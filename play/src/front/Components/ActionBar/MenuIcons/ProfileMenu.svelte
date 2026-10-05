@@ -46,10 +46,12 @@
     import ActionBarButton from "../ActionBarButton.svelte";
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import { warningMessageStore } from "../../../Stores/ErrorStore";
+    import { windowSize } from "../../../Stores/CoWebsiteStore";
+    import { DESKTOP_LAYOUT_MIN_WIDTH, keepBarInViewStore } from "../../../Stores/BarInViewStore";
     import ContextualMenuItems from "./ContextualMenuItems.svelte";
     import HeaderMenuItem from "./HeaderMenuItem.svelte";
     import AdditionalMenuItems from "./AdditionalMenuItems.svelte";
-    import { IconBug, IconLogout } from "@wa-icons";
+    import { IconBug, IconLayoutNavbar, IconLogout } from "@wa-icons";
 
     // The ActionBarButton component is displayed differently in the profile menu.
     // We use the context to decide how to render it.
@@ -57,6 +59,15 @@
     setContext("inMenu", true);
 
     let userName = gameManager.getPlayerName() || "";
+    let profileButton: HTMLButtonElement;
+
+    // Escape closes the open menu and puts the focus back on its button, so the keyboard picks up where it was.
+    function closeOnEscape(event: KeyboardEvent) {
+        if (event.key !== "Escape" || $openedMenuStore !== "profileMenu") return;
+        event.stopPropagation();
+        openedMenuStore.close("profileMenu");
+        profileButton?.focus();
+    }
     let hasPersonalDesk = false;
     let personalAreaData: AreaData | null = null;
     let isInsidePersonalDesk = false;
@@ -293,18 +304,24 @@
     );
 </script>
 
-<!-- svelte-ignore a11y-click-events-have-key-events -->
-<!-- svelte-ignore a11y-no-static-element-interactions -->
+<svelte:window on:keydown={closeOnEscape} />
+
 <div data-testid="action-user" class="flex items-center transition-all pointer-events-auto">
-    <div
-        class="group bg-contrast/80 backdrop-blur rounded-lg h-16 @sm/actions:h-14 @xl/actions:h-16 p-2 cursor-pointer"
+    <!-- A real button: Tab reaches it, Enter and Space open the menu, and screen readers announce it. -->
+    <button
+        type="button"
+        class="group profile-button u-surface-flat rounded-xl h-16 @sm/actions:h-14 @xl/actions:h-16 p-2 cursor-pointer text-start"
+        aria-label={$LL.menu.icon.open.menu()}
+        aria-haspopup="menu"
+        aria-expanded={$openedMenuStore === "profileMenu"}
+        bind:this={profileButton}
         use:floatingUiRef
         on:click|preventDefault={() => {
             openedMenuStore.toggle("profileMenu");
         }}
     >
         <div
-            class="h-12 w-12 @sm/actions:h-10 @sm/actions:w-10 @xl/actions:h-12 @xl/actions:w-12 p-1 m-0 items-center justify-center flex @md/actions:hidden"
+            class="profile-burger h-12 w-12 @sm/actions:h-10 @sm/actions:w-10 @xl/actions:h-12 @xl/actions:w-12 p-1 m-0 items-center justify-center flex @md/actions:hidden"
         >
             {#if $openedMenuStore !== "profileMenu"}
                 <!-- pointer-events-none is important for clickOutside to work. Otherwise, the
@@ -316,16 +333,19 @@
             {/if}
         </div>
         <div
-            class="hidden @md/actions:flex items-center h-full group-hover:bg-white/10 transition-all group-hover:rounded gap-2 pl-0 pr-3"
+            class="profile-pill hidden @md/actions:flex items-center h-full rounded-full transition-colors gap-2 pl-0 pr-3"
         >
-            <div class="overflow-hidden p-2 flex items-center justify-center rounded h-full aspect-square relative">
+            <div
+                class="overflow-hidden p-2 flex items-center justify-center rounded-full h-full aspect-square relative"
+            >
                 <Woka userId={-1} placeholderSrc="" customWidth="30px" />
             </div>
             <div class="grow flex flex-row @xl/actions:flex-col justify-start text-start pr-2">
                 <div
                     class="font-bold text-white leading-5 whitespace-nowrap select-none text-base @sm/actions:text-sm @xl/actions:text-base order-last @xl/actions:order-first flex items-center"
                 >
-                    {userName}
+                    <!-- Names can be 32 letters long: cut a long one, so the menu never pushes the bar apart. -->
+                    <span class="truncate max-w-[11rem]" title={userName}>{userName}</span>
                 </div>
                 <div class="text-xxs bold whitespace-nowrap select-none flex items-center">
                     <div
@@ -349,25 +369,28 @@
                 />
             </div>
         </div>
-    </div>
+    </button>
     {#if $openedMenuStore === "profileMenu"}
         <!-- before:content-[''] before:absolute before:w-0 before:h-0 before:-top-[14px] before:right-6 before:border-solid before:border-8 before:border-transparent before:border-b-contrast/80 -->
+        <!-- The whole menu stays on screen on a phone, however many items fall into it (logged in, apps, map tools,
+             script items): the box is capped to the visible height minus the action bar, and scrolls inside. -->
         <div
-            class="absolute top-0 left-0 bg-contrast/80 backdrop-blur rounded-md p-1 w-56 text-white select-none"
+            class="profile-menu absolute top-0 left-0 z-10 flex flex-col u-surface rounded-2xl p-1 w-64 max-w-[calc(100vw-10px)] text-white select-none"
             data-testid="profile-menu"
             use:floatingUiContent
             use:clickOutside={() => {
                 openedMenuStore.close("profileMenu");
             }}
         >
-            <div use:arrowAction />
-            <div class="p-0 m-0 list-none overflow-y-auto max-h-[calc(100vh-96px)]">
+            <div class="u-surface-arrow" use:arrowAction />
+            <div class="profile-menu-scroll p-0 m-0 list-none overflow-y-auto overscroll-contain rounded-[12px]">
                 <ExternalComponents zone="menuTop" />
                 <AvailabilityStatusList statusInformation={getStatusInformation(statusToShow)} />
                 <HeaderMenuItem label={$LL.menu.sub.profile()} />
                 {#if showWokaNameMenuItem()}
                     <ActionBarButton
                         label={$LL.actionbar.profil()}
+                        chevron
                         on:click={() => {
                             openEditNameScene();
                             analyticsClient.editName();
@@ -378,15 +401,19 @@
                 {/if}
                 <ActionBarButton
                     label={$LL.actionbar.woka()}
+                    chevron
+                    imageTile
                     on:click={() => {
                         openEditSkinScene();
                         analyticsClient.editWoka();
                     }}
                 >
-                    <Woka userId={-1} placeholderSrc="" customWidth="26px" />
+                    <Woka userId={-1} placeholderSrc="" customWidth="32px" />
                 </ActionBarButton>
                 <ActionBarButton
                     label={$LL.actionbar.companion()}
+                    chevron
+                    imageTile
                     on:click={() => {
                         openEditCompanionScene();
                         analyticsClient.editCompanion();
@@ -395,8 +422,8 @@
                     <Companion
                         userId={-1}
                         placeholderSrc="../static/images/default-companion.png"
-                        width="26px"
-                        height="26px"
+                        width="32px"
+                        height="32px"
                     />
                 </ActionBarButton>
                 {#if hasPersonalDesk}
@@ -427,18 +454,23 @@
                 <!--                                    <div class="text-left flex items-center">{$LL.actionbar.quest()}</div>-->
                 <!--                                </button>-->
                 <HeaderMenuItem label={$LL.menu.sub.settings()} />
-                <ActionBarButton label={$LL.actionbar.editCamMic()} on:click={openEnableCameraScene}>
+                <ActionBarButton label={$LL.actionbar.editCamMic()} chevron on:click={openEnableCameraScene}>
                     <CamSettingsIcon />
                 </ActionBarButton>
 
                 {#if SENTRY_DSN_FRONT != undefined && connectionManager.currentRoom?.isIssueReportEnabled}
-                    <ActionBarButton label={$LL.actionbar.issueReport.menuAction()} on:click={openFeedbackScene}>
+                    <ActionBarButton
+                        label={$LL.actionbar.issueReport.menuAction()}
+                        chevron
+                        on:click={openFeedbackScene}
+                    >
                         <IconBug font-size="22" />
                     </ActionBarButton>
                 {/if}
 
                 <ActionBarButton
                     label={$LL.actionbar.allSettings()}
+                    chevron
                     on:click={() => {
                         showMenuItem(SubMenusInterface.settings);
                         analyticsClient.openedMenu();
@@ -448,7 +480,27 @@
                     <SettingsIcon />
                 </ActionBarButton>
 
+                {#if $windowSize.width >= DESKTOP_LAYOUT_MIN_WIDTH}
+                    <!-- Desktops only: where the chat and Orbit open, under the bar or over it. Kept on this device. -->
+                    <button
+                        type="button"
+                        role="switch"
+                        aria-checked={$keepBarInViewStore}
+                        class="u-menu-row group pointer-events-auto select-none"
+                        data-testid="keep-bar-in-view"
+                        on:click={() => keepBarInViewStore.update((keep) => !keep)}
+                    >
+                        <span class="u-menu-tile">
+                            <IconLayoutNavbar height="20" width="20" />
+                        </span>
+                        <span class="u-menu-label">{$LL.actionbar.keepBarInView()}</span>
+                        <span class="layout-switch" class:on={$keepBarInViewStore} aria-hidden="true" />
+                    </button>
+                {/if}
+
                 <div class="@sm/actions:hidden items-center">
+                    <!-- Hidden by CSS when the contextual items render nothing (it is then the only child). -->
+                    <div class="u-menu-divider contextual-divider" />
                     <ContextualMenuItems />
                 </div>
 
@@ -459,20 +511,106 @@
                 {/each}
 
                 {#if ENABLE_OPENID && $userIsConnected}
+                    <div class="u-menu-divider" />
                     <button
+                        type="button"
                         on:click={() => analyticsClient.logout()}
                         on:click={() => connectionManager.logout()}
-                        class="group flex p-2 gap-2 items-center hover:bg-danger-600 transition-all cursor-pointer font-bold text-sm w-full pointer-events-auto text-start rounded"
+                        class="u-menu-row u-danger group pointer-events-auto mb-0"
                     >
-                        <div class="transition-all w-6 h-6 aspect-square text-center flex items-center justify-center">
-                            <IconLogout height="20" width="20" class="text-danger-800 group-hover:text-white" />
-                        </div>
-                        <div class="text-start leading-4 text-danger-800 group-hover:text-white flex items-center">
-                            {$LL.menu.profile.logout()}
-                        </div>
+                        <span class="u-menu-tile">
+                            <IconLogout height="20" width="20" />
+                        </span>
+                        <span class="u-menu-label">{$LL.menu.profile.logout()}</span>
                     </button>
                 {/if}
             </div>
         </div>
     {/if}
 </div>
+
+<style>
+    /* Never taller than what is visible above (phone) or below (desktop) the action bar: 6rem covers the bar at its
+       tallest (16px padding + 64px button), the 8px gap to it and an 8px margin at the far edge. dvh follows the
+       phone's browser bars; vh is the fallback for older browsers. */
+    .profile-menu {
+        max-height: calc(100vh - 6rem);
+        max-height: calc(100dvh - 6rem);
+    }
+    .profile-menu-scroll {
+        flex: 1 1 auto;
+        min-height: 0;
+        -webkit-overflow-scrolling: touch;
+    }
+    .contextual-divider:last-child {
+        display: none;
+    }
+    /* The name and status light up only where hovering exists; a tap on a phone leaves nothing behind. */
+    @media (hover: hover) {
+        .group:hover .profile-pill {
+            background-color: rgba(255, 255, 255, 0.08);
+        }
+    }
+    /* Pressed (a tap on a phone, a click), and open: the bar's pressed grey, on the round burger or the name pill.
+       Open is grey, not the gradient, which means switched on. */
+    .profile-burger {
+        border-radius: 9999px;
+        transition: background-color 150ms ease;
+    }
+    .profile-button:active .profile-burger,
+    .profile-button:active .profile-pill {
+        background-color: rgba(255, 255, 255, 0.12);
+    }
+    .profile-button[aria-expanded="true"] .profile-burger,
+    .profile-button[aria-expanded="true"] .profile-pill {
+        background-color: rgba(255, 255, 255, 0.14);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+    }
+    /* The layout switch's track: the brand gradient when on, like every other "on". */
+    .layout-switch {
+        position: relative;
+        flex: none;
+        width: 36px;
+        height: 22px;
+        margin-inline-start: auto;
+        border-radius: 9999px;
+        background: rgba(255, 255, 255, 0.16);
+        transition: background 150ms ease;
+    }
+    .layout-switch::after {
+        content: "";
+        position: absolute;
+        top: 3px;
+        inset-inline-start: 3px;
+        width: 16px;
+        height: 16px;
+        border-radius: 9999px;
+        background: #fff;
+        transition: inset-inline-start 150ms ease;
+    }
+    .layout-switch.on {
+        background: linear-gradient(135deg, #8629fc, #4156f6);
+    }
+    .layout-switch.on::after {
+        inset-inline-start: 17px;
+    }
+    /* Reached with the keyboard: the same white ring as the bar's other buttons. */
+    .profile-button:focus-visible {
+        outline: none;
+    }
+    .profile-button:focus-visible .profile-pill,
+    .profile-button:focus-visible .profile-burger {
+        border-radius: 9999px;
+        box-shadow: inset 0 0 0 2px #fff;
+    }
+    /* Touch: the same 64px pill as the other controls, whatever the width. */
+    @media (pointer: coarse) {
+        .profile-button.profile-button {
+            height: 4rem;
+        }
+        .profile-burger.profile-burger {
+            height: 3rem;
+            width: 3rem;
+        }
+    }
+</style>

@@ -9,12 +9,19 @@
     import { banMessageStore } from "../Stores/TypeMessageStore/BanMessageStore";
     import { textMessageStore } from "../Stores/TypeMessageStore/TextMessageStore";
     import { soundPlayingStore } from "../Stores/SoundPlayingStore";
-    import { modalVisibilityStore, roomListVisibilityStore, showLimitRoomModalStore } from "../Stores/ModalStore";
+    import {
+        modalFullScreenStore,
+        modalIframeStore,
+        modalVisibilityStore,
+        roomListVisibilityStore,
+        showLimitRoomModalStore,
+    } from "../Stores/ModalStore";
     import { actionsMenuStore } from "../Stores/ActionsMenuStore";
     import { wokaMenuStore } from "../Stores/WokaMenuStore";
     import { showDesktopCapturerSourcePicker } from "../Stores/ScreenSharingStore";
     import { uiWebsitesStore } from "../Stores/UIWebsiteStore";
-    import { coWebsites } from "../Stores/CoWebsiteStore";
+    import { coWebsites, windowSize } from "../Stores/CoWebsiteStore";
+    import { DESKTOP_LAYOUT_MIN_WIDTH } from "../Stores/BarInViewStore";
     import { proximityMeetingStore } from "../Stores/MyMediaStore";
     import { notificationPlayingStore } from "../Stores/NotificationStore";
     import { popupStore } from "../Stores/PopupStore";
@@ -28,7 +35,11 @@
     import { highlightedEmbedScreen } from "../Stores/HighlightedEmbedScreenStore";
     import { highlightFullScreen } from "../Stores/ActionsCamStore";
     import { chatVisibilityStore } from "../Stores/ChatStore";
-    import { chatSidebarWidthStore } from "../Chat/ChatSidebarWidthStore";
+    import {
+        chatFloatInsetStore,
+        chatSidebarWidthStore,
+        hideActionBarStoreBecauseOfChatBar,
+    } from "../Chat/ChatSidebarWidthStore";
     import { EditorToolName } from "../Phaser/Game/MapEditor/MapEditorModeManager";
     import { streamableCollectionStore } from "../Stores/StreamableCollectionStore";
     import { inputFormFocusStore } from "../Stores/UserInputStore";
@@ -103,23 +114,33 @@
         inputFormFocusStore.set(false);
     });
 
-    $: marginLeft = $chatVisibilityStore ? $chatSidebarWidthStore : 0;
+    // On a desktop, windows (the chat, Orbit) open over the game and nothing moves: the bar, Express and the zoom
+    // buttons keep their place and size, and a window simply covers what is behind it. "Keep the bar in view" only
+    // changes where the chat and Orbit start (under the bar), never where anything else sits. Phones and small windows
+    // keep their layout: what is beside the chat starts where it ends.
+    $: desktop = $windowSize.width >= DESKTOP_LAYOUT_MIN_WIDTH;
+    $: marginLeft = $chatVisibilityStore && !desktop ? $chatSidebarWidthStore + $chatFloatInsetStore : 0;
+    // The map editor sits beside the game, and the bar stops where it starts: its menus would open under the editor.
     $: marginRight =
         $mapEditorVisibilityStore && $mapEditorSelectedToolStore !== EditorToolName.WAMSettingsEditor
             ? $mapEditorSideBarWidthStore
             : 0;
+    // A maximised window takes the whole screen, over the chat too: the last thing you asked to see.
+    $: windowMaximised = $modalVisibilityStore && $modalFullScreenStore;
 </script>
 
 <!-- Components ordered by z-index -->
 <div
     id="main-layout"
-    class="@container/main-layout absolute h-full w-full pointer-events-none z-10 {[...$coWebsites.values()].length ===
-    0
+    class="@container/main-layout absolute h-full w-full pointer-events-none {windowMaximised ? 'z-[2001]' : 'z-10'} {[
+        ...$coWebsites.values(),
+    ].length === 0
         ? 'not-cowebsite'
         : ''}"
-    style="padding-inline-start : {marginLeft}px; padding-inline-end: {marginRight}px "
+    style="padding-inline-start : {marginLeft}px; padding-inline-end: {marginRight}px;"
 >
-    {#if $modalVisibilityStore}
+    <!-- Only a centred window dims the map. A side panel leaves the map beside it in plain view, as the chat does. -->
+    {#if $modalVisibilityStore && $modalIframeStore?.position === "center"}
         <div class="bg-black/60 w-full h-full fixed start-0 end-0" />
     {/if}
 
@@ -212,6 +233,24 @@
                 <AudioStreamWrapper {videoBox} />
             {/each}
 
+            <!-- Bottom-right column: the zoom and map tools, with the Express button under them,
+                 directly above the menu button. It comes before the windows (room websites, Explore, the woka menu):
+                 a window opened over it covers it, and it stays in its place behind. When the chat leaves no room
+                 for the bar (a phone), the column goes with the bar: beside the chat is only a peek at the map, and
+                 everything comes back when the chat closes. -->
+            {#if !($chatVisibilityStore && $hideActionBarStoreBecauseOfChatBar)}
+                <!-- Held inside the game's area: a room website opened beside or above the game covers the column as
+                     it grows, instead of the column floating over the website. -->
+                <div class="absolute inset-0 overflow-hidden pointer-events-none">
+                    <div
+                        class="absolute bottom-2 right-1 md:right-2 xl:right-4 flex flex-col items-end gap-2 pointer-events-none"
+                    >
+                        <ExplorerMenu />
+                        <ExpressButton />
+                    </div>
+                </div>
+            {/if}
+
             {#if $uiWebsitesStore}
                 <UiWebsiteContainer />
             {/if}
@@ -250,15 +289,6 @@
                 </div>
             {/if}
             <ExternalComponents zone="centeredPopup" />
-
-            <!-- Bottom-right column: the zoom and map tools, with the Express button under them,
-                 directly above the menu button. -->
-            <div
-                class="absolute bottom-2 right-1 md:right-2 xl:right-4 flex flex-col items-end gap-2 pointer-events-none"
-            >
-                <ExplorerMenu />
-                <ExpressButton />
-            </div>
         </section>
         <div class="">
             <!--<ActionBar />-->

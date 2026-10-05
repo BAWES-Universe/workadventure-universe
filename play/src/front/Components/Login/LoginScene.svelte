@@ -13,6 +13,8 @@
     export let game: Game;
 
     const loginScene = game.scene.getScene(LoginSceneName) as LoginScene;
+    // Opened from the menu, the room is waiting: the screen can lead back into it without a change.
+    const canGoBack = gameManager.canResumeGame;
 
     let name = gameManager.getPlayerName() || "";
     let startValidating = false;
@@ -142,6 +144,16 @@
                 >{$LL.login.continue()}</button
             >
         </section>
+        {#if canGoBack}
+            <section class="flex h-fit justify-center m-0">
+                <button
+                    type="button"
+                    class="mt-2 w-52 md:w-96 text-center block btn btn-ghost btn-lg loginSceneBack"
+                    data-testid="loginSceneBack"
+                    on:click={() => loginScene.back()}>{$LL.actionbar.cancel()}</button
+                >
+            </section>
+        {/if}
         {#if legalString}
             <section class="terms-and-conditions h-fit text-center w-full">
                 <p class="text-white text-xs italic opacity-50">

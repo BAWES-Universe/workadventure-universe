@@ -135,7 +135,7 @@
         }
         analyticsClient.openedChat();
     }}
-    classList="group/btn-message-circle rounded-r-lg pe-2 {last ? '' : '@sm/actions:rounded-r-none @sm/actions:pe-0'}"
+    classList="group/btn-message-circle rounded-e-xl pe-2 {last ? '' : '@sm/actions:rounded-e-none @sm/actions:pe-0'}"
     tooltipTitle={$LL.actionbar.help.chat.title()}
     desc={$LL.actionbar.help.chat.desc()}
     media="./static/Videos/Chat.mp4"

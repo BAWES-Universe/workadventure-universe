@@ -277,6 +277,25 @@ export const isInRemoteConversation = derived(
     }
 );
 
+/**
+ * Whether what your microphone and camera send reaches someone right now: a bubble or a meeting with other people,
+ * or a live stream (a meeting room, on stage in a speaker zone). Not in a silent zone, and not in the audience of a
+ * speaker zone, where you only listen. The microphone and camera buttons show it with a violet ring.
+ */
+export const isBroadcastingMediaStore = derived(
+    [videoStreamElementsStore, screenShareStreamElementsStore, isLiveStreamingStore, silentStore, isListenerStore],
+    ([
+        $videoStreamElementsStore,
+        $screenShareStreamElementsStore,
+        $isLiveStreamingStore,
+        $silentStore,
+        $isListenerStore,
+    ]) =>
+        !$silentStore &&
+        !$isListenerStore &&
+        ($isLiveStreamingStore || $videoStreamElementsStore.length > 0 || $screenShareStreamElementsStore.length > 0)
+);
+
 // No need to unsubscribe, the store is global
 // eslint-disable-next-line svelte/no-ignored-unsubscribe
 streamableCollectionStore.subscribe((streamableCollection) => {

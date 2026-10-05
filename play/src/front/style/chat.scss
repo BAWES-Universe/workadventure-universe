@@ -249,6 +249,24 @@
     .close-window {
         cursor: pointer;
     }
+    // On a desktop the chat floats like Orbit's panel: a rounded card held off the edges (CHAT_FLOAT_INSET, which
+    // everything beside it counts). Phones and tablets keep it edge to edge. Its edge ring follows the corners; it
+    // casts no shadow, like everything else that stays on screen.
+    @media (min-width: 1024px) {
+        top: 16px;
+        inset-inline-start: 16px;
+        height: calc(100dvh - 32px);
+        max-width: calc(100vw - 32px) !important;
+        border-radius: 24px;
+    }
+}
+// With "Keep the bar in view" on (BarInViewStore.ts), the chat opens under the bar: 96px is the bar at its desktop
+// size (16px padding around a 64px pill). The 16px gap at the bottom stays.
+@media (min-width: 1024px) {
+    .u-bar-in-view .chatWindow {
+        top: 96px;
+        height: calc(100dvh - 112px);
+    }
 }
 
 .server-icon.sync:after {

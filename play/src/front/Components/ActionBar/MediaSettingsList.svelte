@@ -25,7 +25,7 @@
     import { LL } from "../../../i18n/i18n-svelte";
     import PopUpBackgroundCamera from "../PopUp/PopUpBackgroundCamera.svelte";
     import { popupStore } from "../../Stores/PopupStore";
-    import { IconCamera, IconMicrophoneOn, IconHeadphones, IconCheck } from "@wa-icons";
+    import { IconCamera, IconMicrophoneOn, IconHeadphones, IconCheck, IconPhoto } from "@wa-icons";
 
     export let mediaSettingsDisplayed = false;
 
@@ -81,221 +81,233 @@
     }
 </script>
 
+<!-- Same box as before: 256px wide, under the mic and camera on desktop and above them on phones, centred on them.
+     The height cap now includes the footer, so a long list on a phone no longer pushes the top off screen.
+     Only the inside is in Universe style: the raised ink surface, violet eyebrows, 40px rows (48px on phones), our
+     purple for the device in use, and gradient buttons to turn the camera or microphone back on. -->
 <div
-    class="absolute top-20 bottom-auto mobile:top-auto mobile:bottom-20 start-1/2 transform -translate-x-1/2 text-white rounded-md w-64 overflow-hidden before:content-[''] before:absolute before:w-full before:h-full before:z-1 before:start-0 before:top-0 before:rounded-lg before:bg-contrast/80 before:backdrop-blur after:content-[''] after:absolute after:z-0 after:w-full after:bg-transparent after:h-full after:-top-4 after:-start-0 transition-all"
+    class="device-list absolute top-20 bottom-auto mobile:top-auto mobile:bottom-20 start-1/2 transform -translate-x-1/2 text-white rounded-2xl w-64 overflow-hidden flex flex-col after:content-[''] after:absolute after:z-0 after:w-full after:bg-transparent after:h-full after:-top-4 after:-start-0 transition-all"
+    style="max-height: calc(100vh - 160px);"
     in:fly={{ y: 40, duration: 150 }}
     use:clickOutside={() => dispatch("close")}
 >
-    <div class="flex flex-col overflow-auto gap-2 p-1" style="max-height: calc(100vh - 160px);">
+    <div class="relative z-10 flex flex-col min-h-0 flex-1 overflow-auto px-1.5 pt-2 pb-1 *:shrink-0">
+        <div class="u-eyebrow px-2 py-1.5">{$LL.actionbar.subtitle.camera()}</div>
         {#if $silentStore == false && $requestedCameraState && $cameraListStore && $cameraListStore.length > 0}
-            <div class="flex flex-col gap-1">
-                <div class="flex text-xxs uppercase text-white/50 px-2 pb-0.5 pt-1 relative bold">
-                    {$LL.actionbar.subtitle.camera()}
-                </div>
-                {#each $cameraListStore as camera, index (index)}
-                    <!-- svelte-ignore a11y-click-events-have-key-events -->
-                    <!-- svelte-ignore a11y-no-static-element-interactions -->
-                    <div
-                        class="cursor-pointer group flex items-center relative z-10 p-1 overflow-hidden rounded {$usedCameraDeviceIdStore ===
-                        camera.deviceId
-                            ? 'bg-secondary'
-                            : 'hover:bg-white/10'}"
-                        on:click|stopPropagation|preventDefault={() => {
-                            analyticsClient.selectCamera();
-                            selectCamera(camera.deviceId);
-                        }}
-                    >
-                        {#if $usedCameraDeviceIdStore === camera.deviceId}
-                            <div class="h-full aspect-square flex items-center justify-center rounded-md me-2">
-                                <IconCamera font-size="20" fillColor="fill-white" />
-                            </div>
-                        {/if}
-
-                        <div
-                            class="grow text-sm text-ellipsis overflow-hidden whitespace-nowrap {$usedCameraDeviceIdStore ===
-                            camera.deviceId
-                                ? 'opacity-100'
-                                : 'opacity-80 group-hover:opacity-100'}"
-                            title={StringUtils.normalizeDeviceName(camera.label)}
-                        >
-                            {StringUtils.normalizeDeviceName(camera.label)}
-                        </div>
-                        {#if $usedCameraDeviceIdStore === camera.deviceId}
-                            <IconCheck font-size="20" />
-                        {/if}
-                    </div>
-                {/each}
-            </div>
-            <div class="group flex items-center relative z-10 px-2">
+            {#each $cameraListStore as camera, index (index)}
                 <button
-                    class="btn btn-sm btn-ghost btn-light justify-center w-full rounded text-nowrap"
-                    on:click={() => analyticsClient.microphone()}
-                    on:click={openBackgroundSettings}
+                    type="button"
+                    class="device-row group min-h-10 mobile:min-h-12"
+                    class:selected={$usedCameraDeviceIdStore === camera.deviceId}
+                    aria-pressed={$usedCameraDeviceIdStore === camera.deviceId}
+                    title={StringUtils.normalizeDeviceName(camera.label)}
+                    on:click|stopPropagation|preventDefault={() => {
+                        analyticsClient.selectCamera();
+                        selectCamera(camera.deviceId);
+                    }}
                 >
-                    {$LL.actionbar.camera.setBackground()}
+                    <span class="device-tile"><IconCamera font-size="16" /></span>
+                    <span class="device-name">{StringUtils.normalizeDeviceName(camera.label)}</span>
+                    {#if $usedCameraDeviceIdStore === camera.deviceId}
+                        <IconCheck font-size="16" class="shrink-0 text-[#c4b5fd]" />
+                    {/if}
                 </button>
-            </div>
+            {/each}
+            <button
+                type="button"
+                class="u-cta-secondary flex items-center justify-center gap-2 h-9 mobile:h-11 mx-1 mt-1 mb-0.5 rounded-xl text-[13px] font-bold text-nowrap"
+                on:click={() => analyticsClient.microphone()}
+                on:click={openBackgroundSettings}
+            >
+                <IconPhoto font-size="15" />
+                {$LL.actionbar.camera.setBackground()}
+            </button>
         {:else}
-            <div class="">
-                <div class="flex text-xxs uppercase text-white/50 px-2 pb-0.5 pt-2 relative bold">
-                    {$LL.actionbar.subtitle.camera()}
-                </div>
-                <div class="group flex items-center relative z-10 px-2 font-sm justify-center">
-                    <div class="text-sm italic">
-                        {#if $cameraListStore == undefined || $cameraListStore.length == 0}
-                            {$LL.actionbar.camera.noDevices()}
-                        {:else}
-                            {$LL.actionbar.camera.disabled()}
-                        {/if}
-                    </div>
-                </div>
-                {#if $silentStore == false && $requestedCameraState == false}
-                    <div class="group flex items-center relative z-10 py-1 px-2 overflow-hidden">
-                        <button
-                            class="btn btn-danger btn-sm w-full justify-center"
-                            on:click={() => analyticsClient.camera()}
-                            on:click={cameraClick}
-                        >
-                            {$LL.actionbar.camera.activate()}
-                        </button>
-                    </div>
+            <div class="device-off">
+                <span class="device-off-dot" />
+                {#if $cameraListStore == undefined || $cameraListStore.length == 0}
+                    {$LL.actionbar.camera.noDevices()}
+                {:else}
+                    {$LL.actionbar.camera.disabled()}
                 {/if}
             </div>
+            {#if $silentStore == false && $requestedCameraState == false}
+                <button
+                    type="button"
+                    class="u-cta flex items-center justify-center h-10 mobile:h-12 mx-1 mb-1 rounded-xl text-sm font-bold"
+                    on:click={() => analyticsClient.camera()}
+                    on:click={cameraClick}
+                >
+                    {$LL.actionbar.camera.activate()}
+                </button>
+            {/if}
         {/if}
-        <div class="w-full z-10 flex items-center">
-            <div class="bg-white/10 w-full h-[1px]" />
-        </div>
+        <div class="h-px bg-white/10 mx-1.5 my-1.5" />
+        <div class="u-eyebrow px-2 py-1.5">{$LL.actionbar.subtitle.microphone()}</div>
         {#if $silentStore == false && $requestedMicrophoneState && $microphoneListStore && $microphoneListStore.length > 0}
-            <div class="flex flex-col gap-1">
-                <div class="flex text-xxs uppercase text-white/50 px-2 pb-0.5 pt-1 relative bold">
-                    {$LL.actionbar.subtitle.microphone()}
-                </div>
-                {#each $microphoneListStore as microphone, index (index)}
-                    <!-- svelte-ignore a11y-click-events-have-key-events -->
-                    <!-- svelte-ignore a11y-no-static-element-interactions -->
-                    <div
-                        class="cursor-pointer group flex items-center relative z-10 p-1 overflow-hidden rounded {$usedMicrophoneDeviceIdStore ===
-                        microphone.deviceId
-                            ? 'bg-secondary'
-                            : 'hover:bg-white/10'}"
-                        on:click={() => {
-                            analyticsClient.selectMicrophone();
-                        }}
-                        on:click|stopPropagation|preventDefault={() => selectMicrophone(microphone.deviceId)}
-                    >
-                        {#if $usedMicrophoneDeviceIdStore === microphone.deviceId}
-                            <div class="h-full aspect-square flex items-center justify-center rounded-md me-2">
-                                <IconMicrophoneOn font-size="20" hover="fill-white" />
-                            </div>
-                        {/if}
-                        <div
-                            class="grow text-sm text-ellipsis overflow-hidden whitespace-nowrap {$usedMicrophoneDeviceIdStore ===
-                            microphone.deviceId
-                                ? 'opacity-100'
-                                : 'opacity-80 group-hover:opacity-100'}"
-                        >
-                            {StringUtils.normalizeDeviceName(microphone.label)}
-                        </div>
-                        {#if $usedMicrophoneDeviceIdStore === microphone.deviceId}
-                            <IconCheck font-size="20" />
-                        {/if}
-                    </div>
-                {/each}
-            </div>
+            {#each $microphoneListStore as microphone, index (index)}
+                <button
+                    type="button"
+                    class="device-row group min-h-10 mobile:min-h-12"
+                    class:selected={$usedMicrophoneDeviceIdStore === microphone.deviceId}
+                    aria-pressed={$usedMicrophoneDeviceIdStore === microphone.deviceId}
+                    title={StringUtils.normalizeDeviceName(microphone.label)}
+                    on:click={() => {
+                        analyticsClient.selectMicrophone();
+                    }}
+                    on:click|stopPropagation|preventDefault={() => selectMicrophone(microphone.deviceId)}
+                >
+                    <span class="device-tile"><IconMicrophoneOn font-size="16" /></span>
+                    <span class="device-name">{StringUtils.normalizeDeviceName(microphone.label)}</span>
+                    {#if $usedMicrophoneDeviceIdStore === microphone.deviceId}
+                        <IconCheck font-size="16" class="shrink-0 text-[#c4b5fd]" />
+                    {/if}
+                </button>
+            {/each}
         {:else}
-            <div class="flex flex-col gap-1">
-                <div class="flex text-xxs uppercase text-white/50 px-2 pb-0.5 pt-1 relative bold">
-                    {$LL.actionbar.subtitle.microphone()}
-                </div>
-                <div class="cursor-pointer group flex items-center relative z-10 py-1 px-2 font-sm justify-center">
-                    <div class="text-sm italic">
-                        {#if $microphoneListStore == undefined || $microphoneListStore.length == 0}
-                            {$LL.actionbar.microphone.noDevices()}
-                        {:else}
-                            {$LL.actionbar.microphone.disabled()}
-                        {/if}
-                    </div>
-                </div>
-                {#if $silentStore == false && $requestedMicrophoneState == false}
-                    <div class="group flex items-center relative z-10 px-2 overflow-hidden">
-                        <button
-                            class="btn btn-danger btn-sm w-full justify-center"
-                            on:click={() => analyticsClient.microphone()}
-                            on:click={microphoneClick}
-                        >
-                            {$LL.actionbar.microphone.activate()}
-                        </button>
-                    </div>
+            <div class="device-off">
+                <span class="device-off-dot" />
+                {#if $microphoneListStore == undefined || $microphoneListStore.length == 0}
+                    {$LL.actionbar.microphone.noDevices()}
+                {:else}
+                    {$LL.actionbar.microphone.disabled()}
                 {/if}
             </div>
+            {#if $silentStore == false && $requestedMicrophoneState == false}
+                <button
+                    type="button"
+                    class="u-cta flex items-center justify-center h-10 mobile:h-12 mx-1 mb-1 rounded-xl text-sm font-bold"
+                    on:click={() => analyticsClient.microphone()}
+                    on:click={microphoneClick}
+                >
+                    {$LL.actionbar.microphone.activate()}
+                </button>
+            {/if}
         {/if}
-        <div class="w-full z-10 flex items-center">
-            <div class="bg-white/10 w-full h-[1px]" />
-        </div>
+        {#if $speakerListStore !== undefined}
+            <div class="h-px bg-white/10 mx-1.5 my-1.5" />
+            <div class="u-eyebrow px-2 py-1.5">{$LL.actionbar.subtitle.speaker()}</div>
+        {/if}
         {#if $speakerSelectedStore != undefined && $speakerListStore && $speakerListStore.length > 0}
-            <div class="flex flex-col gap-1">
-                <div class="flex text-xxs uppercase text-white/50 px-2 pb-0.5 pt-1 relative bold">
-                    {$LL.actionbar.subtitle.speaker()}
-                </div>
-                {#each $speakerListStore as speaker, index (index)}
-                    <!-- svelte-ignore a11y-click-events-have-key-events -->
-                    <!-- svelte-ignore a11y-no-static-element-interactions -->
-                    <div
-                        class="cursor-pointer group flex items-center relative z-10 py-1 px-2 overflow-hidden rounded {$speakerSelectedStore ===
-                        speaker.deviceId
-                            ? 'bg-secondary'
-                            : 'hover:bg-white/10'}"
-                        on:click={() => {
-                            analyticsClient.selectSpeaker();
-                        }}
-                        on:click|stopPropagation|preventDefault={() => selectSpeaker(speaker.deviceId)}
-                    >
-                        {#if $speakerSelectedStore === speaker.deviceId}
-                            <div class="h-full aspect-square flex items-center justify-center rounded-md me-2">
-                                <IconHeadphones font-size="20" hover="fill-white" />
-                            </div>
-                        {/if}
-                        <div
-                            class="grow text-sm text-ellipsis overflow-hidden whitespace-nowrap {$speakerSelectedStore ===
-                            speaker.deviceId
-                                ? 'opacity-100'
-                                : 'opacity-80 group-hover:opacity-100'}"
-                        >
-                            {StringUtils.normalizeDeviceName(speaker.label)}
-                        </div>
-                        {#if $speakerSelectedStore === speaker.deviceId}
-                            <IconCheck font-size="20" />
-                        {/if}
-                    </div>
-                {/each}
-            </div>
+            {#each $speakerListStore as speaker, index (index)}
+                <button
+                    type="button"
+                    class="device-row group min-h-10 mobile:min-h-12"
+                    class:selected={$speakerSelectedStore === speaker.deviceId}
+                    aria-pressed={$speakerSelectedStore === speaker.deviceId}
+                    title={StringUtils.normalizeDeviceName(speaker.label)}
+                    on:click={() => {
+                        analyticsClient.selectSpeaker();
+                    }}
+                    on:click|stopPropagation|preventDefault={() => selectSpeaker(speaker.deviceId)}
+                >
+                    <span class="device-tile"><IconHeadphones font-size="16" /></span>
+                    <span class="device-name">{StringUtils.normalizeDeviceName(speaker.label)}</span>
+                    {#if $speakerSelectedStore === speaker.deviceId}
+                        <IconCheck font-size="16" class="shrink-0 text-[#c4b5fd]" />
+                    {/if}
+                </button>
+            {/each}
         {:else if $speakerListStore !== undefined}
-            <div class="flex flex-col gap-1">
-                <div class="flex text-xxs uppercase text-white/50 px-2 pb-0.5 pt-1 relative bold">
-                    {$LL.actionbar.subtitle.speaker()}
-                </div>
-                <div class="cursor-pointer group flex items-center relative z-10 py-1 px-2 font-sm justify-center">
-                    <div class="text-sm italic">
-                        {#if $speakerListStore.length === 0}
-                            {$LL.actionbar.speaker.noDevices()}
-                        {:else}
-                            {$LL.actionbar.speaker.disabled()}
-                        {/if}
-                    </div>
-                </div>
+            <div class="device-off">
+                {#if $speakerListStore.length === 0}
+                    {$LL.actionbar.speaker.noDevices()}
+                {:else}
+                    {$LL.actionbar.speaker.disabled()}
+                {/if}
             </div>
         {/if}
     </div>
-    <div class="relative z-10 flex gap-2 p-2 bg-contrast/50">
+    <div class="relative z-10 flex shrink-0 gap-2 p-2.5 border-t border-white/5">
         <button
-            class="btn btn-sm btn-ghost btn-light justify-center w-full rounded text-nowrap"
+            type="button"
+            class="u-cta-secondary flex-1 flex items-center justify-center h-[38px] mobile:h-12 rounded-xl text-[13px] font-bold text-nowrap"
             on:click={openEnableCameraScene}>{$LL.actionbar.test()}</button
         >
         <button
-            class="btn btn-sm btn-border btn-light justify-center w-full cursor-pointer rounded"
+            type="button"
+            class="flex-1 flex items-center justify-center h-[38px] mobile:h-12 rounded-xl text-[13px] font-bold text-white/70 hover:text-white hover:bg-white/5 transition-colors"
             on:click|stopPropagation|preventDefault={() => dispatch("close")}
         >
             {$LL.actionbar.close()}
         </button>
     </div>
 </div>
+
+<style>
+    .device-list {
+        background: var(--u-surface-bg);
+        box-shadow: var(--u-surface-shadow);
+        backdrop-filter: blur(18px) saturate(140%);
+        -webkit-backdrop-filter: blur(18px) saturate(140%);
+    }
+    .device-list button {
+        font-family: inherit;
+    }
+    .device-row {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        width: 100%;
+        margin-bottom: 2px;
+        padding: 0 0.5rem 0 0.375rem;
+        border: 1px solid transparent;
+        border-radius: 0.75rem;
+        font-size: 0.875rem;
+        text-align: start;
+        color: rgba(255, 255, 255, 0.85);
+        cursor: pointer;
+        transition: background-color 150ms ease, border-color 150ms ease;
+    }
+    .device-row:hover {
+        background: rgba(255, 255, 255, 0.06);
+        color: #fff;
+    }
+    .device-row:focus-visible {
+        outline: 2px solid rgba(196, 181, 253, 0.9);
+        outline-offset: -2px;
+    }
+    .device-row.selected {
+        background: rgba(134, 41, 252, 0.16);
+        border-color: rgba(167, 139, 250, 0.45);
+        color: #fff;
+        font-weight: 700;
+    }
+    .device-tile {
+        flex: none;
+        display: grid;
+        place-items: center;
+        width: 1.75rem;
+        height: 1.75rem;
+        border-radius: 0.5625rem;
+        opacity: 0.55;
+    }
+    .device-row.selected .device-tile {
+        opacity: 1;
+        background: linear-gradient(135deg, #8629fc, #4156f6);
+        box-shadow: 0 4px 12px -4px rgba(134, 41, 252, 0.8);
+    }
+    .device-name {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .device-off {
+        display: flex;
+        align-items: center;
+        gap: 0.625rem;
+        padding: 0.125rem 0.5rem 0.5rem;
+        font-size: 0.8125rem;
+        color: rgba(255, 255, 255, 0.75);
+    }
+    .device-off-dot {
+        flex: none;
+        width: 0.5rem;
+        height: 0.5rem;
+        border-radius: 999px;
+        background: #e96d51;
+        box-shadow: 0 0 0 3px rgba(233, 109, 81, 0.2);
+    }
+</style>

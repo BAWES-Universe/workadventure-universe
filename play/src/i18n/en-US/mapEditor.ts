@@ -10,11 +10,11 @@ const mapEditor: BaseTranslation = {
         tileEditor: "Tile editor tool",
         configureMyRoom: "Configure my room",
         trashEditor: "Trash",
-        exploreTheRoom: "Explore the room",
+        exploreTheRoom: "Map overview",
         closeMapEditor: "Close map editor",
         mapManagerActivated: "Map manager activated",
         mapExplorerActivated: "Map overview",
-        exploreTheRoomActivated: "Explore the room activated",
+        exploreTheRoomActivated: "Map overview on",
         areaEditorActivated: "Area editor activated",
         entityEditorActivated: "Entity editor activated",
         trashEditorActivated: "Trash editor activated",
@@ -456,7 +456,7 @@ const mapEditor: BaseTranslation = {
         },
     },
     explorer: {
-        title: "Explore the room",
+        title: "Map overview",
         description:
             "Allow to explore the room. You be able to move around the room and interact with objects. 2 mode are available: 'Exploration' and 'Search'. The 'Search mode' mode will propose you to search or filter entities and areas in the room. The 'Exploration mode' mode will let you move freely in the room.",
         noEntitiesFound: "No entity found in the room 🙅‍♂️",
