@@ -8,7 +8,7 @@ const PATH_HOVER_COLOR = 0x4ade80;
 const WAYPOINT_FILL = 0xffffff;
 const WAYPOINT_STROKE = 0x15803d;
 const ARROW_SIZE = 12;
-const WAYPOINT_DEPTH = 1002;
+const WAYPOINT_DEPTH = 100002; // just above the bots (BotPreview's depth)
 
 export enum WaypointPathEvent {
     WaypointSelected = "WaypointPath:WaypointSelected",
