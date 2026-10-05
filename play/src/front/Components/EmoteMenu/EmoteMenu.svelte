@@ -10,6 +10,9 @@
     export let onEmojiClick: (event: EmojiClickEvent) => void = () => {};
     // onClose is triggered when the "Esc" key is pressed, or with the click when someone clicks outside the picker
     export let onClose: (event?: Event) => void = () => {};
+    // A picker kept on the page while hidden (the chat's) is not showing: its clicks outside and Escape are not
+    // about it, and must not mark another picker's menu closed.
+    export let isShown: () => boolean = () => true;
 
     let emojiPicker: Picker;
 
@@ -186,10 +189,11 @@
 
     onDestroy(() => {
         emojiPicker.removeEventListener("emoji-click", emojiClickEventHandler);
-        emoteMenuStore.closeEmoteMenu();
+        if (isShown()) emoteMenuStore.closeEmoteMenu();
     });
 
     function close(event?: Event) {
+        if (!isShown()) return;
         emoteMenuStore.closeEmoteMenu();
         onClose(event);
     }

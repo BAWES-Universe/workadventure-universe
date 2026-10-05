@@ -383,6 +383,8 @@ export function installViewportGuard(
     undoZoom("load");
 
     return () => {
+        // Settle checks still waiting see a newer run and do nothing.
+        settleTimers++;
         viewport?.removeEventListener("resize", onViewportResize);
         viewport?.removeEventListener("scroll", holdPage);
         win.removeEventListener("scroll", holdPage);

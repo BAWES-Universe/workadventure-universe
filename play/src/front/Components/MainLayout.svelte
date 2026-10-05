@@ -35,6 +35,7 @@
     import { highlightedEmbedScreen } from "../Stores/HighlightedEmbedScreenStore";
     import { highlightFullScreen } from "../Stores/ActionsCamStore";
     import { chatVisibilityStore } from "../Stores/ChatStore";
+    import { windowInFrontStore } from "../Stores/WindowInFrontStore";
     import {
         chatFloatInsetStore,
         chatSidebarWidthStore,
@@ -127,16 +128,16 @@
             : 0;
     // A maximised window takes the whole screen, over the chat too: the last thing you asked to see.
     $: windowMaximised = $modalVisibilityStore && $modalFullScreenStore;
+    // Otherwise the chat and the window take turns where they overlap: the one opened or clicked last is in front.
+    $: windowOverChat = $modalVisibilityStore && $chatVisibilityStore && $windowInFrontStore === "window";
 </script>
 
 <!-- Components ordered by z-index -->
 <div
     id="main-layout"
-    class="@container/main-layout absolute h-full w-full pointer-events-none {windowMaximised ? 'z-[2001]' : 'z-10'} {[
-        ...$coWebsites.values(),
-    ].length === 0
-        ? 'not-cowebsite'
-        : ''}"
+    class="@container/main-layout absolute h-full w-full pointer-events-none {windowMaximised || windowOverChat
+        ? 'z-[2001]'
+        : 'z-10'} {[...$coWebsites.values()].length === 0 ? 'not-cowebsite' : ''}"
     style="padding-inline-start : {marginLeft}px; padding-inline-end: {marginRight}px;"
 >
     <!-- Only a centred window dims the map. A side panel leaves the map beside it in plain view, as the chat does. -->
