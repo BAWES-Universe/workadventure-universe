@@ -1,5 +1,6 @@
 import { FilterType } from "@workadventure/messages";
 import { describe, expect, it } from "vitest";
+import { areaSpaceName } from "@workadventure/shared-utils/src/Space/areaSpaceName";
 import {
     checkSpaceJoin,
     SpaceJoinRefusedError,
@@ -12,12 +13,14 @@ const OTHER_BUBBLE = "http://play.example.com/@/team/world/room#13#1700000000001
 const MEGAPHONE = "playexamplecom--team-world-room-megaphone-room";
 const OTHER_ROOM_MEGAPHONE = "playexamplecom--team-world-other-megaphone-room";
 const MEDIA = ["cameraState", "microphoneState", "screenSharingState"];
+const ROOM = "http://play.example.com/@/team/world/room";
+const PRIVATE_ROOM = "http://play.example.com/@/team/world/private-room";
 
 function socketData(
     granted: string[] = [],
     megaphoneChannels: Map<string, boolean> | undefined = new Map([[MEGAPHONE, true]])
 ) {
-    return { grantedBubbleSpaces: new Set(granted), megaphoneChannels };
+    return { grantedBubbleSpaces: new Set(granted), megaphoneChannels, roomId: ROOM };
 }
 
 function join(localSpaceName: string, filterType = FilterType.ALL_USERS, propertiesToSync: string[] = []) {
@@ -101,6 +104,22 @@ describe("checkSpaceJoin", () => {
             expect(() => checkSpaceJoin(join(OTHER_ROOM_MEGAPHONE, FilterType.ALL_USERS, MEDIA), socketData())).toThrow(
                 SpaceJoinRefusedError
             );
+        });
+    });
+
+    describe("meeting rooms and speaker zones", () => {
+        it.each([
+            ["a meeting room", areaSpaceName("Meeting room", ROOM), FilterType.ALL_USERS],
+            ["a speaker zone", areaSpaceName("Stage", ROOM), FilterType.LIVE_STREAMING_USERS],
+        ])("lets a player into %s of their room", (_label, name, filterType) => {
+            expect(() => checkSpaceJoin(join(name, filterType, MEDIA), socketData())).not.toThrow();
+        });
+
+        it.each([
+            ["a meeting room", areaSpaceName("Meeting room", PRIVATE_ROOM), FilterType.ALL_USERS],
+            ["a speaker zone", areaSpaceName("Stage", PRIVATE_ROOM), FilterType.LIVE_STREAMING_USERS],
+        ])("refuses %s of another room", (_label, name, filterType) => {
+            expect(() => checkSpaceJoin(join(name, filterType, MEDIA), socketData())).toThrow(/in another room/);
         });
     });
 

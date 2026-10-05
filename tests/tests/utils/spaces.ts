@@ -12,10 +12,10 @@ function shortHash(s: string): string {
 
 /**
  * The backend name of the space a LiveKit area property joins, for a room loaded from `mapUrl`.
- * The front names it `<shortHash(room URL)>-<room name>` (see slugifyJitsiRoomName), without the URL's query,
- * and the local admin puts every room in "localWorld".
+ * The front names it `area__<shortHash(room URL)>-<room name>` (see libs/shared-utils/src/Space/areaSpaceName.ts),
+ * without the URL's query, and the local admin puts every room in "localWorld".
  */
 export function livekitAreaSpaceName(mapUrl: string, roomName: string): string {
     const url = new URL(mapUrl);
-    return `localWorld.${shortHash(url.origin + url.pathname)}-${roomName}`;
+    return `localWorld.area__${shortHash(url.origin + url.pathname)}-${roomName}`;
 }

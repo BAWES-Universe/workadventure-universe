@@ -1,4 +1,5 @@
 import { FilterType } from "@workadventure/messages";
+import { isAreaSpaceName, isAreaSpaceOfRoom } from "@workadventure/shared-utils/src/Space/areaSpaceName";
 import type { SocketData } from "../models/Websocket/SocketData";
 import { isMegaphoneChannelSpace } from "../models/MegaphoneRights";
 
@@ -10,8 +11,9 @@ import { isMegaphoneChannelSpace } from "../models/MegaphoneRights";
  * - proximity bubbles (names containing "#", made by the back's Group): only the members the back asked to join;
  * - the world space ("allWorldUser"): everyone in the world, as a plain user list without audio or video;
  * - broadcast channel spaces (room, world, universe): everyone, but only as live streaming spaces (going live is
- *   checked in Space).
- * Every other space (meeting areas, speaker zones, map script spaces) is unchanged.
+ *   checked in Space);
+ * - meeting rooms and speaker zones (names starting with AREA_SPACE_PREFIX): only from the room they are in.
+ * Map script spaces are unchanged. Members-only areas inside a room are still only enforced by the browser.
  */
 
 export const WORLD_SPACE_NAME = "allWorldUser";
@@ -47,7 +49,7 @@ export interface SpaceJoinRequest {
  */
 export function checkSpaceJoin(
     request: SpaceJoinRequest,
-    socketData: Pick<SocketData, "grantedBubbleSpaces" | "megaphoneChannels">
+    socketData: Pick<SocketData, "grantedBubbleSpaces" | "megaphoneChannels" | "roomId">
 ): void {
     const { localSpaceName, filterType, propertiesToSync } = request;
 
@@ -70,6 +72,10 @@ export function checkSpaceJoin(
             throw new SpaceJoinRefusedError(localSpaceName, `the world space does not sync "${otherProperty}"`);
         }
         return;
+    }
+
+    if (isAreaSpaceName(localSpaceName) && !isAreaSpaceOfRoom(localSpaceName, socketData.roomId)) {
+        throw new SpaceJoinRefusedError(localSpaceName, "this meeting room or speaker zone is in another room");
     }
 
     if (isMegaphoneChannelSpace(localSpaceName, socketData) && filterType !== FilterType.LIVE_STREAMING_USERS) {
