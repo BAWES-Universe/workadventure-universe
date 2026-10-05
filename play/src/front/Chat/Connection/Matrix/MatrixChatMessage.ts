@@ -23,6 +23,8 @@ export class MatrixChatMessage implements ChatMessage {
     reactions: MapStore<string, MatrixChatMessageReaction>;
     relations: MatrixChatRelation | undefined;
     readonly canDelete: Writable<boolean>;
+    readonly canReact = writable(true);
+    readonly canReply = writable(true);
 
     constructor(private event: MatrixEvent, private room: Room, isQuotedMessage?: boolean) {
         this.id = event.getId() ?? uuidv4();

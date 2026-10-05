@@ -1,5 +1,6 @@
 <script lang="ts">
     import type { Readable } from "svelte/store";
+    import { getSaveableFiles } from "../MessageActions/messageActions";
     import type { ChatMessageContent } from "../../../Connection/ChatConnection";
     import Lightbox from "./Lightbox.svelte";
 
@@ -49,6 +50,7 @@
 <Lightbox
     src={$content.url}
     alt={$content.body}
+    filename={getSaveableFiles("image", $content)[0]?.name}
     show={showLightbox}
     hasPrev={false}
     hasNext={false}
