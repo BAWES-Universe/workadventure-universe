@@ -40,6 +40,7 @@
         chatSidebarWidthStore,
         hideActionBarStoreBecauseOfChatBar,
     } from "../Chat/ChatSidebarWidthStore";
+    import { chatSheetLayoutStore } from "../Chat/ChatSheetStore";
     import { EditorToolName } from "../Phaser/Game/MapEditor/MapEditorModeManager";
     import { streamableCollectionStore } from "../Stores/StreamableCollectionStore";
     import { inputFormFocusStore } from "../Stores/UserInputStore";
@@ -120,7 +121,9 @@
     // changes where the chat and Orbit start (under the bar), never where anything else sits. Phones and small windows
     // keep their layout: what is beside the chat starts where it ends.
     $: desktop = $windowSize.width >= DESKTOP_LAYOUT_MIN_WIDTH;
-    $: marginLeft = $chatVisibilityStore && !desktop ? $chatSidebarWidthStore + $chatFloatInsetStore : 0;
+    // On a phone held upright the chat is a sheet over the bottom of the screen: it takes no width either.
+    $: marginLeft =
+        $chatVisibilityStore && !desktop && !$chatSheetLayoutStore ? $chatSidebarWidthStore + $chatFloatInsetStore : 0;
     // The map editor sits beside the game, and the bar stops where it starts: its menus would open under the editor.
     $: marginRight =
         $mapEditorVisibilityStore && $mapEditorSelectedToolStore !== EditorToolName.WAMSettingsEditor

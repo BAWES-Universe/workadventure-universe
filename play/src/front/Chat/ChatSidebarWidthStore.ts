@@ -5,6 +5,7 @@ import { localUserStore } from "../Connection/LocalUserStore";
 import { mapEditorSideBarWidthStore } from "../Components/MapEditor/MapEditorSideBarWidthStore";
 import { mapEditorModeStore } from "../Stores/MapEditorStore";
 import { barInViewStore, DESKTOP_LAYOUT_MIN_WIDTH } from "../Stores/BarInViewStore";
+import { chatSheetLayoutStore } from "./ChatSheetStore";
 
 export const chatSidebarWidthStore = writable(localUserStore.getChatSideBarWidth());
 
@@ -30,6 +31,7 @@ export const hideActionBarStoreBecauseOfChatBar = derived(
         mapEditorSideBarWidthStore,
         mapEditorModeStore,
         chatFloatInsetStore,
+        chatSheetLayoutStore,
     ],
     ([
         $chatVisibilityStore,
@@ -38,9 +40,15 @@ export const hideActionBarStoreBecauseOfChatBar = derived(
         $mapEditorWidthStore,
         $mapEditorModeStore,
         $chatFloatInsetStore,
+        $chatSheetLayout,
     ]) => {
         if (!$chatVisibilityStore && !$mapEditorModeStore) {
             return false;
+        }
+        // On a phone held upright the chat is a sheet over the bottom of the screen: the bar goes while it is open,
+        // and comes back when it closes.
+        if ($chatVisibilityStore && $chatSheetLayout) {
+            return true;
         }
         return (
             $windowSize.width -

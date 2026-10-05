@@ -1,6 +1,8 @@
 <svelte:options immutable={true} />
 
 <script lang="ts">
+    import { getContext, hasContext } from "svelte";
+    import { readable, type Readable } from "svelte/store";
     import LL from "../../../i18n/i18n-svelte";
     import type { Streamable } from "../../Stores/StreamableCollectionStore";
     import MegaphoneIcon from "../Icons/MegaphoneIcon.svelte";
@@ -47,6 +49,11 @@
     let overlayWidth: number;
     let overlayHeight: number;
     let videoRatio: number;
+
+    // In a round face (VideoBox.svelte), a tall phone video is framed higher than its middle, where a selfie's eyes
+    // are; the middle is often the chin and neck. Wide videos, and videos outside a face, stay centred.
+    const videoFace: Readable<boolean> = hasContext("videoFace") ? getContext("videoFace") : readable(false);
+    $: verticalShare = $videoFace && videoRatio < 1 ? 0.3 : 0.5;
 
     $: {
         if (videoEnabled && containerWidth && containerHeight) {
@@ -139,7 +146,9 @@
                         "px; height: " +
                         Math.ceil(videoHeight) +
                         "px; " +
-                        ` top: ${(containerHeight - videoHeight) / 2 - (containerHeight - overlayHeight) / 2}px;` +
+                        ` top: ${
+                            (containerHeight - videoHeight) * verticalShare - (containerHeight - overlayHeight) / 2
+                        }px;` +
                         (cover
                             ? ` left: ${(containerWidth - videoWidth) / 2 - (containerWidth - overlayWidth) / 2}px;`
                             : "") +
@@ -163,7 +172,9 @@
                         "px; height: " +
                         Math.ceil(videoHeight) +
                         "px; " +
-                        ` top: ${(containerHeight - videoHeight) / 2 - (containerHeight - overlayHeight) / 2}px;` +
+                        ` top: ${
+                            (containerHeight - videoHeight) * verticalShare - (containerHeight - overlayHeight) / 2
+                        }px;` +
                         (cover
                             ? ` left: ${(containerWidth - videoWidth) / 2 - (containerWidth - overlayWidth) / 2}px;`
                             : "") +
@@ -187,7 +198,9 @@
                         "px; height: " +
                         Math.ceil(videoHeight) +
                         "px; " +
-                        ` top: ${(containerHeight - videoHeight) / 2 - (containerHeight - overlayHeight) / 2}px;` +
+                        ` top: ${
+                            (containerHeight - videoHeight) * verticalShare - (containerHeight - overlayHeight) / 2
+                        }px;` +
                         (cover
                             ? ` left: ${(containerWidth - videoWidth) / 2 - (containerWidth - overlayWidth) / 2}px;`
                             : "") +
