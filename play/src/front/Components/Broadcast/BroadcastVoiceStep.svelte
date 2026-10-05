@@ -135,13 +135,16 @@
             return;
         }
         error = undefined;
-        chosen += 1;
+        const mine = ++chosen;
         if (recorder) await stopRecording();
         try {
             const { levels, duration } = await describeAudioFile(file);
+            // Another file was picked while this one decoded: the later pick wins.
+            if (mine !== chosen) return;
             setAudio(file, file.name, levels, duration);
         } catch (e) {
             console.warn("Broadcast: the file could not be decoded", e);
+            if (mine !== chosen) return;
             // The file was picked while the microphone was being opened, and that recorder was let go: ask again.
             if (state === "starting" && !recorder && !opening && !destroyed) {
                 startRecording().catch((err) => console.error(err));
