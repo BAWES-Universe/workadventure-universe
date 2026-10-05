@@ -103,20 +103,24 @@
         recorder = undefined;
         if (ticker) clearInterval(ticker);
         ticker = undefined;
+        const mine = chosen;
         let stopped: Awaited<ReturnType<VoiceRecorder["stop"]>>;
         try {
             stopped = await current.stop();
         } catch (e) {
             console.warn("Broadcast: the voice note could not be saved", e);
             if (destroyed) return;
-            // The take is lost: the one reviewed before stays, else the card goes back to recording.
-            if (audio) {
-                state = "review";
-            } else {
-                state = "starting";
-                if (restart) startRecording().catch((err) => console.error(err));
-            }
+            // The take is lost: the one reviewed before stays, else the card goes back to the start.
+            state = audio ? "review" : "starting";
+            // A file picked while the take was being saved decides what shows next.
+            if (mine !== chosen) return;
+            if (!audio && restart) startRecording().catch((err) => console.error(err));
             error = $LL.broadcast.voice.recordingFailed();
+            return;
+        }
+        // A file picked while the take was being saved wins over it.
+        if (mine !== chosen) {
+            if (!destroyed && state === "recording") state = audio ? "review" : "starting";
             return;
         }
         const { blob, samples, sampleRate } = stopped;
