@@ -280,9 +280,16 @@ test.describe("Map editor @oidc @nomobile @nowebkit", () => {
         await expect(page.getByTestId("variant-side-Left")).toHaveCount(1, { timeout: 30000 });
         await expect(page.getByTestId("variant-error")).toHaveCount(0);
 
-        // Both pages still list one object, not two
-        await expect(page.getByTestId("entity-item")).toHaveCount(1);
+        // The other page still lists one object, not two
         await expect(page2.getByTestId("entity-item")).toHaveCount(1, { timeout: 30000 });
+
+        // The "Sides and colours" page covers the list: back shows the list with one object, and the upload is
+        // still the picked one, so its sides and colours open again
+        await page.getByTestId("edit-panel-back").click();
+        await expect(page.getByTestId("upload-variants")).toHaveCount(0);
+        await expect(page.getByTestId("entity-item")).toHaveCount(1);
+        await page.getByTestId("uploadVariants").click();
+        await expect(page.getByTestId("variant-side-Left")).toHaveCount(1);
 
         // Placing it offers Turn now that it has two sides
         await page.getByTestId("variant-place").click();
