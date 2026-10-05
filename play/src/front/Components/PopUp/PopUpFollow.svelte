@@ -10,6 +10,7 @@
         followRequestStartedAtStore,
         followRoleStore,
         followStateStore,
+        followStopAskedStore,
         followUsersStore,
     } from "../../Stores/FollowStore";
     import LL from "../../../i18n/i18n-svelte";
@@ -24,8 +25,8 @@
     }
 
     function onKeyDown(e: KeyboardEvent) {
-        // Escape answers "Not now" or cancels the request; it never stops a follow already going (it closes menus).
-        if (e.key === "Escape" && $followStateStore === "requesting") {
+        // Escape answers "Not now", cancels the request, or stops a follow already going.
+        if (e.key === "Escape" && $followStateStore !== "off") {
             endFollow();
         }
     }
@@ -190,19 +191,45 @@
                 {#if $followUsersStore.length > 0}
                     <FollowWoka userId={$followUsersStore[0]} small />
                 {/if}
-                <span class="min-w-0 truncate">{followingText}</span>
+                {#if !$followStopAskedStore}
+                    <span class="min-w-0 truncate">{followingText}</span>
+                {/if}
             {:else}
                 {#if leader !== undefined}
                     <FollowWoka userId={leader} small />
                 {/if}
-                <span class="min-w-0 truncate">{$LL.follow.interactStatus.following({ leader: name(leader) })}</span>
+                {#if !$followStopAskedStore}
+                    <span class="min-w-0 truncate">{$LL.follow.interactStatus.following({ leader: name(leader) })}</span
+                    >
+                {/if}
             {/if}
-            <button
-                type="button"
-                class="u-cta-secondary m-0 flex h-8 flex-none items-center rounded-full px-3.5 text-[13px] font-bold"
-                data-testid="follow-stop"
-                on:click={endFollow}>{$LL.follow.stop()}</button
-            >
+            {#if $followStopAskedStore}
+                <!-- F during a follow asks first, as it used to. -->
+                <span class="min-w-0 truncate" data-testid="follow-stop-question"
+                    >{isLeader
+                        ? $LL.follow.interactMenu.stop.leader()
+                        : $LL.follow.interactMenu.stop.follower({ leader: name(leader) })}</span
+                >
+                <button
+                    type="button"
+                    class="u-cta-secondary m-0 flex h-8 flex-none items-center rounded-full px-3.5 text-[13px] font-bold"
+                    data-testid="follow-stop-no"
+                    on:click={() => followStopAskedStore.set(false)}>{$LL.follow.interactMenu.no()}</button
+                >
+                <button
+                    type="button"
+                    class="u-cta m-0 flex h-8 flex-none items-center rounded-full px-3.5 text-[13px] font-bold"
+                    data-testid="follow-stop-yes"
+                    on:click={endFollow}>{$LL.follow.interactMenu.yes()}</button
+                >
+            {:else}
+                <button
+                    type="button"
+                    class="u-cta-secondary m-0 flex h-8 flex-none items-center rounded-full px-3.5 text-[13px] font-bold"
+                    data-testid="follow-stop"
+                    on:click={endFollow}>{$LL.follow.stop()}</button
+                >
+            {/if}
         </div>
     {:else if $followNoteStore}
         <!-- How it ended, for three seconds. -->

@@ -11,6 +11,10 @@ const follow: BaseTranslation = {
         },
     },
     interactMenu: {
+        stop: {
+            leader: "Do you want to stop leading the way?",
+            follower: "Do you want to stop following {leader}?",
+        },
         yes: "Yes",
         no: "No",
     },

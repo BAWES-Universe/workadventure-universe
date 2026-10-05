@@ -39,6 +39,8 @@ export interface FollowNote {
 export const FOLLOW_NOTE_DURATION_MS = 3_000;
 
 export const followStateStore = writable<FollowState>("off");
+/** F pressed during a follow: the pill asks "Do you want to stop…?" before it ends, as it used to. */
+export const followStopAskedStore = writable(false);
 export const followRoleStore = writable<FollowRole>("leader");
 /** The leader: everyone asked, and what they answered so far. Empty for a follower and once the answers are in. */
 export const followAskedStore = writable<FollowAsked[]>([]);
@@ -113,6 +115,7 @@ function createFollowUsersStore() {
         followAskedStore.set([]);
         followStateStore.set("off");
         followRoleStore.set("leader");
+        followStopAskedStore.set(false);
     }
 
     function isLeading(): boolean {
