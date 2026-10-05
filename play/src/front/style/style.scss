@@ -1586,25 +1586,39 @@ button[data-testid="actionBarLogin"]:hover {
     );
     box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.25);
 }
-/* A little room (wall and floor) for a WOKA or a companion to stand in */
+/* A little room (wall and floor) for a WOKA or a companion to walk in. The floor slides so they walk on the spot. */
 .u-join-room {
     position: relative;
     overflow: hidden;
     border-radius: 18px;
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
-    background: linear-gradient(180deg, #1a1628, #211b33 58%, transparent 58%),
-        repeating-linear-gradient(90deg, #2a2440 0 48px, #262038 48px 96px);
 }
-.u-join-room::before {
+.u-join-room-wall {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 58%;
+    background: linear-gradient(180deg, #1a1628, #211b33);
+}
+.u-join-room-wall::before {
     content: "";
     position: absolute;
     left: 0;
     right: 0;
-    top: 58%;
-    height: 2px;
-    background: rgba(167, 139, 250, 0.25);
+    bottom: 18px;
+    height: 6px;
+    background: rgba(167, 139, 250, 0.12);
 }
-.u-join-room.u-join-room-moving {
+.u-join-room-floor {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 42%;
+    border-top: 2px solid rgba(167, 139, 250, 0.25);
+    background: linear-gradient(180deg, rgba(10, 8, 20, 0), rgba(10, 8, 20, 0.35)),
+        repeating-linear-gradient(90deg, #2a2440 0 48px, #262038 48px 96px);
     animation: u-join-floor 1.6s linear infinite;
 }
 @keyframes u-join-floor {
@@ -1687,7 +1701,7 @@ button[data-testid="actionBarLogin"]:hover {
     pointer-events: none;
 }
 @media (prefers-reduced-motion: reduce) {
-    .u-join-room.u-join-room-moving {
+    .u-join-room-floor {
         animation: none;
     }
 }

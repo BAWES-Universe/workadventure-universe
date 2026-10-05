@@ -37,6 +37,7 @@ export function fetchWokaData(): Promise<WokaData> {
     return promise;
 }
 
+/** A WOKA or companion picture: the catalogs give paths relative to the pusher. */
 export function getWokaTextureUrl(relativeUrl: string): string {
     if (relativeUrl.startsWith("http://") || relativeUrl.startsWith("https://")) {
         return relativeUrl;

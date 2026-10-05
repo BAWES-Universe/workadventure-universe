@@ -8,6 +8,8 @@
     /** Your own WOKA, walking on the spot, for the name and camera screens. Shows nothing if the catalog fails. */
     export let size = 64;
     export let walking = true;
+    /** The sheet row: 0 down, 1 left, 2 right, 3 up */
+    export let direction = 0;
 
     let wokaData: WokaData | null = null;
     let selectedTextures: Record<string, string> = {};
@@ -23,7 +25,14 @@
 </script>
 
 {#if wokaData}
-    <WokaImage {selectedTextures} {wokaData} canvasSize={size} getTextureUrl={getWokaTextureUrl} {walking} />
+    <WokaImage
+        {selectedTextures}
+        {wokaData}
+        canvasSize={size}
+        getTextureUrl={getWokaTextureUrl}
+        {walking}
+        {direction}
+    />
 {:else}
     <span class="block" style="width: {size}px; height: {size}px;" />
 {/if}
