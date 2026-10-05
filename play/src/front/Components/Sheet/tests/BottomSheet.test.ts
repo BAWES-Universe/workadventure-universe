@@ -33,9 +33,12 @@ describe("BottomSheet", () => {
     it("gives the chat sheet room for the last messages at its lowest, and a row of faces above it at its tallest", () => {
         const { peek, half, full } = getSnapHeights(844, CHAT_SHEET_SIZES);
         expect(peek).toBe(287);
-        expect(half).toBe(422);
+        // It opens at 60% of the screen, so the list and the conversation can be read without dragging it up.
+        expect(half).toBe(506);
         expect(full).toBe(844 - CHAT_SHEET_TOP_GAP);
         // A short phone: the lowest height never goes past half the screen.
         expect(getSnapHeights(560, CHAT_SHEET_SIZES).peek).toBeLessThanOrEqual(280);
+        // Other sheets keep half the screen.
+        expect(getSnapHeights(844, sizes).half).toBe(422);
     });
 });

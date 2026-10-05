@@ -156,7 +156,8 @@
     let sheetDragHeight: number | undefined;
 
     // A message arriving in a bubble opens the chat by itself: it opens low, over as little of the map and the
-    // videos as it can. Opened on purpose, it comes back at the height it was left at.
+    // videos as it can. Opened on purpose, it opens at "half" (60% of the screen) or the taller height it was left at,
+    // so what is inside can be read without dragging it up first.
     // Before the height below, so a chat opened by a bubble starts at peek without a pass at its old height.
     let wasVisible = false;
     $: onVisibilityChange($chatVisibilityStore);
@@ -165,6 +166,7 @@
             // Reset on opening, not on closing: the sheet slides away at the height it was let go at.
             sheetDragHeight = undefined;
             if (getLastChatOpenSource() === "bubble") chatSheetSnapStore.set("peek");
+            else if ($chatSheetSnapStore === "peek") chatSheetSnapStore.set("half");
         }
         wasVisible = visible;
     }

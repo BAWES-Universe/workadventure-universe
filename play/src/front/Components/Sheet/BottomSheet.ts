@@ -7,6 +7,8 @@ export type SheetSnap = "peek" | "half" | "full";
 export interface SheetSizes {
     /** Height of the sheet at "peek", for this viewport height. */
     peek: (viewportHeight: number) => number;
+    /** Height of the sheet at "half", for this viewport height. Half the screen when left out. */
+    half?: (viewportHeight: number) => number;
     /** Space kept above the sheet at "full". */
     topGap: number;
 }
@@ -18,7 +20,7 @@ const SNAP_ORDER: SheetSnap[] = ["peek", "half", "full"];
 
 export function getSnapHeights(viewportHeight: number, sizes: SheetSizes): Record<SheetSnap, number> {
     const peek = sizes.peek(viewportHeight);
-    const half = Math.max(peek, Math.round(viewportHeight / 2));
+    const half = Math.max(peek, sizes.half?.(viewportHeight) ?? Math.round(viewportHeight / 2));
     const full = Math.max(half, viewportHeight - sizes.topGap);
     return { peek, half, full };
 }

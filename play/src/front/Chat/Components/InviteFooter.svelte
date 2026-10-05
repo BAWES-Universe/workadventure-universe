@@ -231,9 +231,10 @@
 {/if}
 
 <style>
-    /* Fades the list out under the footer, so the button sits on the panel rather than on a hard edge. */
+    /* Fades the list out in the strip above the button only: behind the button it is solid, so nothing in the list
+       shows past its rounded corners. */
     .invite-footer {
-        background: linear-gradient(to top, rgb(var(--u-ink) / 0.95) 55%, rgb(var(--u-ink) / 0));
+        background: linear-gradient(to top, rgb(var(--u-ink)) calc(100% - 0.75rem), rgb(var(--u-ink) / 0));
     }
     /* Follows the floating chat's rounded bottom corners on a desktop (chat.scss). Below that the chat is edge to edge
        and square, and so is the footer. */
