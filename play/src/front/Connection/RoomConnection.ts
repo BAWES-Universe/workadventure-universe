@@ -2045,6 +2045,7 @@ export class RoomConnection implements RoomConnection {
         this._leaveSpaceRequestMessage.complete();
         this._externalModuleMessage.complete();
         this._spaceDestroyedMessage.complete();
+        this._friendsUpdateMessageStream.complete();
     }
 
     private goToSelectYourWokaScene(): void {

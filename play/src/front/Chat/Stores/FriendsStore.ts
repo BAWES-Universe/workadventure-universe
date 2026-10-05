@@ -9,6 +9,7 @@ import type {
     FriendSettingsUpdate,
     FriendsUpdateMessage,
 } from "@workadventure/messages";
+import { ConnectionClosedError } from "../../Connection/ConnectionClosedError";
 
 /** What the friends store needs from the room's connection (a RoomConnection), kept small for tests. */
 export interface FriendsConnection {
@@ -79,6 +80,8 @@ export function createFriendsStore() {
             set({ status: "ready", list });
         } catch (e) {
             if (request !== latestRequest) return;
+            // The room's connection closed: the next one (a reconnect, another room) attaches and loads again.
+            if (e instanceof ConnectionClosedError) return;
             // This server has no friends (no admin), or doesn't count this player as signed in: nothing to retry.
             if (e instanceof Error && NO_FRIENDS_ERRORS.includes(e.message)) {
                 set({ status: "signedOut" });
@@ -151,13 +154,17 @@ export function createFriendsStore() {
             updates = newConnection.friendsUpdateMessageStream.subscribe(onUpdate);
             load().catch((e) => console.error(e));
         },
-        detach(): void {
+        /**
+         * The room's connection is closing. Stops listening and retrying on it; the list stays on screen until the
+         * next connection attaches. Another connection already attached is left alone.
+         */
+        detach(closing: FriendsConnection): void {
+            if (connection !== closing) return;
             updates?.unsubscribe();
             updates = undefined;
             clearTimers();
             connection = undefined;
             latestRequest++;
-            set({ status: "signedOut" });
         },
         refresh(): void {
             load().catch((e) => console.error(e));
