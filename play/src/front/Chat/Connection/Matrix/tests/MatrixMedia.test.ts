@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MatrixClient } from "matrix-js-sdk";
 import { get } from "svelte/store";
-import { MAX_KEPT_MEDIA, holdMatrixMedia, matrixAvatarStore, resolveMatrixMediaUrl } from "../MatrixMedia";
+import {
+    MAX_KEPT_MEDIA,
+    clearMatrixMedia,
+    holdMatrixMedia,
+    matrixAvatarStore,
+    resolveMatrixMediaUrl,
+} from "../MatrixMedia";
 
 function fakeClient(accessToken: string | null = "token"): MatrixClient {
     return {
@@ -263,6 +269,24 @@ describe("resolveMatrixMediaUrl", () => {
         await resolveMatrixMediaUrl(client, "mxc://matrix.test/late");
         expect(fetchMock).not.toHaveBeenCalled();
         hold.release();
+    });
+
+    it("drops every file when the chat signs out", async () => {
+        fetchMock.mockImplementation(() => Promise.resolve(new Response(new Blob(["png"]), { status: 200 })));
+        URL.createObjectURL = vi.fn(() => "blob:https://play.test/signed-out");
+        const revoke = vi.fn();
+        URL.revokeObjectURL = revoke;
+        const client = fakeClient();
+        await resolveMatrixMediaUrl(client, "mxc://matrix.test/signed-out");
+        await resolveMatrixMediaUrl(client, "mxc://matrix.test/signed-out-picture", 48);
+
+        clearMatrixMedia();
+
+        await vi.waitFor(() => expect(revoke).toHaveBeenCalledWith("blob:https://play.test/signed-out"));
+        fetchMock.mockClear();
+        await resolveMatrixMediaUrl(client, "mxc://matrix.test/signed-out");
+        await resolveMatrixMediaUrl(client, "mxc://matrix.test/signed-out-picture", 48);
+        expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 });
 
