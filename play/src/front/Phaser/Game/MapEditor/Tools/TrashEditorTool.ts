@@ -23,6 +23,8 @@ export class TrashEditorTool extends EntityRelatedEditorTool {
     private marked: Entity | AreaPreview | undefined;
     // On a computer the mouse shows what a click would remove; this only brings the "Click to remove" hint.
     private hovered: Entity | AreaPreview | undefined;
+    /** What the current press started on: a click or a tap is a press and a release on the same item. */
+    private pressed: Entity | AreaPreview | undefined;
     private lastMark: DeleteMark | undefined;
 
     constructor(mapEditorModeManager: MapEditorModeManager, private areaEditorTool: AreaEditorTool) {
@@ -106,12 +108,14 @@ export class TrashEditorTool extends EntityRelatedEditorTool {
     }
 
     protected bindEventHandlers(): void {
+        this.scene.input.on(Phaser.Input.Events.POINTER_DOWN, this.pointerDownEventHandler);
         this.scene.input.on(Phaser.Input.Events.POINTER_UP, this.pointerUpEventHandler);
         this.scene.input.on(Phaser.Input.Events.POINTER_OVER, this.pointerHoverEventHandler);
         this.scene.input.on(Phaser.Input.Events.POINTER_OUT, this.pointerOutEventHandler);
     }
 
     protected unbindEventHandlers(): void {
+        this.scene.input.off(Phaser.Input.Events.POINTER_DOWN, this.pointerDownEventHandler);
         this.scene.input.off(Phaser.Input.Events.POINTER_UP, this.pointerUpEventHandler);
         this.scene.input.off(Phaser.Input.Events.POINTER_OVER, this.pointerHoverEventHandler);
         this.scene.input.off(Phaser.Input.Events.POINTER_OUT, this.pointerOutEventHandler);
@@ -190,15 +194,27 @@ export class TrashEditorTool extends EntityRelatedEditorTool {
         return false;
     }
 
+    private pointerDownEventHandler = (pointer: Phaser.Input.Pointer, gameObjects: Phaser.GameObjects.GameObject[]) => {
+        if (!this.active) {
+            return;
+        }
+        this.pressed = this.removableUnder(gameObjects);
+    };
+
     private pointerUpEventHandler = (pointer: Phaser.Input.Pointer, gameObjects: Phaser.GameObjects.GameObject[]) => {
         if (!this.active) {
             return;
         }
+        const pressed = this.pressed;
+        this.pressed = undefined;
         // A drag that moved the map is not a tap on what it ended over.
         if (this.mapEditorModeManager.isDraggingToLookAround) {
             return;
         }
-        const target = this.removableUnder(gameObjects);
+        // A press on one item released over another is a drag too (the map does not pan from an item): it removes
+        // nothing. Only a press and a release on the same item is a click or a tap on it.
+        const under = this.removableUnder(gameObjects);
+        const target = under === pressed ? under : undefined;
         if (pointer.wasTouch) {
             // A finger cannot hover: the first tap marks, the second tap removes, a tap elsewhere keeps.
             if (target && target === this.marked) {

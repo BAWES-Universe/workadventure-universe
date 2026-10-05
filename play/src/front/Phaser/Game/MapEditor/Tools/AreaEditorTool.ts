@@ -6,7 +6,7 @@ import { v4 as uuid } from "uuid";
 import { openModal } from "svelte-modals";
 import type { MapEditorAreaToolMode } from "../../../../Stores/MapEditorStore";
 import { mapEditorAreaModeStore, mapEditorSelectedAreaPreviewStore } from "../../../../Stores/MapEditorStore";
-import { editAreaDraftStore } from "../../../../Stores/EditModeStore";
+import { editAreaDraftStore, showUndoToast } from "../../../../Stores/EditModeStore";
 import { AreaPreview, AreaPreviewEvent } from "../../../Components/MapEditor/AreaPreview";
 import { SizeAlteringSquare } from "../../../Components/MapEditor/SizeAlteringSquare";
 import type { CopyAreaEventData } from "../../GameMap/EntitiesManager";
@@ -226,8 +226,10 @@ export class AreaEditorTool extends MapEditorTool {
                 if (!areaPreview) {
                     break;
                 }
+                const name = areaPreview.getAreaData().name || get(LL).mapEditor.edit.deleteTool.area();
                 this.handleDeleteAreaFrontCommandExecution(areaPreview.getId());
                 this.changeAreaMode("ADD");
+                showUndoToast(get(LL).mapEditor.edit.deleteTool.removed({ name }));
                 break;
             }
             default: {

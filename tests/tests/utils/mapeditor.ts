@@ -34,12 +34,8 @@ class MapEditor {
   }
 
   async openExploration(page: Page) {
-    await page
-      .locator(
-        "section.side-bar-container .side-bar .tool-button button#ExploreTheRoom"
-      )
-      .first()
-      .click();
+    // "Look around" lives in the zoom column, for everyone, not on the editor's rail.
+    await page.getByTestId("map-overview-button").first().click();
     await expect(page.getByTestId("look-around")).toBeVisible();
   }
 
