@@ -54,6 +54,7 @@
     import { windowSize } from "../../Stores/CoWebsiteStore";
     import { mobileLayoutStore } from "../../Stores/MobileLayoutStore";
     import { LL } from "../../../i18n/i18n-svelte";
+    import RaisedHandsPill from "../Video/RaisedHandsPill.svelte";
     import { PHONE_VIDEO_GAP, phoneVideoLayout, type PhoneVideoLayout } from "./PhoneVideoLayout";
     import ResizeHandle from "./ResizeHandle.svelte";
 
@@ -492,6 +493,12 @@
             </div>
         {/if}
     </div>
+    {#if oneLineMode === "horizontal" && !($highlightFullScreen && $highlightedEmbedScreen)}
+        <!-- Under the videos, on the left (clear of the white bar in the middle): who is waiting to speak. -->
+        <div class="raised-hands-anchor">
+            <div class="raised-hands-spot"><RaisedHandsPill /></div>
+        </div>
+    {/if}
     <!-- With the chat sheet open, its handle sizes the videos instead. -->
     {#if !isOnOneLine && !sheetOpen}
         <ResizeHandle
@@ -515,6 +522,16 @@
 
 <!-- && !$megaphoneEnabledStore TODO HUGO -->
 <style lang="scss">
+    .raised-hands-anchor {
+        position: relative;
+        height: 0;
+    }
+    .raised-hands-spot {
+        position: absolute;
+        top: 4px;
+        left: 8px;
+        z-index: 50;
+    }
     .hidden {
         display: none !important;
     }
