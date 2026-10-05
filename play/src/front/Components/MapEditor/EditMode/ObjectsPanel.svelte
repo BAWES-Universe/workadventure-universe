@@ -26,7 +26,8 @@
     import PanelHeader from "./PanelHeader.svelte";
     import ObjectTile from "./ObjectTile.svelte";
     import UploadGuide from "./UploadGuide.svelte";
-    import { IconCloudUpload, IconPencil, IconSearch } from "@wa-icons";
+    import UploadVariants from "./UploadVariants.svelte";
+    import { IconCloudUpload, IconPencil, IconRefresh, IconSearch } from "@wa-icons";
 
     const CUSTOM = "Custom";
     const PREVIEW_COUNT = 6;
@@ -36,6 +37,7 @@
 
     let searchTerm = "";
     let editingUpload = false;
+    let editingVariants = false;
 
     $: view = $editObjectsViewStore;
     $: variants = $variantsStore;
@@ -44,6 +46,23 @@
 
     // When the object on the map is deselected (Esc, a tap elsewhere), the panel goes back to the picker.
     $: if (!settingsOpen && view === "settings") editObjectsViewStore.set("pick");
+
+    // Adding or removing a picture of an upload rebuilds its object; the pick follows the rebuilt one, keeping its
+    // colour and side when they still exist, so Turn and the colour dots in the placing bar see the new pictures.
+    $: if (picked) {
+        const fresh = variants.find((variant) => variant.id === picked.variant.id);
+        if (fresh && fresh !== picked.variant) {
+            const color = fresh.colors.includes(picked.color) ? picked.color : fresh.defaultPrefab.color;
+            const current = $mapEditorSelectedEntityPrefabStore;
+            const sides = fresh.getEntityPrefabsPositions(color);
+            editPickedVariantStore.set({ variant: fresh, color });
+            if (current && !sides.some((side) => side.id === current.id)) {
+                mapEditorSelectedEntityPrefabStore.set(
+                    sides.find((side) => side.direction === current.direction) ?? sides[0]
+                );
+            }
+        }
+    }
 
     function label(tag: string): string {
         if (tag === CUSTOM) return $LL.mapEditor.edit.objects.yourUploads();
@@ -94,6 +113,7 @@
         mapEditorEntityModeStore.set("ADD");
         mapEditorSelectedEntityPrefabStore.set(prefab);
         editingUpload = false;
+        editingVariants = false;
         if ($mobileLayoutStore) mapEditorVisibilityStore.set(false);
     }
 
@@ -103,12 +123,23 @@
         editObjectsViewStore.set("pick");
     }
 
+    /** Every picture of an upload: its first one and the sides and colours added to it. */
+    function picturesOf(id: string): string[] {
+        const pictures = variants.find((variant) => variant.id === id)?.prefabs.map((prefab) => prefab.id) ?? [];
+        return pictures.length > 0 ? pictures : [id];
+    }
+
     function saveUploadChanges(customEntity: EntityPrefab) {
-        mapEditorModifyCustomEntityEventStore.set({ ...customEntity });
+        // Name, category, blocking and depth belong to the whole object, so every picture gets them.
+        for (const id of picturesOf(customEntity.id)) {
+            mapEditorModifyCustomEntityEventStore.set({ ...customEntity, id });
+        }
         editingUpload = false;
     }
     function removeUpload(id: string) {
-        mapEditorDeleteCustomEntityEventStore.set({ id });
+        for (const picture of picturesOf(id)) {
+            mapEditorDeleteCustomEntityEventStore.set({ id: picture });
+        }
         editPickedVariantStore.set(undefined);
         mapEditorSelectedEntityPrefabStore.set(undefined);
         editingUpload = false;
@@ -134,6 +165,8 @@
     <div class="em-scroll em-props" data-testid="object-settings-page">
         <EntityPropertiesEditor />
     </div>
+{:else if editingVariants && picked?.variant.defaultPrefab.type === CUSTOM}
+    <UploadVariants variantId={picked.variant.id} color={picked.color} on:done={() => (editingVariants = false)} />
 {:else if editingUpload && picked?.variant.defaultPrefab.type === CUSTOM}
     <PanelHeader
         title={picked.variant.defaultPrefab.name}
@@ -180,9 +213,19 @@
         </label>
     {/if}
     {#if picked?.variant.defaultPrefab.type === CUSTOM}
-        <button type="button" class="em-link" data-testid="editEntity" on:click={() => (editingUpload = true)}>
-            <IconPencil font-size="14" />{$LL.mapEditor.edit.objects.editUpload()}
-        </button>
+        <div class="em-links">
+            <button type="button" class="em-link" data-testid="editEntity" on:click={() => (editingUpload = true)}>
+                <IconPencil font-size="14" />{$LL.mapEditor.edit.objects.editUpload()}
+            </button>
+            <button
+                type="button"
+                class="em-link"
+                data-testid="uploadVariants"
+                on:click={() => (editingVariants = true)}
+            >
+                <IconRefresh font-size="14" />{$LL.mapEditor.edit.objects.sidesAndColours()}
+            </button>
+        </div>
     {/if}
     <div class="em-scroll em-sections">
         {#if searching}
@@ -302,6 +345,12 @@
         width: 100%;
         opacity: 0;
         cursor: pointer;
+    }
+    .em-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 2px 16px;
+        flex: none;
     }
     .em-link {
         display: inline-flex;

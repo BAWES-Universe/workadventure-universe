@@ -13,7 +13,6 @@ import {
     mapEditorModifyCustomEntityEventStore,
     mapEditorSelectedEntityPrefabStore,
     mapEditorSelectedEntityStore,
-    mapEditorSelectedToolStore,
     mapEditorVisibilityStore,
 } from "../../../../Stores/MapEditorStore";
 import { TexturesHelper } from "../../../Helpers/TexturesHelper";
@@ -25,10 +24,8 @@ import { ModifyCustomEntityFrontCommand } from "../Commands/Entity/ModifyCustomE
 import { UpdateEntityFrontCommand } from "../Commands/Entity/UpdateEntityFrontCommand";
 import { UploadEntityFrontCommand } from "../Commands/Entity/UploadEntityFrontCommand";
 import type { MapEditorModeManager } from "../MapEditorModeManager";
-import { EditorToolName } from "../MapEditorModeManager";
 import { AreaPreview } from "../../../Components/MapEditor/AreaPreview";
 import type { Entity } from "../../../ECS/Entity";
-import { mapEditorActivated } from "../../../../Stores/MenuStore";
 import { editObjectsViewStore, editRecentObjectsStore, editTouchPreviewStore } from "../../../../Stores/EditModeStore";
 import { EntityRelatedEditorTool } from "./EntityRelatedEditorTool";
 
@@ -512,14 +509,8 @@ export class EntityEditorTool extends EntityRelatedEditorTool {
             mapEditorSelectedEntityStore.set(undefined);
         }
 
+        // Nothing to place: a tap on the map, an area included, is left alone. The Objects tool only acts on objects.
         if (!this.entityPrefabPreview || !this.entityPrefab) {
-            // Check that the user can open map editor to edit an area
-            if (get(mapEditorActivated)) {
-                const areaEditorToolObjects = gameObjects.filter((obj) => obj instanceof AreaPreview);
-                if (areaEditorToolObjects.length > 0 && get(mapEditorSelectedToolStore) !== EditorToolName.AreaEditor) {
-                    this.scene.getMapEditorModeManager().equipTool(EditorToolName.AreaEditor);
-                }
-            }
             return;
         }
 

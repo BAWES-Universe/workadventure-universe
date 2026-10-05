@@ -11,7 +11,6 @@
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import type { AreaEditorTool } from "../../../Phaser/Game/MapEditor/Tools/AreaEditorTool";
     import { mapEditorSelectedAreaPreviewStore } from "../../../Stores/MapEditorStore";
-    import { showUndoToast } from "../../../Stores/EditModeStore";
     import type { AreaPreview } from "../../../Phaser/Components/MapEditor/AreaPreview";
     import { extensionModuleStore } from "../../../Stores/GameSceneStore";
     import type { ExtensionModule, ExtensionModuleAreaProperty } from "../../../ExternalModule/ExtensionModule";
@@ -72,14 +71,15 @@
             openProperty = properties.find((p) => p.id === openId);
         }
         areaName = preview.getAreaData().name;
+        // Older areas have no description row; it is added when a description is first saved, so that picking the
+        // area changes nothing (no undo entry, nothing sent).
         const description = preview.getProperties().find((p) => p.type === "areaDescriptionProperties");
-        if (description === undefined) {
-            preview.addProperty({ id: uuid(), type: "areaDescriptionProperties", description: "", searchable: false });
-            areaDescription = "";
-            areaSearchable = false;
-        } else if (description.type === "areaDescriptionProperties") {
+        if (description?.type === "areaDescriptionProperties") {
             areaDescription = description.description ?? "";
             areaSearchable = description.searchable ?? false;
+        } else {
+            areaDescription = "";
+            areaSearchable = false;
         }
     });
     onDestroy(unsubscribe);
@@ -204,18 +204,26 @@
         requestAnimationFrame(() => nameInput?.focus());
     }
     function saveDescription() {
-        const description = preview?.getProperties().find((p) => p.type === "areaDescriptionProperties");
-        if (!description || description.type !== "areaDescriptionProperties") return;
-        // A copy, not the live property: updateProperty snapshots the old state for undo before it applies the change.
-        preview?.updateProperty({ ...description, description: areaDescription, searchable: areaSearchable });
+        if (!preview) return;
+        const description = preview.getProperties().find((p) => p.type === "areaDescriptionProperties");
+        if (description?.type === "areaDescriptionProperties") {
+            // A copy, not the live property: updateProperty snapshots the old state for undo before it applies the change.
+            preview.updateProperty({ ...description, description: areaDescription, searchable: areaSearchable });
+        } else {
+            preview.addProperty({
+                id: uuid(),
+                type: "areaDescriptionProperties",
+                description: areaDescription,
+                searchable: areaSearchable,
+            });
+        }
     }
 
     function deleteArea() {
         if (!preview) return;
-        const name = preview.getAreaData().name || $LL.mapEditor.edit.deleteTool.area();
-        tool()?.handleDeleteAreaFrontCommandExecution(preview.getId());
-        tool()?.deselectArea?.();
-        showUndoToast($LL.mapEditor.edit.deleteTool.removed({ name }));
+        // The tool shows the "removed · Undo" toast itself, once the area really goes (a personal area with objects
+        // asks first, and the page stays open until the answer: a cancelled removal keeps the area on screen).
+        tool()?.handleDeleteAreaFrontCommandExecution(preview.getId(), undefined, () => tool()?.deselectArea?.());
     }
 </script>
 

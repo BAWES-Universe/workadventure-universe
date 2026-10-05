@@ -313,6 +313,8 @@ message UploadEntityMessage {
   string color = 7;
   optional google.protobuf.Value collisionGrid = 8;
   optional int32 depthOffset = 9;
+  // Set when this picture is another side or colour of an upload: the id of that upload's first picture.
+  optional string variantOf = 10;
 }
 
 message UploadFileMessage {

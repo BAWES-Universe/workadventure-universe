@@ -105,8 +105,9 @@
                         type="button"
                         class="em-dot"
                         class:on={picked?.color === color}
-                        style="background: {color}"
-                        aria-label={color}
+                        class:em-dot-none={color === ""}
+                        style={color === "" ? "" : `background: ${color}`}
+                        aria-label={color === "" ? $LL.mapEditor.edit.variants.original() : color}
                         aria-pressed={picked?.color === color}
                         on:click={() => recolorPlacingPreview(color)}
                     />
@@ -244,5 +245,13 @@
     }
     .em-dot.on {
         box-shadow: inset 0 0 0 2px #fff, 0 0 0 2px rgba(167, 139, 250, 0.6);
+    }
+    .em-dot-none {
+        /* An upload's first picture has no named colour: a hatched dot stands for it. */
+        background: repeating-linear-gradient(
+            135deg,
+            rgba(255, 255, 255, 0.32) 0 3px,
+            rgba(255, 255, 255, 0.08) 3px 6px
+        );
     }
 </style>

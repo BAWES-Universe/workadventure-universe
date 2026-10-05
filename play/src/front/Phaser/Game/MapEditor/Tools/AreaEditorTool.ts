@@ -180,7 +180,21 @@ export class AreaEditorTool extends MapEditorTool {
         }
     }
 
-    public handleDeleteAreaFrontCommandExecution(areaId: string, editorTool?: AreaEditorTool | TrashEditorTool): void {
+    /**
+     * Removes the area and shows the "removed · Undo" toast, but only once it really goes: a personal area with
+     * objects inside asks first, and a cancelled ask removes nothing and shows nothing.
+     */
+    /** @param onRemoved Runs once the area is really gone, so a removal that asks first and is cancelled leaves everything as it was. */
+    public handleDeleteAreaFrontCommandExecution(
+        areaId: string,
+        editorTool?: AreaEditorTool | TrashEditorTool,
+        onRemoved?: () => void
+    ): void {
+        const name = this.getAreaPreviewConfig(areaId)?.name || get(LL).mapEditor.edit.deleteTool.area();
+        const removed = () => {
+            showUndoToast(get(LL).mapEditor.edit.deleteTool.removed({ name }));
+            onRemoved?.();
+        };
         const isPersonalArea = this.getIsPersonalArea(areaId);
         const deleteAreaCommand = new DeleteAreaFrontCommand(
             this.scene.getGameMap(),
@@ -193,14 +207,20 @@ export class AreaEditorTool extends MapEditorTool {
             const entitiesInsideArea = this.getEntitiesInsideArea(areaId);
             if (entitiesInsideArea.size > 0) {
                 openModal(ActionPopupOnPersonalAreaWithEntities, {
-                    onDeleteEntities: () => this.executeDeletePersonalAreaWithEntities(areaId, deleteAreaCommand, true),
-                    onKeepEntities: () => this.executeDeletePersonalAreaWithEntities(areaId, deleteAreaCommand),
+                    onDeleteEntities: () =>
+                        this.executeDeletePersonalAreaWithEntities(areaId, deleteAreaCommand, removed, true),
+                    onKeepEntities: () =>
+                        this.executeDeletePersonalAreaWithEntities(areaId, deleteAreaCommand, removed),
                     onCancel: () => {},
                 });
                 return;
             }
         }
-        this.mapEditorModeManager.executeCommand(deleteAreaCommand).catch((error) => console.error(error));
+        // The toast follows the command, so a removal that did not go through shows no toast.
+        this.mapEditorModeManager
+            .executeCommand(deleteAreaCommand)
+            .then(removed)
+            .catch((error) => console.error(error));
     }
 
     private getIsPersonalArea(areaId: string): boolean {
@@ -226,10 +246,8 @@ export class AreaEditorTool extends MapEditorTool {
                 if (!areaPreview) {
                     break;
                 }
-                const name = areaPreview.getAreaData().name || get(LL).mapEditor.edit.deleteTool.area();
                 this.handleDeleteAreaFrontCommandExecution(areaPreview.getId());
                 this.changeAreaMode("ADD");
-                showUndoToast(get(LL).mapEditor.edit.deleteTool.removed({ name }));
                 break;
             }
             default: {
@@ -684,12 +702,16 @@ export class AreaEditorTool extends MapEditorTool {
     private executeDeletePersonalAreaWithEntities(
         areaId: string,
         deleteAreaCommand: DeleteAreaFrontCommand,
+        onRemoved: () => void,
         removeEntities?: boolean
     ): void {
         if (removeEntities) {
             this.removeAreaEntities(areaId);
         }
-        this.mapEditorModeManager.executeCommand(deleteAreaCommand).catch((error) => console.error(error));
+        this.mapEditorModeManager
+            .executeCommand(deleteAreaCommand)
+            .then(onRemoved)
+            .catch((error) => console.error(error));
     }
 
     private executeUpdateAreaFrontCommand(

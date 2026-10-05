@@ -469,8 +469,6 @@ const mapEditor: BaseTranslation = {
         hint: {
             phone: "Pick a tool on the right. Drag to move around, pinch to zoom.",
             desktop: "Click to place · R to turn · Esc to stop · Ctrl+Z to undo",
-            tuck: "Tuck the panel away",
-            untuck: "Show the panel",
         },
         objects: {
             title: "Objects",
@@ -497,6 +495,34 @@ const mapEditor: BaseTranslation = {
             },
             settingsSubtitle: "What happens when someone uses it",
             editUpload: "Edit this upload",
+            sidesAndColours: "Sides and colours",
+        },
+        variants: {
+            yourUpload: "Your upload",
+            sideCount: "{count} side{{s}}",
+            colourCount: "{count} colour{{s}}",
+            sides: "Sides",
+            front: "Front",
+            left: "Left",
+            right: "Right",
+            back: "Back",
+            sidesText:
+                "Add only the sides you have. Turn moves between them. Each side must be the same size as the front.",
+            colours: "Colours",
+            original: "Original",
+            addColour: "Add a colour",
+            coloursText: "A colour needs the same sides as the first one. Missing sides show a dashed box.",
+            pickColour: "Pick the colour, then choose its front picture",
+            preview: "How it shows when placing",
+            placeHint: "Tap the map to place",
+            remove: "Remove this picture",
+            removeFirst: "The first picture is the upload itself. Delete the upload from Edit this upload.",
+            wrongSize:
+                "This picture is {width} × {height} px; every side must be {expectedWidth} × {expectedHeight} px like the front.",
+            uploading: "Adding…",
+            gone: "This upload was removed meanwhile, so nothing was added.",
+            frontUnreadable: "The front picture could not be read, so nothing was added.",
+            uploadFailed: "The picture could not be added. Try again.",
         },
         upload: {
             title: "Add your own",
@@ -509,7 +535,8 @@ const mapEditor: BaseTranslation = {
             backgroundTitle: "See-through background",
             backgroundText: "PNG works best. JPG and WebP keep a box around the object.",
             sidesTitle: "Sides and colours",
-            sidesText: "One picture is one side in one colour. Other sides and colours come later.",
+            sidesText:
+                "One picture is one side in one colour. Add other sides and colours after the first one, from Sides and colours.",
             choose: "Choose a picture",
             formats: "PNG, JPG or WebP",
             checkTitle: "Check it",
