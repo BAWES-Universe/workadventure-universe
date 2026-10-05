@@ -1192,8 +1192,11 @@ export class GameScene extends DirtyScene {
             waScaleManager.zoomModifier = waScaleManager.getSaveZoom();
         }
 
-        // Friends stop listening and retrying on this connection; the next one attaches.
-        if (this.connection) friendsStore.detach(this.connection);
+        // Friends and rings stop listening and retrying on this connection; the next one attaches.
+        if (this.connection) {
+            friendsStore.detach(this.connection);
+            ringStore.detach(this.connection);
+        }
         this.connection?.closeConnection();
         this.outlineManager?.clear();
         this.userInputManager?.destroy();
