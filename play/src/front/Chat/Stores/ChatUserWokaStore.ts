@@ -48,3 +48,16 @@ export function createWokaByChatIdStore(merger: Promise<UserProviderMerger>): Re
 
 /** Context key under which the chat list shares one woka lookup with its rows. */
 export const WOKA_BY_CHAT_ID_CONTEXT = Symbol("wokaByChatId");
+
+/**
+ * The one picture rule for a person everywhere in the chat: their woka as the game sees it right now, else the
+ * picture their chat account carries, else nothing (the caller shows a letter). Every place picks the same way, so a
+ * person never shows two different pictures.
+ */
+export function personPicture(
+    wokas: Map<string, PictureStore>,
+    chatId: string | undefined,
+    accountPicture: PictureStore | undefined
+): PictureStore | undefined {
+    return (chatId ? wokas.get(chatId) : undefined) ?? accountPicture;
+}

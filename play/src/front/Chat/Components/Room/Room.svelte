@@ -16,7 +16,7 @@
     import TopRowAvatar from "../TopRow/TopRowAvatar.svelte";
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import type { PictureStore } from "../../../Stores/PictureStore";
-    import { WOKA_BY_CHAT_ID_CONTEXT } from "../../Stores/ChatUserWokaStore";
+    import { WOKA_BY_CHAT_ID_CONTEXT, personPicture } from "../../Stores/ChatUserWokaStore";
     import EncryptionBadge from "../EncryptionBadge.svelte";
     import { formatTypingLine } from "../TopRow/TopRowSummary";
     import { formatRowTime, formatUnreadCount, normalizeTimestamp, toPlainText } from "../OneList/OneListOrder";
@@ -34,15 +34,14 @@
     const typingMembers = room.typingMembers;
     const messages = room.messages;
     const members = room.members;
-    const roomPicture = room.pictureStore;
 
-    // Direct chats without a room picture show the other person's woka, when we know it.
+    // Direct chats show the other person's woka, picked the same way as inside the chat.
     const wokaByChatId: Readable<Map<string, PictureStore>> = hasContext(WOKA_BY_CHAT_ID_CONTEXT)
         ? getContext(WOKA_BY_CHAT_ID_CONTEXT)
         : readable(new Map<string, PictureStore>());
     const myChatId = localUserStore.getChatId();
     $: partnerId = room.type === "direct" ? $members.find((member) => member.id !== myChatId)?.id : undefined;
-    $: partnerWoka = partnerId && !$roomPicture ? $wokaByChatId.get(partnerId) : undefined;
+    $: partnerWoka = partnerId ? personPicture($wokaByChatId, partnerId, undefined) : undefined;
 
     $: chunks = highlightWords({
         text: $roomName.match(/\[\d*]/) ? $roomName.substring(0, $roomName.search(/\[\d*]/)) : $roomName,
