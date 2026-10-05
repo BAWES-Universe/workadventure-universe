@@ -54,4 +54,16 @@ describe("chatBlockSyncStep", () => {
         expect(step.toUnblock).toEqual([]);
         expect(step.synced).toEqual(new Map([["bob", "@bob:x"]]));
     });
+
+    it("doesn't block them again when someone joins or leaves, so an unblock from the map sticks", () => {
+        const step = chatBlockSyncStep(new Map([["bob", "@bob:x"]]), ["@bob:x"], here);
+        expect(step.toBlock).toEqual([]);
+        expect(step.toUnblock).toEqual([]);
+        expect(step.synced).toEqual(new Map([["bob", "@bob:x"]]));
+    });
+
+    it("blocks them again after they're unblocked in chat and blocked once more", () => {
+        const unblocked = chatBlockSyncStep(new Map([["bob", "@bob:x"]]), [], here);
+        expect(chatBlockSyncStep(unblocked.synced, ["@bob:x"], here).toBlock).toEqual(["bob"]);
+    });
 });
