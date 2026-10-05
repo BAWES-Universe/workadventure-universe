@@ -7,12 +7,17 @@ vi.mock('../server/BotRegistry', () => ({ BotRegistry: class {} }));
 vi.mock('../mcp/MCPConnector', () => ({ MCPConnector: { clearCache: vi.fn() } }));
 vi.mock('../utils/MovementLogger', () => ({ movementLogger: {} }));
 
+import jwt from 'jsonwebtoken';
 import { BotAPI } from '../server/BotAPI';
 
 const SESSION = `orb_sess_v2_${'a'.repeat(64)}`;
+const SECRET_KEY = 'test-secret-key';
+const GAME_TOKEN = jwt.sign({ identifier: 'guest-uuid' }, SECRET_KEY, { expiresIn: '1h' });
 
 const botManager = {
     getBot: vi.fn(),
+    getBotInstance: vi.fn(),
+    handlePlayerLeaveRoom: vi.fn(),
     getRoomState: vi.fn(),
     handlePlayerEnterRoom: vi.fn(),
     spawnBot: vi.fn(),
@@ -34,6 +39,7 @@ let server: Server;
 let base: string;
 
 beforeAll(async () => {
+    process.env.SECRET_KEY = SECRET_KEY;
     const api = new BotAPI(botManager as never, adminApiService as never, {} as never);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const app = (api as any).app;
@@ -112,10 +118,46 @@ describe('bot server control routes', () => {
         expect(botManager.summonBot).toHaveBeenCalled();
     });
 
-    it('keeps room-enter public', async () => {
+    const withGameToken = (path: string, body: unknown, token: string) =>
+        fetch(`${base}${path}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-WA-Auth': token },
+            body: JSON.stringify(body),
+        });
+
+    it.each(['/api/bots/room-enter', '/api/bots/room-leave'])('refuses %s without a game token', async (path) => {
+        const response = await post(path, { roomId: 'r1' });
+        expect(response.status).toBe(401);
+        expect(botManager.handlePlayerEnterRoom).not.toHaveBeenCalled();
+        expect(botManager.handlePlayerLeaveRoom).not.toHaveBeenCalled();
+    });
+
+    it('refuses room-enter with a token the game did not sign', async () => {
+        const forged = jwt.sign({ identifier: 'guest-uuid' }, 'another-key');
+        const response = await withGameToken('/api/bots/room-enter', { roomId: 'r1' }, forged);
+        expect(response.status).toBe(401);
+        expect(botManager.handlePlayerEnterRoom).not.toHaveBeenCalled();
+    });
+
+    it('lets any player with a game token, guests included, open a room for its bots', async () => {
         botManager.handlePlayerEnterRoom.mockResolvedValue(undefined);
-        const response = await post('/api/bots/room-enter', { roomId: 'r1' });
-        expect(response.status).not.toBe(401);
+        const response = await withGameToken('/api/bots/room-enter', { roomId: 'r1' }, GAME_TOKEN);
+        expect(response.status).toBe(200);
+        expect(botManager.handlePlayerEnterRoom).toHaveBeenCalledWith('r1');
+    });
+
+    it('refuses a bot\'s feelings about a player without a game token', async () => {
+        const response = await fetch(`${base}/api/bots/b1/emotions/guest-uuid`);
+        expect(response.status).toBe(401);
+        expect(botManager.getBotInstance).not.toHaveBeenCalled();
+    });
+
+    it('shows a bot\'s feelings to a player with a game token', async () => {
+        botManager.getBotInstance.mockReturnValue(undefined);
+        const response = await fetch(`${base}/api/bots/b1/emotions/guest-uuid`, {
+            headers: { 'X-WA-Auth': GAME_TOKEN },
+        });
+        expect(response.status).toBe(200);
     });
 
     it('refuses the provider list without a session', async () => {
