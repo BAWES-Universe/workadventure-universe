@@ -783,6 +783,7 @@ export function loadBotPreviews(apiBots: Array<Record<string, unknown>>): void {
             behaviorConfig,
             aiProviderRef: (apiBot.aiProviderRef as string) || undefined,
             toolTimeoutSeconds: typeof apiBot.toolTimeoutSeconds === "number" ? apiBot.toolTimeoutSeconds : null,
+            companionTextureId: typeof apiBot.companionTextureId === "string" ? apiBot.companionTextureId : null,
             chatInstructions: (apiBot.chatInstructions as string) || "",
             createdAt: (apiBot.createdAt as string) || new Date().toISOString(),
             updatedAt: (apiBot.updatedAt as string) || new Date().toISOString(),

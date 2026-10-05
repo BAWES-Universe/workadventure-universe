@@ -302,6 +302,7 @@ export class BotManager {
             position,
             viewport: { top: 0, bottom: 1000, left: 0, right: 1000 }, // TODO: Get from config
             characterTextureIds: config.characterTextureIds || [], // TODO: Get from config or WAM file
+            companionTextureId: config.companionTextureId || undefined,
             uploaderUrl: process.env.UPLOADER_URL,
         };
         
@@ -705,10 +706,12 @@ export class BotManager {
         }
 
         // Handle other configuration updates (name, description, enabled, etc.)
-        // Name and characterTextureIds require respawn (part of WebSocket connection)
+        // Name, characterTextureIds and the companion require respawn (part of WebSocket connection)
         const needsRespawn = ('name' in updates && updates.name !== instance.config.name) ||
                             ('characterTextureIds' in updates && 
-                             JSON.stringify(updates.characterTextureIds) !== JSON.stringify(instance.config.characterTextureIds));
+                             JSON.stringify(updates.characterTextureIds) !== JSON.stringify(instance.config.characterTextureIds)) ||
+                            ('companionTextureId' in updates &&
+                             (updates.companionTextureId ?? null) !== (instance.config.companionTextureId ?? null));
         
         if ('name' in updates) {
             instance.config.name = updates.name || instance.config.name;
@@ -727,9 +730,13 @@ export class BotManager {
             instance.config.characterTextureIds = updates.characterTextureIds;
             changes.push('characterTextureIds');
         }
+        if ('companionTextureId' in updates) {
+            instance.config.companionTextureId = updates.companionTextureId ?? null;
+            changes.push('companionTextureId');
+        }
 
         // Update BotClient's fullConfig if any config fields changed
-        if (changes.length > 0 && (aiConfigUpdated || 'name' in updates || 'description' in updates || 'enabled' in updates || 'characterTextureIds' in updates)) {
+        if (changes.length > 0 && (aiConfigUpdated || 'name' in updates || 'description' in updates || 'enabled' in updates || 'characterTextureIds' in updates || 'companionTextureId' in updates)) {
             instance.client.setFullConfig(instance.config);
         }
 
@@ -918,6 +925,7 @@ export class BotManager {
                             existingInstance.config.name !== bot.name ||
                             existingInstance.config.behaviorType !== bot.behaviorType ||
                             JSON.stringify(existingInstance.config.characterTextureIds) !== JSON.stringify(bot.characterTextureIds) ||
+                            (existingInstance.config.companionTextureId ?? null) !== (bot.companionTextureId ?? null) ||
                             JSON.stringify(existingInstance.config.assignedSpace) !== JSON.stringify(bot.assignedSpace);
                         
                         if (needsRespawn) {

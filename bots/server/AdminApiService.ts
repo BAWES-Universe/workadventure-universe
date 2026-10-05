@@ -78,6 +78,9 @@ export interface BotConfiguration {
     };
     enabled?: boolean; // Whether bot is active (defaults to true if not specified)
     characterTextureIds?: string[]; // Character texture IDs for bot appearance
+    // The companion (pet) that walks with the bot: a companion texture id from the room's companion list.
+    // Null or missing means none.
+    companionTextureId?: string | null;
     position?: { x: number; y: number }; // Teleport position (runtime-only, not persisted)
     createdAt: Date;
     updatedAt: Date;

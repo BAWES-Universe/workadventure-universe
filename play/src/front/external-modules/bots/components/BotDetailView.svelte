@@ -18,7 +18,13 @@
     import { botApiService } from "../services/BotApiService";
     import { setBotEnabled } from "../services/botEnabled";
     import { botWokaCatalogStore, ensureBotWokaCatalog } from "../stores/BotWokaCatalogStore";
+    import {
+        botCompanionCatalogStore,
+        ensureBotCompanionCatalog,
+        findCompanion,
+    } from "../stores/BotCompanionCatalogStore";
     import BotTexturePicker from "./BotTexturePicker.svelte";
+    import BotCompanionPicker from "./BotCompanionPicker.svelte";
     import PageSwitch from "./page/PageSwitch.svelte";
     import PageGroup from "./page/PageGroup.svelte";
     import BehaviorGroup from "./page/BehaviorGroup.svelte";
@@ -35,6 +41,7 @@
 
     let currentBot: BotData | null = null;
     let editingTexture = false;
+    let editingCompanion = false;
     let switching = false;
     let switchError: string | null = null;
     let openGroup: string | undefined = lastOpenGroup;
@@ -47,6 +54,7 @@
     function handleTextureKeydown(e: KeyboardEvent) {
         if (e.key === "Escape") {
             editingTexture = false;
+            editingCompanion = false;
         }
     }
 
@@ -256,24 +264,7 @@
                 await botApiService.updateBot(currentBot.id, {
                     characterTextureId: textureId,
                 });
-
-                // Despawn and respawn bot to apply texture change
-                // Texture is set during spawn, so we need to respawn for it to take effect
-                const despawnResult = await botApiService.despawnBot(currentBot.id);
-                if (despawnResult.despawned) {
-                    // Wait a brief moment before respawning
-                    await new Promise<void>((resolve) => {
-                        setTimeout(() => {
-                            resolve();
-                        }, 100);
-                    });
-                    const spawnResult = await botApiService.spawnBot(currentBot.id);
-                    if (!spawnResult.spawned) {
-                        console.warn("[BotDetailView] Failed to respawn bot after texture change:", spawnResult.reason);
-                    }
-                } else {
-                    console.warn("[BotDetailView] Failed to despawn bot for texture change:", despawnResult.reason);
-                }
+                await respawnBot(currentBot.id, "texture");
             } catch (e) {
                 console.error("[BotDetailView] Failed to save texture change:", e);
             }
@@ -283,8 +274,63 @@
         onSave();
     }
 
+    /** Looks are set when the bot connects, so a new WOKA or companion only shows after a respawn. */
+    async function respawnBot(botId: string, what: "texture" | "companion") {
+        const despawnResult = await botApiService.despawnBot(botId);
+        if (despawnResult.despawned) {
+            // Wait a brief moment before respawning
+            await new Promise<void>((resolve) => {
+                setTimeout(() => {
+                    resolve();
+                }, 100);
+            });
+            const spawnResult = await botApiService.spawnBot(botId);
+            if (!spawnResult.spawned) {
+                console.warn(`[BotDetailView] Failed to respawn bot after ${what} change:`, spawnResult.reason);
+            }
+        } else {
+            console.warn(`[BotDetailView] Failed to despawn bot for ${what} change:`, despawnResult.reason);
+        }
+    }
+
+    /** The companion that walks with the bot: picked (or cleared) on the page, saved right away, then respawned. */
+    async function handleCompanionSelect(companionTextureId: string | null) {
+        if (!currentBot) return;
+        editingCompanion = false;
+        if ((currentBot.companionTextureId ?? null) === companionTextureId) return;
+
+        currentBot = { ...currentBot, companionTextureId };
+        upsertBot(currentBot);
+
+        if (currentBot.id && botApiService.isInitialized()) {
+            try {
+                await botApiService.updateBot(currentBot.id, { companionTextureId });
+                await respawnBot(currentBot.id, "companion");
+            } catch (e) {
+                console.error("[BotDetailView] Failed to save companion change:", e);
+            }
+        }
+        onSave();
+    }
+
+    /** What the Companion row says: the companion's name, None yet, or that this room's list lacks it. */
+    function companionBrief(
+        id: string | null | undefined,
+        catalog: typeof $botCompanionCatalogStore,
+        text: typeof page.companion
+    ): string {
+        if (!id) return text.none();
+        const found = findCompanion(catalog, id);
+        if (found) return found.name;
+        return catalog ? text.notHere() : "";
+    }
+    $: companionLine = currentBot
+        ? companionBrief(currentBot.companionTextureId, $botCompanionCatalogStore, page.companion)
+        : "";
+
     onMount(() => {
         void ensureBotWokaCatalog();
+        void ensureBotCompanionCatalog();
     });
 
     /** A change from a group: switches and choices save right away, typing once it stops. */
@@ -445,9 +491,9 @@
                 id="companion"
                 icon={IconPaw}
                 title={page.companion.title()}
-                brief={page.companion.none()}
+                brief={companionLine}
                 link
-                onToggle={() => {}}
+                onToggle={() => (editingCompanion = true)}
             />
         </div>
         <BotFooter bot={currentBot} {onDelete} />
@@ -479,6 +525,35 @@
             />
             <div class="flex justify-end mt-4">
                 <button type="button" class="bp-pill" on:click={() => (editingTexture = false)}>
+                    {$LL.actionbar.close()}
+                </button>
+            </div>
+        </div>
+    </div>
+{/if}
+
+<!-- Companion Picker Modal -->
+{#if editingCompanion && currentBot}
+    <!-- svelte-ignore a11y-click-events-have-key-events -->
+    <div
+        role="presentation"
+        class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+        tabindex="-1"
+        on:click={() => (editingCompanion = false)}
+    >
+        <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+        <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={page.companion.change()}
+            class="bp-dialog u-surface max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6"
+            data-testid="bot-companion-picker"
+            on:click|stopPropagation
+        >
+            <h3 class="text-xl font-semibold text-white mb-4">{page.companion.change()}</h3>
+            <BotCompanionPicker selectedId={currentBot.companionTextureId ?? null} onSelect={handleCompanionSelect} />
+            <div class="flex justify-end mt-4">
+                <button type="button" class="bp-pill" on:click={() => (editingCompanion = false)}>
                     {$LL.actionbar.close()}
                 </button>
             </div>
