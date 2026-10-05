@@ -204,6 +204,20 @@
         checkPermissions().catch((e) => console.warn(e));
     }
 
+    // The browser's "access needed" card only opens here when asked: the screen already says what is blocked, and on
+    // a phone the card would sit over Save
+    let helpAsked = false;
+
+    function howToAllow() {
+        helpAsked = true;
+        showHelpCameraSettings();
+    }
+
+    function closeHelp() {
+        helpAsked = false;
+        popupStore.removePopup("cameraAccessDenied");
+    }
+
     function playSoundClick() {
         sound.play().catch((e) => console.error(e));
     }
@@ -220,7 +234,9 @@
             ? $localStreamStore.stream
             : undefined;
     $: showSpeaker = $speakerSelectedStore != undefined && $speakerListStore && $speakerListStore.length > 0;
-    $: helpPopup = $popupStore.find((popup) => popup.uuid === "cameraAccessDenied");
+    $: helpPopup = helpAsked ? $popupStore.find((popup) => popup.uuid === "cameraAccessDenied") : undefined;
+    // Closed from inside the card: a later error does not reopen it on its own
+    $: if (helpAsked && !$popupStore.some((popup) => popup.uuid === "cameraAccessDenied")) helpAsked = false;
 </script>
 
 <div class="absolute start-0 top-0 w-dvw h-dvh bg-cover z-10" style="background-image: url('{bgMap}');" />
@@ -278,7 +294,7 @@
                                 <button
                                     type="button"
                                     class="u-join-btn u-join-btn-sm u-cta-secondary"
-                                    on:click={showHelpCameraSettings}>{$LL.camera.enable.howToAllow()}</button
+                                    on:click={howToAllow}>{$LL.camera.enable.howToAllow()}</button
                                 >
                                 <button
                                     type="button"
@@ -425,11 +441,7 @@
 
 {#if helpPopup}
     <div class="fixed inset-x-0 bottom-0 z-[1000] flex justify-center p-3 pointer-events-none">
-        <svelte:component
-            this={helpPopup.component}
-            {...helpPopup.props}
-            on:close={() => popupStore.removePopup("cameraAccessDenied")}
-        />
+        <svelte:component this={helpPopup.component} {...helpPopup.props} on:close={closeHelp} />
     </div>
 {/if}
 
