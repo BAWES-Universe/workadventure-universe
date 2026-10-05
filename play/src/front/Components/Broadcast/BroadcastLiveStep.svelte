@@ -9,10 +9,7 @@
         localVolumeStore,
         requestedCameraState,
         requestedMicrophoneState,
-        requestedStatusStore,
     } from "../../Stores/MediaStore";
-    import { resetAllStatusStoreExcept } from "../../Rules/StatusRules/statusChangerFunctions";
-    import type { RequestedStatus } from "../../Rules/StatusRules/statusRules";
     import { requestedScreenSharingState } from "../../Stores/ScreenSharingStore";
     import { srcObject } from "../Video/utils";
     import WaveBars from "./WaveBars.svelte";
@@ -59,10 +56,6 @@
     // touched the mic, turns it back off.
     let micTurnedOnHere = false;
     let wentLive = false;
-    // Busy, Back in a moment and Do not disturb keep the camera and mic off whatever their buttons say, so this step
-    // could not turn them on nor show the preview. Going live means being reachable: the step goes back online, as
-    // moving does, and leaving without going live puts the chosen status back.
-    let statusLeftHere: RequestedStatus | null = null;
 
     // Said under the buttons when going live could not start (the reach's channel is not joined yet).
     let error: string | undefined;
@@ -80,10 +73,6 @@
     onMount(() => {
         // The preview keeps the camera awake, and the mic comes on so going live is one tap.
         displayedMegaphoneScreenStore.set(true);
-        if ($requestedStatusStore) {
-            statusLeftHere = $requestedStatusStore;
-            resetAllStatusStoreExcept();
-        }
         if (!$requestedMicrophoneState) {
             micTurnedOnHere = true;
             requestedMicrophoneState.enableMicrophone();
@@ -92,8 +81,6 @@
     onDestroy(() => {
         displayedMegaphoneScreenStore.set(false);
         if (micTurnedOnHere && !wentLive && $requestedMicrophoneState) requestedMicrophoneState.disableMicrophone();
-        // Unless the player picked another status meanwhile.
-        if (statusLeftHere && !wentLive && $requestedStatusStore === null) resetAllStatusStoreExcept(statusLeftHere);
     });
 </script>
 
