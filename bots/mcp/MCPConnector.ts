@@ -697,6 +697,8 @@ export class MCPConnector {
         signal?: AbortSignal,
         timeoutMs?: number
     ): Promise<any> {
+        // Patience covers the whole call, the retry below included
+        const deadline = timeoutMs !== undefined ? Date.now() + timeoutMs : undefined;
         let response = await jsonRpcRequest(
             serverUrl,
             'tools/call',
@@ -722,8 +724,14 @@ export class MCPConnector {
             // timeout: the request MAY have been delivered, so never retry.
             // The abort signal also short-circuits the retry entirely — no
             // point re-issuing a call on a cancelled turn.
+            // With a Patience, the retry only gets the time that is left of it.
             const cacheKey = sessionCacheKey(serverUrl, authType, authConfig, playerUuid);
-            if (!signal?.aborted && !mcpSessionInitCache.has(cacheKey)) {
+            const retryTimeoutMs = deadline !== undefined ? deadline - Date.now() : undefined;
+            if (
+                !signal?.aborted &&
+                !mcpSessionInitCache.has(cacheKey) &&
+                (retryTimeoutMs === undefined || retryTimeoutMs > 0)
+            ) {
                 response = await jsonRpcRequest(
                 serverUrl,
                 'tools/call',
@@ -733,7 +741,7 @@ export class MCPConnector {
                 extraHeaders,
                 playerUuid,
                 signal,
-                timeoutMs
+                retryTimeoutMs
                 );
             }
         }
