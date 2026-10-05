@@ -969,6 +969,18 @@ message LowerHandPrivateMessage {
 message LowerAllHandsPublicMessage {
 }
 
+// On a podium, a speaker (or an admin) invites someone from the audience to speak (checked by the pusher).
+message InviteToSpeakPrivateMessage {
+}
+
+// The person invited to speak answers "Not now".
+message DeclineToSpeakPrivateMessage {
+}
+
+// A speaker (or an admin) sends someone who speaks from the audience back to it (checked by the pusher).
+message MoveToAudiencePrivateMessage {
+}
+
 message PublicEventFrontToPusher {
   string spaceName = 1;
   SpaceEvent spaceEvent = 2;
@@ -1011,6 +1023,10 @@ message PrivateSpaceEvent {
     BlockUserMessage blockUserMessage = 20;
     UnblockUserMessage unblockUserMessage = 21;
     LowerHandPrivateMessage lowerHand = 22;
+    // From 30: upstream WorkAdventure uses the numbers right after ours.
+    InviteToSpeakPrivateMessage inviteToSpeak = 30;
+    DeclineToSpeakPrivateMessage declineToSpeak = 31;
+    MoveToAudiencePrivateMessage moveToAudience = 32;
   }
 }
 

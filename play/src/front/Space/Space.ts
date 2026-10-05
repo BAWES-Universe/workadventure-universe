@@ -92,6 +92,10 @@ export class Space implements SpaceInterface {
 
     private _setUsers: ((value: Map<string, SpaceUserExtended>) => void) | undefined;
     private _users: Map<string, SpaceUserExtended> = new Map<string, SpaceUserExtended>();
+    // In the audience of a live stream: the people with a raised hand, who are listed but neither stream nor count
+    // as users of the space.
+    private readonly _audienceHands = new MapStore<string, SpaceUserExtended>();
+    public readonly audienceHandsStore: Readable<ReadonlyMap<string, SpaceUserExtended>> = this._audienceHands;
     private _addUserSubject: Subject<SpaceUserExtended> = new Subject<SpaceUserExtended>();
     private _leftUserSubject: Subject<SpaceUserExtended> = new Subject<SpaceUserExtended>();
     private _updateUserSubject: Subject<UpdateSpaceUserEvent> = new Subject<UpdateSpaceUserEvent>();
@@ -460,6 +464,7 @@ export class Space implements SpaceInterface {
      */
     async destroy() {
         this._isDestroyed = true;
+        this._audienceHands.clear();
 
         this.retryAbortController?.abort();
         if (this.retryTimeout) {
@@ -539,6 +544,10 @@ export class Space implements SpaceInterface {
     initUsers(users: SpaceUser[]): void {
         for (const user of users) {
             const extendSpaceUser = this.extendSpaceUser(user);
+            if (this.isAudienceHand(user)) {
+                this._audienceHands.set(user.spaceUserId, extendSpaceUser);
+                continue;
+            }
             if (!this._users.has(user.spaceUserId)) {
                 if (this.isVideoSpace() && user.spaceUserId !== this._mySpaceUserId) {
                     const videoBox = this.getEmptyVideoBox(extendSpaceUser);
@@ -582,6 +591,11 @@ export class Space implements SpaceInterface {
     addUser(user: SpaceUser): SpaceUserExtended {
         const extendSpaceUser = this.extendSpaceUser(user);
 
+        if (this.isAudienceHand(user)) {
+            this._audienceHands.set(user.spaceUserId, extendSpaceUser);
+            return extendSpaceUser;
+        }
+
         if (!this._users.has(user.spaceUserId)) {
             if (this.isVideoSpace() && user.spaceUserId !== this._mySpaceUserId) {
                 const streamable = this.spacePeerManager.getVideoForUser(user.spaceUserId);
@@ -616,6 +630,7 @@ export class Space implements SpaceInterface {
     }
 
     removeUser(spaceUserId: string): void {
+        this._audienceHands.delete(spaceUserId);
         const user = this._users.get(spaceUserId);
         if (user) {
             this._users.delete(spaceUserId);
@@ -634,6 +649,15 @@ export class Space implements SpaceInterface {
     updateUserData(newData: SpaceUser, updateMask: string[]): void {
         if (!newData.spaceUserId && newData.spaceUserId !== "") return;
 
+        const audienceHand = this._audienceHands.get(newData.spaceUserId);
+        if (audienceHand) {
+            merge(audienceHand, applyFieldMask(newData, updateMask) as unknown as Partial<SpaceUser>);
+            this._audienceHands.delete(newData.spaceUserId);
+            // Invited on stage: from now on a user of the space, with a video.
+            this.addUser(audienceHand);
+            return;
+        }
+
         const userToUpdate = this._users.get(newData.spaceUserId);
 
         if (!userToUpdate) return;
@@ -642,6 +666,13 @@ export class Space implements SpaceInterface {
         const maskedNewData = applyFieldMask(newData, updateMask) as unknown as Partial<SpaceUser>;
 
         merge(userToUpdate, maskedNewData);
+
+        // Back in the audience with a hand still up: listed, without a video.
+        if (this.isAudienceHand(userToUpdate)) {
+            this.removeUser(userToUpdate.spaceUserId);
+            this._audienceHands.set(userToUpdate.spaceUserId, this.extendSpaceUser(userToUpdate));
+            return;
+        }
 
         for (const key in maskedNewData) {
             // We allow ourselves a not 100% exact type cast here.
@@ -856,6 +887,14 @@ export class Space implements SpaceInterface {
         await raceAbort(this.initPromise.promise, options?.signal);
 
         return this._users;
+    }
+
+    /**
+     * The back lists the people with a raised hand in the audience of a live stream, so the speakers see them. They
+     * are kept apart from the users who stream.
+     */
+    private isAudienceHand(user: SpaceUser): boolean {
+        return this.filterType === FilterType.LIVE_STREAMING_USERS && !user.megaphoneState;
     }
 
     public isVideoSpace(): boolean {

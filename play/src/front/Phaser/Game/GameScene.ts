@@ -62,6 +62,7 @@ import { Room } from "../../Connection/Room";
 import { CharacterTextureError } from "../../Exception/CharacterTextureError";
 import { localUserStore } from "../../Connection/LocalUserStore";
 import { myHandRaisedStore, raisedHandsStore } from "../../Space/RaiseHand/RaiseHandStore";
+import { bindPodiumToRaiseHand } from "../../Space/RaiseHand/PodiumStore";
 import { HtmlUtils } from "../../WebRtc/HtmlUtils";
 import { Loader } from "../Components/Loader";
 import { RemotePlayer } from "../Entity/RemotePlayer";
@@ -2453,6 +2454,9 @@ export class GameScene extends DirtyScene {
                 }
             )
         );
+
+        // On a podium, the audience raises hands and the speakers invite them to speak.
+        this.unsubscribers.push(bindPodiumToRaiseHand());
 
         // Subscribe to bubble sound changes
         this.unsubscribers.push(

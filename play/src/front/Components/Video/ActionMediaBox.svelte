@@ -12,6 +12,7 @@
     import type { StreamOriginCategory } from "../../Stores/StreamableCollectionStore";
     import RangeSlider from "../Input/RangeSlider.svelte";
     import { raisedHandsStore } from "../../Space/RaiseHand/RaiseHandStore";
+    import { broughtOnStageStore, canInviteToSpeakStore, moveToAudience } from "../../Space/RaiseHand/PodiumStore";
     import { IconAlertTriangle, IconUser, IconMute, IconUnMute } from "@wa-icons";
 
     export let spaceUser: SpaceUserExtended;
@@ -160,6 +161,21 @@
             />
         </div>
     </div>
+
+    <!-- Podium: send someone we brought on stage from the audience back to it -->
+    {#if $canInviteToSpeakStore && !isScreenSharing && $broughtOnStageStore.has(spaceUser.uuid)}
+        <button
+            class="action-button flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded leading-4 text-left text-white"
+            data-testid="move-to-audience"
+            on:click|preventDefault|stopPropagation={() => {
+                moveToAudience(spaceUser);
+                close();
+            }}
+        >
+            <IconUser class="w-4 h-4 text-white flex-shrink-0" />
+            {$LL.say.raiseHand.moveToAudience()}
+        </button>
+    {/if}
 
     <!-- Lower hand (moderators: the pusher only lets admins do it) -->
     {#if $userIsAdminStore && !isScreenSharing && ($handRaisedAt ?? 0) > 0}

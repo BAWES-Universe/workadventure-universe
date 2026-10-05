@@ -72,7 +72,7 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
             }
             this._spaceUpdatedSubject.next(this);
 
-            if (!this.filterOneUser(spaceUser)) {
+            if (!this.isListed(spaceUser)) {
                 return;
             }
 
@@ -86,10 +86,12 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
                 },
             });
 
-            this.communicationManager.handleUserAdded(spaceUser).catch((e) => {
-                Sentry.captureException(e);
-                console.error(e);
-            });
+            if (this.filterOneUser(spaceUser)) {
+                this.communicationManager.handleUserAdded(spaceUser).catch((e) => {
+                    Sentry.captureException(e);
+                    console.error(e);
+                });
+            }
             debug(`${this.name} : user => added ${spaceUser.spaceUserId}`);
         } catch (e) {
             console.error("Error while adding user", e);
@@ -115,12 +117,14 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
                 this._nbPublishers--;
             }
 
-            const oldFilter = this.filterOneUser(user);
+            const oldFilter = this.isListed(user);
+            const oldStreaming = this.filterOneUser(user);
 
             const updateValues = applyFieldMask(spaceUser, updateMask);
             merge(user, updateValues);
 
-            const newFilter = this.filterOneUser(user);
+            const newFilter = this.isListed(user);
+            const newStreaming = this.filterOneUser(user);
 
             usersList.set(spaceUser.spaceUserId, user);
 
@@ -145,20 +149,10 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
                         }),
                     },
                 });
-
-                this.communicationManager.handleUserAdded(user).catch((e) => {
-                    Sentry.captureException(e);
-                    console.error(e);
-                });
             } else if (oldFilter && !newFilter) {
                 debug(
                     `${this.name} : user updated => removed ${user.spaceUserId} updateMask : ${updateMask.join(", ")}`
                 );
-
-                this.communicationManager.handleUserDeleted(user).catch((e) => {
-                    Sentry.captureException(e);
-                    console.error(e);
-                });
 
                 this.notifyWatchers({
                     message: {
@@ -185,7 +179,20 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
                         },
                     },
                 });
+            }
 
+            // Media goes to the people who stream: a raised hand in the audience is listed, not connected.
+            if (!oldStreaming && newStreaming) {
+                this.communicationManager.handleUserAdded(user).catch((e) => {
+                    Sentry.captureException(e);
+                    console.error(e);
+                });
+            } else if (oldStreaming && !newStreaming) {
+                this.communicationManager.handleUserDeleted(user).catch((e) => {
+                    Sentry.captureException(e);
+                    console.error(e);
+                });
+            } else if (oldStreaming && newStreaming) {
                 this.communicationManager.handleUserUpdated(user).catch((e) => {
                     Sentry.captureException(e);
                     console.error(e);
@@ -245,7 +252,8 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
                     Sentry.captureException(e);
                     console.error(e);
                 });
-
+            }
+            if (user && this.isListed(user)) {
                 this.notifyWatchers({
                     message: {
                         $case: "removeSpaceUserMessage",
@@ -291,6 +299,17 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
         return false;
     }
 
+    /**
+     * Who the watchers see: the people who stream, and in the audience of a live stream, the people with a raised
+     * hand, so the speakers know who wants to talk. Only filterOneUser decides who gets connected for media.
+     */
+    private isListed(user: SpaceUser): boolean {
+        return (
+            this.filterOneUser(user) ||
+            (this._filterType === FilterType.LIVE_STREAMING_USERS && (user.handRaisedAt ?? 0) > 0)
+        );
+    }
+
     public addWatcher(watcher: SpacesWatcher) {
         this.users.set(watcher, new Map<string, SpaceUser>());
         this.usersToNotify.set(watcher, new Map<string, SpaceUser>());
@@ -298,7 +317,7 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
 
         const allSpaceUsers: SpaceUser[] = [];
         for (const spaceUsers of this.users.values()) {
-            const filteredSpaceUsers = Array.from(spaceUsers.values()).filter((user) => this.filterOneUser(user));
+            const filteredSpaceUsers = Array.from(spaceUsers.values()).filter((user) => this.isListed(user));
             allSpaceUsers.push(...filteredSpaceUsers);
         }
 
@@ -353,7 +372,7 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
         this.usersToNotify.delete(watcher);
         // In case was not empty when it was removed, we need to notify the other watchers
         for (const spaceUser of spaceUsers?.values() || []) {
-            if (!this.filterOneUser(spaceUser)) {
+            if (!this.isListed(spaceUser)) {
                 continue;
             }
 

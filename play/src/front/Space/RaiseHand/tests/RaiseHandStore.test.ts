@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { get, writable } from "svelte/store";
+import { get, readable, writable } from "svelte/store";
 import { Subject } from "rxjs";
 import type { SpaceInterface, SpaceUserExtended, UpdateSpaceUserEvent } from "../../SpaceInterface";
 import {
@@ -17,11 +17,16 @@ function user(uuid: string, name: string, handRaisedAt?: number): SpaceUserExten
     return { uuid, name, spaceUserId: "space-" + uuid, handRaisedAt } as unknown as SpaceUserExtended;
 }
 
-function fakeSpace(users: SpaceUserExtended[]) {
+function fakeSpace(users: SpaceUserExtended[], audience: SpaceUserExtended[] = []) {
     const usersStore = writable(new Map(users.map((u) => [u.spaceUserId, u])));
+    const audienceHandsStore = writable(new Map(audience.map((u) => [u.spaceUserId, u])));
     const updated = new Subject<UpdateSpaceUserEvent>();
-    const space = { usersStore, observeUserUpdated: updated.asObservable() } as unknown as SpaceInterface;
-    return { space, usersStore, updated };
+    const space = {
+        usersStore,
+        audienceHandsStore,
+        observeUserUpdated: updated.asObservable(),
+    } as unknown as SpaceInterface;
+    return { space, usersStore, audienceHandsStore, updated };
 }
 
 describe("orderRaisedHands", () => {
@@ -91,5 +96,31 @@ describe("raise hand stores", () => {
 
         unsubscribe();
         leave();
+    });
+
+    it("on a podium, lists the audience's hands and lets only the audience raise one", () => {
+        const speaker = user("speaker", "Sam", 0);
+        const { space, audienceHandsStore } = fakeSpace([speaker]);
+        const inAudience = writable(false);
+        const leave = registerConversationSpace(space, inAudience);
+        expect(get(canRaiseHandStore)).toBe(false);
+        raiseHand();
+        expect(get(myHandRaisedStore)).toBe(false);
+
+        audienceHandsStore.set(new Map([["space-ann", user("ann", "Ann", 100)]]));
+        expect(get(raisedHandsStore).map((hand) => hand.name)).toEqual(["Ann"]);
+
+        inAudience.set(true);
+        expect(get(canRaiseHandStore)).toBe(true);
+        leave();
+    });
+
+    it("can raise a hand while one space allows it", () => {
+        const stage = registerConversationSpace(fakeSpace([]).space, readable(false));
+        const bubble = registerConversationSpace(fakeSpace([]).space);
+        expect(get(canRaiseHandStore)).toBe(true);
+        bubble();
+        expect(get(canRaiseHandStore)).toBe(false);
+        stage();
     });
 });

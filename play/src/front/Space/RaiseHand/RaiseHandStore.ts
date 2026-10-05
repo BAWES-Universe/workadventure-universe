@@ -1,10 +1,10 @@
 import type { Readable } from "svelte/store";
-import { derived, get, writable } from "svelte/store";
+import { derived, get, readable, writable } from "svelte/store";
 import type { Subscription } from "rxjs";
 import type { SpaceInterface, SpaceUserExtended } from "../SpaceInterface";
 
 /**
- * Raising your hand in a conversation (a bubble or a meeting room).
+ * Raising your hand in a conversation (a bubble or a meeting room), or in the audience of a podium.
  *
  * The hand is a field of the user in each conversation space (handRaisedAt), synchronized like the microphone and
  * the camera. The pusher stamps it with its own clock, so everybody sees the same order.
@@ -20,10 +20,25 @@ export interface RaisedHand {
     user: SpaceUserExtended;
 }
 
-const conversationSpacesStore = writable<ReadonlySet<SpaceInterface>>(new Set());
+/** The spaces whose raised hands we see, each with whether we can raise ours there (not while on a podium's stage). */
+const conversationSpacesStore = writable<ReadonlyMap<SpaceInterface, Readable<boolean>>>(new Map());
 
 /** True while we are in a conversation where a hand can be raised. */
-export const canRaiseHandStore: Readable<boolean> = derived(conversationSpacesStore, (spaces) => spaces.size > 0);
+export const canRaiseHandStore: Readable<boolean> = derived(
+    conversationSpacesStore,
+    (spaces, set) => {
+        const canRaiseBySpace = new Map<SpaceInterface, boolean>();
+        set(false);
+        const unsubscribers = Array.from(spaces).map(([space, canRaise]) =>
+            canRaise.subscribe((value) => {
+                canRaiseBySpace.set(space, value);
+                set(Array.from(canRaiseBySpace.values()).some(Boolean));
+            })
+        );
+        return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
+    },
+    false
+);
 
 /** Whether we want our hand up. Sent to every conversation we are in. */
 export const myHandRaisedStore = writable(false);
@@ -38,14 +53,18 @@ export function lowerHand(): void {
 }
 
 /**
- * Called by a conversation space while it shares our microphone and camera state.
+ * Called by a conversation space while it shares our microphone and camera state, and by a podium while we are in it
+ * (where only the audience can raise a hand).
  * Returns the function to call when it stops: once we are in no conversation any more, our hand goes down.
  */
-export function registerConversationSpace(space: SpaceInterface): () => void {
-    conversationSpacesStore.update((spaces) => new Set(spaces).add(space));
+export function registerConversationSpace(
+    space: SpaceInterface,
+    canRaise: Readable<boolean> = readable(true)
+): () => void {
+    conversationSpacesStore.update((spaces) => new Map(spaces).set(space, canRaise));
     return () => {
         conversationSpacesStore.update((spaces) => {
-            const remaining = new Set(spaces);
+            const remaining = new Map(spaces);
             remaining.delete(space);
             return remaining;
         });
@@ -88,19 +107,26 @@ export const raisedHandsStore: Readable<RaisedHand[]> = derived(conversationSpac
         return;
     }
     const usersBySpace = new Map<SpaceInterface, ReadonlyMap<string, SpaceUserExtended>>();
+    const audienceBySpace = new Map<SpaceInterface, ReadonlyMap<string, SpaceUserExtended>>();
     const recompute = () => {
         const users: SpaceUserExtended[] = [];
-        for (const spaceUsers of usersBySpace.values()) {
+        for (const spaceUsers of [...usersBySpace.values(), ...audienceBySpace.values()]) {
             users.push(...spaceUsers.values());
         }
         set(orderRaisedHands(users));
     };
     const unsubscribers: (() => void)[] = [];
     const subscriptions: Subscription[] = [];
-    for (const space of spaces) {
+    for (const space of spaces.keys()) {
         unsubscribers.push(
             space.usersStore.subscribe((spaceUsers) => {
                 usersBySpace.set(space, spaceUsers);
+                recompute();
+            })
+        );
+        unsubscribers.push(
+            space.audienceHandsStore.subscribe((audienceHands) => {
+                audienceBySpace.set(space, audienceHands);
                 recompute();
             })
         );
