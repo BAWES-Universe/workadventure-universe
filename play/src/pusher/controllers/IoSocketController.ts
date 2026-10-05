@@ -498,6 +498,7 @@ export class IoSocketController {
                             pusherRoom: undefined,
                             spaces: new Set<SpaceName>(),
                             joinSpacesPromise: new Map<SpaceName, Promise<void>>(),
+                            grantedBubbleSpaces: new Set<SpaceName>(),
                             chatID,
                             world: userData.world,
                             currentChatRoomArea: [],

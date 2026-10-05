@@ -56,6 +56,9 @@ export type SocketData = {
     pusherRoom: PusherRoom | undefined;
     spaces: Set<SpaceName>;
     joinSpacesPromise: Map<SpaceName, Promise<void>>;
+    // The proximity bubbles the back has asked this user to join, by the name the back gives them (without the world
+    // prefix). Only these bubble spaces may be joined.
+    grantedBubbleSpaces: Set<SpaceName>;
     chatID?: string;
     world: string;
     currentChatRoomArea: string[];

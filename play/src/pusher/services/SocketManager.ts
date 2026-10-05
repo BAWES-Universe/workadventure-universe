@@ -68,6 +68,8 @@ import { adminService } from "./AdminService";
 import type { ShortMapDescription } from "./ShortMapDescription";
 import { matrixProvider } from "./MatrixProvider";
 import { MatrixAreaMembership } from "./MatrixAreaMembership";
+import { checkSpaceJoin } from "./SpaceJoinPolicy";
+import { BubbleSpaceGrants } from "./BubbleSpaceGrants";
 
 const debug = Debug("socket");
 
@@ -87,6 +89,12 @@ export class SocketManager implements ZoneEventListener {
         leaveSpace: (socket, spaceName) => this.handleLeaveSpace(socket, spaceName),
         getSpace: (spaceName) => this.spaces.get(spaceName),
     });
+    private readonly bubbleSpaceGrants = new BubbleSpaceGrants<Socket>({
+        getSocketData: (socket) => socket.getUserData(),
+        leaveSpace: (socket, spaceName) => this.handleLeaveSpace(socket, spaceName),
+    });
+    // The leaves in progress, per socket and space, so that two leaves of the same space do not both unregister
+    private readonly leavingSpaces = new WeakMap<Socket, Map<string, Promise<void>>>();
 
     constructor(private _spaceConnection = new SpaceConnection()) {
         clientEventsEmitter.registerToClientJoin((clientUUid: string, roomId: string) => {
@@ -283,6 +291,16 @@ export class SocketManager implements ZoneEventListener {
                             this.refreshRoomData(refreshMessage.roomId, refreshMessage.versionNumber);
                             break;
                         }
+                        // Must be recorded before the message is passed on below: the player joins the bubble only
+                        // once it receives the request.
+                        case "joinSpaceRequestMessage": {
+                            this.bubbleSpaceGrants.grant(client, message.message.joinSpaceRequestMessage.spaceName);
+                            break;
+                        }
+                        case "leaveSpaceRequestMessage": {
+                            this.bubbleSpaceGrants.revoke(client, message.message.leaveSpaceRequestMessage.spaceName);
+                            break;
+                        }
                     }
 
                     // Let's pass data over from the back to the client.
@@ -383,6 +401,8 @@ export class SocketManager implements ZoneEventListener {
     ): Promise<void> {
         const socketData = client.getUserData();
 
+        checkSpaceJoin({ localSpaceName, filterType, propertiesToSync }, socketData);
+
         let space: SpaceInterface | undefined = this.spaces.get(spaceName);
 
         if (!space) {
@@ -450,6 +470,10 @@ export class SocketManager implements ZoneEventListener {
                 Sentry.captureException(
                     new Error("Space is undefined while unregistering user from space after abort")
                 );
+                return;
+            }
+            if (!socketData.spaces.has(spaceName)) {
+                // Already left (for instance, the server made the player leave a bubble)
                 return;
             }
             space.forwarder.unregisterUser(client).catch((error) => {
@@ -1257,7 +1281,30 @@ export class SocketManager implements ZoneEventListener {
         }
     }
 
-    async handleLeaveSpace(client: Socket, spaceName: string) {
+    async handleLeaveSpace(client: Socket, spaceName: string): Promise<void> {
+        let leavingSpaces = this.leavingSpaces.get(client);
+        const leaving = leavingSpaces?.get(spaceName);
+        if (leaving) {
+            // The same space is already being left (e.g. the player leaves while the server makes it leave)
+            return leaving;
+        }
+        const socketData = client.getUserData();
+        if (!socketData.spaces.has(spaceName) && !socketData.joinSpacesPromise.has(spaceName)) {
+            // Not in this space (anymore): nothing to do. This happens when the server already made the player leave.
+            return;
+        }
+        if (!leavingSpaces) {
+            leavingSpaces = new Map<string, Promise<void>>();
+            this.leavingSpaces.set(client, leavingSpaces);
+        }
+        const leavePromise = this.leaveSpace(client, spaceName).finally(() => {
+            leavingSpaces?.delete(spaceName);
+        });
+        leavingSpaces.set(spaceName, leavePromise);
+        return leavePromise;
+    }
+
+    private async leaveSpace(client: Socket, spaceName: string): Promise<void> {
         const socketData = client.getUserData();
         const space = this.spaces.get(spaceName);
         if (space) {
