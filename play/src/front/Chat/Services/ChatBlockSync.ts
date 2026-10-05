@@ -22,6 +22,7 @@ export function blockedPlayers(
 /**
  * One step of the sync: who to block in the game, who to unblock because they were unblocked in chat (maybe on another
  * device), and what this sync has blocked so far. Someone who leaves Universe stays blocked: only an unblock lifts it.
+ * Each person is blocked once, when the sync first finds them, so unblocking them from the map sticks.
  */
 export function chatBlockSyncStep(
     synced: ReadonlyMap<string, string>,
@@ -35,9 +36,12 @@ export function chatBlockSyncStep(
         if (stillIgnored.has(chatId)) next.set(uuid, chatId);
         else toUnblock.push(uuid);
     }
-    const found = blockedPlayers(ignored, usersByRoom);
-    for (const [uuid, chatId] of found) next.set(uuid, chatId);
-    return { synced: next, toBlock: Array.from(found.keys()), toUnblock };
+    const toBlock: string[] = [];
+    for (const [uuid, chatId] of blockedPlayers(ignored, usersByRoom)) {
+        if (!next.has(uuid)) toBlock.push(uuid);
+        next.set(uuid, chatId);
+    }
+    return { synced: next, toBlock, toUnblock };
 }
 
 /**
