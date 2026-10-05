@@ -14,6 +14,7 @@ import { asError } from "catch-unknown";
 import Debug from "debug";
 import { AxiosError } from "axios";
 import { AbortError } from "@workadventure/shared-utils/src/Abort/AbortError";
+import { toGlobalSpaceName } from "../services/SpaceNames";
 import type { FetchMemberDataByUuidResponse } from "../services/AdminApi";
 import type { AdminSocketTokenData } from "../services/JWTTokenManager";
 import { jwtTokenManager, tokenInvalidException } from "../services/JWTTokenManager";
@@ -734,9 +735,11 @@ export class IoSocketController {
                             }
                             case "addSpaceFilterMessage": {
                                 if (message.message.addSpaceFilterMessage.spaceFilterMessage !== undefined)
-                                    message.message.addSpaceFilterMessage.spaceFilterMessage.spaceName = `${
-                                        socket.getUserData().world
-                                    }.${message.message.addSpaceFilterMessage.spaceFilterMessage.spaceName}`;
+                                    message.message.addSpaceFilterMessage.spaceFilterMessage.spaceName =
+                                        toGlobalSpaceName(
+                                            socket.getUserData(),
+                                            message.message.addSpaceFilterMessage.spaceFilterMessage.spaceName
+                                        );
                                 await socketManager.handleAddSpaceFilterMessage(
                                     socket,
                                     noUndefined(message.message.addSpaceFilterMessage)
@@ -745,9 +748,11 @@ export class IoSocketController {
                             }
                             case "removeSpaceFilterMessage": {
                                 if (message.message.removeSpaceFilterMessage.spaceFilterMessage !== undefined)
-                                    message.message.removeSpaceFilterMessage.spaceFilterMessage.spaceName = `${
-                                        socket.getUserData().world
-                                    }.${message.message.removeSpaceFilterMessage.spaceFilterMessage.spaceName}`;
+                                    message.message.removeSpaceFilterMessage.spaceFilterMessage.spaceName =
+                                        toGlobalSpaceName(
+                                            socket.getUserData(),
+                                            message.message.removeSpaceFilterMessage.spaceFilterMessage.spaceName
+                                        );
                                 socketManager.handleRemoveSpaceFilterMessage(
                                     socket,
                                     noUndefined(message.message.removeSpaceFilterMessage)
@@ -777,9 +782,10 @@ export class IoSocketController {
                                     return;
                                 }
 
-                                message.message.updateSpaceMetadataMessage.spaceName = `${socket.getUserData().world}.${
+                                message.message.updateSpaceMetadataMessage.spaceName = toGlobalSpaceName(
+                                    socket.getUserData(),
                                     message.message.updateSpaceMetadataMessage.spaceName
-                                }`;
+                                );
 
                                 socketManager.handleUpdateSpaceMetadata(
                                     socket,
@@ -789,9 +795,10 @@ export class IoSocketController {
                                 break;
                             }
                             case "updateSpaceUserMessage": {
-                                message.message.updateSpaceUserMessage.spaceName = `${socket.getUserData().world}.${
+                                message.message.updateSpaceUserMessage.spaceName = toGlobalSpaceName(
+                                    socket.getUserData(),
                                     message.message.updateSpaceUserMessage.spaceName
-                                }`;
+                                );
 
                                 await socketManager.handleUpdateSpaceUser(
                                     socket,
@@ -975,9 +982,11 @@ export class IoSocketController {
                                         case "joinSpaceQuery": {
                                             const localSpaceName =
                                                 message.message.queryMessage.query.joinSpaceQuery.spaceName;
-                                            message.message.queryMessage.query.joinSpaceQuery.spaceName = `${
-                                                socket.getUserData().world
-                                            }.${message.message.queryMessage.query.joinSpaceQuery.spaceName}`;
+                                            message.message.queryMessage.query.joinSpaceQuery.spaceName =
+                                                toGlobalSpaceName(
+                                                    socket.getUserData(),
+                                                    message.message.queryMessage.query.joinSpaceQuery.spaceName
+                                                );
                                             await socketManager.handleJoinSpace(
                                                 socket,
                                                 message.message.queryMessage.query.joinSpaceQuery.spaceName,
@@ -1000,9 +1009,11 @@ export class IoSocketController {
                                             break;
                                         }
                                         case "leaveSpaceQuery": {
-                                            message.message.queryMessage.query.leaveSpaceQuery.spaceName = `${
-                                                socket.getUserData().world
-                                            }.${message.message.queryMessage.query.leaveSpaceQuery.spaceName}`;
+                                            message.message.queryMessage.query.leaveSpaceQuery.spaceName =
+                                                toGlobalSpaceName(
+                                                    socket.getUserData(),
+                                                    message.message.queryMessage.query.leaveSpaceQuery.spaceName
+                                                );
                                             await socketManager.handleLeaveSpace(
                                                 socket,
                                                 message.message.queryMessage.query.leaveSpaceQuery.spaceName
@@ -1154,16 +1165,18 @@ export class IoSocketController {
                             }
 
                             case "publicEvent": {
-                                message.message.publicEvent.spaceName = `${socket.getUserData().world}.${
+                                message.message.publicEvent.spaceName = toGlobalSpaceName(
+                                    socket.getUserData(),
                                     message.message.publicEvent.spaceName
-                                }`;
+                                );
                                 await socketManager.handlePublicEvent(socket, message.message.publicEvent);
                                 break;
                             }
                             case "privateEvent": {
-                                message.message.privateEvent.spaceName = `${socket.getUserData().world}.${
+                                message.message.privateEvent.spaceName = toGlobalSpaceName(
+                                    socket.getUserData(),
                                     message.message.privateEvent.spaceName
-                                }`;
+                                );
                                 await socketManager.handlePrivateEvent(socket, message.message.privateEvent);
                                 break;
                             }
