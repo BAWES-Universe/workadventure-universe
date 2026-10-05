@@ -1,11 +1,20 @@
 <script lang="ts">
     // The title line of a panel: an optional back circle, the title, one line under it, and room for a trailing control.
-    import { IconChevronLeft } from "@wa-icons";
+    // On a phone the panel covers the map, so every header also has a chevron that tucks the panel away; the tool
+    // stays lit on the rail and tapping it there brings the panel back.
+    import { LL } from "../../../../i18n/i18n-svelte";
+    import { mobileLayoutStore } from "../../../Stores/MobileLayoutStore";
+    import { mapEditorVisibilityStore } from "../../../Stores/MapEditorStore";
+    import { IconChevronDown, IconChevronLeft } from "@wa-icons";
 
     export let title: string;
     export let subtitle: string | undefined = undefined;
     export let onBack: (() => void) | undefined = undefined;
     export let backLabel = "Back";
+
+    function hidePanel() {
+        mapEditorVisibilityStore.set(false);
+    }
 </script>
 
 <div class="em-head">
@@ -21,6 +30,18 @@
         {/if}
     </div>
     <slot name="trailing" />
+    {#if $mobileLayoutStore}
+        <button
+            type="button"
+            class="em-back em-hide"
+            aria-label={$LL.mapEditor.edit.hidePanel()}
+            title={$LL.mapEditor.edit.hidePanel()}
+            data-testid="edit-panel-hide"
+            on:click={hidePanel}
+        >
+            <IconChevronDown font-size="18" />
+        </button>
+    {/if}
 </div>
 
 <style>
@@ -63,6 +84,24 @@
         background: rgba(255, 255, 255, 0.08);
         color: #fff;
         cursor: pointer;
+    }
+    /* The hide chevron: a 44px tap target drawn as the same 34px circle. */
+    .em-hide {
+        position: relative;
+        width: 44px;
+        height: 44px;
+        margin-right: -5px;
+        background: none;
+    }
+    .em-hide::before {
+        content: "";
+        position: absolute;
+        inset: 5px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.08);
+    }
+    .em-hide :global(svg) {
+        position: relative;
     }
     @media (hover: hover) {
         .em-back:hover {

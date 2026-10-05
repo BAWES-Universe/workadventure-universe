@@ -1,34 +1,36 @@
 <script lang="ts">
     // The box of a new area: drawn over the map, with four round corners to resize and a size in tiles. Dragging inside
-    // moves it; dragging outside moves around the map (the editor's drag-to-pan). It snaps to the tile grid.
+    // moves it; dragging outside moves around the map (the editor's drag-to-pan). It sizes freely, to the pixel, as
+    // areas always have; holding Shift on a computer snaps it to the tile grid.
     import { onDestroy, onMount } from "svelte";
     import { get } from "svelte/store";
     import { LL } from "../../../../i18n/i18n-svelte";
     import { gameManager } from "../../../Phaser/Game/GameManager";
+    import { screenSpace } from "../../../Phaser/Game/MapEditor/ScreenSpace";
     import { editAreaDraftStore, type AreaDraft } from "../../../Stores/EditModeStore";
 
     const TILE = 32;
-    const MIN_TILES = 1;
+    const MIN_SIZE = TILE;
 
     let box = { left: 0, top: 0, width: 0, height: 0 };
     let frame: number | undefined;
     let visible = false;
+    let shiftHeld = false;
 
     function camera() {
         return gameManager.tryGetCurrentGameScene()?.cameras.main;
     }
 
     function toScreen(draft: AreaDraft) {
-        const cam = camera();
-        if (!cam) return;
-        const zoom = cam.zoom;
-        box = {
-            left: (draft.x - cam.worldView.x) * zoom,
-            top: (draft.y - cam.worldView.y) * zoom,
-            width: draft.width * zoom,
-            height: draft.height * zoom,
-        };
+        const scene = gameManager.tryGetCurrentGameScene();
+        if (!scene) return;
+        const r = screenSpace(scene).rect(draft.x, draft.y, draft.width, draft.height);
+        box = { left: r.x, top: r.y, width: r.width, height: r.height };
         visible = true;
+    }
+
+    function onKey(event: KeyboardEvent) {
+        shiftHeld = event.shiftKey;
     }
 
     function tick() {
@@ -55,9 +57,13 @@
             }
         }
         frame = requestAnimationFrame(tick);
+        window.addEventListener("keydown", onKey);
+        window.addEventListener("keyup", onKey);
     });
     onDestroy(() => {
         if (frame !== undefined) cancelAnimationFrame(frame);
+        window.removeEventListener("keydown", onKey);
+        window.removeEventListener("keyup", onKey);
     });
 
     type Corner = "nw" | "ne" | "sw" | "se" | "move";
@@ -74,38 +80,40 @@
 
     function moveDrag(event: PointerEvent) {
         if (!dragging) return;
-        const cam = camera();
-        if (!cam) return;
-        const dx = (event.clientX - dragging.startX) / cam.zoom;
-        const dy = (event.clientY - dragging.startY) / cam.zoom;
+        const scene = gameManager.tryGetCurrentGameScene();
+        if (!scene) return;
+        const scale = screenSpace(scene).scale;
+        const dx = (event.clientX - dragging.startX) / scale;
+        const dy = (event.clientY - dragging.startY) / scale;
         const s = dragging.start;
-        const snap = (v: number) => Math.round(v / TILE) * TILE;
+        const shift = shiftHeld || event.shiftKey;
+        const snap = (v: number) => (shift ? Math.round(v / TILE) * TILE : Math.round(v));
         let next: AreaDraft;
         switch (dragging.corner) {
             case "move":
                 next = { ...s, x: snap(s.x + dx), y: snap(s.y + dy) };
                 break;
             case "nw": {
-                const x = Math.min(snap(s.x + dx), s.x + s.width - MIN_TILES * TILE);
-                const y = Math.min(snap(s.y + dy), s.y + s.height - MIN_TILES * TILE);
+                const x = Math.min(snap(s.x + dx), s.x + s.width - MIN_SIZE);
+                const y = Math.min(snap(s.y + dy), s.y + s.height - MIN_SIZE);
                 next = { x, y, width: s.x + s.width - x, height: s.y + s.height - y };
                 break;
             }
             case "ne": {
-                const right = Math.max(snap(s.x + s.width + dx), s.x + MIN_TILES * TILE);
-                const y = Math.min(snap(s.y + dy), s.y + s.height - MIN_TILES * TILE);
+                const right = Math.max(snap(s.x + s.width + dx), s.x + MIN_SIZE);
+                const y = Math.min(snap(s.y + dy), s.y + s.height - MIN_SIZE);
                 next = { x: s.x, y, width: right - s.x, height: s.y + s.height - y };
                 break;
             }
             case "sw": {
-                const x = Math.min(snap(s.x + dx), s.x + s.width - MIN_TILES * TILE);
-                const bottom = Math.max(snap(s.y + s.height + dy), s.y + MIN_TILES * TILE);
+                const x = Math.min(snap(s.x + dx), s.x + s.width - MIN_SIZE);
+                const bottom = Math.max(snap(s.y + s.height + dy), s.y + MIN_SIZE);
                 next = { x, y: s.y, width: s.x + s.width - x, height: bottom - s.y };
                 break;
             }
             default: {
-                const right = Math.max(snap(s.x + s.width + dx), s.x + MIN_TILES * TILE);
-                const bottom = Math.max(snap(s.y + s.height + dy), s.y + MIN_TILES * TILE);
+                const right = Math.max(snap(s.x + s.width + dx), s.x + MIN_SIZE);
+                const bottom = Math.max(snap(s.y + s.height + dy), s.y + MIN_SIZE);
                 next = { x: s.x, y: s.y, width: right - s.x, height: bottom - s.y };
             }
         }
@@ -118,8 +126,10 @@
     }
 
     $: draft = $editAreaDraftStore;
-    $: tilesWide = draft ? Math.round(draft.width / TILE) : 0;
-    $: tilesHigh = draft ? Math.round(draft.height / TILE) : 0;
+    // The size in tiles, to a tenth when it is not whole tiles.
+    const tiles = (px: number) => String(Math.round((px / TILE) * 10) / 10);
+    $: tilesWide = draft ? tiles(draft.width) : "0";
+    $: tilesHigh = draft ? tiles(draft.height) : "0";
 </script>
 
 {#if draft && visible}

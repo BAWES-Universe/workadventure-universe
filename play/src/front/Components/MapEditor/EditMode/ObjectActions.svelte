@@ -5,6 +5,7 @@
     import { fade } from "svelte/transition";
     import { LL } from "../../../../i18n/i18n-svelte";
     import { gameManager } from "../../../Phaser/Game/GameManager";
+    import { screenSpace } from "../../../Phaser/Game/MapEditor/ScreenSpace";
     import type { EntityEditorTool } from "../../../Phaser/Game/MapEditor/Tools/EntityEditorTool";
     import { mobileLayoutStore } from "../../../Stores/MobileLayoutStore";
     import {
@@ -30,13 +31,13 @@
             visible = false;
             return;
         }
-        const camera = scene.cameras.main;
         const bounds = entity.getBounds();
-        const zoom = camera.zoom;
-        const screenLeft = (bounds.left - camera.worldView.x) * zoom;
-        const screenTop = (bounds.top - camera.worldView.y) * zoom;
-        const screenWidth = bounds.width * zoom;
-        const screenHeight = bounds.height * zoom;
+        const {
+            x: screenLeft,
+            y: screenTop,
+            width: screenWidth,
+            height: screenHeight,
+        } = screenSpace(scene).rect(bounds.left, bounds.top, bounds.width, bounds.height);
         const width = root?.offsetWidth ?? 260;
         const height = root?.offsetHeight ?? 60;
         const parentWidth = root?.parentElement?.clientWidth ?? window.innerWidth;

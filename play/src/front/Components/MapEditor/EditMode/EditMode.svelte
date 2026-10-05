@@ -105,7 +105,10 @@
         {@const p = $editTouchPreviewStore}
         <div
             class="em-tap u-surface"
-            style="left: {p.x + p.width / 2}px; top: {Math.max(8, p.y - 40)}px;"
+            style="left: {Math.min(Math.max(90, p.x + p.width / 2), Math.max(90, rootWidth - 90))}px; top: {Math.max(
+                8,
+                p.y - 40
+            )}px;"
             transition:fade={{ duration: 120 }}
         >
             {$LL.mapEditor.edit.objects.tapAgain()}
