@@ -6,16 +6,20 @@
     import { highlightFullScreen } from "../../Stores/ActionsCamStore";
     import { barInViewStore } from "../../Stores/BarInViewStore";
     import { modalFullScreenStore, modalIframeStore, modalVisibilityStore } from "../../Stores/ModalStore";
+    import { openedMenuStore } from "../../Stores/MenuStore";
 
     const logger = debug("responsive-action-bar");
 
     // On desktops a side window (Orbit) opens under the bar: the bar, and the menus that open from
     // it, stay above the window. Maximised, the window takes the whole screen, bar included.
+    // Everywhere else, a menu opened from the bar while a window shows was opened last, so it comes in front of the
+    // window (the window stays open under it).
     $: aboveSideWindow =
-        $barInViewStore &&
-        $modalVisibilityStore &&
-        ($modalIframeStore?.position === "right" || $modalIframeStore?.position === "left") &&
-        !$modalFullScreenStore;
+        ($barInViewStore &&
+            $modalVisibilityStore &&
+            ($modalIframeStore?.position === "right" || $modalIframeStore?.position === "left") &&
+            !$modalFullScreenStore) ||
+        ($modalVisibilityStore && $openedMenuStore !== undefined);
 
     let centerPlusRightDiv: HTMLDivElement;
     export let rightDiv: HTMLDivElement;

@@ -21,13 +21,16 @@ export class WAMSettingsUtils {
             return [];
         }
         const scopes = megaphone.scopes ?? [megaphone.scope ?? "WORLD"];
-        return scopes.filter((scope): scope is "ROOM" | "WORLD" => scope === "ROOM" || scope === "WORLD");
+        return scopes.filter(
+            (scope): scope is MegaphoneScope => scope === "ROOM" || scope === "WORLD" || scope === "UNIVERSE"
+        );
     }
 
     /**
      * Every broadcast channel this room listens to, and whether a user carrying these tags may go live on each:
      * - ROOM and WORLD follow the room's settings (which reaches are on, and who may use them);
-     * - UNIVERSE exists for every room of an Orbit universe (its group is "universe/world") and is for admins.
+     * - UNIVERSE exists for every room of an Orbit universe (its group is "universe/world"), so a universe-wide
+     *   broadcast from anywhere arrives here; going live on it needs the room's switch on, and admins only.
      * Listeners join every channel; a speaker streams on the one they picked.
      */
     static getMegaphoneChannels(
@@ -60,7 +63,7 @@ export class WAMSettingsUtils {
             channels.push({
                 scope: "UNIVERSE",
                 url: WAMSettingsUtils.getUniverseMegaphoneSpaceName(universeSlug),
-                canStream: tags.includes("admin"),
+                canStream: scopes.includes("UNIVERSE") && tags.includes("admin"),
             });
         }
         return channels;

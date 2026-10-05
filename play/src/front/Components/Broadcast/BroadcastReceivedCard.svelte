@@ -161,4 +161,55 @@
         color: #c4b5fd;
         text-decoration: underline;
     }
+    /* What the rich editor can write: the page's reset strips lists, headings and quotes, so they are drawn here. */
+    .broadcast-text :global(ul),
+    .broadcast-text :global(ol) {
+        margin: 0 0 0.25rem;
+        padding-inline-start: 1.5rem;
+    }
+    .broadcast-text :global(ul) {
+        list-style: disc;
+    }
+    .broadcast-text :global(ol) {
+        list-style: decimal;
+    }
+    .broadcast-text :global(h1),
+    .broadcast-text :global(h2),
+    .broadcast-text :global(h3),
+    .broadcast-text :global(h4),
+    .broadcast-text :global(h5),
+    .broadcast-text :global(h6) {
+        margin: 0 0 0.25rem;
+        font-family: inherit;
+        font-weight: 700;
+        text-transform: none;
+        letter-spacing: normal;
+        line-height: 1.25;
+    }
+    .broadcast-text :global(h1) {
+        font-size: 1.5rem;
+    }
+    .broadcast-text :global(h2) {
+        font-size: 1.25rem;
+    }
+    .broadcast-text :global(h3) {
+        font-size: 1.125rem;
+    }
+    .broadcast-text :global(blockquote) {
+        margin: 0 0 0.25rem;
+        padding-inline-start: 0.75rem;
+        border-inline-start: 3px solid rgba(167, 139, 250, 0.6);
+        color: rgba(255, 255, 255, 0.8);
+    }
+    .broadcast-text :global(pre) {
+        margin: 0 0 0.25rem;
+        padding: 0.5rem 0.75rem;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.06);
+        white-space: pre-wrap;
+    }
+    .broadcast-text :global(img),
+    .broadcast-text :global(iframe) {
+        max-width: 100%;
+    }
 </style>

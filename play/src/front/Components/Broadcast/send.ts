@@ -13,13 +13,13 @@ function broadcastMeta(reach: BroadcastReach, caption?: string) {
     };
 }
 
-/** Sends a written notice to everyone in the reach. The text travels in the editor format older clients expect. */
-export function sendBroadcastText(text: string, reach: BroadcastReach): void {
+/** Sends a written notice to everyone in the reach: the rich editor's content (a Quill delta, as JSON). */
+export function sendBroadcastText(delta: string, reach: BroadcastReach): void {
     const connection = gameManager.getCurrentGameScene().connection;
     if (!connection) throw new Error("Not connected");
     connection.emitGlobalMessage({
         type: AdminMessageEventTypes.admin,
-        content: JSON.stringify({ ops: [{ insert: text.trim() + "\n" }] }),
+        content: delta,
         broadcastToWorld: reach !== "ROOM",
         broadcast: broadcastMeta(reach),
     });
