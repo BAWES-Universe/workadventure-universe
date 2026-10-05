@@ -13,7 +13,6 @@ import {
     editingWaypointIndexStore,
     updateBotPosition,
     updateBotRadius,
-    updateConversationRadius,
     addWaypoint,
     updateWaypoint,
     removeWaypoint,
@@ -495,10 +494,6 @@ export class BotEditorTool {
 
         preview.on(BotPreviewEvent.RadiusChanged, (botId: string, radius: number) => {
             updateBotRadius(botId, radius);
-        });
-
-        preview.on(BotPreviewEvent.ConversationRadiusChanged, (botId: string, radius: number) => {
-            updateConversationRadius(botId, radius);
         });
 
         this.botPreviews.set(bot.id, preview);
