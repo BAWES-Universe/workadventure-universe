@@ -87,3 +87,45 @@ export async function saveWokaAvatar(client: MatrixClient, wokaDataUrl: string):
     await client.setAvatarUrl(mxc);
     await client.setAccountData(WOKA_AVATAR_ACCOUNT_DATA as never, { hash, mxc } as never);
 }
+
+/** After a failed save (offline, server busy), it's tried again after these waits, then left until the woka changes. */
+export const WOKA_AVATAR_RETRY_DELAYS = [5_000, 30_000, 120_000];
+
+/** Saves the latest woka as the chat picture: one save at a time, retried when it fails. */
+export class WokaAvatarSaver {
+    private saving: Promise<void> = Promise.resolve();
+    private latest: string | undefined;
+    private retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+    constructor(private readonly client: MatrixClient, private readonly save = saveWokaAvatar) {}
+
+    update(woka: string): void {
+        this.latest = woka;
+        clearTimeout(this.retryTimer);
+        this.queue(woka, 0);
+    }
+
+    stop(): void {
+        this.latest = undefined;
+        clearTimeout(this.retryTimer);
+    }
+
+    /** Resolves once the saves queued so far are done. */
+    get settled(): Promise<void> {
+        return this.saving;
+    }
+
+    private queue(woka: string, attempt: number): void {
+        // One save at a time, so a quick woka change can't race the previous upload; an older woka is skipped.
+        this.saving = this.saving
+            .then(() => (this.latest === woka ? this.save(this.client, woka) : undefined))
+            .catch((error) => {
+                console.warn("Could not save the woka as the chat picture", error);
+                const delay = WOKA_AVATAR_RETRY_DELAYS[attempt];
+                if (delay === undefined || this.latest !== woka) return;
+                this.retryTimer = setTimeout(() => {
+                    if (this.latest === woka) this.queue(woka, attempt + 1);
+                }, delay);
+            });
+    }
+}

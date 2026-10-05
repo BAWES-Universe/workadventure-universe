@@ -53,7 +53,7 @@ import type { MatrixSecurity } from "./MatrixSecurity";
 import { matrixSecurity as defaultMatrixSecurity } from "./MatrixSecurity";
 import { MatrixRoomFolder } from "./MatrixRoomFolder";
 import { chatUserFactory, mapMatrixPresenceToAvailabilityStatus } from "./MatrixChatUser";
-import { saveWokaAvatar } from "./MatrixWokaAvatar";
+import { WokaAvatarSaver } from "./MatrixWokaAvatar";
 
 const CLIENT_NOT_INITIALIZED_ERROR_MSG = "MatrixClient not yet initialized";
 export const defaultWoka =
@@ -64,7 +64,7 @@ export class MatrixChatConnection implements ChatConnectionInterface {
     private readonly roomList: MapStore<string, MatrixChatRoom>;
     private client: MatrixClient | undefined;
     private wokaAvatarUnsubscriber: Unsubscriber | undefined;
-    private wokaAvatarSaving: Promise<void> = Promise.resolve();
+    private wokaAvatarSaver: WokaAvatarSaver | undefined;
     private handleRoom: (room: Room) => void;
     private handleDeleteRoom: (roomId: string) => void;
     private handleMyMembership: (room: Room, membership: string, prevMembership: string | undefined) => void;
@@ -1173,19 +1173,21 @@ export class MatrixChatConnection implements ChatConnectionInterface {
     /** Keeps the chat profile picture in step with the woka, so other chat apps and offline lists show it too. */
     private startSavingWokaAsAvatar(): void {
         if (this.wokaAvatarUnsubscriber) return;
+        const client = this.client;
+        if (!client) return;
+        const saver = new WokaAvatarSaver(client);
+        this.wokaAvatarSaver = saver;
         this.wokaAvatarUnsubscriber = currentPlayerWokaStore.subscribe((woka) => {
-            const client = this.client;
-            if (!client || !woka || woka === defaultWoka) return;
-            // One save at a time, so a quick woka change can't race the previous upload.
-            this.wokaAvatarSaving = this.wokaAvatarSaving
-                .then(() => saveWokaAvatar(client, woka))
-                .catch((error) => console.warn("Could not save the woka as the chat picture", error));
+            if (!woka || woka === defaultWoka) return;
+            saver.update(woka);
         });
     }
 
     clearListener() {
         this.wokaAvatarUnsubscriber?.();
         this.wokaAvatarUnsubscriber = undefined;
+        this.wokaAvatarSaver?.stop();
+        this.wokaAvatarSaver = undefined;
         this.roomList.forEach((room) => {
             this.roomList.delete(room.id);
         });
