@@ -72,14 +72,15 @@
             openProperty = properties.find((p) => p.id === openId);
         }
         areaName = preview.getAreaData().name;
+        // Older areas have no description row; it is added when a description is first saved, so that picking the
+        // area changes nothing (no undo entry, nothing sent).
         const description = preview.getProperties().find((p) => p.type === "areaDescriptionProperties");
-        if (description === undefined) {
-            preview.addProperty({ id: uuid(), type: "areaDescriptionProperties", description: "", searchable: false });
-            areaDescription = "";
-            areaSearchable = false;
-        } else if (description.type === "areaDescriptionProperties") {
+        if (description?.type === "areaDescriptionProperties") {
             areaDescription = description.description ?? "";
             areaSearchable = description.searchable ?? false;
+        } else {
+            areaDescription = "";
+            areaSearchable = false;
         }
     });
     onDestroy(unsubscribe);
@@ -204,10 +205,19 @@
         requestAnimationFrame(() => nameInput?.focus());
     }
     function saveDescription() {
-        const description = preview?.getProperties().find((p) => p.type === "areaDescriptionProperties");
-        if (!description || description.type !== "areaDescriptionProperties") return;
-        // A copy, not the live property: updateProperty snapshots the old state for undo before it applies the change.
-        preview?.updateProperty({ ...description, description: areaDescription, searchable: areaSearchable });
+        if (!preview) return;
+        const description = preview.getProperties().find((p) => p.type === "areaDescriptionProperties");
+        if (description?.type === "areaDescriptionProperties") {
+            // A copy, not the live property: updateProperty snapshots the old state for undo before it applies the change.
+            preview.updateProperty({ ...description, description: areaDescription, searchable: areaSearchable });
+        } else {
+            preview.addProperty({
+                id: uuid(),
+                type: "areaDescriptionProperties",
+                description: areaDescription,
+                searchable: areaSearchable,
+            });
+        }
     }
 
     function deleteArea() {
