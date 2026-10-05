@@ -7,6 +7,7 @@
     import { lowerHand, raisedHandsStore, type RaisedHand } from "../../Space/RaiseHand/RaiseHandStore";
     import type { SpaceUserExtended } from "../../Space/SpaceInterface";
     import { canInviteToSpeakStore, pendingInvitesStore } from "../../Space/RaiseHand/PodiumStore";
+    import { IconHandStop } from "@wa-icons";
     import RaisedHandWoka from "./RaisedHandWoka.svelte";
 
     /** In the phone's chat sheet header: "✋ 2", and the list opens downwards, from the right. */
@@ -111,11 +112,19 @@
                                 {/if}
                             {/if}
                             {#if hand.uuid === myUuid || $userIsAdminStore}
+                                <!-- Next to Invite to speak there is only room for the icon. -->
                                 <button
                                     type="button"
                                     class="raised-lower"
+                                    class:icon-only={$canInviteToSpeakStore}
+                                    aria-label={$LL.say.raiseHand.lowerSomeone()}
+                                    title={$LL.say.raiseHand.lowerSomeone()}
                                     data-testid="raised-hand-lower"
-                                    on:click={() => lower(hand)}>{$LL.say.raiseHand.lowerSomeone()}</button
+                                    on:click={() => lower(hand)}
+                                    >{#if $canInviteToSpeakStore}<IconHandStop
+                                            font-size="16"
+                                            aria-hidden="true"
+                                        />{:else}{$LL.say.raiseHand.lowerSomeone()}{/if}</button
                                 >
                             {/if}
                         </li>
@@ -201,7 +210,7 @@
         right: 0;
     }
     .raised-list.wide {
-        width: 340px;
+        width: 320px;
     }
     .raised-invite {
         flex: none;
@@ -287,6 +296,12 @@
         font-size: 13px;
         font-weight: 700;
         cursor: pointer;
+    }
+    .raised-lower.icon-only {
+        display: grid;
+        place-items: center;
+        width: 32px;
+        padding: 0;
     }
     .raised-lower-all {
         width: 100%;
