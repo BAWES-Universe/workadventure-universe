@@ -607,29 +607,6 @@
         gap: 8px;
         padding-left: 66px;
     }
-    .bp-circle {
-        display: grid;
-        place-items: center;
-        flex: none;
-        width: 36px;
-        height: 36px;
-        margin: 0;
-        padding: 0;
-        border: 0;
-        border-radius: 50%;
-        background: rgba(255, 255, 255, 0.08);
-        color: #fff;
-        cursor: pointer;
-    }
-    @media (hover: hover) {
-        .bp-circle:hover {
-            background: rgba(255, 255, 255, 0.14);
-        }
-    }
-    .bp-circle:focus-visible {
-        outline: 2px solid #a78bfa;
-        outline-offset: 2px;
-    }
     .bp-error {
         margin: 0;
         font-size: 12.5px;
