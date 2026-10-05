@@ -7,7 +7,7 @@
     import { mobileLayoutStore } from "../../Stores/MobileLayoutStore";
     import BotList from "./components/BotList.svelte";
     import BotDetailView from "./components/BotDetailView.svelte";
-    import CreateBotModal from "./components/CreateBotModal.svelte";
+    import NewBotView from "./components/NewBotView.svelte";
     import type { BotData } from "./types";
     import {
         botEditorModeStore,
@@ -33,7 +33,6 @@
     import { botApiService } from "./services/BotApiService";
     import { IconArrowBackUp, IconRoute } from "@wa-icons";
 
-    let showCreateModal = false;
     let detailView: BotDetailView | undefined;
     let botEditorTool = getBotEditorTool();
     let isLoading = false;
@@ -389,7 +388,7 @@
     }
 
     function handleCreateBot() {
-        showCreateModal = true;
+        botEditorModeStore.set("create");
     }
 
     async function handleCreateBotSubmit(name: string, textureId: string) {
@@ -461,7 +460,6 @@
             };
 
             // Close modal
-            showCreateModal = false;
 
             // Start placement mode - user will click on map to set position
             startPlacingBot(newBot);
@@ -471,10 +469,6 @@
         } finally {
             isLoading = false;
         }
-    }
-
-    function handleCloseCreateModal() {
-        showCreateModal = false;
     }
 
     function handleBackToList() {
@@ -606,6 +600,8 @@
     $: editPanelBackStore.set(
         (currentMode === "detail" || currentMode === "waypoint-edit") && selectedBot
             ? { onBack: backToList, label: $LL.mapEditor.edit.bots.page.back() }
+            : currentMode === "create"
+            ? { onBack: handleBackToList, label: $LL.mapEditor.edit.bots.page.back() }
             : undefined
     );
 
@@ -712,7 +708,9 @@
             </button>
         </div>
     {:else if currentMode === "list" || currentMode === "placing"}
-        <BotList {bots} onSelectBot={handleSelectBot} onCreateBot={handleCreateBot} onLocateBot={handleLocateBot} />
+        <BotList {bots} onSelectBot={handleSelectBot} onCreateBot={handleCreateBot} />
+    {:else if currentMode === "create"}
+        <NewBotView busy={isLoading} onCreate={handleCreateBotSubmit} onCancel={handleBackToList} />
     {:else if currentMode === "detail" || currentMode === "waypoint-edit"}
         {#if selectedBot}
             <BotDetailView
@@ -728,8 +726,6 @@
             </div>
         {/if}
     {/if}
-
-    <CreateBotModal isOpen={showCreateModal} onClose={handleCloseCreateModal} onCreate={handleCreateBotSubmit} />
 </div>
 
 <style>

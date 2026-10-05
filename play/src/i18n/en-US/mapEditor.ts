@@ -658,7 +658,7 @@ const mapEditor: BaseTranslation = {
                     none: "None yet",
                 },
                 tools: {
-                    title: "Skills",
+                    title: "Tools",
                     none: "None yet",
                     count: "{count:number} tool{{s}}",
                     waits: "waits {patience:string}",
@@ -676,6 +676,21 @@ const mapEditor: BaseTranslation = {
                 companion: {
                     title: "Companion",
                     none: "None yet",
+                },
+                list: {
+                    newBot: "New bot",
+                    active: "Active",
+                    inactive: "Inactive",
+                    empty: "No bots yet",
+                    emptyHint: "A bot is a helper that lives in this room and talks to people.",
+                },
+                create: {
+                    title: "New bot",
+                    name: "Name",
+                    namePlaceholder: "What people will call it",
+                    woka: "Pick its WOKA",
+                    create: "Create",
+                    cancel: "Cancel",
                 },
                 behavior: {
                     title: "Behavior",

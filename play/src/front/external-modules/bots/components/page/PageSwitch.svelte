@@ -31,6 +31,12 @@
         position: relative;
         cursor: pointer;
     }
+    /* Hit area of 44 px around the 42 x 26 track, so it is easy to tap on a phone */
+    .bp-switch::before {
+        content: "";
+        position: absolute;
+        inset: -9px -1px;
+    }
     .bp-switch::after {
         content: "";
         position: absolute;

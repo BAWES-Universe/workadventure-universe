@@ -10,7 +10,7 @@ import { botModel, routeStops, walksRoute } from "../behaviorModel";
  * - "placing": Placing a new bot on the map (click to set position)
  * - "waypoint-edit": Editing patrol waypoints for a bot
  */
-export type BotEditorMode = "list" | "detail" | "placing" | "waypoint-edit";
+export type BotEditorMode = "list" | "create" | "detail" | "placing" | "waypoint-edit";
 
 /**
  * Current editor mode

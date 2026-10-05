@@ -637,15 +637,15 @@
         <div class="mcp-row">
             <span class="mcp-ico"><IconTool font-size="20" /></span>
             <div class="mcp-tx">
-                <div class="mcp-t">No tools yet</div>
-                <div class="mcp-m mcp-wrap">Tools let it look things up or make things</div>
+                <div class="mcp-t">No MCP servers yet</div>
+                <div class="mcp-m mcp-wrap">Tools come from MCP servers: connect one</div>
             </div>
             <PageButton testId="bot-add-tool" on:click={openAddModal}><IconPlus font-size="16" />Add</PageButton>
         </div>
     {:else}
         <!-- The list's own heading carries Add, so it sits where the list starts rather than after it -->
         <div class="mcp-head">
-            <span class="mcp-label">{servers.length === 1 ? "Uses 1 app" : `Uses ${servers.length} apps`}</span>
+            <span class="mcp-label">{servers.length === 1 ? "1 MCP server" : `${servers.length} MCP servers`}</span>
             <PageButton testId="bot-add-tool" on:click={openAddModal}><IconPlus font-size="16" />Add</PageButton>
         </div>
         {#each servers as server (server.id)}

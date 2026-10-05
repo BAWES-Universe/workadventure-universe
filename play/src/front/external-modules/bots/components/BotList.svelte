@@ -3,12 +3,15 @@
     import type { BotData } from "../types";
     import { hoveredBotIdStore } from "../stores/BotEditorStore";
     import { setBotEnabled } from "../services/botEnabled";
-    import BotCard from "./BotCard.svelte";
+    import LL from "../../../../i18n/i18n-svelte";
+    import BotRow from "./BotRow.svelte";
+    import { IconChevronDown, IconPlus, IconRobot } from "@wa-icons";
 
     export let bots: BotData[] = [];
     export let onSelectBot: (bot: BotData | null) => void;
     export let onCreateBot: () => void;
-    export let onLocateBot: ((botId: string) => void) | undefined = undefined;
+
+    $: page = $LL.mapEditor.edit.bots.page;
 
     let loading = true;
     let error: string | null = null;
@@ -55,7 +58,7 @@
 
     $: sections = (["active", "inactive"] as const).map((key) => ({
         key,
-        title: key === "active" ? "Active" : "Inactive",
+        title: key === "active" ? page.list.active() : page.list.inactive(),
         bots: bots.filter((bot) => placement.get(bot.id) === key),
     }));
 
@@ -116,12 +119,6 @@
         hoveredBotIdStore.set(botId);
     }
 
-    function handleLocate(bot: BotData) {
-        if (onLocateBot) {
-            onLocateBot(bot.id);
-        }
-    }
-
     onMount(() => {
         // Only load if bots array is empty
         // If bots are already provided via prop, skip loading
@@ -138,122 +135,155 @@
     });
 </script>
 
-<div class="bot-list h-full flex flex-col">
-    <!-- Header -->
-    <div class="flex items-center justify-between mb-4 pb-4 border-b border-white/20">
-        <div>
-            <h2 class="text-xl font-semibold text-white">Bots</h2>
-            <p class="text-sm text-white/60 mt-1">
-                {bots.length}
-                {bots.length === 1 ? "bot" : "bots"} on this map
-                {#if bots.length > 0}
-                    {@const activeCount = bots.filter((b) => b.enabled !== false).length}
-                    {@const inactiveCount = bots.filter((b) => b.enabled === false).length}
-                    {#if activeCount > 0 && inactiveCount > 0}
-                        <span class="text-white/40"> • {activeCount} active, {inactiveCount} inactive</span>
+<div class="bl" data-testid="bot-list">
+    {#if loading}
+        <p class="bl-note">Loading…</p>
+    {:else if error}
+        <p class="bl-note bl-bad">{error}</p>
+        <button type="button" class="bl-pill" on:click={loadBots}>Retry</button>
+    {:else if bots.length === 0}
+        <div class="bl-empty">
+            <span class="bl-empty-ico"><IconRobot font-size="36" /></span>
+            <p class="bl-empty-t">{page.list.empty()}</p>
+            <p class="bl-note">{page.list.emptyHint()}</p>
+            <button type="button" class="bl-pill bl-cta" data-testid="bot-new" on:click={onCreateBot}>
+                <IconPlus font-size="18" />
+                {page.list.newBot()}
+            </button>
+        </div>
+    {:else}
+        <button type="button" class="bl-pill bl-cta" data-testid="bot-new" on:click={onCreateBot}>
+            <IconPlus font-size="18" />
+            {page.list.newBot()}
+        </button>
+        <div class="bl-scroll">
+            {#each sections as section (section.key)}
+                {#if section.bots.length > 0}
+                    <button
+                        type="button"
+                        class="bl-sec"
+                        aria-expanded={!collapsed[section.key]}
+                        on:click={() => toggleSection(section.key)}
+                    >
+                        <span>{section.title} · {section.bots.length}</span>
+                        <span class="bl-chev" class:closed={collapsed[section.key]}
+                            ><IconChevronDown font-size="16" /></span
+                        >
+                    </button>
+                    {#if !collapsed[section.key]}
+                        {#each section.bots as bot (bot.id)}
+                            {@const botId = bot.id}
+                            <BotRow
+                                {bot}
+                                toggling={togglingIds.has(bot.id)}
+                                onSelect={() => {
+                                    // Look up bot by ID to ensure we get the latest data
+                                    const latestBot = bots.find((b) => b.id === botId);
+                                    onSelectBot(latestBot ?? bot);
+                                }}
+                                onToggle={handleToggleBot}
+                                onHover={handleHoverBot}
+                            />
+                        {/each}
                     {/if}
                 {/if}
-            </p>
+            {/each}
         </div>
-        <button
-            class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center gap-2 transition-colors"
-            on:click={onCreateBot}
-        >
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-            </svg>
-            Create Bot
-        </button>
-    </div>
-
-    <!-- Content -->
-    <div class="flex-1 overflow-y-auto">
-        {#if loading}
-            <div class="flex items-center justify-center py-12 min-h-[200px]">
-                <div class="text-white/60">Loading bots...</div>
-            </div>
-        {:else if error}
-            <div class="flex flex-col items-center justify-center py-12 px-4 min-h-[200px] text-red-400">
-                <div class="mb-2">{error}</div>
-                <button class="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700" on:click={loadBots}>
-                    Retry
-                </button>
-            </div>
-        {:else if bots.length === 0}
-            <div class="flex flex-col items-center justify-center py-12 px-4 text-white/60 min-h-[200px]">
-                <svg class="w-16 h-16 mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"
-                    />
-                </svg>
-                <p class="text-lg mb-2">No bots yet</p>
-                <p class="text-sm mb-4 text-center">Create your first bot to get started</p>
-                <button class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700" on:click={onCreateBot}>
-                    Create Your First Bot
-                </button>
-            </div>
-        {:else}
-            <div class="space-y-6">
-                {#each sections as section (section.key)}
-                    {#if section.bots.length > 0}
-                        <div>
-                            <button
-                                type="button"
-                                class="w-full flex items-center gap-2 mb-3 text-sm font-semibold uppercase tracking-wide text-left {section.key ===
-                                'active'
-                                    ? 'text-white/80'
-                                    : 'text-white/60'} hover:text-white"
-                                aria-expanded={!collapsed[section.key]}
-                                on:click={() => toggleSection(section.key)}
-                            >
-                                <svg
-                                    class="w-4 h-4 transition-transform {collapsed[section.key] ? '-rotate-90' : ''}"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    viewBox="0 0 24 24"
-                                >
-                                    <path
-                                        stroke-linecap="round"
-                                        stroke-linejoin="round"
-                                        stroke-width="2"
-                                        d="M19 9l-7 7-7-7"
-                                    />
-                                </svg>
-                                {section.title} ({section.bots.length})
-                            </button>
-                            {#if !collapsed[section.key]}
-                                <div class="grid grid-cols-1 gap-3">
-                                    {#each section.bots as bot (bot.id)}
-                                        {@const botId = bot.id}
-                                        <BotCard
-                                            {bot}
-                                            onSelect={() => {
-                                                // Look up bot by ID to ensure we get the latest data
-                                                const latestBot = bots.find((b) => b.id === botId);
-                                                onSelectBot(latestBot ?? bot);
-                                            }}
-                                            onToggle={handleToggleBot}
-                                            toggling={togglingIds.has(bot.id)}
-                                            onHover={handleHoverBot}
-                                            onLocate={() => handleLocate(bot)}
-                                            showLocateButton={!!onLocateBot}
-                                        />
-                                    {/each}
-                                </div>
-                            {/if}
-                        </div>
-                    {/if}
-                {/each}
-            </div>
-        {/if}
-    </div>
+    {/if}
 </div>
 
 <style>
-    .bot-list {
-        color: white;
+    .bl {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        flex: 1;
+        min-height: 0;
+        color: #fff;
+    }
+    .bl-scroll {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+    }
+    .bl-sec {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        width: 100%;
+        min-height: 44px;
+        margin: 4px 0 0;
+        padding: 0 8px;
+        border: 0;
+        background: transparent;
+        font: inherit;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: rgba(244, 242, 250, 0.5);
+        cursor: pointer;
+    }
+    .bl-chev {
+        display: grid;
+        place-items: center;
+        transition: transform 0.15s;
+    }
+    .bl-chev.closed {
+        transform: rotate(-90deg);
+    }
+    .bl-pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        height: 44px;
+        margin: 0;
+        padding: 0 18px;
+        border: 0;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+        font: inherit;
+        font-size: 14px;
+        font-weight: 600;
+        color: #fff;
+        cursor: pointer;
+    }
+    .bl-cta {
+        background: linear-gradient(90deg, #8629fc, #4156f6);
+        box-shadow: 0 8px 24px -10px rgba(134, 41, 252, 0.8);
+    }
+    .bl-pill:focus-visible {
+        outline: 2px solid #a78bfa;
+        outline-offset: 2px;
+    }
+    .bl-empty {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        padding: 40px 12px;
+        text-align: center;
+    }
+    .bl-empty-ico {
+        color: rgba(255, 255, 255, 0.85);
+    }
+    .bl-empty-t {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+    }
+    .bl-note {
+        margin: 0;
+        padding: 0 8px;
+        font-size: 13px;
+        line-height: 1.4;
+        color: rgba(244, 242, 250, 0.64);
+    }
+    .bl-bad {
+        color: #ff8a7a;
     }
 </style>

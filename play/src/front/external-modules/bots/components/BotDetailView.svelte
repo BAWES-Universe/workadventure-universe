@@ -368,11 +368,10 @@
                         selectedTextures={{ woka: currentBot.characterTexture }}
                         wokaData={$botWokaCatalogStore}
                         {getTextureUrl}
-                        canvasSize={40}
+                        canvasSize={44}
                         direction={0}
                     />
                 {/if}
-                <span class="bp-woka-pen" aria-hidden="true"><IconPencil font-size="11" /></span>
             </button>
             <div class="bp-hd-tx">
                 <label class="bp-name-wrap">
@@ -504,8 +503,8 @@
         display: grid;
         place-items: center;
         flex: none;
-        width: 52px;
-        height: 52px;
+        width: 56px;
+        height: 56px;
         margin: 0;
         padding: 0;
         border: 0;
@@ -533,16 +532,12 @@
         flex: 1;
         min-width: 0;
     }
-    .bp-sub {
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
     /* The name is the title, and typing on it renames the bot: no box until it has focus */
     .bp-name-wrap {
         display: flex;
         align-items: center;
         gap: 4px;
+        min-height: 44px;
         margin: 0 0 1px -6px;
         padding: 1px 6px;
         border-radius: 8px;
@@ -579,9 +574,9 @@
     /* What the bot is for, under its name, edited in place */
     .bp-desc {
         display: block;
-        width: 100%;
         min-height: 0;
-        margin: -4px 0 0;
+        width: calc(100% + 8px);
+        margin: -6px 0 0 -8px;
         padding: 6px 8px;
         border: 0;
         border-radius: 10px;
@@ -606,29 +601,11 @@
         background: rgba(0, 0, 0, 0.25);
         box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.6);
     }
-    /* The little pencil on the picture says it can be changed */
-    .bp-woka-pen {
-        position: absolute;
-        right: -1px;
-        bottom: -1px;
-        display: grid;
-        place-items: center;
-        width: 18px;
-        height: 18px;
-        border-radius: 50%;
-        background: #2a2540;
-        box-shadow: 0 0 0 2px #1b1828;
-        color: #fff;
-    }
+    /* Under the name, lined up with it */
     .bp-actions {
         display: flex;
         gap: 8px;
-        padding: 0 2px;
-    }
-    .bp-sub {
-        font-size: 12.5px;
-        line-height: 1.3;
-        color: rgba(244, 242, 250, 0.64);
+        padding-left: 66px;
     }
     .bp-circle {
         display: grid;
