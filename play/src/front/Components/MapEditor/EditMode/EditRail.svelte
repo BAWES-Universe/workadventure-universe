@@ -8,8 +8,7 @@
     import { mapEditorActivated, mapEditorActivatedForThematics } from "../../../Stores/MenuStore";
     import { editHintSeenStore, editToolsStore } from "../../../Stores/EditModeStore";
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
-    import { enterExploreTheRoom } from "../../../Phaser/Game/MapEditor/ExploreTheRoom";
-    import { IconLamp, IconMapSearch, IconTexture, IconTrash } from "@wa-icons";
+    import { IconLamp, IconTexture, IconTrash } from "@wa-icons";
 
     $: canEditAreas = $mapEditorActivated;
     $: canEditObjects = $mapEditorActivated || $mapEditorActivatedForThematics;
@@ -17,10 +16,6 @@
     function pick(tool: EditorToolName) {
         editHintSeenStore.set(true);
         analyticsClient.openMapEditorTool(tool);
-        if (tool === EditorToolName.ExploreTheRoom) {
-            enterExploreTheRoom();
-            return;
-        }
         mapEditorVisibilityStore.set(true);
         gameManager.getCurrentGameScene().getMapEditorModeManager().equipTool(tool);
     }
@@ -89,18 +84,6 @@
                 <span>{$LL.mapEditor.edit.tools.delete()}</span>
             </div>
         {/if}
-        <hr class="em-sep" />
-        <div class="tool-button em-it">
-            <button
-                type="button"
-                id={EditorToolName.ExploreTheRoom}
-                class="em-circ"
-                on:click|preventDefault={() => pick(EditorToolName.ExploreTheRoom)}
-            >
-                <IconMapSearch font-size="22" />
-            </button>
-            <span>{$LL.mapEditor.edit.tools.lookAround()}</span>
-        </div>
     </div>
 </section>
 
@@ -174,11 +157,5 @@
     .em-circ:focus-visible {
         outline: 2px solid #fff;
         outline-offset: 2px;
-    }
-    .em-sep {
-        width: 30px;
-        margin: 4px 0;
-        border: 0;
-        border-top: 1px solid rgba(167, 139, 250, 0.18);
     }
 </style>
