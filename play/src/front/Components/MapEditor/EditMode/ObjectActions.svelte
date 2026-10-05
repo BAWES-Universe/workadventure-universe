@@ -12,7 +12,7 @@
         mapEditorSelectedEntityStore,
         mapEditorVisibilityStore,
     } from "../../../Stores/MapEditorStore";
-    import { editObjectsViewStore } from "../../../Stores/EditModeStore";
+    import { editObjectsViewStore, showUndoToast } from "../../../Stores/EditModeStore";
     import { IconCopy, IconHandMove, IconSettings, IconTrash } from "@wa-icons";
 
     let left = 0;
@@ -80,9 +80,11 @@
     function remove() {
         const entity = $mapEditorSelectedEntityStore;
         if (!entity) return;
+        const name = entity.getEntityData().name || entity.getPrefab().name || $LL.mapEditor.edit.tools.objects();
         entity.delete();
         mapEditorSelectedEntityStore.set(undefined);
         mapEditorEntityModeStore.set("ADD");
+        showUndoToast($LL.mapEditor.edit.deleteTool.removed({ name }));
     }
 </script>
 
