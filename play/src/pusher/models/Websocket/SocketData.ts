@@ -62,6 +62,10 @@ export type SocketData = {
     roomName: string;
     microphoneState: boolean;
     cameraState: boolean;
+    // The room's megaphone space (as the front names it; null when the room has none, undefined until the room is
+    // joined) and whether this user may go live in it
+    megaphoneSpaceName: string | null | undefined;
+    canUseMegaphone: boolean;
     // The abort controllers for each queries received
     queryAbortControllers: Map<number, AbortController>;
     keepAliveInterval: NodeJS.Timeout | undefined;

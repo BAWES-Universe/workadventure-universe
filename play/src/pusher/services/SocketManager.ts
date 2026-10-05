@@ -59,6 +59,7 @@ import { Space } from "../models/Space";
 import { SpaceConnection } from "../models/SpaceConnection";
 import type { UpgradeFailedData } from "../controllers/IoSocketController";
 import { eventProcessor } from "../models/eventProcessorInit";
+import { setMegaphoneSettings } from "../models/MegaphoneRights";
 import { emitInBatch } from "./IoSocketHelpers";
 import { clientEventsEmitter } from "./ClientEventsEmitter";
 import { gaugeManager } from "./GaugeManager";
@@ -271,6 +272,7 @@ export class SocketManager implements ZoneEventListener {
                             socketData.userId = message.message.roomJoinedMessage.currentUserId;
                             socketData.spaceUserId =
                                 socketData.roomId + "_" + message.message.roomJoinedMessage.currentUserId;
+                            setMegaphoneSettings(socketData, message.message.roomJoinedMessage.megaphoneSettings);
 
                             // If this is the first message sent, send back the viewport.
                             this.handleViewport(client, viewport);

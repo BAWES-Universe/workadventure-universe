@@ -6,7 +6,7 @@ import { merge } from "lodash";
 import { applyFieldMask } from "protobuf-fieldmask";
 import type { Socket } from "../services/SocketManager";
 import { isMatrixAreaSpaceName } from "../services/MatrixAreaMembership";
-import type { BackSpaceConnection } from "./Websocket/SocketData";
+import type { BackSpaceConnection, SocketData } from "./Websocket/SocketData";
 import type { EventProcessor } from "./EventProcessor";
 import type { SpaceToBackForwarderInterface } from "./SpaceToBackForwarder";
 import { SpaceToBackForwarder } from "./SpaceToBackForwarder";
@@ -361,13 +361,19 @@ export class Space implements SpaceForSpaceConnectionInterface {
             );
         }
 
-        const changedFields = updateSpaceUserMessage.updateMask.filter((field) =>
-            CLIENT_UPDATABLE_SPACE_USER_FIELDS.has(field)
+        const changedFields = updateSpaceUserMessage.updateMask.filter(
+            (field) =>
+                CLIENT_UPDATABLE_SPACE_USER_FIELDS.has(field) &&
+                (field !== "megaphoneState" ||
+                    !updateSpaceUserMessage.user?.megaphoneState ||
+                    this.canGoLive(client.getUserData()))
         );
         if (changedFields.length !== updateSpaceUserMessage.updateMask.length) {
             const message = `[Space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage] User ${
                 spaceUser.spaceUserId
-            } tried to update read-only fields in space ${this.name}: ${updateSpaceUserMessage.updateMask.join(", ")}`;
+            } tried to update fields it may not change in space ${this.name}: ${updateSpaceUserMessage.updateMask.join(
+                ", "
+            )}`;
             console.warn(message);
             Sentry.captureException(new Error(message));
         }
@@ -384,6 +390,18 @@ export class Space implements SpaceForSpaceConnectionInterface {
             // Only the allowed fields travel on, stamped with the sender's own id.
             partialSpaceUser: { ...updateValues, spaceUserId: spaceUser.spaceUserId },
         };
+    }
+
+    /**
+     * Going live in the room's megaphone space needs the megaphone right, which the back sends with roomJoinedMessage
+     * (and the pusher refreshes when the megaphone settings change). Other live spaces, such as speaker zones and map
+     * script spaces, are open to anyone in them. Nobody goes live before the room is joined.
+     */
+    private canGoLive(socketData: Pick<SocketData, "megaphoneSpaceName" | "canUseMegaphone">): boolean {
+        if (socketData.megaphoneSpaceName === undefined) {
+            return false;
+        }
+        return this.localName !== socketData.megaphoneSpaceName || socketData.canUseMegaphone;
     }
 
     getPropertiesToSync(): string[] {

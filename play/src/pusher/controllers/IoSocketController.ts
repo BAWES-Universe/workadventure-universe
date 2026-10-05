@@ -504,6 +504,8 @@ export class IoSocketController {
                             roomName,
                             microphoneState,
                             cameraState,
+                            megaphoneSpaceName: undefined,
+                            canUseMegaphone: false,
                             queryAbortControllers: new Map<number, AbortController>(),
                             keepAliveInterval: undefined,
                         };

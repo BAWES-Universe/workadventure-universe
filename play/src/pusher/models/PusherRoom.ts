@@ -11,6 +11,7 @@ import { socketManager } from "../services/SocketManager";
 import { PositionDispatcher } from "./PositionDispatcher";
 import type { ViewportInterface } from "./Websocket/ViewportMessage";
 import type { ZoneEventListener } from "./Zone";
+import { setMegaphoneSettings } from "./MegaphoneRights";
 
 const debug = Debug("room");
 
@@ -167,20 +168,19 @@ export class PusherRoom {
                                     }
                                     this._wamSettings.megaphone =
                                         message.message.editMapCommandMessage.editMapMessage.message.updateWAMSettingsMessage.message.updateMegaphoneSettingMessage;
+                                    const megaphoneSettingsMessage = {
+                                        enabled: WAMSettingsUtils.canUseMegaphone(this._wamSettings, userData.tags),
+                                        url: WAMSettingsUtils.getMegaphoneUrl(
+                                            this._wamSettings,
+                                            new URL(this.roomUrl).host,
+                                            this.roomUrl
+                                        ),
+                                    };
+                                    setMegaphoneSettings(userData, megaphoneSettingsMessage);
                                     userData.emitInBatch({
                                         message: {
                                             $case: "megaphoneSettingsMessage",
-                                            megaphoneSettingsMessage: {
-                                                enabled: WAMSettingsUtils.canUseMegaphone(
-                                                    this._wamSettings,
-                                                    userData.tags
-                                                ),
-                                                url: WAMSettingsUtils.getMegaphoneUrl(
-                                                    this._wamSettings,
-                                                    new URL(this.roomUrl).host,
-                                                    this.roomUrl
-                                                ),
-                                            },
+                                            megaphoneSettingsMessage,
                                         },
                                     });
                                 }
