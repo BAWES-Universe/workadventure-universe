@@ -12,10 +12,6 @@ const follow: DeepPartial<Translation["follow"]> = {
         },
     },
     interactMenu: {
-        stop: {
-            leader: "هل ترغب في عدم الاستمرار في القيادة؟", // Do you not want to continue leading?
-            follower: "هل ترغب في عدم متابعة {leader} بعد الآن؟", // Do you not want to follow {leader} anymore?
-        },
         yes: "نعم", // Yes
         no: "لا", // No
     },

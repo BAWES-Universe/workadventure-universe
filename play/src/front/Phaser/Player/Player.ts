@@ -8,14 +8,7 @@ import { UserInputEvent } from "../UserInput/UserInputManager";
 import { Character } from "../Entity/Character";
 
 import { userMovingStore } from "../../Stores/GameStore";
-import {
-    askToFollow,
-    endFollow,
-    followStateStore,
-    followRoleStore,
-    followStopAskedStore,
-    followUsersStore,
-} from "../../Stores/FollowStore";
+import { askToFollow, endFollow, followStateStore, followRoleStore, followUsersStore } from "../../Stores/FollowStore";
 import { bubbleMatesStore } from "../../Stores/CurrentPlayerGroupStore";
 import { WOKA_SPEED } from "../../Enum/EnvironmentVariable";
 import { visibilityStore } from "../../Stores/VisibilityStore";
@@ -65,8 +58,7 @@ export class Player extends Character {
     }
 
     public moveUser(delta: number, activeUserInputEvents: ActiveEventList): void {
-        // F asks the bubble to follow; pressed again, it cancels the request, or asks before it stops leading or
-        // following.
+        // F asks the bubble to follow; pressed again, it cancels the request or stops leading or following.
         const followKeyDown = activeUserInputEvents.get(UserInputEvent.Follow);
         if (followKeyDown && !this.followKeyDown) {
             const state = get(followStateStore);
@@ -74,9 +66,7 @@ export class Player extends Character {
                 if (get(bubbleMatesStore).length > 0) {
                     askToFollow();
                 }
-            } else if (state === "active") {
-                followStopAskedStore.set(true);
-            } else if (get(followRoleStore) === "leader") {
+            } else if (state === "active" || get(followRoleStore) === "leader") {
                 endFollow();
             }
         }
