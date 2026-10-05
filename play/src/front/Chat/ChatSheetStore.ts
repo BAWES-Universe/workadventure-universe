@@ -17,3 +17,6 @@ export const chatSheetSnapStore = writable<SheetSnap>("half");
 
 /** The sheet's height on screen right now (it follows a drag), 0 while there is no sheet. The videos fit above it. */
 export const chatSheetHeightStore = writable(0);
+
+/** The chat is open as the sheet: the videos share the space above it, with no room to show one of them big. */
+export const chatSheetOpenStore = derived(chatSheetHeightStore, ($height) => $height > 0);

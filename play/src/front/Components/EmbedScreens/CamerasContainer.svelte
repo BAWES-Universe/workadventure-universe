@@ -79,7 +79,7 @@
     // The minimum width of a media box in pixels
     const minMediaBoxWidth = 160;
 
-    // ---- Rows and round faces (PhoneVideoLayout.ts): phones held upright, tablets and desktops ----
+    // ---- Rows of videos (PhoneVideoLayout.ts): phones held upright, tablets and desktops ----
     // On a phone held upright the videos get the space above the chat sheet while the chat is open, and everywhere
     // the height set with the white bar; the same rules for all. Walking keeps the single row, and phones on their
     // side keep the layout below.
@@ -87,10 +87,11 @@
     $: sheetOpen = phoneSheet && $chatSheetHeightStore > 0;
     $: phoneLayoutOn =
         ($chatSheetLayoutStore || !$mobileLayoutStore) && oneLineMode === "horizontal" && (!isOnOneLine || sheetOpen);
-    // A screen share in a circle can't be read: with one in the rows, they stay videos. Not the one shown big.
+    // A screen share that small can't be read: with one in the rows, they stay big videos. Not the one shown big
+    // (with the chat sheet open, nobody is: VideoBox.svelte).
     $: screenShareInRows = derived(
         $oneLineStreamableCollectionStore
-            .filter((videoBox) => videoBox !== $highlightedEmbedScreen)
+            .filter((videoBox) => videoBox !== $highlightedEmbedScreen || sheetOpen)
             .map((videoBox) => videoBox.streamable),
         (streamables) => streamables.some((streamable) => streamable?.videoType.endsWith("screenSharing") ?? false)
     );
@@ -99,12 +100,8 @@
     $: spaceAboveSheet = sheetOpen
         ? Math.max(0, $windowSize.height - $chatSheetHeightStore - (cameraBlock?.getBoundingClientRect().top ?? 0) - 8)
         : 0;
-    // With someone shown big, the others get one row of faces above them.
-    $: phoneHeight = sheetOpen
-        ? $highlightedEmbedScreen && !$highlightFullScreen
-            ? Math.min(spaceAboveSheet, 64)
-            : spaceAboveSheet
-        : containerHeight;
+    // Nobody is shown big while the sheet is open (VideoBox.svelte): the videos get all the room above it.
+    $: phoneHeight = sheetOpen ? spaceAboveSheet : containerHeight;
     // "+N" tapped: everyone, in a list that scrolls. Dragging the sheet or the white bar goes back to the layout.
     let showEveryone = false;
     let phoneLayout: PhoneVideoLayout | undefined;
@@ -454,7 +451,7 @@
                 {oneLineMode}
                 {videoWidth}
                 {videoHeight}
-                face={phoneLayout?.kind === "faces"}
+                small={phoneLayout?.kind === "small"}
                 {shownCount}
             />
         {/each}
@@ -463,7 +460,6 @@
             <button
                 type="button"
                 class="more-people pointer-events-auto shrink-0 camera-box"
-                class:face={phoneLayout.kind === "faces"}
                 style="order: {phoneLayout.shown}; width: {phoneLayout.width}px; height: {phoneLayout.height}px;"
                 aria-label={$LL.video.showEveryone({ count: phoneLayout.more })}
                 data-testid="more-people"
@@ -559,16 +555,10 @@
         box-shadow: inset 0 0 0 1px var(--u-surface-edge);
         cursor: pointer;
     }
-    .more-people.face {
-        border-radius: 9999px;
-    }
     .more-people-count {
         font-size: 15px;
         font-weight: 700;
         line-height: 1;
-    }
-    .more-people.face .more-people-count {
-        font-size: 13px;
     }
     .more-people-label {
         font-size: 13px;

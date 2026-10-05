@@ -15,6 +15,7 @@
     import { highlightFullScreen } from "../../Stores/ActionsCamStore";
     import { showFloatingUi } from "../../Utils/svelte-floatingui-show";
     import { userActivationManager } from "../../Stores/UserActivationStore";
+    import { chatSheetOpenStore } from "../../Chat/ChatSheetStore";
     import ActionMediaBox from "./ActionMediaBox.svelte";
     import UserName from "./UserName.svelte";
     import UpDownChevron from "./UpDownChevron.svelte";
@@ -29,8 +30,8 @@
 
     // The inCameraContainer is used to know if the VideoMediaBox is part of a series or video or if it is the highlighted video.
     let inCameraContainer: boolean = getContext("inCameraContainer");
-    // On phones a video can be shown as a small round face (VideoBox.svelte): only the picture, no name or meter.
-    const videoFace: Readable<boolean> = hasContext("videoFace") ? getContext("videoFace") : readable(false);
+    // A video can be shown small (VideoBox.svelte): the picture fills it, with no name or sound meter over it.
+    const videoSmall: Readable<boolean> = hasContext("videoSmall") ? getContext("videoSmall") : readable(false);
 
     let extendedSpaceUser = videoBox.spaceUser;
 
@@ -186,7 +187,7 @@
                 verticalAlign={!inCameraContainer && !fullScreen ? "top" : "center"}
                 isTalking={showVoiceIndicator}
                 flipX={streamable?.flipX}
-                cover={(streamable?.displayMode === "cover" || $videoFace) && inCameraContainer && !fullScreen}
+                cover={(streamable?.displayMode === "cover" || $videoSmall) && inCameraContainer && !fullScreen}
                 isBlocked={$isBlockedStore}
                 withBackground={(inCameraContainer && $statusStore !== "error" && $statusStore !== "connecting") ||
                     $isBlockedStore}
@@ -195,7 +196,7 @@
                 <UserName
                     name={name ?? "unknown"}
                     picture={pictureStore}
-                    pictureOnly={$videoFace}
+                    pictureOnly={$videoSmall}
                     isPlayingAudio={showVoiceIndicator}
                     isCameraDisabled={!videoEnabled && !miniMode}
                     isBlocked={$isBlockedStore}
@@ -242,7 +243,7 @@
                         </div>
                     </div>
                 {/if}
-                {#if $statusStore === "connected" && $hasAudioStore && !$videoFace}
+                {#if $statusStore === "connected" && $hasAudioStore && (!$videoSmall || $isMutedStore)}
                     <div class="z-[251] absolute p-2 right-1" class:top-1={videoEnabled} class:top-0={!videoEnabled}>
                         {#if !$isMutedStore}
                             <SoundMeterWidget
@@ -285,7 +286,8 @@
         {/if}
     </div>
 
-    {#if inCameraContainer && videoEnabled && $isBlockedStore === false}
+    <!-- Shows the video big. Not over the phone's chat sheet, where there is no room for it (VideoBox.svelte). -->
+    {#if inCameraContainer && videoEnabled && $isBlockedStore === false && !$chatSheetOpenStore}
         {#await userActivationManager.waitForUserActivation()}
             <!-- Waiting for user activation; nothing to show -->
         {:then value}

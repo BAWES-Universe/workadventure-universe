@@ -50,10 +50,10 @@
     let overlayHeight: number;
     let videoRatio: number;
 
-    // In a round face (VideoBox.svelte), a tall phone video is framed higher than its middle, where a selfie's eyes
-    // are; the middle is often the chin and neck. Wide videos, and videos outside a face, stay centred.
-    const videoFace: Readable<boolean> = hasContext("videoFace") ? getContext("videoFace") : readable(false);
-    $: verticalShare = $videoFace && videoRatio < 1 ? 0.3 : 0.5;
+    // In a small video (VideoBox.svelte), a tall phone video is framed higher than its middle, where a selfie's eyes
+    // are; the middle is often the chin and neck. Wide videos, and big videos, stay centred.
+    const videoSmall: Readable<boolean> = hasContext("videoSmall") ? getContext("videoSmall") : readable(false);
+    $: verticalShare = $videoSmall && videoRatio < 1 ? 0.3 : 0.5;
 
     $: {
         if (videoEnabled && containerWidth && containerHeight) {
