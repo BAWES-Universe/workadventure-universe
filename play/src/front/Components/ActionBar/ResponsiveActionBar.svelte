@@ -117,9 +117,11 @@
                 <div class="flex justify-end" bind:offsetWidth={centerDivWidth}>
                     <slot name="center" />
                 </div>
-                <!-- Right bar -->
+                <!-- Right bar. It clips what doesn't fit (those buttons go to the menu); the 12px of padding above,
+                     taken back by the negative margin, leaves room for a count on a button's top-left corner (Orbit's)
+                     without moving anything. -->
                 <div
-                    class="flex flex-row justify-end overflow-hidden"
+                    class="flex flex-row justify-end overflow-hidden -mt-3 pt-3"
                     class:flex-none={mode === "wide"}
                     class:flex-1={mode === "shrunk"}
                     bind:this={rightDiv}

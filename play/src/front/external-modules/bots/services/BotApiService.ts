@@ -386,6 +386,21 @@ export class BotApiService {
     }
 
     /**
+     * How many things in Orbit wait for this player's answer (pending invitations for now), for the count on the
+     * Orbit button. Null when it can't be known: a guest, no Orbit, or Orbit didn't answer.
+     */
+    async getAttentionCount(): Promise<number | null> {
+        if (!this.adminUrl || !this.accessToken) return null;
+        try {
+            const response = await this.fetch("/api/me/attention");
+            const data = (await response.json()) as { count?: unknown };
+            return typeof data.count === "number" && Number.isFinite(data.count) ? Math.max(0, data.count) : null;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
      * List all bots for the current room
      */
     async listBots(roomId?: string): Promise<BotData[]> {
