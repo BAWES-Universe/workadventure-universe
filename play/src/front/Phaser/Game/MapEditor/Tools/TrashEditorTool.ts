@@ -26,6 +26,8 @@ export class TrashEditorTool extends EntityRelatedEditorTool {
     /** What the current press started on: a click or a tap is a press and a release on the same item. */
     private pressed: Entity | AreaPreview | undefined;
     private lastMark: DeleteMark | undefined;
+    /** The item the published mark belongs to: two items of the same size on the same spot must not share a mark. */
+    private lastMarkTarget: Entity | AreaPreview | undefined;
 
     constructor(mapEditorModeManager: MapEditorModeManager, private areaEditorTool: AreaEditorTool) {
         super(mapEditorModeManager);
@@ -327,6 +329,7 @@ export class TrashEditorTool extends EntityRelatedEditorTool {
         if (!target || !target.scene) {
             if (this.lastMark) {
                 this.lastMark = undefined;
+                this.lastMarkTarget = undefined;
                 editDeleteMarkStore.set(undefined);
             }
             return;
@@ -348,6 +351,7 @@ export class TrashEditorTool extends EntityRelatedEditorTool {
         const last = this.lastMark;
         if (
             last &&
+            this.lastMarkTarget === target &&
             last.x === next.x &&
             last.y === next.y &&
             last.width === next.width &&
@@ -357,6 +361,7 @@ export class TrashEditorTool extends EntityRelatedEditorTool {
             return;
         }
         this.lastMark = next;
+        this.lastMarkTarget = target;
         editDeleteMarkStore.set(next);
     }
 
