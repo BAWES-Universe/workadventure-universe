@@ -101,15 +101,11 @@
     data-testid={$roomName}
 >
     <div class="relative shrink-0">
-        {#if partnerWoka}
-            <TopRowAvatar pictureStore={partnerWoka} name={$roomName} size="lg" ring={false} />
+        {#if room.type === "direct"}
+            <!-- Their woka: live while they're in Universe, else the one saved as their chat picture. -->
+            <TopRowAvatar pictureStore={partnerWoka ?? room.pictureStore} name={$roomName} size="lg" ring={false} />
         {:else}
-            <Avatar
-                pictureStore={room.pictureStore}
-                fallbackName={$roomName}
-                size="lg"
-                round={room.type === "direct"}
-            />
+            <Avatar pictureStore={room.pictureStore} fallbackName={$roomName} size="lg" />
         {/if}
 
         {#if $isEncrypted}
