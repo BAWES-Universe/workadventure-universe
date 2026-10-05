@@ -178,7 +178,9 @@ export function createRingStore(now: () => number = Date.now) {
                 if (entry.state === "ringing" || entry.state === "starting") setEntry(uuid, undefined);
             }
         },
-        detach(): void {
+        /** The room's connection is closing: its rings end with it. A newer connection already attached is left alone. */
+        detach(closing: RingConnection): void {
+            if (connection !== closing) return;
             updates?.unsubscribe();
             updates = undefined;
             connection = undefined;

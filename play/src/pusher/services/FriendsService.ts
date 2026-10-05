@@ -116,17 +116,21 @@ interface HttpClient {
 
 /**
  * Client of Orbit's /api/friends routes. Friendships and settings live in the admin; only usable when the
- * pusher has an admin (ADMIN_API_URL), otherwise every call fails with "friends_unavailable".
+ * pusher has an admin (ADMIN_API_URL and ADMIN_API_TOKEN), otherwise every call fails with "friends_unavailable".
  */
 export class FriendsService {
     constructor(
         private readonly baseUrl: string | undefined,
         private readonly token: string | undefined,
         private readonly http: HttpClient = axios
-    ) {}
+    ) {
+        if (baseUrl && !token) {
+            console.warn("Friends are off: ADMIN_API_URL is set but ADMIN_API_TOKEN is not");
+        }
+    }
 
     isEnabled(): boolean {
-        return !!this.baseUrl;
+        return !!this.baseUrl && !!this.token;
     }
 
     getFriends(userUuid: string): Promise<OrbitFriendsList> {

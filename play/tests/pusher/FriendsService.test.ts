@@ -29,6 +29,17 @@ describe("FriendsService", () => {
         expect(http.get).not.toHaveBeenCalled();
     });
 
+    it("is unavailable, and says so once, with an admin but no token", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        const http = { get: vi.fn(), post: vi.fn(), put: vi.fn() };
+        const service = new FriendsService("https://orbit.test", undefined, http);
+        expect(service.isEnabled()).toBe(false);
+        expect(warn).toHaveBeenCalledTimes(1);
+        await expect(service.getFriends("alice")).rejects.toEqual(new FriendsError("friends_unavailable"));
+        expect(http.get).not.toHaveBeenCalled();
+        warn.mockRestore();
+    });
+
     it("turns Orbit's refusals into their code", async () => {
         const { service } = serviceRejecting(orbitError(403, { error: "no_shared_world" }));
         const refusal = await service.act("alice", "bob", "request").catch((e: unknown) => e);

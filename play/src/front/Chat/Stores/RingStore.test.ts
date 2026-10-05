@@ -174,6 +174,32 @@ describe("ringStore", () => {
         expect(get(store.incoming)).toBeUndefined();
     });
 
+    it("drops a friend's ring when its connection closes, but not a newer connection's", () => {
+        const store = createRingStore();
+        const first = fakeConnection(ringing);
+        store.attach(first.connection, true);
+        const second = fakeConnection(ringing);
+        store.detach(second.connection);
+        first.updates.next({
+            update: {
+                $case: "ringIncoming",
+                ringIncoming: {
+                    ringId: "a",
+                    fromUuid: "omar",
+                    fromName: "Omar",
+                    playUri: "",
+                    roomName: "",
+                    worldName: "",
+                    universeName: "",
+                    expiresInMs: 30000,
+                },
+            },
+        });
+        expect(get(store.incoming)?.ringId).toBe("a");
+        store.detach(first.connection);
+        expect(get(store.incoming)).toBeUndefined();
+    });
+
     it("rings nobody for guests", async () => {
         const store = createRingStore();
         const { connection, queryRing } = fakeConnection(ringing);
