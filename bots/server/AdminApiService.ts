@@ -63,6 +63,10 @@ export interface BotConfiguration {
     
     // Chat Instructions (Sensitive - stored in Admin API only)
     chatInstructions?: string; // System prompt/instructions for AI behavior
+
+    // How long the bot waits for a tool (MCP) call to answer, in seconds ("Patience").
+    // Null or missing means the bot server's default (REQUEST_TIMEOUT, 90 s).
+    toolTimeoutSeconds?: number | null;
     
     // Assigned space defines where the bot operates (center + radius)
     // Required: All bots must have an assigned space

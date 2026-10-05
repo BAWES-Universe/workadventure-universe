@@ -53,6 +53,21 @@ const toolListCache = new Map<string, CachedTools>();
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour
 export const REQUEST_TIMEOUT = 90_000; // 90 seconds
 
+/** Bounds for a bot's own tool-call timeout ("Patience"), matching Orbit's validation. */
+export const MIN_TOOL_TIMEOUT_SECONDS = 5;
+export const MAX_TOOL_TIMEOUT_SECONDS = 600;
+
+/**
+ * A bot's saved tool timeout ("Patience", in seconds) as milliseconds for
+ * executeToolCall. Unset or invalid values return undefined, so the default
+ * REQUEST_TIMEOUT applies; out-of-range values are clamped.
+ */
+export function toolTimeoutMs(seconds: number | null | undefined): number | undefined {
+    if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) return undefined;
+    const clamped = Math.min(MAX_TOOL_TIMEOUT_SECONDS, Math.max(MIN_TOOL_TIMEOUT_SECONDS, Math.round(seconds)));
+    return clamped * 1000;
+}
+
 // Cache of initialized MCP sessions per (server URL + auth context).
 // Includes auth type/config in the key so bots with different credentials
 // on the same URL don't share sessions.
@@ -215,6 +230,10 @@ function isValidMcpServerUrl(url: string): { valid: boolean; error?: string } {
 /**
  * Execute a JSON-RPC request to an MCP server with timeout and error handling.
  * Never throws — returns the response data or null on failure.
+ *
+ * `timeoutMs` is how long the caller waits in total, including any session
+ * initialize this call has to wait for (a bot's "Patience" for tool calls).
+ * Without it, the initialize and the request each get REQUEST_TIMEOUT.
  */
 async function jsonRpcRequest(
     serverUrl: string,
@@ -224,8 +243,11 @@ async function jsonRpcRequest(
     authConfig?: string,
     extraHeaders?: Record<string, string>,
     playerUuid?: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    timeoutMs?: number
 ): Promise<any> {
+    const deadline = timeoutMs !== undefined ? Date.now() + timeoutMs : undefined;
+    const remaining = () => (deadline !== undefined ? Math.max(0, deadline - Date.now()) : REQUEST_TIMEOUT);
     const urlCheck = isValidMcpServerUrl(serverUrl);
     if (!urlCheck.valid) {
         console.warn(`[MCPConnector] Invalid server URL for ${method}: ${urlCheck.error}`);
@@ -253,7 +275,10 @@ async function jsonRpcRequest(
             }
         } else {
             const initController = new AbortController();
-            const initTimeoutId = setTimeout(() => initController.abort(), REQUEST_TIMEOUT);
+            // The initialize request itself gets at least the default timeout,
+            // even when the caller is less patient: it runs detached and its
+            // session-cache update helps the next call.
+            const initTimeoutId = setTimeout(() => initController.abort(), Math.max(REQUEST_TIMEOUT, timeoutMs ?? 0));
 
             // Run initialize as a detached task. The MCP spec forbids
             // cancelling initialize ("The initialize request MUST NOT be
@@ -323,28 +348,45 @@ async function jsonRpcRequest(
                 }
             })();
 
-            // Race the init against caller cancellation so the turn cancel is
-            // observed immediately, without aborting the initialize request.
-            if (signal) {
-                let cleanupAbortListener: (() => void) | undefined;
-                const abortPromise = new Promise<boolean>((resolve) => {
-                    if (signal.aborted) {
-                        resolve(true);
-                        return;
-                    }
-                    const onAbort = () => resolve(true);
-                    signal.addEventListener('abort', onAbort, { once: true });
-                    cleanupAbortListener = () => signal.removeEventListener('abort', onAbort);
-                });
-                const initDone = initPromise.then(() => false as const);
-                const cancelled = await Promise.race([initDone, abortPromise]);
-                cleanupAbortListener?.();
-                if (cancelled) {
-                    console.log(`[MCPConnector] Request cancelled for ${method} (during initialize)`);
-                    return null;
+            // Race the init against caller cancellation and the caller's
+            // deadline, so a cancelled turn or a short Patience returns
+            // promptly, without aborting the initialize request.
+            let cleanupAbortListener: (() => void) | undefined;
+            let initWaitTimer: ReturnType<typeof setTimeout> | undefined;
+            const abortPromise = new Promise<'cancelled'>((resolve) => {
+                if (!signal) return;
+                if (signal.aborted) {
+                    resolve('cancelled');
+                    return;
                 }
-            } else {
-                await initPromise;
+                const onAbort = () => resolve('cancelled');
+                signal.addEventListener('abort', onAbort, { once: true });
+                cleanupAbortListener = () => signal.removeEventListener('abort', onAbort);
+            });
+            const deadlinePromise = new Promise<'timeout'>((resolve) => {
+                if (deadline === undefined) return;
+                initWaitTimer = setTimeout(() => resolve('timeout'), remaining());
+            });
+            const initDone = initPromise.then(() => 'done' as const);
+            const outcome = await Promise.race([initDone, abortPromise, deadlinePromise]);
+            cleanupAbortListener?.();
+            clearTimeout(initWaitTimer);
+            if (outcome === 'cancelled') {
+                console.log(`[MCPConnector] Request cancelled for ${method} (during initialize)`);
+                return null;
+            }
+            if (outcome === 'timeout') {
+                console.warn(`[MCPConnector] Request timed out after ${timeoutMs}ms for ${method} (during initialize)`);
+                // Mark the session as present-but-expired, as a failed init
+                // does, so executeToolCall doesn't retry and wait all over
+                // again. The detached init overwrites this when it lands.
+                if (!skipSessionCache) {
+                    mcpSessionInitCache.set(sessionCacheKey(serverUrl, authType, authConfig, playerUuid), {
+                        sessionId: undefined,
+                        initializedAt: Date.now() - SESSION_INIT_TTL,
+                    });
+                }
+                return null;
             }
         }
     }
@@ -355,7 +397,8 @@ async function jsonRpcRequest(
     }
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+    const requestTimeout = remaining();
+    const timeoutId = setTimeout(() => controller.abort(), requestTimeout);
     // Link an external abort (e.g. the conversation's per-turn AbortController
     // from the interruption/cancel feature) to this request so cancelling the
     // turn also cancels in-flight MCP tool calls instead of letting them hang
@@ -393,7 +436,7 @@ async function jsonRpcRequest(
                 // 90s-timeout warning on every cancelled turn.
                 console.log(`[MCPConnector] Request cancelled for ${method}`);
             } else {
-                console.warn(`[MCPConnector] Request timed out after ${REQUEST_TIMEOUT}ms for ${method}`);
+                console.warn(`[MCPConnector] Request timed out after ${timeoutMs ?? REQUEST_TIMEOUT}ms for ${method}`);
             }
         } else if (axios.isAxiosError(error)) {
             const status = error.response?.status;
@@ -651,7 +694,8 @@ export class MCPConnector {
         authConfig?: string,
         extraHeaders?: Record<string, string>,
         playerUuid?: string,
-        signal?: AbortSignal
+        signal?: AbortSignal,
+        timeoutMs?: number
     ): Promise<any> {
         let response = await jsonRpcRequest(
             serverUrl,
@@ -661,7 +705,8 @@ export class MCPConnector {
             authConfig,
             extraHeaders,
             playerUuid,
-            signal
+            signal,
+            timeoutMs
         );
 
         if (!response) {
@@ -687,7 +732,8 @@ export class MCPConnector {
                 authConfig,
                 extraHeaders,
                 playerUuid,
-                signal
+                signal,
+                timeoutMs
                 );
             }
         }
