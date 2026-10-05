@@ -6,6 +6,7 @@ import { v4 as uuid } from "uuid";
 import { openModal } from "svelte-modals";
 import type { MapEditorAreaToolMode } from "../../../../Stores/MapEditorStore";
 import { mapEditorAreaModeStore, mapEditorSelectedAreaPreviewStore } from "../../../../Stores/MapEditorStore";
+import { editAreaDraftStore } from "../../../../Stores/EditModeStore";
 import { AreaPreview, AreaPreviewEvent } from "../../../Components/MapEditor/AreaPreview";
 import { SizeAlteringSquare } from "../../../Components/MapEditor/SizeAlteringSquare";
 import type { CopyAreaEventData } from "../../GameMap/EntitiesManager";
@@ -95,6 +96,8 @@ export class AreaEditorTool extends MapEditorTool {
         this.wasAreaMoved = false;
         this.drawinNewAreaStartPos = undefined;
         mapEditorSelectedAreaPreviewStore.set(undefined);
+        // A "New area" box left on the map goes with the tool: the next time the tool opens, it starts clean.
+        editAreaDraftStore.set(undefined);
         this.setAreaPreviewsVisibility(false);
         this.scene.input.setDefaultCursor("auto");
         this.unbindEventHandlers();
@@ -318,6 +321,10 @@ export class AreaEditorTool extends MapEditorTool {
             this.draggingdArea = false;
             this.wasAreaMoved = false;
 
+            // A finger on the empty map pans it; phones draw a new area with the draft box, never by dragging.
+            if (pointer.wasTouch) {
+                return;
+            }
             if (mode === "ADD") {
                 this.drawingNewArea = true;
                 this.drawinNewAreaStartPos = { x: pointer.worldX, y: pointer.worldY };
@@ -373,6 +380,13 @@ export class AreaEditorTool extends MapEditorTool {
                 this.scene.markDirty();
                 return;
             }
+            if (
+                pointer.wasTouch &&
+                (sortedAreaPreviews.length === 0 || this.mapEditorModeManager.isDraggingToLookAround)
+            ) {
+                // A tap on the empty map has nothing to select, and a pan selects nothing wherever it ends.
+                return;
+            }
             this.changeAreaMode("EDIT", sortedAreaPreviews[0]);
         } else if (mode === "EDIT") {
             const currentlySelectedArea = get(mapEditorSelectedAreaPreviewStore);
@@ -383,6 +397,12 @@ export class AreaEditorTool extends MapEditorTool {
                     this.wasAreaMoved = false;
                     return;
                 }
+            }
+
+            if (pointer.wasTouch && this.mapEditorModeManager.isDraggingToLookAround) {
+                // A finger pan keeps the selected area wherever it ends; a tap on the empty map still deselects it,
+                // as a click does, and a tap on an area selects that area.
+                return;
             }
 
             if (currentlySelectedArea) {
@@ -525,7 +545,11 @@ export class AreaEditorTool extends MapEditorTool {
 
         if (area) {
             area.updatePreview(newConfig);
-            mapEditorSelectedAreaPreviewStore.set(area);
+            // The panel re-reads the selected area; a change to another area (a save that lands after you moved on,
+            // or someone else's edit) must not open that area instead.
+            if (get(mapEditorSelectedAreaPreviewStore) === area) {
+                mapEditorSelectedAreaPreviewStore.set(area);
+            }
         }
 
         this.scene.markDirty();
@@ -582,6 +606,29 @@ export class AreaEditorTool extends MapEditorTool {
             .catch((e) => console.error(e));
     }
 
+    /** Open an area's settings from the list in the panel. */
+    public selectArea(id: string): void {
+        const preview = this.getAreaPreview(id);
+        if (!preview) return;
+        this.changeAreaMode("EDIT", preview);
+    }
+
+    /** Back to the list: no area selected. */
+    public deselectArea(): void {
+        this.changeAreaMode("ADD");
+    }
+
+    /** Create an area from the box drawn in the "New area" overlay (phones and computers alike). */
+    public createNewAreaFromDraft(draft: { x: number; y: number; width: number; height: number }): void {
+        if (draft.width < 10 || draft.height < 10) return;
+        this.createNewArea(Math.round(draft.x), Math.round(draft.y), Math.round(draft.width), Math.round(draft.height));
+    }
+
+    /** Dragging the empty map moves around unless the mouse is drawing a new area. */
+    public canDragToLookAround(pointer: Phaser.Input.Pointer): boolean {
+        return pointer.wasTouch && !this.drawingNewArea;
+    }
+
     private createNewArea(x: number, y: number, width: number, height: number): void {
         const id = uuid();
         this.mapEditorModeManager
@@ -592,7 +639,10 @@ export class AreaEditorTool extends MapEditorTool {
                         id,
                         name: "",
                         visible: true,
-                        properties: [],
+                        // The description comes with the area, so that selecting it adds nothing to the undo history.
+                        properties: [
+                            { id: uuid(), type: "areaDescriptionProperties", description: "", searchable: false },
+                        ],
                         width,
                         height,
                         x,

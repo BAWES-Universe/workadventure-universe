@@ -14,8 +14,9 @@
 
 <script lang="ts">
     import { onDestroy, onMount } from "svelte";
-    import { fly } from "svelte/transition";
+    import { slide } from "svelte/transition";
     import { v4 as uuid } from "uuid";
+    import * as Sentry from "@sentry/svelte";
     import type { EmojiClickEvent } from "emoji-picker-element/shared";
     import { defautlNativeIntegrationAppName } from "@workadventure/shared-utils";
     import { readable } from "svelte/store";
@@ -40,7 +41,8 @@
     import excalidrawSvg from "../../../Components/images/applications/icon_excalidraw.svg";
     import cardsPng from "../../../Components/images/applications/icon_cards.svg";
     import tldrawJpeg from "../../../Components/images/applications/icon_tldraw.jpeg";
-    import { showFloatingUi } from "../../../Utils/svelte-floatingui-show";
+    import { showHideableFloatingUi, type HideableFloatingUi } from "../../../Utils/svelte-floatingui-show";
+    import { emoteMenuStore } from "../../../Stores/EmoteStore";
     import LazyEmote from "../../../Components/EmoteMenu/LazyEmote.svelte";
     import { composerDraftStore } from "../../Stores/ComposerDraftStore";
     import { draftMessageService } from "../../Services/DraftMessageService";
@@ -48,7 +50,9 @@
     import { MatrixChatRoom } from "../../Connection/Matrix/MatrixChatRoom";
     import { UPLOADER_URL } from "../../../Enum/EnvironmentVariable";
     import MessageInput from "./MessageInput.svelte";
+    import ReplyPreview from "./MessageActions/ReplyPreview.svelte";
     import { captureSendDestination, isSendDestinationOpen, spaceGenerationOf } from "./SendDestination";
+    import { mainUploadFailure, UploadFailure, uploadFailureReason } from "./UploadFailure";
     import ApplicationFormWrapper from "./Application/ApplicationFormWrapper.svelte";
     import { IconMoodSmile, IconPaperclip, IconSend, IconX } from "@wa-icons";
 
@@ -91,17 +95,60 @@
     let fileAttachementEnabled = false;
     let isUploading = false;
     let uploadError: string | null = null;
-    let failedFileIds: Set<string> = new Set();
-    let uploadErrorTimeout: ReturnType<typeof setTimeout> | undefined;
+    // The files an upload failed for, each with why, so the line can be rebuilt when one of them is removed.
+    let failedFiles: Map<string, UploadFailure> = new Map();
 
-    function showUploadError(msg: string, failed?: Set<string>) {
+    // The error stays until it is closed, its files are removed or the user sends again: it used to vanish
+    // after 5 seconds, before it could be read on a phone.
+    function showUploadError(msg: string, failed?: Map<string, UploadFailure>) {
         uploadError = msg;
-        failedFileIds = failed ?? new Set();
-        clearTimeout(uploadErrorTimeout);
-        uploadErrorTimeout = setTimeout(() => {
-            uploadError = null;
-            failedFileIds = new Set();
-        }, 5000);
+        failedFiles = failed ?? new Map();
+    }
+
+    function clearUploadError() {
+        uploadError = null;
+        failedFiles = new Map();
+    }
+
+    /** One line: what wasn't sent, then the reason the user can act on. */
+    function uploadFailureLine(failedFiles: File[], failures: UploadFailure[]): string {
+        const main = mainUploadFailure(failures) ?? new UploadFailure("other");
+        const count = failedFiles.length;
+        const head = failedFiles.every((file) => file.type.startsWith("image/"))
+            ? $LL.chat.fileAttachment.photosNotSent({ count })
+            : $LL.chat.fileAttachment.filesNotSent({ count });
+        switch (main.reason) {
+            case "tooBig":
+                return `${head} ${$LL.chat.fileAttachment.reasonTooBig({
+                    size: Math.round((main.maxFileSize ?? UPLOAD_MAX_FILESIZE) / 1048576),
+                })}`;
+            case "disabled":
+                return `${head} ${$LL.chat.fileAttachment.reasonDisabled()}`;
+            case "refused":
+                return `${head} ${$LL.chat.fileAttachment.reasonRefused()}`;
+            default:
+                return `${head} ${$LL.chat.fileAttachment.reasonOther()}`;
+        }
+    }
+
+    function reportUploadFailure(failures: UploadFailure[], count: number) {
+        const main = mainUploadFailure(failures) ?? new UploadFailure("other");
+        analyticsClient.chatUploadFailed(main.reason, main.status, count);
+        if (main.reason === "other") {
+            Sentry.captureMessage(`Chat upload failed: ${main.message}`, "warning");
+        }
+    }
+
+    function numberField(data: unknown, key: string): number | undefined {
+        if (typeof data !== "object" || data === null || !(key in data)) return undefined;
+        const value: unknown = (data as Record<string, unknown>)[key];
+        return typeof value === "number" ? value : undefined;
+    }
+
+    function stringField(data: unknown, key: string): string | undefined {
+        if (typeof data !== "object" || data === null || !(key in data)) return undefined;
+        const value: unknown = (data as Record<string, unknown>)[key];
+        return typeof value === "string" ? value : undefined;
     }
 
     let applicationProperty: ApplicationProperty | undefined = undefined;
@@ -215,6 +262,7 @@
                 let userToken: string | undefined;
                 try {
                     userToken = gameManager.getCurrentGameScene().connection?.userRoomToken;
+                    clearUploadError();
                     isUploading = true;
                     // Upload all files, tracking success/failure per file
                     const uploadResults = await Promise.allSettled(
@@ -224,17 +272,28 @@
                             if (userToken) {
                                 formData.append("userRoomToken", userToken);
                             }
-                            const response = await fetch(`${UPLOADER_URL}/upload-file`, {
-                                method: "POST",
-                                body: formData,
-                            });
+                            let response: Response;
+                            try {
+                                response = await fetch(`${UPLOADER_URL}/upload-file`, {
+                                    method: "POST",
+                                    body: formData,
+                                });
+                            } catch {
+                                throw new UploadFailure("other", undefined, "network-error");
+                            }
                             if (!response.ok) {
-                                const errData = await response.json().catch(() => ({}));
-                                throw new Error(errData.message || `Upload failed (${response.status})`);
+                                const errData: unknown = await response.json().catch(() => ({}));
+                                const serverMessage = stringField(errData, "message");
+                                throw new UploadFailure(
+                                    uploadFailureReason(response.status, serverMessage),
+                                    response.status,
+                                    serverMessage,
+                                    numberField(errData, "maxFileSize")
+                                );
                             }
                             const data = await response.json();
                             if (!data || data.length === 0) {
-                                throw new Error("Upload returned no data");
+                                throw new UploadFailure("other", response.status, "no-data");
                             }
                             return { location: data[0].location, name: data[0].name, type: file.type };
                         })
@@ -256,6 +315,7 @@
                     // Separate successes from failures
                     const succeeded: { location: string; name: string; type: string }[] = [];
                     const failedIds: string[] = [];
+                    const failures = new Map<string, UploadFailure>();
                     for (let i = 0; i < uploadResults.length; i++) {
                         const pendingFile = pendingFiles[i];
                         const result = uploadResults[i];
@@ -263,6 +323,10 @@
                             succeeded.push(result.value);
                         } else {
                             failedIds.push(pendingFile.id);
+                            failures.set(
+                                pendingFile.id,
+                                result.reason instanceof UploadFailure ? result.reason : new UploadFailure("other")
+                            );
                         }
                     }
                     if (failedIds.length > 0) {
@@ -272,9 +336,13 @@
 
                         filesPreview = filesPreview.filter((p) => failedIds.includes(p.id));
                         showUploadError(
-                            `Upload failed for ${failedIds.length} file(s). Still in the input for retry.`,
-                            new Set(failedIds)
+                            uploadFailureLine(
+                                files.map(({ file }) => file),
+                                [...failures.values()]
+                            ),
+                            failures
                         );
+                        reportUploadFailure([...failures.values()], failedIds.length);
                         // Don't return — still send text and successful uploads below
                     } else {
                         // All succeeded — clear and send messages
@@ -350,9 +418,17 @@
                         );
                     }
                 } catch (error: unknown) {
-                    if (error instanceof Error) {
-                        showUploadError(error.message);
-                    }
+                    console.error("Error uploading files:", error);
+                    const failure = new UploadFailure("other", undefined, "unexpected-error");
+                    const failures = [failure];
+                    showUploadError(
+                        uploadFailureLine(
+                            pendingFiles.map(({ file }) => file),
+                            failures
+                        ),
+                        new Map(pendingFiles.map(({ id }) => [id, failure]))
+                    );
+                    reportUploadFailure(failures, pendingFiles.length);
                     // Don't return — still send text message below
                 } finally {
                     isUploading = false;
@@ -363,6 +439,8 @@
                     return fileListAcc;
                 }, new DataTransfer()).files;
 
+                const sentFiles = files;
+                clearUploadError();
                 isUploading = true;
                 destination.room
                     .sendFiles(fileList)
@@ -372,7 +450,16 @@
                     })
                     .catch((error) => {
                         console.error("Error sending files:", error);
-                        showUploadError("Failed to send files.");
+                        const failure = new UploadFailure("other", undefined, "matrix-error");
+                        const failures = [failure];
+                        showUploadError(
+                            uploadFailureLine(
+                                sentFiles.map(({ file }) => file),
+                                failures
+                            ),
+                            new Map(sentFiles.map(({ id }) => [id, failure]))
+                        );
+                        reportUploadFailure(failures, sentFiles.length);
                     })
                     .finally(() => {
                         isUploading = false;
@@ -452,7 +539,6 @@
     });
 
     onDestroy(() => {
-        clearTimeout(uploadErrorTimeout);
         if (
             room instanceof ProximityChatRoom &&
             mountSessionId !== undefined &&
@@ -478,46 +564,71 @@
             });
         }
         if (setTimeOutProperty) clearTimeout(setTimeOutProperty);
-        closeEmojiPicker?.();
-        closeEmojiPicker = undefined;
+        if (emojiPickerOpen) emoteMenuStore.closeEmoteMenu();
+        emojiPicker?.destroy();
+        emojiPicker = undefined;
         selectedChatChatMessageToReplyUnsubscriber();
     });
 
-    let closeEmojiPicker: (() => void) | undefined = undefined;
+    // The picker is built once and then shown and hidden. Built again on each open, a new picker could find its
+    // emoji data closed under it by the one just removed (on iPhones it then stayed empty), and each build was slow.
+    let emojiPicker: HideableFloatingUi | undefined = undefined;
+    let emojiPickerOpen = false;
+    let emojiButton: HTMLButtonElement;
 
     function openCloseEmojiPicker() {
-        if (closeEmojiPicker) {
-            closeEmojiPicker();
-            closeEmojiPicker = undefined;
+        if (emojiPickerOpen) {
+            hideEmojiPicker();
         } else {
-            closeEmojiPicker = showFloatingUi(
-                messageBarRef,
-                LazyEmote,
-                {
-                    onEmojiClick: (event: EmojiClickEvent) => {
-                        message += event.detail.unicode ?? "";
-                    },
-                    onClose: () => {
-                        closeEmojiPicker?.();
-                        closeEmojiPicker = undefined;
-                    },
-                },
-                {
-                    placement: "top-end",
-                },
-                12,
-                true
-            );
+            showEmojiPicker();
         }
+    }
+
+    function showEmojiPicker() {
+        emojiPickerOpen = true;
+        if (emojiPicker) {
+            emojiPicker.show();
+            emoteMenuStore.openEmoteMenu();
+            return;
+        }
+        emojiPicker = showHideableFloatingUi(
+            messageBarRef,
+            LazyEmote,
+            {
+                onEmojiClick: (event: EmojiClickEvent) => {
+                    message += event.detail.unicode ?? "";
+                },
+                onClose: (event?: Event) => {
+                    // The emoji button opens and closes the picker itself: its click is not a click outside. The
+                    // picker has already marked itself closed for the game's keys, so an open picker says so again.
+                    if (event?.target instanceof Node && emojiButton?.contains(event.target)) {
+                        if (emojiPickerOpen) emoteMenuStore.openEmoteMenu();
+                        return;
+                    }
+                    hideEmojiPicker();
+                },
+                isShown: () => emojiPickerOpen,
+            },
+            {
+                placement: "top-end",
+            },
+            12,
+            true
+        );
+    }
+
+    function hideEmojiPicker() {
+        if (!emojiPickerOpen) return;
+        emojiPickerOpen = false;
+        emojiPicker?.hide();
+        emoteMenuStore.closeEmoteMenu();
     }
 
     export function handleFiles(event: CustomEvent<FileList>) {
         const incoming = [...event.detail];
 
         // Clear previous upload errors
-        uploadError = null;
-        failedFileIds = new Set();
-        clearTimeout(uploadErrorTimeout);
+        clearUploadError();
 
         // Pre-check: file count (hard rejection — no files added)
         if (files.length + incoming.length > MAX_FILE_COUNT) {
@@ -531,11 +642,13 @@
         for (const file of incoming) {
             const ext = file.name.substring(file.name.lastIndexOf(".")).toLowerCase();
             if (UNSAFE_EXTENSIONS.includes(ext)) {
-                reasons.push(`${file.name}: type not allowed`);
+                reasons.push($LL.chat.fileAttachment.unsafeFileType({ name: file.name }));
                 continue;
             }
             if (file.size > UPLOAD_MAX_FILESIZE) {
-                reasons.push(`${file.name}: too large (max ${UPLOAD_MAX_FILESIZE / 1048576} MB)`);
+                reasons.push(
+                    $LL.chat.fileAttachment.fileTooLarge({ name: file.name, size: UPLOAD_MAX_FILESIZE / 1048576 })
+                );
                 continue;
             }
             valid.push(file);
@@ -550,8 +663,7 @@
 
         // Show error for rejected files
         if (reasons.length > 0) {
-            const msg = `${reasons.length} file(s) rejected: ${reasons.join(", ")}`;
-            showUploadError(msg);
+            showUploadError(reasons.join(" "));
         }
 
         // Return focus to the message input so Enter sends the message instead of re-opening the file picker
@@ -581,6 +693,22 @@
     function deleteFile(id: string) {
         files = files.filter((file) => file.id !== id);
         filesPreview = filesPreview.filter((filePreview) => filePreview.id !== id);
+        if (failedFiles.has(id)) {
+            failedFiles.delete(id);
+            if (failedFiles.size === 0) {
+                // The error was about the files just removed: nothing is left for it to explain.
+                clearUploadError();
+            } else {
+                // Rebuilt for the files still failing, so its count and reason stay true.
+                showUploadError(
+                    uploadFailureLine(
+                        files.filter((file) => failedFiles.has(file.id)).map(({ file }) => file),
+                        [...failedFiles.values()]
+                    ),
+                    failedFiles
+                );
+            }
+        }
     }
 
     function formatBytes(bytes: number) {
@@ -746,91 +874,98 @@
     function onProcessedApplicationProperty() {
         applicationPropertyInProcessing = false;
     }
-
-    $: quotedMessageContent = $selectedChatMessageToReply?.content;
 </script>
 
 {#if files.length > 0 || uploadError}
     <div class="w-full p-1">
-        {#if uploadError}
-            <div
-                class="flex items-center justify-between px-3 py-1 mb-1 rounded-lg bg-red-900/70 text-red-200 text-xs"
-                transition:fly={{ y: -20, duration: 300 }}
-            >
-                <span class="truncate">⚠️ {uploadError}</span>
-                <button
-                    class="ml-2 shrink-0 hover:text-white"
-                    on:click={() => {
-                        uploadError = null;
-                        failedFileIds = new Set();
-                    }}>×</button
-                >
-            </div>
-        {/if}
-        <div class="flex flex-row gap-2 w-full overflow-visible no-scroll-bar rounded-lg p-2 bg-contrast/80">
-            {#each filesPreview as preview (preview.id)}
+        <!-- The error sits inside the tray, above the files it is about, and wraps instead of being cut off. -->
+        <div class="flex flex-col gap-3 w-full rounded-lg pt-3 px-2.5 pb-2.5 bg-contrast/80">
+            {#if uploadError}
                 <div
-                    class="relative content-center {preview.type.includes('image')
-                        ? 'w-20'
-                        : 'w-28'} h-20 rounded-md backdrop-opacity-10 bg-white p-0.5 {failedFileIds.has(preview.id)
-                        ? 'ring-2 ring-red-500 opacity-60'
-                        : ''}"
+                    class="upload-error flex items-start gap-2 text-[13px] leading-snug"
+                    role="alert"
+                    data-testid="chatUploadError"
+                    transition:slide={{ duration: 150 }}
                 >
+                    <span class="upload-error-mark" aria-hidden="true">!</span>
+                    <span class="flex-1 min-w-0 break-words">{uploadError}</span>
                     <button
-                        class="border-2 border-white border-solid absolute flex items-center justify-center rounded-full bg-secondary hover:bg-secondary-600 p-0.5 -start-2 -top-2 {isUploading
-                            ? 'hidden'
-                            : ''}"
-                        on:click={() => deleteFile(preview.id)}
-                        disabled={isUploading}
+                        class="upload-error-close"
+                        aria-label={$LL.chat.fileAttachment.dismissError()}
+                        on:click={clearUploadError}
                     >
-                        <IconX font-size="12" />
+                        <IconX font-size="14" />
                     </button>
-                    {#if preview.type.includes("image") && typeof preview.url === "string"}
-                        <img
-                            draggable="false"
-                            class="w-full h-full object-cover rounded-[10px]"
-                            src={preview.url}
-                            alt={preview.name}
-                        />
-                    {:else}
-                        <div
-                            title={preview.name}
-                            class="flex flex-col items-start overflow-hidden text-ellipsis justify-between p-0.5 bg-contrast/90 h-full w-full text-xs rounded-[10px]"
-                        >
-                            <span class="line-clamp-2 indent-3 text-xs">
-                                {preview.name}
-                            </span>
-                            <div class="rounded-[6px] bg-white/10 p-0.5 text-xxs m-0.5">
-                                {formatBytes(preview.size)}
-                            </div>
-                        </div>
-                    {/if}
-                    {#if isUploading}
-                        <div class="absolute inset-0 flex items-center justify-center bg-black/40 rounded-[10px]">
-                            <svg
-                                class="animate-spin h-5 w-5 text-white"
-                                xmlns="http://www.w3.org/2000/svg"
-                                fill="none"
-                                viewBox="0 0 24 24"
-                            >
-                                <circle
-                                    class="opacity-25"
-                                    cx="12"
-                                    cy="12"
-                                    r="10"
-                                    stroke="currentColor"
-                                    stroke-width="4"
-                                />
-                                <path
-                                    class="opacity-75"
-                                    fill="currentColor"
-                                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                                />
-                            </svg>
-                        </div>
-                    {/if}
                 </div>
-            {/each}
+            {/if}
+            {#if filesPreview.length > 0}
+                <div class="flex flex-row gap-3.5 w-full overflow-visible no-scroll-bar">
+                    {#each filesPreview as preview (preview.id)}
+                        <div
+                            class="relative content-center {preview.type.includes('image')
+                                ? 'w-20'
+                                : 'w-28'} h-20 rounded-[12px] {failedFiles.has(preview.id) ? 'upload-failed' : ''}"
+                        >
+                            <!-- On the top-right corner, partly outside the file, as in Discord. -->
+                            <button
+                                class="upload-remove {isUploading ? 'hidden' : ''}"
+                                aria-label={$LL.chat.fileAttachment.removeFile({ name: preview.name })}
+                                data-testid="chatUploadRemove"
+                                on:click={() => deleteFile(preview.id)}
+                                disabled={isUploading}
+                            >
+                                <IconX font-size="12" stroke-width="3" />
+                            </button>
+                            {#if preview.type.includes("image") && typeof preview.url === "string"}
+                                <img
+                                    draggable="false"
+                                    class="w-full h-full object-cover rounded-[12px]"
+                                    src={preview.url}
+                                    alt={preview.name}
+                                />
+                            {:else}
+                                <div
+                                    title={preview.name}
+                                    class="flex flex-col items-start overflow-hidden text-ellipsis justify-between p-0.5 bg-contrast/90 ring-1 ring-inset ring-white/15 h-full w-full text-xs rounded-[12px]"
+                                >
+                                    <span class="line-clamp-2 indent-3 text-xs">
+                                        {preview.name}
+                                    </span>
+                                    <div class="rounded-[6px] bg-white/10 p-0.5 text-xxs m-0.5">
+                                        {formatBytes(preview.size)}
+                                    </div>
+                                </div>
+                            {/if}
+                            {#if isUploading}
+                                <div
+                                    class="absolute inset-0 flex items-center justify-center bg-black/40 rounded-[12px]"
+                                >
+                                    <svg
+                                        class="animate-spin h-5 w-5 text-white"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                        fill="none"
+                                        viewBox="0 0 24 24"
+                                    >
+                                        <circle
+                                            class="opacity-25"
+                                            cx="12"
+                                            cy="12"
+                                            r="10"
+                                            stroke="currentColor"
+                                            stroke-width="4"
+                                        />
+                                        <path
+                                            class="opacity-75"
+                                            fill="currentColor"
+                                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                                        />
+                                    </svg>
+                                </div>
+                            {/if}
+                        </div>
+                    {/each}
+                </div>
+            {/if}
         </div>
     </div>
 {/if}
@@ -1030,32 +1165,12 @@
     </div>
 {/if}
 <div
-    class="flex w-full flex-none items-center border border-solid border-b-0 border-x-0 border-t-1 border-white/10 bg-contrast/50 relative"
+    class="message-bar flex w-full flex-none items-center border border-solid border-b-0 border-x-0 border-t-1 border-white/10 bg-contrast/50 relative"
     bind:this={messageBarRef}
 >
     {#if $selectedChatMessageToReply !== null}
         <div class="flex p-2 items-start absolute top-0 -translate-y-full w-full">
-            <div class="flex flex-row gap-2 items-center justify-between bg-contrast rounded w-full backdrop-blur">
-                <div class="flex flex-col p-2 rounded w-full">
-                    <span class="flex flex-row justify-between">
-                        <span class="text-sm text-gray-400">
-                            {$LL.chat.replyTo()}
-                        </span>
-                        <button class="p-2 m-0" on:click={unselectChatMessageToReply}>
-                            <!--<IconCircleX />-->
-                            <IconX font-size={18} />
-                        </button>
-                    </span>
-                    <div class="flex row w-full border-l border-l-white/10 ml-1 border-solid border-0">
-                        <p
-                            class=" text-xs text-white/30 rounded-md p-2 m-0 truncate w-full text-ellipsis"
-                            style:overflow-wrap="anywhere"
-                        >
-                            {$quotedMessageContent?.body}
-                        </p>
-                    </div>
-                </div>
-            </div>
+            <ReplyPreview message={$selectedChatMessageToReply} onClose={unselectChatMessageToReply} />
         </div>
     {/if}
     <MessageInput
@@ -1101,7 +1216,7 @@
     {/if}
     <button
         data-testid="quickFileAttachmentButton"
-        class="p-0 m-0 h-11 w-11 flex items-center justify-center hover:bg-white/10 rounded-none"
+        class="p-0 m-0 h-11 w-11 flex items-center justify-center text-white hover:bg-white/10 rounded-none"
         class:disabled:opacity-30={room instanceof ProximityChatRoom}
         disabled={room instanceof ProximityChatRoom ? !fileAttachementEnabled || isUploading : !fileAttachementEnabled}
         on:click={() => fileInputElement?.click()}
@@ -1111,7 +1226,7 @@
     </button>
     <button
         data-testid="addApplicationButton"
-        class="p-0 m-0 h-11 w-11 flex items-center justify-center hover:bg-white/10 rounded-none"
+        class="p-0 m-0 h-11 w-11 flex items-center justify-center text-white hover:bg-white/10 rounded-none"
         class:bg-secondary-800={applicationComponentOpened}
         on:click={toggleApplicationComponent}
     >
@@ -1122,15 +1237,20 @@
         />
     </button>
     <button
-        class="p-0 m-0 h-11 w-11 flex items-center justify-center hover:bg-white/10 rounded-none"
+        data-testid="emojiPickerButton"
+        class="p-0 m-0 h-11 w-11 flex items-center justify-center text-white hover:bg-white/10 rounded-none {emojiPickerOpen
+            ? 'bg-white/10'
+            : ''}"
+        bind:this={emojiButton}
         on:click={openCloseEmojiPicker}
+        aria-pressed={emojiPickerOpen}
     >
         <IconMoodSmile font-size={18} />
     </button>
-    {#if message.trim().length !== 0 || files.length !== 0 || (applicationProperty && applicationProperty.link.length !== 0)}
+    {#if !isEmptyMessage(message) || files.length !== 0 || (applicationProperty && applicationProperty.link.length !== 0)}
         <button
             data-testid="sendMessageButton"
-            class="disabled:opacity-30 disabled:!cursor-none disabled:text-white py-0 px-3 m-0 bg-secondary h-full rounded-none"
+            class="send-button disabled:opacity-30 disabled:!cursor-none text-white py-0 px-3 m-0 h-full rounded-none"
             disabled={applicationPropertyInProcessing || isUploading}
             on:click={() => sendMessage(message).catch((error) => console.error(error))}
         >
@@ -1140,6 +1260,107 @@
 </div>
 
 <style>
+    /* The message field: a rounded field held off the chat's edges, its buttons round inside it. */
+    .message-bar {
+        width: auto;
+        min-height: 52px;
+        margin: 8px 16px 16px;
+        padding: 0 6px 0 4px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 9999px;
+        background: rgba(255, 255, 255, 0.05);
+    }
+    .message-bar > button {
+        width: 40px;
+        height: 40px;
+        padding: 0;
+        border-radius: 9999px;
+        display: grid;
+        place-items: center;
+        flex: none;
+    }
+    /* Send is the one filled button: the brand gradient, its icon white. */
+    .message-bar > .send-button {
+        background: linear-gradient(135deg, #8629fc, #4156f6);
+    }
+    .message-bar :global(.message-input) {
+        padding: 14px 4px 14px 16px;
+    }
+    /* The hint stays on one line in a narrow chat, cut with an ellipsis rather than wrapped. */
+    .message-bar :global(.message-input:empty::before) {
+        display: block;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    /* Upload tray: one wrapped error line, and Discord-style remove buttons on the files' top-right corners. */
+    .upload-error {
+        color: #ffd3d9;
+    }
+    .upload-error-mark {
+        flex: none;
+        width: 16px;
+        height: 16px;
+        margin-top: 1px;
+        border-radius: 9999px;
+        background: #f05a6e;
+        color: #fff;
+        font-weight: 800;
+        font-size: 11px;
+        line-height: 1;
+        display: grid;
+        place-items: center;
+    }
+    .upload-error-close {
+        position: relative;
+        flex: none;
+        width: 20px;
+        height: 20px;
+        margin: -2px -2px 0 0;
+        padding: 0;
+        display: grid;
+        place-items: center;
+        color: #a9a3c2;
+        background: none;
+        border-radius: 9999px;
+    }
+    .upload-error-close:hover {
+        color: #fff;
+    }
+    .upload-failed {
+        box-shadow: 0 0 0 2px #f05a6e;
+    }
+    .upload-remove {
+        position: absolute;
+        top: -8px;
+        right: -8px;
+        z-index: 1;
+        width: 22px;
+        height: 22px;
+        padding: 0;
+        border-radius: 9999px;
+        display: grid;
+        place-items: center;
+        color: #fff;
+        background: #2b2840;
+        /* The ring in the tray's colour keeps the button apart from the photo under it. */
+        box-shadow: 0 0 0 3px hsl(var(--contrast, 250 25% 9%)), inset 0 0 0 1px rgba(167, 139, 250, 0.3);
+    }
+    .upload-remove:hover {
+        background: #3a3656;
+    }
+    /* A bigger target for fingers than the 22px it shows. */
+    .upload-remove::before,
+    .upload-error-close::before {
+        content: "";
+        position: absolute;
+        inset: -8px;
+    }
+    .upload-remove:focus-visible,
+    .upload-error-close:focus-visible {
+        outline: 2px solid #a78bfa;
+        outline-offset: 2px;
+    }
     .no-scroll-bar {
         max-width: calc(100% + 15px);
     }

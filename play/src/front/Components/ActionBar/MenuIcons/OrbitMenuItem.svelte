@@ -1,15 +1,35 @@
 <script lang="ts">
     import { adminDashboardActivatedStore } from "../../../Stores/MenuStore";
+    import { modalIframeStore, modalVisibilityStore } from "../../../Stores/ModalStore";
     import ActionBarButton from "../ActionBarButton.svelte";
     import { openAdminModalFromMenu } from "../../../external-modules/admin-api/index";
     import OrbitIcon from "../../Icons/OrbitIcon.svelte";
+    import { iframeListener } from "../../../Api/IframeListener";
 
     export let first: boolean | undefined = undefined;
     export let last: boolean | undefined = undefined;
     export let classList: string | undefined = undefined;
 
-    // Ensure Orbit always has proper left margin and rounded corners
-    $: finalClassList = classList ? classList : "!rounded-s-lg !ps-2 !ml-1 @md/actions:!ml-2 @xl/actions:!ml-4";
+    // Orbit stands apart from the other buttons: its own pill (round on both ends, with the edge drawn on the
+    // start side too, whether or not it is the first item on screen) and a margin before it.
+    $: finalClassList = classList
+        ? classList
+        : "!rounded-s-xl u-seg-start !ps-2 !ml-1 @md/actions:!ml-2 @xl/actions:!ml-4";
+
+    // Orbit is the side window titled "Orbit" (external-modules/admin-api): while it shows, the button shows it is open.
+    $: orbitOpen = $modalVisibilityStore && $modalIframeStore?.title === "Orbit";
+
+    // The button toggles, like Explore: pressed again while Orbit shows, it closes Orbit the way its close button does.
+    function toggleOrbit() {
+        if (!orbitOpen) {
+            openAdminModalFromMenu();
+            return;
+        }
+        modalVisibilityStore.set(false);
+        if ($modalIframeStore != undefined) {
+            iframeListener.sendModalCloseTriggered($modalIframeStore);
+        }
+    }
 </script>
 
 {#if $adminDashboardActivatedStore}
@@ -17,8 +37,10 @@
         label="Orbit"
         tooltipTitle="Explore the universe and what's in orbit"
         boldLabel={true}
+        chevron
         hideIconInActionBar={false}
-        on:click={openAdminModalFromMenu}
+        state={orbitOpen ? "open" : "normal"}
+        on:click={toggleOrbit}
         {first}
         {last}
         classList={finalClassList}

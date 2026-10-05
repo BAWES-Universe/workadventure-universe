@@ -639,6 +639,58 @@ describe("Space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage", () =
     });
 });
 
+describe("Space raised hands", () => {
+    function spaceWithUser() {
+        const space = new Space(
+            "test",
+            "test",
+            new EventProcessor(),
+            FilterType.ALL_USERS,
+            vi.fn(),
+            mock<SpaceConnectionInterface>(),
+            "world",
+            [],
+            () => ({} as unknown as SpaceToBackForwarder),
+            () => ({} as unknown as SpaceToFrontDispatcher)
+        );
+        const user = { ...SpaceUser.fromPartial({ spaceUserId: "foo_1", uuid: "uuid-1" }), lowercaseName: "foo_1" };
+        const socket = mock<Socket>({
+            getUserData: vi.fn().mockReturnValue({ userUuid: "uuid-1" }),
+        });
+        space._localConnectedUserWithSpaceUser.set(socket, user);
+        const raise = (handRaisedAt: number) =>
+            space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(socket, {
+                spaceName: "test",
+                user: SpaceUser.fromPartial({ spaceUserId: "foo_1", handRaisedAt }),
+                updateMask: ["handRaisedAt"],
+            });
+        return { user, raise };
+    }
+
+    it("stamps a raised hand with the server's time, not the browser's", () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(5000);
+        const { user, raise } = spaceWithUser();
+
+        expect(raise(123)?.partialSpaceUser.handRaisedAt).toBe(5000);
+        expect(user.handRaisedAt).toBe(5000);
+        vi.useRealTimers();
+    });
+
+    it("keeps the place in line of a hand that is already up, and lowers it with 0", () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(5000);
+        const { user, raise } = spaceWithUser();
+        raise(1);
+        vi.setSystemTime(9000);
+
+        expect(raise(1)?.partialSpaceUser.handRaisedAt).toBe(5000);
+        expect(raise(0)?.partialSpaceUser.handRaisedAt).toBe(0);
+        expect(user.handRaisedAt).toBe(0);
+        vi.useRealTimers();
+    });
+});
+
 describe("Space megaphone right", () => {
     const makeLiveSpace = (localName: string, socketData: Record<string, unknown>) => {
         const space = new Space(
@@ -671,11 +723,11 @@ describe("Space megaphone right", () => {
         updateMask: ["megaphoneState", "microphoneState"],
     });
 
-    it("refuses going live in the megaphone space without the megaphone right", () => {
-        const { space, alice, aliceSocket } = makeLiveSpace("host-megaphone-news", {
-            megaphoneSpaceName: "host-megaphone-news",
-            canUseMegaphone: false,
-        });
+    const noRight = { megaphoneChannels: new Map([["host-lobby-megaphone-room", false]]) };
+    const withRight = { megaphoneChannels: new Map([["host-lobby-megaphone-room", true]]) };
+
+    it("refuses going live on a broadcast channel without the right", () => {
+        const { space, alice, aliceSocket } = makeLiveSpace("host-lobby-megaphone-room", noRight);
 
         const result = space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(aliceSocket, goLive(true));
 
@@ -683,11 +735,8 @@ describe("Space megaphone right", () => {
         expect(alice.megaphoneState).toBe(false);
     });
 
-    it("lets a player with the megaphone right go live in the megaphone space", () => {
-        const { space, alice, aliceSocket } = makeLiveSpace("host-megaphone-news", {
-            megaphoneSpaceName: "host-megaphone-news",
-            canUseMegaphone: true,
-        });
+    it("lets a player with the right go live on the broadcast channel", () => {
+        const { space, alice, aliceSocket } = makeLiveSpace("host-lobby-megaphone-room", withRight);
 
         const result = space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(aliceSocket, goLive(true));
 
@@ -695,11 +744,16 @@ describe("Space megaphone right", () => {
         expect(alice.megaphoneState).toBe(true);
     });
 
+    it("refuses going live on another room's broadcast channel", () => {
+        const { space, alice, aliceSocket } = makeLiveSpace("host-other-megaphone-room", withRight);
+
+        space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(aliceSocket, goLive(true));
+
+        expect(alice.megaphoneState).toBe(false);
+    });
+
     it("still lets anyone go live in other live spaces, such as speaker zones", () => {
-        const { space, alice, aliceSocket } = makeLiveSpace("abc123-stage", {
-            megaphoneSpaceName: "host-megaphone-news",
-            canUseMegaphone: false,
-        });
+        const { space, alice, aliceSocket } = makeLiveSpace("abc123-stage", noRight);
 
         space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(aliceSocket, goLive(true));
 
@@ -707,10 +761,7 @@ describe("Space megaphone right", () => {
     });
 
     it("always lets a player stop going live", () => {
-        const { space, alice, aliceSocket } = makeLiveSpace("host-megaphone-news", {
-            megaphoneSpaceName: "host-megaphone-news",
-            canUseMegaphone: false,
-        });
+        const { space, alice, aliceSocket } = makeLiveSpace("host-lobby-megaphone-room", noRight);
         alice.megaphoneState = true;
 
         const result = space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(aliceSocket, goLive(false));
@@ -720,10 +771,7 @@ describe("Space megaphone right", () => {
     });
 
     it("refuses going live before the room is joined", () => {
-        const { space, alice, aliceSocket } = makeLiveSpace("abc123-stage", {
-            megaphoneSpaceName: undefined,
-            canUseMegaphone: false,
-        });
+        const { space, alice, aliceSocket } = makeLiveSpace("abc123-stage", { megaphoneChannels: undefined });
 
         space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(aliceSocket, goLive(true));
 

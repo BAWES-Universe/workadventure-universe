@@ -3,7 +3,6 @@
     import { helpNotificationSettingsVisibleStore } from "../../Stores/HelpSettingsStore";
     import { getNavigatorType, isAndroid as isAndroidFct, NavigatorType } from "../../WebRtc/DeviceUtils";
     import { LL } from "../../../i18n/i18n-svelte";
-    import { gameManager } from "../../Phaser/Game/GameManager";
     import { IconInfoCircle } from "@wa-icons";
 
     let isAndroid = isAndroidFct();
@@ -17,16 +16,10 @@
     function close() {
         helpNotificationSettingsVisibleStore.set(false);
     }
-
-    function getBackgroundColor() {
-        if (!gameManager.currentStartedRoom) return undefined;
-        return gameManager.currentStartedRoom.backgroundColor;
-    }
 </script>
 
 <form
-    class="helpNotificationSettings z-[600] bg-contrast/80 backdrop-filter text-center rounded-lg text-white self-center pointer-events-auto flex flex-col m-auto w-full md:w-2/3 xl:w-[380px] text-sm md:text-base absolute top-10 left-0 right-0 overflow-hidden"
-    style={getBackgroundColor() ? `background-color: ${getBackgroundColor()};` : ""}
+    class="helpNotificationSettings z-[600] u-surface text-center rounded-2xl text-white self-center pointer-events-auto flex flex-col m-auto w-full md:w-2/3 xl:w-[380px] text-sm md:text-base absolute top-10 left-0 right-0 overflow-hidden"
     on:submit|preventDefault={close}
     transition:fly={{ y: -50, duration: 500 }}
 >
@@ -66,12 +59,16 @@
             {/if}
         </div>
     </section>
-    <section class="flex row justify-center p-4 bg-contrast">
-        <button class="btn bg-white/10 hover:bg-white/20 mr-2 w-full justify-center" on:click|preventDefault={refresh}
-            >{$LL.notification.help.refresh()}</button
+    <section class="flex row justify-center gap-2 p-4 bg-black/20 border-0 border-t border-solid border-white/[0.08]">
+        <button
+            type="button"
+            class="u-cta-secondary h-11 m-0 px-4 rounded-full w-full justify-center text-sm font-bold"
+            on:click|preventDefault={refresh}>{$LL.notification.help.refresh()}</button
         >
-        <button type="submit" class="btn btn-danger w-full justify-center" on:click|preventDefault={close}
-            >{$LL.notification.help.continue()}</button
+        <button
+            type="submit"
+            class="u-cta h-11 m-0 px-4 rounded-full w-full justify-center text-sm font-bold"
+            on:click|preventDefault={close}>{$LL.notification.help.continue()}</button
         >
     </section>
 </form>

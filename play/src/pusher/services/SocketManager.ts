@@ -5,6 +5,7 @@ import type {
     AdminMessage,
     AdminPusherToBackMessage,
     AdminRoomMessage,
+    BroadcastMeta,
     AnswerMessage,
     BanMessage,
     BanPlayerMessage,
@@ -41,7 +42,12 @@ import type {
     UserMovesMessage,
     ViewportMessage,
 } from "@workadventure/messages";
-import { FilterType as FilterTypeValue, noUndefined, ServerToClientMessage } from "@workadventure/messages";
+import {
+    FilterType as FilterTypeValue,
+    noUndefined,
+    ServerToClientMessage,
+    SetPlayerDetailsMessage as SetPlayerDetailsMessageTsProto,
+} from "@workadventure/messages";
 import * as Sentry from "@sentry/node";
 import type { AxiosResponse } from "axios";
 import axios, { isAxiosError } from "axios";
@@ -65,6 +71,7 @@ import { clientEventsEmitter } from "./ClientEventsEmitter";
 import { gaugeManager } from "./GaugeManager";
 import { apiClientRepository } from "./ApiClientRepository";
 import { adminService } from "./AdminService";
+import { chatIdVerifier, verifyChatId, withoutChatIdUpdate, withoutUncheckedChatId } from "./ChatIdVerifier";
 import type { ShortMapDescription } from "./ShortMapDescription";
 import { matrixProvider } from "./MatrixProvider";
 import { MatrixAreaMembership } from "./MatrixAreaMembership";
@@ -281,6 +288,15 @@ export class SocketManager implements ZoneEventListener {
                         case "refreshRoomMessage": {
                             const refreshMessage = message.message.refreshRoomMessage;
                             this.refreshRoomData(refreshMessage.roomId, refreshMessage.versionNumber);
+                            break;
+                        }
+                        case "batchMessage": {
+                            // The back sends each user's broadcast channels again when the room's settings change
+                            for (const subMessage of message.message.batchMessage.payload) {
+                                if (subMessage.message?.$case === "megaphoneSettingsMessage") {
+                                    setMegaphoneSettings(socketData, subMessage.message.megaphoneSettingsMessage);
+                                }
+                            }
                             break;
                         }
                     }
@@ -997,6 +1013,10 @@ export class SocketManager implements ZoneEventListener {
         //TODO check right of user in admin
     }
 
+    /**
+     * A written notice or a voice note from an admin, sent to everyone in this room, in every room of the world, or
+     * in every room of the universe. Who sent it and the reach travel with it, so receivers see them.
+     */
     public async emitPlayGlobalMessage(client: Socket, playGlobalMessageEvent: PlayGlobalMessage): Promise<void> {
         const socketData = client.getUserData();
         if (!socketData.tags.includes("admin")) {
@@ -1004,14 +1024,35 @@ export class SocketManager implements ZoneEventListener {
         }
 
         const clientRoomUrl = socketData.roomId;
+        // Only the three known reaches route; anything else falls back the way an old client would.
+        const requested = playGlobalMessageEvent.broadcast?.reach;
+        const reach =
+            requested === "room" || requested === "world" || requested === "universe"
+                ? requested
+                : playGlobalMessageEvent.broadcastToWorld
+                ? "world"
+                : "room";
         let tabUrlRooms: string[];
 
-        if (playGlobalMessageEvent.broadcastToWorld) {
+        if (reach === "universe") {
+            const universe = await adminService.getRoomsFromSameUniverse(clientRoomUrl, socketData.userUuid, "en");
+            tabUrlRooms = universe.worlds.flatMap((world) => world.rooms.map((room) => room.roomUrl));
+            if (!tabUrlRooms.includes(clientRoomUrl)) {
+                tabUrlRooms.push(clientRoomUrl);
+            }
+        } else if (reach === "world") {
             const shortDescriptions = await adminService.getUrlRoomsFromSameWorld(clientRoomUrl, "en", [], true);
             tabUrlRooms = shortDescriptions.map((shortDescription) => shortDescription.roomUrl);
         } else {
             tabUrlRooms = [clientRoomUrl];
         }
+
+        const broadcast: BroadcastMeta = {
+            senderName: playGlobalMessageEvent.broadcast?.senderName ?? socketData.name,
+            reach,
+            reachLabel: playGlobalMessageEvent.broadcast?.reachLabel,
+            caption: playGlobalMessageEvent.broadcast?.caption,
+        };
 
         for (const roomUrl of tabUrlRooms) {
             //eslint-disable-next-line no-await-in-loop
@@ -1020,6 +1061,7 @@ export class SocketManager implements ZoneEventListener {
                 message: playGlobalMessageEvent.content,
                 type: playGlobalMessageEvent.type,
                 roomId: roomUrl,
+                broadcast,
             };
             apiRoom.sendAdminMessageToRoom(roomMessage, () => {
                 return;
@@ -1115,7 +1157,11 @@ export class SocketManager implements ZoneEventListener {
     }
 
     async handleUpdateSpaceUser(client: Socket, updateSpaceUserMessage: UpdateSpaceUserMessage) {
-        const message = noUndefined(updateSpaceUserMessage);
+        // The chat ID is only ever set by the server, once checked (handleUpdateChatId).
+        const message = withoutChatIdUpdate(noUndefined(updateSpaceUserMessage));
+        if (message.updateMask.length === 0) {
+            return;
+        }
 
         await this.checkClientIsPartOfSpace(client, message.spaceName);
         const space = this.spaces.get(message.spaceName);
@@ -1413,10 +1459,33 @@ export class SocketManager implements ZoneEventListener {
         };
     }
 
-    handleUpdateChatId(client: Socket, email: string, chatId: string): Promise<void> {
+    /**
+     * The browser sends the player's Matrix access token; the Matrix server tells us whose token it is, and that is
+     * the player's chat ID. It is saved for this socket's own user only, and shown to the other players.
+     * Whatever chat ID or email the browser sends along is ignored.
+     */
+    handleUpdateChatId(client: Socket, matrixAccessToken: string): Promise<void> {
         const userData = client.getUserData();
-        userData.chatID = chatId;
-        return adminService.updateChatId(email, chatId, client.getUserData().roomId);
+        return verifyChatId(userData, matrixAccessToken, chatIdVerifier, async (chatId) => {
+            await Promise.all([
+                adminService.updateChatId(userData.userUuid, chatId, userData.roomId).catch((e) => {
+                    console.error("Could not save the checked chat ID", e);
+                    Sentry.captureException(e);
+                }),
+                // Same message the browser used to send itself: shows the chat ID to the other players.
+                this.handleSetPlayerDetails(client, SetPlayerDetailsMessageTsProto.fromPartial({ chatID: chatId })),
+            ]);
+        });
+    }
+
+    /**
+     * A chat ID in a player details message is only accepted when it is the checked one (see handleUpdateChatId).
+     */
+    sanitizePlayerDetailsFromClient(
+        client: Socket,
+        playerDetailsMessage: SetPlayerDetailsMessage
+    ): SetPlayerDetailsMessage {
+        return withoutUncheckedChatId(playerDetailsMessage, client.getUserData().chatID);
     }
 
     async handleOauthRefreshTokenQuery(
@@ -1499,6 +1568,11 @@ export class SocketManager implements ZoneEventListener {
     }
 
     async handleEnterChatRoomAreaQuery(socket: Socket, roomID: string): Promise<void> {
+        const { chatID, chatIdVerification } = socket.getUserData();
+        if (!chatID && chatIdVerification) {
+            // The player walked into the area while their chat ID was being checked: wait for it.
+            await chatIdVerification;
+        }
         return this.matrixAreaMembership.enter(socket, roomID);
     }
 

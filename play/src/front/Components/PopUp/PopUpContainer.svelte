@@ -5,8 +5,9 @@
     export let reduceOnSmallScreen = false;
 </script>
 
+<!-- Every popup on the same raised ink surface as the menus and the device list, 16px corners. -->
 <div
-    class="bg-contrast/80 flex flex-col backdrop-blur-md text-white min-w-60 min-h-20 rounded-lg overflow-hidden transition-all animation responsive z-20 {extraClasses}"
+    class="u-surface flex flex-col text-white min-w-60 min-h-20 rounded-2xl overflow-hidden transition-all animation responsive z-20 {extraClasses}"
     class:responsive={reduceOnSmallScreen}
 >
     <div class="flex items-center p-4 px-10 pointer-events-auto justify-center grow">
@@ -15,7 +16,9 @@
         </div>
     </div>
     {#if SLOTS.buttons}
-        <div class="buttons-wrapper flex items-center justify-center p-2 space-x-2 bg-contrast pointer-events-auto">
+        <div
+            class="buttons-wrapper flex items-center justify-center p-2 space-x-2 bg-black/20 border-0 border-t border-solid border-white/[0.08] pointer-events-auto"
+        >
             <slot name="buttons" />
         </div>
     {/if}

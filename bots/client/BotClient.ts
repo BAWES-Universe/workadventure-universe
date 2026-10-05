@@ -30,6 +30,7 @@ import { PathSmoother } from '../utils/PathSmoother';
 import { movementLogger } from '../utils/MovementLogger';
 import type { BotConfiguration } from '../server/AdminApiService';
 import { FileParser } from '../services/FileParser';
+import { extractChatLinks } from '../utils/chatLinks';
 import { resolve4, resolve6 } from 'dns/promises';
 import * as Sentry from '@sentry/node';
 
@@ -266,6 +267,13 @@ export class BotClient {
     isOtherBot(playerId: number): boolean {
         // It's another bot if it's in the bot set AND it's not ourselves
         return playerId !== this.userId && BotClient.isBot(playerId);
+    }
+
+    /**
+     * The behavior running this bot, if any
+     */
+    getBehavior(): BaseBehavior | null {
+        return this.behavior ?? null;
     }
 
     /**
@@ -3102,11 +3110,8 @@ export class BotClient {
      * message drive arbitrary resource consumption.
      */
     private extractUrlsFromText(text: string): string[] {
-        const matches = text.match(/https?:\/\/[^\s)]+/g) || [];
-        return matches
-            .map(match => match.replace(/[.,!?;:]+$/, ''))
-            .filter((url, index, all) => all.indexOf(url) === index)
-            .slice(0, BotClient.MAX_CHAT_URLS);
+        // Full URLs and bare site names ("check out bawes.net"); see utils/chatLinks.
+        return extractChatLinks(text, BotClient.MAX_CHAT_URLS);
     }
 
     /**

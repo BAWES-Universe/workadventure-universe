@@ -51,6 +51,7 @@ import { MatrixChatMessageReaction } from "./MatrixChatMessageReaction";
 import { matrixSecurity } from "./MatrixSecurity";
 import { MatrixChatRoomMember } from "./MatrixChatRoomMember";
 import { isInvitationGoneError } from "./isInvitationGoneError";
+import { matrixAvatarStore } from "./MatrixMedia";
 
 /** How long leaving waits for pending invitations to be withdrawn before it leaves anyway. */
 const INVITE_WITHDRAWAL_DEADLINE_MS = 3000;
@@ -109,15 +110,18 @@ export class MatrixChatRoom
         this.type = this.getMatrixRoomType();
         this.hasUnreadMessages = writable(matrixRoom.getUnreadNotificationCount() > 0);
         this.unreadNotificationCount = writable(matrixRoom.getUnreadNotificationCount());
-        this.pictureStore = readable(matrixRoom.getAvatarUrl(matrixRoom.client.baseUrl, 96, 96, "scale") ?? undefined);
+        // The room's own picture, or for a direct chat the other person's (their woka, which Universe saves there).
+        this.pictureStore = matrixAvatarStore(
+            matrixRoom.client,
+            matrixRoom.getMxcAvatarUrl() ?? matrixRoom.getAvatarFallbackMember()?.getMxcAvatarUrl(),
+            96
+        );
         this.messages = new SearchableArrayStore((item: MatrixChatMessage) => item.id);
         this.sendMessage = this.sendMessage.bind(this);
         this.myMembership = writable(matrixRoom.getMyMembership());
 
         this.members = writable([
-            ...matrixRoom
-                .getMembers()
-                .map((member) => new MatrixChatRoomMember(member, this.matrixRoom.client.baseUrl)),
+            ...matrixRoom.getMembers().map((member) => new MatrixChatRoomMember(member, this.matrixRoom.client)),
         ]);
 
         this.hasPreviousMessage = writable(false);
@@ -233,10 +237,7 @@ export class MatrixChatRoom
     }
 
     private onRoomNewMember(event: MatrixEvent, state: RoomState, member: RoomMember) {
-        this.members.update((members) => [
-            ...members,
-            new MatrixChatRoomMember(member, this.matrixRoom.client.baseUrl),
-        ]);
+        this.members.update((members) => [...members, new MatrixChatRoomMember(member, this.matrixRoom.client)]);
     }
     private onRoomStateEvent(event: MatrixEvent, state: RoomState, lastStateEvent: MatrixEvent | null) {
         if (get(this.isEncrypted)) return;

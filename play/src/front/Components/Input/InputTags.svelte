@@ -21,6 +21,8 @@
         undefined;
 
     let filterText = "";
+    // One shared empty list: a fresh [] on every render would count as a change and re-run the select's value logic.
+    const NO_ITEMS: InputTagOption[] = [];
     const SLOTS = $$slots;
 
     function handleFilter() {
@@ -68,7 +70,7 @@
         on:change={_handleChange}
         on:input={handleChange}
         on:select={handleChange}
-        items={filterText.trim().length === 0 ? [] : options}
+        items={filterText.trim().length === 0 ? NO_ITEMS : options}
         bind:value
         multiple={true}
         placeholder={placeholder ?? "Select rights"}

@@ -3,7 +3,8 @@
 <script lang="ts">
     //STYLE: Classes factorizing tailwind's ones are defined in video-ui.scss
 
-    import { getContext, onDestroy } from "svelte";
+    import { getContext, hasContext, onDestroy } from "svelte";
+    import { readable, type Readable } from "svelte/store";
     import SoundMeterWidget from "../SoundMeterWidget.svelte";
     import { highlightedEmbedScreen } from "../../Stores/HighlightedEmbedScreenStore";
     import type { VideoBox } from "../../Space/Space";
@@ -14,6 +15,7 @@
     import { highlightFullScreen } from "../../Stores/ActionsCamStore";
     import { showFloatingUi } from "../../Utils/svelte-floatingui-show";
     import { userActivationManager } from "../../Stores/UserActivationStore";
+    import { liveBroadcastStore } from "../../Stores/MegaphoneStore";
     import ActionMediaBox from "./ActionMediaBox.svelte";
     import UserName from "./UserName.svelte";
     import UpDownChevron from "./UpDownChevron.svelte";
@@ -28,6 +30,8 @@
 
     // The inCameraContainer is used to know if the VideoMediaBox is part of a series or video or if it is the highlighted video.
     let inCameraContainer: boolean = getContext("inCameraContainer");
+    // On phones a video can be shown as a small round face (VideoBox.svelte): only the picture, no name or meter.
+    const videoFace: Readable<boolean> = hasContext("videoFace") ? getContext("videoFace") : readable(false);
 
     let extendedSpaceUser = videoBox.spaceUser;
 
@@ -56,7 +60,9 @@
 
     $: videoEnabled = $hasVideoStore;
 
-    $: isMegaphoneSpace = videoBox.isMegaphoneSpace ?? false;
+    // Live: someone else's broadcast you listen to, or your own tile while you are live.
+    $: isMegaphoneSpace =
+        (videoBox.isMegaphoneSpace ?? false) || (videoBox.uniqueId === "-1" && $liveBroadcastStore !== undefined);
 
     function toggleFullScreen() {
         highlightFullScreen.update((current) => !current);
@@ -183,7 +189,7 @@
                 verticalAlign={!inCameraContainer && !fullScreen ? "top" : "center"}
                 isTalking={showVoiceIndicator}
                 flipX={streamable?.flipX}
-                cover={streamable?.displayMode === "cover" && inCameraContainer && !fullScreen}
+                cover={(streamable?.displayMode === "cover" || $videoFace) && inCameraContainer && !fullScreen}
                 isBlocked={$isBlockedStore}
                 withBackground={(inCameraContainer && $statusStore !== "error" && $statusStore !== "connecting") ||
                     $isBlockedStore}
@@ -192,6 +198,7 @@
                 <UserName
                     name={name ?? "unknown"}
                     picture={pictureStore}
+                    pictureOnly={$videoFace}
                     isPlayingAudio={showVoiceIndicator}
                     isCameraDisabled={!videoEnabled && !miniMode}
                     isBlocked={$isBlockedStore}
@@ -238,7 +245,7 @@
                         </div>
                     </div>
                 {/if}
-                {#if $statusStore === "connected" && $hasAudioStore}
+                {#if $statusStore === "connected" && $hasAudioStore && !$videoFace}
                     <div class="z-[251] absolute p-2 right-1" class:top-1={videoEnabled} class:top-0={!videoEnabled}>
                         {#if !$isMutedStore}
                             <SoundMeterWidget

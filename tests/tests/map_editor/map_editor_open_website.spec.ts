@@ -105,15 +105,9 @@ test.describe("Map editor @oidc @nomobile @nowebkit", () => {
 
         await AreaEditor.setAreaName(page, "My app zone");
 
+        // The area panel opens one setting's page at a time: add each app, fill its link, then the next one.
         // add property Google Docs
         await AreaEditor.addProperty(page, "openWebsiteGoogleDocs");
-        // add property Google Sheets
-        await AreaEditor.addProperty(page, "openWebsiteGoogleSheets");
-        // add property Google Slides
-        await AreaEditor.addProperty(page, "openWebsiteGoogleSlides");
-        // add property Google Slides
-        await AreaEditor.addProperty(page, "openWebsiteGoogleDrive");
-
         // fill Google Docs link
         const googleDockButtonLocator = page.getByPlaceholder("https://docs.google.com/document/d/1iFHmKL4HJ6WzvQI-6FlyeuCy1gzX8bWQ83dNlcTzigk/edit").first();
         // While the link is not filled, loop to fill it
@@ -121,12 +115,16 @@ test.describe("Map editor @oidc @nomobile @nowebkit", () => {
         await googleDockButtonLocator.first().blur({ timeout: 10_000 });
         await expect(googleDockButtonLocator).toHaveValue("https://docs.google.com/document/d/1iFHmKL4HJ6WzvQI-6FlyeuCy1gzX8bWQ83dNlcTzigk/edit?embedded=true", { timeout: 10_000 });
 
+        // add property Google Sheets
+        await AreaEditor.addProperty(page, "openWebsiteGoogleSheets");
         // fill Google Sheets link
         const googleSheetsButtonLocator = page.getByPlaceholder("https://docs.google.com/spreadsheets/d/1SBIn3IBG30eeq944OhT4VI_tSg-b1CbB0TV0ejK70RA/edit").first();
         await googleSheetsButtonLocator.fill("https://docs.google.com/spreadsheets/d/1SBIn3IBG30eeq944OhT4VI_tSg-b1CbB0TV0ejK70RA/edit");
         await googleSheetsButtonLocator.first().blur({ timeout: 10_000 });
         await expect(googleSheetsButtonLocator).toHaveValue("https://docs.google.com/spreadsheets/d/1SBIn3IBG30eeq944OhT4VI_tSg-b1CbB0TV0ejK70RA/edit?embedded=true", { timeout: 10_000 });
 
+        // add property Google Slides
+        await AreaEditor.addProperty(page, "openWebsiteGoogleSlides");
         // fill Google Slides link
         const googleSlidesButtonLocator = page.getByPlaceholder("https://docs.google.com/presentation/d/1fU4fOnRiDIvOoVXbksrF2Eb0L8BYavs7YSsBmR_We3g/edit").first();
         // While the link is not filled, loop to fill it
@@ -134,6 +132,8 @@ test.describe("Map editor @oidc @nomobile @nowebkit", () => {
         await googleSlidesButtonLocator.first().blur({ timeout: 10_000 });
         await expect(googleSlidesButtonLocator).toHaveValue("https://docs.google.com/presentation/d/1fU4fOnRiDIvOoVXbksrF2Eb0L8BYavs7YSsBmR_We3g/edit?embedded=true", { timeout: 10_000 });
 
+        // add property Google Drive
+        await AreaEditor.addProperty(page, "openWebsiteGoogleDrive");
         // fill Google Drive link
         const googleDriveButtonLocator = page.getByPlaceholder("https://drive.google.com/file/d/1DjNjZVbVeQO9EvgONLzCtl6wG-kxSr9Z/preview").first();
         await googleDriveButtonLocator.fill("https://drive.google.com/file/d/1DjNjZVbVeQO9EvgONLzCtl6wG-kxSr9Z/preview");

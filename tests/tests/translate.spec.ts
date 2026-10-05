@@ -12,7 +12,9 @@ test.describe('Translation @nomobile', () => {
 
     await page.getByTestId('action-user').click();         // new way
     await page.click('button:has-text("Settings")');
-    await page.selectOption('.languages-switcher', 'fr-FR');
+    // Language is a choice row in General: open it, then pick French
+    await page.getByTestId('language').locator('button[aria-expanded]').click();
+    await page.getByTestId('language').getByRole('option', { name: /^Français/ }).click();
 
     await page.reload();
     await page.getByTestId('action-user').click();         // new way
