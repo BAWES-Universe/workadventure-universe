@@ -440,7 +440,7 @@ export class GameScene extends DirtyScene {
     private readonly pendingBroadcastJoins = new Set<string>();
     /** Set once the scene is closing: a join that lands after that must not touch the destroyed registry. */
     private broadcastSceneClosing = false;
-    /** Failed joins per scope, so a broadcast space that could not be joined is tried again, a few times. */
+    /** Failed joins per scope and space name, so a broadcast space that could not be joined is tried again, a few times. */
     private readonly broadcastJoinFailures = new Map<string, number>();
     private readonly broadcastJoinRetryTimers = new Set<ReturnType<typeof setTimeout>>();
 
@@ -490,7 +490,7 @@ export class GameScene extends DirtyScene {
                         });
                         return;
                     }
-                    this.broadcastJoinFailures.delete(scope);
+                    this.broadcastJoinFailures.delete(`${scope} ${spaceName}`);
                     // The tiles of whoever goes live here get the live ring, and sit first in the strip.
                     space.setMetadata(
                         new Map<string, unknown>([
@@ -518,7 +518,7 @@ export class GameScene extends DirtyScene {
                 .catch((e) => {
                     console.error(e);
                     Sentry.captureException(e);
-                    this.retryBroadcastJoinLater(scope, broadcastService);
+                    this.retryBroadcastJoinLater(scope, spaceName, broadcastService);
                 })
                 .finally(() => {
                     this.pendingBroadcastJoins.delete(scope);
@@ -534,13 +534,15 @@ export class GameScene extends DirtyScene {
      * A join that failed (the network dropped, the pusher timed out) is tried again after a while, as long as the
      * scene is open and the channel is still wanted: the channels only re-sync when they change, so without this a
      * passing failure would keep the player out of that broadcast for good. Three tries, each waiting twice as long.
+     * The tries are counted per space name, so a scope that moves to another space starts its count afresh.
      */
-    private retryBroadcastJoinLater(scope: string, broadcastService: BroadcastService): void {
+    private retryBroadcastJoinLater(scope: string, spaceName: string, broadcastService: BroadcastService): void {
         if (this.broadcastSceneClosing || this.abortController.signal.aborted) {
             return;
         }
-        const failures = (this.broadcastJoinFailures.get(scope) ?? 0) + 1;
-        this.broadcastJoinFailures.set(scope, failures);
+        const failureKey = `${scope} ${spaceName}`;
+        const failures = (this.broadcastJoinFailures.get(failureKey) ?? 0) + 1;
+        this.broadcastJoinFailures.set(failureKey, failures);
         if (failures > GameScene.BROADCAST_JOIN_RETRIES) {
             return;
         }
@@ -549,7 +551,7 @@ export class GameScene extends DirtyScene {
             if (
                 this.broadcastSceneClosing ||
                 get(availabilityStatusStore) === AvailabilityStatus.DO_NOT_DISTURB ||
-                !this.latestBroadcastChannels.some((c) => c.scope === scope)
+                !this.latestBroadcastChannels.some((c) => c.scope === scope && slugify(c.url) === spaceName)
             ) {
                 return;
             }

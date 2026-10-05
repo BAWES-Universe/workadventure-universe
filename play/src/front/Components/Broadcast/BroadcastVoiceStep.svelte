@@ -55,6 +55,8 @@
     let fileInput: HTMLInputElement;
 
     let opening = false;
+    /** Bumped when a file is chosen, so a microphone granted after that is let go instead of replacing the file. */
+    let chosen = 0;
 
     /** @param keepReview "Record again": the review (and its recording) stays on screen until the microphone is granted. */
     async function startRecording(keepReview = false) {
@@ -62,6 +64,7 @@
         opening = true;
         error = undefined;
         if (!keepReview) state = "starting";
+        const mine = chosen;
         let started: VoiceRecorder;
         try {
             started = await startVoiceRecorder();
@@ -74,8 +77,8 @@
             // eslint-disable-next-line require-atomic-updates
             opening = false;
         }
-        // The card closed while the browser was asking for the microphone: let it go again.
-        if (destroyed) {
+        // The card closed, or a file was chosen, while the browser was asking for the microphone: let it go again.
+        if (destroyed || mine !== chosen) {
             started.stop().catch(() => {});
             return;
         }
@@ -132,12 +135,17 @@
             return;
         }
         error = undefined;
+        chosen += 1;
         if (recorder) await stopRecording();
         try {
             const { levels, duration } = await describeAudioFile(file);
             setAudio(file, file.name, levels, duration);
         } catch (e) {
             console.warn("Broadcast: the file could not be decoded", e);
+            // The file was picked while the microphone was being opened, and that recorder was let go: ask again.
+            if (state === "starting" && !recorder && !opening && !destroyed) {
+                startRecording().catch((err) => console.error(err));
+            }
             error = $LL.broadcast.voice.wrongFile();
         }
     }
