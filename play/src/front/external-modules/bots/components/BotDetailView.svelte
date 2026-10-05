@@ -314,16 +314,18 @@
         onSave();
     }
 
-    /** What the Companion row says: the companion's name, None yet, or that this room's list lacks it. */
+    /**
+     * What the Companion row says: the companion's name, None yet, or that this room's list lacks it. An ellipsis
+     * holds the line while the room's list is still loading, so the row is never blank.
+     */
     function companionBrief(
         id: string | null | undefined,
         catalog: typeof $botCompanionCatalogStore,
         text: typeof page.companion
     ): string {
         if (!id) return text.none();
-        const found = findCompanion(catalog, id);
-        if (found) return found.name;
-        return catalog ? text.notHere() : "";
+        if (!catalog) return "…";
+        return findCompanion(catalog, id)?.name ?? text.notHere();
     }
     $: companionLine = currentBot
         ? companionBrief(currentBot.companionTextureId, $botCompanionCatalogStore, page.companion)
