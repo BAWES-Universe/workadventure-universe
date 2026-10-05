@@ -9,7 +9,7 @@
     "RequirePkce": false,
     "AllowedScopes": ["openid", "profile", "email", "tags-scope", "some-app-scope-1", "offline_access"],
     "IdentityTokenLifetime": 3600,
-    "AccessTokenLifetime": 300,
+    "AccessTokenLifetime": 7200,
     "RequireClientSecret": false,
     "AllowOfflineAccess": true
   },
@@ -23,7 +23,7 @@
     "RequirePkce": true,
     "AllowedScopes": ["openid", "profile", "email", "tags-scope", "some-app-scope-1", "offline_access"],
     "IdentityTokenLifetime": 3600,
-    "AccessTokenLifetime": 300,
+    "AccessTokenLifetime": 7200,
     "RequireClientSecret": false,
     "AllowOfflineAccess": true
   }

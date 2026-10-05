@@ -13,7 +13,6 @@ import {
     editingWaypointIndexStore,
     updateBotPosition,
     updateBotRadius,
-    updateConversationRadius,
     addWaypoint,
     updateWaypoint,
     removeWaypoint,
@@ -299,37 +298,27 @@ export class BotEditorTool {
                 return;
             }
 
-            // Click anywhere within the radius to add a waypoint
+            // Click anywhere on the map to add a stop: a route isn't limited to the bot's circle
             const selectedBot = get(selectedBotStore);
             if (selectedBot) {
-                const center = selectedBot.behaviorConfig?.assignedSpace?.center || { x: 0, y: 0 };
-                const radius = selectedBot.behaviorConfig?.assignedSpace?.radius || 100;
+                // Snap to grid if shift is held
+                let x = pointer.worldX;
+                let y = pointer.worldY;
+                if (this.shiftKey?.isDown) {
+                    x = Math.round(x / 32) * 32;
+                    y = Math.round(y / 32) * 32;
+                }
 
-                // Check if click is within the constraint radius
-                const dx = pointer.worldX - center.x;
-                const dy = pointer.worldY - center.y;
-                const distance = Math.sqrt(dx * dx + dy * dy);
+                // Get current waypoints
+                const currentWaypoints = selectedBot.behaviorConfig?.patrolWaypoints || [];
 
-                if (distance <= radius) {
-                    // Snap to grid if shift is held
-                    let x = pointer.worldX;
-                    let y = pointer.worldY;
-                    if (this.shiftKey?.isDown) {
-                        x = Math.round(x / 32) * 32;
-                        y = Math.round(y / 32) * 32;
-                    }
+                // Add waypoint at click location
+                addWaypoint(selectedBot.id, x, y);
 
-                    // Get current waypoints
-                    const currentWaypoints = selectedBot.behaviorConfig?.patrolWaypoints || [];
-
-                    // Add waypoint at click location
-                    addWaypoint(selectedBot.id, x, y);
-
-                    // Update the waypoint path display with new waypoints array
-                    const waypointPath = this.waypointPaths.get(selectedBot.id);
-                    if (waypointPath) {
-                        waypointPath.setWaypoints([...currentWaypoints, { x, y }]);
-                    }
+                // Update the waypoint path display with new waypoints array
+                const waypointPath = this.waypointPaths.get(selectedBot.id);
+                if (waypointPath) {
+                    waypointPath.setWaypoints([...currentWaypoints, { x, y }]);
                 }
             }
             return;
@@ -507,10 +496,6 @@ export class BotEditorTool {
             updateBotRadius(botId, radius);
         });
 
-        preview.on(BotPreviewEvent.ConversationRadiusChanged, (botId: string, radius: number) => {
-            updateConversationRadius(botId, radius);
-        });
-
         this.botPreviews.set(bot.id, preview);
 
         // Create waypoint path if patrol bot
@@ -530,10 +515,11 @@ export class BotEditorTool {
         const waypoints = bot.behaviorConfig?.patrolWaypoints || [];
         const waypointPath = new WaypointPath(this.scene, waypoints);
 
-        // Set constraint boundary (waypoints must stay within radius)
+        // Stops can go anywhere: the bot server never kept a route bot inside its circle, so the circle
+        // only limited where stops could be drawn. A radius of 0 means no limit; the centre still places
+        // the "+" button for an empty route.
         const center = bot.behaviorConfig?.assignedSpace?.center || { x: 0, y: 0 };
-        const radius = bot.behaviorConfig?.assignedSpace?.radius || 0;
-        waypointPath.setConstraint(center, radius);
+        waypointPath.setConstraint(center, 0);
 
         // Setup event handlers
         waypointPath.on(WaypointPathEvent.WaypointMoved, (index: number, x: number, y: number) => {
@@ -577,10 +563,9 @@ export class BotEditorTool {
                         waypointPath = this.waypointPaths.get(bot.id);
                     }
                     if (waypointPath) {
-                        // Update constraint when radius/position changes
+                        // Follow the bot's position for the "+" button; stops are not limited to the circle
                         const center = bot.behaviorConfig?.assignedSpace?.center || { x: 0, y: 0 };
-                        const radius = bot.behaviorConfig?.assignedSpace?.radius || 0;
-                        waypointPath.setConstraint(center, radius);
+                        waypointPath.setConstraint(center, 0);
                         waypointPath.setWaypoints(bot.behaviorConfig.patrolWaypoints || []);
                     }
                 } else {
