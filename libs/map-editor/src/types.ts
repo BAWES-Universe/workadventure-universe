@@ -356,8 +356,11 @@ export const WAMVendor = z
 export const MegaphoneSettings = z.object({
     enabled: z.boolean(),
     title: z.string().optional(),
+    // The single reach of rooms configured before "scopes" existed ("ROOM" or "WORLD").
     scope: z.string().optional(),
     rights: z.array(z.string()).optional(),
+    // The reaches people may go live at from this room ("ROOM", "WORLD"). Replaces "scope".
+    scopes: z.array(z.string()).optional(),
 });
 
 export type MegaphoneSettings = z.infer<typeof MegaphoneSettings>;

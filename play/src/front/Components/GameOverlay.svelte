@@ -10,7 +10,7 @@
     import { refreshPromptStore } from "../Stores/RefreshPromptStore";
     import { forceRefreshChatStore } from "../Stores/ChatStore";
     import { loaderVisibleStore } from "../Stores/LoaderStore";
-    import { showModalGlobalComminucationVisibilityStore } from "../Stores/ModalStore";
+    import { broadcastPanelOpenStore } from "../Stores/BroadcastStore";
     import { isActivatedStore as calendarIsActivatedStore, isCalendarVisibleStore } from "../Stores/CalendarStore";
     import { isActivatedStore as todoListIsActivatedStore, isTodoListVisibleStore } from "../Stores/TodoListStore";
     import { draggingFile } from "../Stores/FileUploadStore";
@@ -25,7 +25,7 @@
     import LoaderScene from "./Loader/LoaderScene.svelte";
     import EnableCameraScene from "./EnableCamera/EnableCameraScene.svelte";
     import bgMap from "./images/map-exemple.png";
-    import GlobalCommunicationModal from "./Modal/GlobalCommunicationModal.svelte";
+    import BroadcastPanel from "./Broadcast/BroadcastPanel.svelte";
     import Calendar from "./Calendar/Calendar.svelte";
     import TodoList from "./TodoList/TodoList.svelte";
     import FloatingUiPopupList from "./Util/FloatingUiPopupList.svelte";
@@ -91,8 +91,8 @@
     {/if}
     {#key $forceRefreshChatStore}
         <ChatSidebar />
-        {#if $showModalGlobalComminucationVisibilityStore}
-            <GlobalCommunicationModal />
+        {#if $broadcastPanelOpenStore}
+            <BroadcastPanel />
         {/if}
 
         <MainLayout />

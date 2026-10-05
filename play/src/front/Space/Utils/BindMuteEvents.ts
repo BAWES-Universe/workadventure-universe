@@ -5,7 +5,7 @@ import type { PrivateEvents, SpaceInterface } from "../SpaceInterface";
 import { notificationPlayingStore } from "../../Stores/NotificationStore";
 import { isSpeakerStore, requestedCameraState, requestedMicrophoneState } from "../../Stores/MediaStore";
 import LL from "../../../i18n/i18n-svelte";
-import { currentLiveStreamingSpaceStore } from "../../Stores/MegaphoneStore";
+import { currentLiveStreamingSpaceStore, forgetMegaphoneSpace } from "../../Stores/MegaphoneStore";
 import { chatZoneLiveStore } from "../../Stores/ChatStore";
 import { gameManager } from "../../Phaser/Game/GameManager";
 import { popupStore } from "../../Stores/PopupStore";
@@ -97,6 +97,7 @@ export function bindMuteEventsToSpace(space: SpaceInterface): void {
     space.observePrivateEvent("kickOffUser").subscribe((event) => {
         isSpeakerStore.set(false);
         currentLiveStreamingSpaceStore.set(undefined);
+        forgetMegaphoneSpace(space.getName());
 
         const scene = gameManager.getCurrentGameScene();
         const spaceRegistry = scene.spaceRegistry;

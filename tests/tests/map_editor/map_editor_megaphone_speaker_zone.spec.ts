@@ -78,23 +78,15 @@ test.describe("Map editor @oidc @nomobile @nowebkit", () => {
         await Menu.isThereMegaphoneButton(page);
         await Menu.isThereMegaphoneButton(page2);
 
-        // Update the megaphone button
+        // Go live from the Broadcast card
         await Menu.toggleMegaphoneButton(page);
-
-
-        // Click on the button to start live message
-        await expect(page.getByRole('button', { name: 'Start live message' })).toBeVisible();
-        await page.getByRole('button', { name: 'Start live message' }).click({ timeout: 10_000 });
-        // Click on the button to start megaphone
-        await expect(page.getByRole('button', { name: 'Start megaphone' })).toBeVisible();
-        await page.getByRole('button', { name: 'Start megaphone' }).click({ timeout: 10_000 });
+        await Menu.startLiveBroadcast(page);
 
 
         // click on the megaphone button to start the streaming session
         await expect(page2.getByText('Admin1', { exact: true })).toBeVisible({ timeout: 15_000 });
 
-        await page.getByRole('button', { name: 'Stop megaphone' }).click();
-        await expect(page.getByRole('heading', { name: 'Global communication' })).toBeHidden();
+        await Menu.stopLiveBroadcast(page);
 
 
         await page2.context().close();

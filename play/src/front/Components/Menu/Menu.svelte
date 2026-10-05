@@ -31,7 +31,6 @@
         IconArrowLeft,
         IconKeyboard,
         IconMessageCircle,
-        IconSpeakerPhone,
         IconUnMute,
         IconUser,
         IconX,
@@ -40,7 +39,7 @@
     /**
      * The settings window. Settings are two pages, General and Sound and video, plus Keyboard on computers. Map
      * credits (and Contact and Report a problem, when the room sets a link for them) open from rows of General, with a
-     * back button. The other pages of the menu (the profile, global messages, chat, a map's own menus) keep their
+     * back button. The other pages of the menu (the profile, chat, a map's own menus) keep their
      * place after the settings pages, so nothing a room or script adds is lost.
      *
      * On a phone the pages are tabs with the gradient pill under the open one, like Chats and People. From 1024px they
@@ -82,8 +81,6 @@
         switch (item.key) {
             case SubMenusInterface.profile:
                 return IconUser;
-            case SubMenusInterface.globalMessages:
-                return IconSpeakerPhone;
             case SubMenusInterface.chat:
                 return IconMessageCircle;
             default:
@@ -218,10 +215,6 @@
             case SubMenusInterface.contact:
             case SubMenusInterface.report:
                 openRowPage(item.key);
-                return;
-            case SubMenusInterface.globalMessages:
-                show(item.key, (await import("./GlobalMessagesSubMenu.svelte")).default);
-                analyticsClient.globalMessage();
                 return;
             case SubMenusInterface.chat:
                 show(item.key, ChatSubMenu);

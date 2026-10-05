@@ -26,6 +26,7 @@ import type {
     RoomsList,
     SendEventQuery,
     SendUserMessage,
+    BroadcastMeta,
     SetPlayerDetailsMessage,
     SubToPusherRoomMessage,
     UpdateMapToNewestWithKeyMessage,
@@ -56,7 +57,6 @@ import Jwt from "jsonwebtoken";
 import BigbluebuttonJs from "bigbluebutton-js";
 import Debug from "debug";
 import * as Sentry from "@sentry/node";
-import { WAMSettingsUtils } from "@workadventure/map-editor";
 import { z } from "zod";
 import type { ServiceError } from "@grpc/grpc-js";
 import { asError } from "catch-unknown";
@@ -225,14 +225,7 @@ export class SocketManager {
             activatedInviteUser: user.activatedInviteUser != undefined ? user.activatedInviteUser : true,
             applications: user.applications ?? [],
             playerVariable: playerVariablesMessage,
-            megaphoneSettings: {
-                enabled: WAMSettingsUtils.canUseMegaphone(room.wamSettings, user.tags),
-                url: WAMSettingsUtils.getMegaphoneUrl(
-                    room.wamSettings,
-                    room.roomGroup ?? new URL(room.roomUrl).host,
-                    room.roomUrl
-                ),
-            },
+            megaphoneSettings: room.getMegaphoneSettingsFor(user.tags),
         };
 
         user.write({
@@ -1100,7 +1093,7 @@ export class SocketManager {
         }
     }
 
-    async sendAdminRoomMessage(roomId: string, message: string, type: string) {
+    async sendAdminRoomMessage(roomId: string, message: string, type: string, broadcast?: BroadcastMeta) {
         const room = await this.roomsPromises.get(roomId);
         if (!room) {
             //todo: this should cause the http call to return a 500
@@ -1123,6 +1116,7 @@ export class SocketManager {
                 sendUserMessage: {
                     message,
                     type,
+                    broadcast,
                 },
             });
         });

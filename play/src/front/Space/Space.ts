@@ -29,7 +29,7 @@ import { blackListManager } from "../WebRtc/BlackListManager";
 import { ConnectionClosedError } from "../Connection/ConnectionClosedError";
 import { highlightedEmbedScreen } from "../Stores/HighlightedEmbedScreenStore";
 import type { Streamable } from "../Stores/StreamableCollectionStore";
-import { LAST_VIDEO_BOX_PRIORITY } from "../Stores/StreamableCollectionStore";
+import { LAST_VIDEO_BOX_PRIORITY, LIVE_BROADCAST_VIDEO_BOX_PRIORITY } from "../Stores/StreamableCollectionStore";
 import type {
     PrivateEventsObservables,
     PublicEventsObservables,
@@ -876,7 +876,7 @@ export class Space implements SpaceInterface {
             spaceUser: user,
             streamable: writable(undefined),
             displayOrder: writable(9999),
-            priority: LAST_VIDEO_BOX_PRIORITY,
+            priority: metadata.isMegaphoneSpace ? LIVE_BROADCAST_VIDEO_BOX_PRIORITY : LAST_VIDEO_BOX_PRIORITY,
             isMegaphoneSpace: metadata.isMegaphoneSpace,
         };
     }

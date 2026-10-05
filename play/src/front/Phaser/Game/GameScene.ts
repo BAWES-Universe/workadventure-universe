@@ -164,7 +164,8 @@ import { SpaceScriptingBridgeService } from "../../Space/Utils/SpaceScriptingBri
 import { debugAddPlayer, debugRemovePlayer, debugUpdatePlayer, debugZoom } from "../../Utils/Debuggers";
 import { checkCoturnServer } from "../../Components/Video/utils";
 import { BroadcastService } from "../../Streaming/BroadcastService";
-import { megaphoneCanBeUsedStore, megaphoneSpaceStore } from "../../Stores/MegaphoneStore";
+import { megaphoneCanBeUsedStore, megaphoneChannelsStore, megaphoneSpacesStore } from "../../Stores/MegaphoneStore";
+import { endLiveBroadcast } from "../../Components/Broadcast/live";
 import { CompanionTextureError } from "../../Exception/CompanionTextureError";
 import { SelectCompanionScene, SelectCompanionSceneName } from "../Login/SelectCompanionScene";
 import { scriptUtils } from "../../Api/ScriptUtils";
@@ -445,6 +446,96 @@ export class GameScene extends DirtyScene {
     }
 
     private _broadcastService: BroadcastService | undefined;
+    /** The broadcast channels last asked for, so a join that lands late settles on the latest ones. */
+    private latestBroadcastChannels: { scope: string; url: string }[] = [];
+    /** The scopes whose space join is still in flight (the registry joins a name twice if asked twice). */
+    private readonly pendingBroadcastJoins = new Set<string>();
+    /** Set once the scene is closing: a join that lands after that must not touch the destroyed registry. */
+    private broadcastSceneClosing = false;
+
+    /**
+     * Joins one space per broadcast channel of this room (this room, this world, everywhere in the universe) and
+     * leaves the ones that are gone, so a live broadcast on any reach that covers this room arrives here.
+     */
+    private syncBroadcastSpaces(channels: { scope: string; url: string }[], broadcastService: BroadcastService): void {
+        if (this.broadcastSceneClosing) {
+            return;
+        }
+        this.latestBroadcastChannels = channels;
+        if (!this._spaceRegistry) {
+            console.warn("No space registry available for megaphone space management");
+            return;
+        }
+        const spaces = new Map(get(megaphoneSpacesStore));
+        const wanted = new Map(channels.map((channel) => [channel.scope, slugify(channel.url)]));
+
+        for (const [scope, space] of spaces) {
+            if (wanted.get(scope) === space.getName()) {
+                continue;
+            }
+            spaces.delete(scope);
+            // Through the service, so its own list of joined spaces stays in step for destroy().
+            broadcastService.leaveSpace(space.getName()).catch((e) => {
+                console.error("Error while leaving a broadcast space", e);
+                Sentry.captureException(e);
+            });
+        }
+        megaphoneSpacesStore.set(spaces);
+
+        for (const [scope, spaceName] of wanted) {
+            // A join still in flight for this scope re-syncs when it lands, so it is never asked for twice.
+            if (spaces.has(scope) || this.pendingBroadcastJoins.has(scope)) {
+                continue;
+            }
+            this.pendingBroadcastJoins.add(scope);
+            broadcastService
+                .joinSpace(spaceName, this.abortController.signal)
+                .then((space) => {
+                    // The scene went away while this join was in flight: the next scene must not pick the space up.
+                    if (this.broadcastSceneClosing) {
+                        broadcastService.leaveSpace(space.getName()).catch((e) => {
+                            console.error("Error while leaving a broadcast space joined after the scene closed", e);
+                            Sentry.captureException(e);
+                        });
+                        return;
+                    }
+                    // The tiles of whoever goes live here get the live ring, and sit first in the strip.
+                    space.setMetadata(
+                        new Map<string, unknown>([
+                            ["isMegaphoneSpace", true],
+                            ["megaphoneScope", scope],
+                        ])
+                    );
+                    megaphoneSpacesStore.update((current) => {
+                        const next = new Map(current);
+                        next.set(scope, space);
+                        return next;
+                    });
+                    const subscription = space.onLeaveSpace.subscribe(() => {
+                        megaphoneSpacesStore.update((current) => {
+                            if (current.get(scope) !== space) {
+                                return current;
+                            }
+                            const next = new Map(current);
+                            next.delete(scope);
+                            return next;
+                        });
+                        subscription.unsubscribe();
+                    });
+                })
+                .catch((e) => {
+                    console.error(e);
+                    Sentry.captureException(e);
+                })
+                .finally(() => {
+                    this.pendingBroadcastJoins.delete(scope);
+                    // The channels may have changed while this join was in flight: settle on the latest.
+                    if (this.latestBroadcastChannels !== channels && !this.broadcastSceneClosing) {
+                        this.syncBroadcastSpaces(this.latestBroadcastChannels, broadcastService);
+                    }
+                });
+        }
+    }
 
     public get broadcastService(): BroadcastService {
         if (this._broadcastService === undefined) {
@@ -1177,6 +1268,10 @@ export class GameScene extends DirtyScene {
     public cleanupClosingScene(): void {
         this.unsubscribeChatBlockSync?.();
         this.unsubscribeChatBlockSync = undefined;
+        // No broadcast join may land on a destroyed registry.
+        this.broadcastSceneClosing = true;
+        this.pendingBroadcastJoins.clear();
+        this.latestBroadcastChannels = [];
         // A person card belongs to this map: close it before the map and its players go (a reconnect, a map change).
         wokaMenuStore.clear();
         // make sure we restart own medias
@@ -1209,6 +1304,10 @@ export class GameScene extends DirtyScene {
         this.cameraManager?.destroy();
         this.mapEditorModeManager?.destroy();
         this.pathfindingManager?.cleanup();
+        // A broadcast you were giving ends with the scene: pill, ring and megaphone state all go.
+        endLiveBroadcast();
+        megaphoneSpacesStore.set(new Map());
+        megaphoneChannelsStore.set([]);
         this._broadcastService?.destroy().catch((e) => {
             console.error("Error while destroying broadcast service", e);
             Sentry.captureException(e);
@@ -2186,51 +2285,29 @@ export class GameScene extends DirtyScene {
                 // The megaphoneSettingsMessageStream is completed in the RoomConnection. No need to unsubscribe.
                 //eslint-disable-next-line rxjs/no-ignored-subscription, svelte/no-ignored-unsubscribe
                 this.connection.megaphoneSettingsMessageStream.subscribe((megaphoneSettingsMessage) => {
-                    if (megaphoneSettingsMessage) {
-                        megaphoneCanBeUsedStore.set(megaphoneSettingsMessage.enabled);
-                        if (
-                            megaphoneSettingsMessage.url &&
-                            get(availabilityStatusStore) !== AvailabilityStatus.DO_NOT_DISTURB
-                        ) {
-                            const oldMegaphoneSpace = get(megaphoneSpaceStore);
-                            const spaceName = slugify(megaphoneSettingsMessage.url);
-
-                            // Early return if no space registry available
-                            if (!this._spaceRegistry) {
-                                console.warn("No space registry available for megaphone space management");
-                                return;
-                            }
-
-                            // Handle existing megaphone space
-                            if (oldMegaphoneSpace) {
-                                if (oldMegaphoneSpace.getName() === spaceName) {
-                                    return;
-                                }
-                                // Different space, leave the old one
-                                this._spaceRegistry.leaveSpace(oldMegaphoneSpace).catch((e) => {
-                                    console.error("Error while leaving space", e);
-                                    Sentry.captureException(e);
-                                });
-                            }
-
-                            broadcastService
-                                .joinSpace(spaceName, this.abortController.signal)
-                                .then((space) => {
-                                    // Update space to add metadata "isMegaphoneSpace" to true
-                                    space.setMetadata(new Map([["isMegaphoneSpace", true]]));
-                                    megaphoneSpaceStore.set(space);
-                                    // eslint-disable-next-line @smarttools/rxjs/no-nested-subscribe
-                                    const subscription = space.onLeaveSpace.subscribe(() => {
-                                        megaphoneSpaceStore.set(undefined);
-                                        subscription.unsubscribe();
-                                    });
-                                })
-                                .catch((e) => {
-                                    console.error(e);
-                                    Sentry.captureException(e);
-                                });
-                        }
+                    if (!megaphoneSettingsMessage) {
+                        return;
                     }
+                    megaphoneCanBeUsedStore.set(megaphoneSettingsMessage.enabled);
+                    // An older server sends one url: the world's channel, streamable when enabled.
+                    const channels =
+                        megaphoneSettingsMessage.channels.length > 0
+                            ? megaphoneSettingsMessage.channels
+                            : megaphoneSettingsMessage.url
+                            ? [
+                                  {
+                                      scope: "WORLD",
+                                      url: megaphoneSettingsMessage.url,
+                                      canStream: megaphoneSettingsMessage.enabled,
+                                  },
+                              ]
+                            : [];
+                    megaphoneChannelsStore.set(channels);
+                    // Do not disturb: no broadcast reaches this player.
+                    if (get(availabilityStatusStore) === AvailabilityStatus.DO_NOT_DISTURB) {
+                        return;
+                    }
+                    this.syncBroadcastSpaces(channels, broadcastService);
                 });
                 this._broadcastService = broadcastService;
 
@@ -2418,6 +2495,7 @@ export class GameScene extends DirtyScene {
             this.tryChangeShowVoiceIndicatorState(this.jitsiDominantSpeaker && this.jitsiParticipantsCount > 1);
         });
 
+        let previousAvailabilityStatus: AvailabilityStatus | undefined;
         this.availabilityStatusStoreUnsubscriber = availabilityStatusStore.subscribe((availabilityStatus) => {
             if (!this.connection) {
                 throw new Error("Connection is undefined");
@@ -2427,6 +2505,15 @@ export class GameScene extends DirtyScene {
             if (availabilityStatus === AvailabilityStatus.SILENT) {
                 this.CurrentPlayer.toggleTalk(false, true);
             }
+            // Leaving Do not disturb: join the broadcast channels skipped while it was on.
+            if (
+                previousAvailabilityStatus === AvailabilityStatus.DO_NOT_DISTURB &&
+                availabilityStatus !== AvailabilityStatus.DO_NOT_DISTURB &&
+                this._broadcastService
+            ) {
+                this.syncBroadcastSpaces(get(megaphoneChannelsStore), this._broadcastService);
+            }
+            previousAvailabilityStatus = availabilityStatus;
         });
 
         this.emoteUnsubscriber = emoteStore.subscribe((emote) => {

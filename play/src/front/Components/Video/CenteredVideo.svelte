@@ -5,7 +5,6 @@
     import { readable, type Readable } from "svelte/store";
     import LL from "../../../i18n/i18n-svelte";
     import type { Streamable } from "../../Stores/StreamableCollectionStore";
-    import MegaphoneIcon from "../Icons/MegaphoneIcon.svelte";
     import WebRtcVideo from "./VideoTags/WebRtcVideo.svelte";
     import LivekitVideo from "./VideoTags/LivekitVideo.svelte";
     import ScriptingVideo from "./VideoTags/ScriptingVideo.svelte";
@@ -35,7 +34,7 @@
     export let withBackground = false;
     export let isBlocked = false;
 
-    // If true, the video box is a megaphone space
+    // A live broadcast: yours while you are live, theirs while you listen. The bar's violet ring and a coral LIVE tag.
     export let isMegaphoneSpace = false;
 
     function onLoadVideoElement() {}
@@ -114,8 +113,7 @@
         class:h-full={!videoEnabled}
         class:border-transparent={!isTalking}
         class:border-secondary={isTalking}
-        class:border-yellow-200={isMegaphoneSpace}
-        class:border-4={isMegaphoneSpace}
+        class:u-live-tile={isMegaphoneSpace}
         style={videoEnabled
             ? "width: " +
               overlayWidth +
@@ -127,13 +125,8 @@
               (verticalAlign === "center" ? " top: " + (containerHeight - overlayHeight) / 2 + "px;" : "")
             : ""}
     >
-        <!-- If "isMegaphoneSpace" is true, add corner markers to the video box with megaphone icon -->
         {#if isMegaphoneSpace}
-            <div
-                class="absolute bottom-0 right-0 rounded-none rounded-tl-lg bg-yellow-200 backdrop-blur flex justify-center items-center gap-2 px-2 h-10 w-10 content-center z-[600]"
-            >
-                <MegaphoneIcon strokeColor="stroke-black" classList="mt-1 ml-1" />
-            </div>
+            <span class="u-live-tag" data-testid="live-tag">{$LL.broadcast.live.live()}</span>
         {/if}
 
         {#if !isBlocked && videoEnabled}
