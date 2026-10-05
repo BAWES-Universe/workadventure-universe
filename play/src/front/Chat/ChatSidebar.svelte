@@ -171,6 +171,11 @@
     // where it was left: 60% of the screen at first, then the height the person last dragged it to.
     // Height while it shows the latest message of a bubble, until the person moves it; undefined otherwise.
     let bubbleHeight: number | undefined;
+    // While the sheet keeps the bubble's height, it grows to show each latest message whole (messages load after it
+    // opens, and a long one may follow), never shrinking under the reader. Declared before anything below can run
+    // (the store subscription calls back at once).
+    let latestMessageObserver: MutationObserver | undefined;
+    let fitFrame: number | undefined;
     // Before the height below, so a chat opened by a bubble starts low without a pass at its old height.
     let wasVisible = false;
     $: onVisibilityChange($chatVisibilityStore);
@@ -208,10 +213,6 @@
         stopWatchingLatestMessage();
     }
 
-    // While the sheet keeps the bubble's height, it grows to show each latest message whole (messages load after it
-    // opens, and a long one may follow), never shrinking under the reader.
-    let latestMessageObserver: MutationObserver | undefined;
-    let fitFrame: number | undefined;
 
     function watchLatestMessage() {
         stopWatchingLatestMessage();
