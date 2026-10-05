@@ -222,6 +222,30 @@ describe("FriendsPresence", () => {
         expect(lookupPlaces).toHaveBeenCalledTimes(1);
     });
 
+    it("looks up the room of a session that started while names were being looked up", async () => {
+        let release: () => void = () => undefined;
+        const lookupPlaces = vi.fn((uris: string[]) =>
+            uris.includes(ROOM_A)
+                ? new Promise<Record<string, FriendPlace | null>>((resolve) => {
+                      release = () => resolve(lookupFrom(uris));
+                  })
+                : Promise.resolve(lookupFrom(uris))
+        );
+        const { presence, sent } = setup(lookupPlaces);
+        const watcher = new FakeSocket("bob");
+        presence.watch(watcher, [{ uuid: "alice", shareLocation: true }]);
+        presence.track(new FakeSocket("alice", ROOM_A));
+        await vi.advanceTimersByTimeAsync(600);
+
+        presence.track(new FakeSocket("alice", ROOM_B));
+        release();
+        await vi.advanceTimersByTimeAsync(0);
+
+        const first = presencesSentTo(sent, watcher)[0];
+        expect(first?.presence?.sessions.map((s) => s.worldName)).toEqual(["Office", "Office"]);
+        expect(lookupPlaces).toHaveBeenCalledWith([ROOM_B]);
+    });
+
     it("re-pushes the presence with the new location setting", async () => {
         const { presence, sent } = setup();
         const watcher = new FakeSocket("bob");
