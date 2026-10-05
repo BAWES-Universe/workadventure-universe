@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MatrixClient } from "matrix-js-sdk";
-import { resolveMatrixMediaUrl } from "../MatrixMedia";
+import { MAX_KEPT_MEDIA, resolveMatrixMediaUrl } from "../MatrixMedia";
 
 function fakeClient(accessToken: string | null = "token"): MatrixClient {
     return {
@@ -107,6 +107,45 @@ describe("resolveMatrixMediaUrl", () => {
         expect(await resolveMatrixMediaUrl(fakeClient(null), "mxc://matrix.test/guest")).toBe(
             "https://matrix.test/_matrix/media/v3/download/matrix.test/guest"
         );
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("releases the oldest files and fetches them again when shown later", async () => {
+        fetchMock.mockImplementation(() => Promise.resolve(new Response(new Blob(["png"]), { status: 200 })));
+        let created = 0;
+        URL.createObjectURL = vi.fn(() => `blob:https://play.test/lru-${created++}`);
+        const revoke = vi.fn();
+        URL.revokeObjectURL = revoke;
+        const client = fakeClient();
+
+        const first = await resolveMatrixMediaUrl(client, "mxc://matrix.test/lru-first");
+        await Promise.all(
+            Array.from({ length: MAX_KEPT_MEDIA }, (_, i) =>
+                resolveMatrixMediaUrl(client, `mxc://matrix.test/lru-${i}`)
+            )
+        );
+        await vi.waitFor(() => expect(revoke).toHaveBeenCalledWith(first));
+
+        fetchMock.mockClear();
+        await resolveMatrixMediaUrl(client, "mxc://matrix.test/lru-first");
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps a file that was shown again recently", async () => {
+        fetchMock.mockImplementation(() => Promise.resolve(new Response(new Blob(["png"]), { status: 200 })));
+        URL.revokeObjectURL = vi.fn();
+        const client = fakeClient();
+
+        // The cache is updated as each call is made, so the order of the calls is what counts.
+        const shown = [resolveMatrixMediaUrl(client, "mxc://matrix.test/recent-kept")];
+        for (let i = 0; i < MAX_KEPT_MEDIA; i++) {
+            shown.push(resolveMatrixMediaUrl(client, `mxc://matrix.test/recent-${i}`));
+            shown.push(resolveMatrixMediaUrl(client, "mxc://matrix.test/recent-kept"));
+        }
+        await Promise.all(shown);
+
+        fetchMock.mockClear();
+        await resolveMatrixMediaUrl(client, "mxc://matrix.test/recent-kept");
         expect(fetchMock).not.toHaveBeenCalled();
     });
 });

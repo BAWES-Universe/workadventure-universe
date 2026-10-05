@@ -1,7 +1,23 @@
 import type { MatrixClient } from "matrix-js-sdk";
 
-// One download per file per session: the same image in a reply, a thread or after a decryption isn't fetched again.
+// One download per file: the same image in a reply, a thread or after a decryption isn't fetched again. The most
+// recently shown files are kept; older blob: URLs are released so a long session doesn't hold every file in memory.
 const resolvedUrls = new Map<string, Promise<string | undefined>>();
+export const MAX_KEPT_MEDIA = 200;
+
+function remember(mxcUrl: string, resolved: Promise<string | undefined>): void {
+    resolvedUrls.set(mxcUrl, resolved);
+    while (resolvedUrls.size > MAX_KEPT_MEDIA) {
+        const [oldest, oldestUrl] = resolvedUrls.entries().next().value as [string, Promise<string | undefined>];
+        resolvedUrls.delete(oldest);
+        // An <img> that already shows it keeps its picture; showing it again fetches it anew.
+        oldestUrl
+            .then((url) => {
+                if (url?.startsWith("blob:")) URL.revokeObjectURL(url);
+            })
+            .catch(() => undefined);
+    }
+}
 
 const ENDPOINT_UNKNOWN_STATUSES = [400, 404, 405];
 
@@ -17,10 +33,13 @@ export function resolveMatrixMediaUrl(client: MatrixClient, mxcUrl: unknown): Pr
         return Promise.resolve(undefined);
     }
     let resolved = resolvedUrls.get(mxcUrl);
-    if (!resolved) {
+    if (resolved) {
+        // Shown again: it's now the most recent.
+        resolvedUrls.delete(mxcUrl);
+    } else {
         resolved = fetchMatrixMedia(client, mxcUrl);
-        resolvedUrls.set(mxcUrl, resolved);
     }
+    remember(mxcUrl, resolved);
     return resolved;
 }
 
