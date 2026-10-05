@@ -249,6 +249,49 @@ test.describe("Map editor @oidc @nomobile @nowebkit", () => {
         await page.context().close();
     });
 
+    test("Successfully add a second side to a custom entity", async ({ browser, request }) => {
+        await resetWamMaps(request);
+
+        await using page = await getPage(browser, "Admin1", Map.url("empty"));
+        await Map.teleportToPosition(page, 0, 0);
+
+        // A second browser sees the upload and its new side as one object
+        await using page2 = await getPage(browser, "Admin2", Map.url("empty"));
+
+        await page.bringToFront();
+        await Menu.openMapEditor(page);
+        await Menu.openMapEditor(page2);
+        await MapEditor.openEntityEditor(page);
+        await MapEditor.openEntityEditor(page2);
+
+        await EntityEditor.uploadTestAsset(page);
+        await EntityEditor.selectEntity(page, 0, EntityEditor.getTestAssetName());
+
+        // Open "Sides and colours": the front is there, the other sides are empty
+        await page.getByTestId("uploadVariants").click();
+        await expect(page.getByTestId("upload-variants")).toBeVisible();
+        await expect(page.getByTestId("variant-side-Down")).toHaveCount(1);
+        await expect(page.getByTestId("variant-add-Left")).toBeVisible();
+
+        // Add the left side with the same picture
+        const chooser = page.waitForEvent("filechooser");
+        await page.getByTestId("variant-add-Left").click();
+        await (await chooser).setFiles(path.join(__dirname, `../assets/${EntityEditor.getTestAssetFile()}`));
+        await expect(page.getByTestId("variant-side-Left")).toHaveCount(1, { timeout: 30000 });
+        await expect(page.getByTestId("variant-error")).toHaveCount(0);
+
+        // Both pages still list one object, not two
+        await expect(page.getByTestId("entity-item")).toHaveCount(1);
+        await expect(page2.getByTestId("entity-item")).toHaveCount(1, { timeout: 30000 });
+
+        // Placing it offers Turn now that it has two sides
+        await page.getByTestId("variant-place").click();
+        await expect(page.getByTestId("placing-turn")).toBeVisible();
+
+        await page2.context().close();
+        await page.context().close();
+    });
+
     test('drop PDF file onto canvas inside #game', async ({ browser, request }) => {
         await resetWamMaps(request);
         await using page = await getPage(browser, 'Admin1', Map.url('empty'));

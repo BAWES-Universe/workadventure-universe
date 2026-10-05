@@ -99,6 +99,9 @@ export class CustomEntityCollectionService {
                 await fileSystem.deleteFiles(this.getEntityToUploadVirtualPath(customEntityToDelete.imagePath));
             }
         });
+        // The map's edit lock must not open before the file is written: deleting an upload with several pictures
+        // sends one message per picture, and the next one reads this file.
+        await this.lock;
     }
 
     private async readOrCreateEntitiesCollectionFile() {
@@ -136,5 +139,6 @@ export class CustomEntityCollectionService {
                 JSON.stringify(customEntityCollection)
             );
         });
+        await this.lock;
     }
 }
