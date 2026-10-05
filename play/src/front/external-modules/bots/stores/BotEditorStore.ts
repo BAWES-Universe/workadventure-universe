@@ -1,6 +1,7 @@
 import { writable, derived, get } from "svelte/store";
 import type { BotData } from "../types";
 import { botApiService } from "../services/BotApiService";
+import { botModel, routeStops, walksRoute } from "../behaviorModel";
 
 /**
  * Bot Editor Mode
@@ -251,10 +252,11 @@ export function confirmPlacement(): BotData | undefined {
  */
 export function startWaypointEditing(): void {
     const bot = get(selectedBotStore);
-    if (bot?.behaviorConfig?.behaviorType === "patrol") {
+    if (bot && walksRoute(bot)) {
+        routeUndoStack = [];
+        routeUndoCountStore.set(0);
         // Auto-create first waypoint at bot's center if no waypoints exist
-        const waypoints = bot.behaviorConfig.patrolWaypoints || [];
-        if (waypoints.length === 0) {
+        if (routeStops(bot).length === 0) {
             const center = bot.behaviorConfig.assignedSpace?.center || { x: 0, y: 0 };
             addWaypoint(bot.id, center.x, center.y);
         }
@@ -267,7 +269,49 @@ export function startWaypointEditing(): void {
  */
 export function stopWaypointEditing(): void {
     editingWaypointIndexStore.set(undefined);
+    routeUndoStack = [];
+    routeUndoCountStore.set(0);
     botEditorModeStore.set("detail");
+}
+
+// Undo while editing a route: each change to the stops saves the stops it replaced. Done or leaving the route
+// forgets them; the editor's own Undo (the pill at the top) is for objects and areas.
+let routeUndoStack: Array<Array<{ x: number; y: number }>> = [];
+/** How many route changes can be undone, so the route bar can show its Undo button. */
+export const routeUndoCountStore = writable(0);
+
+function rememberRouteForUndo(bot: BotData): void {
+    if (get(botEditorModeStore) !== "waypoint-edit") return;
+    routeUndoStack.push(routeStops(bot).map((p) => ({ ...p })));
+    routeUndoCountStore.set(routeUndoStack.length);
+}
+
+/** Put back the stops as they were before the last change while editing the route. */
+export function undoRouteChange(): void {
+    const bot = get(selectedBotStore);
+    const previous = routeUndoStack.pop();
+    routeUndoCountStore.set(routeUndoStack.length);
+    if (!bot || !previous) return;
+    setRouteStops(bot.id, previous);
+}
+
+/** Replace all of a route bot's stops, as Undo does. */
+export function setRouteStops(botId: string, stops: Array<{ x: number; y: number }>): void {
+    let updated: BotData | undefined;
+    botPreviewsStore.update((bots) => {
+        const bot = bots.get(botId);
+        if (!bot) return bots;
+        updated = { ...bot, behaviorConfig: { ...bot.behaviorConfig, patrolWaypoints: stops } };
+        const newMap = new Map(bots);
+        newMap.set(botId, updated);
+        if (get(selectedBotStore)?.id === botId) {
+            selectedBotStore.set(updated);
+        }
+        return newMap;
+    });
+    if (updated) {
+        void sendLiveUpdate(botId, { behaviorConfig: { patrolWaypoints: stops } });
+    }
 }
 
 /**
@@ -424,7 +468,7 @@ export function updateBotRadius(botId: string, radius: number): void {
 export function updateConversationRadius(botId: string, conversationRadius: number): void {
     botPreviewsStore.update((bots) => {
         const bot = bots.get(botId);
-        if (bot && bot.behaviorConfig?.behaviorType === "social") {
+        if (bot && botModel(bot).goesToPeople) {
             const updatedBot: BotData = {
                 ...bot,
                 behaviorConfig: {
@@ -500,7 +544,7 @@ export function updateBehaviorType(botId: string, behaviorType: "idle" | "patrol
 export function clearWaypoints(botId: string): void {
     botPreviewsStore.update((bots) => {
         const bot = bots.get(botId);
-        if (bot && bot.behaviorConfig?.behaviorType === "patrol") {
+        if (bot && walksRoute(bot)) {
             const updatedBot: BotData = {
                 ...bot,
                 behaviorConfig: {
@@ -537,7 +581,8 @@ export function addWaypoint(botId: string, x: number, y: number, index?: number)
 
     botPreviewsStore.update((bots) => {
         const bot = bots.get(botId);
-        if (bot && bot.behaviorConfig?.behaviorType === "patrol") {
+        if (bot && walksRoute(bot)) {
+            rememberRouteForUndo(bot);
             const waypoints = [...(bot.behaviorConfig.patrolWaypoints || [])];
             const newWaypoint = { x, y };
 
@@ -587,7 +632,8 @@ export function updateWaypoint(botId: string, waypointIndex: number, x: number, 
 
     botPreviewsStore.update((bots) => {
         const bot = bots.get(botId);
-        if (bot && bot.behaviorConfig?.behaviorType === "patrol") {
+        if (bot && walksRoute(bot)) {
+            rememberRouteForUndo(bot);
             const waypoints = [...(bot.behaviorConfig.patrolWaypoints || [])];
             if (waypointIndex >= 0 && waypointIndex < waypoints.length) {
                 waypoints[waypointIndex] = { x, y };
@@ -632,7 +678,8 @@ export function removeWaypoint(botId: string, waypointIndex: number): void {
 
     botPreviewsStore.update((bots) => {
         const bot = bots.get(botId);
-        if (bot && bot.behaviorConfig?.behaviorType === "patrol") {
+        if (bot && walksRoute(bot)) {
+            rememberRouteForUndo(bot);
             const waypoints = [...(bot.behaviorConfig.patrolWaypoints || [])];
             if (waypointIndex >= 0 && waypointIndex < waypoints.length) {
                 waypoints.splice(waypointIndex, 1);
@@ -735,6 +782,7 @@ export function loadBotPreviews(apiBots: Array<Record<string, unknown>>): void {
             enabled: (apiBot.enabled as boolean) ?? true,
             behaviorConfig,
             aiProviderRef: (apiBot.aiProviderRef as string) || undefined,
+            toolTimeoutSeconds: typeof apiBot.toolTimeoutSeconds === "number" ? apiBot.toolTimeoutSeconds : null,
             chatInstructions: (apiBot.chatInstructions as string) || "",
             createdAt: (apiBot.createdAt as string) || new Date().toISOString(),
             updatedAt: (apiBot.updatedAt as string) || new Date().toISOString(),

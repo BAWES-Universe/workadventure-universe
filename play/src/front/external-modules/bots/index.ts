@@ -237,7 +237,8 @@ function injectBotEditorComponent() {
     // Hide existing conditional content (EntityEditor, AreaEditor, etc.)
     const conditionalContent = sidebar.querySelectorAll(":scope > *:not(.flex.flex-row.justify-end)");
     conditionalContent.forEach((el) => {
-        if (el instanceof HTMLElement && el.id !== "bot-editor-container") {
+        // The panel's title row stays: the bot page puts its back circle there
+        if (el instanceof HTMLElement && el.id !== "bot-editor-container" && !el.classList.contains("em-head")) {
             el.style.display = "none";
         }
     });

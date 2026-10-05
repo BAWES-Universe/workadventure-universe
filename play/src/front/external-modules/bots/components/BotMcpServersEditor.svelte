@@ -6,8 +6,12 @@
         type CreateMcpServerDto,
         type McpServerTestResult,
     } from "../services/BotApiService";
+    import PageButton from "./page/PageButton.svelte";
+    import { IconPlus, IconTool } from "@wa-icons";
 
     export let botId: string;
+    /** Told the servers after every load, so the Tools group can say what the bot has. */
+    export let onServers: ((servers: McpServer[]) => void) | undefined = undefined;
 
     // ─── State ─────────────────────────────────────────────────────────────────────
 
@@ -100,6 +104,7 @@
 
         try {
             servers = await botApiService.getBotMcpServers(botId);
+            onServers?.(servers);
         } catch (error) {
             console.error("[BotMcpServersEditor] Error loading MCP servers:", error);
             loadError = "Failed to load MCP servers";
@@ -599,8 +604,8 @@
 
     function getStatusDot(server: McpServer): string {
         const result = server.lastTestResult;
-        if (!result) return "bg-gray-500"; // untested
-        return result.success ? "bg-green-500" : "bg-red-500";
+        if (!result) return "untested";
+        return result.success ? "ok" : "failed";
     }
 
     function getToolCount(server: McpServer): string {
@@ -614,190 +619,115 @@
     }
 </script>
 
-<div class="space-y-4">
-    <!-- Header -->
-    <div class="flex items-center justify-between">
-        <h3 class="text-base text-white/80 normal-case font-semibold">MCP Servers</h3>
-        <button
-            class="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
-            on:click={openAddModal}
-        >
-            + Add Server
-        </button>
-    </div>
-
-    <p class="text-xs text-white/50 mb-2">
-        Connect MCP (Model Context Protocol) servers to give your bot custom tools and data sources.
-    </p>
-
-    <!-- Loading state -->
+<div class="mcp">
     {#if isLoading}
-        <div class="space-y-3">
-            {#each [1, 2, 3] as _i (_i)}
-                <div class="p-4 border border-white/20 rounded bg-white/5 animate-pulse">
-                    <div class="h-4 bg-white/10 rounded w-3/4 mb-2" />
-                    <div class="h-3 bg-white/10 rounded w-1/2" />
-                </div>
-            {/each}
+        <div class="mcp-row mcp-loading" aria-busy="true">
+            <span class="mcp-tile" />
+            <div class="mcp-tx"><span class="mcp-bar" /><span class="mcp-bar short" /></div>
         </div>
-
-        <!-- Error loading -->
     {:else if loadError}
-        <div class="p-4 border border-red-500/50 rounded bg-red-500/10 text-red-400 text-sm mb-2">
-            {loadError}
+        <div class="mcp-row">
+            <div class="mcp-tx">
+                <div class="mcp-m mcp-bad">{loadError}</div>
+            </div>
+            <PageButton on:click={loadServers}>Retry</PageButton>
         </div>
-        <button
-            class="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-blue-500/10 rounded transition-colors"
-            on:click={loadServers}
-        >
-            Retry
-        </button>
-
-        <!-- Empty state -->
     {:else if servers.length === 0}
-        <div class="p-6 border border-dashed border-white/20 rounded bg-white/5 text-center">
-            <p class="text-sm text-white/60 mb-3">No MCP servers configured. Add one to give your bot custom tools.</p>
-            <button
-                class="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
-                on:click={openAddModal}
-            >
-                + Add Server
-            </button>
+        <div class="mcp-row">
+            <span class="mcp-tile"><IconTool font-size="18" /></span>
+            <div class="mcp-tx">
+                <div class="mcp-t">No tools yet</div>
+                <div class="mcp-m">Tools let it look things up or make things</div>
+            </div>
+            <PageButton testId="bot-add-tool" on:click={openAddModal}><IconPlus font-size="16" />Add</PageButton>
         </div>
-
-        <!-- Server list -->
     {:else}
-        <div class="space-y-3">
-            {#each servers as server (server.id)}
-                <div class="p-4 border border-white/20 rounded bg-white/5 hover:bg-white/[0.07] transition-colors">
-                    <div class="flex items-start justify-between gap-4">
-                        <div class="flex items-start gap-3 flex-1 min-w-0">
-                            <!-- Status dot -->
-                            <div class="flex-shrink-0 mt-1.5">
-                                <div
-                                    class="w-2.5 h-2.5 rounded-full {getStatusDot(server)}"
-                                    title={server.lastTestResult?.success
-                                        ? "Connected"
-                                        : server.lastTestResult
-                                        ? "Error"
-                                        : "Untested"}
-                                />
+        {#each servers as server (server.id)}
+            <div class="mcp-server">
+                <div class="mcp-row">
+                    <span class="mcp-tile">
+                        <IconTool font-size="18" />
+                        <i
+                            class="mcp-dot {getStatusDot(server)}"
+                            title={server.lastTestResult?.success
+                                ? "Connected"
+                                : server.lastTestResult
+                                ? "Error"
+                                : "Untested"}
+                        />
+                    </span>
+                    <div class="mcp-tx">
+                        <div class="mcp-t">{server.name}</div>
+                        {#if server.lastTestResult && !server.lastTestResult.success}
+                            <div class="mcp-m mcp-bad" title={testError[server.id] || server.lastTestResult.error}>
+                                {getToolCount(server)}
                             </div>
-                            <div class="flex-1 min-w-0">
-                                <div class="flex items-center gap-2 flex-wrap">
-                                    <span class="text-sm text-white font-semibold">{server.name}</span>
-                                    {#if server.lastTestResult?.success}
-                                        <span class="text-xs text-green-400">{getToolCount(server)}</span>
-                                    {:else if server.lastTestResult && !server.lastTestResult.success}
-                                        <span
-                                            class="text-xs text-red-400"
-                                            title={testError[server.id] || server.lastTestResult.error}
-                                        >
-                                            {getToolCount(server)}
-                                        </span>
-                                    {/if}
-                                </div>
-                                <p class="text-xs text-white/50 mt-0.5 truncate">{server.serverUrl}</p>
-                                {#if server.authType !== "none"}
-                                    <span
-                                        class="inline-block mt-1 text-[10px] uppercase text-white/30 bg-white/5 px-1.5 py-0.5 rounded"
-                                    >
-                                        {server.authType}
-                                    </span>
-                                {/if}
+                        {:else}
+                            <div class="mcp-m">
+                                {server.lastTestResult?.success ? `${getToolCount(server)} · ` : ""}{server.serverUrl}
                             </div>
-                        </div>
-                        <div class="flex items-center gap-2 flex-shrink-0">
-                            <!-- Test Connection button — hidden for OAuth servers until connected -->
-                            {#if server.authType !== "oauth" || server.oauthConnected}
-                                <button
-                                    class="px-2 py-1 text-xs text-white/60 hover:text-white bg-white/5 hover:bg-white/10 rounded transition-colors"
-                                    on:click={() => handleTestConnection(server.id)}
-                                    disabled={testingServerId === server.id}
-                                >
-                                    {#if testingServerId === server.id}
-                                        Testing...
-                                    {:else}
-                                        Test
-                                    {/if}
-                                </button>
-                            {/if}
-
-                            <!-- OAuth Connect button — hidden after connected -->
-                            {#if server.authType === "oauth" && !server.oauthConnected}
-                                <button
-                                    class="px-2 py-1 text-xs text-green-400 hover:text-green-300 bg-white/5 hover:bg-green-500/10 rounded transition-colors"
-                                    on:click={() => handleOAuthConnect(server.id)}
-                                    disabled={oauthConnectingServerId !== null}
-                                >
-                                    {#if oauthConnectingServerId === server.id}
-                                        Connecting...
-                                    {:else}
-                                        Connect OAuth
-                                    {/if}
-                                </button>
-                            {/if}
-                            <!-- OAuth connected badge -->
-                            {#if server.authType === "oauth" && server.oauthConnected}
-                                <span class="px-2 py-1 text-xs text-green-400 bg-green-500/10 rounded font-semibold">
-                                    Connected ✓
-                                </span>
-                            {/if}
-
-                            <!-- Edit button -->
-                            <button
-                                class="px-2 py-1 text-xs text-blue-400 hover:text-blue-300 bg-white/5 hover:bg-blue-500/10 rounded transition-colors"
-                                on:click={() => openEditModal(server)}
-                            >
-                                Edit
-                            </button>
-
-                            <!-- Remove with inline confirmation -->
-                            {#if removingServerId === server.id}
-                                <div class="flex items-center gap-1">
-                                    <span class="text-xs text-red-400">Remove {server.name}?</span>
-                                    <button
-                                        class="px-2 py-1 text-xs text-red-400 hover:bg-red-500/20 rounded transition-colors"
-                                        on:click={() => handleRemoveServer(server.id)}
-                                        disabled={removingLoading}
-                                    >
-                                        Yes
-                                    </button>
-                                    <button
-                                        class="px-2 py-1 text-xs text-white/60 hover:text-white rounded transition-colors"
-                                        on:click={() => (removingServerId = null)}
-                                    >
-                                        No
-                                    </button>
-                                </div>
-                            {:else}
-                                <button
-                                    class="px-2 py-1 text-xs text-red-400 hover:text-red-300 bg-white/5 hover:bg-red-500/10 rounded transition-colors"
-                                    on:click={() => (removingServerId = server.id)}
-                                >
-                                    Remove
-                                </button>
-                            {/if}
-                        </div>
+                        {/if}
                     </div>
-
-                    <!-- Test result details -->
-                    {#if server.lastTestResult?.success && server.lastTestResult?.toolNames?.length > 0}
-                        <div class="mt-3 pt-2 border-t border-white/10">
-                            <p class="text-xs text-white/50 mb-1">
-                                Available tools ({server.lastTestResult.toolCount}):
-                            </p>
-                            <div class="flex flex-wrap gap-1.5">
-                                {#each server.lastTestResult.toolNames as toolName (toolName)}
-                                    <span class="text-[11px] text-green-300/80 bg-green-500/10 px-2 py-0.5 rounded">
-                                        {toolName}
-                                    </span>
-                                {/each}
-                            </div>
-                        </div>
+                </div>
+                <div class="mcp-actions">
+                    {#if server.authType !== "none"}
+                        <span class="mcp-tag">{server.authType}</span>
+                    {/if}
+                    <!-- Test Connection button — hidden for OAuth servers until connected -->
+                    {#if server.authType !== "oauth" || server.oauthConnected}
+                        <button
+                            type="button"
+                            class="mcp-chip"
+                            on:click={() => handleTestConnection(server.id)}
+                            disabled={testingServerId === server.id}
+                        >
+                            {testingServerId === server.id ? "Testing..." : "Test"}
+                        </button>
+                    {/if}
+                    <!-- OAuth Connect button — hidden after connected -->
+                    {#if server.authType === "oauth" && !server.oauthConnected}
+                        <button
+                            type="button"
+                            class="mcp-chip mcp-good"
+                            on:click={() => handleOAuthConnect(server.id)}
+                            disabled={oauthConnectingServerId !== null}
+                        >
+                            {oauthConnectingServerId === server.id ? "Connecting..." : "Connect OAuth"}
+                        </button>
+                    {/if}
+                    {#if server.authType === "oauth" && server.oauthConnected}
+                        <span class="mcp-tag mcp-good">Connected ✓</span>
+                    {/if}
+                    <button type="button" class="mcp-chip" on:click={() => openEditModal(server)}>Edit</button>
+                    <!-- Remove with inline confirmation -->
+                    {#if removingServerId === server.id}
+                        <span class="mcp-m">Remove {server.name}?</span>
+                        <button
+                            type="button"
+                            class="mcp-chip mcp-bad"
+                            on:click={() => handleRemoveServer(server.id)}
+                            disabled={removingLoading}
+                        >
+                            Yes
+                        </button>
+                        <button type="button" class="mcp-chip" on:click={() => (removingServerId = null)}>No</button>
+                    {:else}
+                        <button type="button" class="mcp-chip mcp-bad" on:click={() => (removingServerId = server.id)}>
+                            Remove
+                        </button>
                     {/if}
                 </div>
-            {/each}
+                {#if server.lastTestResult?.success && server.lastTestResult?.toolNames?.length > 0}
+                    <div class="mcp-tools" aria-label="Available tools">
+                        {#each server.lastTestResult.toolNames as toolName (toolName)}
+                            <span>{toolName}</span>
+                        {/each}
+                    </div>
+                {/if}
+            </div>
+        {/each}
+        <div class="mcp-add">
+            <PageButton testId="bot-add-tool" on:click={openAddModal}><IconPlus font-size="16" />Add</PageButton>
         </div>
     {/if}
 </div>
@@ -815,7 +745,7 @@
         <div
             role="dialog"
             aria-modal="true"
-            class="bg-gray-800 rounded-lg shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto p-6 border border-white/20"
+            class="mcp-dialog u-surface max-w-lg w-full max-h-[90vh] overflow-y-auto p-6"
             on:click|stopPropagation
         >
             <h3 class="text-lg font-semibold text-white mb-4">
@@ -831,7 +761,7 @@
                     <input
                         id="mcp-server-name"
                         type="text"
-                        class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        class="w-full px-3 py-2 mcp-input"
                         bind:value={modalName}
                         placeholder="My MCP Server"
                     />
@@ -845,7 +775,7 @@
                     <input
                         id="mcp-server-url"
                         type="text"
-                        class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        class="w-full px-3 py-2 mcp-input"
                         bind:value={modalServerUrl}
                         placeholder="http://localhost:3001/mcp"
                     />
@@ -858,7 +788,7 @@
                     </label>
                     <select
                         id="mcp-auth-type"
-                        class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        class="w-full px-3 py-2 mcp-input"
                         bind:value={modalAuthType}
                         style="color: white; background-color: rgba(255, 255, 255, 0.05);"
                     >
@@ -884,7 +814,7 @@
                         <input
                             id="mcp-auth-config"
                             type="password"
-                            class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            class="w-full px-3 py-2 mcp-input"
                             bind:value={modalAuthConfig}
                             placeholder={editingServer
                                 ? "Leave empty to keep existing"
@@ -929,7 +859,7 @@
                             <input
                                 id="mcp-oauth-scopes"
                                 type="text"
-                                class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                class="w-full px-3 py-2 mcp-input"
                                 placeholder="read write"
                                 bind:value={modalOauthScopes}
                             />
@@ -949,7 +879,7 @@
                             <input
                                 id="mcp-oauth-client-id"
                                 type="text"
-                                class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                class="w-full px-3 py-2 mcp-input"
                                 placeholder="OAuth client ID from the provider"
                                 bind:value={modalOauthClientId}
                             />
@@ -961,7 +891,7 @@
                             <input
                                 id="mcp-oauth-client-secret"
                                 type="password"
-                                class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                class="w-full px-3 py-2 mcp-input"
                                 placeholder="OAuth client secret"
                                 bind:value={modalOauthClientSecret}
                             />
@@ -973,7 +903,7 @@
                             <input
                                 id="mcp-oauth-scopes"
                                 type="text"
-                                class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                class="w-full px-3 py-2 mcp-input"
                                 placeholder="read write"
                                 bind:value={modalOauthScopes}
                             />
@@ -991,7 +921,7 @@
                             <input
                                 id="mcp-oauth-authorize-url"
                                 type="text"
-                                class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                class="w-full px-3 py-2 mcp-input"
                                 placeholder="https://app.provider.com/oauth/authorize"
                                 bind:value={modalOauthAuthorizeUrl}
                             />
@@ -1003,7 +933,7 @@
                             <input
                                 id="mcp-oauth-token-url"
                                 type="text"
-                                class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                class="w-full px-3 py-2 mcp-input"
                                 placeholder="https://app.provider.com/oauth/token"
                                 bind:value={modalOauthTokenUrl}
                             />
@@ -1015,7 +945,7 @@
                             <input
                                 id="mcp-oauth-client-id"
                                 type="text"
-                                class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                class="w-full px-3 py-2 mcp-input"
                                 placeholder="OAuth client ID from the provider"
                                 bind:value={modalOauthClientId}
                             />
@@ -1027,7 +957,7 @@
                             <input
                                 id="mcp-oauth-client-secret"
                                 type="password"
-                                class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                class="w-full px-3 py-2 mcp-input"
                                 placeholder="OAuth client secret"
                                 bind:value={modalOauthClientSecret}
                             />
@@ -1039,7 +969,7 @@
                             <input
                                 id="mcp-oauth-scopes"
                                 type="text"
-                                class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                class="w-full px-3 py-2 mcp-input"
                                 placeholder="read write"
                                 bind:value={modalOauthScopes}
                             />
@@ -1054,18 +984,18 @@
                         <div class="grid grid-cols-[1fr_1fr_auto] gap-2 mb-2">
                             <input
                                 type="text"
-                                class="min-w-0 px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                class="min-w-0 px-3 py-2 mcp-input"
                                 bind:value={modalHeaders[i].key}
                                 placeholder="Header name"
                             />
                             <input
                                 type="password"
-                                class="min-w-0 px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                class="min-w-0 px-3 py-2 mcp-input"
                                 bind:value={modalHeaders[i].value}
                                 placeholder="Value"
                             />
                             <button
-                                class="px-2 py-2 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded transition-colors"
+                                class="mcp-chip mcp-bad"
                                 on:click={() => {
                                     modalHeaders = modalHeaders.filter((_, idx) => idx !== i);
                                 }}
@@ -1075,7 +1005,7 @@
                         </div>
                     {/each}
                     <button
-                        class="mt-1 px-3 py-1.5 text-xs text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 rounded transition-colors"
+                        class="mcp-chip mt-1"
                         on:click={() => {
                             modalHeaders = [...modalHeaders, { key: "", value: "" }];
                         }}
@@ -1094,14 +1024,9 @@
 
             <!-- Actions -->
             <div class="flex items-center justify-end gap-3 mt-6">
+                <button class="mcp-pill mcp-pill-q" on:click={closeModal}> Cancel </button>
                 <button
-                    class="px-4 py-2 text-sm text-white/70 hover:text-white bg-white/5 hover:bg-white/10 rounded transition-colors"
-                    on:click={closeModal}
-                >
-                    Cancel
-                </button>
-                <button
-                    class="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    class="mcp-pill u-cta disabled:opacity-50 disabled:cursor-not-allowed"
                     on:click={handleSaveServer}
                     disabled={modalLoading}
                 >
@@ -1115,3 +1040,210 @@
         </div>
     </div>
 {/if}
+
+<style>
+    .mcp {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+    .mcp-server {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding-bottom: 6px;
+    }
+    .mcp-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 6px 8px;
+        border-radius: 12px;
+    }
+    .mcp-server .mcp-row {
+        background: rgba(255, 255, 255, 0.08);
+    }
+    .mcp-tile {
+        position: relative;
+        display: grid;
+        place-items: center;
+        flex: none;
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+        background: rgba(167, 139, 250, 0.14);
+        color: #c4b5fd;
+    }
+    .mcp-dot {
+        position: absolute;
+        right: -2px;
+        bottom: -2px;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        box-shadow: 0 0 0 2px #1f1c2f;
+    }
+    .mcp-dot.untested {
+        background: rgba(244, 242, 250, 0.42);
+    }
+    .mcp-dot.ok {
+        background: #34d399;
+    }
+    .mcp-dot.failed {
+        background: #ff705c;
+    }
+    .mcp-tx {
+        flex: 1;
+        min-width: 0;
+    }
+    .mcp-t,
+    .mcp-tx .mcp-m {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .mcp-t {
+        font-size: 14px;
+        font-weight: 600;
+    }
+    .mcp-m {
+        font-size: 12.5px;
+        line-height: 1.3;
+        color: rgba(244, 242, 250, 0.64);
+    }
+    .mcp-bad {
+        color: #ff8a7a;
+    }
+    .mcp-good {
+        color: #6ee7b7;
+    }
+    .mcp-actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px;
+        padding-left: 50px;
+    }
+    .mcp-chip {
+        display: inline-flex;
+        align-items: center;
+        height: 28px;
+        margin: 0;
+        padding: 0 11px;
+        border: 0;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.06);
+        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.18);
+        font: inherit;
+        font-size: 12.5px;
+        font-weight: 500;
+        color: #fff;
+        white-space: nowrap;
+        cursor: pointer;
+    }
+    .mcp-chip.mcp-bad {
+        color: #ff8a7a;
+    }
+    .mcp-chip.mcp-good {
+        color: #6ee7b7;
+    }
+    .mcp-chip:disabled {
+        opacity: 0.5;
+        cursor: default;
+    }
+    @media (hover: hover) {
+        .mcp-chip:not(:disabled):hover {
+            background: rgba(255, 255, 255, 0.12);
+        }
+    }
+    .mcp-chip:focus-visible,
+    .mcp-pill:focus-visible {
+        outline: 2px solid #a78bfa;
+        outline-offset: 2px;
+    }
+    .mcp-tag {
+        font-size: 10.5px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: rgba(244, 242, 250, 0.42);
+    }
+    .mcp-tag.mcp-good {
+        color: #6ee7b7;
+        text-transform: none;
+        letter-spacing: 0;
+        font-size: 12.5px;
+    }
+    .mcp-tools {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        padding-left: 50px;
+    }
+    .mcp-tools span {
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: rgba(52, 211, 153, 0.1);
+        font-size: 11px;
+        color: rgba(110, 231, 183, 0.85);
+    }
+    .mcp-add {
+        display: flex;
+        justify-content: flex-end;
+    }
+    .mcp-loading .mcp-tx {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+    .mcp-bar {
+        display: block;
+        height: 10px;
+        width: 70%;
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.08);
+    }
+    .mcp-bar.short {
+        width: 45%;
+    }
+    .mcp-dialog {
+        border-radius: 24px;
+        color: #fff;
+    }
+    .mcp-dialog :global(.mcp-input) {
+        border: 0;
+        border-radius: 12px;
+        background: rgba(0, 0, 0, 0.25);
+        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.18);
+        color: #fff;
+        outline: none;
+    }
+    .mcp-dialog :global(.mcp-input::placeholder) {
+        color: rgba(244, 242, 250, 0.42);
+    }
+    .mcp-dialog :global(.mcp-input:focus-visible) {
+        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.6);
+    }
+    .mcp-dialog :global(.mcp-input option) {
+        background: #14121e;
+    }
+    .mcp-pill {
+        height: 40px;
+        padding: 0 18px;
+        border: 0;
+        border-radius: 999px;
+        font: inherit;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+    }
+    .mcp-pill-q {
+        background: rgba(255, 255, 255, 0.08);
+        color: #fff;
+    }
+    @media (hover: hover) {
+        .mcp-pill-q:hover {
+            background: rgba(255, 255, 255, 0.14);
+        }
+    }
+</style>

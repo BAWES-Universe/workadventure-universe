@@ -34,11 +34,20 @@ export function unregisterEditTool(id: string): void {
     editToolsStore.update((tools) => tools.filter((t) => t.id !== id));
 }
 
+/**
+ * A back circle for an added tool's panel title, while the tool shows one of its own pages (the bots module's bot
+ * page goes back to its list). Undefined shows the title with its subtitle, as on the tool's first page.
+ */
+export const editPanelBackStore = writable<{ onBack: () => void; label: string } | undefined>(undefined);
+
 /** One action in the bar at the bottom while placing, moving or drawing. */
 export interface PlacingAction {
     label: string;
     kind: "primary" | "secondary";
     testId?: string;
+    /** Shown as a round icon button, with the label for screen readers (Undo in the route bar). */
+    icon?: ComponentType;
+    disabled?: boolean;
     onClick: () => void;
 }
 export interface PlacingBar {
@@ -49,6 +58,8 @@ export interface PlacingBar {
     /** Or an icon when there is no picture (a new area). */
     icon?: ComponentType;
     actions: PlacingAction[];
+    /** One line at the top of the map saying what to do (the route bar: "Tap the map to add a stop…"). */
+    hint?: string;
 }
 /** The bar at the bottom while a module places something (a bot, a route). The editor's own placing bar is drawn by its tools. */
 export const editPlacingBarStore = writable<PlacingBar | undefined>(undefined);

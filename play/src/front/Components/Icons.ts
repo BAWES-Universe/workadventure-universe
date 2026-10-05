@@ -150,3 +150,7 @@ export { default as IconMouse } from "~icons/tabler/mouse";
 export { default as IconAdjustmentsHorizontal } from "~icons/tabler/adjustments-horizontal";
 export { default as IconKeyboard } from "~icons/tabler/keyboard";
 export { default as IconFlag } from "~icons/tabler/flag";
+export { default as IconSparkles } from "~icons/tabler/sparkles";
+export { default as IconTool } from "~icons/tabler/tool";
+export { default as IconCurrentLocation } from "~icons/tabler/current-location";
+export { default as IconCircleDashed } from "~icons/tabler/circle-dashed";

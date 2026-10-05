@@ -33,6 +33,8 @@ export interface CreateBotDto {
     behaviorConfig: BotData["behaviorConfig"];
     chatInstructions?: string;
     aiProviderRef?: string;
+    /** "Patience": how long the bot waits for a tool to answer, in seconds; null = the bot server's default */
+    toolTimeoutSeconds?: number | null;
 }
 
 export interface UpdateBotDto extends Partial<CreateBotDto> {

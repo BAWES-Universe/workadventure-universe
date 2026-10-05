@@ -1,8 +1,8 @@
 <script lang="ts">
     import { onMount, onDestroy } from "svelte";
     import type { BotData } from "../types";
-    import { hoveredBotIdStore, upsertBot } from "../stores/BotEditorStore";
-    import { botApiService } from "../services/BotApiService";
+    import { hoveredBotIdStore } from "../stores/BotEditorStore";
+    import { setBotEnabled } from "../services/botEnabled";
     import BotCard from "./BotCard.svelte";
 
     export let bots: BotData[] = [];
@@ -80,64 +80,12 @@
 
     async function handleToggleBot(bot: BotData, enabled: boolean) {
         if (togglingIds.has(bot.id)) return;
-        const originalEnabled = bot.enabled;
 
         // Flip the switch right away and lock it until the API answers
         togglingIds = new Set(togglingIds).add(bot.id);
-        upsertBot({ ...bot, enabled });
 
         try {
-            // Update bot via Admin API
-            const updatedBot = await botApiService.updateBot(bot.id, { enabled });
-
-            // Update store with API response - single update prevents duplicates
-            // Ensure we always have a valid ID (fallback to original bot.id if API doesn't return it)
-            const botId = updatedBot.id || bot.id;
-            if (!botId) {
-                console.error("[BotList] Cannot update bot: missing ID in both API response and original bot");
-                throw new Error("Bot ID is missing");
-            }
-
-            const textureId = typeof updatedBot.characterTextureId === "string" ? updatedBot.characterTextureId : "";
-            const botData: BotData = {
-                id: botId,
-                botId: botId,
-                name: updatedBot.name || bot.name,
-                description: typeof updatedBot.description === "string" ? updatedBot.description : bot.description,
-                characterTexture: textureId || bot.characterTexture,
-                characterTextureIds: textureId ? [textureId] : bot.characterTextureIds || [],
-                behaviorType: (updatedBot.behaviorType as "idle" | "patrol" | "social") || bot.behaviorType,
-                enabled: updatedBot.enabled ?? enabled, // Use API response, fallback to requested state
-                behaviorConfig: updatedBot.behaviorConfig || bot.behaviorConfig,
-                chatInstructions: updatedBot.chatInstructions || bot.chatInstructions || "",
-                aiProviderRef: updatedBot.aiProviderRef || bot.aiProviderRef || undefined,
-                createdAt: updatedBot.createdAt || bot.createdAt || new Date().toISOString(),
-                updatedAt: updatedBot.updatedAt || new Date().toISOString(),
-                createdBy: updatedBot.createdBy || bot.createdBy || null,
-                updatedBy: updatedBot.updatedBy || bot.updatedBy || null,
-            };
-            // Single upsert call - this will update the store once
-            upsertBot(botData);
-
-            // If disabling, despawn the bot immediately
-            if (!enabled) {
-                try {
-                    await botApiService.despawnBot(bot.id);
-                    console.log(`[BotList] Despawned bot ${bot.id} after disabling`);
-                } catch (despawnError) {
-                    console.warn(`[BotList] Failed to despawn bot ${bot.id}:`, despawnError);
-                    // Don't revert - the bot is disabled in the database even if despawning failed
-                }
-            } else {
-                // If enabling, spawn the bot if not already spawned
-                try {
-                    await botApiService.spawnBot(bot.id);
-                    console.log(`[BotList] Spawned bot ${bot.id} after enabling`);
-                } catch (spawnError) {
-                    console.warn(`[BotList] Failed to spawn bot ${bot.id}:`, spawnError);
-                    // Don't revert - the bot is enabled in the database
-                }
-            }
+            await setBotEnabled(bot, enabled);
         } catch (e) {
             console.error("Error toggling bot:", e);
 
@@ -157,9 +105,6 @@
                     error = null;
                 }, 5000);
             }
-
-            // Revert on error
-            upsertBot({ ...bot, enabled: originalEnabled });
         } finally {
             const next = new Set(togglingIds);
             next.delete(bot.id);

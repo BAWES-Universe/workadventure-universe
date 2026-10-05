@@ -1,14 +1,20 @@
 import Phaser from "phaser";
 
-const WAYPOINT_RADIUS = 16;
-const WAYPOINT_HOVER_RADIUS = 20;
-const PATH_LINE_WIDTH = 4;
-const PATH_COLOR = 0x22c55e;
-const PATH_HOVER_COLOR = 0x4ade80;
-const WAYPOINT_FILL = 0xffffff;
-const WAYPOINT_STROKE = 0x15803d;
-const ARROW_SIZE = 12;
+// Universe colours: numbered violet stops with a white edge, joined by a dashed lavender line
+const WAYPOINT_RADIUS = 14;
+const WAYPOINT_HOVER_RADIUS = 17;
+const PATH_LINE_WIDTH = 3;
+const PATH_COLOR = 0xc4b5fd;
+const PATH_HOVER_COLOR = 0xddd6fe;
+const WAYPOINT_FILL = 0x6d3ff8;
+const WAYPOINT_STROKE = 0xffffff;
+const WAYPOINT_LABEL = "#ffffff";
+const ARROW_SIZE = 10;
+const DASH = 10;
+const GAP = 7;
 const WAYPOINT_DEPTH = 1002;
+// A press that moves less than this before release is a tap (which removes the stop), not a drag
+const TAP_MAX_DISTANCE = 6;
 
 export enum WaypointPathEvent {
     WaypointSelected = "WaypointPath:WaypointSelected",
@@ -26,7 +32,6 @@ interface WaypointMarker {
     container: Phaser.GameObjects.Container;
     circle: Phaser.GameObjects.Arc;
     label: Phaser.GameObjects.Text;
-    deleteButton: Phaser.GameObjects.Arc;
 }
 
 /**
@@ -35,10 +40,9 @@ interface WaypointMarker {
  * Features:
  * - Large, easy to grab waypoint markers
  * - Drag markers to reposition
- * - Click "+" to add waypoint at end
- * - Click "X" on marker to delete
+ * - Tap a marker to remove it (Undo in the route bar puts it back)
  * - Directional arrows showing patrol direction
- * - Constraint to stay within a radius boundary
+ * - A loop draws the way back from the last stop to the first
  */
 export class WaypointPath extends Phaser.GameObjects.Container {
     private waypoints: Waypoint[];
@@ -47,11 +51,9 @@ export class WaypointPath extends Phaser.GameObjects.Container {
     private selectedIndex: number = -1;
     private isEditing: boolean = false;
     private isDragging: boolean = false;
+    private loop = true;
 
     private shiftKey?: Phaser.Input.Keyboard.Key;
-
-    // Instruction overlay
-    private instructionText: Phaser.GameObjects.Text | null = null;
 
     // Constraint boundary (waypoints must stay within this)
     private constraintCenter: { x: number; y: number } = { x: 0, y: 0 };
@@ -87,6 +89,13 @@ export class WaypointPath extends Phaser.GameObjects.Container {
         this.draw();
     }
 
+    /** Whether the route loops (draws the way back from the last stop to the first) or goes back and forth. */
+    public setLoop(loop: boolean): void {
+        if (this.loop === loop) return;
+        this.loop = loop;
+        this.draw();
+    }
+
     /**
      * Get waypoints
      */
@@ -102,18 +111,13 @@ export class WaypointPath extends Phaser.GameObjects.Container {
 
         // Update marker interactivity
         this.markers.forEach((marker, index) => {
+            void index;
             if (editing) {
                 marker.container.setInteractive({ cursor: "grab", draggable: true });
-                // Don't show delete button for first waypoint (index 0)
-                marker.deleteButton.setVisible(index > 0);
             } else {
                 marker.container.disableInteractive();
-                marker.deleteButton.setVisible(false);
             }
         });
-
-        // Show/hide instructions
-        this.updateInstructions();
 
         if (!editing) {
             this.selectedIndex = -1;
@@ -250,9 +254,6 @@ export class WaypointPath extends Phaser.GameObjects.Container {
             this.markers.push(marker);
             this.add(marker.container);
         });
-
-        // Update instructions
-        this.updateInstructions();
     }
 
     /**
@@ -268,52 +269,36 @@ export class WaypointPath extends Phaser.GameObjects.Container {
 
         // Number label
         const label = this.scene.add.text(0, 0, String(index + 1), {
-            fontSize: "14px",
+            fontSize: "13px",
             fontStyle: "bold",
-            color: "#166534",
+            color: WAYPOINT_LABEL,
         });
         label.setOrigin(0.5, 0.5);
         container.add(label);
 
-        // Delete button (X) - positioned at top-right
-        const deleteButton = this.scene.add.arc(WAYPOINT_RADIUS, -WAYPOINT_RADIUS, 10, 0, 360, false, 0xef4444, 1);
-        deleteButton.setStrokeStyle(2, 0xffffff);
-        deleteButton.setVisible(false);
-        deleteButton.setInteractive({ cursor: "pointer" });
-        deleteButton.setData("isDeleteButton", true); // Mark as delete button for hit testing
-        container.add(deleteButton);
-
-        // Delete button X
-        const deleteX = this.scene.add.text(WAYPOINT_RADIUS, -WAYPOINT_RADIUS, "×", {
-            fontSize: "14px",
-            fontStyle: "bold",
-            color: "#ffffff",
-        });
-        deleteX.setOrigin(0.5, 0.5);
-        container.add(deleteX);
-
-        // Set size for interaction
-        container.setSize(WAYPOINT_RADIUS * 2, WAYPOINT_RADIUS * 2);
+        // Set size for interaction (a little larger than the circle, so it is easy to grab on a phone)
+        container.setSize(WAYPOINT_HOVER_RADIUS * 2 + 8, WAYPOINT_HOVER_RADIUS * 2 + 8);
         container.setData("waypointIndex", index);
 
         // Setup events
         if (this.isEditing) {
             container.setInteractive({ cursor: "grab", draggable: true });
-            // Don't show delete button for first waypoint (index 0)
-            deleteButton.setVisible(index > 0);
         }
 
-        // Delete button click - use stored index from container data (only for non-first waypoints)
-        if (index > 0) {
-            deleteButton.on(Phaser.Input.Events.POINTER_DOWN, (pointer: Phaser.Input.Pointer) => {
-                pointer.event.stopPropagation();
-                const currentIndex = container.getData("waypointIndex") as number;
-                // Use setTimeout to prevent the event from interfering with other handlers
-                setTimeout(() => {
-                    this.removeWaypoint(currentIndex);
-                }, 0);
-            });
-        }
+        // A tap (press and release without moving) removes the stop; a drag moves it
+        let pressedAt: { x: number; y: number } | undefined;
+        container.on(Phaser.Input.Events.POINTER_DOWN, (pointer: Phaser.Input.Pointer) => {
+            pressedAt = { x: pointer.x, y: pointer.y };
+        });
+        container.on(Phaser.Input.Events.POINTER_UP, (pointer: Phaser.Input.Pointer) => {
+            const start = pressedAt;
+            pressedAt = undefined;
+            if (!this.isEditing || !start || this.isDragging) return;
+            if (Math.hypot(pointer.x - start.x, pointer.y - start.y) > TAP_MAX_DISTANCE) return;
+            const currentIndex = container.getData("waypointIndex") as number;
+            // After this event: removing rebuilds the markers, including this one
+            setTimeout(() => this.removeWaypoint(currentIndex), 0);
+        });
 
         // Hover effects
         container.on(Phaser.Input.Events.POINTER_OVER, () => {
@@ -368,40 +353,7 @@ export class WaypointPath extends Phaser.GameObjects.Container {
             );
         });
 
-        return { container, circle, label, deleteButton };
-    }
-
-    /**
-     * Update instruction text
-     */
-    private updateInstructions(): void {
-        if (this.instructionText) {
-            this.instructionText.destroy();
-            this.instructionText = null;
-        }
-
-        if (this.isEditing) {
-            const message =
-                this.waypoints.length === 0
-                    ? "Click inside the green circle to add patrol points"
-                    : this.waypoints.length === 1
-                    ? "1 point (start) - Click to add more waypoints"
-                    : `${this.waypoints.length} points - Click to add, drag to move, × to delete`;
-
-            this.instructionText = this.scene.add.text(
-                this.constraintCenter.x,
-                this.constraintCenter.y - this.constraintRadius - 20,
-                message,
-                {
-                    fontSize: "13px",
-                    color: "#ffffff",
-                    backgroundColor: "#22c55ecc",
-                    padding: { x: 10, y: 6 },
-                }
-            );
-            this.instructionText.setOrigin(0.5, 1);
-            this.add(this.instructionText);
-        }
+        return { container, circle, label };
     }
 
     /**
@@ -432,25 +384,36 @@ export class WaypointPath extends Phaser.GameObjects.Container {
 
         // Draw path lines
         const lineColor = this.isEditing ? PATH_HOVER_COLOR : PATH_COLOR;
-        this.pathGraphics.lineStyle(PATH_LINE_WIDTH, lineColor, 0.8);
+        this.pathGraphics.lineStyle(PATH_LINE_WIDTH, lineColor, 0.85);
 
         for (let i = 0; i < this.waypoints.length - 1; i++) {
             const start = this.waypoints[i];
             const end = this.waypoints[i + 1];
 
-            this.pathGraphics.lineBetween(start.x, start.y, end.x, end.y);
+            this.dashedLine(start, end);
             this.drawArrow(start, end, lineColor);
         }
 
-        // Close the loop (last to first)
-        if (this.waypoints.length > 2) {
+        // Close the loop (last to first), fainter: back and forth routes turn round at the last stop instead
+        if (this.loop && this.waypoints.length > 2) {
             const start = this.waypoints[this.waypoints.length - 1];
             const end = this.waypoints[0];
 
-            // Dashed line for return path
-            this.pathGraphics.lineStyle(PATH_LINE_WIDTH, lineColor, 0.4);
-            this.pathGraphics.lineBetween(start.x, start.y, end.x, end.y);
-            this.drawArrow(start, end, lineColor, 0.4);
+            this.pathGraphics.lineStyle(PATH_LINE_WIDTH, lineColor, 0.45);
+            this.dashedLine(start, end);
+            this.drawArrow(start, end, lineColor, 0.45);
+        }
+    }
+
+    /** A dashed segment, in the current line style. */
+    private dashedLine(start: Waypoint, end: Waypoint): void {
+        const length = Math.hypot(end.x - start.x, end.y - start.y);
+        if (length === 0) return;
+        const ux = (end.x - start.x) / length;
+        const uy = (end.y - start.y) / length;
+        for (let d = 0; d < length; d += DASH + GAP) {
+            const to = Math.min(length, d + DASH);
+            this.pathGraphics.lineBetween(start.x + ux * d, start.y + uy * d, start.x + ux * to, start.y + uy * to);
         }
     }
 
@@ -501,7 +464,6 @@ export class WaypointPath extends Phaser.GameObjects.Container {
     public destroy(fromScene?: boolean): void {
         this.pathGraphics.destroy();
         this.markers.forEach((m) => m.container.destroy());
-        this.instructionText?.destroy();
         super.destroy(fromScene);
     }
 }
