@@ -638,3 +638,55 @@ describe("Space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage", () =
         expect(bob.microphoneState).toBe(false);
     });
 });
+
+describe("Space raised hands", () => {
+    function spaceWithUser() {
+        const space = new Space(
+            "test",
+            "test",
+            new EventProcessor(),
+            FilterType.ALL_USERS,
+            vi.fn(),
+            mock<SpaceConnectionInterface>(),
+            "world",
+            [],
+            () => ({} as unknown as SpaceToBackForwarder),
+            () => ({} as unknown as SpaceToFrontDispatcher)
+        );
+        const user = { ...SpaceUser.fromPartial({ spaceUserId: "foo_1", uuid: "uuid-1" }), lowercaseName: "foo_1" };
+        const socket = mock<Socket>({
+            getUserData: vi.fn().mockReturnValue({ userUuid: "uuid-1" }),
+        });
+        space._localConnectedUserWithSpaceUser.set(socket, user);
+        const raise = (handRaisedAt: number) =>
+            space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(socket, {
+                spaceName: "test",
+                user: SpaceUser.fromPartial({ spaceUserId: "foo_1", handRaisedAt }),
+                updateMask: ["handRaisedAt"],
+            });
+        return { user, raise };
+    }
+
+    it("stamps a raised hand with the server's time, not the browser's", () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(5000);
+        const { user, raise } = spaceWithUser();
+
+        expect(raise(123)?.partialSpaceUser.handRaisedAt).toBe(5000);
+        expect(user.handRaisedAt).toBe(5000);
+        vi.useRealTimers();
+    });
+
+    it("keeps the place in line of a hand that is already up, and lowers it with 0", () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(5000);
+        const { user, raise } = spaceWithUser();
+        raise(1);
+        vi.setSystemTime(9000);
+
+        expect(raise(1)?.partialSpaceUser.handRaisedAt).toBe(5000);
+        expect(raise(0)?.partialSpaceUser.handRaisedAt).toBe(0);
+        expect(user.handRaisedAt).toBe(0);
+        vi.useRealTimers();
+    });
+});

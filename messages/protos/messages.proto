@@ -964,6 +964,14 @@ message MuteVideoForEverybodyPublicMessage {
 message KickOffUserPrivateMessage {
 }
 
+// A moderator lowers someone's raised hand (only admins, checked by the pusher).
+message LowerHandPrivateMessage {
+}
+
+// A moderator lowers every raised hand in the space (only admins, checked by the pusher).
+message LowerAllHandsPublicMessage {
+}
+
 message PublicEventFrontToPusher {
   string spaceName = 1;
   SpaceEvent spaceEvent = 2;
@@ -982,6 +990,7 @@ message SpaceEvent {
     MuteAudioForEverybodyPublicMessage muteAudioForEverybody = 3;
     MuteVideoForEverybodyPublicMessage muteVideoForEverybody = 4;
     SpaceStreamMessage spaceStreamMessage = 5;
+    LowerAllHandsPublicMessage lowerAllHands = 6;
   }
 }
 
@@ -1004,6 +1013,7 @@ message PrivateSpaceEvent {
     RemoveSpaceUserMessage removeSpaceUserMessage = 18;
     BlockUserMessage blockUserMessage = 20;
     UnblockUserMessage unblockUserMessage = 21;
+    LowerHandPrivateMessage lowerHand = 22;
   }
 }
 
@@ -1458,6 +1468,8 @@ message SpaceUser{
   string uuid = 16; // used
   google.protobuf.StringValue chatID = 17; // used
   bool showVoiceIndicator = 18;
+  // When the user raised their hand, in ms since the epoch, stamped by the pusher; 0 (or unset) when it is down.
+  optional double handRaisedAt = 19;
 }
 
 /*message PartialSpaceUser{

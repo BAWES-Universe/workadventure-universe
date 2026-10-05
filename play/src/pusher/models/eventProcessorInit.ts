@@ -56,3 +56,17 @@ eventProcessor.registerPrivateEventProcessor("kickOffUser", (event, sender) => {
     }
     return event;
 });
+
+eventProcessor.registerPrivateEventProcessor("lowerHand", (event, sender) => {
+    if (!sender || !sender.tags.includes("admin")) {
+        throw new Error("Only admins can lower someone else's hand");
+    }
+    return event;
+});
+
+eventProcessor.registerPublicEventProcessor("lowerAllHands", (event, sender) => {
+    if (!sender || !sender.tags.includes("admin")) {
+        throw new Error("Only admins can lower all hands");
+    }
+    return event;
+});

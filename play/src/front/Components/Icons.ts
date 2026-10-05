@@ -150,3 +150,4 @@ export { default as IconKeyboard } from "~icons/tabler/keyboard";
 export { default as IconFlag } from "~icons/tabler/flag";
 export { default as IconBan } from "~icons/tabler/ban";
 export { default as IconEyeOff } from "~icons/tabler/eye-off";
+export { default as IconHandStop } from "~icons/tabler/hand-stop";
