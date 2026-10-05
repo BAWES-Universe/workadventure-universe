@@ -67,14 +67,26 @@
             {#if external.subtitle}<div class="em-m">{external.subtitle}</div>{/if}
         </div>
         {#each external.actions as action (action.label)}
-            <button
-                type="button"
-                class="em-btn"
-                class:u-cta={action.kind === "primary"}
-                class:em-btn-q={action.kind === "secondary"}
-                data-testid={action.testId}
-                on:click={action.onClick}>{action.label}</button
-            >
+            {#if action.icon}
+                <button
+                    type="button"
+                    class="em-btn em-btn-q em-btn-round"
+                    aria-label={action.label}
+                    title={action.label}
+                    disabled={action.disabled}
+                    data-testid={action.testId}
+                    on:click={action.onClick}><svelte:component this={action.icon} font-size="20" /></button
+                >
+            {:else}
+                <button
+                    type="button"
+                    class="em-btn"
+                    class:u-cta={action.kind === "primary"}
+                    class:em-btn-q={action.kind === "secondary"}
+                    data-testid={action.testId}
+                    on:click={action.onClick}>{action.label}</button
+                >
+            {/if}
         {/each}
     {:else if drawingArea}
         <span class="em-thumb em-thumb-icon"><IconTexture font-size="22" /></span>
@@ -206,8 +218,16 @@
     .em-btn-q {
         background: rgba(255, 255, 255, 0.08);
     }
+    .em-btn-round {
+        width: 44px;
+        padding: 0;
+    }
+    .em-btn:disabled {
+        opacity: 0.4;
+        cursor: default;
+    }
     @media (hover: hover) {
-        .em-btn-q:hover {
+        .em-btn-q:not(:disabled):hover {
             background: rgba(255, 255, 255, 0.14);
         }
     }

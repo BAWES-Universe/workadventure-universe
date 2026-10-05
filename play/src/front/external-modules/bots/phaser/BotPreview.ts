@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import type { BotData } from "../types";
+import { botModel, noticeRange } from "../behaviorModel";
 
 const TILE_SIZE = 32;
 // Above every placed object (their depth is their bottom edge on the map), so the bot and its radius handle win the
@@ -49,8 +50,8 @@ export class BotPreview extends Phaser.GameObjects.Container {
         this.botData = botData;
 
         const colors = this.getColors();
-        const radius = botData.behaviorConfig?.assignedSpace?.radius || 0;
-        const conversationRadius = botData.behaviorConfig?.conversationRadius || 0;
+        // The circle only means something for a bot that wanders: it is the area it walks in
+        const radius = botModel(botData).moves === "wander" ? botData.behaviorConfig?.assignedSpace?.radius || 0 : 0;
 
         // Radius circle (behind square)
         this.radiusCircle = scene.add.arc(0, 0, radius, 0, 360, false);
@@ -59,9 +60,9 @@ export class BotPreview extends Phaser.GameObjects.Container {
         this.radiusCircle.setVisible(radius > 0);
         this.add(this.radiusCircle);
 
-        // Conversation radius circle for social bots
-        if (botData.behaviorConfig?.behaviorType === "social") {
-            const convRadius = conversationRadius > 0 ? conversationRadius : Math.min(80, radius);
+        // The soft ring: how far a bot that goes to people notices them
+        if (botModel(botData).goesToPeople) {
+            const convRadius = noticeRange(botData);
             this.conversationRadiusCircle = scene.add.arc(0, 0, convRadius, 0, 360, false);
             this.conversationRadiusCircle.setFillStyle(0xa855f7, 0.15);
             this.conversationRadiusCircle.setStrokeStyle(3, 0xa855f7, 0.9);
@@ -99,12 +100,7 @@ export class BotPreview extends Phaser.GameObjects.Container {
         });
 
         this.resizeHandle.on(Phaser.Input.Events.DRAG, (_p: Phaser.Input.Pointer, dragX: number) => {
-            // For social bots, don't allow radius smaller than conversation radius
-            const minRadius =
-                this.botData.behaviorConfig?.behaviorType === "social"
-                    ? Math.max(50, this.botData.behaviorConfig?.conversationRadius || 50)
-                    : 16;
-            const newRadius = Math.max(minRadius, Math.abs(dragX));
+            const newRadius = Math.max(16, Math.abs(dragX));
             this.setRadius(newRadius);
             this.emit(BotPreviewEvent.RadiusChanged, this.botData.id, newRadius);
         });
@@ -184,7 +180,7 @@ export class BotPreview extends Phaser.GameObjects.Container {
     public setSelected(selected: boolean): void {
         this.isSelected = selected;
         const colors = this.getColors();
-        const radius = this.botData.behaviorConfig?.assignedSpace?.radius || 0;
+        const radius = this.areaRadius();
 
         if (selected) {
             this.square.setStrokeStyle(4, 0xffffff);
@@ -209,11 +205,10 @@ export class BotPreview extends Phaser.GameObjects.Container {
 
         if (hovered && !this.isSelected) {
             this.square.setStrokeStyle(3, 0xffffff, 0.8);
-            this.radiusCircle.setVisible(true);
+            this.radiusCircle.setVisible(this.areaRadius() > 0);
         } else if (!this.isSelected) {
             this.square.setStrokeStyle(3, colors.stroke);
-            const radius = this.botData.behaviorConfig?.assignedSpace?.radius || 0;
-            this.radiusCircle.setVisible(radius > 0);
+            this.radiusCircle.setVisible(this.areaRadius() > 0);
         }
     }
 
@@ -222,10 +217,17 @@ export class BotPreview extends Phaser.GameObjects.Container {
             this.botData.behaviorConfig.assignedSpace.radius = radius;
         }
 
+        const shown = this.areaRadius();
         this.radiusCircle.setRadius(radius);
-        this.radiusCircle.setVisible(radius > 0);
+        this.radiusCircle.setVisible(shown > 0);
         this.resizeHandle.setPosition(radius, 0);
-        this.resizeHandle.setVisible(this.isSelected && radius > 0);
+        this.resizeHandle.setVisible(this.isSelected && shown > 0);
+    }
+
+    /** The circle's radius when the bot wanders, else 0: stay and route bots have no area to show. */
+    private areaRadius(): number {
+        if (botModel(this.botData).moves !== "wander") return 0;
+        return this.botData.behaviorConfig?.assignedSpace?.radius || 0;
     }
 
     public getBotData(): BotData {
@@ -267,9 +269,6 @@ export class BotPreview extends Phaser.GameObjects.Container {
             this.setRadius(radius);
         }
 
-        // Get current behavior type (check both locations)
-        const behaviorType = this.botData.behaviorConfig?.behaviorType || this.botData.behaviorType || "idle";
-
         // Update colors based on behavior type
         const colors = this.getColors();
         this.square.setFillStyle(colors.fill, 0.6); // Add opacity to see bots underneath
@@ -285,11 +284,9 @@ export class BotPreview extends Phaser.GameObjects.Container {
             this.nameText.setText(newData.name);
         }
 
-        // Update conversation radius for social bots
-        const conversationRadius = this.botData.behaviorConfig?.conversationRadius || 0;
-
-        if (behaviorType === "social") {
-            const convRadius = conversationRadius > 0 ? conversationRadius : Math.min(80, radius || 100);
+        // The notice ring, for any bot that goes to people
+        if (botModel(this.botData).goesToPeople) {
+            const convRadius = noticeRange(this.botData);
             if (!this.conversationRadiusCircle) {
                 this.conversationRadiusCircle = this.scene.add.arc(0, 0, convRadius, 0, 360, false);
                 this.conversationRadiusCircle.setFillStyle(0xa855f7, 0.15);
@@ -300,7 +297,7 @@ export class BotPreview extends Phaser.GameObjects.Container {
             }
             this.conversationRadiusCircle.setVisible(true);
         } else {
-            // Hide social elements for non-social bots
+            // No ring for a bot that doesn't go to people
             this.conversationRadiusCircle?.setVisible(false);
         }
     }

@@ -8,7 +8,7 @@
     import { windowSize } from "../../../Stores/CoWebsiteStore";
     import { EditorToolName } from "../../../Phaser/Game/MapEditor/MapEditorModeManager";
     import { mapEditorSelectedToolStore } from "../../../Stores/MapEditorStore";
-    import { editToolsStore } from "../../../Stores/EditModeStore";
+    import { editPanelBackStore, editToolsStore } from "../../../Stores/EditModeStore";
     import MapEditorResizeHandle from "../MapEditorResizeHandle.svelte";
     import { mapEditorSideBarWidthStore } from "../MapEditorSideBarWidthStore";
     import ObjectsPanel from "./ObjectsPanel.svelte";
@@ -50,7 +50,12 @@
         {:else if tool === EditorToolName.AreaEditor}
             <AreasPanel />
         {:else if external}
-            <PanelHeader title={external.label} subtitle={external.subtitle} />
+            <PanelHeader
+                title={external.label}
+                subtitle={$editPanelBackStore ? undefined : external.subtitle}
+                onBack={$editPanelBackStore?.onBack}
+                backLabel={$editPanelBackStore?.label}
+            />
         {/if}
     </div>
 </div>
@@ -94,7 +99,10 @@
         display: none;
     }
     /* The bots module shows the anchor row when it puts its page in; then it must take no room. */
+    /* The module adds its page while the title row may still be on its way in, so the page is put after the title
+       whatever their order in the page. */
     .em-sidebar :global(#bot-editor-container) {
+        order: 1;
         flex: 1;
         min-height: 0;
         overflow: auto;

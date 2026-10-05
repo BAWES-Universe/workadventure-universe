@@ -1,9 +1,13 @@
 <script lang="ts">
     import { onMount, onDestroy } from "svelte";
     import { get } from "svelte/store";
+    import LL from "../../../i18n/i18n-svelte";
+    import { editPanelBackStore, editPlacingBarStore } from "../../Stores/EditModeStore";
+    import { mapEditorVisibilityStore } from "../../Stores/MapEditorStore";
+    import { mobileLayoutStore } from "../../Stores/MobileLayoutStore";
     import BotList from "./components/BotList.svelte";
     import BotDetailView from "./components/BotDetailView.svelte";
-    import CreateBotModal from "./components/CreateBotModal.svelte";
+    import NewBotView from "./components/NewBotView.svelte";
     import type { BotData } from "./types";
     import {
         botEditorModeStore,
@@ -19,12 +23,16 @@
         cancelPlacement,
         loadBotPreviews,
         queueBotSave,
+        routeUndoCountStore,
+        stopWaypointEditing,
+        undoRouteChange,
         type BotEditorMode,
     } from "./stores/BotEditorStore";
+    import { routeStops } from "./behaviorModel";
     import { getBotEditorTool } from "./phaser/BotEditorTool";
     import { botApiService } from "./services/BotApiService";
+    import { IconArrowBackUp, IconRoute } from "@wa-icons";
 
-    let showCreateModal = false;
     let detailView: BotDetailView | undefined;
     let botEditorTool = getBotEditorTool();
     let isLoading = false;
@@ -46,6 +54,16 @@
     const pendingSaves = new Map<SaveKind, { timeout: ReturnType<typeof setTimeout>; save: () => void }>();
     let lastSavedBotConfig: string | null = null;
     let lastSavedAIConfig: string | null = null;
+
+    /** What the "ai" save sends besides the behavior: the bot's mind, chat instructions, Patience and description */
+    function aiConfigOf(bot: BotData): string {
+        return JSON.stringify({
+            aiProviderRef: bot.aiProviderRef,
+            chatInstructions: bot.chatInstructions,
+            toolTimeoutSeconds: bot.toolTimeoutSeconds ?? null,
+            description: bot.description ?? "",
+        });
+    }
 
     /** Debounce a save (wait 1 second after the last change), replacing the pending save of the same kind */
     function scheduleSave(kind: SaveKind, save: () => void): void {
@@ -78,10 +96,7 @@
                 console.log("[BotEditor] Bot changed or first selected, initializing lastSaved values");
             }
             lastSavedBotConfig = JSON.stringify(bot.behaviorConfig);
-            lastSavedAIConfig = JSON.stringify({
-                aiProviderRef: bot.aiProviderRef,
-                chatInstructions: bot.chatInstructions,
-            });
+            lastSavedAIConfig = aiConfigOf(bot);
             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                 console.log("[BotEditor] Initialized lastSavedAIConfig:", lastSavedAIConfig.substring(0, 100));
             }
@@ -94,17 +109,13 @@
             previousBot.id === bot.id &&
             previousBot.name !== bot.name &&
             JSON.stringify(previousBot.behaviorConfig) === JSON.stringify(bot.behaviorConfig) &&
-            previousBot.aiProviderRef === bot.aiProviderRef &&
-            previousBot.chatInstructions === bot.chatInstructions;
+            aiConfigOf(previousBot) === aiConfigOf(bot);
 
         // Auto-save when bot's config changes (position, radius, etc.) - debounced
         // Skip if only name changed (handled separately)
         if (bot && botApiService.isInitialized() && !isOnlyNameChange) {
             const currentConfig = JSON.stringify(bot.behaviorConfig);
-            const currentAIConfig = JSON.stringify({
-                aiProviderRef: bot.aiProviderRef,
-                chatInstructions: bot.chatInstructions,
-            });
+            const currentAIConfig = aiConfigOf(bot);
 
             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                 console.log("[BotEditor] Comparing AI configs:", {
@@ -176,6 +187,8 @@
                                     behaviorType, // Include behaviorType explicitly to ensure it's saved
                                     aiProviderRef: bot.aiProviderRef,
                                     chatInstructions: bot.chatInstructions,
+                                    toolTimeoutSeconds: bot.toolTimeoutSeconds ?? null,
+                                    description: bot.description ?? "",
                                 });
                             });
                             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
@@ -375,7 +388,7 @@
     }
 
     function handleCreateBot() {
-        showCreateModal = true;
+        botEditorModeStore.set("create");
     }
 
     async function handleCreateBotSubmit(name: string, textureId: string) {
@@ -447,7 +460,6 @@
             };
 
             // Close modal
-            showCreateModal = false;
 
             // Start placement mode - user will click on map to set position
             startPlacingBot(newBot);
@@ -457,10 +469,6 @@
         } finally {
             isLoading = false;
         }
-    }
-
-    function handleCloseCreateModal() {
-        showCreateModal = false;
     }
 
     function handleBackToList() {
@@ -545,10 +553,6 @@
             return;
         }
 
-        if (!confirm(`Are you sure you want to delete "${selectedBot.name}"?`)) {
-            return;
-        }
-
         isLoading = true;
         error = null;
 
@@ -586,9 +590,73 @@
     function handleLocateBot(botId: string) {
         botEditorTool.panToBot(botId);
     }
+
+    // The bot page's back circle sits in the panel's title, next to "Bots"
+    function backToList() {
+        // Flush while the bot is still selected: only changes to the selected bot are saved
+        detailView?.flushPendingSaves();
+        handleBackToList();
+    }
+    $: editPanelBackStore.set(
+        (currentMode === "detail" || currentMode === "waypoint-edit") && selectedBot
+            ? { onBack: backToList, label: $LL.mapEditor.edit.bots.page.back() }
+            : currentMode === "create"
+            ? { onBack: handleBackToList, label: $LL.mapEditor.edit.bots.page.back() }
+            : undefined
+    );
+
+    // Editing a route: the bar at the bottom says whose route it is and how many stops it has, with Undo and Done,
+    // and a line at the top says how to add, move and remove stops. The panel tucks away to show the map.
+    let routeBarShown = false;
+    $: syncRouteBar(currentMode === "waypoint-edit" ? selectedBot : null, $routeUndoCountStore, $mobileLayoutStore);
+
+    function syncRouteBar(bot: BotData | null, undoCount: number, phone: boolean) {
+        if (!bot) {
+            hideRouteBar();
+            return;
+        }
+        if (!routeBarShown) {
+            routeBarShown = true;
+            mapEditorVisibilityStore.set(false);
+        }
+        const page = $LL.mapEditor.edit.bots.page;
+        const stops = routeStops(bot).length;
+        const loops = bot.behaviorConfig.loop !== false;
+        editPlacingBarStore.set({
+            title: page.route.title({ name: bot.name || "" }),
+            subtitle: `${page.moves.stops({ count: stops })} · ${
+                loops ? page.moves.loops() : page.moves.backAndForthBrief()
+            }`,
+            icon: IconRoute,
+            hint: phone ? page.route.hintPhone() : page.route.hintDesktop(),
+            actions: [
+                {
+                    label: page.route.undo(),
+                    kind: "secondary",
+                    icon: IconArrowBackUp,
+                    disabled: undoCount === 0,
+                    testId: "bot-route-undo",
+                    onClick: undoRouteChange,
+                },
+                { label: page.route.done(), kind: "primary", testId: "bot-route-done", onClick: stopWaypointEditing },
+            ],
+        });
+    }
+
+    function hideRouteBar() {
+        if (!routeBarShown) return;
+        routeBarShown = false;
+        editPlacingBarStore.set(undefined);
+        mapEditorVisibilityStore.set(true);
+    }
+
+    onDestroy(() => {
+        hideRouteBar();
+        editPanelBackStore.set(undefined);
+    });
 </script>
 
-<div class="bot-editor flex flex-col h-full min-h-0" style="padding-top: 30px;">
+<div class="bot-editor flex flex-col h-full min-h-0">
     {#if error}
         <div class="bg-red-500/20 border border-red-500/50 rounded-lg p-4 m-4">
             <p class="text-red-200 text-sm">{error}</p>
@@ -640,13 +708,14 @@
             </button>
         </div>
     {:else if currentMode === "list" || currentMode === "placing"}
-        <BotList {bots} onSelectBot={handleSelectBot} onCreateBot={handleCreateBot} onLocateBot={handleLocateBot} />
+        <BotList {bots} onSelectBot={handleSelectBot} onCreateBot={handleCreateBot} />
+    {:else if currentMode === "create"}
+        <NewBotView busy={isLoading} onCreate={handleCreateBotSubmit} onCancel={handleBackToList} />
     {:else if currentMode === "detail" || currentMode === "waypoint-edit"}
         {#if selectedBot}
             <BotDetailView
                 bind:this={detailView}
                 bot={selectedBot}
-                onBack={handleBackToList}
                 onSave={handleSave}
                 onDelete={handleDelete}
                 onLocate={() => selectedBot && handleLocateBot(selectedBot.id)}
@@ -657,8 +726,6 @@
             </div>
         {/if}
     {/if}
-
-    <CreateBotModal isOpen={showCreateModal} onClose={handleCloseCreateModal} onCreate={handleCreateBotSubmit} />
 </div>
 
 <style>

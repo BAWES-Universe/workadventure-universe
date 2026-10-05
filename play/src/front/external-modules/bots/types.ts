@@ -32,6 +32,7 @@ export interface BotData {
     };
     chatInstructions?: string;
     aiProviderRef?: string; // Reference to AI provider config in Admin API
+    toolTimeoutSeconds?: number | null; // "Patience": how long the bot waits for a tool, null = the server's 90 s
     enabled?: boolean; // Whether bot is active
     createdAt?: string;
     updatedAt?: string;

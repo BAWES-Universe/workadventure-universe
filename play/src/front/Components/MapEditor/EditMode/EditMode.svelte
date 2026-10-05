@@ -166,6 +166,11 @@
             <IconHandMove font-size="18" class="em-hint-icon" />
             <span>{$LL.mapEditor.edit.hint.phone()}</span>
         </div>
+    {:else if $editPlacingBarStore?.hint}
+        <div class="em-hint em-hint-top u-surface" transition:fade={{ duration: 150 }} data-testid="placing-bar-hint">
+            <IconHandMove font-size="18" class="em-hint-icon" />
+            <span>{$editPlacingBarStore.hint}</span>
+        </div>
     {:else if deleteHint}
         <div class="em-hint em-hint-top u-surface" transition:fade={{ duration: 150 }} data-testid="edit-delete-hint">
             <IconTrash font-size="18" class="em-hint-icon em-hint-coral" />

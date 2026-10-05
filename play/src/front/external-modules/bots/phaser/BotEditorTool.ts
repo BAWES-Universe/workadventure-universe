@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { get } from "svelte/store";
 import type { Unsubscriber } from "svelte/store";
+import { routeStops, walksRoute } from "../behaviorModel";
 import type { BotData } from "../types";
 import {
     botEditorModeStore,
@@ -310,7 +311,7 @@ export class BotEditorTool {
                 }
 
                 // Get current waypoints
-                const currentWaypoints = selectedBot.behaviorConfig?.patrolWaypoints || [];
+                const currentWaypoints = routeStops(selectedBot);
 
                 // Add waypoint at click location
                 addWaypoint(selectedBot.id, x, y);
@@ -447,7 +448,7 @@ export class BotEditorTool {
 
                         if (waypointPath) {
                             // Sync waypoints from store (important when first waypoint was auto-created)
-                            const waypoints = selectedBot.behaviorConfig?.patrolWaypoints || [];
+                            const waypoints = routeStops(selectedBot);
                             waypointPath.setWaypoints(waypoints);
                             waypointPath.setEditing(true);
                         }
@@ -499,7 +500,7 @@ export class BotEditorTool {
         this.botPreviews.set(bot.id, preview);
 
         // Create waypoint path if patrol bot
-        if (bot.behaviorConfig?.behaviorType === "patrol") {
+        if (walksRoute(bot)) {
             this.createWaypointPath(bot);
         }
     }
@@ -512,8 +513,9 @@ export class BotEditorTool {
             return;
         }
 
-        const waypoints = bot.behaviorConfig?.patrolWaypoints || [];
+        const waypoints = routeStops(bot);
         const waypointPath = new WaypointPath(this.scene, waypoints);
+        waypointPath.setLoop(bot.behaviorConfig?.loop !== false);
 
         // Stops can go anywhere: the bot server never kept a route bot inside its circle, so the circle
         // only limited where stops could be drawn. A radius of 0 means no limit; the centre still places
@@ -556,7 +558,7 @@ export class BotEditorTool {
                 preview.updateBotData(bot);
 
                 // Update waypoint path if patrol
-                if (bot.behaviorConfig?.behaviorType === "patrol") {
+                if (walksRoute(bot)) {
                     let waypointPath = this.waypointPaths.get(bot.id);
                     if (!waypointPath && this.scene) {
                         this.createWaypointPath(bot);
@@ -566,7 +568,8 @@ export class BotEditorTool {
                         // Follow the bot's position for the "+" button; stops are not limited to the circle
                         const center = bot.behaviorConfig?.assignedSpace?.center || { x: 0, y: 0 };
                         waypointPath.setConstraint(center, 0);
-                        waypointPath.setWaypoints(bot.behaviorConfig.patrolWaypoints || []);
+                        waypointPath.setLoop(bot.behaviorConfig.loop !== false);
+                        waypointPath.setWaypoints(routeStops(bot));
                     }
                 } else {
                     // Remove waypoint path if behavior changed
