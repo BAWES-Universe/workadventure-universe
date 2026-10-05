@@ -167,6 +167,30 @@ export function matrixAvatarStore(
 }
 
 /** `forget` drops the cached answer, so the file is fetched again the next time it's shown. */
+/**
+ * Like `matrixAvatarStore`, for a picture that can change (someone sets a new one): follows `mxcUrl`, keeping the
+ * old picture on screen until the new one is ready.
+ */
+export function changingMatrixAvatarStore(
+    client: MatrixClient,
+    mxcUrl: Readable<string | null | undefined>,
+    size: number
+): Readable<string | undefined> {
+    return readable<string | undefined>(undefined, (set) => {
+        let stopPicture: (() => void) | undefined;
+        const stopUrl = mxcUrl.subscribe((mxc) => {
+            stopPicture?.();
+            stopPicture = matrixAvatarStore(client, mxc, size).subscribe((url) => {
+                if (url !== undefined || !mxc) set(url);
+            });
+        });
+        return () => {
+            stopUrl();
+            stopPicture?.();
+        };
+    });
+}
+
 async function fetchMatrixMedia(
     client: MatrixClient,
     mxcUrl: string,

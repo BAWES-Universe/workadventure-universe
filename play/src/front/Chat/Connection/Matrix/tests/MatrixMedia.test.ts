@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MatrixClient } from "matrix-js-sdk";
-import { get } from "svelte/store";
+import { get, writable } from "svelte/store";
 import {
     MAX_KEPT_MEDIA,
+    changingMatrixAvatarStore,
     clearMatrixMedia,
     holdMatrixMedia,
     matrixAvatarStore,
@@ -304,6 +305,34 @@ describe("matrixAvatarStore", () => {
         unsubscribe();
 
         expect(values[0]).toBeUndefined();
+    });
+
+    it("follows a new picture, keeping the old one until the new one is ready", async () => {
+        let created = 0;
+        URL.createObjectURL = vi.fn(() => `blob:https://play.test/changing-${created++}`);
+        let finishNew: (response: Response) => void = () => undefined;
+        const fetchMock = vi
+            .fn()
+            .mockResolvedValueOnce(new Response(new Blob(["old"]), { status: 200 }))
+            .mockImplementationOnce(
+                () =>
+                    new Promise<Response>((resolve) => {
+                        finishNew = resolve;
+                    })
+            );
+        vi.stubGlobal("fetch", fetchMock);
+        const mxc = writable<string | undefined>("mxc://matrix.test/changing-old");
+        const values: (string | undefined)[] = [];
+        const unsubscribe = changingMatrixAvatarStore(fakeClient(), mxc, 48).subscribe((value) => values.push(value));
+        await vi.waitFor(() => expect(values.at(-1)).toBe("blob:https://play.test/changing-0"));
+
+        mxc.set("mxc://matrix.test/changing-new");
+        await Promise.resolve();
+        expect(values.at(-1)).toBe("blob:https://play.test/changing-0");
+
+        finishNew(new Response(new Blob(["new"]), { status: 200 }));
+        await vi.waitFor(() => expect(values.at(-1)).toBe("blob:https://play.test/changing-1"));
+        unsubscribe();
     });
 
     it("stays empty without a picture", () => {
