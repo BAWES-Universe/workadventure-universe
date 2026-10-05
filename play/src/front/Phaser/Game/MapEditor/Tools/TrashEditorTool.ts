@@ -308,7 +308,8 @@ export class TrashEditorTool extends EntityRelatedEditorTool {
         if (this.marked === target) this.marked = undefined;
         if (this.hovered === target) this.hovered = undefined;
         target.delete();
-        showUndoToast(get(LL).mapEditor.edit.deleteTool.removed({ name }));
+        // An area's toast comes from the area tool, once the area really goes (a personal one with objects asks first).
+        if (target instanceof Entity) showUndoToast(get(LL).mapEditor.edit.deleteTool.removed({ name }));
         this.publishMark();
     }
 
