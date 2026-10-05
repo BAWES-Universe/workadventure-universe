@@ -35,6 +35,7 @@
     import { highlightedEmbedScreen } from "../Stores/HighlightedEmbedScreenStore";
     import { highlightFullScreen } from "../Stores/ActionsCamStore";
     import { chatVisibilityStore } from "../Stores/ChatStore";
+    import { windowInFrontStore } from "../Stores/WindowInFrontStore";
     import {
         chatFloatInsetStore,
         chatSidebarWidthStore,
@@ -115,9 +116,8 @@
     });
 
     // On a desktop, windows (the chat, Orbit) open over the game and nothing moves: the bar, Express and the zoom
-    // buttons keep their place and size, and a window simply covers what is behind it. "Keep the bar in view" only
-    // changes where the chat and Orbit start (under the bar), never where anything else sits. Phones and small windows
-    // keep their layout: what is beside the chat starts where it ends.
+    // buttons keep their place and size, and a window simply covers what is behind it. The chat and Orbit start under
+    // the bar. Phones and small windows keep their layout: what is beside the chat starts where it ends.
     $: desktop = $windowSize.width >= DESKTOP_LAYOUT_MIN_WIDTH;
     $: marginLeft = $chatVisibilityStore && !desktop ? $chatSidebarWidthStore + $chatFloatInsetStore : 0;
     // The map editor sits beside the game, and the bar stops where it starts: its menus would open under the editor.
@@ -127,16 +127,16 @@
             : 0;
     // A maximised window takes the whole screen, over the chat too: the last thing you asked to see.
     $: windowMaximised = $modalVisibilityStore && $modalFullScreenStore;
+    // Otherwise the chat and the window take turns where they overlap: the one opened or clicked last is in front.
+    $: windowOverChat = $modalVisibilityStore && $chatVisibilityStore && $windowInFrontStore === "window";
 </script>
 
 <!-- Components ordered by z-index -->
 <div
     id="main-layout"
-    class="@container/main-layout absolute h-full w-full pointer-events-none {windowMaximised ? 'z-[2001]' : 'z-10'} {[
-        ...$coWebsites.values(),
-    ].length === 0
-        ? 'not-cowebsite'
-        : ''}"
+    class="@container/main-layout absolute h-full w-full pointer-events-none {windowMaximised || windowOverChat
+        ? 'z-[2001]'
+        : 'z-10'} {[...$coWebsites.values()].length === 0 ? 'not-cowebsite' : ''}"
     style="padding-inline-start : {marginLeft}px; padding-inline-end: {marginRight}px;"
 >
     <!-- Only a centred window dims the map. A side panel leaves the map beside it in plain view, as the chat does. -->

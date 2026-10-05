@@ -4,6 +4,7 @@
 
     export let onEmojiClick: (event: EmojiClickEvent) => void = () => {};
     export let onClose: (event?: Event) => void = () => {};
+    export let isShown: () => boolean = () => true;
     export let onLoad: () => void = () => {};
     export let onLoaded: () => void = () => {};
     export let onError: () => void = () => {};
@@ -17,4 +18,5 @@
     component={() => import("../EmoteMenu/EmoteMenu.svelte")}
     {onEmojiClick}
     {onClose}
+    {isShown}
 />

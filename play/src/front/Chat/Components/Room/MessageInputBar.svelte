@@ -606,6 +606,7 @@
                     }
                     hideEmojiPicker();
                 },
+                isShown: () => emojiPickerOpen,
             },
             {
                 placement: "top-end",

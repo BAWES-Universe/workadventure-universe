@@ -48,38 +48,20 @@
     });
 </script>
 
-<div class="customize-main">
-    <div class="submenu p-4">
-        <h2 class="text-white text-lg font-semibold mb-4">{$LL.menu.shortcuts.title()}</h2>
-        <table class="w-full table-auto rounded overflow-hidden border-none">
-            <thead>
-                <tr class="text-left uppercase text-gray-300 text-sm tracking-wider">
-                    <th class="p-3 font-semibold">{$LL.menu.shortcuts.keys()}</th>
-                    <th class="p-3 font-semibold">{$LL.menu.shortcuts.actions()}</th>
-                </tr>
-            </thead>
-            <tbody>
-                {#each groupedShortcuts as shortcut, i (i)}
-                    <tr class="hover:bg-white/5 border-t-4 border-white mx-3">
-                        <td class="p-3">
-                            {#each shortcut.keys as key, i (i)}
-                                {#if i % 2 === 0}
-                                    <span
-                                        class="bg-gray-700 text-white px-4 py-3 rounded text-sm font-mono shadow-sm border-2 border-solid border-black p-2 border-b-4 hover:border-b-2"
-                                    >
-                                        {key}
-                                    </span>
-                                {:else}
-                                    <span class="text-gray-400">
-                                        {key}
-                                    </span>
-                                {/if}
-                            {/each}
-                        </td>
-                        <td class="p-3 text-white">{shortcut.description}</td>
-                    </tr>
+<!-- Keyboard: one plain row per action, its keys on the right as small ink keys. -->
+<div class="u-set-section" data-testid="settings-keyboard">
+    {#each groupedShortcuts as shortcut, i (i)}
+        <div class="u-set-row" style="cursor: default">
+            <span class="u-set-text"><span class="u-set-label">{shortcut.description}</span></span>
+            <span class="u-set-keys" aria-label={$LL.menu.shortcuts.keys()}>
+                {#each shortcut.keys as key, j (j)}
+                    {#if j % 2 === 1}
+                        <span>{key}</span>
+                    {:else}
+                        <kbd>{key}</kbd>
+                    {/if}
                 {/each}
-            </tbody>
-        </table>
-    </div>
+            </span>
+        </div>
+    {/each}
 </div>

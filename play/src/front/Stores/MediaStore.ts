@@ -1005,6 +1005,9 @@ const DEVICE_CHANGE_SETTLE_DELAY_MS = 1000;
  */
 export const deviceListStore = readable<MediaDeviceInfo[] | undefined>(undefined, function start(set) {
     let deviceListCanBeQueried = false;
+    // The devices seen so far, kept here too: when the browser's storage is full, they would otherwise be offered
+    // again on every change.
+    let knownMediaDeviceKeys: string[] | undefined;
 
     const queryDeviceList = () => {
         // Note: so far, we are ignoring any failures.
@@ -1037,13 +1040,16 @@ export const deviceListStore = readable<MediaDeviceInfo[] | undefined>(undefined
 
                 // Only devices this browser has never seen count as new. Devices present on the first
                 // listing are remembered silently.
-                const knownMediaDevices = localUserStore.getKnownMediaDevices();
+                const knownMediaDevices = Array.from(
+                    new Set([...localUserStore.getKnownMediaDevices(), ...(knownMediaDeviceKeys ?? [])])
+                );
                 const previousDevices = get(deviceListStore);
                 const newDevices =
                     previousDevices === undefined
                         ? []
                         : findNewMediaDevices(mediaDeviceInfos, new Set(knownMediaDevices), previousDevices);
-                localUserStore.setKnownMediaDevices(rememberMediaDevices(knownMediaDevices, mediaDeviceInfos));
+                knownMediaDeviceKeys = rememberMediaDevices(knownMediaDevices, mediaDeviceInfos);
+                localUserStore.setKnownMediaDevices(knownMediaDeviceKeys);
 
                 set(mediaDeviceInfos);
                 devicesNotLoaded.set(false);

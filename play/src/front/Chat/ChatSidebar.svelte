@@ -4,6 +4,7 @@
     import { gameManager } from "../Phaser/Game/GameManager";
     import { isMediaBreakpointUp } from "../Utils/BreakpointsUtils";
     import { LL } from "../../i18n/i18n-svelte";
+    import { windowInFrontStore } from "../Stores/WindowInFrontStore";
     import { selectedRoomStore } from "./Stores/SelectRoomStore";
     import Chat from "./Components/Chat.svelte";
     import { chatFloatInsetStore, chatSidebarWidthStore, chatCarriesItsCloseStore } from "./ChatSidebarWidthStore";
@@ -32,6 +33,9 @@
 
     const handleMousedown = (e: MouseEvent) => {
         resizing = true;
+        // The pages in windows (Orbit, room websites) would take the mouse as it crosses them, and the drag would stop
+        // at their edge. They ignore it until the button is let go.
+        document.body.classList.add("chat-resizing");
         let dragX = e.clientX;
         const initialWidth = sideBarWidth;
 
@@ -48,6 +52,7 @@
         };
         document.onmouseup = () => {
             resizing = false;
+            document.body.classList.remove("chat-resizing");
             document.onmousemove = null;
             chatSidebarWidthStore.set(sideBarWidth);
             reposition();
@@ -141,8 +146,11 @@
 
 <svelte:window on:resize={onresize} />
 {#if $chatVisibilityStore}
+    <!-- A click anywhere on the chat brings it in front of a window it overlaps. -->
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
     <section
         bind:this={container}
+        on:pointerdown|capture={() => windowInFrontStore.set("chat")}
         id="chat"
         data-testid="chat"
         transition:fly={{
