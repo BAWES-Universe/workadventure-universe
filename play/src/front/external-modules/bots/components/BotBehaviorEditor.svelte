@@ -119,7 +119,7 @@
                 assignedSpaceRadius = 150; // Movement area
             }
             if (conversationRadius === 0 || conversationRadius > assignedSpaceRadius) {
-                conversationRadius = Math.min(80, assignedSpaceRadius); // Detection range (smaller)
+                conversationRadius = Math.min(100, assignedSpaceRadius); // Detection range (smaller), same default as the bot server
             }
         } else if (behaviorType === "patrol") {
             // Set reasonable default for patrol
@@ -284,7 +284,7 @@
                 {#if behaviorType === "social"}
                     Boundary where bot wanders. Detection range (purple) must be smaller.
                 {:else if behaviorType === "patrol"}
-                    Safety boundary - all waypoints must be inside this circle.
+                    Stops can go anywhere on the map, inside or outside this circle.
                 {:else}
                     Drag the circle edge on the map for precise control
                 {/if}
@@ -354,11 +354,8 @@
 
             <div class="mt-3 space-y-2">
                 <p class="text-xs text-white/60">
-                    <strong class="text-green-300">How to use:</strong> Click the button above, then click anywhere inside
-                    the green circle to add waypoints. Drag waypoints to reposition, click × to delete.
-                </p>
-                <p class="text-xs text-white/40">
-                    Moving the bot will clear existing waypoints so you can redraw the patrol route.
+                    <strong class="text-green-300">How to use:</strong> Click the button above, then click anywhere on the
+                    map to add waypoints. Drag waypoints to reposition, click × to delete.
                 </p>
             </div>
         </div>
