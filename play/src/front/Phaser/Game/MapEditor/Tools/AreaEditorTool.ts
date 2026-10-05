@@ -199,21 +199,20 @@ export class AreaEditorTool extends MapEditorTool {
             const entitiesInsideArea = this.getEntitiesInsideArea(areaId);
             if (entitiesInsideArea.size > 0) {
                 openModal(ActionPopupOnPersonalAreaWithEntities, {
-                    onDeleteEntities: () => {
-                        this.executeDeletePersonalAreaWithEntities(areaId, deleteAreaCommand, true);
-                        removed();
-                    },
-                    onKeepEntities: () => {
-                        this.executeDeletePersonalAreaWithEntities(areaId, deleteAreaCommand);
-                        removed();
-                    },
+                    onDeleteEntities: () =>
+                        this.executeDeletePersonalAreaWithEntities(areaId, deleteAreaCommand, removed, true),
+                    onKeepEntities: () =>
+                        this.executeDeletePersonalAreaWithEntities(areaId, deleteAreaCommand, removed),
                     onCancel: () => {},
                 });
                 return;
             }
         }
-        this.mapEditorModeManager.executeCommand(deleteAreaCommand).catch((error) => console.error(error));
-        removed();
+        // The toast follows the command, so a removal that did not go through shows no toast.
+        this.mapEditorModeManager
+            .executeCommand(deleteAreaCommand)
+            .then(removed)
+            .catch((error) => console.error(error));
     }
 
     private getIsPersonalArea(areaId: string): boolean {
@@ -695,12 +694,16 @@ export class AreaEditorTool extends MapEditorTool {
     private executeDeletePersonalAreaWithEntities(
         areaId: string,
         deleteAreaCommand: DeleteAreaFrontCommand,
+        onRemoved: () => void,
         removeEntities?: boolean
     ): void {
         if (removeEntities) {
             this.removeAreaEntities(areaId);
         }
-        this.mapEditorModeManager.executeCommand(deleteAreaCommand).catch((error) => console.error(error));
+        this.mapEditorModeManager
+            .executeCommand(deleteAreaCommand)
+            .then(onRemoved)
+            .catch((error) => console.error(error));
     }
 
     private executeUpdateAreaFrontCommand(
