@@ -228,7 +228,7 @@ export class SpacePeerManager {
             })
         );
 
-        // A hand can be raised in a conversation (bubble or meeting room), not in the audience of a megaphone.
+        // A hand can be raised in a conversation (bubble or meeting room). Podiums are wired in PodiumStore.
         if (this.space.filterType === FilterType.ALL_USERS) {
             this.unsubscribes.push(registerConversationSpace(this.space));
             this.unsubscribes.push(holdAutoLowerHand());

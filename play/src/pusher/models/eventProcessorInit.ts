@@ -70,3 +70,22 @@ eventProcessor.registerPublicEventProcessor("lowerAllHands", (event, sender) => 
     }
     return event;
 });
+
+// On a podium, the people streaming (the speakers) and admins can bring someone from the audience on stage, and send
+// them back.
+const canBringOnStage = (sender: { megaphoneState: boolean; tags: string[] }) =>
+    sender.megaphoneState || sender.tags.includes("admin");
+
+eventProcessor.registerPrivateEventProcessor("inviteToSpeak", (event, sender) => {
+    if (!canBringOnStage(sender)) {
+        throw new Error("Only speakers and admins can invite someone to speak");
+    }
+    return event;
+});
+
+eventProcessor.registerPrivateEventProcessor("moveToAudience", (event, sender) => {
+    if (!canBringOnStage(sender)) {
+        throw new Error("Only speakers and admins can move someone to the audience");
+    }
+    return event;
+});
