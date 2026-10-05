@@ -1,5 +1,6 @@
 import { FilterType } from "@workadventure/messages";
 import { describe, expect, it } from "vitest";
+import { areaSpaceName } from "@workadventure/shared-utils/src/Space/areaSpaceName";
 import {
     checkSpaceJoin,
     SpaceJoinRefusedError,
@@ -11,9 +12,11 @@ const BUBBLE = "http://play.example.com/@/team/world/room#12#1700000000000";
 const OTHER_BUBBLE = "http://play.example.com/@/team/world/room#13#1700000000001";
 const MEGAPHONE = "playexamplecom-megaphone-news";
 const MEDIA = ["cameraState", "microphoneState", "screenSharingState"];
+const ROOM = "http://play.example.com/@/team/world/room";
+const PRIVATE_ROOM = "http://play.example.com/@/team/world/private-room";
 
 function socketData(granted: string[] = [], megaphoneSpaceName: string | null | undefined = MEGAPHONE) {
-    return { grantedBubbleSpaces: new Set(granted), megaphoneSpaceName };
+    return { grantedBubbleSpaces: new Set(granted), megaphoneSpaceName, roomId: ROOM };
 }
 
 function join(localSpaceName: string, filterType = FilterType.ALL_USERS, propertiesToSync: string[] = []) {
@@ -95,6 +98,22 @@ describe("checkSpaceJoin", () => {
 
         it("does not restrict that name in a room without a megaphone", () => {
             expect(() => checkSpaceJoin(join(MEGAPHONE, FilterType.ALL_USERS), socketData([], null))).not.toThrow();
+        });
+    });
+
+    describe("meeting rooms and speaker zones", () => {
+        it.each([
+            ["a meeting room", areaSpaceName("Meeting room", ROOM), FilterType.ALL_USERS],
+            ["a speaker zone", areaSpaceName("Stage", ROOM), FilterType.LIVE_STREAMING_USERS],
+        ])("lets a player into %s of their room", (_label, name, filterType) => {
+            expect(() => checkSpaceJoin(join(name, filterType, MEDIA), socketData())).not.toThrow();
+        });
+
+        it.each([
+            ["a meeting room", areaSpaceName("Meeting room", PRIVATE_ROOM), FilterType.ALL_USERS],
+            ["a speaker zone", areaSpaceName("Stage", PRIVATE_ROOM), FilterType.LIVE_STREAMING_USERS],
+        ])("refuses %s of another room", (_label, name, filterType) => {
+            expect(() => checkSpaceJoin(join(name, filterType, MEDIA), socketData())).toThrow(/in another room/);
         });
     });
 
