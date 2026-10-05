@@ -98,8 +98,11 @@ export function bindMuteEventsToSpace(space: SpaceInterface): void {
     space.observePrivateEvent("kickOffUser").subscribe((event) => {
         isSpeakerStore.set(false);
         // Live on this very space: end the broadcast first, while the space is still known, so streaming stops.
-        if (get(currentLiveStreamingSpaceStore)?.getName() === space.getName()) endLiveBroadcast();
-        currentLiveStreamingSpaceStore.set(undefined);
+        // Only this space's live state is touched: a kick from one channel leaves a broadcast on another alone.
+        if (get(currentLiveStreamingSpaceStore)?.getName() === space.getName()) {
+            endLiveBroadcast();
+            currentLiveStreamingSpaceStore.set(undefined);
+        }
         forgetMegaphoneSpace(space.getName());
 
         // Through the broadcast service, so its own list of joined spaces stays in step for destroy().

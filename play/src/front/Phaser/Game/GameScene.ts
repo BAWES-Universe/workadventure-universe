@@ -164,7 +164,7 @@ import { debugAddPlayer, debugRemovePlayer, debugUpdatePlayer, debugZoom } from 
 import { checkCoturnServer } from "../../Components/Video/utils";
 import { BroadcastService } from "../../Streaming/BroadcastService";
 import {
-    currentLiveStreamingSpaceStore,
+    liveBroadcastStore,
     megaphoneCanBeUsedStore,
     megaphoneChannelsStore,
     megaphoneSpacesStore,
@@ -2510,9 +2510,9 @@ export class GameScene extends DirtyScene {
                 previousAvailabilityStatus !== AvailabilityStatus.DO_NOT_DISTURB &&
                 this._broadcastService
             ) {
-                const liveSpaceName = get(currentLiveStreamingSpaceStore)?.getName();
+                const live = get(liveBroadcastStore);
                 this.syncBroadcastSpaces(
-                    get(megaphoneChannelsStore).filter((channel) => slugify(channel.url) === liveSpaceName),
+                    get(megaphoneChannelsStore).filter((channel) => channel.scope === live?.scope),
                     this._broadcastService
                 );
             }
