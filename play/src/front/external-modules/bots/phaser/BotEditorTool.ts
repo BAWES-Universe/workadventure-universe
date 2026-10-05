@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import { get } from "svelte/store";
 import type { Unsubscriber } from "svelte/store";
-import { walksRoute } from "../behaviorModel";
+import { routeStops, walksRoute } from "../behaviorModel";
 import type { BotData } from "../types";
 import {
     botEditorModeStore,
@@ -311,7 +311,7 @@ export class BotEditorTool {
                 }
 
                 // Get current waypoints
-                const currentWaypoints = selectedBot.behaviorConfig?.patrolWaypoints || [];
+                const currentWaypoints = routeStops(selectedBot);
 
                 // Add waypoint at click location
                 addWaypoint(selectedBot.id, x, y);
@@ -448,7 +448,7 @@ export class BotEditorTool {
 
                         if (waypointPath) {
                             // Sync waypoints from store (important when first waypoint was auto-created)
-                            const waypoints = selectedBot.behaviorConfig?.patrolWaypoints || [];
+                            const waypoints = routeStops(selectedBot);
                             waypointPath.setWaypoints(waypoints);
                             waypointPath.setEditing(true);
                         }
@@ -513,7 +513,7 @@ export class BotEditorTool {
             return;
         }
 
-        const waypoints = bot.behaviorConfig?.patrolWaypoints || [];
+        const waypoints = routeStops(bot);
         const waypointPath = new WaypointPath(this.scene, waypoints);
         waypointPath.setLoop(bot.behaviorConfig?.loop !== false);
 
@@ -569,7 +569,7 @@ export class BotEditorTool {
                         const center = bot.behaviorConfig?.assignedSpace?.center || { x: 0, y: 0 };
                         waypointPath.setConstraint(center, 0);
                         waypointPath.setLoop(bot.behaviorConfig.loop !== false);
-                        waypointPath.setWaypoints(bot.behaviorConfig.patrolWaypoints || []);
+                        waypointPath.setWaypoints(routeStops(bot));
                     }
                 } else {
                     // Remove waypoint path if behavior changed

@@ -583,7 +583,7 @@ export function addWaypoint(botId: string, x: number, y: number, index?: number)
         const bot = bots.get(botId);
         if (bot && walksRoute(bot)) {
             rememberRouteForUndo(bot);
-            const waypoints = [...(bot.behaviorConfig.patrolWaypoints || [])];
+            const waypoints = routeStops(bot);
             const newWaypoint = { x, y };
 
             if (index !== undefined && index >= 0 && index <= waypoints.length) {
@@ -634,7 +634,7 @@ export function updateWaypoint(botId: string, waypointIndex: number, x: number, 
         const bot = bots.get(botId);
         if (bot && walksRoute(bot)) {
             rememberRouteForUndo(bot);
-            const waypoints = [...(bot.behaviorConfig.patrolWaypoints || [])];
+            const waypoints = routeStops(bot);
             if (waypointIndex >= 0 && waypointIndex < waypoints.length) {
                 waypoints[waypointIndex] = { x, y };
                 updatedWaypoints = waypoints;
@@ -680,7 +680,7 @@ export function removeWaypoint(botId: string, waypointIndex: number): void {
         const bot = bots.get(botId);
         if (bot && walksRoute(bot)) {
             rememberRouteForUndo(bot);
-            const waypoints = [...(bot.behaviorConfig.patrolWaypoints || [])];
+            const waypoints = routeStops(bot);
             if (waypointIndex >= 0 && waypointIndex < waypoints.length) {
                 waypoints.splice(waypointIndex, 1);
                 updatedWaypoints = waypoints;
