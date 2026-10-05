@@ -149,14 +149,22 @@
 </ActionBarButton>
 {#if $chatZoneLiveStore || totalUnreadCount > 0}
     <div>
-        <span class="w-4 h-4 block rounded-full absolute -top-1 -start-1 animate-ping bg-white" />
-        <span class="w-3 h-3 block rounded-full absolute -top-0.5 -start-0.5 bg-white" />
+        <span class="w-4 h-4 block rounded-full absolute -top-1 start-1 animate-ping bg-white" />
+        <span class="w-3 h-3 block rounded-full absolute -top-0.5 start-1.5 bg-white" />
     </div>
 {/if}
 {#if totalUnreadCount > 0}
     <div
-        class="absolute -top-2 -start-2 aspect-square flex w-5 h-5 items-center justify-center text-sm font-bold leading-none text-contrast bg-success rounded-full z-10"
+        class="u-badge chat-unread-badge absolute -top-2 start-0 flex min-w-5 h-5 px-1 items-center justify-center text-sm font-bold leading-none tabular-nums rounded-full z-10"
+        data-testid="chatUnreadBadge"
     >
         {displayCount}
     </div>
 {/if}
+
+<style>
+    /* A thin ink ring keeps the count apart from the chat button it sits on. */
+    .chat-unread-badge {
+        box-shadow: 0 0 0 2px #0a0814, 0 2px 8px -2px rgba(134, 41, 252, 0.8);
+    }
+</style>

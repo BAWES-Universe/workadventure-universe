@@ -21,25 +21,44 @@ export const chatFloatInsetStore = derived(windowSize, ($windowSize) =>
     $windowSize.width >= DESKTOP_LAYOUT_MIN_WIDTH ? CHAT_FLOAT_INSET : 0
 );
 
+/** Below this much room beside the chat, the bar and the zoom column are hidden. */
+export const MIN_ROOM_FOR_ACTION_BAR = 285;
+
+/**
+ * Whether the chat or the room editor leaves too little room for the bar. On a desktop the chat floats over the game
+ * under the bar and never pushes it, so however wide it is, the bar, Express and the zoom column stay where they are
+ * (it may cover the column; closing or narrowing the chat shows it again). Only phones and small windows, where what is
+ * beside the chat starts where it ends, count the chat's width. Editing a room on a phone or a small window hides the
+ * bar until Done: the editor's panel floats over the map and would cover it. On a desktop the editor floats on the
+ * right and the bar keeps its place.
+ */
+export function chatLeavesNoRoomForBar(
+    windowWidth: number,
+    chatVisible: boolean,
+    chatWidth: number,
+    chatFloatInset: number,
+    mapEditorInUse: boolean
+): boolean {
+    if (!chatVisible && !mapEditorInUse) {
+        return false;
+    }
+    if (mapEditorInUse && windowWidth < DESKTOP_LAYOUT_MIN_WIDTH) {
+        return true;
+    }
+    const chatPushesGame = chatVisible && windowWidth < DESKTOP_LAYOUT_MIN_WIDTH;
+    return windowWidth - (chatPushesGame ? chatWidth + chatFloatInset : 0) < MIN_ROOM_FOR_ACTION_BAR;
+}
+
 export const hideActionBarStoreBecauseOfChatBar = derived(
     [chatVisibilityStore, chatSidebarWidthStore, windowSize, mapEditorToolbarInUseStore, chatFloatInsetStore],
-    ([
-        $chatVisibilityStore,
-        $chatSidebarWidthStore,
-        $windowSize,
-        $mapEditorToolbarInUseStore,
-        $chatFloatInsetStore,
-    ]) => {
-        if (!$chatVisibilityStore && !$mapEditorToolbarInUseStore) {
-            return false;
-        }
-        // Editing a room on a phone or a small window hides the bar until Done: the editor's panel floats over the
-        // map and would cover it. On a desktop the editor floats on the right and the bar keeps its place.
-        if ($mapEditorToolbarInUseStore && $windowSize.width < DESKTOP_LAYOUT_MIN_WIDTH) {
-            return true;
-        }
-        return $windowSize.width - ($chatVisibilityStore ? $chatSidebarWidthStore + $chatFloatInsetStore : 0) < 285;
-    }
+    ([$chatVisibilityStore, $chatSidebarWidthStore, $windowSize, $mapEditorToolbarInUseStore, $chatFloatInsetStore]) =>
+        chatLeavesNoRoomForBar(
+            $windowSize.width,
+            $chatVisibilityStore,
+            $chatSidebarWidthStore,
+            $chatFloatInsetStore,
+            $mapEditorToolbarInUseStore
+        )
 );
 
 /**
