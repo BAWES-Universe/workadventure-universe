@@ -22,6 +22,33 @@ export const chatFloatInsetStore = derived(windowSize, ($windowSize) =>
     $windowSize.width >= DESKTOP_LAYOUT_MIN_WIDTH ? CHAT_FLOAT_INSET : 0
 );
 
+/** Below this much room beside the chat and the map editor, the bar and the zoom column are hidden. */
+export const MIN_ROOM_FOR_ACTION_BAR = 285;
+
+/**
+ * Whether the chat (or the map editor) leaves too little room for the bar. On a desktop the chat floats over the game
+ * under the bar and never pushes it, so however wide it is, the bar, Express and the zoom column stay where they are
+ * (it may cover the column; closing or narrowing the chat shows it again). Only phones and small windows, where what is
+ * beside the chat starts where it ends, count the chat's width.
+ */
+export function chatLeavesNoRoomForBar(
+    windowWidth: number,
+    chatVisible: boolean,
+    chatWidth: number,
+    chatFloatInset: number,
+    mapEditorMode: boolean,
+    mapEditorWidth: number
+): boolean {
+    if (!chatVisible && !mapEditorMode) {
+        return false;
+    }
+    const chatPushesGame = chatVisible && windowWidth < DESKTOP_LAYOUT_MIN_WIDTH;
+    return (
+        windowWidth - (chatPushesGame ? chatWidth + chatFloatInset : 0) - (mapEditorMode ? mapEditorWidth : 0) <
+        MIN_ROOM_FOR_ACTION_BAR
+    );
+}
+
 export const hideActionBarStoreBecauseOfChatBar = derived(
     [
         chatVisibilityStore,
@@ -38,17 +65,15 @@ export const hideActionBarStoreBecauseOfChatBar = derived(
         $mapEditorWidthStore,
         $mapEditorToolbarInUseStore,
         $chatFloatInsetStore,
-    ]) => {
-        if (!$chatVisibilityStore && !$mapEditorToolbarInUseStore) {
-            return false;
-        }
-        return (
-            $windowSize.width -
-                ($chatVisibilityStore ? $chatSidebarWidthStore + $chatFloatInsetStore : 0) -
-                ($mapEditorToolbarInUseStore ? $mapEditorWidthStore : 0) <
-            285
-        );
-    }
+    ]) =>
+        chatLeavesNoRoomForBar(
+            $windowSize.width,
+            $chatVisibilityStore,
+            $chatSidebarWidthStore,
+            $chatFloatInsetStore,
+            $mapEditorToolbarInUseStore,
+            $mapEditorWidthStore
+        )
 );
 
 /**

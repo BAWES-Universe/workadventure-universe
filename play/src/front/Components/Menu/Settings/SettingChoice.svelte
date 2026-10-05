@@ -23,25 +23,34 @@
 </script>
 
 <div class="u-set-choice" data-testid={id}>
-    <button
-        type="button"
-        class="u-set-row u-set-choice-head"
-        aria-expanded={open}
-        aria-controls="{id}-options"
-        on:click={onToggle}
-    >
-        <span class="u-set-text">
-            {#if wideLabel}
-                <span class="u-set-label u-set-label-phone">{label}</span>
-                <span class="u-set-label u-set-label-wide">{wideLabel}</span>
-            {:else}
-                <span class="u-set-label">{label}</span>
+    <!-- A control of its own (the join sound's play button) sits over a gap left in the row for it: inside the row's
+         button it would be a button within a button, which screen readers can't reach on its own. -->
+    <div class="u-set-choice-line">
+        <button
+            type="button"
+            class="u-set-row u-set-choice-head"
+            aria-expanded={open}
+            aria-controls="{id}-options"
+            on:click={onToggle}
+        >
+            <span class="u-set-text">
+                {#if wideLabel}
+                    <span class="u-set-label u-set-label-phone">{label}</span>
+                    <span class="u-set-label u-set-label-wide">{wideLabel}</span>
+                {:else}
+                    <span class="u-set-label">{label}</span>
+                {/if}
+            </span>
+            <span class="u-set-value">{current?.label ?? value}</span>
+            {#if $$slots.extra}
+                <span class="u-set-extra-gap" aria-hidden="true" />
             {/if}
-        </span>
-        <span class="u-set-value">{current?.label ?? value}</span>
-        <slot name="extra" />
-        <IconChevronDown class="u-set-chevron {open ? 'is-open' : ''}" font-size="16" />
-    </button>
+            <IconChevronDown class="u-set-chevron {open ? 'is-open' : ''}" font-size="16" />
+        </button>
+        {#if $$slots.extra}
+            <span class="u-set-extra"><slot name="extra" /></span>
+        {/if}
+    </div>
     {#if open}
         <div
             class="u-set-options"
