@@ -58,15 +58,32 @@ function downloadFile(file: File): void {
     setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
 }
 
+/** The plain download link chat files had before: the browser downloads the file, or opens it in a new tab. */
+function openFileLink(file: SaveableFile): void {
+    const link = document.createElement("a");
+    link.href = file.url;
+    link.download = file.name;
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.style.display = "none";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+}
+
 /**
  * Saves a message's files under their real names without leaving the game.
  * On phones it opens the share sheet (Save to Photos, Files...); elsewhere it downloads them.
- * A file whose server refuses to be read from the game (no CORS) cannot be saved this way: the caller says so.
+ * A file whose server refuses to be read from the game (no CORS) cannot be saved this way: it gets the plain link
+ * instead, and the caller says so.
  */
 export async function saveFiles(files: SaveableFile[]): Promise<SaveResult> {
     if (files.length === 0) return "failed";
     const fetched = await Promise.all(files.map(fetchAsFile));
     const ready = fetched.filter((file): file is File => file !== undefined);
+    files
+        .filter((_file, index) => fetched[index] === undefined)
+        .forEach((file, index) => setTimeout(() => openFileLink(file), index * 250));
     if (ready.length === 0) return "failed";
 
     if (isTouchDevice() && typeof navigator.canShare === "function" && navigator.canShare({ files: ready })) {

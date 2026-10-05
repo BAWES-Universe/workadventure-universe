@@ -21,8 +21,16 @@
     let hidden = true;
     let cvIframe: HTMLIFrameElement;
 
-    // A visit card is a web page: anything else (a javascript: link...) would run in the game's page.
-    $: safeVisitCardUrl = isHttpUrl(visitCardUrl) ? visitCardUrl : undefined;
+    // A visit card is a web page: anything else (a javascript: link...) would run in the game's page. A relative link
+    // is a page on the game's own server, and loads as before.
+    function isWebPage(url: string): boolean {
+        try {
+            return isHttpUrl(new URL(url, window.location.href).href);
+        } catch {
+            return false;
+        }
+    }
+    $: safeVisitCardUrl = isWebPage(visitCardUrl) ? visitCardUrl : undefined;
 
     const chatConnection = gameManager.chatConnection;
     const selectPlayerChatID = get(selectedChatIDRemotePlayerStore);
