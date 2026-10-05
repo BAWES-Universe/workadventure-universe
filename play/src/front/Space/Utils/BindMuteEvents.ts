@@ -99,12 +99,14 @@ export function bindMuteEventsToSpace(space: SpaceInterface): void {
         currentLiveStreamingSpaceStore.set(undefined);
         forgetMegaphoneSpace(space.getName());
 
-        const scene = gameManager.getCurrentGameScene();
-        const spaceRegistry = scene.spaceRegistry;
-        spaceRegistry.leaveSpace(space).catch((e) => {
-            console.error("Error while leaving space", e);
-            Sentry.captureException(e);
-        });
+        // Through the broadcast service, so its own list of joined spaces stays in step for destroy().
+        gameManager
+            .getCurrentGameScene()
+            .broadcastService.leaveSpace(space.getName())
+            .catch((e) => {
+                console.error("Error while leaving space", e);
+                Sentry.captureException(e);
+            });
         chatZoneLiveStore.set(false);
     });
 

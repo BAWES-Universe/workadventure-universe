@@ -195,7 +195,7 @@
         <button
             type="button"
             class="u-cta-coral rounded-full grid place-items-center w-[88px] h-[88px] mt-1"
-            on:click={() => stopRecording()}
+            on:click={() => stopRecording().catch((e) => console.error(e))}
             disabled={state !== "recording"}
             aria-label={$LL.broadcast.voice.recording()}
             data-testid="broadcast-voice-stop"
