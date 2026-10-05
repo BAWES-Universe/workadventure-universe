@@ -36,13 +36,14 @@
     // A raised hand shows on the person's camera (ours is "-1"), not on their screen share: a gold edge, unless they
     // are talking (blue wins), and their place in line on the top-left corner, like on the ✋ button.
     // Our own camera is made before we know our uuid: read it when the hands change.
-    const handUuid = (): string | undefined =>
-        videoBox.uniqueId === "-1"
+    // The box is passed in so the position follows a new videoBox too.
+    const handUuid = (box: VideoBox): string | undefined =>
+        box.uniqueId === "-1"
             ? localUserStore.getLocalUser()?.uuid
-            : videoBox.uniqueId === videoBox.spaceUser.spaceUserId
-            ? videoBox.spaceUser.uuid
+            : box.uniqueId === box.spaceUser.spaceUserId
+            ? box.spaceUser.uuid
             : undefined;
-    $: handPosition = $raisedHandsStore.find((hand) => hand.uuid !== "" && hand.uuid === handUuid())?.position;
+    $: handPosition = $raisedHandsStore.find((hand) => hand.uuid !== "" && hand.uuid === handUuid(videoBox))?.position;
     $: speaking = voiceStore ? $voiceStore : false;
 
     const streamable = videoBox.streamable;
