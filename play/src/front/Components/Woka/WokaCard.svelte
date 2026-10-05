@@ -1,12 +1,7 @@
-<script context="module" lang="ts">
-    const desktop = typeof window !== "undefined" && window.matchMedia("(min-width: 768px)").matches;
-    // Whole-ish multiples of the 32px frame so the pixels stay crisp
-    const previewSize = desktop ? 144 : 80;
-</script>
-
 <script lang="ts">
     import { onDestroy, onMount, tick } from "svelte";
     import type { ComponentType } from "svelte";
+    import { joinDesktopStore } from "../../Stores/JoinDesktopStore";
     import { LL } from "../../../i18n/i18n-svelte";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import WokaImage from "./WokaImage.svelte";
@@ -52,6 +47,8 @@
     }
 
     const bgColor = gameManager.currentStartedRoom.backgroundColor ?? "#000000";
+    // Whole-ish multiples of the 32px frame so the pixels stay crisp
+    $: previewSize = $joinDesktopStore ? 144 : 80;
 
     // Categories: a fade and an arrow on the right while more pills are off screen
     let pills: HTMLDivElement | undefined;

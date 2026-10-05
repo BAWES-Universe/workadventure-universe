@@ -2,6 +2,7 @@
     import { onDestroy, onMount, tick } from "svelte";
     import { LL } from "../../../i18n/i18n-svelte";
     import { gameManager } from "../../Phaser/Game/GameManager";
+    import { joinDesktopStore } from "../../Stores/JoinDesktopStore";
     import HatOutlineIcon from "../Join/HatOutlineIcon.svelte";
     import type { WokaBodyPart, WokaData } from "./WokaTypes";
     import WokaImage from "./WokaImage.svelte";
@@ -23,8 +24,7 @@
     let error = "";
     let direction = 0;
 
-    const isDesktop = window.matchMedia("(min-width: 768px)").matches;
-    const tileSize = isDesktop ? 64 : 52;
+    $: tileSize = $joinDesktopStore ? 64 : 52;
 
     $: part = bodyPartOrder[partIndex];
     $: categories = bodyPartOrder.map((p, index) => ({

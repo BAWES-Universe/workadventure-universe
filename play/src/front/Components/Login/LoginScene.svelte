@@ -7,6 +7,7 @@
     import poweredByWorkAdventureImg from "../images/Powered_By_WorkAdventure_Big.png";
     import bgMap from "../images/map-exemple.png";
     import { gameManager } from "../../Phaser/Game/GameManager";
+    import { joinDesktopStore } from "../../Stores/JoinDesktopStore";
     import { LL } from "../../../i18n/i18n-svelte";
     import { NameNotValidError, NameTooLongError } from "../../Exception/NameError";
     import JoinLegal from "../Join/JoinLegal.svelte";
@@ -27,9 +28,9 @@
 
     const sceneBg = gameManager.currentStartedRoom.backgroundSceneImage ?? bgMap;
 
-    const isDesktop = window.matchMedia("(min-width: 768px)").matches;
-    const wokaSize = isDesktop ? 72 : 64;
-    const spotSize = isDesktop ? 128 : 112;
+    $: isDesktop = $joinDesktopStore;
+    $: wokaSize = isDesktop ? 72 : 64;
+    $: spotSize = isDesktop ? 128 : 112;
 
     async function submit() {
         startValidating = true;
