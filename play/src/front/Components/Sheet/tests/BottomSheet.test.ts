@@ -37,7 +37,7 @@ describe("BottomSheet", () => {
         expect(nextSnap("full")).toBe("peek");
     });
 
-    it("gives the chat sheet room for the last messages at its lowest, and a row of faces above it at its tallest", () => {
+    it("gives the chat sheet room for the last messages at its lowest, and the whole screen at its tallest", () => {
         const { peek, half, full } = getSnapHeights(844, CHAT_SHEET_SIZES);
         expect(peek).toBe(287);
         // It opens at 60% of the screen, so the list and the conversation can be read without dragging it up.

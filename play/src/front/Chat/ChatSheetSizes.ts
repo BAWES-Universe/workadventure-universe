@@ -3,8 +3,8 @@ import { getSnapHeights } from "../Components/Sheet/BottomSheet";
 
 /** The chat's bottom sheet on phones (ChatSheetStore.ts): its heights. Pure, so it can be unit tested. */
 
-/** Space kept above the sheet at "full": a row of faces stays in view above it. */
-export const CHAT_SHEET_TOP_GAP = 104;
+/** Space kept above the sheet at "full": none, so it can be dragged up to cover the whole screen. */
+export const CHAT_SHEET_TOP_GAP = 0;
 /** Share of the screen the sheet takes when the chat is opened on purpose ("half"). */
 export const CHAT_SHEET_OPEN_SHARE = 0.6;
 /** Below its lowest height, a sheet let go this much further down closes the chat. */
