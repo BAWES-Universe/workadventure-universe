@@ -6,6 +6,7 @@ import {
     cleanRoomName,
     computePresence,
     FriendsPresence,
+    liveStatus,
     mostAvailableStatus,
 } from "../../src/pusher/services/FriendsPresence";
 import type { FriendPlace } from "../../src/pusher/services/FriendsService";
@@ -24,6 +25,8 @@ class FakeSocket implements FriendsSocket {
             roomName: "Room",
             availabilityStatus: AvailabilityStatus.ONLINE,
             disconnecting: false,
+            tags: [],
+            characterTextures: [],
             ...options,
         };
     }
@@ -60,7 +63,7 @@ function presencesSentTo(sent: { socket: FakeSocket; message: FriendsUpdateMessa
 }
 
 function session(playUri: string, availabilityStatus: AvailabilityStatus, joinedAt: number): PresenceSession {
-    return { playUri, roomName: "Fallback", availabilityStatus, joinedAt };
+    return { playUri, roomName: "Fallback", availabilityStatus, joinedAt, woka: [] };
 }
 
 describe("computePresence", () => {
@@ -363,5 +366,37 @@ describe("FriendsPresence", () => {
         await expect(presence.placeOf(ROOM_A)).resolves.toEqual(PLACES[ROOM_A]);
         await expect(presence.placeOf("https://play.test/unknown")).resolves.toBeNull();
         expect(lookupPlaces).toHaveBeenCalledTimes(2);
+    });
+});
+
+describe("FriendsPresence.snapshot", () => {
+    it("lists signed-in players with their tabs, status and Woka, and only counts guests and bots", () => {
+        const { presence } = setup();
+        const woka = [{ id: "body", url: "https://play.test/woka/body.png" }] as FakeSocketData["characterTextures"];
+        presence.track(new FakeSocket("alice", ROOM_A, { characterTextures: woka }));
+        presence.track(new FakeSocket("alice", ROOM_B, { availabilityStatus: AvailabilityStatus.BUSY }));
+        presence.track(new FakeSocket("guest-1", ROOM_A, { isLogged: false }));
+        presence.track(new FakeSocket("bot-7", ROOM_A, { isLogged: false, tags: ["bot"] }));
+
+        const snapshot = presence.snapshot();
+        expect(snapshot.users).toHaveLength(1);
+        expect(snapshot.users[0]).toMatchObject({ uuid: "alice", status: "online" });
+        expect(snapshot.users[0].sessions.map((s) => s.playUri).sort()).toEqual([ROOM_A, ROOM_B].sort());
+        expect(snapshot.rooms).toEqual({ [ROOM_A]: { guests: 1, bots: 1 } });
+    });
+
+    it("forgets a guest or a bot once their socket closes", () => {
+        const { presence } = setup();
+        const guest = new FakeSocket("guest-1", ROOM_A, { isLogged: false });
+        presence.track(guest);
+        presence.untrack(guest);
+        expect(presence.snapshot()).toMatchObject({ users: [], rooms: {} });
+    });
+
+    it("reads meetings and calls as busy, a short break as away", () => {
+        expect(liveStatus(AvailabilityStatus.ONLINE)).toBe("online");
+        expect(liveStatus(AvailabilityStatus.LIVEKIT)).toBe("busy");
+        expect(liveStatus(AvailabilityStatus.DO_NOT_DISTURB)).toBe("busy");
+        expect(liveStatus(AvailabilityStatus.BACK_IN_A_MOMENT)).toBe("away");
     });
 });
