@@ -142,6 +142,11 @@ export function removeBot(botId: string): void {
  * Select a bot for editing
  */
 export function selectBot(bot: BotData | undefined): void {
+    // Another bot (or none) in the middle of a route: the route ends as its own Done does, so a changed route
+    // starts again from stop 1 and the next route edit starts clean
+    if (get(botEditorModeStore) === "waypoint-edit" && get(selectedBotStore)?.id !== bot?.id) {
+        stopWaypointEditing();
+    }
     if (!bot) {
         selectedBotStore.set(undefined);
         return;
