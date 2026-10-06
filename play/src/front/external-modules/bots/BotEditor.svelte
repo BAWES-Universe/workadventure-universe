@@ -546,7 +546,14 @@
         }
     }
 
-    async function handleDelete() {
+    function handleDelete() {
+        // A second tap on Delete while the first is still running would send a second delete, which Orbit
+        // answered with "Internal server error" although the bot was gone.
+        if (isLoading) return;
+        void deleteSelectedBot();
+    }
+
+    async function deleteSelectedBot() {
         if (!selectedBot?.id || !botApiService.isInitialized()) {
             return;
         }
