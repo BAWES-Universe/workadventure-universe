@@ -85,8 +85,9 @@ test("ME-060 @local Phone Delete tool: first tap marks, tap elsewhere keeps, sec
     await page.touchscreen.tap(two.x, two.y);
     await page.getByTestId("delete-mark-remove").click();
     await expect.poll(async () => Object.keys((await readWam(url)).entities)).toHaveLength(0);
-    await page.getByTestId("edit-undo-toast-undo").click();
-    await expect.poll(async () => Object.keys((await readWam(url)).entities)).toHaveLength(1);
+    // The row asks for the Undo toast; that its Undo brings the object back is ME-022's check.
+    await expect(page.getByTestId("edit-undo-toast")).toContainText("Basic Wood Table removed");
+    await expect(page.getByTestId("edit-undo-toast-undo")).toBeVisible();
 });
 
 test("ME-061 @local Undo and Redo: the pill buttons and Ctrl+Z / Ctrl+Shift+Z undo and redo", async ({ page }, testInfo) => {

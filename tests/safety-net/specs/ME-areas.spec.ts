@@ -373,12 +373,11 @@ test("ME-044 Stage and Audience pages: stage name and chat, audience picks the s
     await expect(select).toBeVisible();
     await select.selectOption({ label: "keynote" });
     await expect.poll(async () => (await areaProps(url, audience)).find((p) => p.type === "listenerMegaphone")?.speakerZoneName).toBeTruthy();
-    const link = pg.locator("#tabLink, input[type=url], input[placeholder*='http']").first();
-    if (await link.count()) {
-        await link.fill("not a link");
-        await link.blur();
-        await expect(pg.getByTestId("applicationLinkError")).toBeVisible();
-    }
+    const link = pg.locator("input#waitingWebLink");
+    await link.fill("not a link");
+    await link.blur();
+    // Prod and dev both mark the error line and the help line under it with this testid.
+    await expect(pg.getByTestId("applicationLinkError").first()).toBeVisible();
     await expect(pg.getByTestId("chatEnabled")).toBeVisible();
 });
 

@@ -73,8 +73,10 @@ test("ME-027 Check it: size line for a fitting and an odd picture, errors for a 
 
 test("ME-028 Save to my objects: the upload shows in Your uploads and in search", async ({ page }, testInfo) => {
     const url = await uploadGuide(page, testInfo);
+    // Uploads outlive the room, so each run uses its own name.
+    const name = `Safety planter ${Date.now().toString(36)}`;
     await page.getByTestId("uploadCustomAsset").setInputFiles(pngFile("planter.png", 64, 64, [40, 160, 60, 255]));
-    await page.getByTestId("name").fill("Safety planter");
+    await page.getByTestId("name").fill(name);
     await page.getByTestId("tags").fill("plants2");
     const floats = page.getByTestId("floatingObject");
     if (await floats.isChecked()) await floats.click();
@@ -93,29 +95,31 @@ test("ME-028 Save to my objects: the upload shows in Your uploads and in search"
     await expect(page.getByTestId("objects-search")).toBeVisible({ timeout: 30_000 });
     await expect(panel.locator(".em-cat-label"), "the panel returns to the picker, not an empty category").toHaveText("All categories");
     await expect(panel.locator(".em-sech", { hasText: "Your uploads" })).toBeVisible();
-    await expect(panel.getByTestId("entity-item").filter({ hasText: "Safety planter" }).first()).toBeVisible();
-    await page.getByTestId("objects-search").fill("Safety planter");
-    await expect(panel.getByTestId("entity-item").filter({ hasText: "Safety planter" })).toHaveCount(1);
+    await expect(panel.getByTestId("entity-item").filter({ hasText: name }).first()).toBeVisible();
+    await page.getByTestId("objects-search").fill(name);
+    await expect(panel.getByTestId("entity-item").filter({ hasText: name })).toHaveCount(1);
     void url;
 });
 
 test("ME-029 Edit this upload: change name and save; Delete this upload removes it", async ({ page }, testInfo) => {
     await uploadGuide(page, testInfo);
-    await uploadObject(page, "Safety lamp");
+    // Uploads outlive the room, so each run uses its own name.
+    const name = `Safety lamp ${Date.now().toString(36)}`;
+    await uploadObject(page, name);
     const panel = page.getByTestId("edit-panel");
-    await page.getByTestId("objects-search").fill("Safety lamp");
-    await panel.getByTestId("entity-item").filter({ hasText: "Safety lamp" }).first().click();
+    await page.getByTestId("objects-search").fill(name);
+    await panel.getByTestId("entity-item").filter({ hasText: name }).first().click();
     if (isPhone(testInfo)) {
         await rail(page, "EntityEditor").click();
     }
     await page.getByTestId("editEntity").click();
     const nameField = panel.locator("input#name, input[placeholder*='name' i]").first();
     await expect(nameField).toBeVisible();
-    await nameField.fill("Safety lamp two");
+    await nameField.fill(`${name} two`);
     await panel.getByRole("button", { name: /save|apply/i }).first().click();
-    await page.getByTestId("objects-search").fill("Safety lamp two");
-    await expect(panel.getByTestId("entity-item").filter({ hasText: "Safety lamp two" })).toHaveCount(1, { timeout: 15_000 });
-    await panel.getByTestId("entity-item").filter({ hasText: "Safety lamp two" }).first().click();
+    await page.getByTestId("objects-search").fill(`${name} two`);
+    await expect(panel.getByTestId("entity-item").filter({ hasText: `${name} two` })).toHaveCount(1, { timeout: 15_000 });
+    await panel.getByTestId("entity-item").filter({ hasText: `${name} two` }).first().click();
     if (isPhone(testInfo)) {
         await rail(page, "EntityEditor").click();
     }
@@ -123,16 +127,18 @@ test("ME-029 Edit this upload: change name and save; Delete this upload removes 
     await panel.getByRole("button", { name: /delete/i }).first().click();
     const confirm = page.getByRole("button", { name: /^(delete|confirm|yes)/i });
     if (await confirm.first().isVisible().catch(() => false)) await confirm.first().click();
-    await page.getByTestId("objects-search").fill("Safety lamp");
-    await expect(panel.getByTestId("entity-item").filter({ hasText: "Safety lamp" })).toHaveCount(0, { timeout: 15_000 });
+    await page.getByTestId("objects-search").fill(name);
+    await expect(panel.getByTestId("entity-item").filter({ hasText: name })).toHaveCount(0, { timeout: 15_000 });
 });
 
 test("ME-030 @local Sides and colours: add a side, wrong size error, remove, add a colour, Turn and Place", async ({ page }, testInfo) => {
     const url = await uploadGuide(page, testInfo);
-    await uploadObject(page, "Safety box");
+    // Uploads outlive the room, so each run uses its own name: an earlier run's "Safety box" already has a Left side.
+    const name = `Safety box ${Date.now().toString(36)}`;
+    await uploadObject(page, name);
     const panel = page.getByTestId("edit-panel");
-    await page.getByTestId("objects-search").fill("Safety box");
-    await panel.getByTestId("entity-item").filter({ hasText: "Safety box" }).first().click();
+    await page.getByTestId("objects-search").fill(name);
+    await panel.getByTestId("entity-item").filter({ hasText: name }).first().click();
     if (isPhone(testInfo)) {
         await rail(page, "EntityEditor").click();
     }
@@ -161,13 +167,10 @@ test("ME-030 @local Sides and colours: add a side, wrong size error, remove, add
         el.dispatchEvent(new Event("input", { bubbles: true }));
         el.dispatchEvent(new Event("change", { bubbles: true }));
     });
-    const chooser4 = page.waitForEvent("filechooser", { timeout: 5000 }).catch(() => undefined);
-    const fc = await chooser4;
-    if (fc) await fc.setFiles(pngFile("green.png", 64, 64, [34, 170, 68, 255]));
-    else {
-        await page.getByTestId("variant-add-Front").click();
-        await page.getByTestId("variant-file").setInputFiles(pngFile("green.png", 64, 64, [34, 170, 68, 255]));
-    }
+    // The new colour's front: the Front slot's testid uses the game's direction name, Down.
+    const chooser4 = page.waitForEvent("filechooser");
+    await page.getByTestId("variant-add-Down").click();
+    await (await chooser4).setFiles(pngFile("green.png", 64, 64, [34, 170, 68, 255]));
     await expect(page.getByTestId("variant-colour-22aa44")).toBeVisible({ timeout: 20_000 });
     await expect(variants.locator(".em-slot.e").first()).toBeVisible();
     await page.getByTestId("variant-colour-original").click();

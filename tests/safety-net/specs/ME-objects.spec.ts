@@ -332,7 +332,8 @@ test("ME-021 @local Object settings: name, description, searchable, property but
     const addDescription = settings.getByText("+ Add description field");
     if (await addDescription.isVisible()) await addDescription.click();
     await settings.locator("#objectDescription").fill("Ask here");
-    await settings.locator("#objectDescription").press("Enter");
+    // A text area (prod and dev): Enter adds a line, leaving the field saves it.
+    await settings.locator("#objectDescription").blur();
     await settings.getByTestId("searchable").click();
     await settings.getByTestId("openWebsite").first().click();
     await settings.locator("input#tabLink").fill("https://example.org/");
@@ -374,7 +375,10 @@ test("ME-023 @local A tap on empty floor or Esc deselects; an open settings page
     const url = await objectsOpen(page, testInfo);
     const id = await placedObject(page, testInfo, url);
     await selectPlaced(page, testInfo, url, id);
-    await hit(page, testInfo, await toScreen(page, SPOT_C.x, SPOT_C.y));
+    // Empty floor beside the object (SPOT_C can sit under the phone's rail, depending on where the camera rests).
+    const floor = await toScreen(page, SPOT_B.x, SPOT_B.y);
+    expect(await page.evaluate((q) => document.elementFromPoint(q.x, q.y)?.tagName, floor), "the floor spot is on the map, not under a panel").toBe("CANVAS");
+    await hit(page, testInfo, floor);
     await expect(page.getByTestId("object-actions")).toBeHidden();
     await selectPlaced(page, testInfo, url, id);
     await page.getByTestId("object-settings").click();

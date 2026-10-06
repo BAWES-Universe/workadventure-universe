@@ -27,12 +27,16 @@ async function addWebsite(settings: ReturnType<Page["getByTestId"]>, link = SITE
     await settings.locator("input#tabLink").last().press("Enter");
 }
 
-/** Leaves the editor and stands just below an object. */
+/** Leaves the editor and walks up to an object from below, so the WOKA stands next to it facing it. */
 async function standBy(page: Page, url: string, id: string): Promise<void> {
     if (await page.getByTestId("edit-pill").isVisible()) await page.getByTestId("closeMapEditorButton").click();
     await expect(page.getByTestId("edit-pill")).toBeHidden();
     const e = (await readWam(url)).entities[id];
-    await wa(page, (p: { x: number; y: number }) => WA.player.teleport(p.x, p.y), { x: e.x + 16, y: e.y + 48 });
+    // A teleport keeps the WOKA facing down, away from the object, and the game measures "near" from a point 50 px
+    // ahead of the WOKA: walking the last steps up makes it face the object, as a player walking to it would.
+    await wa(page, (p: { x: number; y: number }) => WA.player.teleport(p.x, p.y), { x: e.x + 16, y: e.y + 112 });
+    await wa(page, (p: { x: number; y: number }) => WA.player.moveTo(p.x, p.y), { x: e.x + 16, y: e.y + 64 });
+    await expect.poll(async () => (await playerPosition(page)).y, { message: "walked up to the object" }).toBeLessThan(e.y + 112);
 }
 
 test("ME-070 @local An object with one website: outlined when near, Space or click opens it; two settings give a menu", async ({ page }, testInfo) => {
