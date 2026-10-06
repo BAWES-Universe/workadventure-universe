@@ -5,9 +5,6 @@ import {getPage} from "./utils/auth";
 import {isMobile} from "./utils/isMobile";
 import {expectLivekitConnectionsCountToBe, expectWebRtcConnectionsCountToBe , expectLivekitRoomsCountToBe} from "./utils/webRtc";
 import { resetWamMaps } from './utils/map-editor/uploader';
-import ConfigureMyRoom from "./utils/map-editor/configureMyRoom";
-import Megaphone from "./utils/map-editor/megaphone";
-import MapEditor from "./utils/mapeditor";
 import Menu from "./utils/menu";
 import AreaLivekit from './utils/AreaLivekit';
 
@@ -198,18 +195,7 @@ test.describe('Meeting actions test', () => {
         await Map.teleportToPosition(page2, 4 * 32, 0);
         
 
-        await Menu.openMapEditor(page);
-        await MapEditor.openConfigureMyRoom(page);
-        await ConfigureMyRoom.selectMegaphoneItemInCMR(page);
-        
-        // Enabling megaphone and settings default value
-        await Megaphone.toggleMegaphone(page);
-        await Megaphone.isMegaphoneEnabled(page);
-        await Megaphone.megaphoneSave(page);
-        // Wait for the megaphone settings to be saved
-        await Megaphone.isCorrectlySaved(page);
-        // Close the configuration popup
-        await Menu.closeMapEditorConfigureMyRoomPopUp(page);
+        // A room nobody has set up lets its admins go live: no settings needed.
         
         
         

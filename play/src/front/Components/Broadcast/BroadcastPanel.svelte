@@ -11,7 +11,6 @@
     import { megaphoneChannelsStore } from "../../Stores/MegaphoneStore";
     import { exploreStore } from "../../Stores/ExploreStore";
     import { userIsAdminStore } from "../../Stores/GameStore";
-    import { mapEditorActivated } from "../../Stores/MenuStore";
     import { displayedMegaphoneScreenStore } from "../../Stores/MediaStore";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
@@ -30,8 +29,8 @@
     let kind: BroadcastKind | undefined = undefined;
     let reach: BroadcastReach | undefined = undefined;
 
-    // Admins and people who may edit the room set who can go live here and how far they reach.
-    $: canConfigure = $userIsAdminStore || $mapEditorActivated;
+    // Admins set who can go live here and how far they reach.
+    $: canConfigure = $userIsAdminStore;
     // Written and voice notes are sent by the server to whole rooms: admins only.
     $: canMessage = $userIsAdminStore;
 

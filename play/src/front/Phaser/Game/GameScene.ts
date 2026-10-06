@@ -153,9 +153,7 @@ import {
     mapEditorModeStore,
     mapEditorRestrictedPropertiesStore,
     mapEditorSelectedToolStore,
-    mapEditorWamSettingsEditorToolCurrentMenuItemStore,
     mapExplorationModeStore,
-    WAM_SETTINGS_EDITOR_TOOL_MENU_ITEM,
 } from "../../Stores/MapEditorStore";
 import { refreshPromptStore } from "../../Stores/RefreshPromptStore";
 import { SpaceRegistry } from "../../Space/SpaceRegistry/SpaceRegistry";
@@ -3546,23 +3544,10 @@ ${escapedMessage}
             } else {
                 switch (toolEditorParam) {
                     case "wamSettingsEditorTool": {
+                        // Configure my room holds the room's settings, which only admins may change.
+                        if (!get(userIsAdminStore)) break;
                         mapEditorModeStore.switchMode(true);
                         mapEditorSelectedToolStore.set(EditorToolName.WAMSettingsEditor);
-                        const menuItem = urlManager.getHashParameter("menuItem");
-                        if (menuItem) {
-                            switch (menuItem) {
-                                case "megaphone": {
-                                    mapEditorWamSettingsEditorToolCurrentMenuItemStore.set(
-                                        WAM_SETTINGS_EDITOR_TOOL_MENU_ITEM.Megaphone
-                                    );
-                                    break;
-                                }
-                                default: {
-                                    mapEditorWamSettingsEditorToolCurrentMenuItemStore.set(undefined);
-                                    break;
-                                }
-                            }
-                        }
                         break;
                     }
                     case "floor": {

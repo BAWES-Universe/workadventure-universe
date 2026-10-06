@@ -9,6 +9,7 @@
     import { mapEditorSelectedToolStore, mapEditorVisibilityStore } from "../../Stores/MapEditorStore";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
     import { mapEditorActivated, mapEditorActivatedForThematics } from "../../Stores/MenuStore";
+    import { userIsAdminStore } from "../../Stores/GameStore";
     import { isMediaBreakpointUp } from "../../Utils/BreakpointsUtils";
     import { IconX, IconTexture, IconLamp, IconMapSearch, IconSettings, IconTrash } from "@wa-icons";
 
@@ -44,11 +45,14 @@
             tooltiptext: $LL.mapEditor.sideBar.areaEditor(),
         });
         availableTools.push(entityEditorTool);
-        availableTools.push({
-            toolName: EditorToolName.WAMSettingsEditor,
-            iconComponent: IconSettings,
-            tooltiptext: $LL.mapEditor.sideBar.configureMyRoom(),
-        });
+        // Configure my room holds the room's settings, which only admins may change (Broadcast has its own card).
+        if ($userIsAdminStore) {
+            availableTools.push({
+                toolName: EditorToolName.WAMSettingsEditor,
+                iconComponent: IconSettings,
+                tooltiptext: $LL.mapEditor.sideBar.configureMyRoom(),
+            });
+        }
         availableTools.push(trashEditorTool);
     }
 
