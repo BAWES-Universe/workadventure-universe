@@ -52,7 +52,6 @@
 
     // The mic and camera stay as the player has them: this step never switches them, the player does, here or
     // with the bar's buttons, before and while live.
-    let wentLive = false;
 
     // Said under the buttons when going live could not start (the reach's channel is not joined yet).
     let error: string | undefined;
@@ -60,7 +59,6 @@
     function goLive() {
         if (!anythingOn) return;
         if (startLiveBroadcast(reach)) {
-            wentLive = true;
             dispatch("live");
         } else {
             error = $LL.broadcast.live.notReady();
