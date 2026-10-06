@@ -51,8 +51,8 @@
             <AreasPanel />
         {:else if external}
             <PanelHeader
-                title={external.label}
-                subtitle={$editPanelBackStore ? undefined : external.subtitle}
+                title={$editPanelBackStore?.title ?? external.label}
+                subtitle={$editPanelBackStore ? $editPanelBackStore.subtitle : external.subtitle}
                 onBack={$editPanelBackStore?.onBack}
                 backLabel={$editPanelBackStore?.label}
             />

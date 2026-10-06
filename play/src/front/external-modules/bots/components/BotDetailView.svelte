@@ -41,7 +41,8 @@
 
     let currentBot: BotData | null = null;
     let editingTexture = false;
-    let editingCompanion = false;
+    /** The companion picker fills the panel in place of the page (BotEditor puts its title and back circle up) */
+    export let editingCompanion = false;
     let switching = false;
     let switchError: string | null = null;
     let openGroup: string | undefined = lastOpenGroup;
@@ -99,6 +100,8 @@
     // Initialize from prop - handle both bot changes and bot becoming null
     $: if (bot) {
         if (bot.id !== currentBot?.id) {
+            // Another bot: its page opens, not the last one's companion picker
+            editingCompanion = false;
             // Ensure behaviorType is never undefined - check both top-level and behaviorConfig
             const behaviorType = bot.behaviorType || bot.behaviorConfig?.behaviorType || "idle";
 
@@ -243,6 +246,17 @@
         }
         return `${ABSOLUTE_PUSHER_URL}${relativeUrl}`;
     }
+
+    // The bot's WOKA sheet, for the companion picker's room
+    $: botSheetUrl = (() => {
+        const id = currentBot?.characterTexture;
+        if (!id || !$botWokaCatalogStore) return undefined;
+        for (const collection of $botWokaCatalogStore.woka?.collections ?? []) {
+            const texture = collection.textures.find((t) => t.id === id);
+            if (texture) return getTextureUrl(texture.url);
+        }
+        return undefined;
+    })();
 
     async function handleTextureSelect(textureId: string) {
         if (!currentBot) {
@@ -401,7 +415,14 @@
 
 <svelte:window on:keydown={handleTextureKeydown} />
 
-{#if currentBot}
+{#if currentBot && editingCompanion}
+    <BotCompanionPicker
+        selectedId={currentBot.companionTextureId ?? null}
+        botUrl={botSheetUrl}
+        onSave={handleCompanionSelect}
+        onCancel={() => (editingCompanion = false)}
+    />
+{:else if currentBot}
     <div class="bot-page" data-testid="bot-page">
         <div class="bp-hd">
             <button
@@ -528,35 +549,6 @@
             />
             <div class="flex justify-end mt-4">
                 <button type="button" class="bp-pill" on:click={() => (editingTexture = false)}>
-                    {$LL.actionbar.close()}
-                </button>
-            </div>
-        </div>
-    </div>
-{/if}
-
-<!-- Companion Picker Modal -->
-{#if editingCompanion && currentBot}
-    <!-- svelte-ignore a11y-click-events-have-key-events -->
-    <div
-        role="presentation"
-        class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
-        tabindex="-1"
-        on:click={() => (editingCompanion = false)}
-    >
-        <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-        <div
-            role="dialog"
-            aria-modal="true"
-            aria-label={page.companion.change()}
-            class="bp-dialog u-surface max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6"
-            data-testid="bot-companion-picker"
-            on:click|stopPropagation
-        >
-            <h3 class="text-xl font-semibold text-white mb-4">{page.companion.change()}</h3>
-            <BotCompanionPicker selectedId={currentBot.companionTextureId ?? null} onSelect={handleCompanionSelect} />
-            <div class="flex justify-end mt-4">
-                <button type="button" class="bp-pill" on:click={() => (editingCompanion = false)}>
                     {$LL.actionbar.close()}
                 </button>
             </div>

@@ -602,8 +602,18 @@
         detailView?.flushPendingSaves();
         handleBackToList();
     }
+    // While its companion is picked, the title is the bot's name over "Companion" and the back circle returns to
+    // the bot's page, leaving the companion as it was
+    let editingCompanion = false;
     $: editPanelBackStore.set(
-        (currentMode === "detail" || currentMode === "waypoint-edit") && selectedBot
+        currentMode === "detail" && selectedBot && editingCompanion
+            ? {
+                  onBack: () => (editingCompanion = false),
+                  label: $LL.mapEditor.edit.bots.page.companion.back({ name: selectedBot.name ?? "" }),
+                  title: selectedBot.name || undefined,
+                  subtitle: $LL.mapEditor.edit.bots.page.companion.title(),
+              }
+            : (currentMode === "detail" || currentMode === "waypoint-edit") && selectedBot
             ? { onBack: backToList, label: $LL.mapEditor.edit.bots.page.back() }
             : currentMode === "create"
             ? { onBack: handleBackToList, label: $LL.mapEditor.edit.bots.page.back() }
@@ -720,6 +730,7 @@
         {#if selectedBot}
             <BotDetailView
                 bind:this={detailView}
+                bind:editingCompanion
                 bot={selectedBot}
                 onSave={handleSave}
                 onDelete={handleDelete}
