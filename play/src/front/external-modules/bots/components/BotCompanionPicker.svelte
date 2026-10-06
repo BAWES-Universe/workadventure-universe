@@ -47,14 +47,15 @@
         </div>
     {:else}
         <div class="space-y-4">
-            <!-- Preview: the companion it has now -->
-            <div class="flex items-center justify-center gap-3 p-4 bg-white/5 rounded-lg border border-white/20">
+            <!-- Preview: the companion it has now. With none it stays empty, as on the join screen, so "None" shows
+                 only once (the first tile) and the grid does not move when a companion is picked -->
+            <div
+                class="flex items-center justify-center gap-3 p-4 min-h-[128px] bg-white/5 rounded-lg border border-white/20"
+                data-testid="bot-companion-preview"
+            >
                 {#if selected}
                     <CompanionSprite url={textureUrl(selected.url)} size={96} />
                     <span class="text-sm font-medium">{selected.name}</span>
-                {:else}
-                    <span class="text-white/60"><IconForbid font-size="40" /></span>
-                    <span class="text-sm font-medium text-white/60">{page.noneOption()}</span>
                 {/if}
             </div>
 
