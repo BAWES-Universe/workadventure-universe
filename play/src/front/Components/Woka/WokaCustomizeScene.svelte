@@ -71,13 +71,15 @@
     }
 
     // Randomize picks every part from all of its collections
-    function randomize() {
+    async function randomize() {
         const next = { ...selectedTextures };
         for (const p of bodyPartOrder) {
             const all = (wokaData?.[p]?.collections ?? []).flatMap((collection) => collection.textures);
             if (all.length > 0) next[p] = all[Math.floor(Math.random() * all.length)].id;
         }
         selectedTextures = next;
+        await tick();
+        scrollToSelected();
     }
 
     async function nextPart() {

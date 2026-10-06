@@ -73,10 +73,14 @@
         const all = collections.flatMap((collection, index) => collection.textures.map((t) => ({ index, t })));
         if (all.length === 0) return;
         const pick = all[Math.floor(Math.random() * all.length)];
-        collectionIndex = pick.index;
+        // Through the card, so the collection's pill scrolls into view too
+        if (card) await card.selectCategory(pick.index);
+        else collectionIndex = pick.index;
         await tick();
         select(pick.t.id);
     }
+
+    let card: WokaCard | undefined;
 
     function columns(): number {
         const grid = document.getElementById("woka-grid");
@@ -127,6 +131,7 @@
 </script>
 
 <WokaCard
+    bind:this={card}
     eyebrow={$LL.woka.selectWoka.eyebrow()}
     title={$LL.woka.selectWoka.heading()}
     {selectedTextures}
