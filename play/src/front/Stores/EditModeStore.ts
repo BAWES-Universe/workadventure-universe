@@ -36,9 +36,12 @@ export function unregisterEditTool(id: string): void {
 
 /**
  * A back circle for an added tool's panel title, while the tool shows one of its own pages (the bots module's bot
- * page goes back to its list). Undefined shows the title with its subtitle, as on the tool's first page.
+ * page goes back to its list). Undefined shows the title with its subtitle, as on the tool's first page. A page can
+ * also put up its own title and the line under it (a bot's companion picker: the bot's name over "Companion").
  */
-export const editPanelBackStore = writable<{ onBack: () => void; label: string } | undefined>(undefined);
+export const editPanelBackStore = writable<
+    { onBack: () => void; label: string; title?: string; subtitle?: string } | undefined
+>(undefined);
 
 /** One action in the bar at the bottom while placing, moving or drawing. */
 export interface PlacingAction {

@@ -4,7 +4,7 @@ import type { ExtensionModule, ExtensionModuleOptions } from "../../ExternalModu
 import { localUserStore } from "../../Connection/LocalUserStore";
 import { mapEditorActivated, userIsConnected } from "../../Stores/MenuStore";
 import { mapEditorModeStore, mapEditorVisibilityStore, mapEditorSelectedToolStore } from "../../Stores/MapEditorStore";
-import { registerEditTool } from "../../Stores/EditModeStore";
+import { editHintSeenStore, registerEditTool } from "../../Stores/EditModeStore";
 import LL from "../../../i18n/i18n-svelte";
 import { EditorToolName } from "../../Phaser/Game/MapEditor/MapEditorModeManager";
 import { gameManager } from "../../Phaser/Game/GameManager";
@@ -132,6 +132,9 @@ function openBotEditor() {
 
     botEditorOpen = true;
     lastRoomIdWhenEditorWasOpen = currentRoomId;
+    // Bots is now the picked tool, whichever way it was opened (rail, menu, a bot on the map), so the phone's
+    // "Pick a tool on the right" hint has done its job, as it has after picking Objects or Areas
+    editHintSeenStore.set(true);
 
     mapEditorVisibilityStore.set(true);
 

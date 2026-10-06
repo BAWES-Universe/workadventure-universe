@@ -707,6 +707,13 @@ const mapEditor: BaseTranslation = {
                     noneOption: "None",
                     notHere: "Not in this room's list",
                     empty: "This room has no companions to pick from.",
+                    save: "Save",
+                    cancel: "Cancel",
+                    rotate: "Rotate",
+                    randomize: "Randomize",
+                    browse: "browse",
+                    saveHint: "save",
+                    back: "Back to {name:string}",
                 },
                 list: {
                     newBot: "New bot",
