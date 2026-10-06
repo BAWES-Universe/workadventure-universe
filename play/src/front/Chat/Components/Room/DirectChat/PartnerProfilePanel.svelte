@@ -174,9 +174,6 @@
                 {/if}
             </div>
         {/if}
-        {#if !live}
-            <p class="m-0 text-center text-xs text-white/50">{$LL.chat.directChat.profile.notInUniverse()}</p>
-        {/if}
 
         <div class="partner-group">
             <button
@@ -234,7 +231,8 @@
             {#if confirmingDelete}
                 <div class="flex flex-col gap-2 p-2 text-sm" data-testid="partnerDeleteConfirm">
                     <span class="font-bold">{$LL.chat.directChat.deleteChat.confirm()}</span>
-                    <span class="text-xs text-white/60">{$LL.chat.directChat.deleteChat.hint()}</span>
+                    <span class="text-xs text-white/60">{$LL.chat.directChat.deleteChat.hint({ name: $roomName })}</span
+                    >
                     <div class="flex gap-2">
                         <button
                             type="button"
@@ -260,7 +258,7 @@
                     <span class="u-menu-tile"><IconTrash /></span>
                     <span class="flex min-w-0 flex-1 flex-col">
                         <span class="truncate">{$LL.chat.directChat.deleteChat.label()}</span>
-                        <span class="partner-hint">{$LL.chat.directChat.deleteChat.hint()}</span>
+                        <span class="partner-hint">{$LL.chat.directChat.deleteChat.hint({ name: $roomName })}</span>
                     </span>
                 </button>
             {/if}
@@ -301,9 +299,6 @@
         place-items: center;
         width: 2.25rem;
         height: 2.25rem;
-        border-radius: 0.7rem;
-        background: linear-gradient(135deg, #8629fc, #4156f6);
-        box-shadow: 0 6px 16px -6px rgba(134, 41, 252, 0.6);
     }
     .partner-group {
         display: flex;

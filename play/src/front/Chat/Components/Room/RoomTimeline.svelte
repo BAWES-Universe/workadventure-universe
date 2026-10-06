@@ -39,6 +39,7 @@
     import MessageInputBar from "./MessageInputBar.svelte";
     import MessageSystem from "./MessageSystem.svelte";
     import TypingUsers from "./TypingUsers.svelte";
+    import CopiedPill from "./MessageActions/CopiedPill.svelte";
     import SessionDivider from "./Thread/SessionDivider.svelte";
     import ProximityThreadTitle from "./Thread/ProximityThreadTitle.svelte";
     import ProximityEndedFooter from "./Thread/ProximityEndedFooter.svelte";
@@ -520,6 +521,8 @@
         {#if $typingMembers.length > 0 && !isEnded}
             <TypingUsers typingMembers={$typingMembers} />
         {/if}
+
+        <CopiedPill />
 
         {#if isEnded && shownSession}
             <!-- An ended proximity chat can't receive anything: a way back to the people replaces the composer. -->

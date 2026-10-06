@@ -47,7 +47,9 @@
     }
 
     function handleIframeMessage(message: MessageEvent) {
-        if (message.data.type === "cvIframeSize") {
+        // Only this card's own frame: another card open at the same time sends its own size.
+        if (message.source !== cvIframe?.contentWindow) return;
+        if (message.data?.type === "cvIframeSize") {
             // w = message.data.data.w + "px";
             h = message.data.data.h;
         }
@@ -59,8 +61,10 @@
     });
 </script>
 
-<section class="visitCard {isEmbedded ? 'w-full' : 'max-w-[320px]'}">
-    <div class="{isEmbedded ? '' : 'bg-contrast/80 rounded-lg'} relative backdrop-blur">
+<!-- A profile with nothing written and no links reports no height: embedded, the card then takes no room at all
+     (an empty frame would still leave a dark strip). -->
+<section class="visitCard {isEmbedded ? 'w-full' : 'max-w-[320px]'}" class:collapsed={isEmbedded && !hidden && h === 0}>
+    <div class="{isEmbedded ? '' : 'bg-contrast/80 rounded-lg backdrop-blur'} relative">
         {#if !isEmbedded}
             <div class="absolute top-2 {h > maxHeigth ? 'right-5' : ' right-2'}">
                 <ButtonClose size="xs" dataTestId="closeVisitCardButton" on:click={closeCard} />
@@ -76,8 +80,12 @@
                 title="visitCard"
                 src={safeVisitCardUrl ? `${safeVisitCardUrl}&embed=${isEmbedded}` : "about:blank"}
                 class="max-h-lg"
+                class:block={isEmbedded}
                 allow="clipboard-read; clipboard-write {safeVisitCardUrl ?? ''}"
-                style="width: {isEmbedded ? '100%' : w}; height: {Math.min(h, maxHeigth)}px; color-scheme: dark"
+                style="width: {isEmbedded ? '100%' : w}; height: {Math.max(
+                    isEmbedded ? 1 : 0,
+                    Math.min(h, maxHeigth)
+                )}px; color-scheme: dark"
                 class:hidden
                 bind:this={cvIframe}
             />
@@ -114,6 +122,14 @@
     .visitCard {
         pointer-events: all;
         z-index: 750;
+
+        /* Out of the way but not hidden: the browser stops updating a hidden or zero-size frame from another
+           site, so it could never report the profile's real height. */
+        &.collapsed {
+            position: absolute;
+            opacity: 0;
+            pointer-events: none;
+        }
 
         iframe {
             border: 0;

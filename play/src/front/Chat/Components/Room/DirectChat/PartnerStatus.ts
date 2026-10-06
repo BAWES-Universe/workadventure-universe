@@ -30,7 +30,10 @@ export function partnerStatus(place: PartnerPlace, ll: TranslationFunctions): { 
                 color: getColorHexOfStatus(place.status),
             };
         case "chatOnly":
-            return { label: status.chatOnly(), color: ONLINE_GREEN };
+            return {
+                label: `${status.online()}${ll.chat.topRow.separator()}${status.chatOnly()}`,
+                color: ONLINE_GREEN,
+            };
         case "offline":
             return { label: status.offline() };
     }
