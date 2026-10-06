@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onDestroy, onMount, tick } from "svelte";
+    import { onDestroy, tick } from "svelte";
     import type { ComponentType } from "svelte";
     import { joinDesktopStore } from "../../Stores/JoinDesktopStore";
     import { LL } from "../../../i18n/i18n-svelte";
@@ -33,17 +33,11 @@
     // Rotate turns the WOKA a quarter: down, left, up, right
     const turnOrder = [0, 1, 3, 2];
     let turn = 0;
-    let autoTurn: ReturnType<typeof setInterval> | undefined;
 
+    // The preview only turns when you rotate it
     function rotate() {
-        stopAutoTurn();
         turn = (turn + 1) % turnOrder.length;
         direction = turnOrder[turn];
-    }
-
-    function stopAutoTurn() {
-        if (autoTurn) clearInterval(autoTurn);
-        autoTurn = undefined;
     }
 
     const bgColor = gameManager.currentStartedRoom.backgroundColor ?? "#000000";
@@ -149,18 +143,7 @@
     $: observe(tilesBox, tiles);
     $: if (pills) updatePills();
 
-    onMount(() => {
-        // The preview turns on its own, slowly, until you rotate it yourself
-        if (!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
-            autoTurn = setInterval(() => {
-                turn = (turn + 1) % turnOrder.length;
-                direction = turnOrder[turn];
-            }, 2400);
-        }
-    });
-
     onDestroy(() => {
-        stopAutoTurn();
         resizeObserver?.disconnect();
     });
 </script>

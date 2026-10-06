@@ -8,7 +8,7 @@
     import WokaImage from "./WokaImage.svelte";
     import WokaCard from "./WokaCard.svelte";
     import { fetchWokaData, getWokaTextureUrl, texturesByPart } from "./WokaData";
-    import { IconArrowLeft, IconCheck, IconEye, IconEyeglass, IconPalette, IconScissors, IconShirt } from "@wa-icons";
+    import { IconCheck, IconEye, IconEyeglass, IconLayoutGrid, IconPalette, IconScissors, IconShirt } from "@wa-icons";
 
     export let back: () => void;
     export let saveAndContinue: (texturesId: string[]) => void;
@@ -192,9 +192,11 @@
     </div>
 
     <svelte:fragment slot="footer">
-        <button type="button" class="u-join-btn u-cta-secondary wokaBuildBack" on:click={back}>
-            <IconArrowLeft font-size="18" />
-            {$LL.woka.customWoka.back()}
+        <!-- Build and the ready-made WOKAs are two modes: this switches mode, it isn't a step back -->
+        <button type="button" class="u-join-btn u-cta-secondary wokaBuildBack !px-3 md:!px-5" on:click={back}>
+            <IconLayoutGrid font-size="16" />
+            <span class="md:hidden">{$LL.woka.customWoka.presetsShort()}</span>
+            <span class="hidden md:inline">{$LL.woka.customWoka.presets()}</span>
         </button>
         <button
             type="button"
