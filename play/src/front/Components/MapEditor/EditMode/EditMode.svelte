@@ -19,7 +19,6 @@
         editAreaDraftStore,
         editDeleteMarkStore,
         editHintSeenStore,
-        editOpenWithPanelStore,
         editPlacingBarStore,
         editTouchPreviewStore,
         editUndoToastStore,
@@ -37,11 +36,9 @@
 
     let rootWidth = 0;
 
-    // On a phone, edit mode opens on the whole map: the panel comes out when a tool on the rail is tapped. An entry
-    // that opens straight into one tool (the menu's "Bot editor") asks for the panel at once instead.
+    // On a phone, edit mode opens on the whole map: the panel comes out when a tool on the rail is tapped.
     onMount(() => {
-        if ($mobileLayoutStore && !$editOpenWithPanelStore) mapEditorVisibilityStore.set(false);
-        editOpenWithPanelStore.set(false);
+        if ($mobileLayoutStore) mapEditorVisibilityStore.set(false);
     });
 
     $: tool = $mapEditorSelectedToolStore;

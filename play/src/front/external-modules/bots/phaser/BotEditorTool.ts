@@ -25,6 +25,7 @@ import {
 } from "../stores/BotEditorStore";
 import { gameManager } from "../../../Phaser/Game/GameManager";
 import type { GameScene } from "../../../Phaser/Game/GameScene";
+import { mapEditorVisibilityStore } from "../../../Stores/MapEditorStore";
 import { WaypointPath, WaypointPathEvent } from "./WaypointPath";
 import { BotPreview, BotPreviewEvent } from "./BotPreview";
 
@@ -487,6 +488,10 @@ export class BotEditorTool {
         // Setup event handlers
         preview.on(BotPreviewEvent.Selected, (selectedPreview: BotPreview) => {
             selectBot(selectedPreview.getBotData());
+            // Tapped with the panel tucked away (a phone opens on the whole map): the panel comes out on the page
+            if (!get(mapEditorVisibilityStore)) {
+                mapEditorVisibilityStore.set(true);
+            }
         });
 
         preview.on(BotPreviewEvent.PositionChanged, (botId: string, x: number, y: number) => {
