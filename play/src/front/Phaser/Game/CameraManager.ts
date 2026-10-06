@@ -166,6 +166,8 @@ export class CameraManager extends Phaser.Events.EventEmitter {
     }
 
     public destroy(): void {
+        // The next map sets its own zone; until then, zooming out stops where its map fits.
+        this.waScaleManager.zoomOutPastMapFit = undefined;
         this.scene.game.events.off(WaScaleManagerEvent.RefreshFocusOnTarget);
         this.camera.off("followupdate", this.onFollowUpdate);
         this.scene.events.off(Phaser.Scenes.Events.POST_UPDATE, this.applyMapBounds);
@@ -1010,9 +1012,13 @@ export class CameraManager extends Phaser.Events.EventEmitter {
         this.player = player;
 
         this.resistanceCallback = callback;
+        // Zooming out into "Look around" must be able to pass the end of the zone, also on a map small enough to fit
+        // the screen before it (zooming out would otherwise stop there, and the zone would only ever pull back).
+        this.waScaleManager.zoomOutPastMapFit = endZoomLevel < startZoomLevel ? endZoomLevel * 0.9 : undefined;
     }
 
     public disableResistanceZone(): void {
+        this.waScaleManager.zoomOutPastMapFit = undefined;
         this.resistanceCallback = undefined;
         this.stopResistZoom();
     }

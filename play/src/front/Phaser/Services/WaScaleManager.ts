@@ -186,6 +186,9 @@ export class WaScaleManager {
     public get maxZoomOut(): number {
         return this.hdpiManager.maxZoomOut;
     }
+    public set zoomOutPastMapFit(zoomModifier: number | undefined) {
+        this.hdpiManager.zoomOutPastMapFit = zoomModifier;
+    }
 
     public get isMaximumZoomOutReached(): boolean {
         return this.hdpiManager.isMaximumZoomReached;
