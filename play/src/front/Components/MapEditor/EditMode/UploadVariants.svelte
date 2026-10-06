@@ -59,6 +59,10 @@
     let colorInput: HTMLInputElement;
 
     $: variant = $variantsStore.find((each) => each.id === variantId);
+    // The object went (someone else deleted it): back to the objects, not an empty panel.
+    let hadVariant = false;
+    $: if (variant) hadVariant = true;
+    else if (hadVariant) dispatch("done");
     $: first = variant?.defaultPrefab;
     $: colors = variant
         ? [
