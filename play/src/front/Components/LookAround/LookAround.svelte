@@ -3,6 +3,7 @@
     // It is not the map editor: no toolbar, for anyone. A pill at the top says where you are and brings you back,
     // a hint shows you can drag and pinch until you first drag, the map layer draws the "You are here" box,
     // and the Places panel and the place card open from here.
+    import { onDestroy, onMount } from "svelte";
     import { fade, fly } from "svelte/transition";
     import { LL } from "../../../i18n/i18n-svelte";
     import { gameManager } from "../../Phaser/Game/GameManager";
@@ -18,6 +19,31 @@
     import { IconFocusCentered, IconHandMove, IconMouse, IconSearch } from "@wa-icons";
 
     let peopleByArea: Map<string, number> = new Map();
+    let root: HTMLElement;
+    // How far this layer runs under the bar, if it does (the bar is below it in the layout, but a browser that sizes
+    // the two differently can slide it underneath): the card, the Places panel and the "You" tab stay above the bar
+    // by that much more. Measured, not assumed, so it holds on every phone.
+    let barClear = 0;
+    let barClearTimer: ReturnType<typeof setInterval> | undefined;
+
+    function measureBarClear() {
+        const bar = document.querySelector(".bp-menu");
+        if (!root || !bar) {
+            barClear = 0;
+            return;
+        }
+        const overlap = root.getBoundingClientRect().bottom - bar.getBoundingClientRect().top;
+        barClear = Math.max(0, Math.round(overlap));
+    }
+    onMount(() => {
+        measureBarClear();
+        barClearTimer = setInterval(measureBarClear, 500);
+        window.addEventListener("resize", measureBarClear);
+    });
+    onDestroy(() => {
+        if (barClearTimer) clearInterval(barClearTimer);
+        window.removeEventListener("resize", measureBarClear);
+    });
 
     const roomName = gameManager.currentStartedRoom?.roomName ?? "";
     $: peopleHere = $playersStore.size + 1;
@@ -36,8 +62,10 @@
 </script>
 
 <div
+    bind:this={root}
     class="look-around absolute inset-0 pointer-events-none"
     class:phone={$mobileLayoutStore}
+    style="--bar-clear: {barClear}px"
     data-testid="look-around"
 >
     <LookAroundMap bind:peopleByArea />
