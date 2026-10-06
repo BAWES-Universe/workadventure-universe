@@ -462,7 +462,7 @@ export class BotAPI {
         this.app.post('/api/bots/:botId/update', requireSession, requireManager, async (req: Request, res: Response) => {
             try {
                 const { botId } = req.params;
-                const { position, behaviorConfig, behaviorType } = req.body;
+                const { position, behaviorConfig, behaviorType, restartRoute } = req.body;
 
                 console.log(`[BotAPI] Received update request for bot ${botId}:`, {
                     position,
@@ -470,11 +470,15 @@ export class BotAPI {
                     hasConfig: !!behaviorConfig,
                 });
 
-                const result = await this.botManager.updateBot(botId, {
-                    position,
-                    behaviorConfig,
-                    behaviorType,
-                } as Partial<BotConfiguration>);
+                const result = await this.botManager.updateBot(
+                    botId,
+                    {
+                        position,
+                        behaviorConfig,
+                        behaviorType,
+                    } as Partial<BotConfiguration>,
+                    { restartRoute: restartRoute === true }
+                );
 
                 if (!result.updated) {
                     res.status(404).json({

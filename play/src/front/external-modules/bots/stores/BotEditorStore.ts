@@ -246,6 +246,9 @@ export function confirmPlacement(): BotData | undefined {
     return undefined;
 }
 
+// The stops when Edit route was pressed, to tell on Done whether the route changed.
+let routeAtEditStart: Array<{ x: number; y: number }> | undefined;
+
 /**
  * Enter waypoint editing mode for patrol bots
  * Auto-creates first waypoint at bot's center if none exist
@@ -255,6 +258,7 @@ export function startWaypointEditing(): void {
     if (bot && walksRoute(bot)) {
         routeUndoStack = [];
         routeUndoCountStore.set(0);
+        routeAtEditStart = routeStops(bot).map((p) => ({ ...p }));
         // Auto-create first waypoint at bot's center if no waypoints exist
         if (routeStops(bot).length === 0) {
             const center = bot.behaviorConfig.assignedSpace?.center || { x: 0, y: 0 };
@@ -268,6 +272,21 @@ export function startWaypointEditing(): void {
  * Exit waypoint editing mode
  */
 export function stopWaypointEditing(): void {
+    // Done after the route changed: the bot starts it again from stop 1 instead of walking back to it. Only on Done,
+    // so it doesn't jump while the stops are being added or dragged.
+    const bot = get(selectedBotStore);
+    if (bot && walksRoute(bot)) {
+        const stops = routeStops(bot);
+        const before = routeAtEditStart;
+        const changed =
+            !before ||
+            before.length !== stops.length ||
+            before.some((p, i) => p.x !== stops[i].x || p.y !== stops[i].y);
+        if (changed && stops.length > 0) {
+            void sendLiveUpdate(bot.id, { behaviorConfig: { patrolWaypoints: stops }, restartRoute: true });
+        }
+    }
+    routeAtEditStart = undefined;
     editingWaypointIndexStore.set(undefined);
     routeUndoStack = [];
     routeUndoCountStore.set(0);
@@ -324,6 +343,7 @@ export async function sendLiveUpdate(
         position?: { x: number; y: number };
         behaviorConfig?: Record<string, unknown>;
         behaviorType?: string;
+        restartRoute?: boolean;
     }
 ): Promise<void> {
     if (!botApiService.isInitialized()) {
@@ -390,6 +410,10 @@ export function updateBotPosition(botId: string, x: number, y: number): void {
     botPreviewsStore.update((bots) => {
         const bot = bots.get(botId);
         if (bot) {
+            // On a route, stop 1 is where the bot starts, so it moves with the bot. The other stops stay where they
+            // are: they are map positions, not offsets from the bot.
+            const stops = routeStops(bot);
+            const patrolWaypoints = walksRoute(bot) && stops.length > 0 ? [{ x, y }, ...stops.slice(1)] : undefined;
             const updatedBot: BotData = {
                 ...bot,
                 behaviorConfig: {
@@ -398,7 +422,7 @@ export function updateBotPosition(botId: string, x: number, y: number): void {
                         ...bot.behaviorConfig.assignedSpace,
                         center: { x, y },
                     },
-                    // The route stays where it is: stops are map positions, not offsets from the bot
+                    ...(patrolWaypoints ? { patrolWaypoints } : {}),
                 },
             };
             const newMap = new Map(bots);
@@ -410,8 +434,11 @@ export function updateBotPosition(botId: string, x: number, y: number): void {
                 selectedBotStore.set(updatedBot);
             }
 
-            // Send live update to running bot (teleport it)
-            void sendLiveUpdate(botId, { position: { x, y } });
+            // Send live update to running bot (teleport it), with the route's new stop 1
+            void sendLiveUpdate(botId, {
+                position: { x, y },
+                ...(patrolWaypoints ? { behaviorConfig: { patrolWaypoints } } : {}),
+            });
 
             // Save the new spot now: a drag ends once, and the editor's auto-save only covers the selected
             // bot, so a bot dragged without being selected (or just before the editor closes) kept its old spot.

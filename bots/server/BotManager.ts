@@ -23,7 +23,12 @@ import { SelfImprovementLoop } from '../improvement/SelfImprovementLoop';
 import type { AutoPilotImprovement } from '../services/AutoPilotImprovement';
 import * as Sentry from '@sentry/node';
 import { resolveWsUrl } from '../utils/resolveWsUrl';
-import { buildBehaviorConfig, type LegacyBehaviorType } from '../behaviors/behaviorModel';
+import {
+    buildBehaviorConfig,
+    waypointsOf,
+    type BehaviorModel,
+    type LegacyBehaviorType,
+} from '../behaviors/behaviorModel';
 
 export interface BotInstance {
     botId: string;
@@ -57,6 +62,22 @@ export function idleHomeAfterSwitch(
     }
     const fromUpdate: { x: number; y: number } | undefined = updates.behaviorConfig?.assignedSpace?.center;
     return fromUpdate ?? config.assignedSpace?.center;
+}
+
+/**
+ * Where a route bot goes when the editor asks it to start its route again (Done after editing the route): stop 1,
+ * so it walks the route from the beginning instead of walking back to it from wherever it was. Undefined when the
+ * bot doesn't walk a route or has no stops.
+ */
+export function routeStart(
+    model: BehaviorModel,
+    config: Record<string, unknown> | undefined
+): { x: number; y: number } | undefined {
+    if (model.moves !== 'route') {
+        return undefined;
+    }
+    const stops = waypointsOf(config ?? {});
+    return stops.length > 0 ? { x: stops[0].x, y: stops[0].y } : undefined;
 }
 
 type BehaviorClasses = {
@@ -580,7 +601,8 @@ export class BotManager {
      */
     async updateBot(
         botId: string,
-        updates: Partial<BotConfiguration>
+        updates: Partial<BotConfiguration>,
+        options: { restartRoute?: boolean } = {}
     ): Promise<{ updated: boolean; reason?: string; changes?: string[] }> {
         const instance = this.bots.get(botId);
         if (!instance) {
@@ -655,6 +677,13 @@ export class BotManager {
             behavior.setServices(this.aiService, this.adminApiService, this.conversationStorage, this.responseProcessor, this.metricsCollector);
             if (behavior.setConversationMemory) {
                 behavior.setConversationMemory(this.conversationMemory);
+            }
+            // Done after editing a route: the bot starts it again from stop 1. Only then: each stop added or dragged
+            // while editing is also sent here, and the bot shouldn't jump on every one.
+            const restartAt = options.restartRoute ? routeStart(built.model, instance.config.behaviorConfig) : undefined;
+            if (restartAt) {
+                instance.client.teleportTo(restartAt.x, restartAt.y);
+                changes.push('position');
             }
             instance.client.setBehavior(behavior);
 

@@ -677,6 +677,8 @@ export class BotApiService {
             position?: { x: number; y: number };
             behaviorConfig?: Record<string, unknown>;
             behaviorType?: string;
+            /** Put a route bot on stop 1 to start its route again (Done after editing the route). */
+            restartRoute?: boolean;
         }
     ): Promise<{ updated: boolean; reason?: string; changes?: string[] }> {
         try {

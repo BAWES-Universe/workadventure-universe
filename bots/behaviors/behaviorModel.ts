@@ -72,7 +72,8 @@ function numberOr(value: unknown, fallback: number): number {
     return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
-function waypointsOf(cfg: Record<string, unknown>): Point[] {
+/** A route's stops, from either saved key (patrolWaypoints, or the older waypoints). */
+export function waypointsOf(cfg: Record<string, unknown>): Point[] {
     const raw = Array.isArray(cfg.patrolWaypoints) ? cfg.patrolWaypoints : Array.isArray(cfg.waypoints) ? cfg.waypoints : [];
     return raw.filter(
         (p): p is Point => !!p && typeof (p as Point).x === 'number' && typeof (p as Point).y === 'number'
