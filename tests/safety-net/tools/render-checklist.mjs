@@ -1,5 +1,5 @@
 // Renders checklist.json as a readable markdown page (the copy kept in the project files).
-// Usage: node tools/render-checklist.mjs <out.md> [results/results.json]
+// Usage: node tools/render-checklist.mjs <out.md> [results/results.json[,more.json]]
 // With a results file, each row also shows its last phone and desktop result.
 import fs from "node:fs";
 import path from "node:path";
@@ -30,7 +30,7 @@ if (resultsFile) {
             }
         }
     };
-    for (const s of JSON.parse(fs.readFileSync(resultsFile, "utf8")).suites) walk(s);
+    for (const file of resultsFile.split(",")) for (const s of JSON.parse(fs.readFileSync(file, "utf8")).suites) walk(s);
 }
 const res = (id, p) => (status.has(`${id}|${p}`) ? (status.get(`${id}|${p}`) ? "pass" : "**FAIL**") : "–");
 const how = (r) =>

@@ -1,6 +1,6 @@
 // Turns a Playwright run into the safety-net summary the Dev desk pastes at the top of a go-live note.
-// Usage: node report.mjs [--build <commit>] [--out results/summary.md]
-// Reads results/results.json (Playwright JSON reporter) and checklist.json.
+// Usage: node report.mjs [--build <commit>] [--out results/summary.md] [--results a.json,b.json]
+// Reads results/results.json (Playwright JSON reporter), or several result files from a run split in parts, and checklist.json.
 import fs from "node:fs";
 import path from "node:path";
 
@@ -14,7 +14,7 @@ const build = arg("--build", process.env.SAFETY_NET_BUILD ?? "unknown build");
 const out = arg("--out", path.join(here, "results/summary.md"));
 
 const checklist = JSON.parse(fs.readFileSync(path.join(here, "checklist.json"), "utf8"));
-const results = JSON.parse(fs.readFileSync(path.join(here, "results/results.json"), "utf8"));
+const resultFiles = arg("--results", path.join(here, "results/results.json")).split(",");
 const rows = new Map(checklist.rows.map((r) => [r.id, r]));
 const ID = /\b[A-Z]{2}-\d{3}\b/g;
 
@@ -47,7 +47,7 @@ function walk(suite, titles) {
         }
     }
 }
-for (const s of results.suites) walk(s, []);
+for (const file of resultFiles) for (const s of JSON.parse(fs.readFileSync(file, "utf8")).suites) walk(s, []);
 
 const all = [...checks.values()];
 const passed = all.filter((c) => c.status !== "fail");
