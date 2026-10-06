@@ -22,14 +22,16 @@ class AreaAccessRights {
   // Below the area, left of the editor's panel, which covers the right of the small map.
   public entityPositionOutsideArea: Coordinates = { x: 5.5 * 32 * 1.5, y: 8.5 * 32 * 1.5 };
 
+  // On the table's top, half a tile above where it was placed: lower down is beside its leg, where a click in play
+  // finds nothing (objects there are hit on their visible pixels).
   public mouseCoordinatesToClickOnEntityInsideArea = {
-    x: this.entityPositionInArea.x + 10,
-    y: this.entityPositionInArea.y,
+    x: this.entityPositionInArea.x,
+    y: this.entityPositionInArea.y - 16 * 1.5,
   };
 
   public mouseCoordinatesToClickOnEntityOutsideArea = {
-    x: this.entityPositionOutsideArea.x + 10,
-    y: this.entityPositionOutsideArea.y,
+    x: this.entityPositionOutsideArea.x,
+    y: this.entityPositionOutsideArea.y - 16 * 1.5,
   };
 
   async openAreaEditorAndAddAreaWithRights(

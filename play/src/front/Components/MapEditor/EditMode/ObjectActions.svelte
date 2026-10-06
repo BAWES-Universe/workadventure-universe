@@ -25,6 +25,8 @@
     let root: HTMLElement;
 
     function place() {
+        // Every frame, also while there is nothing to place: during a map change the scene is gone for a moment.
+        frame = requestAnimationFrame(place);
         const entity = $mapEditorSelectedEntityStore;
         const scene = gameManager.tryGetCurrentGameScene();
         if (!entity || !scene) {
@@ -50,7 +52,6 @@
         if (top + height > parentHeight - 90) top = screenTop - height - 10;
         top = Math.max(minTop, top);
         visible = true;
-        frame = requestAnimationFrame(place);
     }
 
     function editPillBottom(): number {
