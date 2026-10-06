@@ -308,7 +308,9 @@
         </SheetDragHandle>
         <div class="relative flex-1 min-h-0">
             {#if $chatCarriesItsCloseStore && isInSpecificDiscussion}
-                <div class="close-window absolute end-2 top-0 z-50">
+                <!-- Level with the close beside the Chats and People tabs (their row's top padding and the track's), so
+                     it stays put going from the tabs into a chat and its profile. -->
+                <div class="close-window absolute end-2 top-[13px] z-50">
                     <button
                         class="u-close"
                         data-testid="closeChatButton"

@@ -139,16 +139,14 @@
     data-testid="toggleRoomMenu"
     bind:this={optionButtonRef}
     on:click|preventDefault|stopPropagation={toggleRoomOptions}
-    class="m-0 p-0 flex items-center justify-center h-7 w-7 hover:bg-white/10 rounded"
+    class="m-0 p-0 flex items-center justify-center h-7 w-7 text-white hover:bg-white/10 rounded"
 >
     <IconDots font-size="16" />
 </button>
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div
     on:mouseleave={toggleRoomOptions}
-    class="bg-contrast/50 backdrop-blur-md rounded-md overflow-hidden z-[99] w-max min-w-48 end-2 p-1 {inHeader
-        ? 'top-14'
-        : 'top-10'}"
+    class="u-surface rounded-2xl overflow-hidden z-[99] w-max min-w-48 end-2 p-1 {inHeader ? 'top-14' : 'top-10'}"
     class:absolute={optionButtonRef !== undefined}
     class:hidden={hideOptions}
     data-testid="roomMenu"
@@ -189,7 +187,7 @@
     />
 
     {#if isDirect}
-        <div class="my-1 h-px bg-white/10" />
+        <div class="u-menu-divider" />
         {#if confirmingDelete}
             <div class="flex flex-col gap-2 p-2 text-sm" data-testid="deleteChatConfirm">
                 <span class="font-bold">{$LL.chat.directChat.deleteChat.confirm()}</span>
@@ -197,13 +195,13 @@
                 <div class="flex gap-2">
                     <button
                         type="button"
-                        class="m-0 flex-1 rounded bg-white/10 px-2 py-1.5 text-sm hover:bg-white/20"
+                        class="m-0 flex-1 rounded bg-white/10 px-2 py-1.5 text-sm text-white [font-family:inherit] hover:bg-white/20"
                         on:click|stopPropagation={() => (confirmingDelete = false)}
                         >{$LL.chat.directChat.deleteChat.cancel()}</button
                     >
                     <button
                         type="button"
-                        class="m-0 flex-1 rounded bg-danger-900 px-2 py-1.5 text-sm font-bold hover:bg-danger"
+                        class="m-0 flex-1 rounded bg-danger-900 px-2 py-1.5 text-sm font-bold text-white [font-family:inherit] hover:bg-danger"
                         data-testid="deleteChatConfirmButton"
                         on:click|stopPropagation={closeMenuAndLeaveRoom}
                         >{$LL.chat.directChat.deleteChat.confirmButton()}</button
@@ -215,7 +213,7 @@
                 dataTestId="deleteChatOption"
                 IconComponent={IconTrash}
                 title={$LL.chat.directChat.deleteChat.label()}
-                bg="text-[#f08a70] hover:bg-danger-900/40"
+                bg="u-danger"
                 on:click={() => (confirmingDelete = true)}
             />
         {/if}

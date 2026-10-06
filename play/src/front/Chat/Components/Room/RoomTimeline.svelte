@@ -301,6 +301,7 @@
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div
     class="relative isolate flex flex-col flex-auto h-full w-full max-w-full"
+    class:profile-open={profileOpen && matrixRoom && $directPartner}
     on:dragover|preventDefault
     on:drop|preventDefault|stopPropagation={onDropFiles}
 >
@@ -320,7 +321,7 @@
             >
                 {#if chatRoomsEnableInAdmin}
                     <button
-                        class="back-roomlist p-3 hover:bg-white/10 rounded-2xl aspect-square w-12 shrink-0"
+                        class="back-roomlist p-3 text-white hover:bg-white/10 rounded-2xl aspect-square w-12 shrink-0"
                         data-testid="chatBackward"
                         on:click={goBackAndClearSelectedChatMessage}
                     >
@@ -511,3 +512,11 @@
         {/if}
     {/if}
 </div>
+
+<style>
+    /* The profile has no background of its own: it sits on the chat panel's surface, like the conversation. What it
+       covers is hidden instead, and keeps its draft, files and scroll for when you come back. */
+    .profile-open > :global(:not([data-testid="partnerProfilePanel"])) {
+        visibility: hidden;
+    }
+</style>
