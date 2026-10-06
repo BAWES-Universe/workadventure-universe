@@ -15,7 +15,7 @@ import {
     mapEditorSelectedToolStore,
 } from "../../../Stores/MapEditorStore";
 import { mapEditorActivated, mapEditorActivatedForThematics } from "../../../Stores/MenuStore";
-import { editUndoRedoStore, turnPlacingPreview } from "../../../Stores/EditModeStore";
+import { editPillStore, editUndoRedoStore, turnPlacingPreview } from "../../../Stores/EditModeStore";
 import { localUserStore } from "../../../Connection/LocalUserStore";
 import { userIsAdminStore } from "../../../Stores/GameStore";
 import LL from "../../../../i18n/i18n-svelte";
@@ -332,6 +332,16 @@ export class MapEditorModeManager {
             case "z": {
                 if (!mapEditorModeActivated) break;
                 // Todo replace with key combo https://photonstorm.github.io/phaser3-docs/Phaser.Input.Keyboard.KeyCombo.html
+                // A module's job in the pill (a bot's route): the keys undo and redo what its Undo and Redo do
+                const job = get(editPillStore);
+                if (job && (event.ctrlKey || event.metaKey)) {
+                    if (event.shiftKey) {
+                        if (job.canRedo) job.onRedo();
+                    } else if (job.canUndo) {
+                        job.onUndo();
+                    }
+                    break;
+                }
                 if (event.ctrlKey || event.metaKey) {
                     if (event.shiftKey) {
                         this.runningUndoRedoCommand = this.runningUndoRedoCommand
