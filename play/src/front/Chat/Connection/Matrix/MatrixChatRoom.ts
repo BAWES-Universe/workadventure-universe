@@ -213,7 +213,7 @@ export class MatrixChatRoom
         }
         if (event.getType() === "m.room.message" && !this.isEventReplacingExistingOne(event)) {
             this.addEventContentInMemory(event);
-            return new MatrixChatMessage(event, this.matrixRoom);
+            return new MatrixChatMessage(event, this.matrixRoom, false, this.type === "direct");
         }
         if (event.getType() === "m.reaction") {
             this.handleNewMessageReaction(event, messages);
@@ -341,7 +341,7 @@ export class MatrixChatRoom
     }
 
     private handleNewMessage(event: MatrixEvent) {
-        const message = new MatrixChatMessage(event, this.matrixRoom);
+        const message = new MatrixChatMessage(event, this.matrixRoom, false, this.type === "direct");
         this.messages.push(message);
         const senderID = event.getSender();
         if (senderID) {
@@ -899,7 +899,7 @@ export class MatrixChatRoom
         );
         const event = timeline?.getEvents().find((ev) => ev.getId() === messageId);
         if (event) {
-            return new MatrixChatMessage(event, this.matrixRoom);
+            return new MatrixChatMessage(event, this.matrixRoom, false, this.type === "direct");
         }
         return;
     }

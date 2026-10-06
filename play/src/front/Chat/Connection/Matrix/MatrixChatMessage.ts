@@ -30,7 +30,8 @@ export class MatrixChatMessage implements ChatMessage {
     private isShown = false;
     private mediaHold: MatrixMediaHold | undefined;
 
-    constructor(private event: MatrixEvent, private room: Room, isQuotedMessage?: boolean) {
+    /** In a direct chat (isDirect), only the person who sent a message can delete it. */
+    constructor(private event: MatrixEvent, private room: Room, isQuotedMessage?: boolean, private isDirect = false) {
         this.id = event.getId() ?? uuidv4();
         this.type = this.mapMatrixMessageTypeToChatMessage();
         this.date = event.getDate();
@@ -62,7 +63,11 @@ export class MatrixChatMessage implements ChatMessage {
                 .getState(Direction.Backward)
                 ?.hasSufficientPowerLevelFor("redact", myPowerLevel) ?? false;
 
-        this.canDelete = writable(this.isMyMessage || (hasSufficientPowerLevel && myPowerLevel > senderPowerLevel));
+        // In a group, a moderator can delete others' messages. In a DM, whoever started it is admin in Matrix
+        // (older DMs), and that must not let them delete what the other person sent.
+        this.canDelete = writable(
+            this.isMyMessage || (!this.isDirect && hasSufficientPowerLevel && myPowerLevel > senderPowerLevel)
+        );
 
         event.on(MatrixEventEvent.Decrypted, () => {
             this.updateMessageContentOnDecryptedEvent();
@@ -205,7 +210,7 @@ export class MatrixChatMessage implements ChatMessage {
         if (replyEventId) {
             const replyToEvent = this.room.findEventById(replyEventId);
             if (replyToEvent) {
-                return new MatrixChatMessage(replyToEvent, this.room, true);
+                return new MatrixChatMessage(replyToEvent, this.room, true, this.isDirect);
             }
         }
         return;
