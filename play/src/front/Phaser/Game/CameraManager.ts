@@ -132,6 +132,7 @@ export class CameraManager extends Phaser.Events.EventEmitter {
         this.unsubscribeMapEditorModeStore = mapEditorModeStore.subscribe((isOpened) => {
             // Define new bounds for camera if the map editor is opened
             if (isOpened) {
+                this.mapBoundsActive = false;
                 this.camera.setBounds(0, 0, this.mapSize.width * 2, this.mapSize.height);
             } else {
                 // We set the bounds back after a call to start following the player
@@ -158,6 +159,7 @@ export class CameraManager extends Phaser.Events.EventEmitter {
     public destroy(): void {
         this.scene.game.events.off(WaScaleManagerEvent.RefreshFocusOnTarget);
         this.camera.off("followupdate", this.onFollowUpdate);
+        this.scene.events.off(Phaser.Scenes.Events.POST_UPDATE, this.applyMapBounds);
         this.unsubscribeMapEditorModeStore();
         super.destroy();
     }
@@ -309,7 +311,7 @@ export class CameraManager extends Phaser.Events.EventEmitter {
         if (duration === 0) {
             this.camera.startFollow(player, true);
             this.scene.markDirty();
-            this.camera.setBounds(0, 0, this.mapSize.width, this.mapSize.height);
+            this.setMapBounds();
             return;
         }
         this.setExplorationMode();
@@ -360,7 +362,7 @@ export class CameraManager extends Phaser.Events.EventEmitter {
                     return;
                 }
                 this.camera.startFollow(player, true);
-                this.camera.setBounds(0, 0, this.mapSize.width, this.mapSize.height);
+                this.setMapBounds();
                 // Back to following: the player is placed in the space the chat panel and videos leave free again.
                 this.setCameraMode(CameraMode.Follow);
                 this.scene.reposition();
@@ -542,8 +544,37 @@ export class CameraManager extends Phaser.Events.EventEmitter {
 
     private initCamera() {
         this.camera = this.scene.cameras.main;
-        this.camera.setBounds(0, 0, this.mapSize.width, this.mapSize.height);
+        this.setMapBounds();
+        this.scene.events.on(Phaser.Scenes.Events.POST_UPDATE, this.applyMapBounds);
     }
+
+    // While following the player, the camera stays on the map. Zoomed out further than the map, the map sits in the
+    // middle of the screen instead of in its top left corner.
+    private mapBoundsActive = false;
+    private setMapBounds(): void {
+        this.mapBoundsActive = true;
+        this.applyMapBounds();
+    }
+    private readonly applyMapBounds = (): void => {
+        if (!this.mapBoundsActive || !this.camera) return;
+        const viewWidth = this.camera.width / this.camera.zoom;
+        const viewHeight = this.camera.height / this.camera.zoom;
+        const width = Math.max(this.mapSize.width, viewWidth);
+        const height = Math.max(this.mapSize.height, viewHeight);
+        const x = (this.mapSize.width - width) / 2;
+        const y = (this.mapSize.height - height) / 2;
+        const bounds = this.camera.getBounds();
+        if (
+            Math.abs(bounds.x - x) < 0.5 &&
+            Math.abs(bounds.y - y) < 0.5 &&
+            Math.abs(bounds.width - width) < 0.5 &&
+            Math.abs(bounds.height - height) < 0.5
+        ) {
+            return;
+        }
+        this.camera.setBounds(x, y, width, height);
+        this.scene.markDirty();
+    };
 
     private onFollowUpdate = () => {
         this.emit(CameraManagerEvent.CameraUpdate, this.getCameraUpdateEventData());
@@ -591,6 +622,7 @@ export class CameraManager extends Phaser.Events.EventEmitter {
 
         this.camera.setFollowOffset(0, 0);
 
+        this.mapBoundsActive = false;
         this.camera.setBounds(
             -this.mapSize.width,
             -this.mapSize.height,
