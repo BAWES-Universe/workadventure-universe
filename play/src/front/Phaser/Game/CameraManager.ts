@@ -105,6 +105,11 @@ export class CameraManager extends Phaser.Events.EventEmitter {
     private freedByDrag = false;
     // The player-moved listener that drag set, so that following resumes once and the listener can be dropped.
     private dragListener: { player: Player | RemotePlayer; handler: () => void } | undefined;
+    // The focus (a focusable area) a drag while editing took the camera off, to go back to when the drag is over.
+    private dragFocus:
+        | { target: WaScaleManagerFocusTarget; margin: number; offset: { x: number; y: number } }
+        | undefined;
+    private focusMargin = 0;
     private focusTargetSpeed = 0.2;
 
     // The tween for the camera offset
@@ -218,10 +223,22 @@ export class CameraManager extends Phaser.Events.EventEmitter {
      * @param setTo Viewport on which the camera should focus on
      * @param duration Time for the transition im MS. If set to 0, transition will occur immediately
      */
-    public enterFocusMode(focusOn: WaScaleManagerFocusTarget, margin = 0, duration = 1000): void {
+    public enterFocusMode(
+        focusOn: WaScaleManagerFocusTarget,
+        margin = 0,
+        duration = 1000,
+        // False when going back to a focus a drag left: the zoom saved on the way in is still the one to go back to.
+        saveZoom = true
+    ): void {
+        this.dragFocus = undefined;
+        this.freedByDrag = false;
+        this.clearDragListener();
+        this.focusMargin = margin;
         this.setCameraMode(CameraMode.Focus);
         this.followedRemotePlayerUuid = undefined;
-        this.waScaleManager.saveZoom();
+        if (saveZoom) {
+            this.waScaleManager.saveZoom();
+        }
         this.waScaleManager.setFocusTarget(focusOn);
 
         this.cameraLocked = false;
@@ -305,6 +322,7 @@ export class CameraManager extends Phaser.Events.EventEmitter {
         targetZoomLevel: number | undefined = undefined
     ): void {
         this.freedByDrag = false;
+        this.dragFocus = undefined;
         this.clearDragListener();
         this.playerToFollow = player;
         this.setCameraMode(CameraMode.Follow);
@@ -1032,7 +1050,22 @@ export class CameraManager extends Phaser.Events.EventEmitter {
      * the camera over from the glide.
      */
     dragCamera(x: number, y: number): void {
-        if (this.playerToFollow && (this.cameraMode === CameraMode.Follow || this.startFollowTween)) {
+        const focusTarget = this.cameraMode === CameraMode.Focus ? this.waScaleManager.getFocusTarget() : undefined;
+        if (focusTarget) {
+            // Standing in a focusable area: the camera lets go of the area the same way, and goes back to it after.
+            const offset = { x: this.camera.followOffset.x, y: this.camera.followOffset.y };
+            this.dragFocus = { target: focusTarget, margin: this.focusMargin, offset };
+            this.setExplorationMode();
+            this.freedByDrag = true;
+            this.clearDragListener();
+            const player = this.scene.CurrentPlayer;
+            const handler = () => {
+                this.dragListener = undefined;
+                this.endDragFreedom();
+            };
+            this.dragListener = { player, handler };
+            player.once(hasMovedEventName, handler);
+        } else if (this.playerToFollow && (this.cameraMode === CameraMode.Follow || this.startFollowTween)) {
             const player = this.playerToFollow;
             this.setExplorationMode();
             this.freedByDrag = true;
@@ -1050,6 +1083,13 @@ export class CameraManager extends Phaser.Events.EventEmitter {
 
     /** The editor closed: a camera that a drag took off the player glides back to them. */
     endDragFreedom(): void {
+        if (this.freedByDrag && this.dragFocus) {
+            const { target, margin, offset } = this.dragFocus;
+            this.enterFocusMode(target, margin, 1000, false);
+            // The area sits where it sat before the drag: in the space the open panels leave free.
+            this.camera.setFollowOffset(offset.x, offset.y);
+            return;
+        }
         if (!this.freedByDrag || !this.playerToFollow) {
             return;
         }
