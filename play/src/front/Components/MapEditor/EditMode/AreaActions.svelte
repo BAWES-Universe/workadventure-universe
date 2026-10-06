@@ -91,7 +91,8 @@
         padding: 5px;
         border-radius: 999px;
         color: #fff;
-        z-index: 4;
+        /* Under the panel and the rail: a panel opened over the map covers what is on the map. */
+        z-index: 1;
     }
     .em-hidden {
         visibility: hidden;
