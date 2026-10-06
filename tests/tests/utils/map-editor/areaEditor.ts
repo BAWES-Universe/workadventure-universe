@@ -1,6 +1,6 @@
 import path from "path";
-import type { Locator, Page} from "@playwright/test";
-import {expect} from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
+import { expect } from "@playwright/test";
 import Menu from "../menu";
 
 class AreaEditor {
@@ -35,7 +35,9 @@ class AreaEditor {
 
   // The area panel shows the area's rows, or one setting's page over them: this goes back to the rows.
   private async showAreaRows(page: Page) {
-    await expect(page.getByTestId("area-rename").or(page.getByTestId("area-property-page"))).toBeVisible();
+    await expect(
+      page.getByTestId("area-rename").or(page.getByTestId("area-property-page"))
+    ).toBeVisible();
     const propertyPage = page.getByTestId("area-property-page");
     if (await propertyPage.isVisible()) {
       await page.getByTestId("edit-panel-back").click();
@@ -55,22 +57,26 @@ class AreaEditor {
     await page.getByTestId(property).click();
   }
 
-  async setPodiumNameProperty(page: Page, name: string , enableChat = false) {
+  async setPodiumNameProperty(page: Page, name: string, enableChat = false) {
     await page.getByPlaceholder("MainStage").click();
     await page.getByPlaceholder("MainStage").fill(name);
     await page.getByPlaceholder("MainStage").press("Enter");
-    if(enableChat){
+    if (enableChat) {
       await page.getByTestId("chatEnabled").click();
     }
   }
 
-  async setMatchingPodiumZoneProperty(page: Page, name: string, enableChat = false) {
+  async setMatchingPodiumZoneProperty(
+    page: Page,
+    name: string,
+    enableChat = false
+  ) {
     await page
       .locator(
         ".map-editor .sidebar .properties-container select#speakerZoneSelector"
       )
       .selectOption({ label: name.toLowerCase() });
-    if(enableChat){
+    if (enableChat) {
       await page.getByTestId("chatEnabled").click();
     }
   }
@@ -87,9 +93,8 @@ class AreaEditor {
 
   async setAreaDescription(page: Page, Description: string) {
     await this.showAreaRows(page);
-    const input = page.locator("#map-editor-right input#objectDescription");
+    const input = page.locator("#map-editor-right textarea#objectDescription");
     await input.fill(Description);
-    await input.press("Enter");
     await input.blur();
   }
 
@@ -127,51 +132,75 @@ class AreaEditor {
     }
   }
 
-  async setAreaLiveKitProperty(page: Page, startWithAudioMuted = false, startWithVideoMuted = false) {
+  async setAreaLiveKitProperty(
+    page: Page,
+    startWithAudioMuted = false,
+    startWithVideoMuted = false
+  ) {
     await page.getByTestId("livekitRoomProperty").click();
-    if(!startWithAudioMuted && !startWithVideoMuted){
-      return; 
+    if (!startWithAudioMuted && !startWithVideoMuted) {
+      return;
     }
 
     await page.getByTestId("livekitRoomMoreOptionsButton").click();
 
-    if(startWithVideoMuted){
+    if (startWithVideoMuted) {
       await page.getByTestId("startWithVideoMuted").check();
     }
 
-    if(startWithAudioMuted){
+    if (startWithAudioMuted) {
       await page.getByTestId("startWithAudioMuted").check();
     }
 
     await page.getByTestId("livekitRoomConfigValidateButton").click(); //close the more options
   }
 
-  async setOpenLinkProperty(page: Page, link: string, option = "Show immediately on enter") {
-    await page.locator(".map-editor .sidebar .properties-container select#trigger").selectOption({ label: option });
-    await page.locator(".map-editor .sidebar .properties-container input#tabLink").fill(link,{timeout : 20_000});
+  async setOpenLinkProperty(
+    page: Page,
+    link: string,
+    option = "Show immediately on enter"
+  ) {
+    await page
+      .locator(".map-editor .sidebar .properties-container select#trigger")
+      .selectOption({ label: option });
+    await page
+      .locator(".map-editor .sidebar .properties-container input#tabLink")
+      .fill(link, { timeout: 20_000 });
   }
 
   async setOpenFileProperty(page: Page, option = "Show immediately on enter") {
-    await page.locator(".map-editor .sidebar .properties-container select#trigger").selectOption({ label: option });
+    await page
+      .locator(".map-editor .sidebar .properties-container select#trigger")
+      .selectOption({ label: option });
     const fileChooserPromise = page.waitForEvent("filechooser");
-    await page.locator(".map-editor .sidebar .properties-container span#chooseUpload").click();
+    await page
+      .locator(".map-editor .sidebar .properties-container span#chooseUpload")
+      .click();
     const fileChooser = await fileChooserPromise;
-    await fileChooser.setFiles(path.join(__dirname, `../../assets/lorem-ipsum.pdf`));
+    await fileChooser.setFiles(
+      path.join(__dirname, `../../assets/lorem-ipsum.pdf`)
+    );
   }
 
   async deleteFile(page: Page) {
     await page.getByTestId("closeFileUpload").click();
   }
 
-  async setMatrixChatRoomProperty(page: Page,shouldOpenAutomatically: boolean, roomName?: string){
+  async setMatrixChatRoomProperty(
+    page: Page,
+    shouldOpenAutomatically: boolean,
+    roomName?: string
+  ) {
     //TODO : find a better way to wait for the room to be created
     //eslint-disable-next-line playwright/no-wait-for-timeout
     await page.waitForTimeout(4000);
     await page.getByTestId("shouldOpenAutomaticallyCheckbox").click();
 
-    if(roomName){
-      await page.getByPlaceholder("My room").isEnabled({timeout : 20_000});
-      await page.getByPlaceholder("My room").fill(roomName,{timeout : 20_000});
+    if (roomName) {
+      await page.getByPlaceholder("My room").isEnabled({ timeout: 20_000 });
+      await page
+        .getByPlaceholder("My room")
+        .fill(roomName, { timeout: 20_000 });
     }
     //TODO : find a better way to wait for the room to be created
     //eslint-disable-next-line playwright/no-wait-for-timeout

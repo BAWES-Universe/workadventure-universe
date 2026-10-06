@@ -10,6 +10,7 @@ import { ADMIN_URL, FEATURE_FLAG_BROADCAST_AREAS, MATRIX_PUBLIC_URI } from "../.
 import { ABSOLUTE_PUSHER_URL } from "../../../Enum/ComputedConst";
 import { ON_ACTION_TRIGGER_ENTER } from "../../../WebRtc/LayoutManager";
 import { gameManager } from "../../../Phaser/Game/GameManager";
+import type { ExtensionModuleAreaProperty } from "../../../ExternalModule/ExtensionModule";
 import {
     IconDesk,
     IconDoorIn,
@@ -41,6 +42,9 @@ export interface AreaSettingRow {
     testId: string;
     /** False hides the row (a feature that is off, or a setting that cannot go with one already on). */
     available: boolean;
+    /** True shows the row greyed out and not tappable: it cannot go with a setting already on (the old editor's
+     *  disabled buttons, e.g. Stage next to a video call). */
+    blocked?: boolean;
     /** True opens the setting's own page right after adding it. */
     opensPage: boolean;
 }
@@ -68,6 +72,7 @@ export function areaSettingRows(LL: TranslationFunctions, flags: AreaSettingFlag
             icon: IconUsersGroup,
             testId: "livekitRoomProperty",
             available: !flags.livekitRoomProperty && !flags.speakerMegaphone && !flags.listenerMegaphone,
+            blocked: !flags.livekitRoomProperty && (!!flags.speakerMegaphone || !!flags.listenerMegaphone),
             opensPage: true,
         },
         {
@@ -90,6 +95,10 @@ export function areaSettingRows(LL: TranslationFunctions, flags: AreaSettingFlag
                 !flags.speakerMegaphone &&
                 !flags.listenerMegaphone &&
                 !flags.livekitRoomProperty,
+            blocked:
+                FEATURE_FLAG_BROADCAST_AREAS &&
+                !flags.speakerMegaphone &&
+                (!!flags.listenerMegaphone || !!flags.livekitRoomProperty),
             opensPage: true,
         },
         {
@@ -103,6 +112,10 @@ export function areaSettingRows(LL: TranslationFunctions, flags: AreaSettingFlag
                 !flags.listenerMegaphone &&
                 !flags.speakerMegaphone &&
                 !flags.livekitRoomProperty,
+            blocked:
+                FEATURE_FLAG_BROADCAST_AREAS &&
+                !flags.listenerMegaphone &&
+                (!!flags.speakerMegaphone || !!flags.livekitRoomProperty),
             opensPage: true,
         },
         {
@@ -219,7 +232,8 @@ export function areaSettingRows(LL: TranslationFunctions, flags: AreaSettingFlag
 /** The title and line of a setting that is on, from its data. */
 export function describeAreaProperty(
     LL: TranslationFunctions,
-    property: AreaDataProperty
+    property: AreaDataProperty,
+    extensionRows: { [subtype: string]: ExtensionModuleAreaProperty }[] = []
 ): { title: string; text: string; icon: ComponentType } {
     const t = LL.mapEditor.edit.properties;
     const rows = areaSettingRows(LL, {});
@@ -229,6 +243,9 @@ export function describeAreaProperty(
     const row = rows.find((r) => r.key === property.type);
     if (row) return { title: row.title, text: row.text, icon: row.icon };
     if (property.type === "extensionModule") {
+        // A module's own name for its setting (the portal: "Teleport"), as the old editor showed its own button.
+        const label = extensionRows.find((row) => row[property.subtype]?.label)?.[property.subtype]?.label;
+        if (label) return label;
         return { title: property.subtype, text: t.extensionModule.text(), icon: IconLink };
     }
     return { title: property.type, text: "", icon: IconLink };

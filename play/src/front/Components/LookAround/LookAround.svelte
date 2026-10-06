@@ -10,6 +10,7 @@
     import { playersStore } from "../../Stores/PlayersStore";
     import { mobileLayoutStore } from "../../Stores/MobileLayoutStore";
     import { mapExplorationObjectSelectedStore } from "../../Stores/MapEditorStore";
+    import { cameraTilesClearStore } from "../../Stores/CameraTilesClearStore";
     import { lookAroundDraggedStore, lookAroundPlacesOpenStore } from "../../Stores/LookAroundStore";
     import { leaveExploreTheRoom } from "../../Phaser/Game/MapEditor/ExploreTheRoom";
     import { AreaPreview } from "../../Phaser/Components/MapEditor/AreaPreview";
@@ -65,7 +66,7 @@
     bind:this={root}
     class="look-around absolute inset-0 pointer-events-none"
     class:phone={$mobileLayoutStore}
-    style="--bar-clear: {barClear}px"
+    style="--bar-clear: {barClear}px; --tiles-clear: {$cameraTilesClearStore}px"
     data-testid="look-around"
 >
     <LookAroundMap bind:peopleByArea />
@@ -125,7 +126,7 @@
        on a phone it spans the top. */
     .la-pill {
         position: absolute;
-        top: 8px;
+        top: calc(var(--tiles-clear, 0px) + 8px);
         left: 50%;
         transform: translateX(-50%);
         width: min(430px, calc(100% - 24px));
@@ -137,7 +138,7 @@
         border-radius: 999px;
     }
     .phone .la-pill {
-        top: calc(10px + env(safe-area-inset-top, 0px));
+        top: calc(var(--tiles-clear, 0px) + 10px + env(safe-area-inset-top, 0px));
         left: 12px;
         right: 12px;
         width: auto;
@@ -209,7 +210,7 @@
     /* The hint card, under the pill. */
     .la-hint {
         position: absolute;
-        top: 78px;
+        top: calc(var(--tiles-clear, 0px) + 78px);
         left: 50%;
         transform: translateX(-50%);
         display: flex;
@@ -220,7 +221,7 @@
         white-space: nowrap;
     }
     .phone .la-hint {
-        top: calc(90px + env(safe-area-inset-top, 0px));
+        top: calc(var(--tiles-clear, 0px) + 90px + env(safe-area-inset-top, 0px));
         left: 40px;
         right: 40px;
         transform: none;

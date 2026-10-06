@@ -27,6 +27,7 @@
     } from "../../../Stores/EditModeStore";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import ConfigureMyRoom from "../WAMSettingsEditor.svelte";
+    import { cameraTilesClearStore } from "../../../Stores/CameraTilesClearStore";
     import EditPill from "./EditPill.svelte";
     import EditRail from "./EditRail.svelte";
     import EditPanel from "./EditPanel.svelte";
@@ -86,6 +87,7 @@
     class="em-root absolute inset-0 z-[100] pointer-events-none text-white"
     class:em-phone={$mobileLayoutStore}
     data-testid="edit-mode"
+    style="--tiles-clear: {$cameraTilesClearStore}px"
     bind:clientWidth={rootWidth}
 >
     <EditPill />
@@ -233,14 +235,14 @@
         bottom: calc(18px + env(safe-area-inset-bottom, 0px));
     }
     .em-hint-top {
-        top: 64px;
+        top: calc(var(--tiles-clear, 0px) + 64px);
         left: 50%;
         transform: translateX(-50%);
         width: max-content;
         max-width: min(480px, calc(100% - 120px));
     }
     .em-phone .em-hint-top {
-        top: calc(80px + env(safe-area-inset-top, 0px));
+        top: calc(var(--tiles-clear, 0px) + 80px + env(safe-area-inset-top, 0px));
         left: 14px;
         right: 84px;
         width: auto;

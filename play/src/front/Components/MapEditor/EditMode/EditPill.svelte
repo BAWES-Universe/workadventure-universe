@@ -59,7 +59,7 @@
 <style>
     .em-pill {
         position: absolute;
-        top: 0;
+        top: var(--tiles-clear, 0px);
         left: 50%;
         transform: translateX(-50%);
         width: min(430px, calc(100% - 24px));
@@ -72,7 +72,7 @@
         color: #fff;
     }
     :global(.em-phone) .em-pill {
-        top: calc(10px + env(safe-area-inset-top, 0px));
+        top: calc(var(--tiles-clear, 0px) + 10px + env(safe-area-inset-top, 0px));
         left: 10px;
         right: 10px;
         width: auto;
