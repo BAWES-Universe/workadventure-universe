@@ -36,6 +36,7 @@
     import { openProfileRoomIdStore } from "../../Stores/PartnerProfileStore";
     import { chatCarriesItsCloseStore } from "../../ChatSidebarWidthStore";
     import { installStrayFileDropGuard, isFileDrag } from "../../../Utils/strayFileDropGuard";
+    import { mapEditorToolbarInUseStore } from "../../../Stores/MapEditorStore";
     import Message from "./Message.svelte";
     import MessageInputBar from "./MessageInputBar.svelte";
     import MessageSystem from "./MessageSystem.svelte";
@@ -340,6 +341,10 @@
 
     function onDocumentDragOver(event: DragEvent) {
         if (!takesFileDrop(event)) return;
+        acceptFileDrag(event);
+    }
+
+    function acceptFileDrag(event: DragEvent) {
         event.preventDefault();
         if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
         fileDragOver = true;
@@ -348,6 +353,33 @@
         clearTimeout(fileDragTimer);
         fileDragTimer = setTimeout(() => (fileDragOver = false), 700);
     }
+
+    // The map takes files only in edit mode. While playing, a file over the map is the chat's: it is caught on the
+    // way down, before the map's own drop listener can show its overlay or take it.
+    function isOverPlayingMap(event: DragEvent): boolean {
+        return (
+            event.target instanceof HTMLCanvasElement &&
+            event.target.closest("#game") !== null &&
+            !get(mapEditorToolbarInUseStore)
+        );
+    }
+
+    function onMapFileDragCapture(event: DragEvent) {
+        if (!isFileDrag(event) || isEnded || !messageInputBarRef || !isOverPlayingMap(event)) return;
+        event.stopPropagation();
+        if (event.type === "drop") {
+            event.preventDefault();
+            onDropFiles(event);
+        } else {
+            acceptFileDrag(event);
+        }
+    }
+
+    onMount(() => {
+        document.addEventListener("dragenter", onMapFileDragCapture, true);
+        document.addEventListener("dragover", onMapFileDragCapture, true);
+        document.addEventListener("drop", onMapFileDragCapture, true);
+    });
 
     function onDocumentDragLeave(event: DragEvent) {
         // Leaving the window (relatedTarget can't tell: WebKit leaves it empty on every element).
@@ -370,7 +402,12 @@
         onDropFiles(event);
     }
 
-    onDestroy(() => clearTimeout(fileDragTimer));
+    onDestroy(() => {
+        clearTimeout(fileDragTimer);
+        document.removeEventListener("dragenter", onMapFileDragCapture, true);
+        document.removeEventListener("dragover", onMapFileDragCapture, true);
+        document.removeEventListener("drop", onMapFileDragCapture, true);
+    });
 </script>
 
 <svelte:document on:dragover={onDocumentDragOver} on:dragleave={onDocumentDragLeave} on:drop={onDocumentDrop} />
