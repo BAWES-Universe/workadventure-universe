@@ -20,6 +20,7 @@ import {
     EventType,
     MatrixError,
     PendingEventOrdering,
+    Preset,
     PushRuleActionName,
     RoomEvent,
     RoomStateEvent,
@@ -938,6 +939,8 @@ export class MatrixChatConnection implements ChatConnectionInterface {
         try {
             const { room_id } = await this.client.createRoom({
                 visibility: "private" as Visibility | undefined,
+                // Both people get the same power level, so neither can delete the other's messages from any app.
+                preset: Preset.TrustedPrivateChat,
                 invite: createRoomOptions.invite?.map((invitation) => invitation.value) ?? [],
                 is_direct: true,
                 initial_state: this.computeInitialState(createRoomOptions),
