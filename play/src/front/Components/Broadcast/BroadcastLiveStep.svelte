@@ -41,8 +41,6 @@
     $: name = reachName(reach, $broadcastReachInfoStore);
 
     function toggleMic() {
-        // The player chose a mic state here: leaving keeps that choice, whatever this step did on arrival.
-        micTurnedOnHere = false;
         if ($requestedMicrophoneState) requestedMicrophoneState.disableMicrophone();
         else requestedMicrophoneState.enableMicrophone();
     }
@@ -55,9 +53,8 @@
         else requestedScreenSharingState.enableScreenSharing();
     }
 
-    // The step turns the mic on for the preview; leaving without going live, and without the player having
-    // touched the mic, turns it back off.
-    let micTurnedOnHere = false;
+    // The mic and camera stay as the player has them: this step never switches them, the player does, here or
+    // with the bar's buttons, before and while live.
     let wentLive = false;
     // Busy, Back in a moment and Do not disturb keep the camera and mic off whatever their buttons say, so this step
     // could not turn them on nor show the preview. Going live means being reachable: the step goes back online, as
@@ -78,20 +75,15 @@
     }
 
     onMount(() => {
-        // The preview keeps the camera awake, and the mic comes on so going live is one tap.
+        // The preview keeps the camera awake while it shows.
         displayedMegaphoneScreenStore.set(true);
         if ($requestedStatusStore) {
             statusLeftHere = $requestedStatusStore;
             resetAllStatusStoreExcept();
         }
-        if (!$requestedMicrophoneState) {
-            micTurnedOnHere = true;
-            requestedMicrophoneState.enableMicrophone();
-        }
     });
     onDestroy(() => {
         displayedMegaphoneScreenStore.set(false);
-        if (micTurnedOnHere && !wentLive && $requestedMicrophoneState) requestedMicrophoneState.disableMicrophone();
         // Unless the player picked another status meanwhile.
         if (statusLeftHere && !wentLive && $requestedStatusStore === null) resetAllStatusStoreExcept(statusLeftHere);
     });
