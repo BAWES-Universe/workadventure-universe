@@ -103,6 +103,8 @@
         else if (event.key === "ArrowUp") next = Math.max(index - columns(), 0);
         else if (event.key === "ArrowDown") next = Math.min(index + columns(), textures.length - 1);
         else if (event.key === "Enter") {
+            // A focused button (Randomize, Build, Save…) does its own job on Enter; tiles let Enter save
+            if (event.target instanceof HTMLButtonElement && event.target.getAttribute("role") !== "radio") return;
             enterPressed = true;
             return;
         } else return;

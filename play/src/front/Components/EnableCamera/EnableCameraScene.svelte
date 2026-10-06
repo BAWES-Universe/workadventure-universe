@@ -341,7 +341,7 @@
                 <USelect
                     label={$LL.camera.enable.camera()}
                     icon={IconCamera}
-                    value={selectedCamera}
+                    value={selectedCamera ?? lastCamera}
                     options={cameraOptions}
                     placeholder={$LL.camera.enable.noDevice()}
                     disabled={!cameraOn || !$cameraListStore?.length}
@@ -371,7 +371,7 @@
                 <USelect
                     label={$LL.camera.enable.microphone()}
                     icon={IconMicrophoneOn}
-                    value={selectedMicrophone}
+                    value={selectedMicrophone ?? lastMicrophone}
                     options={microphoneOptions}
                     placeholder={$LL.camera.enable.noDevice()}
                     disabled={!microphoneOn || !$microphoneListStore?.length}
@@ -397,7 +397,7 @@
                     <USelect
                         label={$LL.camera.enable.speaker()}
                         icon={IconHeadphonesOutline}
-                        value={$speakerSelectedStore}
+                        value={$speakerSelectedStore || speakerOptions[0]?.value}
                         options={speakerOptions}
                         onSelect={onSpeakerChange}
                     />

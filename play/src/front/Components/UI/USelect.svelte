@@ -29,7 +29,7 @@
     let upward = false;
 
     $: current = options.find((option) => option.value === value);
-    $: shown = current?.label ?? (options.length > 0 ? options[0].label : placeholder);
+    $: shown = current?.label ?? placeholder;
     $: if (disabled && open) close(false);
 
     async function show() {
