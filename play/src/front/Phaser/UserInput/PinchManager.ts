@@ -17,6 +17,10 @@ export class PinchManager {
 
         this.pinch.on("pinchstart", () => {
             smoothPinch = 1;
+            if (this.scene instanceof GameScene) this.scene.getCameraManager().setPinchInProgress(true);
+        });
+        this.pinch.on("pinchend", () => {
+            if (this.scene instanceof GameScene) this.scene.getCameraManager().setPinchInProgress(false);
         });
 
         // eslint-disable-next-line

@@ -98,6 +98,12 @@ export class ExplorerTool implements MapEditorTool {
     };
     private pointerMoveHandler = (pointer: Phaser.Input.Pointer) => {
         if (!this.explorationMouseIsActive) return;
+        // Two fingers are a pinch (the zoom), not a drag: moving the map with the first finger would carry the camera
+        // away from you, and zooming back in near you would then never close "Look around".
+        if (this.scene.input.pointer1.isDown && this.scene.input.pointer2.isDown) {
+            this.pinchedDuringDrag = true;
+            return;
+        }
 
         this.scene
             .getCameraManager()
@@ -113,6 +119,12 @@ export class ExplorerTool implements MapEditorTool {
         this.scene.input.setDefaultCursor("grab");
         const wasDragging = this.explorationMouseIsActive;
         this.explorationMouseIsActive = false;
+        // After a pinch, lifting the fingers neither flings the map nor picks what is under them.
+        if (this.pinchedDuringDrag) {
+            this.pinchedDuringDrag = false;
+            this.scene.markDirty();
+            return;
+        }
 
         // A tap is a release close to where the pointer went down. Only a real drag keeps the camera gliding:
         // a plain tap used to fling the map away because the pointer's velocity is never exactly zero.
@@ -148,6 +160,9 @@ export class ExplorerTool implements MapEditorTool {
         gameObject.setStrokeStyle(2, 0x000000);
         this.scene.markDirty();
     };
+
+    /** A second finger came down during this drag: it was a pinch. */
+    private pinchedDuringDrag = false;
 
     /** Releases closer than this (in screen pixels) to where the pointer went down are taps, not drags. */
     private static readonly TAP_MAX_DISTANCE = 8;

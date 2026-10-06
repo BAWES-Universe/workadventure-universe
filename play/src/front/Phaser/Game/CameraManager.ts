@@ -91,6 +91,8 @@ export class CameraManager extends Phaser.Events.EventEmitter {
     // The date when the resistance wall was broken
     private wallDownDate = 0;
     private resistanceZoneEnterDate = 0;
+    // Two fingers are on the screen: the zone does not pull the zoom back until they lift.
+    private pinchInProgress = false;
     private cameraSpeed: { x: number; y: number } | undefined;
     // If set to false, the resistance wall will never be active
     private enableResistanceWall = false;
@@ -885,7 +887,9 @@ export class CameraManager extends Phaser.Events.EventEmitter {
                 this._resistanceStrength;
         //this.targetZoomModifier = newZoom;
 
-        this.animateToZoomLevel(newZoom);
+        // While pinching, the fingers move the zoom in small steps that the pull back would undo every frame, so a
+        // pinch could never get through the zone: the pull back waits until the fingers lift.
+        if (!this.pinchInProgress) this.animateToZoomLevel(newZoom);
 
         // If the wall is not broken and we spent more than 2 seconds in the resistance zone, let's break the wall.
         if (this.wallDownDate === 0 && Date.now() - this.resistanceZoneEnterDate > 2000) {
@@ -946,6 +950,12 @@ export class CameraManager extends Phaser.Events.EventEmitter {
         // Zooming out into "Look around" must be able to pass the end of the zone, also on a map small enough to fit
         // the screen before it (zooming out would otherwise stop there, and the zone would only ever pull back).
         this.waScaleManager.zoomOutPastMapFit = endZoomLevel < startZoomLevel ? endZoomLevel * 0.9 : undefined;
+    }
+
+    public setPinchInProgress(pinchInProgress: boolean): void {
+        this.pinchInProgress = pinchInProgress;
+        // A pull back already on its way would fight the fingers.
+        if (pinchInProgress) this.targetZoomModifier = undefined;
     }
 
     public disableResistanceZone(): void {
