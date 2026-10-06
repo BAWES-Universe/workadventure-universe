@@ -210,6 +210,10 @@ export class FileListener {
 
         const mapEditorModeManager = scene.getMapEditorModeManager();
 
+        // A file dropped earlier that could not be put down is still in hand: this one replaces it, rather than
+        // adding a second "Open file" to the same object.
+        const replacesHeldFile = get(mapEditorEntityFileDroppedStore);
+
         analyticsClient.dragDropFile();
         mapEditorModeManager.equipTool(EditorToolName.EntityEditor);
         mapEditorEntityFileDroppedStore.set(true);
@@ -218,7 +222,7 @@ export class FileListener {
         isTodoListVisibleStore.set(false);
         isCalendarVisibleStore.set(false);
         mapEditorCopiedEntityDataPropertiesStore.update((properties) => {
-            const newProperties = properties ? [...properties] : [];
+            const newProperties = properties && !replacesHeldFile ? [...properties] : [];
             newProperties.push(property);
             return newProperties;
         });
