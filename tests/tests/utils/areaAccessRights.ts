@@ -24,6 +24,20 @@ class AreaAccessRights {
     y: this.entityPositionInArea.y,
   };
 
+  /**
+   * The same point of the map, on the screen of someone playing (not editing) who just joined. The empty test map
+   * (10 x 10 tiles, shown at 1.5x) is smaller than the screen: while playing it sits in the middle of the screen,
+   * while editing in its top left corner, where the coordinates above are measured.
+   */
+  whilePlaying(page: Page, point: Coordinates): Coordinates {
+    const mapSize = 10 * 32 * 1.5;
+    const viewport = page.viewportSize() ?? { width: mapSize, height: mapSize };
+    return {
+      x: point.x + Math.max(0, (viewport.width - mapSize) / 2),
+      y: point.y + Math.max(0, (viewport.height - mapSize) / 2),
+    };
+  }
+
   public mouseCoordinatesToClickOnEntityOutsideArea = {
     x: this.entityPositionOutsideArea.x + 10,
     y: this.entityPositionOutsideArea.y,

@@ -96,11 +96,12 @@ test.describe("Map editor area with rights @oidc @nomobile @nowebkit", () => {
     //Need to wait for player move action
     // eslint-disable-next-line
     await page.waitForTimeout(1000);
-    await page.mouse.click(
-      AreaAccessRights.mouseCoordinatesToClickOnEntityInsideArea.x,
-      AreaAccessRights.mouseCoordinatesToClickOnEntityInsideArea.y,
-      { button: "right" }
+    // Logged out, the page joined again as someone playing: the map is in the middle of the screen now.
+    const insideArea = AreaAccessRights.whilePlaying(
+      page,
+      AreaAccessRights.mouseCoordinatesToClickOnEntityInsideArea
     );
+    await page.mouse.click(insideArea.x, insideArea.y, { button: "right" });
 // eslint-disable-next-line
 await page.pause();
     //Need to wait for player move action
@@ -167,11 +168,12 @@ await page.pause();
     // Expect user in other page to not have the right
     // to read the object
     //await page.pause();
-    await EntityEditor.moveAndClick(
+    // page2 is playing, not editing: the map is in the middle of its screen.
+    const entityWhilePlaying = AreaAccessRights.whilePlaying(
       page2,
-      AreaAccessRights.mouseCoordinatesToClickOnEntityInsideArea.x,
-      AreaAccessRights.mouseCoordinatesToClickOnEntityInsideArea.y
+      AreaAccessRights.mouseCoordinatesToClickOnEntityInsideArea
     );
+    await EntityEditor.moveAndClick(page2, entityWhilePlaying.x, entityWhilePlaying.y);
     
     await expect(page2.getByTestId("openWebsite")).toBeHidden();
 
@@ -209,11 +211,12 @@ await page.pause();
 
     // Expect user in other page to not have the right
     // to read the object
-    await EntityEditor.moveAndClick(
+    // page2 is playing, not editing: the map is in the middle of its screen.
+    const entityWhilePlaying = AreaAccessRights.whilePlaying(
       page2,
-      AreaAccessRights.mouseCoordinatesToClickOnEntityInsideArea.x,
-      AreaAccessRights.mouseCoordinatesToClickOnEntityInsideArea.y
+      AreaAccessRights.mouseCoordinatesToClickOnEntityInsideArea
     );
+    await EntityEditor.moveAndClick(page2, entityWhilePlaying.x, entityWhilePlaying.y);
 
     // Check if the cowebsite is opened
     await expect(page2.locator('#cowebsites-container')).toBeVisible();
