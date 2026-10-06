@@ -653,6 +653,8 @@ function setupBotEditor(options: ExtensionModuleOptions) {
     // Helper function to try injecting the bot editor tool
     const tryInjectBotTool = () => {
         const sidebar = document.querySelector(".side-bar-container") as HTMLElement;
+        // The edit rail lists Bots itself (registerEditTool below): there is no button to add to it
+        if (sidebar?.matches('[data-testid="edit-rail"]')) return true;
         if (sidebar && localUserStore.isLogged()) {
             injectBotEditorTool(sidebar, options);
             return true;
