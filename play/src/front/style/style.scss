@@ -964,6 +964,12 @@ div.emoji-picker {
     pointer-events: none;
     transition: background-color 150ms ease, box-shadow 150ms ease;
 }
+/* The bar's microphone and camera: no colour fade. Muting or unmuting changes the icon at once, and a fading colour
+   showed an in-between look on phones (the pressed red behind the "on" mic). Only the live ring eases in. */
+.group\/btn-mic .u-ab-state,
+.group\/btn-cam .u-ab-state {
+    transition: box-shadow 150ms ease;
+}
 @media (hover: hover) {
     .u-ab-btn:hover > .u-ab-state {
         background-color: rgba(255, 255, 255, 0.08);
