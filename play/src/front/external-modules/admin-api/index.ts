@@ -133,7 +133,7 @@ function handleAdminAuthMessage(event: MessageEvent<unknown>) {
         return;
     // After signing in, Orbit's bridge says it is ready and answers requests (see orbitBridge.ts).
     if (isOrbitBridgeReadyMessage(event.data)) {
-        bridge?.onReady();
+        bridge?.onReady(event.data.capabilities);
         return;
     }
     if (isOrbitBridgeAckMessage(event.data)) {
@@ -258,6 +258,27 @@ export function requestOrbitPage(intent: OrbitNavigateIntent, params?: Record<st
     return true;
 }
 
+/** One command menu, whether invoked over the game or from inside Orbit. */
+export function openOrbitMenu(): boolean {
+    if (!extensionOptions || !bridge || !canOpenOrbit()) return false;
+    // Do not replace another app's modal (it may contain unfinished work).
+    if (get(modalVisibilityStore) && !adminModalOpen) return false;
+    if (!adminModalOpen) openAdminModal(extensionOptions, "link");
+    bridge.openMenu();
+    get(modalIframeWindowStore)?.focus();
+    return true;
+}
+
+function handleMenuShortcut(event: KeyboardEvent) {
+    if (event.defaultPrevented || event.isComposing || event.repeat || event.altKey || event.shiftKey) return;
+    if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "k") return;
+    // Existing dialogs and settings keep their focus and any unsaved input.
+    if (document.querySelector('[role="dialog"], [role="alertdialog"], [data-testid="settings-window"]')) return;
+    if (!openOrbitMenu()) return;
+    event.preventDefault();
+    event.stopPropagation();
+}
+
 /**
  * Opens a player's profile in Orbit, by the id they play with: yours is You, anyone else's is their page. Orbit sends
  * guests and players it does not know to its home.
@@ -349,6 +370,8 @@ function initializeAdminIntegration(options: ExtensionModuleOptions) {
     window.addEventListener("message", handleAdminAuthMessage);
     window.removeEventListener("popstate", handlePopState);
     window.addEventListener("popstate", handlePopState);
+    window.removeEventListener("keydown", handleMenuShortcut, true);
+    window.addEventListener("keydown", handleMenuShortcut, true);
     // Orbit lays itself out for the frame's size, whoever changed it.
     unsubscribeFullScreen?.();
     unsubscribeFullScreen = modalFullScreenStore.subscribe((full) => {
@@ -409,6 +432,7 @@ const adminExtensionModule: ExtensionModule = {
         }
         // Deactivate the Orbit button
         adminDashboardActivatedStore.set(false);
+        window.removeEventListener("keydown", handleMenuShortcut, true);
         window.removeEventListener("message", handleAdminAuthMessage);
         window.removeEventListener("popstate", handlePopState);
         unsubscribeFullScreen?.();

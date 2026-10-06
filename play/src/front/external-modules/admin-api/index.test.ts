@@ -346,7 +346,7 @@ describe("Opening Orbit on one of its pages", () => {
 
 describe("The Orbit bridge", () => {
     const ADMIN = "https://admin.example.com";
-    let frame: { postMessage: ReturnType<typeof vi.fn> };
+    let frame: { postMessage: ReturnType<typeof vi.fn>; focus: ReturnType<typeof vi.fn> };
     let listeners: ((event: MessageEvent<unknown>) => void)[];
     let popStateListeners: ((event: PopStateEvent) => void)[];
 
@@ -354,7 +354,7 @@ describe("The Orbit bridge", () => {
         vi.useFakeTimers();
         vi.clearAllMocks();
         mocks.isLogged.mockReturnValue(true);
-        frame = { postMessage: vi.fn() };
+        frame = { postMessage: vi.fn(), focus: vi.fn() };
         mocks.frame = frame;
         listeners = [];
         popStateListeners = [];
@@ -385,6 +385,7 @@ describe("The Orbit bridge", () => {
             default: AdminModuleLike;
             requestOrbitPage(intent: string, params?: Record<string, string>): boolean;
             notifyOrbitChanged(topic: string): void;
+            openOrbitMenu(): boolean;
             openAdminModalFromMenu(): void;
         };
     }
@@ -431,6 +432,50 @@ describe("The Orbit bridge", () => {
             expect.objectContaining({ type: "orbit-navigate", intent: "new-universe", roomRevision: revision }),
             ADMIN
         );
+    });
+
+    it("opens the shared menu and preserves the current Orbit page when it is already open", async () => {
+        const index = await freshIndex();
+        index.default.init({}, makeOptions());
+        vi.advanceTimersByTime(3000);
+        index.openAdminModalFromMenu();
+        fromOrbit({ type: "orbit-bridge-ready", version: 1, capabilities: ["menu"] });
+        mocks.modalIframeSet.mockClear();
+        expect(index.openOrbitMenu()).toBe(true);
+        expect(frame.focus).toHaveBeenCalled();
+        expect(mocks.modalIframeSet).not.toHaveBeenCalled();
+        expect(frame.postMessage).toHaveBeenLastCalledWith(
+            expect.objectContaining({ type: "orbit-menu", roomRevision: lastInitRevision() }),
+            ADMIN
+        );
+    });
+
+    it("registers one keyboard handler, ignores repeats and composition, and cleans up", async () => {
+        const index = await freshIndex();
+        index.default.init({}, makeOptions());
+        vi.advanceTimersByTime(3000);
+        const call = vi.mocked(window.addEventListener).mock.calls.find((args) => args[0] === "keydown")!;
+        expect(call[2]).toBe(true);
+        const handler = call[1] as (event: KeyboardEvent) => void;
+        const repeat = new KeyboardEvent("keydown", { key: "k", ctrlKey: true, repeat: true, cancelable: true });
+        handler(repeat);
+        expect(repeat.defaultPrevented).toBe(false);
+        expectOrbitNotOpened();
+        const composing = new KeyboardEvent("keydown", {
+            key: "k",
+            ctrlKey: true,
+            isComposing: true,
+            cancelable: true,
+        });
+        handler(composing);
+        expectOrbitNotOpened();
+        const shortcut = new KeyboardEvent("keydown", { key: "k", metaKey: true, cancelable: true });
+        handler(shortcut);
+        expect(shortcut.defaultPrevented).toBe(true);
+        fromOrbit({ type: "orbit-bridge-ready", version: 1, capabilities: ["menu"] });
+        expect(frame.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ type: "orbit-menu" }), ADMIN);
+        index.default.destroy();
+        expect(window.removeEventListener).toHaveBeenCalledWith("keydown", handler, true);
     });
 
     it("ignores a ready message from another window or origin", async () => {

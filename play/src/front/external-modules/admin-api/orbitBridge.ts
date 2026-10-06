@@ -62,7 +62,20 @@ export interface OrbitViewMessage {
     view: OrbitView;
 }
 
-export type OrbitBridgeOutgoing = OrbitBridgeInitMessage | OrbitNavigateMessage | OrbitEventMessage | OrbitViewMessage;
+/** Open the existing Orbit menu without changing its page or browser history. */
+export interface OrbitMenuMessage {
+    type: "orbit-menu";
+    version: typeof ORBIT_BRIDGE_VERSION;
+    requestId: string;
+    roomRevision: string;
+}
+
+export type OrbitBridgeOutgoing =
+    | OrbitBridgeInitMessage
+    | OrbitNavigateMessage
+    | OrbitEventMessage
+    | OrbitViewMessage
+    | OrbitMenuMessage;
 
 // Orbit → game
 export interface OrbitBridgeReadyMessage {
@@ -143,7 +156,8 @@ export interface OrbitBridgeEnv {
 
 type PendingRequest =
     | { kind: "navigate"; intent: OrbitNavigateIntent; params?: Record<string, string> }
-    | { kind: "event"; topic: OrbitEventTopic };
+    | { kind: "event"; topic: OrbitEventTopic }
+    | { kind: "menu" };
 
 /**
  * The bridge for one visit. Requests made before Orbit is ready (still signing in, or not open yet) wait and are sent
@@ -151,6 +165,7 @@ type PendingRequest =
  */
 export class OrbitBridge {
     private ready = false;
+    private supportsMenu = false;
     private view: OrbitView = "compact";
     private waiting: PendingRequest[] = [];
     private readonly inFlight = new Map<string, unknown>();
@@ -163,8 +178,9 @@ export class OrbitBridge {
     ) {}
 
     /** Orbit is signed in and listening: tell it which visit and view this is, then send what was waiting. */
-    onReady(): void {
+    onReady(capabilities: readonly string[] = []): void {
         this.ready = true;
+        this.supportsMenu = capabilities.includes("menu");
         this.env.post({
             type: "orbit-bridge-init",
             version: ORBIT_BRIDGE_VERSION,
@@ -191,6 +207,7 @@ export class OrbitBridge {
     /** Orbit closed: nothing waits for it any more, and it has to say it is ready again next time. */
     onClosed(): void {
         this.ready = false;
+        this.supportsMenu = false;
         this.waiting = [];
         for (const timer of this.inFlight.values()) this.env.clearTimeout(timer);
         this.inFlight.clear();
@@ -204,6 +221,12 @@ export class OrbitBridge {
 
     navigate(intent: OrbitNavigateIntent, params?: Record<string, string>): void {
         this.request({ kind: "navigate", intent, params });
+    }
+
+    openMenu(): void {
+        // Holding the shortcut before sign-in completes must not queue many opens.
+        if (!this.ready && this.waiting.some((request) => request.kind === "menu")) return;
+        this.request({ kind: "menu" });
     }
 
     notifyChanged(topic: OrbitEventTopic): void {
@@ -220,6 +243,8 @@ export class OrbitBridge {
     }
 
     private send(request: PendingRequest): void {
+        // An older Orbit still opens normally; never send it unsupported commands.
+        if (request.kind === "menu" && !this.supportsMenu) return;
         this.nextRequest += 1;
         const requestId = `${this.nextRequest}`;
         const base = { version: ORBIT_BRIDGE_VERSION, requestId, roomRevision: this.roomRevision };
@@ -231,7 +256,9 @@ export class OrbitBridge {
                       intent: request.intent,
                       ...(request.params ? { params: request.params } : {}),
                   }
-                : { ...base, type: "orbit-event", topic: request.topic }
+                : request.kind === "event"
+                ? { ...base, type: "orbit-event", topic: request.topic }
+                : { ...base, type: "orbit-menu" }
         );
         const timer = this.env.setTimeout(() => {
             this.inFlight.delete(requestId);

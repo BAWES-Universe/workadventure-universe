@@ -156,3 +156,33 @@ describe("OrbitBridge", () => {
         expect(isOrbitProfileChangedMessage({ ...good, roomRevision: "short" })).toBe(false);
     });
 });
+
+describe("Shared menu requests", () => {
+    it("queues one menu request until ready and never navigates away from the current page", () => {
+        const { bridge, posted } = makeBridge();
+        bridge.openMenu();
+        bridge.openMenu();
+        expect(posted).toEqual([]);
+        bridge.onReady(["menu"]);
+        expect(posted.filter((message) => message.type === "orbit-menu")).toEqual([
+            { type: "orbit-menu", version: 1, requestId: "1", roomRevision: revision },
+        ]);
+        expect(posted.some((message) => message.type === "orbit-navigate")).toBe(false);
+    });
+
+    it("does not send unsupported menu messages to older Orbit builds", () => {
+        const { bridge, posted, timers } = makeBridge();
+        bridge.openMenu();
+        bridge.onReady(["navigate", "event", "view"]);
+        expect(posted).toHaveLength(1);
+        expect(timers.size).toBe(0);
+    });
+
+    it("drops a pending menu request when the frame closes", () => {
+        const { bridge, posted } = makeBridge();
+        bridge.openMenu();
+        bridge.onClosed();
+        bridge.onReady(["menu"]);
+        expect(posted.some((message) => message.type === "orbit-menu")).toBe(false);
+    });
+});

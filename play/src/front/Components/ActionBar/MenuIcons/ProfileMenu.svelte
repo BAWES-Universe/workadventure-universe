@@ -15,6 +15,7 @@
     import {
         SubMenusInterface,
         userIsConnected,
+        adminDashboardActivatedStore,
         openedMenuStore,
         showMenuItem,
         rightActionBarMenuItems,
@@ -46,10 +47,11 @@
     import ActionBarButton from "../ActionBarButton.svelte";
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import { warningMessageStore } from "../../../Stores/ErrorStore";
+    import { canOpenOrbit, openOrbitMenu } from "../../../external-modules/admin-api/index";
     import ContextualMenuItems from "./ContextualMenuItems.svelte";
     import HeaderMenuItem from "./HeaderMenuItem.svelte";
     import AdditionalMenuItems from "./AdditionalMenuItems.svelte";
-    import { IconBug, IconLogout } from "@wa-icons";
+    import { IconBug, IconLogout, IconSearch } from "@wa-icons";
 
     // The ActionBarButton component is displayed differently in the profile menu.
     // We use the context to decide how to render it.
@@ -451,6 +453,17 @@
                 <!--                                    </div>-->
                 <!--                                    <div class="text-left flex items-center">{$LL.actionbar.quest()}</div>-->
                 <!--                                </button>-->
+                {#if $adminDashboardActivatedStore && canOpenOrbit()}
+                    <ActionBarButton
+                        label="Menu & search"
+                        chevron
+                        on:click={() => {
+                            if (openOrbitMenu()) openedMenuStore.close("profileMenu");
+                        }}
+                    >
+                        <IconSearch />
+                    </ActionBarButton>
+                {/if}
                 <HeaderMenuItem label={$LL.menu.sub.settings()} />
                 <ActionBarButton label={$LL.actionbar.editCamMic()} chevron on:click={openEnableCameraScene}>
                     <CamSettingsIcon />
