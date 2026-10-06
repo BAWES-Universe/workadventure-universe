@@ -40,6 +40,11 @@
 
     function unhighlight() {
         if (!highlighted) return;
+        // Leaving Look around destroys the areas it drew before this runs: a destroyed object has no scene, leave it be.
+        if (!highlighted.scene) {
+            highlighted = undefined;
+            return;
+        }
         if (highlighted instanceof Entity) {
             if (highlighted.searchable) highlighted.setPointedToEditColor(0x000000);
             else highlighted.removePointedToEditColor();

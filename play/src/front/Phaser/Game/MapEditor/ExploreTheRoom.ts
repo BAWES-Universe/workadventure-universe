@@ -3,6 +3,7 @@ import { lookAroundNormalZoomStore, lookAroundPlacesOpenStore } from "../../../S
 import {
     mapEditorModeStore,
     mapExplorationAreasStore,
+    mapExplorationEntitiesStore,
     mapExplorationModeStore,
     mapExplorationObjectSelectedStore,
 } from "../../../Stores/MapEditorStore";
@@ -56,6 +57,7 @@ export function clearLookAroundStores(): void {
     mapExplorationObjectSelectedStore.set(undefined);
     mapExplorationModeStore.set(false);
     mapExplorationAreasStore.set(undefined);
+    mapExplorationEntitiesStore.set(new Map());
     lookAroundPlacesOpenStore.set(false);
     lookAroundNormalZoomStore.set(undefined);
 }
