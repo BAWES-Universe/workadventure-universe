@@ -452,6 +452,8 @@ message BroadcastMeta {
   optional string reachLabel = 3;
   // A line of text sent with a voice note.
   optional string caption = 4;
+  // The sender's Woka, so the card shows who sent it. Set by the pusher from the sender's own connection.
+  repeated CharacterTextureMessage senderTextures = 5;
 }
 
 /************ Queries and answers ****************/

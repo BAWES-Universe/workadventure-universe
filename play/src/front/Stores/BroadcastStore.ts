@@ -1,5 +1,5 @@
 import { derived, get, writable } from "svelte/store";
-import type { BroadcastMeta } from "@workadventure/messages";
+import type { BroadcastMeta, CharacterTextureMessage } from "@workadventure/messages";
 import { gameSceneStore } from "./GameSceneStore";
 import { exploreStore } from "./ExploreStore";
 import { playersStore } from "./PlayersStore";
@@ -71,6 +71,8 @@ export function reachLabel(reach: BroadcastReach, info: BroadcastReachInfo): str
 export interface BroadcastCard {
     id: string;
     senderName: string;
+    /** The sender's Woka, drawn on the card; empty from an older pusher, which shows a plain person instead. */
+    senderTextures: CharacterTextureMessage[];
     /** "room", "world" or "universe", and the name of what it covers when the server knew it. */
     reach: string;
     reachLabel: string | undefined;
@@ -105,11 +107,12 @@ export const broadcastInboxStore = createBroadcastInboxStore();
 export function broadcastMetaReach(
     meta: BroadcastMeta | undefined,
     fallback: string
-): Pick<BroadcastCard, "reach" | "reachLabel" | "senderName"> {
+): Pick<BroadcastCard, "reach" | "reachLabel" | "senderName" | "senderTextures"> {
     return {
         reach: meta?.reach ?? fallback,
         reachLabel: meta?.reachLabel || undefined,
         senderName: meta?.senderName || "",
+        senderTextures: meta?.senderTextures ?? [],
     };
 }
 

@@ -10,6 +10,8 @@ function broadcastMeta(reach: BroadcastReach, caption?: string) {
         reach: reach.toLowerCase(),
         reachLabel: reachName(reach, get(broadcastReachInfoStore)) || undefined,
         caption: caption?.trim() || undefined,
+        // The pusher fills in the sender's Woka from the connection.
+        senderTextures: [],
     };
 }
 

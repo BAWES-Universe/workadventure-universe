@@ -1035,6 +1035,8 @@ export class SocketManager implements ZoneEventListener {
             reach,
             reachLabel: playGlobalMessageEvent.broadcast?.reachLabel,
             caption: playGlobalMessageEvent.broadcast?.caption,
+            // Taken from the connection, not from what the client sent: the card shows who really sent it.
+            senderTextures: socketData.characterTextures,
         };
 
         for (const roomUrl of tabUrlRooms) {

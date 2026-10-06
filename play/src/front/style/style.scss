@@ -1389,27 +1389,24 @@ body .u-close:focus {
     opacity: 0.5;
     cursor: not-allowed;
 }
+/* The option's icon: a plain glyph with no box behind it, like the other icons in the game; its colour says the type. */
 .u-option-tile {
     flex: none;
     display: grid;
     place-items: center;
-    width: 48px;
-    height: 48px;
-    border-radius: 12px;
-    background: rgba(255, 255, 255, 0.06);
+    width: 24px;
+    height: 24px;
     color: #fff;
 }
 .u-option-tile svg {
-    width: 22px;
-    height: 22px;
+    width: 24px;
+    height: 24px;
 }
 .u-option-tile.u-tile-gold {
     color: #e9c74c;
-    background: rgba(233, 199, 76, 0.12);
 }
 .u-option-tile.u-tile-coral {
     color: #f08a70;
-    background: rgba(233, 109, 81, 0.14);
 }
 .u-option-text {
     flex: 1;

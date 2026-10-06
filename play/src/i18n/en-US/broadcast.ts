@@ -53,7 +53,10 @@ const broadcast: BaseTranslation = {
         sendFailed: "The message could not be sent. Try again.",
     },
     voice: {
+        record: "Record",
+        tapToRecord: "Tap to record.",
         recording: "Recording. Tap to stop.",
+        position: "Where you are in the voice note",
         haveFile: "Have something ready?",
         useFile: "Use a file",
         recordAgain: "Record again",

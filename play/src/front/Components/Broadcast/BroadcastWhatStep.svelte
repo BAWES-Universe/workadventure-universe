@@ -16,7 +16,7 @@
 
 {#if !canMessage && !canGoLive}
     <div class="flex flex-col items-center text-center gap-3 py-6 px-2">
-        <span class="grid place-items-center w-14 h-14 rounded-2xl bg-white/5 text-white/60" aria-hidden="true">
+        <span class="grid place-items-center text-white/60" aria-hidden="true">
             <IconSpeakerPhone font-size="28" />
         </span>
         <p class="m-0 text-base font-semibold">{$LL.broadcast.off.title()}</p>
