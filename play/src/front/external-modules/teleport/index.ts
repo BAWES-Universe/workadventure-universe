@@ -7,6 +7,7 @@ import type {
 import { gameManager } from "../../Phaser/Game/GameManager";
 import { Room } from "../../Connection/Room";
 import { inJitsiStore } from "../../Stores/MediaStore";
+import { IconRoute } from "../../Components/Icons";
 import TeleportPropertyEditor from "./TeleportPropertyEditor.svelte";
 import AddTeleportPropertyButton from "./AddTeleportPropertyButton.svelte";
 
@@ -27,6 +28,11 @@ const teleportExtensionModule: ExtensionModule = {
         const teleportAreaProperty: ExtensionModuleAreaProperty = {
             AreaPropertyEditor: TeleportPropertyEditor,
             AddAreaPropertyButton: AddTeleportPropertyButton,
+            label: {
+                title: "Teleport",
+                text: "Teleport people to another universe/world/room",
+                icon: IconRoute,
+            },
             handleAreaPropertyOnEnter(area: AreaData, signal: AbortSignal) {
                 const property = area.properties.find(
                     (prop) => prop.type === "extensionModule" && (prop as { subtype?: string }).subtype === "teleport"

@@ -55,7 +55,14 @@
     }
 </script>
 
-<div class="em-bar u-surface pointer-events-auto" transition:fly={{ y: 40, duration: 200 }} data-testid="placing-bar">
+<!-- On a phone, an object with colours or sides puts its buttons on a second row, so its name and the hint
+     are not cut off. -->
+<div
+    class="em-bar u-surface pointer-events-auto"
+    class:em-bar-stack={$mobileLayoutStore && !external && !drawingArea && (colors.length > 1 || sides > 1)}
+    transition:fly={{ y: 40, duration: 200 }}
+    data-testid="placing-bar"
+>
     {#if external}
         {#if external.image}
             <i class="em-thumb" style="background-image: url({external.image})" />
@@ -152,6 +159,19 @@
         bottom: calc(14px + env(safe-area-inset-bottom, 0px));
         width: auto;
         transform: none;
+    }
+    .em-bar-stack {
+        flex-wrap: wrap;
+        row-gap: 8px;
+    }
+    .em-bar-stack .em-text {
+        flex-basis: calc(100% - 58px);
+    }
+    :global(.em-phone) .em-m {
+        white-space: normal;
+    }
+    .em-bar-stack .em-text + * {
+        margin-left: auto;
     }
     .em-thumb {
         display: grid;

@@ -53,7 +53,7 @@
     function byTag(all: EntityVariant[]): { tag: string; items: EntityVariant[] }[] {
         const groups = new Map<string, EntityVariant[]>();
         for (const variant of all) {
-            if (variant.defaultPrefab.type === CUSTOM) continue;
+            // Your uploads show in the categories you gave them too, as they did in the old picker.
             // A prefab repeats a tag when the collection carries it too; one tile per section.
             for (const tag of new Set(variant.defaultPrefab.tags)) {
                 const list = groups.get(tag) ?? [];
