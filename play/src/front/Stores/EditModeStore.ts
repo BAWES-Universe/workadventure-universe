@@ -128,6 +128,14 @@ export interface AreaDraft {
     height: number;
 }
 export const editAreaDraftStore = writable<AreaDraft | undefined>(undefined);
+/** "New area" was tapped: the next drag on the map draws the area's box, with a finger as with a mouse. */
+export const editAreaDrawArmedStore = writable<boolean>(false);
+/** The box under the pointer while a drag draws a new area, in world pixels; it becomes the draft or the area. */
+export const editAreaSketchStore = writable<AreaDraft | undefined>(undefined);
+/** Where the picked area was while it is moved or resized: a faint dashed line, in world pixels. */
+export const editAreaGhostStore = writable<AreaDraft | undefined>(undefined);
+/** On a phone, the Areas sheet pulled up to the list of all areas (otherwise it peeks at the bottom). */
+export const editAreaSheetOpenStore = writable<boolean>(false);
 
 /** Shown once per phone until the first tool is picked: "Pick a tool on the right..." */
 function createEditHintSeenStore() {

@@ -1,13 +1,15 @@
 <script lang="ts">
-    // The box of a new area: drawn over the map, with four round corners to resize and a size in tiles. Dragging inside
-    // moves it; dragging outside moves around the map (the editor's drag-to-pan). It sizes freely, to the pixel, as
-    // areas always have; holding Shift on a computer snaps it to the tile grid.
+    // The box of a new area once it is drawn: the same frame and eight round dots as every picked area, named "New
+    // area" until it has a name. Dragging inside moves it; dragging a dot resizes it; dragging outside moves around
+    // the map (the editor's drag-to-pan). It sizes freely, to the pixel, as areas always have; holding Shift on a
+    // computer snaps it to the tile grid.
     import { onDestroy, onMount } from "svelte";
     import { get } from "svelte/store";
     import { LL } from "../../../../i18n/i18n-svelte";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import { screenSpace } from "../../../Phaser/Game/MapEditor/ScreenSpace";
     import { editAreaDraftStore, type AreaDraft } from "../../../Stores/EditModeStore";
+    import { areaLook } from "./areaLook";
 
     const TILE = 32;
     const MIN_SIZE = TILE;
@@ -16,10 +18,6 @@
     let frame: number | undefined;
     let visible = false;
     let shiftHeld = false;
-
-    function camera() {
-        return gameManager.tryGetCurrentGameScene()?.cameras.main;
-    }
 
     function toScreen(draft: AreaDraft) {
         const scene = gameManager.tryGetCurrentGameScene();
@@ -40,22 +38,6 @@
     }
 
     onMount(() => {
-        if (!get(editAreaDraftStore)) {
-            // Start in the middle of the screen, 6 × 5 tiles, on the grid.
-            const cam = camera();
-            if (cam) {
-                const centerX = cam.worldView.x + cam.worldView.width / 2;
-                const centerY = cam.worldView.y + cam.worldView.height / 2;
-                const width = 6 * TILE;
-                const height = 5 * TILE;
-                editAreaDraftStore.set({
-                    x: Math.round((centerX - width / 2) / TILE) * TILE,
-                    y: Math.round((centerY - height / 2) / TILE) * TILE,
-                    width,
-                    height,
-                });
-            }
-        }
         frame = requestAnimationFrame(tick);
         window.addEventListener("keydown", onKey);
         window.addEventListener("keyup", onKey);
@@ -66,14 +48,16 @@
         window.removeEventListener("keyup", onKey);
     });
 
-    type Corner = "nw" | "ne" | "sw" | "se" | "move";
-    let dragging: { corner: Corner; startX: number; startY: number; start: AreaDraft } | undefined;
+    // The eight dots: the corners and the middles of the edges. A dot resizes the edges it is on.
+    type Handle = "nw" | "n" | "ne" | "w" | "e" | "sw" | "s" | "se";
+    const HANDLES: Handle[] = ["nw", "n", "ne", "w", "e", "sw", "s", "se"];
+    let dragging: { handle: Handle | "move"; startX: number; startY: number; start: AreaDraft } | undefined;
 
-    function down(corner: Corner, event: PointerEvent) {
+    function down(handle: Handle | "move", event: PointerEvent) {
         const draft = get(editAreaDraftStore);
         if (!draft) return;
         (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
-        dragging = { corner, startX: event.clientX, startY: event.clientY, start: { ...draft } };
+        dragging = { handle, startX: event.clientX, startY: event.clientY, start: { ...draft } };
         event.preventDefault();
         event.stopPropagation();
     }
@@ -89,33 +73,19 @@
         const shift = shiftHeld || event.shiftKey;
         const snap = (v: number) => (shift ? Math.round(v / TILE) * TILE : Math.round(v));
         let next: AreaDraft;
-        switch (dragging.corner) {
-            case "move":
-                next = { ...s, x: snap(s.x + dx), y: snap(s.y + dy) };
-                break;
-            case "nw": {
-                const x = Math.min(snap(s.x + dx), s.x + s.width - MIN_SIZE);
-                const y = Math.min(snap(s.y + dy), s.y + s.height - MIN_SIZE);
-                next = { x, y, width: s.x + s.width - x, height: s.y + s.height - y };
-                break;
-            }
-            case "ne": {
-                const right = Math.max(snap(s.x + s.width + dx), s.x + MIN_SIZE);
-                const y = Math.min(snap(s.y + dy), s.y + s.height - MIN_SIZE);
-                next = { x: s.x, y, width: right - s.x, height: s.y + s.height - y };
-                break;
-            }
-            case "sw": {
-                const x = Math.min(snap(s.x + dx), s.x + s.width - MIN_SIZE);
-                const bottom = Math.max(snap(s.y + s.height + dy), s.y + MIN_SIZE);
-                next = { x, y: s.y, width: s.x + s.width - x, height: bottom - s.y };
-                break;
-            }
-            default: {
-                const right = Math.max(snap(s.x + s.width + dx), s.x + MIN_SIZE);
-                const bottom = Math.max(snap(s.y + s.height + dy), s.y + MIN_SIZE);
-                next = { x: s.x, y: s.y, width: right - s.x, height: bottom - s.y };
-            }
+        if (dragging.handle === "move") {
+            next = { ...s, x: snap(s.x + dx), y: snap(s.y + dy) };
+        } else {
+            const h = dragging.handle;
+            let left = s.x;
+            let top = s.y;
+            let right = s.x + s.width;
+            let bottom = s.y + s.height;
+            if (h.includes("w")) left = Math.min(snap(s.x + dx), right - MIN_SIZE);
+            if (h.includes("e")) right = Math.max(snap(right + dx), left + MIN_SIZE);
+            if (h.includes("n")) top = Math.min(snap(s.y + dy), bottom - MIN_SIZE);
+            if (h.includes("s")) bottom = Math.max(snap(bottom + dy), top + MIN_SIZE);
+            next = { x: left, y: top, width: right - left, height: bottom - top };
         }
         editAreaDraftStore.set(next);
         toScreen(next);
@@ -126,29 +96,47 @@
     }
 
     $: draft = $editAreaDraftStore;
-    // The size in tiles, to a tenth when it is not whole tiles.
-    const tiles = (px: number) => String(Math.round((px / TILE) * 10) / 10);
-    $: tilesWide = draft ? tiles(draft.width) : "0";
-    $: tilesHigh = draft ? tiles(draft.height) : "0";
+    // Where each dot sits on the box, as fractions of its width and height.
+    const AT: Record<Handle, [number, number]> = {
+        nw: [0, 0],
+        n: [0.5, 0],
+        ne: [1, 0],
+        w: [0, 0.5],
+        e: [1, 0.5],
+        sw: [0, 1],
+        s: [0.5, 1],
+        se: [1, 1],
+    };
+    // The top edge's dot moves right of the label when the label reaches the middle, as on a picked area.
+    let label: HTMLElement | undefined;
+    $: labelRight = label ? 22 + label.offsetWidth + 18 : 0;
+    $: topDotLeft =
+        labelRight > box.width / 2 ? Math.max(box.width / 2, Math.min(labelRight, box.width - 30)) : box.width / 2;
+    function dotStyle(handle: Handle, topLeft: number): string {
+        const left = handle === "n" ? `${topLeft}px` : `${AT[handle][0] * 100}%`;
+        return `left: ${left}; top: ${AT[handle][1] * 100}%;`;
+    }
 </script>
 
 {#if draft && visible}
     <!-- svelte-ignore a11y-no-static-element-interactions -->
     <div
         class="em-draft pointer-events-auto"
-        style="left: {box.left}px; top: {box.top}px; width: {box.width}px; height: {box.height}px;"
+        style="{areaLook()} left: {box.left}px; top: {box.top}px; width: {box.width}px; height: {box.height}px;"
         data-testid="area-draft"
         on:pointerdown={(e) => down("move", e)}
         on:pointermove={moveDrag}
         on:pointerup={up}
         on:pointercancel={up}
     >
-        <span class="em-size u-surface">{$LL.mapEditor.edit.areas.tiles({ width: tilesWide, height: tilesHigh })}</span>
-        {#each ["nw", "ne", "sw", "se"] as corner (corner)}
+        <span class="em-label u-surface" bind:this={label}>{$LL.mapEditor.edit.areas.newArea()}</span>
+        {#each HANDLES as handle (handle)}
             <!-- svelte-ignore a11y-no-static-element-interactions -->
             <i
-                class="em-corner em-{corner}"
-                on:pointerdown={(e) => down(corner === "nw" || corner === "ne" || corner === "sw" ? corner : "se", e)}
+                class="em-dot em-{handle}"
+                class:em-dot-big={dragging?.handle === handle}
+                style={dotStyle(handle, topDotLeft)}
+                on:pointerdown={(e) => down(handle, e)}
                 on:pointermove={moveDrag}
                 on:pointerup={up}
                 on:pointercancel={up}
@@ -158,54 +146,67 @@
 {/if}
 
 <style>
+    /* The look of a picked area in AreaFrames.svelte: its colour fills it, and the dots have its colour round them. */
     .em-draft {
         position: absolute;
-        border-radius: 6px;
-        background: rgba(134, 41, 252, 0.2);
-        outline: 2px solid rgba(196, 181, 253, 0.95);
+        border-radius: 14px;
+        background: var(--af-fill);
+        box-shadow: 0 0 0 3px var(--af-c), 0 0 0 8px var(--af-halo);
         cursor: move;
         touch-action: none;
         z-index: 3;
     }
-    .em-size {
+    .em-label {
         position: absolute;
-        left: 50%;
-        top: 50%;
-        transform: translate(-50%, -50%);
+        left: 22px;
+        top: -14px;
         padding: 4px 10px;
         border-radius: 999px;
-        font-size: 12px;
-        font-weight: 600;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
         white-space: nowrap;
+        line-height: 1.2;
+        color: var(--af-t);
         pointer-events: none;
     }
-    .em-corner {
+    .em-dot {
         position: absolute;
         width: 22px;
         height: 22px;
+        margin: -11px 0 0 -11px;
         border-radius: 50%;
         background: #fff;
-        box-shadow: 0 0 0 3px #8b5cf6;
+        box-shadow: 0 0 0 3px var(--af-c), 0 2px 6px rgba(0, 0, 0, 0.45);
         touch-action: none;
     }
-    .em-nw {
-        left: -11px;
-        top: -11px;
-        cursor: nwse-resize;
+    /* A finger needs more than the dot to land on: the dot catches the pointer around it too. */
+    .em-dot::after {
+        content: "";
+        position: absolute;
+        inset: -11px;
     }
-    .em-ne {
-        right: -11px;
-        top: -11px;
-        cursor: nesw-resize;
+    .em-dot-big {
+        width: 28px;
+        height: 28px;
+        margin: -14px 0 0 -14px;
+        box-shadow: 0 0 0 4px var(--af-c), 0 0 0 12px var(--af-halo);
     }
-    .em-sw {
-        left: -11px;
-        bottom: -11px;
-        cursor: nesw-resize;
-    }
+    .em-nw,
     .em-se {
-        right: -11px;
-        bottom: -11px;
         cursor: nwse-resize;
+    }
+    .em-ne,
+    .em-sw {
+        cursor: nesw-resize;
+    }
+    .em-n,
+    .em-s {
+        cursor: ns-resize;
+    }
+    .em-w,
+    .em-e {
+        cursor: ew-resize;
     }
 </style>

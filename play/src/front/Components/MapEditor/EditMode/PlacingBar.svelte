@@ -10,6 +10,7 @@
     import { mapEditorSelectedEntityPrefabStore, mapEditorVisibilityStore } from "../../../Stores/MapEditorStore";
     import {
         editAreaDraftStore,
+        editAreaDrawArmedStore,
         editPickedVariantStore,
         editPlacingBarStore,
         editTouchPreviewStore,
@@ -43,6 +44,7 @@
 
     function cancelArea() {
         editAreaDraftStore.set(undefined);
+        editAreaDrawArmedStore.set(false);
         if ($mobileLayoutStore) mapEditorVisibilityStore.set(true);
     }
 
@@ -87,13 +89,20 @@
         <span class="em-thumb em-thumb-icon"><IconTexture font-size="22" /></span>
         <div class="em-text">
             <div class="em-t">{$LL.mapEditor.edit.areas.newArea()}</div>
-            <div class="em-m">{$LL.mapEditor.edit.areas.draftSubtitle()}</div>
+            <div class="em-m">
+                {$editAreaDraftStore ? $LL.mapEditor.edit.areas.draftSubtitle() : $LL.mapEditor.edit.areas.drawHint()}
+            </div>
         </div>
         <button type="button" class="em-btn em-btn-q" data-testid="area-draft-cancel" on:click={cancelArea}
             >{$LL.mapEditor.edit.areas.cancel()}</button
         >
-        <button type="button" class="em-btn u-cta" data-testid="area-draft-next" on:click={nextArea}
-            >{$LL.mapEditor.edit.areas.next()}</button
+        <!-- Next waits for the box: until a drag has drawn it there is nothing to make an area of. -->
+        <button
+            type="button"
+            class="em-btn u-cta"
+            disabled={!$editAreaDraftStore}
+            data-testid="area-draft-next"
+            on:click={nextArea}>{$LL.mapEditor.edit.areas.next()}</button
         >
     {:else if placingObject && prefab}
         <i class="em-thumb" style="background-image: url({prefab.imagePath})" />

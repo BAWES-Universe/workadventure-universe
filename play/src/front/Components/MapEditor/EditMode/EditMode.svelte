@@ -8,7 +8,6 @@
     import { mobileLayoutStore } from "../../../Stores/MobileLayoutStore";
     import { EditorToolName } from "../../../Phaser/Game/MapEditor/MapEditorModeManager";
     import {
-        mapEditorAreaModeStore,
         mapEditorEntityModeStore,
         mapEditorSelectedEntityPrefabStore,
         mapEditorSelectedAreaPreviewStore,
@@ -18,6 +17,7 @@
     } from "../../../Stores/MapEditorStore";
     import {
         editAreaDraftStore,
+        editAreaDrawArmedStore,
         editDeleteMarkStore,
         editHintSeenStore,
         editObjectsViewStore,
@@ -37,7 +37,9 @@
     import ObjectActions from "./ObjectActions.svelte";
     import AreaActions from "./AreaActions.svelte";
     import AreaDraft from "./AreaDraft.svelte";
-    import { IconArrowBackUp, IconHandMove, IconTrash } from "@wa-icons";
+    import AreaFrames from "./AreaFrames.svelte";
+    import AreaSheet from "./AreaSheet.svelte";
+    import { IconArrowBackUp, IconArrowsMove, IconHandMove, IconTrash } from "@wa-icons";
 
     let rootWidth = 0;
 
@@ -48,24 +50,34 @@
 
     $: tool = $mapEditorSelectedToolStore;
     $: placingObject = tool === EditorToolName.EntityEditor && $mapEditorSelectedEntityPrefabStore !== undefined;
-    $: drawingArea = tool === EditorToolName.AreaEditor && $editAreaDraftStore !== undefined;
+    $: drawingArea =
+        tool === EditorToolName.AreaEditor && ($editAreaDraftStore !== undefined || $editAreaDrawArmedStore);
     $: barShown = placingObject || drawingArea || $editPlacingBarStore !== undefined;
+    $: areaSelected = tool === EditorToolName.AreaEditor && $mapEditorSelectedAreaPreviewStore !== undefined;
+    // On a phone the Areas tool keeps the map in view: a small sheet at the bottom instead of the panel, which only
+    // opens for the settings of the picked area.
+    $: areaSheet =
+        $mobileLayoutStore &&
+        $mapEditorVisibilityStore &&
+        tool === EditorToolName.AreaEditor &&
+        !areaSelected &&
+        !drawingArea;
     // The panel is not for every tool: Delete only needs the map, and Room settings is a window of its own.
     $: panelShown =
         $mapEditorVisibilityStore &&
         tool !== undefined &&
         tool !== EditorToolName.TrashEditor &&
         tool !== EditorToolName.WAMSettingsEditor &&
-        tool !== EditorToolName.CloseMapEditor;
+        tool !== EditorToolName.CloseMapEditor &&
+        !($mobileLayoutStore && tool === EditorToolName.AreaEditor && !areaSelected);
     $: objectSelected =
         tool === EditorToolName.EntityEditor &&
         $mapEditorEntityModeStore === "EDIT" &&
         $mapEditorSelectedEntityStore !== undefined;
-    $: areaSelected = tool === EditorToolName.AreaEditor && $mapEditorSelectedAreaPreviewStore !== undefined;
-    $: phoneHint = $mobileLayoutStore && !$editHintSeenStore && !panelShown && !barShown;
+    $: phoneHint = $mobileLayoutStore && !$editHintSeenStore && !panelShown && !barShown && !areaSheet;
+    $: areaPickHint = $mobileLayoutStore && areaSelected && !drawingArea && !panelShown;
     $: desktopHint = !$mobileLayoutStore && placingObject;
     $: deleteHint = tool === EditorToolName.TrashEditor;
-    $: areaDraftHint = drawingArea && $mapEditorAreaModeStore === "ADD";
     // Delete: a tap on a phone only marks the item (box and Remove chip); on a computer the mouse's outline is the mark.
     $: deleteMark = tool === EditorToolName.TrashEditor ? $editDeleteMarkStore : undefined;
     $: deleteMarkTapped = deleteMark?.tapped ? deleteMark : undefined;
@@ -114,6 +126,9 @@
     style="--tiles-clear: {$cameraTilesClearStore}px"
     bind:clientWidth={rootWidth}
 >
+    {#if tool === EditorToolName.AreaEditor}
+        <AreaFrames />
+    {/if}
     <EditPill />
     <EditRail />
     {#if panelShown}
@@ -128,6 +143,9 @@
     {/if}
     {#if drawingArea}
         <AreaDraft />
+    {/if}
+    {#if areaSheet}
+        <AreaSheet />
     {/if}
     {#if barShown}
         <PlacingBar {placingObject} {drawingArea} />
@@ -206,10 +224,10 @@
             <IconTrash font-size="18" class="em-hint-icon em-hint-coral" />
             <span>{$LL.mapEditor.edit.deleteTool.subtitle()}</span>
         </div>
-    {:else if areaDraftHint}
-        <div class="em-hint em-hint-top u-surface" transition:fade={{ duration: 150 }}>
-            <IconHandMove font-size="18" class="em-hint-icon" />
-            <span>{$LL.mapEditor.edit.areas.draftHint()}</span>
+    {:else if areaPickHint}
+        <div class="em-hint em-hint-bottom u-surface" transition:fade={{ duration: 150 }} data-testid="area-pick-hint">
+            <IconArrowsMove font-size="18" class="em-hint-icon" />
+            <span>{$LL.mapEditor.edit.areas.pickHint()}</span>
         </div>
     {:else if desktopHint}
         <div class="em-hint em-hint-keys u-surface" transition:fade={{ duration: 150 }}>

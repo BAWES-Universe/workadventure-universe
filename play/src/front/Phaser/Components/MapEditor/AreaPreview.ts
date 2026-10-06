@@ -28,6 +28,21 @@ export enum AreaPreviewEvent {
 const DEFAULT_COLOR = 0x0000ff;
 const MAXIMUM_DEPTH = 100000; // we use a high depth to ensure the area preview is on top of other objects
 const DEFAULT_AREA_PREVIEW_ALPHA = 0.5;
+/** The colour of an area with no setting that has a colour of its own. */
+const NO_SETTINGS_COLOUR = "6f7dff";
+
+/**
+ * An area's own colour on the editor's map, as hex without "#": the colour of its last setting that has one (a quiet
+ * zone is red, a meeting blue, as the old editor filled them), or violet blue when it has none.
+ */
+export function areaColour(properties: AreaDataProperties): string {
+    let colour = NO_SETTINGS_COLOUR;
+    for (const property of properties) {
+        const look = propertyLook(property.type);
+        if (look.name !== "") colour = look.color;
+    }
+    return colour;
+}
 
 export class AreaPreview extends Phaser.GameObjects.Rectangle {
     private squares: SizeAlteringSquare[];
@@ -44,6 +59,13 @@ export class AreaPreview extends Phaser.GameObjects.Rectangle {
     private propertiesIcon: GameObjects.Image[] = [];
 
     private speechDomElement: SpeechDomElement | null = null;
+    /**
+     * In the area tool the frame, name and dots are drawn over the map by the page (AreaFrames.svelte); the area and
+     * its dots here only catch the pointer, at the same places.
+     */
+    private framed = false;
+    /** Where the top edge's dot sits, from the area's left, when the name label would cover the middle. */
+    private topHandleOffset: number | undefined;
     private playTextTimeout: ReturnType<typeof setTimeout> | null = null;
 
     constructor(
@@ -130,6 +152,30 @@ export class AreaPreview extends Phaser.GameObjects.Rectangle {
 
     public delete(): void {
         this.emit(AreaPreviewEvent.Delete);
+    }
+
+    /** Draw nothing: the page draws the area, and this only catches the pointer (see `framed`). */
+    public useMapFrame(): void {
+        this.framed = true;
+        this.setFillStyle(this.fillColor, 0);
+        this.squares.forEach((square) => square.catchOnly());
+        this.destroyText();
+    }
+
+    public isSelected(): boolean {
+        return this.selected;
+    }
+
+    /** The dots of the picked area, in world pixels, and whether one is being dragged. */
+    public getHandles(): { x: number; y: number; dragged: boolean }[] {
+        return this.squares.map((square) => ({ x: square.x, y: square.y, dragged: square.isSelected() }));
+    }
+
+    /** Moves the top edge's dot right of the name label; undefined puts it back in the middle. */
+    public setTopHandleOffset(offset: number | undefined): void {
+        if (this.topHandleOffset === offset) return;
+        this.topHandleOffset = offset;
+        this.updateSquaresPositions();
     }
 
     public select(value: boolean): void {
@@ -228,7 +274,7 @@ export class AreaPreview extends Phaser.GameObjects.Rectangle {
     }
 
     public changeColor(color: string | number | Phaser.Types.Display.InputColorObject) {
-        this.setFillStyle(Phaser.Display.Color.ValueToColor(color).color, DEFAULT_AREA_PREVIEW_ALPHA);
+        this.setFillStyle(Phaser.Display.Color.ValueToColor(color).color, this.fillAlphaNow());
         this.updateSquaresPositions();
     }
 
@@ -254,12 +300,16 @@ export class AreaPreview extends Phaser.GameObjects.Rectangle {
                     icon.setVisible(true);
                     counter++;
                 }
-                this.setFillStyle(Phaser.Display.Color.ValueToColor(color).color, DEFAULT_AREA_PREVIEW_ALPHA);
+                this.setFillStyle(Phaser.Display.Color.ValueToColor(color).color, this.fillAlphaNow());
             } else {
-                this.setFillStyle(Phaser.Display.Color.ValueToColor(DEFAULT_COLOR).color, DEFAULT_AREA_PREVIEW_ALPHA);
+                this.setFillStyle(Phaser.Display.Color.ValueToColor(DEFAULT_COLOR).color, this.fillAlphaNow());
             }
         }
         this.updateSquaresPositions();
+    }
+
+    private fillAlphaNow(): number {
+        return this.framed ? 0 : DEFAULT_AREA_PREVIEW_ALPHA;
     }
 
     private showPropertiesIcon(value: boolean) {
@@ -291,7 +341,7 @@ export class AreaPreview extends Phaser.GameObjects.Rectangle {
                 //this.propertiesIcon.push(icon);
                 counter++;
             }
-            this.setFillStyle(Phaser.Display.Color.ValueToColor(color).color, DEFAULT_AREA_PREVIEW_ALPHA);
+            this.setFillStyle(Phaser.Display.Color.ValueToColor(color).color, this.fillAlphaNow());
         }
         this.x = Math.floor(this.areaData.x + this.areaData.width * 0.5);
         this.y = Math.floor(this.areaData.y + this.areaData.height * 0.5);
@@ -380,6 +430,7 @@ export class AreaPreview extends Phaser.GameObjects.Rectangle {
         this.squares.forEach((square, index) => {
             square.on(SizeAlteringSquareEvent.Selected, () => {
                 this.squareSelected = true;
+                this.emit(AreaPreviewEvent.DragStart);
             });
 
             square.on(Phaser.Input.Events.DRAG, (pointer: Phaser.Input.Pointer, dragX: number, dragY: number) => {
@@ -470,6 +521,7 @@ export class AreaPreview extends Phaser.GameObjects.Rectangle {
 
             square.on(SizeAlteringSquareEvent.Released, () => {
                 this.squareSelected = false;
+                this.emit(AreaPreviewEvent.Released);
                 this.updateAreaDataWithSquaresAdjustments();
                 const data: AtLeast<AreaData, "id"> = {
                     id: this.getAreaData().id,
@@ -485,7 +537,12 @@ export class AreaPreview extends Phaser.GameObjects.Rectangle {
 
     private updateSquaresPositions(): void {
         this.squares[0].setPosition(this.getTopLeft().x, this.getTopLeft().y);
-        this.squares[1].setPosition(this.getTopCenter().x, this.getTopCenter().y);
+        // Any point of the top edge resizes it, so its dot may sit right of the name label instead of under it.
+        const topX =
+            this.topHandleOffset === undefined
+                ? this.getTopCenter().x
+                : (this.getTopLeft().x ?? 0) + Math.min(this.topHandleOffset, this.displayWidth);
+        this.squares[1].setPosition(topX, this.getTopCenter().y);
         this.squares[2].setPosition(this.getTopRight().x, this.getTopRight().y);
         this.squares[3].setPosition(this.getLeftCenter().x, this.getLeftCenter().y);
         this.squares[4].setPosition(this.getRightCenter().x, this.getRightCenter().y);
@@ -505,77 +562,14 @@ export class AreaPreview extends Phaser.GameObjects.Rectangle {
     }
 
     private getPropertyIcons(name: string) {
-        switch (name) {
-            case "focusable":
-                return {
-                    name: "Focus",
-                    color: "00F0B5",
-                };
-            case "speakerMegaphone":
-                return {
-                    name: "SpeakerMegaphone",
-                    color: "ff9f45",
-                };
-            case "listenerMegaphone":
-                return {
-                    name: "ListenerMegaphone",
-                    color: "EEEBD0",
-                };
-            case "jitsiRoomProperty":
-                return {
-                    name: "Meeting",
-                    color: "86BBD8",
-                };
-            case "openWebsite":
-                return {
-                    name: "Link",
-                    color: "758E4F",
-                };
-            case "playAudio":
-                return {
-                    name: "Link",
-                    color: "31AFD4",
-                };
-            case "silent":
-                return {
-                    name: "Silent",
-                    color: "FF5A5F",
-                };
-            case "extensionModule": {
-                return {
-                    name: "Extension",
-                    color: "464EB8",
-                };
-            }
-            case "matrixRoomPropertyData": {
-                return {
-                    name: "MatrixRoom",
-                    color: "0cbd8b",
-                };
-            }
-            case "tooltipPropertyData": {
-                return {
-                    name: "Tooltip",
-                    color: "0b66c2",
-                };
-            }
-            case "livekitRoomProperty": {
-                return {
-                    name: "Livekit",
-                    color: "1E88E5",
-                };
-            }
-            default:
-                return {
-                    name: "",
-                    color: "FFFFFF",
-                };
-        }
+        return propertyLook(name);
     }
 
     // Play text on the Image entity
     public playText() {
         if (this.speechDomElement) this.destroyText();
+        // In the area tool the name is the frame's label, drawn by the page.
+        if (this.framed) return;
         // Two updates in a row (a name and a description, say) show one label, not one per update.
         if (this.playTextTimeout) clearTimeout(this.playTextTimeout);
         this.playTextTimeout = setTimeout(() => {
@@ -655,5 +649,74 @@ export class AreaPreview extends Phaser.GameObjects.Rectangle {
             return (propertyTranslation as { actionButtonLabel: () => string }).actionButtonLabel();
         }
         return get(LL).mapEditor.explorer.details.moveToArea({ name: "" });
+    }
+}
+
+function propertyLook(name: string): { name: string; color: string } {
+    switch (name) {
+        case "focusable":
+            return {
+                name: "Focus",
+                color: "00F0B5",
+            };
+        case "speakerMegaphone":
+            return {
+                name: "SpeakerMegaphone",
+                color: "ff9f45",
+            };
+        case "listenerMegaphone":
+            return {
+                name: "ListenerMegaphone",
+                color: "EEEBD0",
+            };
+        case "jitsiRoomProperty":
+            return {
+                name: "Meeting",
+                color: "86BBD8",
+            };
+        case "openWebsite":
+            return {
+                name: "Link",
+                color: "758E4F",
+            };
+        case "playAudio":
+            return {
+                name: "Link",
+                color: "31AFD4",
+            };
+        case "silent":
+            return {
+                name: "Silent",
+                color: "FF5A5F",
+            };
+        case "extensionModule": {
+            return {
+                name: "Extension",
+                color: "464EB8",
+            };
+        }
+        case "matrixRoomPropertyData": {
+            return {
+                name: "MatrixRoom",
+                color: "0cbd8b",
+            };
+        }
+        case "tooltipPropertyData": {
+            return {
+                name: "Tooltip",
+                color: "0b66c2",
+            };
+        }
+        case "livekitRoomProperty": {
+            return {
+                name: "Livekit",
+                color: "1E88E5",
+            };
+        }
+        default:
+            return {
+                name: "",
+                color: "FFFFFF",
+            };
     }
 }
