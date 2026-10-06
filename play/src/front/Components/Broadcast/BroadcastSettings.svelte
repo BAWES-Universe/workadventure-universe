@@ -62,7 +62,8 @@
                 updateMegaphoneSettingMessage: {
                     enabled: true,
                     title: settings?.megaphone?.title || "MyMegaphone",
-                    scope: scopes[0],
+                    // Older clients read one reach, ROOM or WORLD: the widest of those chosen.
+                    scope: scopes.includes("WORLD") ? "WORLD" : "ROOM",
                     rights: WHO_RIGHTS[who],
                     scopes: { scopes },
                 },
