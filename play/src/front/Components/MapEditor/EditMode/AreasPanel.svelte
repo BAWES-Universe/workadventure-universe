@@ -38,7 +38,7 @@
     });
 
     function tool(): AreaEditorTool | undefined {
-        return gameManager.getCurrentGameScene().getMapEditorModeManager().currentlyActiveTool as
+        return gameManager.tryGetCurrentGameScene()?.getMapEditorModeManager()?.currentlyActiveTool as
             | AreaEditorTool
             | undefined;
     }
