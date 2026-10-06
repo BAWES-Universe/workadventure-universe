@@ -1,6 +1,7 @@
 <script lang="ts">
     import { afterUpdate, beforeUpdate, hasContext, onMount, setContext } from "svelte";
-    import { get, readable } from "svelte/store";
+    import { derived, get, readable, writable } from "svelte/store";
+    import type { Readable } from "svelte/store";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import type { ChatMessage, ChatRoom } from "../../Connection/ChatConnection";
     import getCloseImg from "../../images/get-close.png";
@@ -22,7 +23,14 @@
     import { selectedProximitySessionStore } from "../../Stores/ProximitySessionStore";
     import LL, { locale } from "../../../../i18n/i18n-svelte";
     import { formatPeopleNames } from "../TopRow/TopRowSummary";
-    import { WOKA_BY_CHAT_ID_CONTEXT, createWokaByChatIdStore } from "../../Stores/ChatUserWokaStore";
+    import {
+        PERSON_COLOUR_CONTEXT,
+        WOKA_BY_CHAT_ID_CONTEXT,
+        createColourByChatIdStore,
+        createWokaByChatIdStore,
+        personColour,
+    } from "../../Stores/ChatUserWokaStore";
+    import type { PersonColourOf } from "../../Stores/ChatUserWokaStore";
     import Avatar from "../Avatar.svelte";
     import { MatrixChatRoom } from "../../Connection/Matrix/MatrixChatRoom";
     import { openProfileRoomIdStore } from "../../Stores/PartnerProfileStore";
@@ -49,6 +57,18 @@
             createWokaByChatIdStore(gameManager.getCurrentGameScene().userProviderMerger)
         );
     }
+
+    // In a direct chat, each person's woka sits on their colour from People (header, profile, messages).
+    const isDirectChat = writable(false);
+    const colourByChatId = createColourByChatIdStore(gameManager.getCurrentGameScene().userProviderMerger);
+    setContext<Readable<PersonColourOf>>(
+        PERSON_COLOUR_CONTEXT,
+        derived([isDirectChat, colourByChatId], ([$isDirectChat, $colourByChatId]) =>
+            $isDirectChat
+                ? (chatId: string | undefined, name: string | undefined) => personColour($colourByChatId, chatId, name)
+                : () => undefined
+        )
+    );
 
     const chatConnection = gameManager.chatConnection;
     const shouldRetrySendingEvents = chatConnection.shouldRetrySendingEvents;
@@ -80,6 +100,7 @@
     // A direct chat knows who the other person is and where they are right now (header, menu, profile).
     $: directPartner = matrixRoom?.type === "direct" ? directPartnerStore(matrixRoom) : undefined;
     $: profileOpen = directPartner !== undefined && $openProfileRoomIdStore === room.id;
+    $: isDirectChat.set(directPartner !== undefined);
     $: roomMembers = matrixRoom ? matrixRoom.members : readable([]);
     $: memberCount = $roomMembers.length;
     // The proximity chat is one timeline across every stay. The thread shows one stay at a time: the live one,

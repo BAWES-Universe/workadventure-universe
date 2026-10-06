@@ -10,7 +10,8 @@
     } from "../../../Connection/ChatConnection";
     import type { PictureStore } from "../../../../Stores/PictureStore";
     import { notificationPlayingStore } from "../../../../Stores/NotificationStore";
-    import { WOKA_BY_CHAT_ID_CONTEXT, personPicture } from "../../../Stores/ChatUserWokaStore";
+    import { PERSON_COLOUR_CONTEXT, WOKA_BY_CHAT_ID_CONTEXT, personPicture } from "../../../Stores/ChatUserWokaStore";
+    import type { PersonColourOf } from "../../../Stores/ChatUserWokaStore";
     import { selectedRoomStore } from "../../../Stores/SelectRoomStore";
     import TopRowAvatar from "../../TopRow/TopRowAvatar.svelte";
     import VisitCard from "../../../../Components/VisitCard/VisitCard.svelte";
@@ -52,6 +53,9 @@
     const wokaByChatId: Readable<Map<string, PictureStore>> = hasContext(WOKA_BY_CHAT_ID_CONTEXT)
         ? getContext(WOKA_BY_CHAT_ID_CONTEXT)
         : readable(new Map<string, PictureStore>());
+    const colourOf: Readable<PersonColourOf> = hasContext(PERSON_COLOUR_CONTEXT)
+        ? getContext(PERSON_COLOUR_CONTEXT)
+        : readable(() => undefined);
 
     let confirmingDelete = false;
     let blockInProgress = false;
@@ -107,7 +111,13 @@
     <div class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
         <div class="flex flex-col items-center gap-1.5 pt-1 text-center">
             <div class="relative mb-1.5">
-                <TopRowAvatar pictureStore={picture} name={$roomName} size="xl" ring={false} />
+                <TopRowAvatar
+                    pictureStore={picture}
+                    name={$roomName}
+                    color={$colourOf(partner.chatId, $roomName)}
+                    size="xl"
+                    ring={false}
+                />
                 {#if live}
                     <span
                         class="absolute -inset-1.5 rounded-full border-2 border-solid"

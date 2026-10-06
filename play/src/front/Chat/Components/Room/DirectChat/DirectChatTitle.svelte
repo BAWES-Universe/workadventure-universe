@@ -5,7 +5,8 @@
     import LL from "../../../../../i18n/i18n-svelte";
     import type { ChatRoom } from "../../../Connection/ChatConnection";
     import type { PictureStore } from "../../../../Stores/PictureStore";
-    import { WOKA_BY_CHAT_ID_CONTEXT, personPicture } from "../../../Stores/ChatUserWokaStore";
+    import { PERSON_COLOUR_CONTEXT, WOKA_BY_CHAT_ID_CONTEXT, personPicture } from "../../../Stores/ChatUserWokaStore";
+    import type { PersonColourOf } from "../../../Stores/ChatUserWokaStore";
     import TopRowAvatar from "../../TopRow/TopRowAvatar.svelte";
     import type { DirectPartner } from "./DirectPartnerStore";
     import { isInUniverse } from "./PartnerPlace";
@@ -25,6 +26,9 @@
     const wokaByChatId: Readable<Map<string, PictureStore>> = hasContext(WOKA_BY_CHAT_ID_CONTEXT)
         ? getContext(WOKA_BY_CHAT_ID_CONTEXT)
         : readable(new Map<string, PictureStore>());
+    const colourOf: Readable<PersonColourOf> = hasContext(PERSON_COLOUR_CONTEXT)
+        ? getContext(PERSON_COLOUR_CONTEXT)
+        : readable(() => undefined);
 
     $: picture = personPicture($wokaByChatId, partner.chatId, undefined) ?? room.pictureStore;
     $: status = partnerStatus(partner.place, $LL);
@@ -39,7 +43,12 @@
     on:click={() => dispatch("openProfile")}
 >
     <span class="relative flex shrink-0" aria-hidden="true">
-        <TopRowAvatar pictureStore={picture} name={$roomName} ring={false} />
+        <TopRowAvatar
+            pictureStore={picture}
+            name={$roomName}
+            color={$colourOf(partner.chatId, $roomName)}
+            ring={false}
+        />
         {#if live}
             <span
                 class="absolute -inset-1 rounded-full border-2 border-solid"
