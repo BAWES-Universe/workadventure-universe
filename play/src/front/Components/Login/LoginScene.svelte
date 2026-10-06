@@ -59,6 +59,7 @@
 <div class="absolute left-0 top-0 w-full h-full z-20 login-overlay" />
 
 <form
+    autocomplete="off"
     class="loginScene min-h-dvh flex flex-col items-center justify-start md:justify-center pointer-events-auto relative z-30 px-4 pt-[60px] pb-6 md:p-6"
     on:submit|preventDefault={submit}
 >
@@ -104,7 +105,12 @@
                     <!-- svelte-ignore a11y-autofocus -->
                     <input
                         type="text"
-                        name="fname"
+                        name="display-name"
+                        autocomplete="off"
+                        data-1p-ignore
+                        data-lpignore="true"
+                        data-bwignore
+                        data-form-type="other"
                         data-testid="loginSceneNameInput"
                         placeholder={$LL.login.input.name.placeholder()}
                         aria-label={$LL.login.input.name.placeholder()}

@@ -33,17 +33,11 @@
     // Rotate turns the WOKA a quarter: down, left, up, right
     const turnOrder = [0, 1, 3, 2];
     let turn = 0;
-    let autoTurn: ReturnType<typeof setInterval> | undefined;
 
+    // The preview only turns when you rotate it
     function rotate() {
-        stopAutoTurn();
         turn = (turn + 1) % turnOrder.length;
         direction = turnOrder[turn];
-    }
-
-    function stopAutoTurn() {
-        if (autoTurn) clearInterval(autoTurn);
-        autoTurn = undefined;
     }
 
     const bgColor = gameManager.currentStartedRoom.backgroundColor ?? "#000000";
@@ -65,6 +59,11 @@
 
     export async function selectCategory(index: number) {
         if (index < 0 || index >= categories.length || index === category) return;
+        // The page you came from stays drawn; the new page beyond is drawn once the switch is on screen
+        previousCategory = category;
+        neighboursReady = false;
+        clearTimeout(neighboursTimer);
+        neighboursTimer = setTimeout(() => (neighboursReady = true), 300);
         category = index;
         await tick();
         pills?.querySelectorAll("[role=tab]")[index]?.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -114,23 +113,76 @@
         thumbTop = scrollHeight > clientHeight + 2 ? (scrollTop / scrollHeight) * 100 : 0;
     }
 
-    // Swiping the tiles sideways moves to the next or previous category (phones)
+    // Swiping the tiles sideways moves to the next or previous category (phones). The tiles follow the finger, and
+    // the categories on either side are already drawn, so the next one is there as soon as it slides in.
     let swipeHintBox: HTMLParagraphElement | undefined;
-    let touchStart: { x: number; y: number } | undefined;
+    let pagesBox: HTMLDivElement | undefined;
+    let drag: { x: number; y: number; axis?: "x" | "y" } | undefined;
+    let dragX = 0;
+    let sliding = false;
+    const slideMs = 220;
+
+    $: categoryCount = Math.max(categories.length, 1);
+    let previousCategory = -1;
+    let neighboursReady = true;
+    let neighboursTimer: ReturnType<typeof setTimeout> | undefined;
+    $: pageIndexes = [category - 1, category, category + 1].filter(
+        (index) =>
+            index >= 0 && index < categoryCount && (index === category || index === previousCategory || neighboursReady)
+    );
+
+    // The page on screen is the one that scrolls, fits and shows the scroll bar
+    function pageScroller(node: HTMLDivElement, active: boolean) {
+        if (active) tiles = node;
+        return {
+            update(isActive: boolean) {
+                if (isActive) tiles = node;
+            },
+        };
+    }
 
     function onTouchStart(event: TouchEvent) {
         const touch = event.touches[0];
-        touchStart = touch ? { x: touch.clientX, y: touch.clientY } : undefined;
+        drag = touch && event.touches.length === 1 && !sliding ? { x: touch.clientX, y: touch.clientY } : undefined;
+        dragX = 0;
     }
 
-    function onTouchEnd(event: TouchEvent) {
-        const touch = event.changedTouches[0];
-        if (!touchStart || !touch) return;
-        const dx = touch.clientX - touchStart.x;
-        const dy = touch.clientY - touchStart.y;
-        touchStart = undefined;
-        if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
-        selectCategory(category + (dx < 0 ? 1 : -1)).catch((e) => console.error(e));
+    function onTouchMove(event: TouchEvent) {
+        const touch = event.touches[0];
+        if (!drag || !touch) return;
+        const dx = touch.clientX - drag.x;
+        const dy = touch.clientY - drag.y;
+        if (!drag.axis) {
+            if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+            drag.axis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+        }
+        if (drag.axis !== "x") return;
+        // The sideways swipe is ours, so the browser doesn't also take it as "go back"
+        if (event.cancelable) event.preventDefault();
+        const atEnd = (category === 0 && dx > 0) || (category >= categoryCount - 1 && dx < 0);
+        dragX = atEnd ? dx / 4 : dx;
+    }
+
+    function onTouchEnd() {
+        const swiped = drag?.axis === "x";
+        drag = undefined;
+        if (!swiped) return;
+        const width = pagesBox?.clientWidth ?? 0;
+        const step = Math.abs(dragX) > 50 ? (dragX < 0 ? 1 : -1) : 0;
+        const next = category + step;
+        sliding = true;
+        if (step === 0 || next < 0 || next >= categoryCount) {
+            dragX = 0;
+            setTimeout(() => (sliding = false), slideMs);
+            return;
+        }
+        dragX = -step * width;
+        setTimeout(() => {
+            // In one update: the page that slid in takes the place it already sits in, without animating
+            sliding = false;
+            dragX = 0;
+            selectCategory(next).catch((e) => console.error(e));
+        }, slideMs);
     }
 
     let resizeObserver: ResizeObserver | undefined;
@@ -149,19 +201,17 @@
     $: observe(tilesBox, tiles);
     $: if (pills) updatePills();
 
+    // While the card is open, a sideways swipe anywhere on it never makes the browser go back a page
+    let rootOverscroll = "";
     onMount(() => {
-        // The preview turns on its own, slowly, until you rotate it yourself
-        if (!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
-            autoTurn = setInterval(() => {
-                turn = (turn + 1) % turnOrder.length;
-                direction = turnOrder[turn];
-            }, 2400);
-        }
+        rootOverscroll = document.documentElement.style.overscrollBehaviorX;
+        document.documentElement.style.overscrollBehaviorX = "none";
     });
 
     onDestroy(() => {
-        stopAutoTurn();
         resizeObserver?.disconnect();
+        clearTimeout(neighboursTimer);
+        document.documentElement.style.overscrollBehaviorX = rootOverscroll;
     });
 </script>
 
@@ -289,13 +339,27 @@
                             style={tilesHeight ? `height: ${tilesHeight}px;` : ""}
                         >
                             <div
-                                class="woka-tiles-scroll h-full overflow-y-auto"
-                                bind:this={tiles}
-                                on:scroll={updateScroll}
+                                class="woka-pages h-full"
+                                class:woka-pages-sliding={sliding}
+                                bind:this={pagesBox}
                                 on:touchstart|passive={onTouchStart}
-                                on:touchend|passive={onTouchEnd}
+                                on:touchmove|nonpassive={onTouchMove}
+                                on:touchend={onTouchEnd}
+                                on:touchcancel={onTouchEnd}
                             >
-                                <slot name="tiles" />
+                                {#each pageIndexes as index (index)}
+                                    <div
+                                        class="woka-tiles-scroll h-full overflow-y-auto"
+                                        class:woka-page-side={index !== category}
+                                        style="transform: translateX(calc({(index - category) * 100}% + {dragX}px));"
+                                        aria-hidden={index !== category ? "true" : undefined}
+                                        inert={index !== category}
+                                        use:pageScroller={index === category}
+                                        on:scroll={updateScroll}
+                                    >
+                                        <slot name="tiles" {index} active={index === category} />
+                                    </div>
+                                {/each}
                             </div>
                             {#if thumbHeight > 0}
                                 <span class="woka-scrollbar" aria-hidden="true">
@@ -404,9 +468,28 @@
     .woka-tiles {
         margin-right: 12px;
     }
+    .woka-pages {
+        position: relative;
+        overflow: hidden;
+        border-radius: 14px;
+        touch-action: pan-y;
+        overscroll-behavior-x: none;
+    }
     .woka-tiles-scroll {
         scrollbar-width: none;
         border-radius: 14px;
+    }
+    .woka-page-side {
+        position: absolute;
+        inset: 0;
+    }
+    .woka-pages-sliding .woka-tiles-scroll {
+        transition: transform 220ms ease-out;
+    }
+    @media (prefers-reduced-motion: reduce) {
+        .woka-pages-sliding .woka-tiles-scroll {
+            transition: none;
+        }
     }
     .woka-tiles-scroll::-webkit-scrollbar {
         display: none;

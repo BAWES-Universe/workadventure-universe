@@ -73,10 +73,14 @@
         const all = collections.flatMap((collection, index) => collection.textures.map((t) => ({ index, t })));
         if (all.length === 0) return;
         const pick = all[Math.floor(Math.random() * all.length)];
-        collectionIndex = pick.index;
+        // Through the card, so the collection's pill scrolls into view too
+        if (card) await card.selectCategory(pick.index);
+        else collectionIndex = pick.index;
         await tick();
         select(pick.t.id);
     }
+
+    let card: WokaCard | undefined;
 
     function columns(): number {
         const grid = document.getElementById("woka-grid");
@@ -99,6 +103,8 @@
         else if (event.key === "ArrowUp") next = Math.max(index - columns(), 0);
         else if (event.key === "ArrowDown") next = Math.min(index + columns(), textures.length - 1);
         else if (event.key === "Enter") {
+            // A focused button (Randomize, Build, Save…) does its own job on Enter; tiles let Enter save
+            if (event.target instanceof HTMLButtonElement && event.target.getAttribute("role") !== "radio") return;
             enterPressed = true;
             return;
         } else return;
@@ -127,6 +133,7 @@
 </script>
 
 <WokaCard
+    bind:this={card}
     eyebrow={$LL.woka.selectWoka.eyebrow()}
     title={$LL.woka.selectWoka.heading()}
     {selectedTextures}
@@ -149,18 +156,21 @@
         {$LL.woka.selectWoka.save()}
     </svelte:fragment>
 
+    <!-- The card also draws the collections on either side, ready to slide in: only the one on screen has the ids -->
     <div
         slot="tiles"
-        id="woka-grid"
+        let:index
+        let:active
+        id={active ? "woka-grid" : undefined}
         class="grid grid-cols-4 md:grid-cols-6 gap-2 p-1"
         role="radiogroup"
         aria-label={$LL.woka.selectWoka.heading()}
     >
-        {#each textures as texture (texture.id)}
+        {#each collections[index]?.textures ?? [] as texture (texture.id)}
             <button
                 type="button"
                 role="radio"
-                id="woka-{texture.id}"
+                id={active ? `woka-${texture.id}` : undefined}
                 class="u-join-tile"
                 aria-checked={selectedId === texture.id}
                 aria-label={texture.name}

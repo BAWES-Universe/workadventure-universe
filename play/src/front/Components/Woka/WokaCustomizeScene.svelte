@@ -4,11 +4,11 @@
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { joinDesktopStore } from "../../Stores/JoinDesktopStore";
     import HatOutlineIcon from "../Join/HatOutlineIcon.svelte";
-    import type { WokaBodyPart, WokaData } from "./WokaTypes";
+    import type { WokaBodyPart, WokaData, WokaTexture } from "./WokaTypes";
     import WokaImage from "./WokaImage.svelte";
     import WokaCard from "./WokaCard.svelte";
     import { fetchWokaData, getWokaTextureUrl, texturesByPart } from "./WokaData";
-    import { IconArrowLeft, IconCheck, IconEye, IconEyeglass, IconPalette, IconScissors, IconShirt } from "@wa-icons";
+    import { IconCheck, IconEye, IconEyeglass, IconLayoutGrid, IconPalette, IconScissors, IconShirt } from "@wa-icons";
 
     export let back: () => void;
     export let saveAndContinue: (texturesId: string[]) => void;
@@ -32,7 +32,12 @@
         icon: partIcons[index],
     }));
     // Every option of the part, across its collections
-    $: options = (wokaData?.[part]?.collections ?? []).flatMap((collection) => collection.textures);
+    $: options = partOptions(part, wokaData);
+
+    function partOptions(bodyPart: WokaBodyPart | undefined, data: WokaData | null): WokaTexture[] {
+        if (!bodyPart) return [];
+        return (data?.[bodyPart]?.collections ?? []).flatMap((collection) => collection.textures);
+    }
 
     async function loadWokaData() {
         isLoading = true;
@@ -71,13 +76,15 @@
     }
 
     // Randomize picks every part from all of its collections
-    function randomize() {
+    async function randomize() {
         const next = { ...selectedTextures };
         for (const p of bodyPartOrder) {
             const all = (wokaData?.[p]?.collections ?? []).flatMap((collection) => collection.textures);
             if (all.length > 0) next[p] = all[Math.floor(Math.random() * all.length)].id;
         }
         selectedTextures = next;
+        await tick();
+        scrollToSelected();
     }
 
     async function nextPart() {
@@ -108,6 +115,8 @@
         else if (event.key === "ArrowUp") next = Math.max(index - columns(), 0);
         else if (event.key === "ArrowDown") next = Math.min(index + columns(), options.length - 1);
         else if (event.key === "Enter") {
+            // A focused button (Randomize, Build, Save…) does its own job on Enter; tiles let Enter save
+            if (event.target instanceof HTMLButtonElement && event.target.getAttribute("role") !== "radio") return;
             enterPressed = true;
             return;
         } else return;
@@ -159,32 +168,35 @@
         {$LL.woka.customWoka.nextPart()}
     </svelte:fragment>
 
+    <!-- The card also draws the parts on either side, ready to slide in: only the one on screen has the ids -->
     <div
         slot="tiles"
-        id="woka-grid"
+        let:index
+        let:active
+        id={active ? "woka-grid" : undefined}
         class="grid grid-cols-4 md:grid-cols-6 gap-2 p-1"
         role="radiogroup"
-        aria-label={categories[partIndex]?.label}
+        aria-label={categories[index]?.label}
     >
-        {#each options as texture (texture.id)}
+        {#each partOptions(bodyPartOrder[index], wokaData) as texture (texture.id)}
             <button
                 type="button"
                 role="radio"
-                id="texture-{part}-{texture.id}"
+                id={active ? `texture-${bodyPartOrder[index]}-${texture.id}` : undefined}
                 class="u-join-tile"
-                aria-checked={selectedTextures[part] === texture.id}
+                aria-checked={selectedTextures[bodyPartOrder[index]] === texture.id}
                 aria-label={texture.name}
                 on:click={() => select(texture.id)}
             >
                 <!-- Each option on your own WOKA -->
                 <WokaImage
-                    selectedTextures={{ ...selectedTextures, [part]: texture.id }}
+                    selectedTextures={{ ...selectedTextures, [bodyPartOrder[index]]: texture.id }}
                     {wokaData}
                     getTextureUrl={getWokaTextureUrl}
                     canvasSize={tileSize}
                     {direction}
                 />
-                {#if selectedTextures[part] === texture.id}
+                {#if selectedTextures[bodyPartOrder[index]] === texture.id}
                     <span class="u-join-tile-check"><IconCheck font-size="12" /></span>
                 {/if}
             </button>
@@ -192,9 +204,11 @@
     </div>
 
     <svelte:fragment slot="footer">
-        <button type="button" class="u-join-btn u-cta-secondary wokaBuildBack" on:click={back}>
-            <IconArrowLeft font-size="18" />
-            {$LL.woka.customWoka.back()}
+        <!-- Build and the ready-made WOKAs are two modes: this switches mode, it isn't a step back -->
+        <button type="button" class="u-join-btn u-cta-secondary wokaBuildBack !px-3 md:!px-5" on:click={back}>
+            <IconLayoutGrid font-size="16" />
+            <span class="md:hidden">{$LL.woka.customWoka.presetsShort()}</span>
+            <span class="hidden md:inline">{$LL.woka.customWoka.presets()}</span>
         </button>
         <button
             type="button"

@@ -25,17 +25,10 @@
     import { hideHelpCameraSettings, showHelpCameraSettings } from "../../Stores/HelpSettingsStore";
     import bgMap from "../images/map-exemple.png";
     import JoinLegal from "../Join/JoinLegal.svelte";
+    import USelect from "../UI/USelect.svelte";
     import MyWoka from "../Join/MyWoka.svelte";
     import HorizontalSoundMeterWidget from "./HorizontalSoundMeterWidget.svelte";
-    import {
-        IconCamera,
-        IconChevronDown,
-        IconHeadphonesOutline,
-        IconLock,
-        IconMicrophoneOn,
-        IconPlay,
-        IconX,
-    } from "@wa-icons";
+    import { IconCamera, IconHeadphonesOutline, IconLock, IconMicrophoneOn, IconPlay, IconX } from "@wa-icons";
 
     export let game: Game;
 
@@ -51,7 +44,8 @@
     let lastMicrophone: string | undefined = undefined;
     let cameraBlocked = false;
     let microphoneBlocked = false;
-    const sound = new Audio("/resources/objects/webrtc-in.mp3");
+    // The test sound is your join sound (Settings > Sound), played on the speaker picked here
+    const sound = new Audio();
 
     function submit() {
         selectCamera(selectedCamera);
@@ -137,7 +131,6 @@
         requestedMicrophoneState.enableMicrophone();
 
         batchGetUserMediaStore.commitChanges();
-        sound.load();
         checkPermissions().catch((e) => console.warn(e));
     });
 
@@ -218,14 +211,30 @@
         popupStore.removePopup("cameraAccessDenied");
     }
 
-    function playSoundClick() {
-        sound.play().catch((e) => console.error(e));
+    async function playSoundClick() {
+        sound.src = `/resources/objects/webrtc-in-${localUserStore.getBubbleSound()}.mp3`;
+        sound.volume = 0.5;
+        const speaker = $speakerSelectedStore;
+        const output = sound as HTMLAudioElement & { setSinkId?: (sinkId: string) => Promise<void> };
+        if (speaker && typeof output.setSinkId === "function") {
+            await output.setSinkId(speaker).catch((e) => console.warn("Cannot play on the chosen speaker", e));
+        }
+        await sound.play();
     }
 
-    function onSpeakerChange(event: Event) {
-        selectSpeaker((event.currentTarget as HTMLSelectElement).value);
-        playSoundClick();
+    function onSpeakerChange(deviceId: string) {
+        selectSpeaker(deviceId);
+        playSoundClick().catch((e) => console.error(e));
     }
+
+    const deviceOptions = (devices: MediaDeviceInfo[] | undefined) =>
+        (devices ?? []).map((device) => ({
+            value: device.deviceId,
+            label: StringUtils.normalizeDeviceName(device.label),
+        }));
+    $: cameraOptions = deviceOptions($cameraListStore);
+    $: microphoneOptions = deviceOptions($microphoneListStore);
+    $: speakerOptions = deviceOptions($speakerListStore);
 
     $: cameraOn = $requestedCameraState;
     $: microphoneOn = $requestedMicrophoneState;
@@ -329,23 +338,16 @@
                         />
                     </span>
                 </div>
-                <label class="u-join-field" class:opacity-50={!cameraOn}>
-                    <IconCamera font-size="18" class="flex-none text-white/80" />
-                    <select
-                        aria-label={$LL.camera.enable.camera()}
-                        value={selectedCamera ?? ""}
-                        disabled={!cameraOn || !$cameraListStore?.length}
-                        on:change={(e) => selectCamera(e.currentTarget.value || undefined)}
-                    >
-                        {#if !$cameraListStore?.length}
-                            <option value="">{$LL.camera.enable.noDevice()}</option>
-                        {/if}
-                        {#each $cameraListStore ?? [] as camera (camera.deviceId)}
-                            <option value={camera.deviceId}>{StringUtils.normalizeDeviceName(camera.label)}</option>
-                        {/each}
-                    </select>
-                    <IconChevronDown font-size="16" class="flex-none text-white/70 pointer-events-none" />
-                </label>
+                <USelect
+                    label={$LL.camera.enable.camera()}
+                    icon={IconCamera}
+                    value={selectedCamera ?? lastCamera}
+                    options={cameraOptions}
+                    placeholder={$LL.camera.enable.noDevice()}
+                    disabled={!cameraOn || !$cameraListStore?.length}
+                    dim={!cameraOn}
+                    onSelect={(deviceId) => selectCamera(deviceId)}
+                />
             </div>
 
             <!-- MICROPHONE AND SPEAKER -->
@@ -366,25 +368,16 @@
                         />
                     </span>
                 </div>
-                <label class="u-join-field" class:opacity-50={!microphoneOn}>
-                    <IconMicrophoneOn font-size="18" class="flex-none text-white/80" />
-                    <select
-                        aria-label={$LL.camera.enable.microphone()}
-                        value={selectedMicrophone ?? ""}
-                        disabled={!microphoneOn || !$microphoneListStore?.length}
-                        on:change={(e) => selectMicrophone(e.currentTarget.value || undefined)}
-                    >
-                        {#if !$microphoneListStore?.length}
-                            <option value="">{$LL.camera.enable.noDevice()}</option>
-                        {/if}
-                        {#each $microphoneListStore ?? [] as microphone (microphone.deviceId)}
-                            <option value={microphone.deviceId}
-                                >{StringUtils.normalizeDeviceName(microphone.label)}</option
-                            >
-                        {/each}
-                    </select>
-                    <IconChevronDown font-size="16" class="flex-none text-white/70 pointer-events-none" />
-                </label>
+                <USelect
+                    label={$LL.camera.enable.microphone()}
+                    icon={IconMicrophoneOn}
+                    value={selectedMicrophone ?? lastMicrophone}
+                    options={microphoneOptions}
+                    placeholder={$LL.camera.enable.noDevice()}
+                    disabled={!microphoneOn || !$microphoneListStore?.length}
+                    dim={!microphoneOn}
+                    onSelect={(deviceId) => selectMicrophone(deviceId)}
+                />
                 {#if microphoneBlocked}
                     <p class="u-join-error">
                         {$LL.camera.enable.microphoneBlocked()}
@@ -401,25 +394,17 @@
 
                 {#if showSpeaker}
                     <div class="u-join-label mt-1.5 md:mt-2"><span>{$LL.camera.enable.speaker()}</span></div>
-                    <label class="u-join-field">
-                        <IconHeadphonesOutline font-size="18" class="flex-none text-white/80" />
-                        <select
-                            aria-label={$LL.camera.enable.speaker()}
-                            value={$speakerSelectedStore ?? ""}
-                            on:change={onSpeakerChange}
-                        >
-                            {#each $speakerListStore ?? [] as speaker (speaker.deviceId)}
-                                <option value={speaker.deviceId}
-                                    >{StringUtils.normalizeDeviceName(speaker.label)}</option
-                                >
-                            {/each}
-                        </select>
-                        <IconChevronDown font-size="16" class="flex-none text-white/70 pointer-events-none" />
-                    </label>
+                    <USelect
+                        label={$LL.camera.enable.speaker()}
+                        icon={IconHeadphonesOutline}
+                        value={$speakerSelectedStore || speakerOptions[0]?.value}
+                        options={speakerOptions}
+                        onSelect={onSpeakerChange}
+                    />
                     <button
                         type="button"
                         class="u-join-btn u-join-btn-sm u-cta-secondary justify-self-start"
-                        on:click={playSoundClick}
+                        on:click={() => playSoundClick().catch((e) => console.error(e))}
                     >
                         <IconPlay font-size="14" />
                         {$LL.camera.enable.testSound()}

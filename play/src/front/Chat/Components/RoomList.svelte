@@ -211,20 +211,20 @@
                             <p class="m-0 mt-1 text-xs leading-5 text-white/60">{$LL.chat.guest.intro()}</p>
                             <ul class="m-0 mt-3 flex list-none flex-col gap-2.5 p-0 text-[13px] leading-5">
                                 <li class="flex items-start gap-3">
-                                    <span class="guest-tile" aria-hidden="true"><IconTools font-size="16" /></span>
+                                    <span class="guest-tile" aria-hidden="true"><IconTools font-size="18" /></span>
                                     <span>{$LL.chat.guest.build()}</span>
                                 </li>
                                 <li class="flex items-start gap-3">
-                                    <span class="guest-tile" aria-hidden="true"><IconWorldSearch font-size="16" /></span
+                                    <span class="guest-tile" aria-hidden="true"><IconWorldSearch font-size="18" /></span
                                     >
                                     <span>{$LL.chat.guest.orbit()}</span>
                                 </li>
                                 <li class="flex items-start gap-3">
-                                    <span class="guest-tile" aria-hidden="true"><IconMessage font-size="16" /></span>
+                                    <span class="guest-tile" aria-hidden="true"><IconMessage font-size="18" /></span>
                                     <span>{$LL.chat.guest.messageAnyone()}</span>
                                 </li>
                                 <li class="flex items-start gap-3">
-                                    <span class="guest-tile" aria-hidden="true"><IconUserCircle font-size="16" /></span>
+                                    <span class="guest-tile" aria-hidden="true"><IconUserCircle font-size="18" /></span>
                                     <span>{$LL.chat.guest.keepWoka()}</span>
                                 </li>
                             </ul>
@@ -283,17 +283,14 @@
 </div>
 
 <style>
-    /* The small icon tiles of the guest card: a purple → blue gradient, like the "+" menu's. */
+    /* The guest card's icons: plain white, with no box behind them, like the game menu's. */
     .guest-tile {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        width: 1.75rem;
-        height: 1.75rem;
+        width: 1.25rem;
+        height: 1.25rem;
         flex-shrink: 0;
-        border-radius: 0.5rem;
         color: #fff;
-        background: linear-gradient(135deg, rgba(134, 41, 252, 0.9), rgba(65, 86, 246, 0.9));
-        box-shadow: 0 4px 10px -4px rgba(134, 41, 252, 0.7);
     }
 </style>
