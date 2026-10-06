@@ -8,6 +8,7 @@
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import type { EntityVariant } from "../../../Phaser/Game/MapEditor/Entities/EntityVariant";
     import { mobileLayoutStore } from "../../../Stores/MobileLayoutStore";
+    import { gameSceneStore } from "../../../Stores/GameSceneStore";
     import {
         mapEditorDeleteCustomEntityEventStore,
         mapEditorEntityModeStore,
@@ -34,10 +35,12 @@
     const CUSTOM = "Custom";
     const PREVIEW_COUNT = 6;
 
-    // Safe lookup: while the map changes there may be no scene, and the panel then shows no objects.
-    const variantsStore =
-        gameManager.tryGetCurrentGameScene()?.getEntitiesCollectionsManager().getEntitiesPrefabsVariantStore() ??
-        readable<EntityVariant[]>([]);
+    // The objects of the room on screen, followed when the room changes. While the map changes there may be no scene,
+    // and the panel then shows no objects.
+    $: variantsStore =
+        ($gameSceneStore ?? gameManager.tryGetCurrentGameScene())
+            ?.getEntitiesCollectionsManager()
+            .getEntitiesPrefabsVariantStore() ?? readable<EntityVariant[]>([]);
 
     let searchTerm = "";
     let editingUpload = false;
