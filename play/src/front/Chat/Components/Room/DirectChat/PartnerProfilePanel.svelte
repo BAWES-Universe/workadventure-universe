@@ -90,7 +90,7 @@
     <div class="p-2 flex items-center gap-1 border border-solid border-x-0 border-b border-t-0 border-white/10">
         <button
             type="button"
-            class="p-3 hover:bg-white/10 rounded-2xl aspect-square w-12"
+            class="p-3 text-white hover:bg-white/10 rounded-2xl aspect-square w-12"
             data-testid="partnerProfileBack"
             aria-label={$LL.chat.directChat.profile.title()}
             on:click={() => dispatch("close")}
@@ -228,13 +228,13 @@
                     <div class="flex gap-2">
                         <button
                             type="button"
-                            class="m-0 flex-1 rounded-lg bg-white/10 px-2 py-2 text-sm hover:bg-white/20"
+                            class="m-0 flex-1 rounded-lg bg-white/10 px-2 py-2 text-sm text-white [font-family:inherit] hover:bg-white/20"
                             on:click={() => (confirmingDelete = false)}
                             >{$LL.chat.directChat.deleteChat.cancel()}</button
                         >
                         <button
                             type="button"
-                            class="m-0 flex-1 rounded-lg bg-danger-900 px-2 py-2 text-sm font-bold hover:bg-danger"
+                            class="m-0 flex-1 rounded-lg bg-danger-900 px-2 py-2 text-sm font-bold text-white [font-family:inherit] hover:bg-danger"
                             data-testid="partnerDeleteConfirmButton"
                             on:click={deleteChat}>{$LL.chat.directChat.deleteChat.confirmButton()}</button
                         >
@@ -259,10 +259,6 @@
 </div>
 
 <style lang="scss">
-    /* Opaque, so the conversation underneath doesn't show through; same colours as the chat panel. */
-    .partner-profile {
-        background: linear-gradient(160deg, rgb(31 28 47), rgb(var(--u-ink)));
-    }
     .partner-presence {
         border: 3px solid rgb(var(--u-ink));
     }
@@ -274,6 +270,7 @@
         margin: 0;
         padding: 0.65rem 0.25rem 0.6rem;
         border-radius: 14px;
+        font-family: inherit;
         font-size: 0.8rem;
         font-weight: 600;
         color: #fff;

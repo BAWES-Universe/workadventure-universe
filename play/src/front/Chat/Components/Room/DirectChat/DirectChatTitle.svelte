@@ -33,7 +33,7 @@
 
 <button
     type="button"
-    class="m-0 flex min-w-0 max-w-full items-center gap-2.5 rounded-xl py-1 pe-2 ps-1 text-start hover:bg-white/10"
+    class="m-0 flex min-w-0 max-w-full items-center gap-2.5 rounded-xl py-1 pe-2 ps-1 text-start text-white [font:inherit] hover:bg-white/10"
     aria-label={$LL.chat.directChat.openProfile({ name: $roomName })}
     data-testid="openPartnerProfile"
     on:click={() => dispatch("openProfile")}
