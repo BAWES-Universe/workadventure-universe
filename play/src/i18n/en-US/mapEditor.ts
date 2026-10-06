@@ -714,8 +714,8 @@ const mapEditor: BaseTranslation = {
                 },
                 route: {
                     title: "{name:string}'s route",
-                    hintPhone: "Tap the map to add a stop. Drag a stop to move it, tap it to remove it.",
-                    hintDesktop: "Click the map to add a stop. Drag a stop to move it, click it to remove it.",
+                    hintPhone: "Tap the map to add a stop. Drag a stop to move it, tap its × to remove it.",
+                    hintDesktop: "Click the map to add a stop. Drag a stop to move it, click its × to remove it.",
                     undo: "Undo",
                     done: "Done",
                 },

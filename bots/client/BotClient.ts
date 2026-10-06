@@ -176,7 +176,8 @@ export class BotClient {
             if (this.config.companionTextureId) {
                 params.set('companionTextureId', this.config.companionTextureId);
             }
-            params.set('availabilityStatus', '0'); // ONLINE
+            // ONLINE (1). This used to send 0, which is UNCHANGED: people saw the bot as offline in the People list
+            params.set('availabilityStatus', '1');
             params.set('version', apiVersionHash); // Imported from @workadventure/messages
             params.set('chatID', '');
             params.set('roomName', '');

@@ -2,6 +2,7 @@
     import { onMount, onDestroy } from "svelte";
     import { get } from "svelte/store";
     import LL from "../../../i18n/i18n-svelte";
+    import type { TranslationFunctions } from "../../../i18n/i18n-types";
     import { editPanelBackStore, editPlacingBarStore, type PlacingBar } from "../../Stores/EditModeStore";
     import { mapEditorVisibilityStore } from "../../Stores/MapEditorStore";
     import { mobileLayoutStore } from "../../Stores/MobileLayoutStore";
@@ -608,9 +609,9 @@
     let bottomBarShown = false;
     $: syncBottomBar(
         currentMode === "waypoint-edit" && selectedBot
-            ? routeBar(selectedBot, $routeUndoCountStore, $mobileLayoutStore)
+            ? routeBar(selectedBot, $routeUndoCountStore, $mobileLayoutStore, $LL)
             : $placingBotStore
-            ? placeBar($placingBotStore, $mobileLayoutStore)
+            ? placeBar($placingBotStore, $mobileLayoutStore, $LL)
             : undefined
     );
 
@@ -626,8 +627,9 @@
         editPlacingBarStore.set(bar);
     }
 
-    function routeBar(bot: BotData, undoCount: number, phone: boolean): PlacingBar {
-        const page = $LL.mapEditor.edit.bots.page;
+    // The translations come in as an argument so the bar follows a change of language
+    function routeBar(bot: BotData, undoCount: number, phone: boolean, ll: TranslationFunctions): PlacingBar {
+        const page = ll.mapEditor.edit.bots.page;
         const stops = routeStops(bot).length;
         const loops = bot.behaviorConfig.loop !== false;
         return {
@@ -652,8 +654,8 @@
     }
 
     // A new bot waits for its spot: the map must stay visible, so the panel never covers it (on a phone it did)
-    function placeBar(bot: BotData, phone: boolean): PlacingBar {
-        const page = $LL.mapEditor.edit.bots.page;
+    function placeBar(bot: BotData, phone: boolean, ll: TranslationFunctions): PlacingBar {
+        const page = ll.mapEditor.edit.bots.page;
         return {
             title: page.place.title({ name: bot.name || "" }),
             subtitle: phone ? page.place.tap() : page.place.click(),

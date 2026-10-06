@@ -390,6 +390,10 @@ export function updateBotPosition(botId: string, x: number, y: number): void {
     botPreviewsStore.update((bots) => {
         const bot = bots.get(botId);
         if (bot) {
+            // On a route, stop 1 is where the bot starts, so it moves with the bot. The other stops stay where they
+            // are: they are map positions, not offsets from the bot.
+            const stops = routeStops(bot);
+            const patrolWaypoints = walksRoute(bot) && stops.length > 0 ? [{ x, y }, ...stops.slice(1)] : undefined;
             const updatedBot: BotData = {
                 ...bot,
                 behaviorConfig: {
@@ -398,7 +402,7 @@ export function updateBotPosition(botId: string, x: number, y: number): void {
                         ...bot.behaviorConfig.assignedSpace,
                         center: { x, y },
                     },
-                    // The route stays where it is: stops are map positions, not offsets from the bot
+                    ...(patrolWaypoints ? { patrolWaypoints } : {}),
                 },
             };
             const newMap = new Map(bots);
@@ -410,8 +414,11 @@ export function updateBotPosition(botId: string, x: number, y: number): void {
                 selectedBotStore.set(updatedBot);
             }
 
-            // Send live update to running bot (teleport it)
-            void sendLiveUpdate(botId, { position: { x, y } });
+            // Send live update to running bot (teleport it), with the route's new stop 1
+            void sendLiveUpdate(botId, {
+                position: { x, y },
+                ...(patrolWaypoints ? { behaviorConfig: { patrolWaypoints } } : {}),
+            });
 
             // Save the new spot now: a drag ends once, and the editor's auto-save only covers the selected
             // bot, so a bot dragged without being selected (or just before the editor closes) kept its old spot.

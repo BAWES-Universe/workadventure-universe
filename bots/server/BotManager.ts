@@ -23,7 +23,13 @@ import { SelfImprovementLoop } from '../improvement/SelfImprovementLoop';
 import type { AutoPilotImprovement } from '../services/AutoPilotImprovement';
 import * as Sentry from '@sentry/node';
 import { resolveWsUrl } from '../utils/resolveWsUrl';
-import { buildBehaviorConfig, type LegacyBehaviorType } from '../behaviors/behaviorModel';
+import {
+    buildBehaviorConfig,
+    resolveBehaviorModel,
+    waypointsOf,
+    type BehaviorModel,
+    type LegacyBehaviorType,
+} from '../behaviors/behaviorModel';
 
 export interface BotInstance {
     botId: string;
@@ -57,6 +63,31 @@ export function idleHomeAfterSwitch(
     }
     const fromUpdate: { x: number; y: number } | undefined = updates.behaviorConfig?.assignedSpace?.center;
     return fromUpdate ?? config.assignedSpace?.center;
+}
+
+/**
+ * Where a route bot goes when the editor changes its route: onto stop 1, so it starts walking the new route from the
+ * beginning instead of walking back from wherever it was. Only when the route changed, or the bot just started
+ * walking one: the editor's saves repeat the same stops, and those leave the bot where it is.
+ */
+export function routeStartAfterEdit(
+    previousType: string | undefined,
+    previousConfig: Record<string, unknown> | undefined,
+    nextModel: BehaviorModel,
+    nextConfig: Record<string, unknown> | undefined
+): { x: number; y: number } | undefined {
+    if (nextModel.moves !== 'route') {
+        return undefined;
+    }
+    const stops = waypointsOf(nextConfig ?? {});
+    if (stops.length === 0) {
+        return undefined;
+    }
+    const wasRoute = resolveBehaviorModel(previousType, previousConfig).moves === 'route';
+    const before = waypointsOf(previousConfig ?? {});
+    const sameStops =
+        before.length === stops.length && before.every((p, i) => p.x === stops[i].x && p.y === stops[i].y);
+    return wasRoute && sameStops ? undefined : { x: stops[0].x, y: stops[0].y };
 }
 
 type BehaviorClasses = {
@@ -639,6 +670,7 @@ export class BotManager {
             if (updates.behaviorType) {
                 instance.config.behaviorType = updates.behaviorType as 'idle' | 'patrol' | 'social';
             }
+            const previousBehaviorConfig = instance.config.behaviorConfig;
             if (updates.behaviorConfig) {
                 instance.config.behaviorConfig = { ...instance.config.behaviorConfig, ...updates.behaviorConfig };
             }
@@ -654,6 +686,18 @@ export class BotManager {
             behavior.setServices(this.aiService, this.adminApiService, this.conversationStorage, this.responseProcessor, this.metricsCollector);
             if (behavior.setConversationMemory) {
                 behavior.setConversationMemory(this.conversationMemory);
+            }
+            // A route that was just drawn or changed starts again from stop 1: the bot is put there before the new
+            // behavior starts, so it walks the new route from the beginning
+            const routeStart = routeStartAfterEdit(
+                previousBehaviorType,
+                previousBehaviorConfig,
+                built.model,
+                instance.config.behaviorConfig
+            );
+            if (routeStart) {
+                instance.client.teleportTo(routeStart.x, routeStart.y);
+                changes.push('position');
             }
             instance.client.setBehavior(behavior);
 

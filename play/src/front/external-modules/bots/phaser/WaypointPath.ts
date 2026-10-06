@@ -13,8 +13,11 @@ const ARROW_SIZE = 10;
 const DASH = 10;
 const GAP = 7;
 const WAYPOINT_DEPTH = 100002; // just above the bots (BotPreview's depth)
-// A press that moves less than this before release is a tap (which removes the stop), not a drag
-const TAP_MAX_DISTANCE = 6;
+// The × that removes a stop, on its top-right like before the redesign: red, with a white edge
+const REMOVE_RADIUS = 11;
+const REMOVE_HIT_RADIUS = 14; // a little larger than it looks, so it is easy to hit with a finger
+const REMOVE_OFFSET = 20;
+const REMOVE_FILL = 0xef4444;
 
 export enum WaypointPathEvent {
     WaypointSelected = "WaypointPath:WaypointSelected",
@@ -32,6 +35,7 @@ interface WaypointMarker {
     container: Phaser.GameObjects.Container;
     circle: Phaser.GameObjects.Arc;
     label: Phaser.GameObjects.Text;
+    removeButton?: Phaser.GameObjects.Container;
 }
 
 /**
@@ -40,7 +44,7 @@ interface WaypointMarker {
  * Features:
  * - Large, easy to grab waypoint markers
  * - Drag markers to reposition
- * - Tap a marker to remove it (Undo in the route bar puts it back)
+ * - The × on a marker removes it (Undo in the route bar puts it back). Stop 1 has none: the bot starts there
  * - Directional arrows showing patrol direction
  * - A loop draws the way back from the last stop to the first
  */
@@ -109,13 +113,18 @@ export class WaypointPath extends Phaser.GameObjects.Container {
     public setEditing(editing: boolean): void {
         this.isEditing = editing;
 
-        // Update marker interactivity
-        this.markers.forEach((marker, index) => {
-            void index;
+        // Update marker interactivity; the × only shows while editing
+        this.markers.forEach((marker) => {
             if (editing) {
                 marker.container.setInteractive({ cursor: "grab", draggable: true });
             } else {
                 marker.container.disableInteractive();
+            }
+            marker.removeButton?.setVisible(editing);
+            if (editing) {
+                marker.removeButton?.setInteractive();
+            } else {
+                marker.removeButton?.disableInteractive();
             }
         });
 
@@ -285,20 +294,11 @@ export class WaypointPath extends Phaser.GameObjects.Container {
             container.setInteractive({ cursor: "grab", draggable: true });
         }
 
-        // A tap (press and release without moving) removes the stop; a drag moves it
-        let pressedAt: { x: number; y: number } | undefined;
-        container.on(Phaser.Input.Events.POINTER_DOWN, (pointer: Phaser.Input.Pointer) => {
-            pressedAt = { x: pointer.x, y: pointer.y };
-        });
-        container.on(Phaser.Input.Events.POINTER_UP, (pointer: Phaser.Input.Pointer) => {
-            const start = pressedAt;
-            pressedAt = undefined;
-            if (!this.isEditing || !start || this.isDragging) return;
-            if (Math.hypot(pointer.x - start.x, pointer.y - start.y) > TAP_MAX_DISTANCE) return;
-            const currentIndex = container.getData("waypointIndex") as number;
-            // After this event: removing rebuilds the markers, including this one
-            setTimeout(() => this.removeWaypoint(currentIndex), 0);
-        });
+        // The × removes the stop. Stop 1 has none: it is where the bot starts (and moves with the bot).
+        let removeButton: Phaser.GameObjects.Container | undefined;
+        if (index > 0) {
+            removeButton = this.createRemoveButton(container);
+        }
 
         // Hover effects
         container.on(Phaser.Input.Events.POINTER_OVER, () => {
@@ -353,7 +353,38 @@ export class WaypointPath extends Phaser.GameObjects.Container {
             );
         });
 
-        return { container, circle, label };
+        return { container, circle, label, removeButton };
+    }
+
+    /** The red × at a stop's top-right corner. A press on it removes the stop and does not start a drag. */
+    private createRemoveButton(marker: Phaser.GameObjects.Container): Phaser.GameObjects.Container {
+        const button = this.scene.add.container(REMOVE_OFFSET, -REMOVE_OFFSET);
+        const disc = this.scene.add.arc(0, 0, REMOVE_RADIUS, 0, 360, false, REMOVE_FILL, 1);
+        disc.setStrokeStyle(2, 0xffffff);
+        const cross = this.scene.add.text(0, 0, "×", { fontSize: "16px", fontStyle: "bold", color: "#ffffff" });
+        cross.setOrigin(0.5, 0.55);
+        button.add([disc, cross]);
+        button.setData("isDeleteButton", true); // BotEditorTool must not add a stop for this press
+        button.setInteractive({
+            hitArea: new Phaser.Geom.Circle(0, 0, REMOVE_HIT_RADIUS),
+            hitAreaCallback: Phaser.Geom.Circle.Contains, //eslint-disable-line @typescript-eslint/unbound-method
+            cursor: "pointer",
+        });
+        button.setVisible(this.isEditing);
+        if (!this.isEditing) {
+            button.disableInteractive();
+        }
+        button.on(
+            Phaser.Input.Events.POINTER_DOWN,
+            (_pointer: Phaser.Input.Pointer, _x: number, _y: number, event: Phaser.Types.Input.EventData) => {
+                event.stopPropagation();
+                const currentIndex = marker.getData("waypointIndex") as number;
+                // After this event: removing rebuilds the markers, including this one
+                setTimeout(() => this.removeWaypoint(currentIndex), 0);
+            }
+        );
+        marker.add(button);
+        return button;
     }
 
     /**
