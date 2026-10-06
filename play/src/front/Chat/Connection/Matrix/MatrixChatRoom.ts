@@ -368,6 +368,7 @@ export class MatrixChatRoom
             const { messageId, reactionKey } = reactionEvent;
             const existingMessageWithReactions = messages.get(messageId);
             if (existingMessageWithReactions) {
+                existingMessageWithReactions.followReactions();
                 const existingMessageReaction = existingMessageWithReactions.reactions.get(reactionKey);
                 if (existingMessageReaction) {
                     existingMessageReaction.addUser(event.getSender(), event.getId());
@@ -375,7 +376,9 @@ export class MatrixChatRoom
                 }
                 existingMessageWithReactions.reactions.set(
                     reactionKey,
-                    new MatrixChatMessageReaction(this.matrixRoom, event)
+                    new MatrixChatMessageReaction(this.matrixRoom, event, () =>
+                        existingMessageWithReactions.toggleReaction(reactionKey)
+                    )
                 );
                 return;
             }

@@ -1,5 +1,4 @@
 import type { MatrixEvent, Room } from "matrix-js-sdk";
-import { EventType, RelationType } from "matrix-js-sdk";
 import { MapStore } from "@workadventure/store-utils";
 import type { Writable } from "svelte/store";
 import { get, writable } from "svelte/store";
@@ -15,7 +14,8 @@ export class MatrixChatMessageReaction implements ChatMessageReaction {
     users: MapStore<string, ChatUserWithEventId>;
     reacted: Writable<boolean>;
 
-    constructor(private matrixRoom: Room, event: MatrixEvent) {
+    /** toggle turns my reaction with this emoji on or off, through the message so quick clicks queue up. */
+    constructor(private matrixRoom: Room, event: MatrixEvent, private toggle: () => Promise<void>) {
         const relation = event.getRelation();
         if (relation === null || relation.rel_type !== "m.annotation") {
             throw Error("Wrong matrix event object for MessageReaction");
@@ -59,31 +59,6 @@ export class MatrixChatMessageReaction implements ChatMessageReaction {
     }
 
     react() {
-        const userWithReactionEventId = this.users.get(this.matrixRoom.myUserId);
-        if (userWithReactionEventId === undefined) {
-            this.sendMyReaction().catch((error) => console.error(error));
-        } else {
-            this.removeMyReaction(userWithReactionEventId.eventId).catch((error) => console.error(error));
-        }
-    }
-
-    private async sendMyReaction() {
-        try {
-            await this.matrixRoom.client.sendEvent(this.matrixRoom.roomId, EventType.Reaction, {
-                "m.relates_to": { event_id: this.messageId, rel_type: RelationType.Annotation, key: this.key },
-            });
-        } catch (error) {
-            console.error(error);
-        }
-    }
-
-    private async removeMyReaction(myReactionEventId: string) {
-        try {
-            await this.matrixRoom.client
-                .redactEvent(this.matrixRoom.roomId, myReactionEventId)
-                .catch((error) => console.error(error));
-        } catch (error) {
-            console.error(error);
-        }
+        this.toggle().catch((error) => console.error(error));
     }
 }

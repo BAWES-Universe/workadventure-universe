@@ -1,5 +1,5 @@
 import type { MatrixEvent, Room } from "matrix-js-sdk";
-import { Direction, EventType, MatrixEventEvent, MsgType, RelationType } from "matrix-js-sdk";
+import { Direction, EventStatus, EventType, MatrixEventEvent, MsgType, RelationType } from "matrix-js-sdk";
 import type { Writable } from "svelte/store";
 import { writable } from "svelte/store";
 import { v4 as uuidv4 } from "uuid";
@@ -10,6 +10,17 @@ import { MatrixChatMessageReaction } from "./MatrixChatMessageReaction";
 import { MatrixChatRelation } from "./MatrixChatRelation";
 import type { MatrixMediaHold } from "./MatrixMedia";
 import { holdMatrixMedia } from "./MatrixMedia";
+
+/** My reaction with one emoji: what the last click asked for, and the event that is on the server now. */
+interface MyReaction {
+    want: boolean;
+    eventId: string | undefined;
+    clicks: number;
+    sync: Promise<void> | undefined;
+}
+
+/** Clicks closer together than this count as one burst: only where the burst ends is sent. */
+const REACTION_BURST_MS = 300;
 
 export class MatrixChatMessage implements ChatMessage {
     id: string;
@@ -29,6 +40,7 @@ export class MatrixChatMessage implements ChatMessage {
     readonly canReply = writable(true);
     private isShown = false;
     private mediaHold: MatrixMediaHold | undefined;
+    private myReactions = new Map<string, MyReaction>();
 
     /** In a direct chat (isDirect), only the person who sent a message can delete it. */
     constructor(private event: MatrixEvent, private room: Room, isQuotedMessage?: boolean, private isDirect = false) {
@@ -200,9 +212,23 @@ export class MatrixChatMessage implements ChatMessage {
         const sortedReactionByKey = reactionByKey.getSortedAnnotationsByKey() ?? [];
         sortedReactionByKey.forEach(([reactionKey, events]) => {
             events.forEach((event) => {
-                this.reactions.set(reactionKey, new MatrixChatMessageReaction(this.room, event));
+                // Everyone who reacted with this emoji, not only the last one: else my own reaction can look missing.
+                const reaction = this.reactions.get(reactionKey);
+                if (reaction) {
+                    reaction.addUser(event.getSender(), event.getId());
+                    return;
+                }
+                this.reactions.set(
+                    reactionKey,
+                    new MatrixChatMessageReaction(this.room, event, () => this.toggleReaction(reactionKey))
+                );
             });
         });
+    }
+
+    /** From its first reaction on, the message follows Matrix's own count of them, removals included. */
+    public followReactions() {
+        if (this.relations === undefined) this.initReactions();
     }
 
     private getQuotedMessage() {
@@ -282,13 +308,92 @@ export class MatrixChatMessage implements ChatMessage {
         this.isDeleted.set(true);
     }
 
-    async addReaction(reaction: string) {
+    addReaction(reaction: string): Promise<void> {
+        return this.toggleReaction(reaction);
+    }
+
+    /**
+     * Turns my reaction with this emoji on or off. Clicks made while one is still on its way only change what the
+     * last click asked for, so quick clicks end where the last one says and nothing is sent twice: the server refuses
+     * a second identical reaction, and a refused event holds back everything sent after it in the room.
+     */
+    toggleReaction(key: string): Promise<void> {
+        const current = this.myReactions.get(key);
+        if (current?.sync) {
+            current.want = !current.want;
+            current.clicks++;
+            return current.sync;
+        }
+        const eventId = this.myReactionEventId(key, current?.eventId);
+        const mine: MyReaction = { want: eventId === undefined, eventId, clicks: 0, sync: undefined };
+        this.myReactions.set(key, mine);
+        mine.sync = this.syncMyReaction(key, mine).finally(() => (mine.sync = undefined));
+        return mine.sync;
+    }
+
+    private myReactionEventId(key: string, lastSentId: string | undefined): string | undefined {
+        const known = this.reactions.get(key)?.users.get(this.room.myUserId)?.eventId;
+        // A "~" id is a local echo, never confirmed by the server.
+        if (known !== undefined && !known.startsWith("~") && !this.isRemoved(known)) return known;
+        // Sent from here and maybe not back from sync yet.
+        return lastSentId !== undefined && !this.isRemoved(lastSentId) ? lastSentId : undefined;
+    }
+
+    private isRemoved(eventId: string): boolean {
+        const event = this.room.findEventById(eventId);
+        return event !== undefined && (event.isRedacted() || event.localRedactionEvent() !== null);
+    }
+
+    private async syncMyReaction(key: string, mine: MyReaction): Promise<void> {
         try {
-            await this.room.client.sendEvent(this.room.roomId, EventType.Reaction, {
-                "m.relates_to": { key: reaction, rel_type: RelationType.Annotation, event_id: this.id },
-            });
+            // The first click is sent at once. Clicks after it only change mine.want until they stop, then one send
+            // or removal brings the server to the last one: the chat server slows down anyone sending many events.
+            // One request at a time on purpose, and only this loop writes mine.eventId.
+            for (;;) {
+                if (mine.want !== (mine.eventId !== undefined)) {
+                    if (mine.eventId === undefined) {
+                        // eslint-disable-next-line no-await-in-loop
+                        const { event_id } = await this.room.client.sendEvent(this.room.roomId, EventType.Reaction, {
+                            "m.relates_to": { key, rel_type: RelationType.Annotation, event_id: this.id },
+                        });
+                        // eslint-disable-next-line require-atomic-updates
+                        mine.eventId = event_id;
+                    } else {
+                        // eslint-disable-next-line no-await-in-loop
+                        await this.room.client.redactEvent(this.room.roomId, mine.eventId);
+                        // eslint-disable-next-line require-atomic-updates
+                        mine.eventId = undefined;
+                    }
+                }
+                // Wait for the clicks to stop.
+                let clicks: number;
+                do {
+                    clicks = mine.clicks;
+                    // eslint-disable-next-line no-await-in-loop
+                    await new Promise<void>((resolve) => {
+                        setTimeout(resolve, REACTION_BURST_MS);
+                    });
+                } while (mine.clicks !== clicks);
+                if (mine.want === (mine.eventId !== undefined)) return;
+            }
         } catch (error) {
             console.error(error);
+            mine.want = mine.eventId !== undefined;
+            this.dropUnsentReactions();
+        }
+    }
+
+    /** A refused reaction stays queued as "not sent", and the room then holds back every later message too. */
+    private dropUnsentReactions() {
+        for (const event of this.room.getPendingEvents()) {
+            if (event.status !== EventStatus.NOT_SENT) continue;
+            const target = event.isRedaction() ? event.getAssociatedId() : undefined;
+            const isReaction =
+                event.getType() === EventType.Reaction ||
+                (target !== undefined &&
+                    (this.room.findEventById(target) ?? this.room.getPendingEvent(target))?.getType() ===
+                        EventType.Reaction);
+            if (isReaction) this.room.client.cancelPendingEvent(event);
         }
     }
 }

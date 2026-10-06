@@ -8,7 +8,8 @@
 
     const dispatch = createEventDispatcher<{ showWho: { text: string; chip: HTMLElement } }>();
 
-    const { reacted, key, users } = reaction;
+    // The message swaps in a fresh reaction object when the reactions change: follow the current one.
+    $: ({ reacted, key, users } = reaction);
 
     $: names = Array.from($users.values())
         .map((user) => user.username)
