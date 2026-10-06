@@ -176,6 +176,8 @@ export class MapEditorModeManager {
     private runningUndoRedoCommand: Promise<void> = Promise.resolve();
 
     public async undoCommand(): Promise<void> {
+        // A change still being made (a Delete that just showed its "Undo" toast) lands in the history first.
+        await this.currentRunningCommand;
         if (this.localCommandsHistory.length === 0 || this.currentCommandIndex === -1) {
             return;
         }
@@ -221,6 +223,7 @@ export class MapEditorModeManager {
     }
 
     public async redoCommand(): Promise<void> {
+        await this.currentRunningCommand;
         if (
             this.localCommandsHistory.length === 0 ||
             this.currentCommandIndex === this.localCommandsHistory.length - 1

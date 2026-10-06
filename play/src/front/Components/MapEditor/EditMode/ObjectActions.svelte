@@ -45,9 +45,19 @@
         left = Math.min(Math.max(8, screenLeft + screenWidth / 2 - width / 2), parentWidth - width - 8);
         // Below the object; above it when there is no room below.
         top = screenTop + screenHeight + 10;
-        if (top + height > parentHeight - 90) top = Math.max(8, screenTop - height - 10);
+        // Never under the edit pill at the top, so Done and Undo stay in reach.
+        const minTop = editPillBottom();
+        if (top + height > parentHeight - 90) top = screenTop - height - 10;
+        top = Math.max(minTop, top);
         visible = true;
         frame = requestAnimationFrame(place);
+    }
+
+    function editPillBottom(): number {
+        const pill = root?.parentElement?.querySelector<HTMLElement>('[data-testid="edit-pill"]');
+        const parent = root?.parentElement;
+        if (!pill || !parent) return 8;
+        return pill.getBoundingClientRect().bottom - parent.getBoundingClientRect().top + 8;
     }
 
     onMount(() => {
@@ -59,7 +69,7 @@
     });
 
     function tool(): EntityEditorTool | undefined {
-        return gameManager.getCurrentGameScene().getMapEditorModeManager().currentlyActiveTool as
+        return gameManager.tryGetCurrentGameScene()?.getMapEditorModeManager()?.currentlyActiveTool as
             | EntityEditorTool
             | undefined;
     }

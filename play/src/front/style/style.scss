@@ -1360,3 +1360,19 @@ button[data-testid="actionBarLogin"]:hover {
 :where(html, body, body *) {
     touch-action: manipulation;
 }
+/* The field of the game's dropdown (UI/USelect), the same as the join screens' fields. */
+.u-join-field {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    min-width: 0;
+    height: 3rem;
+    padding: 0 0.875rem;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.06);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+    color: #fff;
+}
+.u-join-field:focus-within {
+    box-shadow: inset 0 0 0 2px rgba(196, 181, 253, 0.85);
+}

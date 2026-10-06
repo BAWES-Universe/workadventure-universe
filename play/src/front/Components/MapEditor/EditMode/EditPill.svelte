@@ -70,6 +70,8 @@
         padding: 0 6px;
         border-radius: 999px;
         color: #fff;
+        /* Over the actions pinned to what you tapped on the map, under the panel. */
+        z-index: 2;
     }
     :global(.em-phone) .em-pill {
         top: calc(var(--tiles-clear, 0px) + 10px + env(safe-area-inset-top, 0px));
