@@ -69,20 +69,23 @@
         analyticsClient.filterInMapExplorer();
     }
 
-    function matches(place: Place): boolean {
-        if (search.trim() !== "" && !getPlaceSearchText(place, $LL).includes(search.trim().toLowerCase())) {
+    // The search and the filters are passed in, not read here, so the lists below are filtered again whenever they change.
+    function matches(place: Place, query: string, filters: string[]): boolean {
+        if (query.trim() !== "" && !getPlaceSearchText(place, $LL).includes(query.trim().toLowerCase())) {
             return false;
         }
-        if (selectedFilters.length > 0 && !selectedFilters.some((filter) => placeHasProperty(place, filter))) {
+        if (filters.length > 0 && !filters.some((filter) => placeHasProperty(place, filter))) {
             return false;
         }
         return true;
     }
 
     $: areas = [...($mapExplorationAreasStore ?? new Map<string, AreaPreview>()).entries()].filter(([, area]) =>
-        matches(area)
+        matches(area, search, selectedFilters)
     );
-    $: objects = [...$mapExplorationEntitiesStore.entries()].filter(([, entity]) => matches(entity));
+    $: objects = [...$mapExplorationEntitiesStore.entries()].filter(([, entity]) =>
+        matches(entity, search, selectedFilters)
+    );
     $: showAreas = kind !== "objects";
     $: showObjects = kind !== "areas";
 
