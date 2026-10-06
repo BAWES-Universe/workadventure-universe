@@ -273,12 +273,12 @@
     }
     /* The top tab hangs under the pill; on a phone the bottom one sits above the bar. */
     .you-tab-top {
-        top: 72px;
+        top: calc(var(--tiles-clear, 0px) + 72px);
         border-radius: 0 0 26px 26px;
         transform: translateX(-50%);
     }
     .phone .you-tab-top {
-        top: calc(76px + env(safe-area-inset-top, 0px));
+        top: calc(var(--tiles-clear, 0px) + 76px + env(safe-area-inset-top, 0px));
     }
     .you-tab-bottom {
         bottom: 0;
