@@ -85,9 +85,7 @@ test.describe("Map editor @oidc @nomobile @nowebkit", () => {
 
         // click on the object and open popup on both pages
         await EntityEditor.moveAndClick(page, 2 * 32 * 1.5, 8.5 * 32 * 1.5 - 16);
-        // page2 is playing, so the map sits in the middle of its screen.
-        const objectForPage2 = Map.whilePlaying(page2, 2 * 32 * 1.5, 8.5 * 32 * 1.5 - 16);
-        await EntityEditor.moveAndClick(page2, objectForPage2.x, objectForPage2.y);
+        await EntityEditor.moveAndClick(page2, 2 * 32 * 1.5, 8.5 * 32 * 1.5 - 16);
 
         // Check if the cowebsite is opened
         await expect(page.locator('#cowebsites-container')).toBeVisible();
@@ -146,9 +144,7 @@ test.describe("Map editor @oidc @nomobile @nowebkit", () => {
         await EntityEditor.moveAndClick(page, 6 * 32, 10 * 32);
 
         await page2.getByTestId("camera-container").waitFor({ state: 'detached' });
-        // page2 is playing, so the map sits in the middle of its screen.
-        const objectForPage2 = Map.whilePlaying(page2, 6 * 32, 10 * 32);
-        await EntityEditor.moveAndClick(page2, objectForPage2.x, objectForPage2.y);
+        await EntityEditor.moveAndClick(page2, 6 * 32, 10 * 32);
 
 
         // Check if the cowebsite is opened

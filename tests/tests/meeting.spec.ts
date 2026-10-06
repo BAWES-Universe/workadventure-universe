@@ -254,9 +254,9 @@ test.describe('Meeting actions test @nomobile @nowebkit', () => {
           await userBob.getByTestId('messageInput').fill('Hello banned!');
           await userBob.getByTestId('messageInput').press('Enter');
   
-          // Bob's woka; the small map sits in the middle of the screen while playing.
+          // Bob's woka; the small map sits in the middle of the screen.
           await page.locator('canvas').click({
-              position: Map.whilePlaying(page, 266, 240)
+              position: Map.onScreen(page, 266, 240)
           });
 
 
