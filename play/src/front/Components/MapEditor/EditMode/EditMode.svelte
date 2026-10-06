@@ -96,7 +96,7 @@
 
     function undoLast() {
         hideUndoToast();
-        gameManager.getCurrentGameScene().getMapEditorModeManager().undo();
+        gameManager.tryGetCurrentGameScene()?.getMapEditorModeManager().undo();
     }
 </script>
 
