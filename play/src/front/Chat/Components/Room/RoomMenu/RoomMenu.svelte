@@ -53,7 +53,9 @@
     $: orderFreeze?.setHeld(freezeHolder, !hideOptions);
     $: if (hideOptions) confirmingDelete = false;
 
-    $: shouldDisplayManageParticipantButton = $hasPermissionToInvite || $hasPermissionToKick || $hasPermissionToBan;
+    // A direct chat always has the same two people: Participants is for groups only.
+    $: shouldDisplayManageParticipantButton =
+        !isDirect && ($hasPermissionToInvite || $hasPermissionToKick || $hasPermissionToBan);
 
     // Opening another chat menu closes this one.
     const unsubscribeOpenMenu = openChatMenuStore.subscribe((openMenu) => {
