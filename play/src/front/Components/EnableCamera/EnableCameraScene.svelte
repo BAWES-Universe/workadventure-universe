@@ -22,7 +22,7 @@
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { StringUtils } from "../../Utils/StringUtils";
     import { popupStore } from "../../Stores/PopupStore";
-    import { hideHelpCameraSettings, showHelpCameraSettings } from "../../Stores/HelpSettingsStore";
+    import { showHelpCameraSettings } from "../../Stores/HelpSettingsStore";
     import bgMap from "../images/map-exemple.png";
     import JoinLegal from "../Join/JoinLegal.svelte";
     import USelect from "../UI/USelect.svelte";
@@ -118,7 +118,6 @@
 
     onDestroy(() => {
         unsubscribeLocalStreamStore();
-        hideHelpCameraSettings();
     });
 
     onMount(() => {
