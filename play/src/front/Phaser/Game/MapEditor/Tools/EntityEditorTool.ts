@@ -452,7 +452,11 @@ export class EntityEditorTool extends EntityRelatedEditorTool {
             if (!placing || !this.entityPrefabPreview || !this.entityPrefab) return;
             // A press that dragged (the map, or from an object on it) is not a click: nothing is placed.
             if (this.mapEditorModeManager.isDraggingToLookAround || pointer.getDistance() > 8) return;
-            if (!this.canEntityBePlaced()) return;
+            if (!this.canEntityBePlaced()) {
+                // Show why nothing was placed: the preview turns red where it cannot go.
+                this.changePreviewTint();
+                return;
+            }
             this.placePreview();
             return;
         }
