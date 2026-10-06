@@ -53,7 +53,9 @@
     $: orderFreeze?.setHeld(freezeHolder, !hideOptions);
     $: if (hideOptions) confirmingDelete = false;
 
-    $: shouldDisplayManageParticipantButton = $hasPermissionToInvite || $hasPermissionToKick || $hasPermissionToBan;
+    // A direct chat always has the same two people: Participants is for groups only.
+    $: shouldDisplayManageParticipantButton =
+        !isDirect && ($hasPermissionToInvite || $hasPermissionToKick || $hasPermissionToBan);
 
     // Opening another chat menu closes this one.
     const unsubscribeOpenMenu = openChatMenuStore.subscribe((openMenu) => {
@@ -145,7 +147,7 @@
 </button>
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div
-    on:mouseleave={toggleRoomOptions}
+    on:mouseleave={() => (hideOptions = true)}
     class="u-surface rounded-2xl overflow-hidden z-[99] w-max min-w-48 end-2 p-1 {inHeader ? 'top-14' : 'top-10'}"
     class:absolute={optionButtonRef !== undefined}
     class:hidden={hideOptions}

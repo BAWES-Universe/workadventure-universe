@@ -10,6 +10,8 @@
     export let size: "xs" | "sm" | "lg" | "xl" = "sm";
     /** Ring drawn around the avatar, in the colour of what's behind it, so stacked avatars separate. */
     export let ring = true;
+    /** The colour the woka sits on (a person's colour from People); without it the circle stays plain. */
+    export let color: string | undefined = undefined;
 
     $: initial = name.trim().charAt(0) || "?";
     $: loading = pictureStore.loading ?? readable(false);
@@ -24,7 +26,7 @@
         : size === 'xs'
         ? 'h-7 w-7'
         : 'h-8 w-8'} {ring ? 'ring-2 ring-contrast' : ''}"
-    style:background-color={$pictureStore || $loading ? undefined : getColorByString(name) ?? undefined}
+    style:background-color={color ?? ($pictureStore || $loading ? undefined : getColorByString(name) ?? undefined)}
     title={name}
 >
     {#if $pictureStore}

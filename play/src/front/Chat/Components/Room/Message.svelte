@@ -4,7 +4,8 @@
     import { derived, readable } from "svelte/store";
     import type { Readable } from "svelte/store";
     import type { PictureStore } from "../../../Stores/PictureStore";
-    import { WOKA_BY_CHAT_ID_CONTEXT, personPicture } from "../../Stores/ChatUserWokaStore";
+    import { PERSON_COLOUR_CONTEXT, WOKA_BY_CHAT_ID_CONTEXT, personPicture } from "../../Stores/ChatUserWokaStore";
+    import type { PersonColourOf } from "../../Stores/ChatUserWokaStore";
     import type { ChatMessage, ChatMessageType } from "../../Connection/ChatConnection";
     import LL, { locale } from "../../../../i18n/i18n-svelte";
     import TopRowAvatar from "../TopRow/TopRowAvatar.svelte";
@@ -51,6 +52,10 @@
     const wokaByChatId: Readable<Map<string, PictureStore>> = hasContext(WOKA_BY_CHAT_ID_CONTEXT)
         ? getContext(WOKA_BY_CHAT_ID_CONTEXT)
         : readable(new Map<string, PictureStore>());
+    // In a direct chat, on their colour from People.
+    const colourOf: Readable<PersonColourOf> = hasContext(PERSON_COLOUR_CONTEXT)
+        ? getContext(PERSON_COLOUR_CONTEXT)
+        : readable(() => undefined);
 
     const dispatch = createEventDispatcher<{
         updateMessageBody: { id: string };
@@ -71,6 +76,7 @@
     } = message;
 
     $: senderPicture = personPicture($wokaByChatId, sender?.chatId, sender?.pictureStore) ?? readable(undefined);
+    $: senderColour = $colourOf(sender?.chatId, sender?.username);
 
     const updateMessageBody = () => {
         dispatch("updateMessageBody", {
@@ -164,7 +170,13 @@
         {#if (!isMyMessage || isQuotedMessage) && sender !== undefined && replyDepth === 0}
             <!-- Not "avatar": that design-system class paints a grey 40px square behind the round woka. -->
             <div class="sender-avatar pt-1.5">
-                <TopRowAvatar pictureStore={senderPicture} name={sender?.username ?? ""} size="xs" ring={false} />
+                <TopRowAvatar
+                    pictureStore={senderPicture}
+                    name={sender?.username ?? ""}
+                    color={senderColour}
+                    size="xs"
+                    ring={false}
+                />
             </div>
         {/if}
 
