@@ -1378,7 +1378,9 @@ body .u-close:focus {
     outline: 2px solid rgba(196, 181, 253, 0.9);
     outline-offset: -2px;
 }
-.u-option.u-selected {
+/* A chosen option stays violet under the pointer: the grey hover is only for the others. */
+.u-option.u-selected,
+.u-option.u-selected:hover:not(:disabled) {
     border-color: rgba(167, 139, 250, 0.7);
     background: rgba(134, 41, 252, 0.14);
     box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.35), 0 0 24px -8px rgba(134, 41, 252, 0.6);

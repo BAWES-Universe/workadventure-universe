@@ -16,6 +16,7 @@ import { scriptingVideoStore } from "./ScriptingVideoStore";
 import { myCameraStore } from "./MyMediaStore";
 import {
     cameraEnergySavingStore,
+    displayedMegaphoneScreenStore,
     isListenerStore,
     localVoiceIndicatorStore,
     localVolumeStore,
@@ -162,6 +163,7 @@ function createStreamableCollectionStore(): Readable<Map<string, VideoBox>> {
             windowSize,
             isLiveStreamingStore,
             isListenerStore,
+            displayedMegaphoneScreenStore,
         ],
         (
             [
@@ -177,6 +179,7 @@ function createStreamableCollectionStore(): Readable<Map<string, VideoBox>> {
                 $windowSize,
                 $isLiveStreamingStore,
                 $isListenerStore,
+                $displayedMegaphoneScreenStore,
             ] /*, set*/
         ) => {
             const peers = new Map<string, VideoBox>();
@@ -199,6 +202,11 @@ function createStreamableCollectionStore(): Readable<Map<string, VideoBox>> {
                 }
 
                 if ($isListenerStore) {
+                    shouldAddMyCamera = false;
+                }
+
+                // Broadcast's Go live step shows your camera in its own preview: one picture of you, not two.
+                if ($displayedMegaphoneScreenStore) {
                     shouldAddMyCamera = false;
                 }
 
