@@ -177,9 +177,12 @@ test.describe("Map editor interacting with object @oidc @nomobile", () => {
 
     await Menu.closeMapEditor(page);
 
-    // Now let's check Entity PDF file deletion
+    // Now let's check Entity PDF file deletion, from a fresh page: the area's file viewer is closed and the small map
+    // is back in the middle of the screen, so the entity is where it was placed.
+    await page.goto(Map.url("empty"));
+    await Menu.waitForMapLoad(page);
     await page.keyboard.press("e");
-    await EntityEditor.moveAndClick(page, 16, 600);
+    await EntityEditor.moveAndClick(page, 1, 8.5 * 32 * 1.45);
     await page.keyboard.press("Delete");
 
     // The deletion travels through the pusher and the back to map-storage; the file is gone a moment later.

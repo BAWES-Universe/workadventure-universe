@@ -16,9 +16,11 @@ class AreaAccessRights {
     bottomRight: { x: 9 * 32 * 1.5, y: 7 * 32 * 1.5 },
   };
 
-  public entityPositionInArea: Coordinates = { x: 4 * 32 * 1.5, y: 4 * 32 * 1.5 };
+  // Objects are placed in the middle of a tile: on a tile's edge, the tile they land on (and so the click that
+  // finds them) depends on rounding.
+  public entityPositionInArea: Coordinates = { x: 4.5 * 32 * 1.5, y: 4.5 * 32 * 1.5 };
   // Below the area, left of the editor's panel, which covers the right of the small map.
-  public entityPositionOutsideArea: Coordinates = { x: 5 * 32 * 1.5, y: 8 * 32 * 1.5 };
+  public entityPositionOutsideArea: Coordinates = { x: 5.5 * 32 * 1.5, y: 8.5 * 32 * 1.5 };
 
   public mouseCoordinatesToClickOnEntityInsideArea = {
     x: this.entityPositionInArea.x + 10,
