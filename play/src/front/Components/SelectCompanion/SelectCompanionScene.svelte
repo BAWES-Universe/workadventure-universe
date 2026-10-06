@@ -17,8 +17,8 @@
     export let game: Game;
 
     // The scene may not exist yet when the screen opens from the menu: look it up when a button needs it
-    function companionScene(): SelectCompanionScene {
-        return game.scene.getScene(SelectCompanionSceneName) as SelectCompanionScene;
+    function companionScene(): SelectCompanionScene | null {
+        return (game.scene.getScene(SelectCompanionSceneName) as SelectCompanionScene | null) ?? null;
     }
     // Opened from the game's menu: the round close leads back into the room with the companion unchanged
     const canGoBack = gameManager.canResumeGame;
@@ -62,22 +62,20 @@
     }
 
     function confirm() {
-        if (saving) return;
+        const scene = companionScene();
+        if (saving || !scene) return;
         saving = true;
-        if (selected) {
-            analyticsClient.selectCompanion();
-            companionScene()
-                .selectCompanion(selected.id)
-                .catch((e) => console.error(e));
-        } else {
-            companionScene()
-                .noCompagnion()
-                .catch((e) => console.error(e));
-        }
+        const id = selected?.id;
+        if (id) analyticsClient.selectCompanion();
+        (id ? scene.selectCompanion(id) : scene.noCompagnion()).catch((e) => {
+            console.error(e);
+            // Continue works again, so you can retry
+            saving = false;
+        });
     }
 
     function back() {
-        companionScene().closeScene();
+        companionScene()?.closeScene();
     }
 
     function columns(): number {
