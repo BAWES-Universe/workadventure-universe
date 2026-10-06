@@ -714,6 +714,8 @@ export class AreaEditorTool extends MapEditorTool {
     public glideToArea(id: string, free?: { left: number; top: number; right: number; bottom: number }): void {
         const preview = this.getAreaPreview(id);
         if (!preview) return;
+        // Picking an area from the list ends "New area", or the next drag on it would also draw a box.
+        editAreaDrawArmedStore.set(false);
         this.changeAreaMode("EDIT", preview);
         if (get(mobileLayoutStore)) mapEditorVisibilityStore.set(false);
         const camera = this.scene.cameras.main;
