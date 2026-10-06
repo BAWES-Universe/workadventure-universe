@@ -67,6 +67,26 @@ export interface PlacingBar {
 /** The bar at the bottom while a module places something (a bot, a route). The editor's own placing bar is drawn by its tools. */
 export const editPlacingBarStore = writable<PlacingBar | undefined>(undefined);
 
+/**
+ * A module's own job in the pill at the top (editing a bot's route): its title and the line under it take the place
+ * of the room's name, and Done, Undo and Redo do the module's job. Undefined is the editor's own pill.
+ */
+export interface EditPillOverride {
+    title: string;
+    subtitle?: string;
+    /** One line at the top of the map saying what to do. */
+    hint?: string;
+    onDone: () => void;
+    onUndo: () => void;
+    onRedo: () => void;
+    canUndo: boolean;
+    canRedo: boolean;
+    doneTestId?: string;
+    undoTestId?: string;
+    redoTestId?: string;
+}
+export const editPillStore = writable<EditPillOverride | undefined>(undefined);
+
 /** The object picked in the Objects panel, with its colours and sides, so the placing bar can turn it or change its colour. */
 export interface PickedVariant {
     variant: EntityVariant;

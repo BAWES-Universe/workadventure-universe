@@ -261,8 +261,7 @@ let routeAtEditStart: Array<{ x: number; y: number }> | undefined;
 export function startWaypointEditing(): void {
     const bot = get(selectedBotStore);
     if (bot && walksRoute(bot)) {
-        routeUndoStack = [];
-        routeUndoCountStore.set(0);
+        resetRouteHistory();
         routeAtEditStart = routeStops(bot).map((p) => ({ ...p }));
         // Auto-create first waypoint at bot's center if no waypoints exist
         if (routeStops(bot).length === 0) {
@@ -293,30 +292,62 @@ export function stopWaypointEditing(): void {
     }
     routeAtEditStart = undefined;
     editingWaypointIndexStore.set(undefined);
-    routeUndoStack = [];
-    routeUndoCountStore.set(0);
+    resetRouteHistory();
     botEditorModeStore.set("detail");
 }
 
-// Undo while editing a route: each change to the stops saves the stops it replaced. Done or leaving the route
-// forgets them; the editor's own Undo (the pill at the top) is for objects and areas.
+// Undo and Redo while editing a route: each change to the stops saves the stops it replaced, Undo puts them back
+// (and keeps what it took away for Redo), a new change forgets what Redo had. Done or leaving the route forgets
+// both; while a route is edited, the pill at the top is the route's, with these.
 let routeUndoStack: Array<Array<{ x: number; y: number }>> = [];
+let routeRedoStack: Array<Array<{ x: number; y: number }>> = [];
 /** How many route changes can be undone, so the route bar can show its Undo button. */
 export const routeUndoCountStore = writable(0);
+/** How many undone route changes can be done again, for the route bar's Redo button. */
+export const routeRedoCountStore = writable(0);
+
+function syncRouteHistoryCounts(): void {
+    routeUndoCountStore.set(routeUndoStack.length);
+    routeRedoCountStore.set(routeRedoStack.length);
+}
+
+function resetRouteHistory(): void {
+    routeUndoStack = [];
+    routeRedoStack = [];
+    syncRouteHistoryCounts();
+}
+
+function copyStops(bot: BotData): Array<{ x: number; y: number }> {
+    return routeStops(bot).map((p) => ({ ...p }));
+}
 
 function rememberRouteForUndo(bot: BotData): void {
     if (get(botEditorModeStore) !== "waypoint-edit") return;
-    routeUndoStack.push(routeStops(bot).map((p) => ({ ...p })));
-    routeUndoCountStore.set(routeUndoStack.length);
+    routeUndoStack.push(copyStops(bot));
+    routeRedoStack = [];
+    syncRouteHistoryCounts();
 }
 
 /** Put back the stops as they were before the last change while editing the route. */
 export function undoRouteChange(): void {
     const bot = get(selectedBotStore);
     const previous = routeUndoStack.pop();
-    routeUndoCountStore.set(routeUndoStack.length);
-    if (!bot || !previous) return;
-    setRouteStops(bot.id, previous);
+    if (bot && previous) {
+        routeRedoStack.push(copyStops(bot));
+        setRouteStops(bot.id, previous);
+    }
+    syncRouteHistoryCounts();
+}
+
+/** Do again the last route change that Undo put back. */
+export function redoRouteChange(): void {
+    const bot = get(selectedBotStore);
+    const next = routeRedoStack.pop();
+    if (bot && next) {
+        routeUndoStack.push(copyStops(bot));
+        setRouteStops(bot.id, next);
+    }
+    syncRouteHistoryCounts();
 }
 
 /** Replace all of a route bot's stops, as Undo does. */
