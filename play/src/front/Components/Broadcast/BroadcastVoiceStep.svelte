@@ -74,6 +74,8 @@
             started = await startVoiceRecorder();
         } catch (e) {
             console.warn("Broadcast: the microphone could not be opened for a voice note", e);
+            // A file was chosen while the browser was asking: the file is what the player wants now.
+            if (destroyed || mine !== chosen) return;
             if (keepReview) error = $LL.broadcast.voice.micBlocked();
             else state = "blocked";
             return;
@@ -189,8 +191,8 @@
         } catch (e) {
             console.warn("Broadcast: the file could not be decoded", e);
             if (mine !== chosen) return;
-            // The file was picked while the microphone was being opened, and that recorder was let go.
-            if (state === "starting" && !recorder && !opening && !destroyed) state = "ready";
+            // The file was picked while the microphone was being opened: that recorder is let go when it comes.
+            if (state === "starting" && !recorder && !destroyed) state = "ready";
             error = $LL.broadcast.voice.wrongFile();
         }
     }
