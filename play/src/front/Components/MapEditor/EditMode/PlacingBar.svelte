@@ -28,7 +28,7 @@
     $: external = $editPlacingBarStore;
 
     function tool() {
-        return gameManager.getCurrentGameScene().getMapEditorModeManager().currentlyActiveTool;
+        return gameManager.tryGetCurrentGameScene()?.getMapEditorModeManager()?.currentlyActiveTool;
     }
 
     function doneObject() {
