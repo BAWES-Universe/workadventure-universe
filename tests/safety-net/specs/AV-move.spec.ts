@@ -26,12 +26,15 @@ async function hold(page: Page, key: string, ms = 400) {
 async function settled(page: Page) {
     let last = await position(page);
     await expect
-        .poll(async () => {
-            const now = await position(page);
-            const same = now.x === last.x && now.y === last.y;
-            last = now;
-            return same;
-        }, { intervals: [500] })
+        .poll(
+            async () => {
+                const now = await position(page);
+                const same = now.x === last.x && now.y === last.y;
+                last = now;
+                return same;
+            },
+            { intervals: [500] }
+        )
         .toBe(true);
     return last;
 }
@@ -92,7 +95,10 @@ async function touchDrag(page: Page, from: { x: number; y: number }, to: { x: nu
     await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
 }
 
-test("AV-094 Desktop silent zone: banner under mic/cam, devices disabled, no bubble; leaving restores", async ({ page, browser }, testInfo) => {
+test("AV-094 Desktop silent zone: banner under mic/cam, devices disabled, no bubble; leaving restores", async ({
+    page,
+    browser,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
     const url = roomUrl(testInfo, AREAS);
     await join(page, url, "Alice");
@@ -123,7 +129,9 @@ test("AV-094 Desktop silent zone: banner under mic/cam, devices disabled, no bub
     await bob.context().close();
 });
 
-test("AV-095 Phone silent zone banner sits above the bar, clear of the column and Express", async ({ page }, testInfo) => {
+test("AV-095 Phone silent zone banner sits above the bar, clear of the column and Express", async ({
+    page,
+}, testInfo) => {
     test.skip(!isPhone(testInfo), "phone only");
     await join(page, roomUrl(testInfo, AREAS), "Alice");
     await teleport(page, 850, 400);
@@ -215,7 +223,9 @@ test("AV-099 Phone: touch and drag walks with the joystick; release stops", asyn
     expect(end.x - start.x).toBeGreaterThan(20);
 });
 
-test("AV-100 Releasing a held arrow inside the Express tray does not leave the WOKA walking", async ({ player }, testInfo) => {
+test("AV-100 Releasing a held arrow inside the Express tray does not leave the WOKA walking", async ({
+    player,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
     await teleport(player, 40, 160);
     await player.locator("canvas").first().focus();
@@ -249,7 +259,11 @@ test("AV-101 R turns the WOKA to face the next direction", async ({ player }, te
     await expect.poll(async () => (await directions()).at(-1)).not.toBe(first);
 });
 
-test("AV-102 AV-015 A player's card opens on tap/click; Walk to walks next to them, clear of the device tab", async ({ player, url, browser }, testInfo) => {
+test("AV-102 AV-015 A player's card opens on tap/click; Walk to walks next to them, clear of the device tab", async ({
+    player,
+    url,
+    browser,
+}, testInfo) => {
     const bob = await joinBubble(browser, testInfo, player, url);
     await teleport(bob, 208, 144);
     await expectNoBubble(player);
@@ -273,10 +287,13 @@ test("AV-102 AV-015 A player's card opens on tap/click; Walk to walks next to th
     if (isPhone(testInfo)) await walkTo.tap();
     else await walkTo.click();
     await expect
-        .poll(async () => {
-            const p = await position(player);
-            return Math.hypot(p.x - bobAt.x, p.y - bobAt.y);
-        }, { timeout: 15_000 })
+        .poll(
+            async () => {
+                const p = await position(player);
+                return Math.hypot(p.x - bobAt.x, p.y - bobAt.y);
+            },
+            { timeout: 15_000 }
+        )
         .toBeLessThan(64);
     await bob.context().close();
 });
@@ -291,7 +308,9 @@ test("AV-103 A quick tap or click on your own WOKA opens your own card", async (
     await expect(card).toContainText("Alice");
 });
 
-test("AV-104 AV-105 Zoom buttons and the wheel zoom the map; tooltips show; one wheel jump is at most 2x", async ({ player }, testInfo) => {
+test("AV-104 AV-105 Zoom buttons and the wheel zoom the map; tooltips show; one wheel jump is at most 2x", async ({
+    player,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
     await recordCamera(player);
     const zoomIn = player.getByRole("button", { name: "Zoom In +" });
@@ -344,13 +363,19 @@ test("AV-106 Phone: pinching zooms the map", async ({ player }, testInfo) => {
         const cy = 450;
         await cdp.send("Input.dispatchTouchEvent", {
             type: "touchStart",
-            touchPoints: [{ x: cx - from, y: cy, id: 1 }, { x: cx + from, y: cy, id: 2 }],
+            touchPoints: [
+                { x: cx - from, y: cy, id: 1 },
+                { x: cx + from, y: cy, id: 2 },
+            ],
         });
         for (let i = 1; i <= 8; i++) {
             const d = from + ((to - from) * i) / 8;
             await cdp.send("Input.dispatchTouchEvent", {
                 type: "touchMove",
-                touchPoints: [{ x: cx - d, y: cy, id: 1 }, { x: cx + d, y: cy, id: 2 }],
+                touchPoints: [
+                    { x: cx - d, y: cy, id: 1 },
+                    { x: cx + d, y: cy, id: 2 },
+                ],
             });
             await player.waitForTimeout(30);
         }
@@ -368,7 +393,9 @@ test("AV-106 Phone: pinching zooms the map", async ({ player }, testInfo) => {
     await expect.poll(() => lastZoom(player)).toBeLessThan(z1);
 });
 
-test("AV-107 Scrolling out past the limit opens Look around; zooming back in near you leaves it", async ({ page }, testInfo) => {
+test("AV-107 Scrolling out past the limit opens Look around; zooming back in near you leaves it", async ({
+    page,
+}, testInfo) => {
     test.slow();
     test.skip(isPhone(testInfo), "desktop only");
     await join(page, await wamRoom(testInfo, "map"), "Alice");
@@ -376,21 +403,29 @@ test("AV-107 Scrolling out past the limit opens Look around; zooming back in nea
     const overview = player.getByTestId("map-overview-button");
     await player.mouse.move(300, 300);
     await expect
-        .poll(async () => {
-            await player.mouse.wheel(0, 100);
-            return overview.getAttribute("aria-pressed");
-        }, { timeout: 60_000, intervals: [700] })
+        .poll(
+            async () => {
+                await player.mouse.wheel(0, 100);
+                return overview.getAttribute("aria-pressed");
+            },
+            { timeout: 60_000, intervals: [700] }
+        )
         .toBe("true");
     await expect(player.getByTestId("look-around")).toBeVisible();
     await expect
-        .poll(async () => {
-            await player.mouse.wheel(0, -100);
-            return overview.getAttribute("aria-pressed");
-        }, { timeout: 60_000, intervals: [700] })
+        .poll(
+            async () => {
+                await player.mouse.wheel(0, -100);
+                return overview.getAttribute("aria-pressed");
+            },
+            { timeout: 60_000, intervals: [700] }
+        )
         .toBe("false");
 });
 
-test("AV-108 @local Desktop alone: a hidden tab goes Away with the camera off and mic on; back restores", async ({ player }, testInfo) => {
+test("AV-108 @local Desktop alone: a hidden tab goes Away with the camera off and mic on; back restores", async ({
+    player,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
     await keepCameraAwake(player, testInfo);
     await expect.poll(() => liveTracks(player)).toEqual({ video: 1, audio: 1 });
@@ -402,7 +437,9 @@ test("AV-108 @local Desktop alone: a hidden tab goes Away with the camera off an
     await expect.poll(() => liveTracks(player)).toEqual({ video: 1, audio: 1 });
 });
 
-test("AV-109 @local Phone alone: background turns camera and mic off; back restores both", async ({ player }, testInfo) => {
+test("AV-109 @local Phone alone: background turns camera and mic off; back restores both", async ({
+    player,
+}, testInfo) => {
     test.skip(!isPhone(testInfo), "phone only");
     await keepCameraAwake(player, testInfo);
     await expect.poll(() => liveTracks(player)).toEqual({ video: 1, audio: 1 });

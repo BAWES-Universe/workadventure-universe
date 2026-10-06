@@ -24,7 +24,12 @@ test("ME-026 Add your own: the guide with four rules and the drop zone", async (
     const panel = page.getByTestId("edit-panel");
     await expect(panel.locator(".em-title").first()).toHaveText("Add your own");
     await expect(panel).toContainText("Make it fit, then check it here");
-    for (const rule of ["32 pixels is one tile", "Same angle as the map", "See-through background", "Sides and colours"]) {
+    for (const rule of [
+        "32 pixels is one tile",
+        "Same angle as the map",
+        "See-through background",
+        "Sides and colours",
+    ]) {
         await expect(panel.getByText(rule, { exact: true })).toBeVisible();
     }
     const drop = panel.locator(".em-drop");
@@ -34,7 +39,9 @@ test("ME-026 Add your own: the guide with four rules and the drop zone", async (
     expect(await drop.evaluate((e) => getComputedStyle(e).borderStyle)).toBe("dashed");
 });
 
-test("ME-027 Check it: size line for a fitting and an odd picture, errors for a GIF and two files, drop works", async ({ page }, testInfo) => {
+test("ME-027 Check it: size line for a fitting and an odd picture, errors for a GIF and two files, drop works", async ({
+    page,
+}, testInfo) => {
     await uploadGuide(page, testInfo);
     const panel = page.getByTestId("edit-panel");
     const input = page.getByTestId("uploadCustomAsset");
@@ -48,7 +55,9 @@ test("ME-027 Check it: size line for a fitting and an odd picture, errors for a 
             return dt;
         }, pngFile("a.png", 64, 64).buffer.toString("base64"));
         await panel.locator(".em-drop").dispatchEvent("drop", { dataTransfer: two });
-        await expect(panel.locator(".em-err"), "two files dropped at once show an error").toHaveText(/Multiple file drop is not supported/);
+        await expect(panel.locator(".em-err"), "two files dropped at once show an error").toHaveText(
+            /Multiple file drop is not supported/
+        );
     }
     await input.setInputFiles(pngFile("fits.png", 64, 64));
     await expect(panel.locator(".em-title").first()).toHaveText("Check it");
@@ -93,7 +102,9 @@ test("ME-028 Save to my objects: the upload shows in Your uploads and in search"
     await page.getByTestId("applyEntityModifications").click();
     const panel = page.getByTestId("edit-panel");
     await expect(page.getByTestId("objects-search")).toBeVisible({ timeout: 30_000 });
-    await expect(panel.locator(".em-cat-label"), "the panel returns to the picker, not an empty category").toHaveText("All categories");
+    await expect(panel.locator(".em-cat-label"), "the panel returns to the picker, not an empty category").toHaveText(
+        "All categories"
+    );
     await expect(panel.locator(".em-sech", { hasText: "Your uploads" })).toBeVisible();
     await expect(panel.getByTestId("entity-item").filter({ hasText: name }).first()).toBeVisible();
     await page.getByTestId("objects-search").fill(name);
@@ -116,22 +127,42 @@ test("ME-029 Edit this upload: change name and save; Delete this upload removes 
     const nameField = panel.locator("input#name, input[placeholder*='name' i]").first();
     await expect(nameField).toBeVisible();
     await nameField.fill(`${name} two`);
-    await panel.getByRole("button", { name: /save|apply/i }).first().click();
+    await panel
+        .getByRole("button", { name: /save|apply/i })
+        .first()
+        .click();
     await page.getByTestId("objects-search").fill(`${name} two`);
-    await expect(panel.getByTestId("entity-item").filter({ hasText: `${name} two` })).toHaveCount(1, { timeout: 15_000 });
-    await panel.getByTestId("entity-item").filter({ hasText: `${name} two` }).first().click();
+    await expect(panel.getByTestId("entity-item").filter({ hasText: `${name} two` })).toHaveCount(1, {
+        timeout: 15_000,
+    });
+    await panel
+        .getByTestId("entity-item")
+        .filter({ hasText: `${name} two` })
+        .first()
+        .click();
     if (isPhone(testInfo)) {
         await rail(page, "EntityEditor").click();
     }
     await page.getByTestId("editEntity").click();
-    await panel.getByRole("button", { name: /delete/i }).first().click();
+    await panel
+        .getByRole("button", { name: /delete/i })
+        .first()
+        .click();
     const confirm = page.getByRole("button", { name: /^(delete|confirm|yes)/i });
-    if (await confirm.first().isVisible().catch(() => false)) await confirm.first().click();
+    if (
+        await confirm
+            .first()
+            .isVisible()
+            .catch(() => false)
+    )
+        await confirm.first().click();
     await page.getByTestId("objects-search").fill(name);
     await expect(panel.getByTestId("entity-item").filter({ hasText: name })).toHaveCount(0, { timeout: 15_000 });
 });
 
-test("ME-030 @local Sides and colours: add a side, wrong size error, remove, add a colour, Turn and Place", async ({ page }, testInfo) => {
+test("ME-030 @local Sides and colours: add a side, wrong size error, remove, add a colour, Turn and Place", async ({
+    page,
+}, testInfo) => {
     const url = await uploadGuide(page, testInfo);
     // Uploads outlive the room, so each run uses its own name: an earlier run's "Safety box" already has a Left side.
     const name = `Safety box ${Date.now().toString(36)}`;
@@ -145,7 +176,8 @@ test("ME-030 @local Sides and colours: add a side, wrong size error, remove, add
     await page.getByTestId("uploadVariants").click();
     const variants = page.getByTestId("upload-variants");
     await expect(variants).toBeVisible();
-    for (const word of ["Sides", "Front", "Left", "Right", "Back", "Colours"]) await expect(variants.getByText(word, { exact: true }).first()).toBeVisible();
+    for (const word of ["Sides", "Front", "Left", "Right", "Back", "Colours"])
+        await expect(variants.getByText(word, { exact: true }).first()).toBeVisible();
     const chooser = page.waitForEvent("filechooser");
     await page.getByTestId("variant-add-Left").click();
     await (await chooser).setFiles(pngFile("left.png", 64, 64, [60, 60, 200, 255]));
@@ -153,7 +185,9 @@ test("ME-030 @local Sides and colours: add a side, wrong size error, remove, add
     const chooser2 = page.waitForEvent("filechooser");
     await page.getByTestId("variant-add-Right").click();
     await (await chooser2).setFiles(pngFile("right.png", 32, 48));
-    await expect(page.getByTestId("variant-error")).toContainText("This picture is 32 × 48 px; every side must be 64 × 64 px");
+    await expect(page.getByTestId("variant-error")).toContainText(
+        "This picture is 32 × 48 px; every side must be 64 × 64 px"
+    );
     await page.getByTestId("variant-remove-Left").click();
     await expect(page.getByTestId("variant-side-Left")).toBeHidden({ timeout: 20_000 });
     await expect(page.getByTestId("variant-add-Left")).toBeVisible();

@@ -14,7 +14,10 @@ import {
     CORNER,
 } from "../lib/ch";
 
-test("CH-001 Desktop chat button opens a floating panel on Chats, the bar's X closes it", async ({ page, url }, testInfo) => {
+test("CH-001 Desktop chat button opens a floating panel on Chats, the bar's X closes it", async ({
+    page,
+    url,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
     const player = await alice(page, url);
     await player.getByTestId("chat-btn").click();
@@ -80,7 +83,10 @@ test("CH-002 C and U open, switch and close the chat, not while the map editor i
     await expect(chat(page)).toBeHidden();
 });
 
-test("CH-003 Desktop People button opens the chat on People, hidden on a bar under 640px", async ({ page, url }, testInfo) => {
+test("CH-003 Desktop People button opens the chat on People, hidden on a bar under 640px", async ({
+    page,
+    url,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
     const player = await alice(page, url);
     await player.getByTestId("user-list-button").click();
@@ -93,7 +99,10 @@ test("CH-003 Desktop People button opens the chat on People, hidden on a bar und
     await expect(player.getByTestId("user-list-button")).toBeHidden();
 });
 
-test("CH-004 Phone: chat button bottom-right, sheet opens at 60% and hides the bar", async ({ page, url }, testInfo) => {
+test("CH-004 Phone: chat button bottom-right, sheet opens at 60% and hides the bar", async ({
+    page,
+    url,
+}, testInfo) => {
     test.skip(!isPhone(testInfo), "phone only");
     const player = await alice(page, url);
     const { width, height } = player.viewportSize()!;
@@ -117,7 +126,10 @@ test("CH-004 Phone: chat button bottom-right, sheet opens at 60% and hides the b
     await expect(player.getByTestId("microphone-button")).toBeHidden();
 });
 
-test("CH-005 Phone: the sheet follows a drag, can cover the screen, and stays where it is let go", async ({ page, url }, testInfo) => {
+test("CH-005 Phone: the sheet follows a drag, can cover the screen, and stays where it is let go", async ({
+    page,
+    url,
+}, testInfo) => {
     test.skip(!isPhone(testInfo), "phone only");
     const player = await alice(page, url);
     const height = player.viewportSize()!.height;
@@ -133,7 +145,10 @@ test("CH-005 Phone: the sheet follows a drag, can cover the screen, and stays wh
     expect(Math.abs((await sheetHeight(player)) - height / 2)).toBeLessThanOrEqual(2);
 });
 
-test("CH-006 Phone: dragging the sheet well below its lowest height closes the chat", async ({ page, url }, testInfo) => {
+test("CH-006 Phone: dragging the sheet well below its lowest height closes the chat", async ({
+    page,
+    url,
+}, testInfo) => {
     test.skip(!isPhone(testInfo), "phone only");
     const player = await alice(page, url);
     await openChat(player);
@@ -160,7 +175,10 @@ test("CH-007 Phone: tapping the handle steps through the snaps", async ({ page, 
     await expect.poll(() => sheetHeight(player)).toBe(half);
 });
 
-test("CH-008 Phone: the sheet reopens at the height it was left at, after a reload", async ({ page, url }, testInfo) => {
+test("CH-008 Phone: the sheet reopens at the height it was left at, after a reload", async ({
+    page,
+    url,
+}, testInfo) => {
     test.skip(!isPhone(testInfo), "phone only");
     const player = await alice(page, url);
     const h = player.viewportSize()!.height;
@@ -177,7 +195,11 @@ test("CH-008 Phone: the sheet reopens at the height it was left at, after a relo
     await expect.poll(() => sheetHeight(player)).toBe(Math.round(h * 0.8));
 });
 
-test("CH-009 Phone: a message in a bubble opens a low sheet that shows it whole", async ({ page, browser, url }, testInfo) => {
+test("CH-009 Phone: a message in a bubble opens a low sheet that shows it whole", async ({
+    page,
+    browser,
+    url,
+}, testInfo) => {
     test.skip(!isPhone(testInfo), "phone only");
     const player = await alice(page, url);
     const h = player.viewportSize()!.height;
@@ -202,7 +224,10 @@ test("CH-009 Phone: a message in a bubble opens a low sheet that shows it whole"
     expect(msgBox!.y + msgBox!.height).toBeLessThanOrEqual(inputBox!.y);
 });
 
-test("CH-011 Phone sideways: the chat is a side panel, not a sheet, and an X closes it", async ({ page, url }, testInfo) => {
+test("CH-011 Phone sideways: the chat is a side panel, not a sheet, and an X closes it", async ({
+    page,
+    url,
+}, testInfo) => {
     test.skip(!isPhone(testInfo), "phone only");
     const player = await alice(page, url);
     await player.setViewportSize({ width: 926, height: 428 });
@@ -222,7 +247,10 @@ test("CH-011 Phone sideways: the chat is a side panel, not a sheet, and an X clo
     await expect(player.getByTestId("chat-btn")).toBeVisible();
 });
 
-test("CH-012 Desktop: the panel's edge handle resizes, is kept, and double-click toggles full width", async ({ page, url }, testInfo) => {
+test("CH-012 Desktop: the panel's edge handle resizes, is kept, and double-click toggles full width", async ({
+    page,
+    url,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
     const player = await alice(page, url);
     await openChat(player);
@@ -254,7 +282,11 @@ test("CH-012 Desktop: the panel's edge handle resizes, is kept, and double-click
     await expect.poll(async () => Math.round((await chat(player).boundingBox())!.width)).toBe(335);
 });
 
-test("CH-013 Desktop: a wide panel shows list and thread side by side, a narrow one has a back arrow", async ({ page, browser, url }, testInfo) => {
+test("CH-013 Desktop: a wide panel shows list and thread side by side, a narrow one has a back arrow", async ({
+    page,
+    browser,
+    url,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
     const player = await alice(page, url);
     await openChat(player);
@@ -279,7 +311,9 @@ test("CH-013 Desktop: a wide panel shows list and thread side by side, a narrow 
     expect(title.x).toBeGreaterThan(list.x + list.width - 5);
 
     await bar.dblclick();
-    await expect.poll(async () => Math.round((await chat(player).boundingBox())!.width)).toBe(player.viewportSize()!.width - 32);
+    await expect
+        .poll(async () => Math.round((await chat(player).boundingBox())!.width))
+        .toBe(player.viewportSize()!.width - 32);
     await bar.dblclick();
     await expect.poll(async () => Math.round((await chat(player).boundingBox())!.width)).toBe(335);
     await expect(player.getByTestId("roomName")).toBeVisible();
@@ -365,7 +399,11 @@ test("CH-016 Alone: no live card, a Say hi in person card whose button opens Peo
     await expect(player.getByTestId("peopleList")).toBeVisible();
 });
 
-test("CH-106 Desktop, mic and camera off: joining a bubble opens the proximity thread by itself", async ({ player, browser, url }, testInfo) => {
+test("CH-106 Desktop, mic and camera off: joining a bubble opens the proximity thread by itself", async ({
+    player,
+    browser,
+    url,
+}, testInfo) => {
     await player.getByTestId("camera-button").click();
     await player.getByTestId("microphone-button").click();
     const bob = await bobApart(browser, testInfo, player, url);

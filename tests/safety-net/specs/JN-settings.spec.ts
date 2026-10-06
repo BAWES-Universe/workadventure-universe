@@ -108,14 +108,20 @@ test.describe("Settings: General", () => {
         await language.getByRole("option", { name: "Français (France)" }).click();
         await expect(language.getByRole("listbox")).toHaveCount(0);
         await expect(language.locator(".u-set-value")).toHaveText("Français (France)");
-        await expect(settingsWindow(player).getByText("Général", { exact: true }).filter({ visible: true }).first()).toBeVisible();
+        await expect(
+            settingsWindow(player).getByText("Général", { exact: true }).filter({ visible: true }).first()
+        ).toBeVisible();
         await language.locator("button.u-set-choice-head").click();
         await language.getByRole("option", { name: "English (United States)" }).click();
-        await expect(settingsWindow(player).getByText("General", { exact: true }).filter({ visible: true }).first()).toBeVisible();
+        await expect(
+            settingsWindow(player).getByText("General", { exact: true }).filter({ visible: true }).first()
+        ).toBeVisible();
         await expect(language.locator(".u-set-value")).toHaveText("English (United States)");
     });
 
-    test("JN-082 Notifications switch flips back when refused; Ignore follow requests saves", async ({ page }, testInfo) => {
+    test("JN-082 Notifications switch flips back when refused; Ignore follow requests saves", async ({
+        page,
+    }, testInfo) => {
         await page.addInitScript(() => {
             Object.defineProperty(Notification, "permission", { get: () => "default" });
             Notification.requestPermission = () => Promise.resolve("denied");
@@ -168,7 +174,9 @@ test.describe("Settings: General", () => {
         else await expect(mic).toBeChecked();
     });
 
-    test("JN-085 Screen switches save at once; calm map pauses animations; full screen @local", async ({ player }, testInfo) => {
+    test("JN-085 Screen switches save at once; calm map pauses animations; full screen @local", async ({
+        player,
+    }, testInfo) => {
         await openSettings(player);
         const flip = async (id: string) => {
             const before = await switchOf(player, id).isChecked();
@@ -182,7 +190,11 @@ test.describe("Settings: General", () => {
         expect(await player.evaluate(() => localStorage.getItem("allowPictureInPicture"))).toBe("false");
 
         const animationsActive = () =>
-            withFrontModule<boolean>(player, "src/front/Phaser/Game/GameManager.ts", "m => m.gameManager.getCurrentGameScene().animatedTiles.active");
+            withFrontModule<boolean>(
+                player,
+                "src/front/Phaser/Game/GameManager.ts",
+                "m => m.gameManager.getCurrentGameScene().animatedTiles.active"
+            );
         expect(await flip("changeDisableAnimations")).toBe(true);
         expect(await player.evaluate(() => localStorage.getItem("disableAnimations"))).toBe("true");
         await expect.poll(animationsActive).toBe(false);
@@ -266,8 +278,12 @@ test.describe("Settings: Sound and video", () => {
         await join(page, roomUrl(testInfo, "tests/E2E/audio.json"), "Alice");
         await wa(page, () => WA.player.teleport(256, 128));
         const mapAudioPlaying = () =>
-            page.evaluate(() => [...document.querySelectorAll("audio")].some((a) => !a.paused && a.src.includes("Audience")));
-        await expect.poll(mapAudioPlaying, { timeout: 20_000, message: "the map's music plays in its area" }).toBe(true);
+            page.evaluate(() =>
+                [...document.querySelectorAll("audio")].some((a) => !a.paused && a.src.includes("Audience"))
+            );
+        await expect
+            .poll(mapAudioPlaying, { timeout: 20_000, message: "the map's music plays in its area" })
+            .toBe(true);
         await openSettings(page);
         await goToPage(page, "sound", phone);
 
@@ -279,17 +295,22 @@ test.describe("Settings: Sound and video", () => {
         await expect.poll(() => page.evaluate(() => localStorage.getItem("volumeProximityDiscussion"))).toBe("0.4");
 
         const joinSound = page.getByTestId("bubble-sound");
-        await expect(joinSound.locator(".u-set-label:visible")).toHaveText(phone ? "Sound when someone joins" : "Join sound");
+        await expect(joinSound.locator(".u-set-label:visible")).toHaveText(
+            phone ? "Sound when someone joins" : "Join sound"
+        );
         await joinSound.locator("button.u-set-choice-head").click();
         await joinSound.getByRole("option", { name: "Wobble" }).click();
         await expect(joinSound.locator(".u-set-value")).toHaveText("Wobble");
-        const wobbles = async () => (await playedSounds(page)).filter((src) => src.includes("webrtc-in-wobble.mp3")).length;
+        const wobbles = async () =>
+            (await playedSounds(page)).filter((src) => src.includes("webrtc-in-wobble.mp3")).length;
         await expect.poll(wobbles).toBe(1);
         await joinSound.getByRole("button", { name: "Play the sound" }).click();
         await expect.poll(wobbles).toBe(2);
 
         await page.locator("label[for=decreaseAudioPlayerVolumeWhileTalking-toggle]").click();
-        await expect.poll(() => page.evaluate(() => localStorage.getItem("decreaseAudioPlayerVolumeWhileTalking"))).not.toBeNull();
+        await expect
+            .poll(() => page.evaluate(() => localStorage.getItem("decreaseAudioPlayerVolumeWhileTalking")))
+            .not.toBeNull();
 
         await page.locator("label[for=changeBlockAudio]").click();
         await expect(page.getByTestId("changeBlockAudio")).toBeChecked();
@@ -310,7 +331,21 @@ test.describe("Settings: Keyboard, persistence, map pages", () => {
         await player.getByTestId("settings-nav-shortcuts").click();
         const keyboard = player.getByTestId("settings-keyboard");
         await expect(keyboard).toBeVisible();
-        for (const action of ["Move Up", "Move Down", "Move Left", "Move Right", "Run", "Interact", "Follow", "Open Chat", "Open User List", "Show/Hide Map Editor", "Emote 1", "Emote 6", "Walk to My Desk"]) {
+        for (const action of [
+            "Move Up",
+            "Move Down",
+            "Move Left",
+            "Move Right",
+            "Run",
+            "Interact",
+            "Follow",
+            "Open Chat",
+            "Open User List",
+            "Show/Hide Map Editor",
+            "Emote 1",
+            "Emote 6",
+            "Walk to My Desk",
+        ]) {
             await expect(keyboard.getByText(action, { exact: true })).toBeVisible();
         }
         await expect(keyboard.locator("kbd").first()).toBeVisible();
@@ -369,7 +404,10 @@ test.describe("Settings: Keyboard, persistence, map pages", () => {
         await expect(settingsWindow(page).locator("iframe[src*='customIframeMenu.html']")).toBeVisible();
         await entry("custom callback menu").click();
         await expect(settingsWindow(page)).toBeHidden();
-        await expect(page.getByText("Custom menu clicked").first(), "the map's command ran (it posts in the chat)").toBeAttached();
+        await expect(
+            page.getByText("Custom menu clicked").first(),
+            "the map's command ran (it posts in the chat)"
+        ).toBeAttached();
         const closeChat = page.getByRole("button", { name: "Close chat" });
         if (await closeChat.isVisible()) await closeChat.click();
         await openSettings(page);

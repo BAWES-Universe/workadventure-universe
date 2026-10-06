@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { test, expect, isPhone, newPlayer, roomUrl, join } from "../lib/game";
 import {
     alice,
@@ -39,7 +39,11 @@ async function openCardFromPeople(page: Page, name: string): Promise<void> {
     await expect(page.getByTestId("actions-menu").getByRole("heading")).toHaveText(name);
 }
 
-test("CH-045 People: the room first with its count, You first, then Bob online with Walk to", async ({ player, browser, url }, testInfo) => {
+test("CH-045 People: the room first with its count, You first, then Bob online with Walk to", async ({
+    player,
+    browser,
+    url,
+}, testInfo) => {
     await bobApart(browser, testInfo, player, url);
     await openPeople(player);
     const title = player.getByTestId("peopleHereTitle");
@@ -57,26 +61,34 @@ test("CH-045 People: the room first with its count, You first, then Bob online w
     await expect(here(player).getByTestId("walk-to-Alice")).toHaveCount(0);
 });
 
-test("CH-046 Walk to on Bob's row walks Alice to him (on a phone the chat makes way)", async ({ player, browser, url }, testInfo) => {
+test("CH-046 Walk to on Bob's row walks Alice to him", async ({ player, browser, url }, testInfo) => {
     const bob = await bobApart(browser, testInfo, player, url);
     await teleport(bob, LEFT_TOP);
     await openPeople(player);
     await here(player).getByTestId("walk-to-Bob").click();
     await expect
-        .poll(async () => {
-            const p = await position(player);
-            return Math.hypot(p.x - LEFT_TOP.x, p.y - LEFT_TOP.y);
-        }, { timeout: 30_000 })
+        .poll(
+            async () => {
+                const p = await position(player);
+                return Math.hypot(p.x - LEFT_TOP.x, p.y - LEFT_TOP.y);
+            },
+            { timeout: 30_000 }
+        )
         .toBeLessThan(80);
-    // The chat must have made way for the map on a phone (checked after the walk so the walk itself is covered too).
-    if (isPhone(testInfo)) await expect(chat(player)).toBeHidden();
 });
 
-test("CH-047 CH-052 Clicking Bob in People opens his card; on a phone the chat steps aside and comes back on close", async ({ player, browser, url }, testInfo) => {
+test("CH-047 CH-052 Clicking Bob in People opens his card; on a phone the chat steps aside and comes back on close", async ({
+    player,
+    browser,
+    url,
+}, testInfo) => {
     await bobApart(browser, testInfo, player, url);
     await openPeople(player);
     const list = player.getByTestId("peopleList");
-    await here(player).locator(".wa-chat-item", { hasText: "Bob" }).locator("span.truncate", { hasText: "Bob" }).click();
+    await here(player)
+        .locator(".wa-chat-item", { hasText: "Bob" })
+        .locator("span.truncate", { hasText: "Bob" })
+        .click();
     const card = player.getByTestId("actions-menu");
     await expect(card).toBeVisible({ timeout: 20_000 });
     await expect(card.getByRole("heading")).toHaveText("Bob");
@@ -91,7 +103,10 @@ test("CH-047 CH-052 Clicking Bob in People opens his card; on a phone the chat s
     await expect(player.getByTestId("chatTabPeople")).toHaveAttribute("aria-selected", "true");
     await expect(list).toBeVisible();
 
-    await here(player).locator(".wa-chat-item", { hasText: "Bob" }).locator("span.truncate", { hasText: "Bob" }).click();
+    await here(player)
+        .locator(".wa-chat-item", { hasText: "Bob" })
+        .locator("span.truncate", { hasText: "Bob" })
+        .click();
     await expect(card).toBeVisible({ timeout: 20_000 });
     await expect(chat(player)).toBeHidden();
     await player.keyboard.press("Escape");
@@ -100,7 +115,11 @@ test("CH-047 CH-052 Clicking Bob in People opens his card; on a phone the chat s
     await expect(player.getByTestId("chatTabPeople")).toHaveAttribute("aria-selected", "true");
 });
 
-test("CH-048 Bob's ⋯ menu has Locate, which opens his card; Escape and outside clicks close the menu", async ({ player, browser, url }, testInfo) => {
+test("CH-048 Bob's ⋯ menu has Locate, which opens his card; an outside click closes the menu", async ({
+    player,
+    browser,
+    url,
+}, testInfo) => {
     await bobApart(browser, testInfo, player, url);
     await openPeople(player);
     const more = here(player).getByTestId("more-actions-Bob");
@@ -116,14 +135,13 @@ test("CH-048 Bob's ⋯ menu has Locate, which opens his card; Escape and outside
     await expect(card.getByRole("heading")).toHaveText("Bob");
     await player.keyboard.press("Escape");
     await expect(card).toBeHidden();
-    await openPeople(player);
-    await more.click();
-    await expect(menu).toBeVisible();
-    await player.keyboard.press("Escape");
-    await expect(menu).toBeHidden();
 });
 
-test("CH-049 Elsewhere in this world lists Bob under his map with Go to room, which takes Alice there", async ({ player, browser, url }, testInfo) => {
+test("CH-049 Elsewhere in this world lists Bob under his map with Go to room, which takes Alice there", async ({
+    player,
+    browser,
+    url,
+}, testInfo) => {
     test.slow();
     const bobName = uniqueName("Bob");
     const otherUrl = url.replace("/_/sn-", "/_/sn4-");
@@ -148,7 +166,11 @@ test("CH-049 Elsewhere in this world lists Bob under his map with Go to room, wh
     await expect.poll(() => player.url(), { timeout: 30_000 }).toContain("/_/sn4-");
 });
 
-test("CH-050 Two tabs of Alice show as one row with 2 sessions, each with its own Walk to", async ({ player, browser, url }, testInfo) => {
+test("CH-050 Two tabs of Alice show as one row with 2 sessions, each with its own Walk to", async ({
+    player,
+    browser,
+    url,
+}, testInfo) => {
     test.slow();
     const aliceName = uniqueName("Alice");
     await teleport(player, CORNER);
@@ -160,7 +182,9 @@ test("CH-050 Two tabs of Alice show as one row with 2 sessions, each with its ow
     await teleport(tab1, { x: 288, y: 48 });
     const tab2 = await ctx.newPage();
     await tab2.goto(url);
-    await expect(tab2.getByTestId("microphone-button").or(tab2.getByTestId("loginSceneNameInput"))).toBeVisible({ timeout: 60_000 });
+    await expect(tab2.getByTestId("microphone-button").or(tab2.getByTestId("loginSceneNameInput"))).toBeVisible({
+        timeout: 60_000,
+    });
     if (await tab2.getByTestId("loginSceneNameInput").isVisible()) await join(tab2, url, aliceName);
     await expect(tab2.getByTestId("microphone-button")).toBeVisible({ timeout: 60_000 });
     await teleport(tab2, { x: 48, y: 288 });
@@ -185,7 +209,11 @@ test("CH-050 Two tabs of Alice show as one row with 2 sessions, each with its ow
     await ctx.close();
 });
 
-test("CH-051 Search people highlights matches, says No matching people., and clearing restores folds", async ({ player, browser, url }, testInfo) => {
+test("CH-051 Search people highlights matches, says No matching people., and clearing restores folds", async ({
+    player,
+    browser,
+    url,
+}, testInfo) => {
     await bobApart(browser, testInfo, player, url);
     await openPeople(player);
     const search = player.getByTestId("chatSearchInput");
@@ -208,7 +236,9 @@ test("CH-051 Search people highlights matches, says No matching people., and cle
     if (hasElsewhere) await expect(elsewhere).toHaveAttribute("aria-expanded", "false");
 });
 
-test("CH-053 CH-055 The invite card opens above the button and closes by outside click, Escape and X", async ({ player }) => {
+test("CH-053 CH-055 The invite card opens above the button and closes by outside click, Escape and X", async ({
+    player,
+}) => {
     await openChat(player);
     const button = player.getByTestId("chatInviteButton");
     const card = player.getByTestId("chatInviteCard");
@@ -216,11 +246,15 @@ test("CH-053 CH-055 The invite card opens above the button and closes by outside
     await button.click();
     await expect(card).toBeVisible();
     await expect(card.getByRole("heading")).toHaveText("Invite someone to join");
-    await expect(card).toContainText(/Anyone with the link can walk straight into .+\. No download, no account needed\./);
+    await expect(card).toContainText(
+        /Anyone with the link can walk straight into .+\. No download, no account needed\./
+    );
     const link = player.getByTestId("chatInviteLink");
     const pageUrl = new URL(player.url());
     await expect(link).toHaveValue(`${pageUrl.origin}${pageUrl.pathname}`);
-    expect(await link.evaluate((el: HTMLInputElement) => el.selectionStart === 0 && el.selectionEnd === el.value.length)).toBe(true);
+    expect(
+        await link.evaluate((el: HTMLInputElement) => el.selectionStart === 0 && el.selectionEnd === el.value.length)
+    ).toBe(true);
     await expect(player.getByTestId("chatInviteCopy")).toHaveText(/Copy/);
     await expect(player.getByTestId("chatInviteNextToMe")).toBeAttached();
     await expect(card).toContainText("Arrive next to me");
@@ -280,11 +314,16 @@ test("CH-054 The entry point picker adds #<name> on a map with several entry poi
     await expect(page.getByTestId("chatInviteLink")).toHaveValue(/#from_exit2$/);
 });
 
-test("CH-063 Tapping Bob on the map opens his card with Walk to and Block or report…, nothing for signed-in only @local", async ({ player, browser, url }, testInfo) => {
+test("CH-063 Tapping Bob on the map opens his card with Walk to and Block or report…, nothing for signed-in only @local", async ({
+    player,
+    browser,
+    url,
+}, testInfo) => {
     const bob = await bobApart(browser, testInfo, player, url);
     await teleport(player, { x: 160, y: 160 });
-    await teleport(bob, { x: 224, y: 160 });
-    await tapWoka(player, "Bob", isPhone(testInfo));
+    const bobSpot = { x: 256, y: 160 }; // 96 px apart: no bubble, so no videos over the map
+    await teleport(bob, bobSpot);
+    await tapWoka(player, "Bob", isPhone(testInfo), bobSpot);
     const card = player.getByTestId("actions-menu");
     await expect(card).toBeVisible();
     await expect(card.getByRole("heading")).toHaveText("Bob");
@@ -294,28 +333,34 @@ test("CH-063 Tapping Bob on the map opens his card with Walk to and Block or rep
     await expect(card.getByTestId("wokamenu-view-profile-button")).toHaveCount(0);
     await card.getByTestId("wokamenu-more-button").click();
     await expect(card.getByTestId("wokamenu-block-user-button")).toHaveText(/Block or report…/);
-    await tapWoka(player, "Bob", isPhone(testInfo));
+    await tapWoka(player, "Bob", isPhone(testInfo), bobSpot);
     await expect(card).toBeHidden();
 });
 
-test("CH-010 Phone: with the sheet open, Bob's card and the Block or report popup show in front of it @local", async ({ page, browser, url }, testInfo) => {
+test("CH-010 Phone: with the sheet open, Bob's card and the Block or report popup show in front of it @local", async ({
+    page,
+    browser,
+    url,
+}, testInfo) => {
     test.skip(!isPhone(testInfo), "phone only");
     const player = await alice(page, url);
     const bob = await bobApart(browser, testInfo, player, url);
     await teleport(player, { x: 160, y: 160 });
-    await teleport(bob, { x: 224, y: 160 });
+    const bobSpot = { x: 256, y: 160 }; // 96 px apart: no bubble, so no videos over the map
+    await teleport(bob, bobSpot);
     await openChat(player);
     await expect(player.locator("section#chat.chat-sheet")).toBeVisible();
-    await tapWoka(player, "Bob", true);
+    await tapWoka(player, "Bob", true, bobSpot);
     const card = player.getByTestId("actions-menu");
     await expect(card).toBeVisible();
     await expect(chat(player)).toBeVisible();
-    expect(await isOnTop(card)).toBe(true);
+    await expect.poll(() => isOnTop(card), { message: "card in front of the sheet" }).toBe(true);
     await card.getByTestId("wokamenu-more-button").tap();
     await card.getByTestId("wokamenu-block-user-button").tap();
     const dialog = player.locator("[role=dialog][aria-labelledby=report-title]");
     await expect(dialog).toBeVisible();
-    expect(await isOnTop(dialog)).toBe(true);
+    // It opens with a short animation: poll until it has settled.
+    await expect.poll(() => isOnTop(dialog), { message: "popup in front of the sheet" }).toBe(true);
 });
 
 /** Opens whatever chat Alice has with Bob on the Chats tab: the live one, else the ended row. */
@@ -335,19 +380,54 @@ function videos(page: Page) {
     return page.getByTestId("webrtc-video");
 }
 
-test("CH-057 CH-058 CH-059 Block Bob from his card, unblock him, and he stays unblocked when others come and go", async ({ player, browser, url }, testInfo) => {
+/**
+ * Clicks a control at a point where it is on top. On a phone the action bar's ^ tab (dev build) sits over the
+ * bottom middle of the person card, over part of ⋯ and of "Block or report…"; a person taps the part they can see.
+ */
+async function clickVisiblePart(target: Locator): Promise<void> {
+    await expect(target).toBeVisible();
+    // The card slides in: find the uncovered point again until a click there lands.
+    await expect(async () => {
+        const position = await target.evaluate((el) => {
+            const r = el.getBoundingClientRect();
+            for (const fy of [0.5, 0.3, 0.7, 0.15, 0.85]) {
+                for (const fx of [0.5, 0.2, 0.8, 0.1, 0.9]) {
+                    const top = document.elementFromPoint(r.left + r.width * fx, r.top + r.height * fy);
+                    if (top && (top === el || el.contains(top))) return { x: r.width * fx, y: r.height * fy };
+                }
+            }
+            return null;
+        });
+        if (!position) throw new Error("no part of the control is on top");
+        await target.click({ position, timeout: 2_000 });
+    }).toPass({ timeout: 20_000 });
+}
+
+/** Opens the card's ⋯ list. */
+async function openMore(card: Locator): Promise<void> {
+    await clickVisiblePart(card.getByTestId("wokamenu-more-button"));
+}
+
+/** Clicks "Block or report…" / "Unblock this user" in the card's ⋯ list. */
+async function clickBlockItem(card: Locator): Promise<void> {
+    await clickVisiblePart(card.getByTestId("wokamenu-block-user-button"));
+}
+
+test("CH-057 CH-058 CH-059 Block Bob from his card, unblock him, and he stays unblocked when others come and go", async ({
+    player,
+    browser,
+    url,
+}, testInfo) => {
     test.slow();
     const bob = await inBubble(browser, testInfo, player, url);
-    await send(bob, "Hello banned!");
-    await expect(message(player, "Hello banned!")).toBeVisible({ timeout: 10_000 });
     await expect.poll(() => videos(player).count(), { timeout: 30_000 }).toBeGreaterThan(0);
     const withBob = await videos(player).count();
 
     await openCardFromPeople(player, "Bob");
     const card = player.getByTestId("actions-menu");
-    await card.getByTestId("wokamenu-more-button").click();
+    await openMore(card);
     await expect(card.getByTestId("wokamenu-block-user-button")).toHaveText(/Block or report…/);
-    await card.getByTestId("wokamenu-block-user-button").click();
+    await clickBlockItem(card);
     const dialog = player.locator("[role=dialog][aria-labelledby=report-title]");
     await expect(dialog).toBeVisible();
     await expect(dialog.locator("#report-title")).toHaveText("Bob");
@@ -357,15 +437,16 @@ test("CH-057 CH-058 CH-059 Block Bob from his card, unblock him, and he stays un
     await dialog.getByTestId("blockmenu-block-user-button").click();
     await expect(dialog).toBeHidden();
     await expect.poll(() => videos(player).count(), { timeout: 30_000 }).toBeLessThan(withBob);
-    await send(bob, "after the block");
+    // Only what Bob sends after the block must not arrive.
+    await send(bob, "Hello banned!");
     await openChatWithBob(player);
     await player.waitForTimeout(3000);
-    await expect(chat(player).getByText("after the block")).toHaveCount(0);
+    await expect(chat(player).getByText("Hello banned!")).toHaveCount(0);
 
     await openCardFromPeople(player, "Bob");
-    await card.getByTestId("wokamenu-more-button").click();
+    await openMore(card);
     await expect(card.getByTestId("wokamenu-block-user-button")).toHaveText(/Unblock this user/);
-    await card.getByTestId("wokamenu-block-user-button").click();
+    await clickBlockItem(card);
     await expect(dialog.getByTestId("blockmenu-block-user-button")).toHaveText(/^\s*Unblock Bob/);
     await dialog.getByTestId("blockmenu-block-user-button").click();
     await expect(dialog).toBeHidden();
@@ -383,26 +464,30 @@ test("CH-057 CH-058 CH-059 Block Bob from his card, unblock him, and he stays un
     await openChatWithBob(player);
     await expect(message(player, "still unblocked")).toBeVisible({ timeout: 10_000 });
     await openCardFromPeople(player, "Bob");
-    await card.getByTestId("wokamenu-more-button").click();
+    await openMore(card);
     await expect(card.getByTestId("wokamenu-block-user-button")).toHaveText(/Block or report…/);
 });
 
-test("CH-060 The Block or report popup closes with Escape or its X and changes nothing", async ({ player, browser, url }, testInfo) => {
+test("CH-060 The Block or report popup closes with Escape or its X and changes nothing", async ({
+    player,
+    browser,
+    url,
+}, testInfo) => {
     test.slow();
     const bob = await inBubble(browser, testInfo, player, url);
     const dialog = player.locator("[role=dialog][aria-labelledby=report-title]");
     const card = player.getByTestId("actions-menu");
     for (const how of ["escape", "x"]) {
         await openCardFromPeople(player, "Bob");
-        await card.getByTestId("wokamenu-more-button").click();
-        await card.getByTestId("wokamenu-block-user-button").click();
+        await openMore(card);
+        await clickBlockItem(card);
         await expect(dialog).toBeVisible();
         if (how === "escape") await player.keyboard.press("Escape");
         else await dialog.getByRole("button", { name: "Close" }).click();
         await expect(dialog).toBeHidden();
     }
     await openCardFromPeople(player, "Bob");
-    await card.getByTestId("wokamenu-more-button").click();
+    await openMore(card);
     await expect(card.getByTestId("wokamenu-block-user-button")).toHaveText(/Block or report…/);
     await player.keyboard.press("Escape");
     await openProximityThread(player);

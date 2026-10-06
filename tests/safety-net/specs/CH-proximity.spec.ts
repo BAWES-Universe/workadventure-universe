@@ -18,6 +18,7 @@ import {
     send,
     serveEmojiData,
     teleport,
+    touchHold,
     typeInField,
     CORNER,
     FAR,
@@ -28,12 +29,19 @@ import {
 const NEAR_START = { x: 48, y: 48 };
 
 /** Carol chats with Alice and leaves, then Bob joins Alice's bubble: one ended chat and one live one. */
-async function endedThenLive(browser: Parameters<typeof newPlayer>[0], testInfo: Parameters<typeof newPlayer>[1], player: Page, url: string) {
+async function endedThenLive(
+    browser: Parameters<typeof newPlayer>[0],
+    testInfo: Parameters<typeof newPlayer>[1],
+    player: Page,
+    url: string
+) {
     const carol = await inBubble(browser, testInfo, player, url, "Carol");
     await send(carol, "hi from carol");
     await expect(message(player, "hi from carol")).toBeVisible({ timeout: 20_000 });
     await teleport(carol, FAR);
-    await expect(player.getByTestId("proximitySessionRowTitle").getByText("Carol", { exact: true })).toBeVisible({ timeout: 20_000 });
+    await expect(player.getByTestId("proximitySessionRowTitle").getByText("Carol", { exact: true })).toBeVisible({
+        timeout: 20_000,
+    });
     await carol.context().close();
     await teleport(player, CORNER);
     const bob = await newPlayer(browser, testInfo, url, "Bob");
@@ -44,7 +52,11 @@ async function endedThenLive(browser: Parameters<typeof newPlayer>[0], testInfo:
     return bob;
 }
 
-test("CH-017 Joining a bubble opens the proximity thread titled Proximity Chat, with Bob", async ({ player, browser, url }, testInfo) => {
+test("CH-017 Joining a bubble opens the proximity thread titled Proximity Chat, with Bob", async ({
+    player,
+    browser,
+    url,
+}, testInfo) => {
     await player.getByTestId("camera-button").click();
     await player.getByTestId("microphone-button").click();
     const bob = await bobApart(browser, testInfo, player, url);
@@ -56,10 +68,16 @@ test("CH-017 Joining a bubble opens the proximity thread titled Proximity Chat, 
     await expect(player.getByTestId("threadNowLabel")).toHaveText("Talking now · With Bob");
     await expect(player.getByTestId("threadSessionDividerLabel").last()).toHaveText("With Bob");
     await expect(player.getByTestId("threadSessionDivider").last()).toHaveAttribute("data-current", "true");
-    await expect(player.getByTestId("proximityExplainer")).toContainText("Only people here when you send a message see it");
+    await expect(player.getByTestId("proximityExplainer")).toContainText(
+        "Only people here when you send a message see it"
+    );
 });
 
-test("CH-018 A message sent with Enter or Send reaches the other side; Send shows only with text", async ({ player, browser, url }, testInfo) => {
+test("CH-018 A message sent with Enter or Send reaches the other side; Send shows only with text", async ({
+    player,
+    browser,
+    url,
+}, testInfo) => {
     const bob = await inBubble(browser, testInfo, player, url);
     const input = bob.getByTestId("messageInput");
     await expect(bob.getByTestId("sendMessageButton")).toBeHidden();
@@ -95,7 +113,11 @@ test("CH-019 Shift+Enter adds a line break and never sends", async ({ player, br
     await expect(chat(player).locator("li[data-event-id]").filter({ hasText: "line one" })).toHaveCount(1);
 });
 
-test("CH-020 The composer's smiley opens an emoji picker, inserts the emoji, and closes", async ({ player, browser, url }, testInfo) => {
+test("CH-020 The composer's smiley opens an emoji picker, inserts the emoji, and closes", async ({
+    player,
+    browser,
+    url,
+}, testInfo) => {
     await serveEmojiData(player);
     await inBubble(browser, testInfo, player, url);
     const smiley = player.getByTestId("emojiPickerButton");
@@ -119,7 +141,18 @@ test("CH-021 The rotated + opens the app list and closes it", async ({ player, b
     const plus = player.getByTestId("addApplicationButton");
     await expect(plus.locator("svg")).toHaveClass(/rotate-45/);
     await plus.click();
-    for (const app of ["youtube", "klaxoon", "googleSheets", "googleDocs", "googleSlides", "googleDrive", "eraser", "excalidraw", "cards", "tldraw"]) {
+    for (const app of [
+        "youtube",
+        "klaxoon",
+        "googleSheets",
+        "googleDocs",
+        "googleSlides",
+        "googleDrive",
+        "eraser",
+        "excalidraw",
+        "cards",
+        "tldraw",
+    ]) {
         await expect(player.getByTestId(`${app}ApplicationButton`)).toBeVisible();
     }
     await expect(player.getByTestId("youtubeApplicationButton")).toContainText("YouTube");
@@ -128,7 +161,11 @@ test("CH-021 The rotated + opens the app list and closes it", async ({ player, b
     await expect(player.getByTestId("youtubeApplicationButton")).toBeHidden();
 });
 
-test("CH-022 Bob typing shows in Alice's thread and on the live card, and stops when he sends", async ({ player, browser, url }, testInfo) => {
+test("CH-022 Bob typing shows in Alice's thread and on the live card, and stops when he sends", async ({
+    player,
+    browser,
+    url,
+}, testInfo) => {
     const bob = await inBubble(browser, testInfo, player, url);
     await typeInField(bob, "typing away");
     await expect(chat(player).locator("[id^=typing-user-]")).toBeVisible({ timeout: 10_000 });
@@ -141,7 +178,11 @@ test("CH-022 Bob typing shows in Alice's thread and on the live card, and stops 
     await expect(player.getByTestId("proximityTopRowSubtitle").or(message(player, "typing away"))).toBeVisible();
 });
 
-test("CH-023 The live card reads Proximity Chat with Bob and his last message, and reopens the thread", async ({ player, browser, url }, testInfo) => {
+test("CH-023 The live card reads Proximity Chat with Bob and his last message, and reopens the thread", async ({
+    player,
+    browser,
+    url,
+}, testInfo) => {
     const bob = await inBubble(browser, testInfo, player, url);
     await backToList(player);
     const top = player.getByTestId("proximityTopRow");
@@ -159,7 +200,11 @@ test("CH-023 The live card reads Proximity Chat with Bob and his last message, a
     await expect(message(player, "see you at the demo")).toBeVisible();
 });
 
-test("CH-024 CH-025 An ended bubble becomes its own read-only row, with a way back", async ({ player, browser, url }, testInfo) => {
+test("CH-024 CH-025 An ended bubble becomes its own read-only row, with a way back", async ({
+    player,
+    browser,
+    url,
+}, testInfo) => {
     const bob = await inBubble(browser, testInfo, player, url);
     await send(bob, "see you at the demo");
     await expect(message(player, "see you at the demo")).toBeVisible({ timeout: 10_000 });
@@ -199,34 +244,51 @@ test("CH-026 Walk to Bob from an ended chat walks Alice to him", async ({ player
     if (isPhone(testInfo)) await way.tap();
     else await way.click();
     await expect
-        .poll(async () => {
-            const p = await position(player);
-            return Math.hypot(p.x - CORNER.x, p.y - CORNER.y);
-        }, { timeout: 30_000 })
+        .poll(
+            async () => {
+                const p = await position(player);
+                return Math.hypot(p.x - CORNER.x, p.y - CORNER.y);
+            },
+            { timeout: 30_000 }
+        )
         .toBeLessThan(80);
 });
 
-test("CH-026 Go to <room> from an ended chat moves Alice to Bob's map", async ({ player, browser, url }, testInfo) => {
+test("CH-026 Go to <room> from an ended chat, with Bob on another map, moves Alice to Bob's map", async ({
+    player,
+    browser,
+    url,
+}, testInfo) => {
     test.slow();
     const bob = await inBubble(browser, testInfo, player, url);
     await send(bob, "hello");
     await expect(message(player, "hello")).toBeVisible({ timeout: 10_000 });
+    // Alice changes maps, so Bob is now on another map than hers. (Not Bob: a person who changes maps comes back with
+    // a new id, and the ended chat can only find people by the id they had in it, so it offers Find people.)
     const other = url.replace("/_/sn-", "/_/sn2-");
-    await wa(bob, (target) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (globalThis as any).WA.nav.goToRoom(target);
-    }, other);
-    await expect(player.getByTestId("proximityTopRow")).toBeHidden({ timeout: 30_000 });
+    await wa(
+        player,
+        (target) => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (globalThis as any).WA.nav.goToRoom(target);
+        },
+        other
+    );
+    await expect.poll(() => player.url(), { timeout: 30_000 }).toContain("/_/sn2-");
     await openEndedRow(player, "Bob");
     const way = player.getByTestId("proximityWayBack");
     await expect(way).toHaveAttribute("data-kind", "go", { timeout: 30_000 });
     await expect(way).toHaveText(/^\s*Go to /);
     if (isPhone(testInfo)) await way.tap();
     else await way.click();
-    await expect.poll(() => player.url(), { timeout: 30_000 }).toContain("/_/sn2-");
+    await expect.poll(() => player.url(), { timeout: 30_000 }).toContain(url);
 });
 
-test("CH-026 Find people from an ended chat opens People searching for Bob", async ({ player, browser, url }, testInfo) => {
+test("CH-026 Find people from an ended chat opens People searching for Bob", async ({
+    player,
+    browser,
+    url,
+}, testInfo) => {
     const bob = await inBubble(browser, testInfo, player, url);
     await send(bob, "hello");
     await expect(message(player, "hello")).toBeVisible({ timeout: 10_000 });
@@ -241,7 +303,11 @@ test("CH-026 Find people from an ended chat opens People searching for Bob", asy
     await expect(player.getByTestId("chatSearchInput")).toHaveValue("Bob");
 });
 
-test("CH-027 Bob back within minutes: the same chat carries on, Back with Bob, no second row", async ({ player, browser, url }, testInfo) => {
+test("CH-027 Bob back within minutes: the same chat carries on, Back with Bob, no second row", async ({
+    player,
+    browser,
+    url,
+}, testInfo) => {
     const bob = await inBubble(browser, testInfo, player, url);
     await send(bob, "see you at the demo");
     await expect(message(player, "see you at the demo")).toBeVisible({ timeout: 10_000 });
@@ -260,7 +326,11 @@ test("CH-027 Bob back within minutes: the same chat carries on, Back with Bob, n
     await expect(player.getByTestId("proximitySessionRow")).toHaveCount(0);
 });
 
-test("CH-028 A draft left when the bubble ends shows as Unsent draft with Copy", async ({ player, browser, url }, testInfo) => {
+test("CH-028 A draft left when the bubble ends shows as Unsent draft with Copy", async ({
+    player,
+    browser,
+    url,
+}, testInfo) => {
     await player.context().grantPermissions(["clipboard-read", "clipboard-write"]);
     const bob = await inBubble(browser, testInfo, player, url);
     await send(bob, "hello");
@@ -280,7 +350,11 @@ test("CH-028 A draft left when the bubble ends shows as Unsent draft with Copy",
     expect(await clipboardText(player)).toContain("my unsent words");
 });
 
-test("CH-029 An old ended chat shows You're with Bob now, and Go to chat opens the live one", async ({ player, browser, url }, testInfo) => {
+test("CH-029 An old ended chat shows You're with Bob now, and Go to chat opens the live one", async ({
+    player,
+    browser,
+    url,
+}, testInfo) => {
     test.slow();
     await endedThenLive(browser, testInfo, player, url);
     await backToList(player);
@@ -293,7 +367,11 @@ test("CH-029 An old ended chat shows You're with Bob now, and Go to chat opens t
     await expect(player.getByTestId("threadNowLabel")).toHaveText("Talking now · With Bob");
 });
 
-test("CH-030 CH-031 A live message while viewing an old chat is unread: tab dot, then the badge on the chat button", async ({ player, browser, url }, testInfo) => {
+test("CH-030 CH-031 A live message while viewing an old chat is unread: tab dot, then the badge on the chat button", async ({
+    player,
+    browser,
+    url,
+}, testInfo) => {
     test.slow();
     const bob = await endedThenLive(browser, testInfo, player, url);
     await backToList(player);
@@ -335,7 +413,13 @@ test("CH-032 Each past chat has its own row, newest first", async ({ player, bro
     await expect(player.getByTestId("oneChatListShowMore")).toHaveCount(0);
 });
 
-test("CH-033 Search chats filters the rows; Escape clears then leaves; X clears; no match says so", async ({ player, browser, url }, testInfo) => {
+test("CH-033 Search chats filters the rows; Escape clears then leaves; X clears; no match says so", async ({
+    player,
+    browser,
+    url,
+}, testInfo) => {
+    // Search is hidden while the chat server (Matrix) is offline, and the local stack has none.
+    test.skip(!process.env.SAFETY_NET_URL, "needs the chat server");
     const bob = await inBubble(browser, testInfo, player, url);
     await send(bob, "bob was here");
     await expect(message(player, "bob was here")).toBeVisible({ timeout: 10_000 });
@@ -383,7 +467,11 @@ test("CH-035 A script's chat message arrives from The bot and adds a Room messag
     await expect(player.getByTestId("threadNowLabel")).toHaveText("Messages from this room's scripts");
 });
 
-test("CH-036 Links and markdown render: new-tab links, bold, highlighted code", async ({ player, browser, url }, testInfo) => {
+test("CH-036 Links and markdown render: new-tab links, bold, highlighted code", async ({
+    player,
+    browser,
+    url,
+}, testInfo) => {
     const bob = await inBubble(browser, testInfo, player, url);
     await send(bob, "https://example.com");
     const plain = chat(player).locator('a[href^="https://example.com"]');
@@ -411,23 +499,33 @@ test("CH-036 Links and markdown render: new-tab links, bold, highlighted code", 
     await expect(code.locator(".hljs-keyword").first()).toHaveText("const");
 });
 
-test("CH-044 Messages carried over from the previous map can no longer be reacted to", async ({ player, browser, url }, testInfo) => {
+test("CH-044 Messages carried over from the previous map can no longer be reacted to", async ({
+    player,
+    browser,
+    url,
+}, testInfo) => {
     test.slow();
     const bob = await inBubble(browser, testInfo, player, url);
     await send(bob, "carried along");
     await expect(message(player, "carried along")).toBeVisible({ timeout: 10_000 });
     const other = url.replace("/_/sn-", "/_/sn3-");
-    await wa(player, (target) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (globalThis as any).WA.nav.goToRoom(target);
-    }, other);
+    await wa(
+        player,
+        (target) => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (globalThis as any).WA.nav.goToRoom(target);
+        },
+        other
+    );
     await expect.poll(() => player.url(), { timeout: 30_000 }).toContain("/_/sn3-");
+    // On a phone the chat sheet stays open across the map change and hides the bar: close it to see the new map load.
+    if (isPhone(testInfo) && (await chat(player).isVisible())) await closeChat(player);
     await expect(player.getByTestId("microphone-button")).toBeVisible({ timeout: 60_000 });
     await openEndedRow(player, "Bob");
     const msg = message(player, "carried along");
     await expect(msg).toBeVisible();
     if (isPhone(testInfo)) {
-        await msg.locator("#message").dispatchEvent("contextmenu");
+        await touchHold(player, msg.getByText("carried along"));
         const menu = player.getByTestId("messageActionMenu");
         await expect(menu).toBeVisible();
         await expect(menu.getByTestId("menuCopyTextButton")).toBeVisible();

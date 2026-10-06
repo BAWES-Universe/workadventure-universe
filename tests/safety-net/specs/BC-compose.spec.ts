@@ -29,7 +29,9 @@ async function recordTake(page: Page, seconds: number) {
 
 const wav = (seconds: number) => ({ name: "tone.wav", mimeType: "audio/wav", buffer: wavBuffer(seconds) });
 
-test("BC-037 @local Write a message: the rich editor with its full toolbar, focused, keys stay out of the game", async ({ page }, testInfo) => {
+test("BC-037 @local Write a message: the rich editor with its full toolbar, focused, keys stay out of the game", async ({
+    page,
+}, testInfo) => {
     await openCompose(page, "message", testInfo);
     const editor = page.getByTestId("broadcast-text-editor");
     await expect(editor).toBeVisible();
@@ -77,7 +79,9 @@ test("BC-037 @local Write a message: the rich editor with its full toolbar, focu
     expect(end).toEqual(start);
 });
 
-test("BC-038 @local Sending an empty message shows Write something first. and keeps the card", async ({ page }, testInfo) => {
+test("BC-038 @local Sending an empty message shows Write something first. and keeps the card", async ({
+    page,
+}, testInfo) => {
     await openCompose(page, "message", testInfo);
     await page.getByTestId("broadcast-send").click();
     const error = panel(page).getByRole("alert");
@@ -119,7 +123,9 @@ test("BC-043 @local While recording: timer, coloured wave, coral stop, Use a fil
     await expect(panel(page).getByRole("button", { name: "Use a file" })).toBeVisible();
 });
 
-test("BC-044 BC-045 @local Review: listen, play/pause, record again, caption, Send to <reach>", async ({ page }, testInfo) => {
+test("BC-044 BC-045 @local Review: listen, play/pause, record again, caption, Send to <reach>", async ({
+    page,
+}, testInfo) => {
     await openCompose(page, "voice", testInfo);
     await recordTake(page, 2);
     const play = page.getByTestId("broadcast-voice-play");
@@ -134,11 +140,17 @@ test("BC-044 BC-045 @local Review: listen, play/pause, record again, caption, Se
 
     await play.click();
     await expect(play).toHaveAttribute("aria-label", "Pause");
-    const playing = await panel(page).locator("audio").evaluate((audio: HTMLAudioElement) => !audio.paused);
+    const playing = await panel(page)
+        .locator("audio")
+        .evaluate((audio: HTMLAudioElement) => !audio.paused);
     expect(playing).toBe(true);
     await play.click();
     await expect(play).toHaveAttribute("aria-label", "Play");
-    expect(await panel(page).locator("audio").evaluate((audio: HTMLAudioElement) => audio.paused)).toBe(true);
+    expect(
+        await panel(page)
+            .locator("audio")
+            .evaluate((audio: HTMLAudioElement) => audio.paused)
+    ).toBe(true);
 });
 
 test("BC-046 @local Recording stops by itself at 3:00 and goes to review", async ({ page }, testInfo) => {
@@ -149,7 +161,9 @@ test("BC-046 @local Recording stops by itself at 3:00 and goes to review", async
     await expect(panel(page).getByText("Listen before you send")).toBeVisible({ timeout: 30_000 });
 });
 
-test("BC-047 @local A blocked microphone says so and offers Record again and Use a file", async ({ page }, testInfo) => {
+test("BC-047 @local A blocked microphone says so and offers Record again and Use a file", async ({
+    page,
+}, testInfo) => {
     await join(page, await wamRoom(testInfo, "empty"), "Alice");
     await page.evaluate(() => {
         const original = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
@@ -172,7 +186,9 @@ test("BC-047 @local A blocked microphone says so and offers Record again and Use
     await expect(panel(page).getByRole("button", { name: "Use a file" })).toBeVisible();
 });
 
-test("BC-048 @local Use a file: an audio file goes to review with its wave and duration, and plays", async ({ page }, testInfo) => {
+test("BC-048 @local Use a file: an audio file goes to review with its wave and duration, and plays", async ({
+    page,
+}, testInfo) => {
     await openCompose(page, "voice", testInfo);
     await page.getByTestId("broadcast-voice-file").setInputFiles(wav(4));
     await expect(panel(page).getByText("Listen before you send")).toBeVisible();
@@ -182,7 +198,9 @@ test("BC-048 @local Use a file: an audio file goes to review with its wave and d
     await expect(page.getByTestId("broadcast-voice-play")).toHaveAttribute("aria-label", "Pause");
 });
 
-test("BC-049 @local A text file or an audio file over 10 MiB is refused and the step stays", async ({ page }, testInfo) => {
+test("BC-049 @local A text file or an audio file over 10 MiB is refused and the step stays", async ({
+    page,
+}, testInfo) => {
     await openCompose(page, "voice", testInfo);
     const input = page.getByTestId("broadcast-voice-file");
     const before = await panel(page).getByText("Listen before you send").count();
@@ -191,12 +209,18 @@ test("BC-049 @local A text file or an audio file over 10 MiB is refused and the 
     expect(await panel(page).getByText("Listen before you send").count()).toBe(before);
     await panel(page).getByRole("alert").getByRole("button", { name: "Close" }).click();
 
-    await input.setInputFiles({ name: "big.mp3", mimeType: "audio/mpeg", buffer: Buffer.alloc(10 * 1024 * 1024 + 1024) });
+    await input.setInputFiles({
+        name: "big.mp3",
+        mimeType: "audio/mpeg",
+        buffer: Buffer.alloc(10 * 1024 * 1024 + 1024),
+    });
     await expect(panel(page).getByRole("alert")).toHaveText("That isn't an audio file. Use an MP3, WAV or OGG.");
     expect(await panel(page).getByText("Listen before you send").count()).toBe(before);
 });
 
-test("BC-050 @local Desktop: an audio file dropped on the Voice step is taken like Use a file", async ({ page }, testInfo) => {
+test("BC-050 @local Desktop: an audio file dropped on the Voice step is taken like Use a file", async ({
+    page,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
     await openCompose(page, "voice", testInfo);
     await expect(panel(page).getByRole("button", { name: "Use a file" })).toBeVisible();

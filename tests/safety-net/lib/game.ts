@@ -9,7 +9,9 @@ const MAP_STORAGE_AUTH = "Basic " + Buffer.from("john.doe:password").toString("b
  * so editor changes never leak between tests. Maps: empty (10x10), map (30x30), areas, online (31x17).
  */
 export async function wamRoom(testInfo: TestInfo, map: "empty" | "map" | "areas" | "online" = "map"): Promise<string> {
-    const slug = `sn-${testInfo.project.name}-${testInfo.testId}-${testInfo.retry}`.replace(/[^a-zA-Z0-9-]/g, "").slice(0, 60);
+    const slug = `sn-${testInfo.project.name}-${testInfo.testId}-${testInfo.retry}`
+        .replace(/[^a-zA-Z0-9-]/g, "")
+        .slice(0, 60);
     const destination = `/e2e/tests/maps/${slug}.wam`;
     await fetch(MAP_STORAGE + destination, { method: "DELETE", headers: { Authorization: MAP_STORAGE_AUTH } });
     const res = await fetch(MAP_STORAGE + "/copy", {
@@ -76,7 +78,9 @@ export async function wa<R, A>(page: Page, fn: (arg: A) => R | Promise<R>, arg?:
             async () => {
                 frame = page.frames().find((f) => f.url().includes("/local-script") || f.url() === "about:srcdoc");
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                return frame ? frame.evaluate(() => typeof (globalThis as any).WA !== "undefined").catch(() => false) : false;
+                return frame
+                    ? frame.evaluate(() => typeof (globalThis as any).WA !== "undefined").catch(() => false)
+                    : false;
             },
             { message: "map script frame with WA not found", timeout: 20_000 }
         )

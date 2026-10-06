@@ -1,6 +1,14 @@
 import type { Page } from "@playwright/test";
 import { test, expect, isPhone, join, newPlayer, roomUrl, wa } from "../lib/game";
-import { dismissNotificationAsk, expectCurrentStatus, inBubble, openMenu, pickStatus, profileMenu, watchBubble } from "../lib/jn";
+import {
+    dismissNotificationAsk,
+    expectCurrentStatus,
+    inBubble,
+    openMenu,
+    pickStatus,
+    profileMenu,
+    watchBubble,
+} from "../lib/jn";
 
 declare const WA: {
     player: {
@@ -16,7 +24,9 @@ declare const WA: {
 const statusDot = (page: Page) => page.locator(".profile-pill div.rounded-full.h-2");
 
 test.describe("Status", () => {
-    test("JN-067 Busy: menu closes, dot yellow, Busy checked, mic and camera disabled", async ({ player }, testInfo) => {
+    test("JN-067 Busy: menu closes, dot yellow, Busy checked, mic and camera disabled", async ({
+        player,
+    }, testInfo) => {
         await player.context().grantPermissions(["notifications"]);
         await pickStatus(player, "Busy");
         await dismissNotificationAsk(player);
@@ -29,7 +39,9 @@ test.describe("Status", () => {
         await expect(player.getByTestId("camera-button")).toHaveAttribute("data-state", "disabled");
     });
 
-    test("JN-068 Busy asks to turn on notifications, held 4 h after Not now; Turn on with a grant closes it", async ({ page }, testInfo) => {
+    test("JN-068 Busy asks to turn on notifications, held 4 h after Not now; Turn on with a grant closes it", async ({
+        page,
+    }, testInfo) => {
         await page.addInitScript(() => {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const w = window as any;
@@ -44,7 +56,11 @@ test.describe("Status", () => {
         await pickStatus(page, "Busy");
         const card = page.getByText("Turn on notifications?");
         await expect(card).toBeVisible();
-        await expect(page.getByText("Get a notification when someone wants to talk to you, even when this tab is in the background.")).toBeVisible();
+        await expect(
+            page.getByText(
+                "Get a notification when someone wants to talk to you, even when this tab is in the background."
+            )
+        ).toBeVisible();
         await expect(page.getByRole("button", { name: "Turn on" })).toBeVisible();
         await page.getByRole("button", { name: "Not now" }).click();
         await expect(card).toBeHidden();
@@ -81,14 +97,20 @@ test.describe("Status", () => {
         await join(page, roomUrl(testInfo), "Alice");
         const card = page.getByText("Turn on notifications?");
         await page.evaluate(() =>
-            localStorage.setItem("lastNotificationPermissionRequest", new Date(Date.now() - 5 * 24 * 3600_000).toString())
+            localStorage.setItem(
+                "lastNotificationPermissionRequest",
+                new Date(Date.now() - 5 * 24 * 3600_000).toString()
+            )
         );
         await pickStatus(page, "Busy");
         // eslint-disable-next-line playwright/no-wait-for-timeout
         await page.waitForTimeout(2_000);
         await expect(card, "held for 14 days when blocked").toBeHidden();
         await page.evaluate(() =>
-            localStorage.setItem("lastNotificationPermissionRequest", new Date(Date.now() - 15 * 24 * 3600_000).toString())
+            localStorage.setItem(
+                "lastNotificationPermissionRequest",
+                new Date(Date.now() - 15 * 24 * 3600_000).toString()
+            )
         );
         await pickStatus(page, "Online");
         await pickStatus(page, "Busy");
@@ -114,7 +136,11 @@ test.describe("Status", () => {
         await expect(popup).toHaveCount(0);
     });
 
-    test("JN-070 Busy: Bob arrives, Alice can Accept (back Online, bubble) or Close (stays Busy)", async ({ browser, player, url }, testInfo) => {
+    test("JN-070 Busy: Bob arrives, Alice can Accept (back Online, bubble) or Close (stays Busy)", async ({
+        browser,
+        player,
+        url,
+    }, testInfo) => {
         await player.context().grantPermissions(["notifications"]);
         await watchBubble(player);
         await pickStatus(player, "Busy");
@@ -161,7 +187,11 @@ test.describe("Status", () => {
         ["JN-071", "Back in a moment"],
         ["JN-072", "Do not disturb"],
     ] as const) {
-        test(`${id} ${status}: mic and camera disabled, no bubble with Bob`, async ({ browser, player, url }, testInfo) => {
+        test(`${id} ${status}: mic and camera disabled, no bubble with Bob`, async ({
+            browser,
+            player,
+            url,
+        }, testInfo) => {
             await pickStatus(player, status);
             await expect(player.getByTestId("microphone-button")).toHaveAttribute("data-state", "disabled");
             await expect(player.getByTestId("camera-button")).toHaveAttribute("data-state", "disabled");
@@ -178,7 +208,9 @@ test.describe("Status", () => {
         });
     }
 
-    test("JN-073 Moving brings any status back to Online with mic and camera as before", async ({ player }, testInfo) => {
+    test("JN-073 Moving brings any status back to Online with mic and camera as before", async ({
+        player,
+    }, testInfo) => {
         await player.context().grantPermissions(["notifications"]);
         await player.getByTestId("camera-button").click();
         await expect(player.getByTestId("camera-button")).toHaveAttribute("data-state", "forbidden");
@@ -189,9 +221,14 @@ test.describe("Status", () => {
             if (isPhone(testInfo)) {
                 const canvas = await player.locator("#game canvas").first().boundingBox();
                 expect(canvas).not.toBeNull();
-                if (canvas) await player.touchscreen.tap(canvas.x + canvas.width / 2 + 120, canvas.y + canvas.height / 2);
+                if (canvas)
+                    await player.touchscreen.tap(canvas.x + canvas.width / 2 + 120, canvas.y + canvas.height / 2);
             } else {
-                await player.locator("#game canvas").first().focus().catch(() => undefined);
+                await player
+                    .locator("#game canvas")
+                    .first()
+                    .focus()
+                    .catch(() => undefined);
                 await player.keyboard.down("ArrowRight");
                 // eslint-disable-next-line playwright/no-wait-for-timeout
                 await player.waitForTimeout(300);
@@ -254,7 +291,11 @@ test.describe("Status", () => {
         await expect(profileMenu(page).getByRole("button", { name: "Busy", exact: true })).toHaveCount(0);
     });
 
-    test("JN-076 Bob's game knows Alice's status (the dot itself is canvas only)", async ({ browser, player, url }, testInfo) => {
+    test("JN-076 Bob's game knows Alice's status (the dot itself is canvas only)", async ({
+        browser,
+        player,
+        url,
+    }, testInfo) => {
         test.setTimeout(180_000);
         await player.context().grantPermissions(["notifications"]);
         const bob = await newPlayer(browser, testInfo, url, "Bob");

@@ -79,7 +79,12 @@ test.describe("Profile menu", () => {
         await openMenu(player);
         const menu = profileMenu(player);
         await expect(menu.locator(".u-eyebrow")).toHaveText(["Change your status", "Profile", "Settings"]);
-        await expect(menu.locator("button.status-button")).toHaveText(["Online", "Busy", "Back in a moment", "Do not disturb"]);
+        await expect(menu.locator("button.status-button")).toHaveText([
+            "Online",
+            "Busy",
+            "Back in a moment",
+            "Do not disturb",
+        ]);
         const rows = ["Edit your name", "Customize your avatar", "Add companion", "Edit cam / mic", "All settings"];
         for (const row of rows) await expect(menu.getByRole("button", { name: row })).toBeVisible();
         const tops: number[] = [];
@@ -89,7 +94,9 @@ test.describe("Profile menu", () => {
         await expect(menu.getByRole("button", { name: "Unclaim my desk" })).toHaveCount(0);
         await expect(menu.getByRole("button", { name: "Report an issue" })).toHaveCount(0);
         await expect(menu.getByRole("button", { name: "Log out" })).toHaveCount(0);
-        await expect(menu.getByRole("button", { name: "Customize your avatar" }).locator("canvas, img").first()).toBeVisible();
+        await expect(
+            menu.getByRole("button", { name: "Customize your avatar" }).locator("canvas, img").first()
+        ).toBeVisible();
     });
 
     test("JN-049 Menu closes on outside click, pill click and Escape", async ({ player }) => {
@@ -105,7 +112,9 @@ test.describe("Profile menu", () => {
         await expect(profileButton(player)).toBeFocused();
     });
 
-    test("JN-050 Keyboard: Tab reaches the profile button, Enter and Space open the menu", async ({ player }, testInfo) => {
+    test("JN-050 Keyboard: Tab reaches the profile button, Enter and Space open the menu", async ({
+        player,
+    }, testInfo) => {
         test.skip(isPhone(testInfo), "desktop only");
         await player.locator("body").click({ position: { x: 300, y: 200 } });
         let focused = false;
@@ -114,7 +123,10 @@ test.describe("Profile menu", () => {
             focused = await profileButton(player).evaluate((node) => node === document.activeElement);
         }
         expect(focused, "Tab reaches the profile button").toBe(true);
-        await expect(player.locator(".profile-pill")).toHaveCSS("box-shadow", /rgb\(255, 255, 255\) 0px 0px 0px 2px inset/);
+        await expect(player.locator(".profile-pill")).toHaveCSS(
+            "box-shadow",
+            /rgb\(255, 255, 255\) 0px 0px 0px 2px inset/
+        );
         await player.keyboard.press("Enter");
         await expect(profileMenu(player)).toBeVisible();
         await player.keyboard.press("Escape");
@@ -124,7 +136,10 @@ test.describe("Profile menu", () => {
         await expect(profileMenu(player)).toBeVisible();
     });
 
-    test("JN-051 JN-052 Phone menu in a bubble with music: contextual actions, fits the screen", async ({ browser, page }, testInfo) => {
+    test("JN-051 JN-052 Phone menu in a bubble with music: contextual actions, fits the screen", async ({
+        browser,
+        page,
+    }, testInfo) => {
         test.skip(!isPhone(testInfo), "phone only");
         test.setTimeout(180_000);
         const url = roomUrl(testInfo, "tests/E2E/audio.json");
@@ -135,10 +150,16 @@ test.describe("Profile menu", () => {
         await wa(bob, () => WA.player.teleport(256, 128));
         await expect.poll(() => inBubble(page), { timeout: 30_000 }).toBe(true);
         await expect
-            .poll(() => page.evaluate(() => [...document.querySelectorAll("audio")].some((a) => !a.paused && a.src.includes("Audience"))), {
-                timeout: 20_000,
-                message: "the map's music plays in its area",
-            })
+            .poll(
+                () =>
+                    page.evaluate(() =>
+                        [...document.querySelectorAll("audio")].some((a) => !a.paused && a.src.includes("Audience"))
+                    ),
+                {
+                    timeout: 20_000,
+                    message: "the map's music plays in its area",
+                }
+            )
             .toBe(true);
         await openMenu(page);
         const menu = profileMenu(page);
@@ -149,8 +170,8 @@ test.describe("Profile menu", () => {
         await expect(menu.getByRole("button", { name: "Share your screen" })).toBeVisible();
         await expect(menu.getByRole("button", { name: "Picture in picture" })).toBeVisible();
         const tops = await Promise.all(
-            ["All settings", "Contextual actions"].map(async (label) =>
-                (await menu.getByText(label, { exact: true }).boundingBox())?.y ?? -1
+            ["All settings", "Contextual actions"].map(
+                async (label) => (await menu.getByText(label, { exact: true }).boundingBox())?.y ?? -1
             )
         );
         expect(tops[1]).toBeGreaterThan(tops[0]);
@@ -186,9 +207,14 @@ test.describe("Profile menu", () => {
     test("JN-053 Phone: bar items that don't fit are listed in the menu", async ({ player }, testInfo) => {
         test.skip(!isPhone(testInfo), "phone only");
         const labels = ["JN first button", "JN second button", "JN third button", "JN fourth button"];
-        await wa(player, (names) => {
-            for (const name of names) WA.ui.actionBar.addButton({ id: name, label: name, callback: () => undefined });
-        }, labels);
+        await wa(
+            player,
+            (names) => {
+                for (const name of names)
+                    WA.ui.actionBar.addButton({ id: name, label: name, callback: () => undefined });
+            },
+            labels
+        );
         await expect(player.getByText(labels[0]).first()).toBeAttached();
         await openMenu(player);
         const inMenu: string[] = [];
@@ -255,7 +281,9 @@ test.describe("Profile menu: edit name, WOKA, companion, devices", () => {
         const picked = ((await wokaTiles(player).nth(5).getAttribute("id")) ?? "").replace(/^woka-/, "");
         await player.locator("button.selectCharacterSceneFormSubmit").click();
         await inRoom(player);
-        expect(JSON.parse((await player.evaluate(() => localStorage.getItem("characterTextures"))) ?? "[]")).toEqual([picked]);
+        expect(JSON.parse((await player.evaluate(() => localStorage.getItem("characterTextures"))) ?? "[]")).toEqual([
+            picked,
+        ]);
     });
 
     test("JN-057 Desktop companion screen", async ({ player }, testInfo) => {
@@ -272,12 +300,17 @@ test.describe("Profile menu: edit name, WOKA, companion, devices", () => {
         const tiles = scene.locator("[role=radiogroup] [role=radio]");
         await expect(tiles.first()).toHaveId("companion-none");
         await expect(tiles.nth(1)).toBeVisible();
-        const columns = await scene.locator("[role=radiogroup]").evaluate((grid) => getComputedStyle(grid).gridTemplateColumns.split(" ").length);
+        const columns = await scene
+            .locator("[role=radiogroup]")
+            .evaluate((grid) => getComputedStyle(grid).gridTemplateColumns.split(" ").length);
         expect(columns).toBe(4);
         await expect(scene.locator("footer .u-join-hint")).toContainText("to browse");
         await expect(scene.locator("footer .u-join-hint")).toContainText("to continue");
         await expect(player.locator("button.selectCompanionSceneFormSubmit span:visible")).toHaveText("Continue");
-        await expect(player.locator("button.selectCompanionSceneClose")).toHaveAttribute("aria-label", "Back to your room");
+        await expect(player.locator("button.selectCompanionSceneClose")).toHaveAttribute(
+            "aria-label",
+            "Back to your room"
+        );
         await tiles.nth(1).click();
         const name = (await tiles.nth(1).getAttribute("aria-label")) ?? "";
         await expect(scene.locator("b.truncate")).toHaveText(name);
@@ -298,7 +331,9 @@ test.describe("Profile menu: edit name, WOKA, companion, devices", () => {
         const card = await scene.locator(".u-join-card").boundingBox();
         expect(card).not.toBeNull();
         if (card) expect(Math.round(card.width)).toBe(428);
-        const columns = await scene.locator("[role=radiogroup]").evaluate((grid) => getComputedStyle(grid).gridTemplateColumns.split(" ").length);
+        const columns = await scene
+            .locator("[role=radiogroup]")
+            .evaluate((grid) => getComputedStyle(grid).gridTemplateColumns.split(" ").length);
         expect(columns).toBe(3);
         await expect(scene.getByText("Just you, no companion")).toBeHidden();
         const submit = player.locator("button.selectCompanionSceneFormSubmit");
@@ -308,7 +343,9 @@ test.describe("Profile menu: edit name, WOKA, companion, devices", () => {
         if (box) expect(box.width).toBeGreaterThan(428 - 2 * 24);
         const tile = scene.locator("[role=radiogroup] [role=radio]").nth(1);
         await tile.tap();
-        await expect(submit.locator("span:visible")).toHaveText(`Continue with ${await tile.getAttribute("aria-label")}`);
+        await expect(submit.locator("span:visible")).toHaveText(
+            `Continue with ${await tile.getAttribute("aria-label")}`
+        );
     });
 
     test("JN-059 Picking a companion and then None", async ({ player }, testInfo) => {
@@ -378,7 +415,9 @@ test.describe("Profile menu: edit name, WOKA, companion, devices", () => {
         await profileMenu(player).getByRole("button", { name: "Edit cam / mic" }).click();
         await expect(mic).toBeEnabled();
         await expect(mic).toHaveValue(before);
-        const options = await mic.locator("option").evaluateAll((all) => all.map((o) => (o as HTMLOptionElement).value));
+        const options = await mic
+            .locator("option")
+            .evaluateAll((all) => all.map((o) => (o as HTMLOptionElement).value));
         const other = options.find((value) => value !== before) ?? "";
         await mic.selectOption(other);
         await player.getByRole("button", { name: "Save", exact: true }).click();

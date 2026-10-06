@@ -18,11 +18,15 @@ const OPEN_WEBSITE_DESKTOP = "[SPACE] to open web site 👀";
 const OPEN_WEBSITE_PHONE = "👆 to open web site 👀";
 
 async function walkToTopRow(page: Page): Promise<void> {
-    await walkUntil(page, "ArrowUp", () => expect.poll(async () => (await playerAt(page)).y, { timeout: 15_000 }).toBeLessThan(40));
+    await walkUntil(page, "ArrowUp", () =>
+        expect.poll(async () => (await playerAt(page)).y, { timeout: 15_000 }).toBeLessThan(40)
+    );
 }
 
 async function walkOutLeft(page: Page): Promise<void> {
-    await walkUntil(page, "ArrowLeft", () => expect.poll(async () => (await playerAt(page)).x, { timeout: 15_000 }).toBeLessThan(5 * 32));
+    await walkUntil(page, "ArrowLeft", () =>
+        expect.poll(async () => (await playerAt(page)).x, { timeout: 15_000 }).toBeLessThan(5 * 32)
+    );
 }
 
 async function openTwoCowebsites(page: Page): Promise<void> {
@@ -40,7 +44,9 @@ async function openTwoCowebsites(page: Page): Promise<void> {
     await expect(page.getByTestId("tab2")).toBeVisible();
 }
 
-test("OR-077 @local Walking into an openWebsite area opens the cowebsite beside the map; walking out closes it", async ({ page }, testInfo) => {
+test("OR-077 @local Walking into an openWebsite area opens the cowebsite beside the map; walking out closes it", async ({
+    page,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
     await fakeOutside(page.context());
     await join(page, tiled(testInfo, "tests/CoWebsite/cowebsite_property.json"), "Alice");
@@ -60,7 +66,9 @@ test("OR-077 @local Walking into an openWebsite area opens the cowebsite beside 
     await expect(page.locator('iframe[title="Cowebsite"]')).toHaveCount(0);
 });
 
-test("OR-078 @local Phone: the cowebsite opens above the map with a horizontal drag bar under it", async ({ page }, testInfo) => {
+test("OR-078 @local Phone: the cowebsite opens above the map with a horizontal drag bar under it", async ({
+    page,
+}, testInfo) => {
     test.skip(!isPhone(testInfo), "phone only");
     await fakeOutside(page.context());
     await join(page, tiled(testInfo, "tests/CoWebsite/cowebsite_property.json"), "Alice");
@@ -80,7 +88,9 @@ test("OR-078 @local Phone: the cowebsite opens above the map with a horizontal d
     expect(barBox.y).toBeGreaterThan(box.y + box.height - 20);
 });
 
-test("OR-079 @local Desktop: on-action cowebsite shows the SPACE popup; SPACE or the button opens it; leaving removes the popup", async ({ page }, testInfo) => {
+test("OR-079 @local Desktop: on-action cowebsite shows the SPACE popup; SPACE or the button opens it; leaving removes the popup", async ({
+    page,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
     await fakeOutside(page.context());
     await join(page, tiled(testInfo, "tests/CoWebsite/cowebsite_property_trigger.json"), "Alice");
@@ -110,7 +120,9 @@ test("OR-079 @local Desktop: on-action cowebsite shows the SPACE popup; SPACE or
     await expect(page.locator('iframe[title="Cowebsite"]')).toHaveCount(0);
 });
 
-test("OR-080 @local Phone: on-action cowebsite popup reads the tap text, sits above the bar, and the button opens it", async ({ page }, testInfo) => {
+test("OR-080 @local Phone: on-action cowebsite popup reads the tap text, sits above the bar, and the button opens it", async ({
+    page,
+}, testInfo) => {
     test.skip(!isPhone(testInfo), "phone only");
     await fakeOutside(page.context());
     await join(page, tiled(testInfo, "tests/CoWebsite/cowebsite_property_trigger.json"), "Alice");
@@ -128,9 +140,12 @@ test("OR-080 @local Phone: on-action cowebsite popup reads the tap text, sits ab
     await expect(message).toBeHidden();
 });
 
-test("OR-081 Two cowebsite tabs stay loaded, keep what was typed, show only the active one; arrows on overflow", async ({ player }) => {
+test("OR-081 Two cowebsite tabs stay loaded, keep what was typed, show only the active one; arrows on overflow", async ({
+    player,
+}) => {
     await openTwoCowebsites(player);
-    const input = () => player.locator('iframe[title="Cowebsite"]:visible').contentFrame().locator('[id="\\#text_input"]');
+    const input = () =>
+        player.locator('iframe[title="Cowebsite"]:visible').contentFrame().locator('[id="\\#text_input"]');
 
     await expect(input()).toHaveValue("");
     await input().fill("tab2");
@@ -158,7 +173,9 @@ test("OR-081 Two cowebsite tabs stay loaded, keep what was typed, show only the 
     await expect(cowebsite(player).locator(".flex-0 button").first()).toBeVisible();
 });
 
-test("OR-082 Cowebsite tab buttons: first copies the URL with a popup, second opens a new tab, X closes the tab", async ({ player }) => {
+test("OR-082 Cowebsite tab buttons: first copies the URL with a popup, second opens a new tab, X closes the tab", async ({
+    player,
+}) => {
     await player.context().grantPermissions(["clipboard-read", "clipboard-write"]);
     await openTwoCowebsites(player);
     const tab = player.getByTestId("tab2");
@@ -182,7 +199,9 @@ test("OR-082 Cowebsite tab buttons: first copies the URL with a popup, second op
     await expect(player.locator('iframe[title="Cowebsite"]')).toHaveCount(1);
 });
 
-test("OR-083 Desktop: the cowebsite's drag bar resizes the split; the full-screen icon hides the game and comes back", async ({ player }, testInfo) => {
+test("OR-083 Desktop: the cowebsite's drag bar resizes the split; the full-screen icon hides the game and comes back", async ({
+    player,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
     await openTwoCowebsites(player);
     const container = cowebsite(player);
@@ -211,7 +230,9 @@ test("OR-083 Desktop: the cowebsite's drag bar resizes the split; the full-scree
     await expect.poll(async () => (await container.boundingBox())!.width).toBeLessThan(viewport.width - 100);
 });
 
-test("OR-084 @local A not-closable on-icon cowebsite shows its tab without X and closes when you leave", async ({ page }, testInfo) => {
+test("OR-084 @local A not-closable on-icon cowebsite shows its tab without X and closes when you leave", async ({
+    page,
+}, testInfo) => {
     await fakeOutside(page.context());
     await join(page, tiled(testInfo, "tests/CoWebsite/cowebsite_property_onicon_closable.json"), "Alice");
     await walkToTopRow(page);
@@ -222,13 +243,31 @@ test("OR-084 @local A not-closable on-icon cowebsite shows its tab without X and
     await expect(page.getByTestId("tab1")).toHaveCount(0);
 });
 
-test("OR-085 Open-tab area on action: popup with Open Tab; SPACE and the button open a new browser tab; without a trigger it opens at once", async ({ page }, testInfo) => {
+test("OR-085 Open-tab area on action: popup with Open Tab; SPACE and the button open a new browser tab; without a trigger it opens at once", async ({
+    page,
+}, testInfo) => {
     await fakeOutside(page.context());
     const url = await wamRoom(testInfo, "empty");
     const link = "https://workadventu.re/open-tab";
     await addWamAreas(url, [
-        { id: "tab-action", name: "tabAction", x: 160, y: 0, width: 128, height: 96, properties: [{ id: "p1", type: "openWebsite", link, newTab: true, trigger: "onaction" }] },
-        { id: "tab-enter", name: "tabEnter", x: 160, y: 224, width: 128, height: 96, properties: [{ id: "p2", type: "openWebsite", link: link + "-now", newTab: true }] },
+        {
+            id: "tab-action",
+            name: "tabAction",
+            x: 160,
+            y: 0,
+            width: 128,
+            height: 96,
+            properties: [{ id: "p1", type: "openWebsite", link, newTab: true, trigger: "onaction" }],
+        },
+        {
+            id: "tab-enter",
+            name: "tabEnter",
+            x: 160,
+            y: 224,
+            width: 128,
+            height: 96,
+            properties: [{ id: "p2", type: "openWebsite", link: link + "-now", newTab: true }],
+        },
     ]);
     await join(page, url, "Alice");
 
@@ -256,12 +295,39 @@ test("OR-085 Open-tab area on action: popup with Open Tab; SPACE and the button 
     expect(atOnce.url()).toBe(link + "-now");
 });
 
-test("OR-086 WAM website areas: cowebsite on enter, Open Website popup on action; leaving closes and removes them", async ({ page }, testInfo) => {
+test("OR-086 WAM website areas: cowebsite on enter, Open Website popup on action; leaving closes and removes them", async ({
+    page,
+}, testInfo) => {
     await fakeOutside(page.context());
     const url = await wamRoom(testInfo, "empty");
     await addWamAreas(url, [
-        { id: "site-enter", name: "siteEnter", x: 160, y: 0, width: 128, height: 96, properties: [{ id: "p1", type: "openWebsite", link: INPUT_PAGE + "?enter", newTab: false, closable: true }] },
-        { id: "site-action", name: "siteAction", x: 160, y: 224, width: 128, height: 96, properties: [{ id: "p2", type: "openWebsite", link: INPUT_PAGE + "?action", newTab: false, closable: true, trigger: "onaction" }] },
+        {
+            id: "site-enter",
+            name: "siteEnter",
+            x: 160,
+            y: 0,
+            width: 128,
+            height: 96,
+            properties: [{ id: "p1", type: "openWebsite", link: INPUT_PAGE + "?enter", newTab: false, closable: true }],
+        },
+        {
+            id: "site-action",
+            name: "siteAction",
+            x: 160,
+            y: 224,
+            width: 128,
+            height: 96,
+            properties: [
+                {
+                    id: "p2",
+                    type: "openWebsite",
+                    link: INPUT_PAGE + "?action",
+                    newTab: false,
+                    closable: true,
+                    trigger: "onaction",
+                },
+            ],
+        },
     ]);
     await join(page, url, "Alice");
 
@@ -287,12 +353,23 @@ test("OR-086 WAM website areas: cowebsite on enter, Open Website popup on action
 });
 
 async function stubJitsi(page: Page): Promise<void> {
-    await page.context().route(/^https:\/\/jitsi\.invalid\//, (route) =>
-        route.fulfill({ status: 200, contentType: "application/javascript", body: "window.JitsiMeetExternalAPI = function () { return { addListener() {}, removeListener() {}, executeCommand() {}, dispose() {}, getIFrame() { return document.createElement('iframe'); } }; };" })
-    );
+    await page
+        .context()
+        .route(/^https:\/\/jitsi\.invalid\//, (route) =>
+            route.fulfill({
+                status: 200,
+                contentType: "application/javascript",
+                body: "window.JitsiMeetExternalAPI = function () { return { addListener() {}, removeListener() {}, executeCommand() {}, dispose() {}, getIFrame() { return document.createElement('iframe'); } }; };",
+            })
+        );
 }
 
-async function expectJitsiFlow(page: Page, isPhoneProject: boolean, leave: () => Promise<void>, enter: () => Promise<void>): Promise<void> {
+async function expectJitsiFlow(
+    page: Page,
+    isPhoneProject: boolean,
+    leave: () => Promise<void>,
+    enter: () => Promise<void>
+): Promise<void> {
     const message = popups(page).getByText(isPhoneProject ? "👆 to enter Jitsi 👀" : "[SPACE] to enter Jitsi 👀");
     await enter();
     await expect(message).toBeVisible();
@@ -303,7 +380,9 @@ async function expectJitsiFlow(page: Page, isPhoneProject: boolean, leave: () =>
     await expect(page.getByTestId("tab1")).toHaveCount(0);
 }
 
-test("OR-087 Jitsi area on action: Enter Jitsi popup opens a Jitsi tab; leaving closes it", async ({ page }, testInfo) => {
+test("OR-087 Jitsi area on action: Enter Jitsi popup opens a Jitsi tab; leaving closes it", async ({
+    page,
+}, testInfo) => {
     await stubJitsi(page);
     await join(page, tiled(testInfo, "tests/E2E/empty.json"), "Alice");
     await wa(page, async () => {
@@ -315,16 +394,44 @@ test("OR-087 Jitsi area on action: Enter Jitsi popup opens a Jitsi tab; leaving 
         area.setProperty("jitsiUrl", "https://jitsi.invalid");
         area.setProperty("jitsiRoom", "safety-net");
     });
-    await expectJitsiFlow(page, isPhone(testInfo), () => teleport(page, 48, 144), () => teleport(page, 208, 48));
+    await expectJitsiFlow(
+        page,
+        isPhone(testInfo),
+        () => teleport(page, 48, 144),
+        () => teleport(page, 208, 48)
+    );
 });
 
-test("OR-088 WAM Jitsi area on action: Enter Jitsi popup opens a Jitsi tab; leaving closes it", async ({ page }, testInfo) => {
+test("OR-088 WAM Jitsi area on action: Enter Jitsi popup opens a Jitsi tab; leaving closes it", async ({
+    page,
+}, testInfo) => {
     await stubJitsi(page);
     const url = await wamRoom(testInfo, "empty");
     await addWamAreas(url, [
-        { id: "jitsi", name: "jitsiArea", x: 160, y: 0, width: 128, height: 96, properties: [{ id: "p1", type: "jitsiRoomProperty", roomName: "safety-net", trigger: "onaction", jitsiUrl: "https://jitsi.invalid", jitsiRoomConfig: {} }] },
+        {
+            id: "jitsi",
+            name: "jitsiArea",
+            x: 160,
+            y: 0,
+            width: 128,
+            height: 96,
+            properties: [
+                {
+                    id: "p1",
+                    type: "jitsiRoomProperty",
+                    roomName: "safety-net",
+                    trigger: "onaction",
+                    jitsiUrl: "https://jitsi.invalid",
+                    jitsiRoomConfig: {},
+                },
+            ],
+        },
     ]);
     await join(page, url, "Alice");
-    await expectJitsiFlow(page, isPhone(testInfo), () => teleport(page, 48, 144), () => teleport(page, 208, 48));
+    await expectJitsiFlow(
+        page,
+        isPhone(testInfo),
+        () => teleport(page, 48, 144),
+        () => teleport(page, 208, 48)
+    );
 });
-

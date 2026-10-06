@@ -40,7 +40,9 @@ test("OR-001 A guest has no Orbit button in the bar and no Orbit row in the prof
     await expect(player.getByRole("button", { name: "Orbit" })).toHaveCount(0);
 });
 
-test("OR-089 Desktop: a play-audio area plays music; the music button toggles the volume slider; pause and stop work", async ({ page }, testInfo) => {
+test("OR-089 Desktop: a play-audio area plays music; the music button toggles the volume slider; pause and stop work", async ({
+    page,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
     await join(page, tiled(testInfo, "tests/E2E/audio.json"), "Alice");
     await expect(page.getByTestId("music-button")).toHaveCount(0);
@@ -85,10 +87,14 @@ test("OR-090 Phone: the music controls of a play-audio area sit in the profile m
     await expect.poll(() => audio(page).evaluate((a: HTMLAudioElement) => a.paused)).toBe(true);
 });
 
-test("OR-091 Muted map sounds disable the music button; a sound that fails shows the warning and a forbidden button", async ({ page }, testInfo) => {
+test("OR-091 Muted map sounds disable the music button; a sound that fails shows the warning and a forbidden button", async ({
+    page,
+}, testInfo) => {
     await join(page, tiled(testInfo, "tests/E2E/audio.json"), "Alice");
     await openSettings(page);
-    await page.locator('[data-testid="settings-tab-sound"]:visible, [data-testid="settings-nav-sound"]:visible').click();
+    await page
+        .locator('[data-testid="settings-tab-sound"]:visible, [data-testid="settings-nav-sound"]:visible')
+        .click();
     await page.getByText("Mute map music and sounds").click();
     await page.locator("#closeMenu").click();
     await expect(page.getByTestId("settings-window")).toBeHidden();
@@ -100,7 +106,9 @@ test("OR-091 Muted map sounds disable the music button; a sound that fails shows
     if (isPhone(testInfo)) await page.getByTestId("action-user").click();
 
     await openSettings(page);
-    await page.locator('[data-testid="settings-tab-sound"]:visible, [data-testid="settings-nav-sound"]:visible').click();
+    await page
+        .locator('[data-testid="settings-tab-sound"]:visible, [data-testid="settings-nav-sound"]:visible')
+        .click();
     await page.getByText("Mute map music and sounds").click();
     await page.locator("#closeMenu").click();
 
@@ -128,13 +136,17 @@ test("OR-091 Blocked autoplay: the WOKA shows the 'Audio is not allowed' bubble"
     await expect(page.locator("span.characterTriggerAction")).toContainText("or click here to play it!");
 });
 
-test("OR-092 @local Exits: exit1's exit loads exit2, whose exit brings you back to exit1 at from_exit2", async ({ page }, testInfo) => {
+test("OR-092 @local Exits: exit1's exit loads exit2, whose exit brings you back to exit1 at from_exit2", async ({
+    page,
+}, testInfo) => {
     await join(page, tiled(testInfo, "tests/exit1.json"), "Alice");
     await walkUntil(page, "ArrowRight", () => expect(page).toHaveURL(/tests\/exit2\.json/, { timeout: 30_000 }));
     await expect(page.getByTestId("microphone-button")).toBeVisible({ timeout: 60_000 });
     await expect.poll(() => tileOf(page), { timeout: 30_000 }).toBe("1,4");
 
-    await walkUntil(page, "ArrowLeft", () => expect(page).toHaveURL(/tests\/exit1\.json#from_exit2/, { timeout: 30_000 }));
+    await walkUntil(page, "ArrowLeft", () =>
+        expect(page).toHaveURL(/tests\/exit1\.json#from_exit2/, { timeout: 30_000 })
+    );
     await expect(page.getByTestId("microphone-button")).toBeVisible({ timeout: 60_000 });
     await expect.poll(() => tileOf(page), { timeout: 30_000 }).toBe("8,4");
     await expect(page.getByText(/error/i)).toHaveCount(0);
@@ -153,11 +165,25 @@ test("OR-093 @local Exits to start layers of the same map jump to S2 and back to
 test("OR-094 WAM exit area takes you to the other room and closes open cowebsites", async ({ page }, testInfo) => {
     const url = await wamRoom(testInfo, "empty");
     const target = roomUrl(testInfo, "tests/E2E/empty.json").replace("/_/", "/_/exit-");
-    await addWamAreas(url, [{ id: "exit", name: "exitArea", x: 160, y: 0, width: 128, height: 96, properties: [{ id: "p1", type: "exit", url: target, areaName: "" }] }]);
+    await addWamAreas(url, [
+        {
+            id: "exit",
+            name: "exitArea",
+            x: 160,
+            y: 0,
+            width: 128,
+            height: 96,
+            properties: [{ id: "p1", type: "exit", url: target, areaName: "" }],
+        },
+    ]);
     await join(page, url, "Alice");
-    await wa(page, async (u: string) => {
-        await (globalThis as Any).WA.nav.openCoWebSite(u);
-    }, INPUT_PAGE);
+    await wa(
+        page,
+        async (u: string) => {
+            await (globalThis as Any).WA.nav.openCoWebSite(u);
+        },
+        INPUT_PAGE
+    );
     await expect(cowebsiteFrame(page)).toBeVisible();
 
     await teleport(page, 208, 48).catch(() => undefined);
@@ -166,7 +192,9 @@ test("OR-094 WAM exit area takes you to the other room and closes open cowebsite
     await expect(page.locator('iframe[title="Cowebsite"]')).toHaveCount(0);
 });
 
-test("OR-095 goToPage map: the Open Links popup's four buttons each act; javascript: links are refused", async ({ page }, testInfo) => {
+test("OR-095 goToPage map: the Open Links popup's four buttons each act; javascript: links are refused", async ({
+    page,
+}, testInfo) => {
     await fakeOutside(page.context());
     await join(page, tiled(testInfo, "tests/goToPage.json"), "Alice");
     const popup = page.locator("div.popUpElement");
@@ -207,7 +235,10 @@ test("OR-095 goToPage map: the Open Links popup's four buttons each act; javascr
     expect(page.url()).toBe(before);
 
     await enter();
-    await Promise.all([page.waitForURL("https://workadventu.re/pricing", { timeout: 30_000 }), button("Go To Page").click()]);
+    await Promise.all([
+        page.waitForURL("https://workadventu.re/pricing", { timeout: 30_000 }),
+        button("Go To Page").click(),
+    ]);
 });
 
 test("OR-095 goToPage map: the popup's 'load grouped map' button changes room", async ({ page }, testInfo) => {
@@ -220,7 +251,9 @@ test("OR-095 goToPage map: the popup's 'load grouped map' button changes room", 
     await expect(page.getByTestId("microphone-button")).toBeVisible({ timeout: 60_000 });
 });
 
-test("OR-096 Starter map: the clock zone opens a script popup 'It's HH:MM' that closes when you leave", async ({ page }, testInfo) => {
+test("OR-096 Starter map: the clock zone opens a script popup 'It's HH:MM' that closes when you leave", async ({
+    page,
+}, testInfo) => {
     await join(page, tiled(testInfo, "starter/map.json"), "Alice");
     const popup = page.locator("div.popUpElement");
     await teleport(page, 14 * 32 + 16, 3 * 32 + 16);
@@ -230,7 +263,9 @@ test("OR-096 Starter map: the clock zone opens a script popup 'It's HH:MM' that 
     await expect(popup).toHaveCount(0);
 });
 
-test("OR-097 Banner: script banner with colours, link and Got it!; closeBanner removes it", async ({ page }, testInfo) => {
+test("OR-097 Banner: script banner with colours, link and Got it!; closeBanner removes it", async ({
+    page,
+}, testInfo) => {
     await fakeOutside(page.context());
     await join(page, tiled(testInfo, "tests/Banner/banner.json"), "Alice");
     const banner = page.locator("#banner-test");
@@ -253,7 +288,12 @@ test("OR-097 Banner: script banner with colours, link and Got it!; closeBanner r
     await expect(banner).toHaveCount(0);
 
     await wa(page, () => {
-        (globalThis as Any).WA.ui.banner.openBanner({ id: "banner-two", text: "Second banner", closable: false, timeToClose: 0 });
+        (globalThis as Any).WA.ui.banner.openBanner({
+            id: "banner-two",
+            text: "Second banner",
+            closable: false,
+            timeToClose: 0,
+        });
     });
     const second = page.locator("#banner-two");
     await expect(second).toContainText("Second banner");
@@ -281,7 +321,9 @@ async function registerTopButtons(page: Page): Promise<void> {
     });
 }
 
-test("OR-098 Desktop: script bar buttons sit on the right before Tools, run their callback, and move into the profile menu when the bar is narrow", async ({ page: player }, testInfo) => {
+test("OR-098 Desktop: script bar buttons sit on the right before Tools, run their callback, and move into the profile menu when the bar is narrow", async ({
+    page: player,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
     await join(player, await wamRoom(testInfo, "empty"), "Alice");
     await expect(player.getByTestId("map-menu")).toBeVisible();
@@ -307,7 +349,10 @@ test("OR-098 Desktop: script bar buttons sit on the right before Tools, run thei
     await expect(inventory).toHaveCount(0);
 });
 
-test("OR-099 Phone: script bar buttons sit in the profile menu and run their callback", async ({ page: player, url }, testInfo) => {
+test("OR-099 Phone: script bar buttons sit in the profile menu and run their callback", async ({
+    page: player,
+    url,
+}, testInfo) => {
     test.skip(!isPhone(testInfo), "phone only");
     await join(player, url, "Alice");
     await registerTopButtons(player);
@@ -320,7 +365,9 @@ test("OR-099 Phone: script bar buttons sit in the profile menu and run their cal
     await expect(player.getByRole("button", { name: "Register" })).toHaveCount(0);
 });
 
-test("OR-100 Script buttons for appsMenu, buildMenu and profileMenu appear in their menus (Apps in the profile menu on phones) and run their callbacks", async ({ player }, testInfo) => {
+test("OR-100 Script buttons for appsMenu, buildMenu and profileMenu appear in their menus (Apps in the profile menu on phones) and run their callbacks", async ({
+    player,
+}, testInfo) => {
     await wa(player, () => {
         const WA = (globalThis as Any).WA;
         (globalThis as Any).clicked = [];
@@ -349,7 +396,9 @@ test("OR-100 Script buttons for appsMenu, buildMenu and profileMenu appear in th
 
     if (phone) {
         if (!(await player.getByTestId("profile-menu").isVisible())) await player.getByTestId("action-user").click();
-        await expect(player.getByTestId("profile-menu").getByRole("button", { name: "Custom profileMenu" })).toBeVisible();
+        await expect(
+            player.getByTestId("profile-menu").getByRole("button", { name: "Custom profileMenu" })
+        ).toBeVisible();
     } else {
         await player.getByTestId("action-user").click();
     }
@@ -360,10 +409,14 @@ test("OR-100 Script buttons for appsMenu, buildMenu and profileMenu appear in th
     await player.getByTestId("map-menu").click();
     await expect(player.getByTestId("map-sub-menu")).toBeVisible();
     await player.getByRole("button", { name: "Custom buildMenu" }).click();
-    await expect.poll(() => scriptGlobal<string[]>(player, "clicked")).toEqual(["appsMenu", "profileMenu", "buildMenu"]);
+    await expect
+        .poll(() => scriptGlobal<string[]>(player, "clicked"))
+        .toEqual(["appsMenu", "profileMenu", "buildMenu"]);
 });
 
-test("OR-101 An action-type script button shows its image with the tooltip name and runs its callback", async ({ player }, testInfo) => {
+test("OR-101 An action-type script button shows its image with the tooltip name and runs its callback", async ({
+    player,
+}, testInfo) => {
     await wa(player, () => {
         const WA = (globalThis as Any).WA;
         WA.ui.actionBar.addButton({
@@ -408,7 +461,10 @@ async function openModal(page: Page, options: Record<string, unknown>): Promise<
 
 const modalSrc = `${MAPS}/tests/index.html`;
 
-test("OR-102 Desktop: script modal right/left float without dimming, centre dims; X, Escape and closeModal close it and the script hears it", async ({ page: player, url }, testInfo) => {
+test("OR-102 Desktop: script modal right/left float without dimming, centre dims; X, Escape and closeModal close it and the script hears it", async ({
+    page: player,
+    url,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
     await join(player, url, "Alice");
     const panel = player.locator(".menu-container");
@@ -449,7 +505,10 @@ test("OR-102 Desktop: script modal right/left float without dimming, centre dims
     await expect.poll(() => scriptGlobal<number>(player, "modalEvents")).toBe(3);
 });
 
-test("OR-103 Phone: a centre modal is forced full screen with X top right; a right modal is the 80%/400px side window", async ({ page: player, url }, testInfo) => {
+test("OR-103 Phone: a centre modal is forced full screen with X top right; a right modal is the 80%/400px side window", async ({
+    page: player,
+    url,
+}, testInfo) => {
     test.skip(!isPhone(testInfo), "phone only");
     await join(player, url, "Alice");
     const panel = player.locator(".menu-container");
@@ -474,7 +533,10 @@ test("OR-103 Phone: a centre modal is forced full screen with X top right; a rig
     expect(Math.round(box.x + box.width)).toBe(viewport.width);
 });
 
-test("OR-104 Desktop: a script modal with allowFullScreen expands to full screen and back", async ({ page: player, url }, testInfo) => {
+test("OR-104 Desktop: a script modal with allowFullScreen expands to full screen and back", async ({
+    page: player,
+    url,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
     await join(player, url, "Alice");
     const panel = player.locator(".menu-container");
@@ -488,7 +550,9 @@ test("OR-104 Desktop: a script modal with allowFullScreen expands to full screen
     await expect.poll(async () => (await panel.boundingBox())!.width).toBeLessThan(viewport.width * 0.4);
 });
 
-test("OR-105 UI website: entering first_website opens a centred overlay over the game; leaving closes it", async ({ page }, testInfo) => {
+test("OR-105 UI website: entering first_website opens a centred overlay over the game; leaving closes it", async ({
+    page,
+}, testInfo) => {
     await join(page, tiled(testInfo, "tests/UIWebsite/uiwebsite.json"), "Alice");
     const container = page.locator("#ui-website-container");
     await expect(container.locator('iframe[title="https://www.wikipedia.org/"]')).toHaveCount(1);
@@ -507,21 +571,31 @@ test("OR-105 UI website: entering first_website opens a centred overlay over the
     await expect(first).toHaveCount(0);
 });
 
-test("OR-106 @local Embedded website: the map's website object is an iframe on the map that moves with it", async ({ page }, testInfo) => {
+test("OR-106 @local Embedded website: the map's website object is an iframe on the map that moves with it", async ({
+    page,
+}, testInfo) => {
     await join(page, tiled(testInfo, "tests/EmbeddedWebsite/website_in_map.json"), "Alice");
     const frame = page.locator('iframe[src*="integrated_website_1.html"]');
     await expect(frame).toBeVisible();
     const before = (await frame.boundingBox())!;
     const start = await playerAt(page);
-    await walkUntil(page, "ArrowDown", () => expect.poll(async () => (await playerAt(page)).y, { timeout: 15_000 }).toBeGreaterThan(start.y + 8 * 32));
-    await walkUntil(page, "ArrowRight", () => expect.poll(async () => (await playerAt(page)).x, { timeout: 15_000 }).toBeGreaterThan(start.x + 8 * 32));
-    await expect.poll(async () => {
-        const now = (await frame.boundingBox())!;
-        return Math.abs(now.x - before.x) + Math.abs(now.y - before.y);
-    }).toBeGreaterThan(20);
+    await walkUntil(page, "ArrowDown", () =>
+        expect.poll(async () => (await playerAt(page)).y, { timeout: 15_000 }).toBeGreaterThan(start.y + 8 * 32)
+    );
+    await walkUntil(page, "ArrowRight", () =>
+        expect.poll(async () => (await playerAt(page)).x, { timeout: 15_000 }).toBeGreaterThan(start.x + 8 * 32)
+    );
+    await expect
+        .poll(async () => {
+            const now = (await frame.boundingBox())!;
+            return Math.abs(now.x - before.x) + Math.abs(now.y - before.y);
+        })
+        .toBeGreaterThan(20);
 });
 
-test("OR-107 Script menu commands show as Settings pages: the iframe one shows inside Settings, the command one runs and closes Settings", async ({ player }, testInfo) => {
+test("OR-107 Script menu commands show as Settings pages: the iframe one shows inside Settings, the command one runs and closes Settings", async ({
+    player,
+}, testInfo) => {
     await wa(
         player,
         (src: string) => {
@@ -536,7 +610,9 @@ test("OR-107 Script menu commands show as Settings pages: the iframe one shows i
     await openSettings(player);
     const window = player.getByTestId("settings-window");
     const entry = (label: string) =>
-        isPhone(testInfo) ? window.getByRole("tab", { name: label }) : window.locator(".u-settings-nav").getByRole("button", { name: label });
+        isPhone(testInfo)
+            ? window.getByRole("tab", { name: label })
+            : window.locator(".u-settings-nav").getByRole("button", { name: label });
 
     await expect(entry("Script page")).toBeVisible();
     await expect(entry("Script action")).toBeVisible();
@@ -548,7 +624,9 @@ test("OR-107 Script menu commands show as Settings pages: the iframe one shows i
     await expect(window).toBeHidden();
 });
 
-test("OR-108 getMenuCommand('settings').open() opens Settings; 'globalMessages' opens the Broadcast card instead of an old page", async ({ player }) => {
+test("OR-108 getMenuCommand('settings').open() opens Settings; 'globalMessages' opens the Broadcast card instead of an old page", async ({
+    player,
+}) => {
     await wa(player, async () => {
         await (await (globalThis as Any).WA.ui.getMenuCommand("settings")).open();
     });
@@ -563,13 +641,19 @@ test("OR-108 getMenuCommand('settings').open() opens Settings; 'globalMessages' 
     await expect(player.getByTestId("settings-window")).toHaveCount(0);
 });
 
-test("OR-109 displayActionMessage: popup with the message and Close; SPACE or Close runs the callback and removes it", async ({ player }) => {
+test("OR-109 displayActionMessage: popup with the message and Close; SPACE or Close runs the callback and removes it", async ({
+    player,
+}) => {
     const show = (id: string) =>
-        wa(player, (i: string) => {
-            const g = globalThis as Any;
-            g.actions = g.actions ?? [];
-            g.WA.ui.displayActionMessage({ message: "Press SPACE " + i, callback: () => g.actions.push(i) });
-        }, id);
+        wa(
+            player,
+            (i: string) => {
+                const g = globalThis as Any;
+                g.actions = g.actions ?? [];
+                g.WA.ui.displayActionMessage({ message: "Press SPACE " + i, callback: () => g.actions.push(i) });
+            },
+            id
+        );
     const popupText = (id: string) => player.locator(".popups").getByText("Press SPACE " + id);
 
     await show("one");
@@ -585,13 +669,23 @@ test("OR-109 displayActionMessage: popup with the message and Close; SPACE or Cl
     await expect(popupText("two")).toHaveCount(0);
 });
 
-test("OR-110 displayPlayerMessage: a bubble over your WOKA; SPACE or a click runs the callback and removes it", async ({ player }) => {
+test("OR-110 displayPlayerMessage: a bubble over your WOKA; SPACE or a click runs the callback and removes it", async ({
+    player,
+}) => {
     const show = (id: string) =>
-        wa(player, (i: string) => {
-            const g = globalThis as Any;
-            g.messages = g.messages ?? [];
-            g.WA.ui.displayPlayerMessage({ message: "Hello " + i, type: "message", callback: () => g.messages.push(i) });
-        }, id);
+        wa(
+            player,
+            (i: string) => {
+                const g = globalThis as Any;
+                g.messages = g.messages ?? [];
+                g.WA.ui.displayPlayerMessage({
+                    message: "Hello " + i,
+                    type: "message",
+                    callback: () => g.messages.push(i),
+                });
+            },
+            id
+        );
     const bubble = player.locator("span.characterTriggerAction");
 
     await show("one");
@@ -607,11 +701,29 @@ test("OR-110 displayPlayerMessage: a bubble over your WOKA; SPACE or a click run
     await expect(bubble).toHaveCount(0);
 });
 
-test("OR-111 WAM tooltip areas: the text shows over your WOKA while inside (or for its duration) and goes when you leave", async ({ page }, testInfo) => {
+test("OR-111 WAM tooltip areas: the text shows over your WOKA while inside (or for its duration) and goes when you leave", async ({
+    page,
+}, testInfo) => {
     const url = await wamRoom(testInfo, "empty");
     await addWamAreas(url, [
-        { id: "tip-forever", name: "tipForever", x: 160, y: 0, width: 128, height: 96, properties: [{ id: "t1", type: "tooltipPropertyData", content: "Stays while inside", duration: 0 }] },
-        { id: "tip-short", name: "tipShort", x: 160, y: 224, width: 128, height: 96, properties: [{ id: "t2", type: "tooltipPropertyData", content: "Gone after three seconds", duration: 3 }] },
+        {
+            id: "tip-forever",
+            name: "tipForever",
+            x: 160,
+            y: 0,
+            width: 128,
+            height: 96,
+            properties: [{ id: "t1", type: "tooltipPropertyData", content: "Stays while inside", duration: 0 }],
+        },
+        {
+            id: "tip-short",
+            name: "tipShort",
+            x: 160,
+            y: 224,
+            width: 128,
+            height: 96,
+            properties: [{ id: "t2", type: "tooltipPropertyData", content: "Gone after three seconds", duration: 3 }],
+        },
     ]);
     await join(page, url, "Alice");
     const bubble = page.locator("span.characterTriggerAction");

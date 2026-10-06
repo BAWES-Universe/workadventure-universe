@@ -54,7 +54,13 @@ test("BC-075 @local A received text card: sender, reach line, formatting and Got
 test("BC-077 @local A received voice card: Play/Pause, wave, duration and caption", async ({ page }, testInfo) => {
     await join(page, await wamRoom(testInfo, "empty"), "Alice");
     const audioUrl = "data:audio/wav;base64," + wavBuffer(20).toString("base64");
-    await primeCard(page, { senderName: "Khalid", reach: "room", reachLabel: "Main Hall", audioUrl, html: "<p>Listen to this</p>" });
+    await primeCard(page, {
+        senderName: "Khalid",
+        reach: "room",
+        reachLabel: "Main Hall",
+        audioUrl,
+        html: "<p>Listen to this</p>",
+    });
     const card = page.getByTestId("broadcast-received");
     await expect(card.getByText("Listen to this")).toBeVisible();
     const play = page.getByTestId("broadcast-received-play");
@@ -132,7 +138,9 @@ test("BC-080 @local Desktop: Escape closes the open menu or window, not the card
     }
 });
 
-test("BC-081 @local Settings opens over existing cards; a new card comes over Settings; after closing cards are on top", async ({ page }, testInfo) => {
+test("BC-081 @local Settings opens over existing cards; a new card comes over Settings; after closing cards are on top", async ({
+    page,
+}, testInfo) => {
     await join(page, await wamRoom(testInfo, "empty"), "Alice");
     await primeCard(page, { senderName: "Before", reach: "room", html: "<p>before</p>" });
     await expect(page.getByTestId("broadcast-received")).toHaveCount(1);

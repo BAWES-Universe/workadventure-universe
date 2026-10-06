@@ -50,7 +50,9 @@ test("ME-001 Desktop: Tools > Map editor opens the edit pill, rail and Objects p
     await expect(page.getByTestId("map-menu")).toBeVisible();
 });
 
-test("ME-002 Phone: menu > Tools > Map editor shows the whole map, pill and rail, play UI hidden", async ({ page }, testInfo) => {
+test("ME-002 Phone: menu > Tools > Map editor shows the whole map, pill and rail, play UI hidden", async ({
+    page,
+}, testInfo) => {
     test.skip(!isPhone(testInfo), "phone only");
     await editRoom(page, testInfo);
     await openTools(page);
@@ -73,7 +75,9 @@ test("ME-002 Phone: menu > Tools > Map editor shows the whole map, pill and rail
     await expect(page.getByText("Pick a tool on the right. Drag to move around, pinch to zoom.")).toBeVisible();
 });
 
-test("ME-003 @local Done leaves the editor and play is back (a tap, or a right-click on desktop, walks)", async ({ page }, testInfo) => {
+test("ME-003 @local Done leaves the editor and play is back (a tap, or a right-click on desktop, walks)", async ({
+    page,
+}, testInfo) => {
     await editRoom(page, testInfo);
     await openEditor(page, testInfo);
     await page.getByTestId("closeMapEditorButton").click();
@@ -87,7 +91,9 @@ test("ME-003 @local Done leaves the editor and play is back (a tap, or a right-c
     const floor = await toScreen(page, SPOT_A.x, SPOT_A.y);
     if (isPhone(testInfo)) await page.touchscreen.tap(floor.x, floor.y);
     else await page.mouse.click(floor.x, floor.y, { button: "right" });
-    await expect.poll(async () => Math.abs((await playerPosition(page)).x - start.x), { message: "the WOKA walks" }).toBeGreaterThan(40);
+    await expect
+        .poll(async () => Math.abs((await playerPosition(page)).x - start.x), { message: "the WOKA walks" })
+        .toBeGreaterThan(40);
 });
 
 test("ME-004 Desktop: E turns edit mode on (Objects) and off", async ({ page }, testInfo) => {
@@ -101,7 +107,9 @@ test("ME-004 Desktop: E turns edit mode on (Objects) and off", async ({ page }, 
     await expect(page.getByTestId("look-around")).toBeHidden();
 });
 
-test("ME-005 Desktop: backtick closes; 2 Areas, 3 Objects, 5 Delete, 6 closes, 1 Look around", async ({ page }, testInfo) => {
+test("ME-005 Desktop: backtick closes; 2 Areas, 3 Objects, 5 Delete, 6 closes, 1 Look around", async ({
+    page,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
     await editRoom(page, testInfo);
     await openEditor(page, testInfo);
@@ -125,7 +133,9 @@ test("ME-005 Desktop: backtick closes; 2 Areas, 3 Objects, 5 Delete, 6 closes, 1
     await expect(page.getByTestId("edit-pill")).toBeHidden();
 });
 
-test("ME-006 @local Desktop: 4 opens Configure my room; Room settings save; Megaphone tab is there", async ({ page }, testInfo) => {
+test("ME-006 @local Desktop: 4 opens Configure my room; Room settings save; Megaphone tab is there", async ({
+    page,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
     await editRoom(page, testInfo);
     await module(page, "/src/front/Stores/GameStore.ts", (m) => m.userIsAdminStore.set(true));
@@ -141,6 +151,9 @@ test("ME-006 @local Desktop: 4 opens Configure my room; Room settings save; Mega
     await expect(win.getByRole("textbox", { name: "Room name" })).toBeVisible();
     await expect(win.getByText("Tags", { exact: true })).toBeVisible();
     await expect(win.getByRole("textbox", { name: "Room license" })).toBeVisible();
+    // Saving needs a room name; local test maps have none.
+    const roomName = win.getByRole("textbox", { name: "Room name" });
+    if ((await roomName.inputValue()) === "") await roomName.fill("Safety net");
     await description.fill("Safety net room");
     await win.getByText(/^Confirm that you want to save the changes/).click();
     await expect(win.getByRole("checkbox", { name: /Confirm that you want to save the changes/ })).toBeChecked();
@@ -148,7 +161,9 @@ test("ME-006 @local Desktop: 4 opens Configure my room; Room settings save; Mega
     await expect(page.getByText("Room settings saved")).toBeVisible();
 });
 
-test("ME-007 @local Rail: tapping lit Objects tucks the panel, but placed objects can still be picked", async ({ page }, testInfo) => {
+test("ME-007 @local Rail: tapping lit Objects tucks the panel, but placed objects can still be picked", async ({
+    page,
+}, testInfo) => {
     const url = await editRoom(page, testInfo);
     await openEditor(page, testInfo);
     await pickTool(page, "EntityEditor");
@@ -192,12 +207,17 @@ test("ME-008 Desktop: the panel's drag edge resizes it and the width is remember
     expect(Math.round((await panel.boundingBox())!.width)).toBeLessThan(saved + 3);
 });
 
-test("ME-009 Editing while in a call: the edit pill never covers the video tiles", async ({ page, browser }, testInfo) => {
+test("ME-009 Editing while in a call: the edit pill never covers the video tiles", async ({
+    page,
+    browser,
+}, testInfo) => {
     test.setTimeout(240_000);
     const url = await editRoom(page, testInfo, "empty");
     const bob = await newPlayer(browser, testInfo, url, "Bob");
     const tiles = page.locator("#cameras-container .camera-box:visible");
-    await expect.poll(async () => tiles.count(), { message: "Alice sees the bubble's video tiles", timeout: 30_000 }).toBeGreaterThan(1);
+    await expect
+        .poll(async () => tiles.count(), { message: "Alice sees the bubble's video tiles", timeout: 30_000 })
+        .toBeGreaterThan(1);
     await openEditor(page, testInfo);
     const pill = (await page.getByTestId("edit-pill").boundingBox())!;
     for (let i = 0; i < (await tiles.count()); i++) {
@@ -210,7 +230,9 @@ test("ME-009 Editing while in a call: the edit pill never covers the video tiles
     await bob.context().close();
 });
 
-test("ME-010 @local Editing: dragging pans, zooming works, the WOKA never walks, no Look around", async ({ page }, testInfo) => {
+test("ME-010 @local Editing: dragging pans, zooming works, the WOKA never walks, no Look around", async ({
+    page,
+}, testInfo) => {
     await editRoom(page, testInfo);
     await openEditor(page, testInfo);
     await expect(rail(page, "EntityEditor")).toHaveAttribute("aria-pressed", "true");
@@ -218,7 +240,9 @@ test("ME-010 @local Editing: dragging pans, zooming works, the WOKA never walks,
     const cam0 = await camera(page);
     const empty = await toScreen(page, SPOT_A.x, SPOT_A.y);
     await drag(page, testInfo, empty, { x: empty.x + 120, y: empty.y - 80 });
-    await expect.poll(async () => Math.abs((await camera(page)).x - cam0.x), { message: "the map pans" }).toBeGreaterThan(30);
+    await expect
+        .poll(async () => Math.abs((await camera(page)).x - cam0.x), { message: "the map pans" })
+        .toBeGreaterThan(30);
     expect(await playerPosition(page)).toEqual(me);
     const spot = await toScreen(page, SPOT_B.x, SPOT_B.y);
     await hit(page, testInfo, spot);

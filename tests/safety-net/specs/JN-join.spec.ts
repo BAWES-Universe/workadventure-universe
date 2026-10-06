@@ -118,7 +118,9 @@ test.describe("Join: WOKA picker", () => {
         await expect(card.locator("p.u-join-hint")).toContainText("to save");
         await expect(checkedTile(page)).toHaveCount(1);
         await expect(checkedTile(page).locator(".u-join-tile-check")).toBeVisible();
-        const columns = await page.locator("#woka-grid").evaluate((grid) => getComputedStyle(grid).gridTemplateColumns.split(" ").length);
+        const columns = await page
+            .locator("#woka-grid")
+            .evaluate((grid) => getComputedStyle(grid).gridTemplateColumns.split(" ").length);
         expect(columns).toBe(6);
         await expect(page.locator("button.wokaBuildButton span:visible")).toHaveText("Build your WOKA");
         await expect(page.locator("button.wokaBuildButton svg")).toBeVisible();
@@ -127,7 +129,9 @@ test.describe("Join: WOKA picker", () => {
         await expect(page.getByRole("tab")).toHaveCount(0);
         const tile = wokaTiles(page).first().locator("canvas");
         const before = await canvasPicture(tile);
-        await expect.poll(() => canvasPicture(tile), { message: "tiles turn on their own every 2.4 s", timeout: 6_000 }).not.toBe(before);
+        await expect
+            .poll(() => canvasPicture(tile), { message: "tiles turn on their own every 2.4 s", timeout: 6_000 })
+            .not.toBe(before);
     });
 
     test("JN-008 JN-013 Collection pills with counts, switching and the More arrow", async ({ page }, testInfo) => {
@@ -139,7 +143,9 @@ test.describe("Join: WOKA picker", () => {
         await expect(tabs.first().locator("b.woka-count")).toHaveText(String(await wokaTiles(page).count()));
         await expect(tabs.nth(1).locator("b.woka-count")).toHaveText("3");
         await page.locator(".woka-tiles-scroll").evaluate((node) => (node.scrollTop = node.scrollHeight));
-        await expect.poll(() => page.locator(".woka-tiles-scroll").evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+        await expect
+            .poll(() => page.locator(".woka-tiles-scroll").evaluate((node) => node.scrollTop))
+            .toBeGreaterThan(0);
         await tabs.nth(1).click();
         await expect(tabs.nth(1)).toHaveAttribute("aria-selected", "true");
         await expect(tabs.first()).toHaveAttribute("aria-selected", "false");
@@ -165,7 +171,9 @@ test.describe("Join: WOKA picker", () => {
         if (!card) return;
         expect(Math.round(card.x)).toBe(0);
         expect(Math.round(card.width)).toBe(428);
-        const columns = await page.locator("#woka-grid").evaluate((grid) => getComputedStyle(grid).gridTemplateColumns.split(" ").length);
+        const columns = await page
+            .locator("#woka-grid")
+            .evaluate((grid) => getComputedStyle(grid).gridTemplateColumns.split(" ").length);
         expect(columns).toBe(4);
         await expect(page.locator("button.wokaBuildButton span:visible")).toHaveText("Build");
         await expect(page.locator("button.wokaBuildButton").getByText("Build your WOKA")).toBeHidden();
@@ -193,13 +201,15 @@ test.describe("Join: WOKA picker", () => {
         await page.emulateMedia({ reducedMotion: "reduce" });
         await openWokaPicker(page, roomUrl(testInfo));
         const preview = page.locator(".woka-spot canvas");
-        await expect(checkedTile(page)).toHaveId(await wokaTiles(page).first().getAttribute("id") ?? "");
+        await expect(checkedTile(page)).toHaveId((await wokaTiles(page).first().getAttribute("id")) ?? "");
         const previewBefore = await canvasPicture(preview);
         await wokaTiles(page).nth(2).click();
         await expect(wokaTiles(page).nth(2)).toHaveAttribute("aria-checked", "true");
         await expect(wokaTiles(page).nth(2).locator(".u-join-tile-check")).toBeVisible();
         await expect(checkedTile(page)).toHaveCount(1);
-        await expect.poll(() => canvasPicture(preview), { message: "preview shows the picked WOKA" }).not.toBe(previewBefore);
+        await expect
+            .poll(() => canvasPicture(preview), { message: "preview shows the picked WOKA" })
+            .not.toBe(previewBefore);
         if (isPhone(testInfo)) return;
         await page.keyboard.press("ArrowRight");
         await expect(wokaTiles(page).nth(3)).toHaveAttribute("aria-checked", "true");
@@ -227,7 +237,9 @@ test.describe("Join: WOKA picker", () => {
             }
         }
         expect(new Set(pictures).size).toBe(4);
-        await expect.poll(() => canvasPicture(tile), { message: "four turns come back to the start" }).toBe(pictures[0]);
+        await expect
+            .poll(() => canvasPicture(tile), { message: "four turns come back to the start" })
+            .toBe(pictures[0]);
         // eslint-disable-next-line playwright/no-wait-for-timeout
         await page.waitForTimeout(3_000);
         expect(await canvasPicture(tile), "no automatic turn after Rotate").toBe(pictures[0]);
@@ -251,14 +263,18 @@ test.describe("Join: WOKA picker", () => {
         expect(seenTiles.size).toBeGreaterThan(1);
         expect(seenTabs.size, "the active pill follows the random pick").toBeGreaterThan(0);
         const active = page.locator("[role=tab][aria-selected=true]");
-        const activeIndex = await tabs.evaluateAll((all) => all.findIndex((t) => t.getAttribute("aria-selected") === "true"));
+        const activeIndex = await tabs.evaluateAll((all) =>
+            all.findIndex((t) => t.getAttribute("aria-selected") === "true")
+        );
         const id = (await checkedTile(page).getAttribute("id")) ?? "";
         if (activeIndex === 0) expect(id).not.toMatch(/^woka-copy-[1-8]-/);
         else expect(id).toMatch(new RegExp(`^woka-copy-${activeIndex}-`));
         await expect(active).toHaveCount(1);
     });
 
-    test("JN-014 Long tile list is cut half way through a row, with a fade and scroll bar", async ({ page }, testInfo) => {
+    test("JN-014 Long tile list is cut half way through a row, with a fade and scroll bar", async ({
+        page,
+    }, testInfo) => {
         await openWokaBuilder(page, roomUrl(testInfo));
         await page.getByRole("tab", { name: "Hair" }).click();
         await expect(wokaTiles(page)).toHaveCount(74);
@@ -323,7 +339,9 @@ test.describe("Join: Build your WOKA", () => {
         }
     });
 
-    test("JN-018 Picking a part changes only that part; Enter walks the parts and saves", async ({ page }, testInfo) => {
+    test("JN-018 Picking a part changes only that part; Enter walks the parts and saves", async ({
+        page,
+    }, testInfo) => {
         await openWokaBuilder(page, roomUrl(testInfo));
         const before = await builderSelection(page);
         await page.getByRole("tab", { name: "Hair" }).click();
@@ -351,7 +369,9 @@ test.describe("Join: Build your WOKA", () => {
         await expect(page.locator(".u-join-card p.u-join-hint")).toContainText("Part 6 of 6");
         await page.keyboard.press("Enter");
         await expect(cameraHeading(page)).toBeVisible();
-        const saved: string[] = await page.evaluate(() => JSON.parse(localStorage.getItem("characterTextures") ?? "[]"));
+        const saved: string[] = await page.evaluate(() =>
+            JSON.parse(localStorage.getItem("characterTextures") ?? "[]")
+        );
         expect(saved).toHaveLength(6);
     });
 
@@ -407,7 +427,9 @@ test.describe("Join: Build your WOKA", () => {
         const hairId = (await wokaTiles(page).nth(7).getAttribute("id")) ?? "";
         await page.locator("button.selectCharacterSceneFormSubmit").click();
         await expect(cameraHeading(page)).toBeVisible();
-        const saved: string[] = await page.evaluate(() => JSON.parse(localStorage.getItem("characterTextures") ?? "[]"));
+        const saved: string[] = await page.evaluate(() =>
+            JSON.parse(localStorage.getItem("characterTextures") ?? "[]")
+        );
         expect(saved).toHaveLength(6);
         await page.getByRole("button", { name: "Save", exact: true }).click();
         await inRoom(page);
@@ -507,14 +529,21 @@ test.describe("Join: camera and microphone", () => {
         const select = page.getByRole("combobox", { name: "Microphone" });
         await expect(select.locator("option")).toHaveCount(3);
         await expect(select).toBeEnabled();
-        const options = await select.locator("option").evaluateAll((all) => all.map((o) => (o as HTMLOptionElement).value));
+        const options = await select
+            .locator("option")
+            .evaluateAll((all) => all.map((o) => (o as HTMLOptionElement).value));
         const current = await select.inputValue();
-        const other = options.find((value) => value !== current && value !== "default") ?? options.find((v) => v !== current);
+        const other =
+            options.find((value) => value !== current && value !== "default") ?? options.find((v) => v !== current);
         expect(other).toBeTruthy();
         await select.selectOption(other ?? "");
         await expect(select).toHaveValue(other ?? "");
         await expect
-            .poll(() => page.evaluate(() => Object.entries(localStorage).find(([k]) => /preferredAudioInputDevice/i.test(k))?.[1]))
+            .poll(() =>
+                page.evaluate(
+                    () => Object.entries(localStorage).find(([k]) => /preferredAudioInputDevice/i.test(k))?.[1]
+                )
+            )
             .toBe(other);
         await page.getByRole("button", { name: "Save", exact: true }).click();
         await inRoom(page);
@@ -531,11 +560,17 @@ test.describe("Join: camera and microphone", () => {
         const speaker = page.getByRole("combobox", { name: "Speaker" });
         await expect(speaker).toBeVisible();
         await page.getByRole("button", { name: "Play a test sound" }).click();
-        await expect.poll(async () => (await playedSounds(page)).filter((src) => src.includes("webrtc-in.mp3")).length).toBe(1);
-        const options = await speaker.locator("option").evaluateAll((all) => all.map((o) => (o as HTMLOptionElement).value));
+        await expect
+            .poll(async () => (await playedSounds(page)).filter((src) => src.includes("webrtc-in.mp3")).length)
+            .toBe(1);
+        const options = await speaker
+            .locator("option")
+            .evaluateAll((all) => all.map((o) => (o as HTMLOptionElement).value));
         const other = options.find((value) => value !== (options[0] ?? ""));
         await speaker.selectOption(other ?? "");
-        await expect.poll(async () => (await playedSounds(page)).filter((src) => src.includes("webrtc-in.mp3")).length).toBe(2);
+        await expect
+            .poll(async () => (await playedSounds(page)).filter((src) => src.includes("webrtc-in.mp3")).length)
+            .toBe(2);
         await expect(speaker).toHaveValue(other ?? "");
     });
 
@@ -543,7 +578,9 @@ test.describe("Join: camera and microphone", () => {
         await blockMedia(page);
         await openCameraScreen(page, roomUrl(testInfo));
         await expect(page.getByText("Your browser blocked the camera")).toBeVisible();
-        await expect(page.locator(".camera-preview").getByText("Allow it in the address bar, then try again.")).toBeVisible();
+        await expect(
+            page.locator(".camera-preview").getByText("Allow it in the address bar, then try again.")
+        ).toBeVisible();
         await expect(page.locator(".camera-preview svg").first()).toBeVisible();
         await expect(page.locator("p.u-join-error")).toHaveText(
             "Your browser blocked the microphone. Allow it in the address bar, then try again."
@@ -621,7 +658,8 @@ test.describe("Join: enter room", () => {
             const w = window as any;
             w.__jnSawJoinScreen = false;
             new MutationObserver(() => {
-                if (document.querySelector("[data-testid=loginSceneNameInput], #woka-grid, .enableCameraScene")) w.__jnSawJoinScreen = true;
+                if (document.querySelector("[data-testid=loginSceneNameInput], #woka-grid, .enableCameraScene"))
+                    w.__jnSawJoinScreen = true;
             }).observe(document, { childList: true, subtree: true });
         });
         await page.reload();

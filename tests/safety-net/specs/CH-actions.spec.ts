@@ -1,7 +1,11 @@
 import { test, expect, isPhone } from "../lib/game";
 import { alice, chat, clipboardText, inBubble, message, send, serveEmojiData, touchHold, touchSwipe } from "../lib/ch";
 
-test("CH-037 Desktop: hovering Bob's message shows 3 quick reactions, Add reaction, Reply and More, no Edit/Delete", async ({ page, browser, url }, testInfo) => {
+test("CH-037 Desktop: hovering Bob's message shows 3 quick reactions, Add reaction, Reply and More, no Edit/Delete", async ({
+    page,
+    browser,
+    url,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only (hover)");
     const player = await alice(page, url);
     const bob = await inBubble(browser, testInfo, player, url);
@@ -25,7 +29,11 @@ test("CH-037 Desktop: hovering Bob's message shows 3 quick reactions, Add reacti
     await expect(player.getByTestId("removeMessageButton")).toHaveCount(0);
 });
 
-test("CH-038 Desktop: a quick 👍 shows a chip to both; clicking it again removes it for both", async ({ page, browser, url }, testInfo) => {
+test("CH-038 Desktop: a quick 👍 shows a chip to both; clicking it again removes it for both", async ({
+    page,
+    browser,
+    url,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only (hover)");
     const player = await alice(page, url);
     const bob = await inBubble(browser, testInfo, player, url);
@@ -47,7 +55,11 @@ test("CH-038 Desktop: a quick 👍 shows a chip to both; clicking it again remov
     await expect(chipB).toHaveCount(0, { timeout: 10_000 });
 });
 
-test("CH-039 Desktop: Add reaction opens the full picker by the message; the pick shows to both, in one row", async ({ page, browser, url }, testInfo) => {
+test("CH-039 Desktop: Add reaction opens the full picker by the message; the pick shows to both, in one row", async ({
+    page,
+    browser,
+    url,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only (hover)");
     const player = await alice(page, url);
     await serveEmojiData(player);
@@ -74,17 +86,32 @@ test("CH-039 Desktop: Add reaction opens the full picker by the message; the pic
         await expect(msg.getByTestId(`${picked[i]}_reactionButton`)).toBeVisible();
         if (await picker.isVisible()) await player.keyboard.press("Escape");
     }
-    await expect(message(bob, "first message").getByTestId(`${picked[0]}_reactionButton`)).toBeVisible({ timeout: 10_000 });
+    await expect(message(bob, "first message").getByTestId(`${picked[0]}_reactionButton`)).toBeVisible({
+        timeout: 10_000,
+    });
     const chips = msg.locator("[data-testid$=_reactionButton]");
     await expect(chips).toHaveCount(6);
-    const tops = await chips.evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().top)));
-    expect(new Set(tops).size).toBe(1);
+    // The newest chip pops in (a short slide and scale): measure once it has settled.
+    let tops: number[] = [];
+    await expect
+        .poll(
+            async () => {
+                tops = await chips.evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().top)));
+                return new Set(tops).size;
+            },
+            { message: "chips not in one row", timeout: 5_000 }
+        )
+        .toBe(1);
     const firstChip = (await chips.first().boundingBox())!;
     const next = (await message(player, "second message").getByText("second message").boundingBox())!;
     expect(firstChip.y + firstChip.height).toBeLessThanOrEqual(next.y + 1);
 });
 
-test("CH-040 Desktop: Reply shows a preview, the sent reply quotes Bob for both, the quote jumps to the original", async ({ page, browser, url }, testInfo) => {
+test("CH-040 Desktop: Reply shows a preview, the sent reply quotes Bob for both, the quote jumps to the original", async ({
+    page,
+    browser,
+    url,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only (hover)");
     const player = await alice(page, url);
     const bob = await inBubble(browser, testInfo, player, url);
@@ -109,13 +136,20 @@ test("CH-040 Desktop: Reply shows a preview, the sent reply quotes Bob for both,
     await expect(preview).toBeHidden();
     const reply = message(bob, "ok");
     await expect(reply.getByTestId("quotedMessage")).toContainText("original words", { timeout: 10_000 });
-    const mine = chat(player).locator("li[data-event-id]").filter({ has: player.getByTestId("quotedMessage") }).last();
+    const mine = chat(player)
+        .locator("li[data-event-id]")
+        .filter({ has: player.getByTestId("quotedMessage") })
+        .last();
     await expect(mine.getByTestId("quotedMessage")).toContainText("original words");
     await mine.getByTestId("quotedMessage").click();
     await expect(msg).toHaveClass(/quote-flash/);
 });
 
-test("CH-041 Desktop: More > Copy text copies and says Text copied; right-click opens the message menu", async ({ page, browser, url }, testInfo) => {
+test("CH-041 Desktop: More > Copy text copies and says Text copied; right-click opens the message menu", async ({
+    page,
+    browser,
+    url,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only (hover)");
     await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
     const player = await alice(page, url);
@@ -144,7 +178,11 @@ test("CH-041 Desktop: More > Copy text copies and says Text copied; right-click 
     await expect(menu).toBeHidden();
 });
 
-test("CH-042 Phone: press and hold opens 6 reactions plus more and Reply / Copy text; the backdrop closes it", async ({ page, browser, url }, testInfo) => {
+test("CH-042 Phone: press and hold opens 6 reactions plus more and Reply / Copy text; the backdrop closes it", async ({
+    page,
+    browser,
+    url,
+}, testInfo) => {
     test.skip(!isPhone(testInfo), "phone only (touch)");
     const player = await alice(page, url);
     const bob = await inBubble(browser, testInfo, player, url);

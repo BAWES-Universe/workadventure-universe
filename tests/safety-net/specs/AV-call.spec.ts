@@ -45,13 +45,21 @@ async function dragHandle(page: Page, dy: number) {
 async function playVideos(page: Page, count: number) {
     const src = new URL("/static/Videos/Chat.mp4", page.url()).toString();
     for (let i = 0; i < count; i++) {
-        await wa(page, async (url) => {
-            await WA.ui.playVideo(url, { name: "Clip" });
-        }, src);
+        await wa(
+            page,
+            async (url) => {
+                await WA.ui.playVideo(url, { name: "Clip" });
+            },
+            src
+        );
     }
 }
 
-test("AV-033 AV-034 Walking up forms a bubble with both videos; walking away closes it", async ({ player, url, browser }, testInfo) => {
+test("AV-033 AV-034 Walking up forms a bubble with both videos; walking away closes it", async ({
+    player,
+    url,
+    browser,
+}, testInfo) => {
     const bob = await joinBubble(browser, testInfo, player, url);
     await expect(player.locator("#cameras-container").getByText("You", { exact: true })).toBeVisible();
     await expect(bob.locator("#cameras-container").getByText("You", { exact: true })).toBeVisible();
@@ -101,7 +109,11 @@ test("AV-036 AV-037 Lock keeps a third player out; unlock lets them in", async (
 
 test("AV-038 Nobody can start a bubble with a player in Do not disturb", async ({ player, url, browser }, testInfo) => {
     await openProfileMenu(player, testInfo);
-    await tapOrClick(player, testInfo, player.getByTestId("profile-menu").locator(".status-button", { hasText: "Do not disturb" }).last());
+    await tapOrClick(
+        player,
+        testInfo,
+        player.getByTestId("profile-menu").locator(".status-button", { hasText: "Do not disturb" }).last()
+    );
     await expectState(player, "microphone-button", "disabled");
     const bob = await newPlayer(browser, testInfo, url, "Bob");
     await staysOutOfBubble(player, "Bob");
@@ -111,7 +123,11 @@ test("AV-038 Nobody can start a bubble with a player in Do not disturb", async (
     await bob.context().close();
 });
 
-test("AV-039 AV-040 Maximise shows a video big; full screen hides the strip and Express; minimise returns it", async ({ player, url, browser }, testInfo) => {
+test("AV-039 AV-040 Maximise shows a video big; full screen hides the strip and Express; minimise returns it", async ({
+    player,
+    url,
+    browser,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
     const bob = await joinBubble(browser, testInfo, player, url);
     const tile = tileOf(player, "Bob");
@@ -138,7 +154,11 @@ test("AV-039 AV-040 Maximise shows a video big; full screen hides the strip and 
     await bob.context().close();
 });
 
-test("AV-041 AV-042 Tile menu lists volume and asks; the volume mutes that person for you only", async ({ player, url, browser }, testInfo) => {
+test("AV-041 AV-042 Tile menu lists volume and asks; the volume mutes that person for you only", async ({
+    player,
+    url,
+    browser,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only (hover menu)");
     const bob = await joinBubble(browser, testInfo, player, url);
     const menu = await openTileMenu(player, "Bob");
@@ -160,7 +180,11 @@ test("AV-041 AV-042 Tile menu lists volume and asks; the volume mutes that perso
     await bob.context().close();
 });
 
-test("AV-043 Ask to mute audio and video: the other player answers Yes and is muted", async ({ player, url, browser }, testInfo) => {
+test("AV-043 Ask to mute audio and video: the other player answers Yes and is muted", async ({
+    player,
+    url,
+    browser,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only (hover menu)");
     const bob = await joinBubble(browser, testInfo, player, url);
     let menu = await openTileMenu(player, "Bob");
@@ -178,7 +202,11 @@ test("AV-043 Ask to mute audio and video: the other player answers Yes and is mu
     await bob.context().close();
 });
 
-test("AV-045 Tile menu Moderation opens Block or report for that person", async ({ player, url, browser }, testInfo) => {
+test("AV-045 Tile menu Moderation opens Block or report for that person", async ({
+    player,
+    url,
+    browser,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only (hover menu)");
     const bob = await joinBubble(browser, testInfo, player, url);
     const menu = await openTileMenu(player, "Bob");
@@ -188,7 +216,11 @@ test("AV-045 Tile menu Moderation opens Block or report for that person", async 
     await bob.context().close();
 });
 
-test("AV-046 The fake mic makes the other player's tile show the sound meter and the talking edge", async ({ player, url, browser }, testInfo) => {
+test("AV-046 The fake mic makes the other player's tile show the sound meter and the talking edge", async ({
+    player,
+    url,
+    browser,
+}, testInfo) => {
     const bob = await joinBubble(browser, testInfo, player, url);
     await expect(tileOf(bob, "Alice").locator(".voice-meter-cam-off")).toBeAttached();
     await expect(tileOf(bob, "Alice").locator(".border-secondary").first()).toBeAttached({ timeout: 20_000 });
@@ -198,7 +230,11 @@ test("AV-046 The fake mic makes the other player's tile show the sound meter and
     await bob.context().close();
 });
 
-test("AV-048 AV-049 White bar resizes the video area, is remembered, and small videos show names on hover", async ({ player, url, browser }, testInfo) => {
+test("AV-048 AV-049 White bar resizes the video area, is remembered, and small videos show names on hover", async ({
+    player,
+    url,
+    browser,
+}, testInfo) => {
     test.slow();
     test.skip(isPhone(testInfo), "desktop only");
     const bob = await joinBubble(browser, testInfo, player, url);
@@ -213,11 +249,18 @@ test("AV-048 AV-049 White bar resizes the video area, is remembered, and small v
     const grown = (await boxOf(player.getByTestId("resize-handle"))).y;
 
     await player.reload();
-    if (await player.getByTestId("loginSceneNameInput").isVisible({ timeout: 10_000 }).catch(() => false)) {
+    if (
+        await player
+            .getByTestId("loginSceneNameInput")
+            .isVisible({ timeout: 10_000 })
+            .catch(() => false)
+    ) {
         await join(player, url, "Alice");
     }
     await expectInBubble(player, "Bob");
-    await expect.poll(async () => (await boxOf(player.getByTestId("resize-handle"))).y, { timeout: 20_000 }).toBeGreaterThan(grown - 30);
+    await expect
+        .poll(async () => (await boxOf(player.getByTestId("resize-handle"))).y, { timeout: 20_000 })
+        .toBeGreaterThan(grown - 30);
 
     await dragHandle(player, -2000);
     await expect(container).toHaveAttribute("data-phone-layout", "small");
@@ -263,7 +306,11 @@ test("AV-050 Over the video limit the last spot is a +N tile that shows everyone
     await expect(more).toBeVisible();
 });
 
-test("AV-051 AV-052 Phone upright: rows layout in a bubble; with the chat open videos sit above it and maximise closes chat", async ({ player, url, browser }, testInfo) => {
+test("AV-051 AV-052 Phone upright: rows layout in a bubble; with the chat open videos sit above it and maximise closes chat", async ({
+    player,
+    url,
+    browser,
+}, testInfo) => {
     test.skip(!isPhone(testInfo), "phone only");
     const bob = await joinBubble(browser, testInfo, player, url);
     await expect(player.getByTestId("cameras-container")).toHaveAttribute("data-phone-layout", /videos|small/);
@@ -291,20 +338,32 @@ test("AV-053 Sideways phone keeps the old video layout", async ({ page, url, bro
     await bob.context().close();
 });
 
-test("AV-054 Walking in a bubble collapses the videos to one line, then they come back", async ({ player, url, browser }, testInfo) => {
+test("AV-054 Walking in a bubble collapses the videos to one line, then they come back", async ({
+    player,
+    url,
+    browser,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
     const bob = await joinBubble(browser, testInfo, player, url);
-    await expect(player.getByTestId("resize-handle")).toBeVisible();
-    await player.keyboard.down("ArrowDown");
-    await player.waitForTimeout(250);
-    await player.keyboard.up("ArrowDown");
+    // The videos spread out 10 s after the last move (the join counts as one).
+    await expect(player.getByTestId("resize-handle")).toBeVisible({ timeout: 20_000 });
+    // A short walk that stays in the bubble (a held arrow key can overshoot out of it on a slow machine).
+    await wa(player, async () => {
+        const p = await WA.player.getPosition();
+        await WA.player.moveTo(p.x, p.y + 24);
+    });
     await expect(player.getByTestId("resize-handle")).toHaveCount(0);
+    await expectInBubble(player, "Bob");
     await expect(player.getByTestId("cameras-container")).not.toHaveAttribute("data-phone-layout", /.+/);
     await expect(player.getByTestId("resize-handle")).toBeVisible({ timeout: 20_000 });
     await bob.context().close();
 });
 
-test("AV-055 AV-058 Desktop screen share: two You tiles, the other sees it big; never small in rows", async ({ player, url, browser }, testInfo) => {
+test("AV-055 AV-058 Desktop screen share: two You tiles, the other sees it big; never small in rows", async ({
+    player,
+    url,
+    browser,
+}, testInfo) => {
     test.slow();
     test.skip(isPhone(testInfo), "desktop only");
     const bob = await joinBubble(browser, testInfo, player, url);
@@ -324,7 +383,11 @@ test("AV-055 AV-058 Desktop screen share: two You tiles, the other sees it big; 
     await bob.context().close();
 });
 
-test("AV-056 AV-062 Phone menu has Share screen and Picture in picture in a bubble", async ({ player, url, browser }, testInfo) => {
+test("AV-056 AV-062 Phone menu has Share screen and Picture in picture in a bubble", async ({
+    player,
+    url,
+    browser,
+}, testInfo) => {
     test.skip(!isPhone(testInfo), "phone only");
     const bob = await joinBubble(browser, testInfo, player, url);
     const menu = await openProfileMenu(player, testInfo);
@@ -344,7 +407,11 @@ test("AV-057 In a silent zone Share screen starts nothing", async ({ page }, tes
     await expect(page.locator("#cameras-container").getByText("You", { exact: true })).toHaveCount(0);
 });
 
-test("AV-059 Desktop PiP opens a floating window with the call and closes on a second click", async ({ player, url, browser }, testInfo) => {
+test("AV-059 Desktop PiP opens a floating window with the call and closes on a second click", async ({
+    player,
+    url,
+    browser,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
     const bob = await joinBubble(browser, testInfo, player, url);
     await player.evaluate(() => localStorage.setItem("allowPictureInPicture", "false"));

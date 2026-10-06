@@ -73,9 +73,7 @@ export async function serveManyCollections(page: Page): Promise<void> {
         const copy = (texture: any, n: number) => ({ ...texture, id: `copy-${n}-${texture.id}` });
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const textures: any[] = original.textures;
-        const collections = [
-            { name: "Main collection", textures: [...textures, ...textures.map((t) => copy(t, 0))] },
-        ];
+        const collections = [{ name: "Main collection", textures: [...textures, ...textures.map((t) => copy(t, 0))] }];
         for (let n = 1; n <= 8; n++) {
             collections.push({
                 name: `Collection number ${n}`,
@@ -119,8 +117,15 @@ export async function blockMedia(page: Page, onlyWhenFlagged = false): Promise<v
         };
         const query = navigator.permissions.query.bind(navigator.permissions);
         navigator.permissions.query = (descriptor: PermissionDescriptor) => {
-            if (descriptor.name === ("camera" as PermissionName) || descriptor.name === ("microphone" as PermissionName)) {
-                return Promise.resolve({ state: "denied", name: descriptor.name, onchange: null } as unknown as PermissionStatus);
+            if (
+                descriptor.name === ("camera" as PermissionName) ||
+                descriptor.name === ("microphone" as PermissionName)
+            ) {
+                return Promise.resolve({
+                    state: "denied",
+                    name: descriptor.name,
+                    onchange: null,
+                } as unknown as PermissionStatus);
             }
             return query(descriptor);
         };

@@ -38,7 +38,9 @@ test("AV-001 Desktop bar sits across the top with its groups in order", async ({
     expect(micWithChat.y).toBeLessThan(120);
 });
 
-test("AV-002 Phone bar at the bottom: menu left, mic and cam centre, chat right, no share", async ({ player }, testInfo) => {
+test("AV-002 Phone bar at the bottom: menu left, mic and cam centre, chat right, no share", async ({
+    player,
+}, testInfo) => {
     test.skip(!isPhone(testInfo), "phone only");
     const mic = await boxOf(player.getByTestId("microphone-button"));
     const cam = await boxOf(player.getByTestId("camera-button"));
@@ -64,7 +66,11 @@ test("AV-002 Phone bar at the bottom: menu left, mic and cam centre, chat right,
     expect(express.y + express.height).toBeLessThan(mic.y);
 });
 
-test("AV-003 Sideways phone: chat left, profile right, call buttons in the bar", async ({ page, url, browser }, testInfo) => {
+test("AV-003 Sideways phone: chat left, profile right, call buttons in the bar", async ({
+    page,
+    url,
+    browser,
+}, testInfo) => {
     test.skip(!isPhone(testInfo), "phone only");
     await page.setViewportSize({ width: 926, height: 428 });
     await join(page, url, "Alice");
@@ -84,7 +90,11 @@ test("AV-003 Sideways phone: chat left, profile right, call buttons in the bar",
     await bob.context().close();
 });
 
-test("AV-004 Phone menu holds the contextual actions in a bubble; Follow closes it", async ({ player, url, browser }, testInfo) => {
+test("AV-004 Phone menu holds the contextual actions in a bubble; Follow closes it", async ({
+    player,
+    url,
+    browser,
+}, testInfo) => {
     test.skip(!isPhone(testInfo), "phone only");
     const bob = await joinBubble(browser, testInfo, player, url);
     const menu = await openProfileMenu(player, testInfo);
@@ -98,7 +108,11 @@ test("AV-004 Phone menu holds the contextual actions in a bubble; Follow closes 
     await bob.context().close();
 });
 
-test("AV-005 Narrow desktop bar moves Follow and Lock into the profile menu; nothing disappears", async ({ page, url, browser }, testInfo) => {
+test("AV-005 Narrow desktop bar moves Follow and Lock into the profile menu; nothing disappears", async ({
+    page,
+    url,
+    browser,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
     await page.setViewportSize({ width: 600, height: 900 });
     await join(page, url, "Alice");
@@ -127,7 +141,9 @@ test("AV-006 Phone chat sheet hides the bar and the right column until it closes
     await expect(player.getByTestId("express-button")).toBeVisible();
 });
 
-test("AV-007 Keyboard: bar buttons ring white and Enter/Space press them without opening Express", async ({ player }, testInfo) => {
+test("AV-007 Keyboard: bar buttons ring white and Enter/Space press them without opening Express", async ({
+    player,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
     const mic = player.getByTestId("microphone-button");
     await mic.focus();
@@ -152,7 +168,11 @@ test("AV-007 Keyboard: bar buttons ring white and Enter/Space press them without
     await expect(player.getByTestId("express-tray")).toHaveCount(0);
 });
 
-test("AV-008 Hovering Share, PiP, Follow and Lock shows their help tooltip", async ({ player, url, browser }, testInfo) => {
+test("AV-008 Hovering Share, PiP, Follow and Lock shows their help tooltip", async ({
+    player,
+    url,
+    browser,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
     const bob = await joinBubble(browser, testInfo, player, url);
     const cases: [string, string][] = [

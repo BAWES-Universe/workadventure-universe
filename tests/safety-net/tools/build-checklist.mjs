@@ -4,16 +4,28 @@ import fs from "node:fs";
 import path from "node:path";
 
 const dir = process.argv[2];
-const AREAS = { JN: "Join, profile and settings", AV: "Bar, camera, calls and moving", CH: "Chat", ME: "Map editor and Look around", BC: "Broadcasting", OR: "Orbit and map scripts" };
+const AREAS = {
+    JN: "Join, profile and settings",
+    AV: "Bar, camera, calls and moving",
+    CH: "Chat",
+    ME: "Map editor and Look around",
+    BC: "Broadcasting",
+    OR: "Orbit and map scripts",
+};
 
 function cells(line) {
     // Split on pipes that are not escaped (\|) and not inside backticks.
     const out = [];
-    let cur = "", tick = false;
+    let cur = "",
+        tick = false;
     for (let i = 1; i < line.length; i++) {
         const c = line[i];
         if (c === "`") tick = !tick;
-        if (c === "|" && !tick && line[i - 1] !== "\\") { out.push(cur.trim()); cur = ""; continue; }
+        if (c === "|" && !tick && line[i - 1] !== "\\") {
+            out.push(cur.trim());
+            cur = "";
+            continue;
+        }
         cur += c;
     }
     return out;
@@ -54,5 +66,11 @@ for (const r of rows) {
     if (ids.has(r.id)) throw new Error(`duplicate id ${r.id}`);
     ids.add(r.id);
 }
-fs.writeFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), "../checklist.json"), JSON.stringify({ rows }, null, 1) + "\n");
-console.log(`${rows.length} rows`, Object.fromEntries(Object.keys(AREAS).map((p) => [p, rows.filter((r) => r.id.startsWith(p)).length])));
+fs.writeFileSync(
+    path.join(path.dirname(new URL(import.meta.url).pathname), "../checklist.json"),
+    JSON.stringify({ rows }, null, 1) + "\n"
+);
+console.log(
+    `${rows.length} rows`,
+    Object.fromEntries(Object.keys(AREAS).map((p) => [p, rows.filter((r) => r.id.startsWith(p)).length]))
+);

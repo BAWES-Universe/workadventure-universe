@@ -34,7 +34,10 @@ test("BC-020 Who should hear it? lists the switched-on reaches, This world prese
     await expect(page.getByTestId("broadcast-next")).toBeEnabled();
 });
 
-test("BC-021 This room is named with the people here now (2 people, then 1 person)", async ({ page, browser }, testInfo) => {
+test("BC-021 This room is named with the people here now (2 people, then 1 person)", async ({
+    page,
+    browser,
+}, testInfo) => {
     test.setTimeout(180_000);
     const url = await wamRoom(testInfo, "empty");
     await join(page, url, "Alice");
@@ -99,7 +102,9 @@ test("BC-027 Desktop: the selected reach stays purple while hovered (KNOWN GAP)"
     expect(await look()).toBe("rgba(134, 41, 252, 0.14) | rgba(167, 139, 250, 0.7)");
 });
 
-test("BC-028 The compose header names the reach with its counts (KNOWN GAP: world people)", async ({ page }, testInfo) => {
+test("BC-028 The compose header names the reach with its counts (KNOWN GAP: world people)", async ({
+    page,
+}, testInfo) => {
     const url = await wamRoom(testInfo, "empty");
     await join(page, url, "Alice");
     await openBroadcast(page);
@@ -158,7 +163,9 @@ test("BC-032 The Live pill's second line is This room · <room name>", async ({ 
     );
 });
 
-test("BC-034 Broadcast settings: each reach row is named with its counts (KNOWN GAP: counts)", async ({ page }, testInfo) => {
+test("BC-034 Broadcast settings: each reach row is named with its counts (KNOWN GAP: counts)", async ({
+    page,
+}, testInfo) => {
     const url = await wamRoom(testInfo, "empty");
     await join(page, url, "Alice");
     await openBroadcast(page);
@@ -177,7 +184,10 @@ test("BC-034 Broadcast settings: each reach row is named with its counts (KNOWN 
     expect.soft(universe, "universe row: room count").toMatch(ROOMS);
 });
 
-test("BC-036 The listener's live tile shows the speaker and the reach (KNOWN GAP)", async ({ page, browser }, testInfo) => {
+test("BC-036 The listener's live tile shows the speaker and the reach (KNOWN GAP)", async ({
+    page,
+    browser,
+}, testInfo) => {
     test.setTimeout(180_000);
     const url = await wamRoom(testInfo, "empty");
     await join(page, url, "Alice");

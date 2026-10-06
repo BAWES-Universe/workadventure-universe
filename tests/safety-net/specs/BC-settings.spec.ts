@@ -25,7 +25,9 @@ async function openAreas(page: Page) {
     await page.getByRole("button", { name: "Map editor", exact: true }).click();
     await expect(page.getByTestId("edit-pill")).toBeVisible();
     const areas = page.locator("section.side-bar-container .side-bar .tool-button button#AreaEditor").first();
-    if (!((await areas.getAttribute("aria-pressed")) === "true" && (await page.getByTestId("edit-panel").isVisible()))) {
+    if (
+        !((await areas.getAttribute("aria-pressed")) === "true" && (await page.getByTestId("edit-panel").isVisible()))
+    ) {
         await areas.click();
     }
     await expect(page.getByTestId("edit-panel")).toBeVisible();
@@ -51,7 +53,9 @@ async function backToAreaList(page: Page) {
     await expect(page.getByTestId("area-new")).toBeVisible();
 }
 
-test("BC-083 Broadcast settings: who can go live, reach switches, the Orbit line and Save", async ({ page }, testInfo) => {
+test("BC-083 Broadcast settings: who can go live, reach switches, the Orbit line and Save", async ({
+    page,
+}, testInfo) => {
     const url = await wamRoom(testInfo, "empty");
     await join(page, url, "Alice");
     await openSettingsView(page);
@@ -72,7 +76,9 @@ test("BC-083 Broadcast settings: who can go live, reach switches, the Orbit line
     await expect(card.getByText(/space name/i)).toHaveCount(0);
 });
 
-test("BC-084 Chosen tags: typed tags become lower-case chips; Escape cancels, clicking away adds, x removes", async ({ page }, testInfo) => {
+test("BC-084 Chosen tags: typed tags become lower-case chips; Escape cancels, clicking away adds, x removes", async ({
+    page,
+}, testInfo) => {
     await join(page, await wamRoom(testInfo, "empty"), "Alice");
     await openSettingsView(page);
     await page.getByTestId("broadcast-settings-who-tags").click();
@@ -114,7 +120,10 @@ test("BC-085 Chosen tags with no tag: Save says so and nothing is saved", async 
     await expect(page.getByTestId("broadcast-settings-who-everyone")).toHaveAttribute("aria-checked", "true");
 });
 
-test("BC-087 Admins only takes Go live away from everyone at once; Everyone brings it back without reload", async ({ page, browser }, testInfo) => {
+test("BC-087 Admins only takes Go live away from everyone at once; Everyone brings it back without reload", async ({
+    page,
+    browser,
+}, testInfo) => {
     test.setTimeout(180_000);
     const url = await wamRoom(testInfo, "empty");
     await join(page, url, "Alice");
@@ -134,7 +143,9 @@ test("BC-087 Admins only takes Go live away from everyone at once; Everyone brin
     await expect(panel(bob).getByText("What do you want to share?")).toBeVisible();
 });
 
-test("BC-088 This world only: Go live skips Who; Write a message still offers This room", async ({ page }, testInfo) => {
+test("BC-088 This world only: Go live skips Who; Write a message still offers This room", async ({
+    page,
+}, testInfo) => {
     await join(page, await wamRoom(testInfo, "empty"), "Alice");
     await openBroadcast(page);
     await turnOnBroadcast(page, { room: false, world: true });
@@ -166,7 +177,9 @@ test("BC-090 Saved settings come back after a reload", async ({ page }, testInfo
     await inRoom(page);
     await openSettingsView(page);
     await expect(page.getByTestId("broadcast-settings-who-tags")).toHaveAttribute("aria-checked", "true");
-    await expect(settingsCard(page).locator(".u-chip, [data-testid='broadcast-settings-tag-staff']").first()).toContainText("staff");
+    await expect(
+        settingsCard(page).locator(".u-chip, [data-testid='broadcast-settings-tag-staff']").first()
+    ).toContainText("staff");
     await expect(page.getByTestId("broadcast-settings-reach-ROOM")).toHaveAttribute("aria-checked", "false");
     await expect(page.getByTestId("broadcast-settings-reach-WORLD")).toHaveAttribute("aria-checked", "true");
 });
@@ -239,7 +252,9 @@ test("BC-094 Walking onto a Stage goes live to the Audience; leaving stops it", 
     await expect(aliceTile).toHaveCount(0, { timeout: 30_000 });
 });
 
-test("BC-095 Live from Broadcast, walking across a Stage or an Audience keeps the broadcast", async ({ page }, testInfo) => {
+test("BC-095 Live from Broadcast, walking across a Stage or an Audience keeps the broadcast", async ({
+    page,
+}, testInfo) => {
     const url = await stageRoom(testInfo);
     await join(page, url, "Alice");
     await wa(page, () => WA.player.teleport(160, 160));

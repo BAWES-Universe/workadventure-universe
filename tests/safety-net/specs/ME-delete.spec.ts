@@ -31,7 +31,9 @@ async function withObjects(page: Page, testInfo: TestInfo, count: number): Promi
     return { url, ids };
 }
 
-test("ME-059 @local Desktop Delete tool: hint, red hover with 'Click to remove', one click removes, toast Undo restores", async ({ page }, testInfo) => {
+test("ME-059 @local Desktop Delete tool: hint, red hover with 'Click to remove', one click removes, toast Undo restores", async ({
+    page,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
     const { url, ids } = await withObjects(page, testInfo, 1);
     await pickTool(page, "AreaEditor");
@@ -51,18 +53,24 @@ test("ME-059 @local Desktop Delete tool: hint, red hover with 'Click to remove',
     await expect(toast).toContainText("Basic Wood Table removed");
     await expect(page.getByTestId("edit-undo-toast-undo")).toHaveText(/Undo/);
     await page.getByTestId("edit-undo-toast-undo").click();
-    await expect.poll(async () => Object.keys((await readWam(url)).entities).length, { message: "Undo restores the object" }).toBe(1);
+    await expect
+        .poll(async () => Object.keys((await readWam(url)).entities).length, { message: "Undo restores the object" })
+        .toBe(1);
     const a = (await readWam(url)).areas.find((x) => x.id === area)!;
     const inArea = await toScreen(page, a.x + 10, a.y + a.height - 10);
     await page.mouse.move(inArea.x - 3, inArea.y);
     await page.mouse.move(inArea.x, inArea.y);
     await page.mouse.click(inArea.x, inArea.y);
-    await expect.poll(async () => (await readWam(url)).areas.length, { message: "a click on an area removes it" }).toBe(0);
+    await expect
+        .poll(async () => (await readWam(url)).areas.length, { message: "a click on an area removes it" })
+        .toBe(0);
     await expect(toast).toBeVisible();
     await expect(toast).toBeHidden({ timeout: 10_000 });
 });
 
-test("ME-060 @local Phone Delete tool: first tap marks, tap elsewhere keeps, second tap or Remove deletes, Undo toast", async ({ page }, testInfo) => {
+test("ME-060 @local Phone Delete tool: first tap marks, tap elsewhere keeps, second tap or Remove deletes, Undo toast", async ({
+    page,
+}, testInfo) => {
     test.skip(!isPhone(testInfo), "phone only");
     const { url, ids } = await withObjects(page, testInfo, 2);
     await rail(page, "TrashEditor").click();
@@ -90,17 +98,23 @@ test("ME-060 @local Phone Delete tool: first tap marks, tap elsewhere keeps, sec
     await expect(page.getByTestId("edit-undo-toast-undo")).toBeVisible();
 });
 
-test("ME-061 @local Undo and Redo: the pill buttons and Ctrl+Z / Ctrl+Shift+Z undo and redo", async ({ page }, testInfo) => {
+test("ME-061 @local Undo and Redo: the pill buttons and Ctrl+Z / Ctrl+Shift+Z undo and redo", async ({
+    page,
+}, testInfo) => {
     const { url } = await withObjects(page, testInfo, 1);
     const undo = page.getByTestId("edit-undo");
     const redo = page.getByTestId("edit-redo");
     await expect(undo).toBeEnabled();
     await expect(redo).toBeDisabled();
     await undo.click();
-    await expect.poll(async () => Object.keys((await readWam(url)).entities).length, { message: "Undo removes the placement" }).toBe(0);
+    await expect
+        .poll(async () => Object.keys((await readWam(url)).entities).length, { message: "Undo removes the placement" })
+        .toBe(0);
     await expect(redo).toBeEnabled();
     await redo.click();
-    await expect.poll(async () => Object.keys((await readWam(url)).entities).length, { message: "Redo puts it back" }).toBe(1);
+    await expect
+        .poll(async () => Object.keys((await readWam(url)).entities).length, { message: "Redo puts it back" })
+        .toBe(1);
     if (isPhone(testInfo)) return;
     await pickTool(page, "AreaEditor");
     const id = await newArea(page, url);
@@ -109,9 +123,14 @@ test("ME-061 @local Undo and Redo: the pill buttons and Ctrl+Z / Ctrl+Shift+Z un
     const from = await areaCentre(page, url, id);
     await drag(page, testInfo, from, { x: from.x + 160, y: from.y }, 15);
     await expect.poll(async () => Number(await areaX())).toBeGreaterThan(before.x + 32);
-    await page.locator("canvas").first().hover({ position: { x: 5, y: 5 } });
+    await page
+        .locator("canvas")
+        .first()
+        .hover({ position: { x: 5, y: 5 } });
     await page.keyboard.press("Control+z");
     await expect.poll(areaX, { message: "Ctrl+Z undoes the move (and only the move)" }).toBe(before.x);
     await page.keyboard.press("Control+Shift+z");
-    await expect.poll(async () => Number(await areaX()), { message: "Ctrl+Shift+Z redoes it" }).toBeGreaterThan(before.x + 32);
+    await expect
+        .poll(async () => Number(await areaX()), { message: "Ctrl+Shift+Z redoes it" })
+        .toBeGreaterThan(before.x + 32);
 });

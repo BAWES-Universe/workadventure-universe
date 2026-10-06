@@ -27,7 +27,13 @@ async function objectsOpen(page: Page, testInfo: TestInfo): Promise<string> {
 }
 
 /** Places one object beside the WOKA, stops placing, and tucks the panel on a phone. Returns its id. */
-async function placedObject(page: Page, testInfo: TestInfo, url: string, name = "Basic Wood Table", spot = SPOT_A): Promise<string> {
+async function placedObject(
+    page: Page,
+    testInfo: TestInfo,
+    url: string,
+    name = "Basic Wood Table",
+    spot = SPOT_A
+): Promise<string> {
     await pickObject(page, name);
     const id = await placeAt(page, testInfo, url, spot);
     await page.getByTestId("placing-done").click();
@@ -40,11 +46,15 @@ async function selectPlaced(page: Page, testInfo: TestInfo, url: string, id: str
     await expect(page.getByTestId("object-actions")).toBeVisible();
 }
 
-test("ME-011 Objects panel: title, line, search, categories, sections, tiles, Add your own", async ({ page }, testInfo) => {
+test("ME-011 Objects panel: title, line, search, categories, sections, tiles, Add your own", async ({
+    page,
+}, testInfo) => {
     await objectsOpen(page, testInfo);
     const panel = page.getByTestId("edit-panel");
     await expect(panel.locator(".em-title").first()).toHaveText("Objects");
-    await expect(panel).toContainText(isPhone(testInfo) ? "Pick one, then tap the map" : "Pick one, then click the map");
+    await expect(panel).toContainText(
+        isPhone(testInfo) ? "Pick one, then tap the map" : "Pick one, then click the map"
+    );
     await expect(page.getByTestId("objects-search")).toHaveAttribute("placeholder", "Search objects");
     const select = panel.locator('select[aria-label="All categories"]');
     await expect(select).toBeAttached();
@@ -56,11 +66,17 @@ test("ME-011 Objects panel: title, line, search, categories, sections, tiles, Ad
     await expect(basic.getByRole("button", { name: "All" })).toBeVisible();
     await expect(panel.getByTestId("entity-item").filter({ hasText: "Basic Chair" }).first()).toBeVisible();
     await expect(panel).not.toContainText("Recently used");
-    await expect(panel).not.toContainText("Your uploads");
+    // Uploads are shared by every room on this stack, so other tests' uploads may already be here. The section
+    // must then name a non-zero count; with none it must not show. (ME-028 checks a fresh upload appears in it.)
+    const uploads = panel.locator(".em-sech", { hasText: "Your uploads" });
+    if ((await uploads.count()) > 0) await expect(uploads.first().locator("b")).toHaveText(/^[1-9]\d*$/);
+    else await expect(panel).not.toContainText("Your uploads");
     await expect(page.getByTestId("objects-add-your-own")).toHaveText(/Add your own/);
 });
 
-test("ME-011 ME-014 @local Desktop placing: hint and bar, every click places a copy, Done stops, Recently used", async ({ page }, testInfo) => {
+test("ME-011 ME-014 @local Desktop placing: hint and bar, every click places a copy, Done stops, Recently used", async ({
+    page,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
     const url = await objectsOpen(page, testInfo);
     await pickObject(page, "Basic Wood Table");
@@ -101,10 +117,17 @@ test("ME-012 Search filters tiles by name or tag, 'Nothing matches', clearing re
     await expect(panel.getByText("Nothing matches")).toBeHidden();
 });
 
-test("ME-013 Category dropdown and a section's All show one category; the back circle returns", async ({ page }, testInfo) => {
+test("ME-013 Category dropdown and a section's All show one category; the back circle returns", async ({
+    page,
+}, testInfo) => {
     await objectsOpen(page, testInfo);
     const panel = page.getByTestId("edit-panel");
-    const sectionCount = Number(await panel.locator(".em-sech", { hasText: /bathroom/i }).locator("b").innerText());
+    const sectionCount = Number(
+        await panel
+            .locator(".em-sech", { hasText: /bathroom/i })
+            .locator("b")
+            .innerText()
+    );
     await panel.locator('select[aria-label="All categories"]').selectOption({ index: 2 });
     await expect(panel.locator(".em-sech")).toHaveCount(0);
     await expect(page.getByTestId("edit-panel-back")).toBeVisible();
@@ -122,7 +145,9 @@ test("ME-013 Category dropdown and a section's All show one category; the back c
     expect(sectionCount).toBeGreaterThan(0);
 });
 
-test("ME-015 @local Desktop placing: Shift snaps to the grid, blocked spots place nothing, right-click and Esc stop", async ({ page }, testInfo) => {
+test("ME-015 @local Desktop placing: Shift snaps to the grid, blocked spots place nothing, right-click and Esc stop", async ({
+    page,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
     const url = await objectsOpen(page, testInfo);
     await pickObject(page, "Basic Chair");
@@ -156,7 +181,9 @@ test("ME-015 @local Desktop placing: Shift snaps to the grid, blocked spots plac
     await expect(page.getByTestId("placing-bar"), "Esc stops placing").toBeHidden();
 });
 
-test("ME-016 @local Phone placing: tap shows the preview and 'Tap again to place', drag moves it, tap places, Done", async ({ page }, testInfo) => {
+test("ME-016 @local Phone placing: tap shows the preview and 'Tap again to place', drag moves it, tap places, Done", async ({
+    page,
+}, testInfo) => {
     test.skip(!isPhone(testInfo), "phone only");
     const url = await objectsOpen(page, testInfo);
     await pickObject(page, "Basic Wood Table");
@@ -182,7 +209,10 @@ test("ME-016 @local Phone placing: tap shows the preview and 'Tap again to place
     const centre = await toScreen(page, p0.x, p0.y);
     await drag(page, testInfo, centre, { x: centre.x + 48, y: centre.y });
     await expect.poll(async () => Math.round((await preview()).x)).toBeGreaterThan(Math.round(p0.x) + 20);
-    expect(await scene(page, (s) => s.cameras.main.worldView.x as number), "the map does not pan while dragging the preview").toBe(cam0);
+    expect(
+        await scene(page, (s) => s.cameras.main.worldView.x as number),
+        "the map does not pan while dragging the preview"
+    ).toBe(cam0);
     const p1 = await preview();
     const onPreview = await toScreen(page, p1.x, p1.y);
     await page.touchscreen.tap(onPreview.x, onPreview.y);
@@ -193,10 +223,16 @@ test("ME-016 @local Phone placing: tap shows the preview and 'Tap again to place
     await expect(page.getByText("Tap again to place")).toBeVisible();
     await page.getByTestId("placing-done").click();
     await expect(bar).toBeHidden();
-    await expect.poll(async () => Object.keys((await readWam(url)).entities).length, { message: "Done places the waiting preview" }).toBe(2);
+    await expect
+        .poll(async () => Object.keys((await readWam(url)).entities).length, {
+            message: "Done places the waiting preview",
+        })
+        .toBe(2);
 });
 
-test("ME-017 @local Turn and colour: R / Turn change the side, dots recolour, placed copies keep them", async ({ page }, testInfo) => {
+test("ME-017 @local Turn and colour: R / Turn change the side, dots recolour, placed copies keep them", async ({
+    page,
+}, testInfo) => {
     const url = await objectsOpen(page, testInfo);
     await pickObject(page, "Basic Chair");
     const bar = page.getByTestId("placing-bar");
@@ -219,7 +255,9 @@ test("ME-017 @local Turn and colour: R / Turn change the side, dots recolour, pl
     }
 });
 
-test("ME-018 @local Selecting a placed object shows Move, Copy, Settings, Delete right next to it", async ({ page }, testInfo) => {
+test("ME-018 @local Selecting a placed object shows Move, Copy, Settings, Delete right next to it", async ({
+    page,
+}, testInfo) => {
     const url = await objectsOpen(page, testInfo);
     const id = await placedObject(page, testInfo, url, "Basic Wood Table", SPOT_B);
     if (isPhone(testInfo)) {
@@ -229,30 +267,55 @@ test("ME-018 @local Selecting a placed object shows Move, Copy, Settings, Delete
     if (!isPhone(testInfo)) {
         await page.mouse.move(centre.x - 5, centre.y);
         await page.mouse.move(centre.x, centre.y);
-        await expect.poll(async () => scene(page, (s, eid: string) => {
-            const e = s.getGameMapFrontWrapper().getEntitiesManager().getEntities().get(eid);
-            let colour: unknown = null;
-            e.outlineColorStore.subscribe((c: unknown) => (colour = c))();
-            return colour ?? null;
-        }, id), { message: "hover outlines it green" }).toBe(0x00ff00);
+        await expect
+            .poll(
+                async () =>
+                    scene(
+                        page,
+                        (s, eid: string) => {
+                            const e = s.getGameMapFrontWrapper().getEntitiesManager().getEntities().get(eid);
+                            let colour: unknown = null;
+                            e.outlineColorStore.subscribe((c: unknown) => (colour = c))();
+                            return colour ?? null;
+                        },
+                        id
+                    ),
+                { message: "hover outlines it green" }
+            )
+            .toBe(0x00ff00);
     }
     await selectPlaced(page, testInfo, url, id);
     const chip = page.getByTestId("object-actions");
-    for (const name of ["Move", "Copy", "Settings", "Delete"]) await expect(chip.getByRole("button", { name })).toBeVisible();
+    for (const name of ["Move", "Copy", "Settings", "Delete"])
+        await expect(chip.getByRole("button", { name })).toBeVisible();
     const box = (await chip.boundingBox())!;
     const obj = await entityBox(page, id);
     const gap = Math.min(Math.abs(box.y - (obj.y + obj.height)), Math.abs(box.y + box.height - obj.y));
     const sideBySide = Math.min(box.x + box.width, obj.x + obj.width) - Math.max(box.x, obj.x);
-    expect(gap, `the chip sits right under or over the object (chip ${JSON.stringify(box)}, object ${JSON.stringify(obj)})`).toBeLessThan(30);
-    expect(sideBySide, `the chip lines up with the object (chip ${JSON.stringify(box)}, object ${JSON.stringify(obj)})`).toBeGreaterThan(0);
+    expect(
+        gap,
+        `the chip sits right under or over the object (chip ${JSON.stringify(box)}, object ${JSON.stringify(obj)})`
+    ).toBeLessThan(30);
+    expect(
+        sideBySide,
+        `the chip lines up with the object (chip ${JSON.stringify(box)}, object ${JSON.stringify(obj)})`
+    ).toBeGreaterThan(0);
     if (!isPhone(testInfo)) await page.mouse.move(5, 450);
     await expect
-        .poll(async () => scene(page, (s, eid: string) => {
-            const e = s.getGameMapFrontWrapper().getEntitiesManager().getEntities().get(eid);
-            let colour: unknown = null;
-            e.outlineColorStore.subscribe((c: unknown) => (colour = c))();
-            return colour ?? null;
-        }, id), { message: "the picked object stays highlighted" })
+        .poll(
+            async () =>
+                scene(
+                    page,
+                    (s, eid: string) => {
+                        const e = s.getGameMapFrontWrapper().getEntitiesManager().getEntities().get(eid);
+                        let colour: unknown = null;
+                        e.outlineColorStore.subscribe((c: unknown) => (colour = c))();
+                        return colour ?? null;
+                    },
+                    id
+                ),
+            { message: "the picked object stays highlighted" }
+        )
         .not.toBeNull();
 });
 
@@ -267,7 +330,9 @@ test("ME-019 @local Dragging a placed object moves it and saves; Move shows its 
     const from = await entityOnScreen(page, url, id);
     const tile = (await toScreen(page, 32, 0)).x - (await toScreen(page, 0, 0)).x;
     await drag(page, testInfo, from, { x: from.x + 3 * tile, y: from.y }, 15);
-    await expect.poll(async () => (await readWam(url)).entities[id]?.x, { message: "moved object saved" }).toBeGreaterThanOrEqual(before.x + 64);
+    await expect
+        .poll(async () => (await readWam(url)).entities[id]?.x, { message: "moved object saved" })
+        .toBeGreaterThanOrEqual(before.x + 64);
     expect(Object.keys((await readWam(url)).entities)).toHaveLength(1);
 });
 
@@ -290,16 +355,21 @@ test("ME-020 @local Copy puts the same object one step right; Ctrl+drag leaves a
         await page.mouse.move(from.x, from.y);
         await page.mouse.down();
         await page.keyboard.down("Control");
-        for (let i = 1; i <= 10; i++) await page.mouse.move(from.x + ((to.x - from.x) * i) / 10, from.y + ((to.y - from.y) * i) / 10);
+        for (let i = 1; i <= 10; i++)
+            await page.mouse.move(from.x + ((to.x - from.x) * i) / 10, from.y + ((to.y - from.y) * i) / 10);
         await page.mouse.up();
         await page.keyboard.up("Control");
-        await expect.poll(async () => Object.keys((await readWam(url)).entities).length, { message: "Ctrl+drag leaves a copy" }).toBe(3);
+        await expect
+            .poll(async () => Object.keys((await readWam(url)).entities).length, { message: "Ctrl+drag leaves a copy" })
+            .toBe(3);
         const after = (await readWam(url)).entities[id];
         expect({ x: after.x, y: after.y }).toEqual({ x: orig.x, y: orig.y });
     }
 });
 
-test("ME-021 @local Object settings: name, description, searchable, property buttons, Open a website; back deselects", async ({ page }, testInfo) => {
+test("ME-021 @local Object settings: name, description, searchable, property buttons, Open a website; back deselects", async ({
+    page,
+}, testInfo) => {
     const url = await objectsOpen(page, testInfo);
     const id = await placedObject(page, testInfo, url);
     await selectPlaced(page, testInfo, url, id);
@@ -342,7 +412,12 @@ test("ME-021 @local Object settings: name, description, searchable, property but
         .poll(async () => {
             const e = (await readWam(url)).entities[id];
             const about = e.properties?.find((p) => p.type === "entityDescriptionProperties");
-            return { name: e.name, description: about?.description, searchable: about?.searchable, website: e.properties?.find((p) => p.type === "openWebsite")?.link };
+            return {
+                name: e.name,
+                description: about?.description,
+                searchable: about?.searchable,
+                website: e.properties?.find((p) => p.type === "openWebsite")?.link,
+            };
         })
         .toEqual({ name: "Front desk", description: "Ask here", searchable: true, website: "https://example.org/" });
     await page.getByTestId("edit-panel-back").click();
@@ -351,7 +426,9 @@ test("ME-021 @local Object settings: name, description, searchable, property but
     await expect(page.getByTestId("object-actions")).toBeHidden();
 });
 
-test("ME-022 @local Delete from the chip or the Delete key, toast with Undo brings it back", async ({ page }, testInfo) => {
+test("ME-022 @local Delete from the chip or the Delete key, toast with Undo brings it back", async ({
+    page,
+}, testInfo) => {
     const url = await objectsOpen(page, testInfo);
     const id = await placedObject(page, testInfo, url);
     await selectPlaced(page, testInfo, url, id);
@@ -360,7 +437,11 @@ test("ME-022 @local Delete from the chip or the Delete key, toast with Undo brin
     const toast = page.getByTestId("edit-undo-toast");
     await expect(toast).toContainText("Basic Wood Table removed");
     await page.getByTestId("edit-undo-toast-undo").click();
-    await expect.poll(async () => Object.keys((await readWam(url)).entities).length, { message: "Undo in the toast brings it back" }).toBe(1);
+    await expect
+        .poll(async () => Object.keys((await readWam(url)).entities).length, {
+            message: "Undo in the toast brings it back",
+        })
+        .toBe(1);
     if (!isPhone(testInfo)) {
         const back = Object.keys((await readWam(url)).entities)[0];
         await selectPlaced(page, testInfo, url, back);
@@ -371,13 +452,18 @@ test("ME-022 @local Delete from the chip or the Delete key, toast with Undo brin
     }
 });
 
-test("ME-023 @local A tap on empty floor or Esc deselects; an open settings page returns to the picker", async ({ page }, testInfo) => {
+test("ME-023 @local A tap on empty floor or Esc deselects; an open settings page returns to the picker", async ({
+    page,
+}, testInfo) => {
     const url = await objectsOpen(page, testInfo);
     const id = await placedObject(page, testInfo, url);
     await selectPlaced(page, testInfo, url, id);
     // Empty floor beside the object (SPOT_C can sit under the phone's rail, depending on where the camera rests).
     const floor = await toScreen(page, SPOT_B.x, SPOT_B.y);
-    expect(await page.evaluate((q) => document.elementFromPoint(q.x, q.y)?.tagName, floor), "the floor spot is on the map, not under a panel").toBe("CANVAS");
+    expect(
+        await page.evaluate((q) => document.elementFromPoint(q.x, q.y)?.tagName, floor),
+        "the floor spot is on the map, not under a panel"
+    ).toBe("CANVAS");
     await hit(page, testInfo, floor);
     await expect(page.getByTestId("object-actions")).toBeHidden();
     await selectPlaced(page, testInfo, url, id);
@@ -390,8 +476,13 @@ test("ME-023 @local A tap on empty floor or Esc deselects; an open settings page
     }
 });
 
-test("ME-024 @local Each tool keeps to its own things: Areas ignores objects, Objects ignores areas", async ({ page }, testInfo) => {
-    test.skip(isPhone(testInfo), "phone: the panel covers the map and tucking it drops the tool (ME-007), so the open tool can't stay lit");
+test("ME-024 @local Each tool keeps to its own things: Areas ignores objects, Objects ignores areas", async ({
+    page,
+}, testInfo) => {
+    test.skip(
+        isPhone(testInfo),
+        "phone: the panel covers the map and tucking it drops the tool (ME-007), so the open tool can't stay lit"
+    );
     const url = await objectsOpen(page, testInfo);
     const id = await placedObject(page, testInfo, url);
     await pickTool(page, "AreaEditor");
@@ -413,15 +504,22 @@ test("ME-024 @local Each tool keeps to its own things: Areas ignores objects, Ob
     await expect(page.getByTestId("area-rename")).toBeHidden();
 });
 
-test("ME-025 @local Another player sees objects placed, moved and deleted without reload", async ({ page, browser }, testInfo) => {
+test("ME-025 @local Another player sees objects placed, moved and deleted without reload", async ({
+    page,
+    browser,
+}, testInfo) => {
     test.setTimeout(240_000);
     const url = await objectsOpen(page, testInfo);
     const bob = await newPlayer(browser, testInfo, url, "Bob");
     const bobSees = async (eid: string) =>
-        scene(bob, (s, i: string) => {
-            const e = s.getGameMapFrontWrapper().getEntitiesManager().getEntities().get(i);
-            return e ? { x: e.x as number, y: e.y as number } : null;
-        }, eid);
+        scene(
+            bob,
+            (s, i: string) => {
+                const e = s.getGameMapFrontWrapper().getEntitiesManager().getEntities().get(i);
+                return e ? { x: e.x as number, y: e.y as number } : null;
+            },
+            eid
+        );
     const id = await placedObject(page, testInfo, url);
     await expect.poll(() => bobSees(id), { timeout: 5000 }).not.toBeNull();
     const before = (await readWam(url)).entities[id];

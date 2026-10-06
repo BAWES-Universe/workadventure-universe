@@ -11,7 +11,11 @@ async function muteMic(page: Page, testInfo: Parameters<typeof tapOrClick>[1]) {
     await expect(page.getByTestId("microphone-button")).toHaveAttribute("data-state", "forbidden");
 }
 
-test("AV-063 The hand button appears only in a bubble, between the zoom column and Express", async ({ player, url, browser }, testInfo) => {
+test("AV-063 The hand button appears only in a bubble, between the zoom column and Express", async ({
+    player,
+    url,
+    browser,
+}, testInfo) => {
     const slot = player.locator(".hand-slot");
     await expect(slot).not.toHaveClass(/shown/);
     await expect(handButton(player)).toBeHidden();
@@ -22,7 +26,9 @@ test("AV-063 The hand button appears only in a bubble, between the zoom column a
     await expect(handButton(player)).toBeVisible();
     const hand = await boxOf(handButton(player));
     const express = await boxOf(player.getByTestId("express-button"));
-    await expect.poll(async () => (await boxOf(player.getByTestId("actions-explorer"))).y).toBeLessThan(pillBefore.y - 40);
+    await expect
+        .poll(async () => (await boxOf(player.getByTestId("actions-explorer"))).y)
+        .toBeLessThan(pillBefore.y - 40);
     const pill = await boxOf(player.getByTestId("actions-explorer"));
     expect(hand.y).toBeGreaterThan(pill.y + pill.height - 2);
     expect(hand.y + hand.height).toBeLessThanOrEqual(express.y + 2);
@@ -35,7 +41,11 @@ test("AV-063 The hand button appears only in a bubble, between the zoom column a
     await bob.context().close();
 });
 
-test("AV-064 AV-065 AV-066 Raising a hand: gold button with place in line, tile chip for others, pill with the list", async ({ player, url, browser }, testInfo) => {
+test("AV-064 AV-065 AV-066 Raising a hand: gold button with place in line, tile chip for others, pill with the list", async ({
+    player,
+    url,
+    browser,
+}, testInfo) => {
     const bob = await joinBubble(browser, testInfo, player, url);
     await muteMic(player, testInfo);
     await tapOrClick(player, testInfo, handButton(player));
@@ -77,7 +87,11 @@ test("AV-064 AV-065 AV-066 Raising a hand: gold button with place in line, tile 
     await bob.context().close();
 });
 
-test("AV-067 Phone: with a hand up the chat sheet header shows the compact pill", async ({ player, url, browser }, testInfo) => {
+test("AV-067 Phone: with a hand up the chat sheet header shows the compact pill", async ({
+    player,
+    url,
+    browser,
+}, testInfo) => {
     test.skip(!isPhone(testInfo), "phone only");
     const bob = await joinBubble(browser, testInfo, player, url);
     await muteMic(player, testInfo);
@@ -96,7 +110,11 @@ test("AV-067 Phone: with a hand up the chat sheet header shows the compact pill"
     await bob.context().close();
 });
 
-test("AV-068 Talking with a hand up offers to keep it; Keep it raised keeps it", async ({ player, url, browser }, testInfo) => {
+test("AV-068 Talking with a hand up offers to keep it; Keep it raised keeps it", async ({
+    player,
+    url,
+    browser,
+}, testInfo) => {
     const bob = await joinBubble(browser, testInfo, player, url);
     await tapOrClick(player, testInfo, handButton(player));
     const callout = player.getByTestId("keep-hand-raised");
@@ -119,7 +137,11 @@ test("AV-068 Without Keep it raised the hand goes down after talking", async ({ 
     await bob.context().close();
 });
 
-test("AV-069 Hands queue in the order they went up; lowering the first moves the second up", async ({ player, url, browser }, testInfo) => {
+test("AV-069 Hands queue in the order they went up; lowering the first moves the second up", async ({
+    player,
+    url,
+    browser,
+}, testInfo) => {
     const bob = await joinBubble(browser, testInfo, player, url);
     await muteMic(player, testInfo);
     await muteMic(bob, testInfo);

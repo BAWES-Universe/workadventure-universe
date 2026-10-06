@@ -1,14 +1,6 @@
 import type { Page } from "@playwright/test";
 import { test, expect, wamRoom, join, isPhone, newPlayer, wa } from "../lib/game";
-import {
-    goLive,
-    openBroadcast,
-    openGoLive,
-    otherWamRoom,
-    panel,
-    primeCard,
-    turnOnBroadcast,
-} from "../lib/bc";
+import { goLive, openBroadcast, openGoLive, otherWamRoom, panel, primeCard, turnOnBroadcast } from "../lib/bc";
 
 async function setBar(page: Page, testId: "microphone-button" | "camera-button", on: boolean) {
     const button = page.getByTestId(testId);
@@ -25,7 +17,11 @@ async function setStatus(page: Page, status: "Online" | "Do not disturb") {
 }
 
 /** Alice in a fresh room with broadcasting on (This room), and Bob in the same room far from her. */
-async function speakerAndListener(page: Page, browser: Parameters<typeof newPlayer>[0], testInfo: Parameters<typeof wamRoom>[0]) {
+async function speakerAndListener(
+    page: Page,
+    browser: Parameters<typeof newPlayer>[0],
+    testInfo: Parameters<typeof wamRoom>[0]
+) {
     test.setTimeout(180_000);
     const url = await wamRoom(testInfo, "empty");
     await join(page, url, "Alice");
@@ -47,7 +43,9 @@ function videosOutsidePanel(page: Page) {
     );
 }
 
-test("BC-054 Go live: preview, You chip, mic/camera/screen buttons, mic on at open, notice and Go live", async ({ page }, testInfo) => {
+test("BC-054 Go live: preview, You chip, mic/camera/screen buttons, mic on at open, notice and Go live", async ({
+    page,
+}, testInfo) => {
     await join(page, await wamRoom(testInfo, "empty"), "Alice");
     await setBar(page, "microphone-button", false);
     await openBroadcast(page);
@@ -75,7 +73,9 @@ test("BC-054 Go live: preview, You chip, mic/camera/screen buttons, mic on at op
     await expect(page.getByTestId("broadcast-go-live")).toBeEnabled();
 });
 
-test("BC-055 Go live's mic and camera are the bar's mic and camera, with the violet ring when on", async ({ page }, testInfo) => {
+test("BC-055 Go live's mic and camera are the bar's mic and camera, with the violet ring when on", async ({
+    page,
+}, testInfo) => {
     await join(page, await wamRoom(testInfo, "empty"), "Alice");
     await setBar(page, "camera-button", true);
     await openBroadcast(page);
@@ -129,7 +129,9 @@ test("BC-057 With mic, camera and screen all off, Go live is disabled and says w
     await expect(panel(page).locator("p.text-center")).toHaveText("Turn on your mic, camera or screen to go live.");
 });
 
-test("BC-058 Leaving Go live without touching the mic turns it back off; a chosen mic state stays", async ({ page }, testInfo) => {
+test("BC-058 Leaving Go live without touching the mic turns it back off; a chosen mic state stays", async ({
+    page,
+}, testInfo) => {
     await join(page, await wamRoom(testInfo, "empty"), "Alice");
     await setBar(page, "microphone-button", false);
     await openBroadcast(page);
@@ -195,7 +197,9 @@ test("BC-060 Go live closes the card and shows the Live pill with timer, reach a
     }
 });
 
-test("BC-061 While live: own tile with the violet ring and LIVE tag, bar mic and camera ringed", async ({ page }, testInfo) => {
+test("BC-061 While live: own tile with the violet ring and LIVE tag, bar mic and camera ringed", async ({
+    page,
+}, testInfo) => {
     await join(page, await wamRoom(testInfo, "empty"), "Alice");
     await setBar(page, "camera-button", true);
     await openBroadcast(page);
@@ -214,11 +218,17 @@ test("BC-062 A listener in the room gets the Announcement and A's live tile", as
     await expect(bob.locator(".notification-playing")).toContainText("Announcement", { timeout: 30_000 });
     await expect(bob.getByTestId("live-tag")).toBeVisible({ timeout: 30_000 });
     await expect(bob.locator(".u-live-tile").filter({ has: bob.getByTestId("live-tag") })).toHaveCount(1);
-    const tile = bob.locator("div").filter({ has: bob.getByTestId("live-tag") }).filter({ hasText: "Alice" });
+    const tile = bob
+        .locator("div")
+        .filter({ has: bob.getByTestId("live-tag") })
+        .filter({ hasText: "Alice" });
     await expect(tile.first()).toBeVisible();
 });
 
-test("BC-063 Players in a bubble elsewhere see the live tile next to their bubble", async ({ page, browser }, testInfo) => {
+test("BC-063 Players in a bubble elsewhere see the live tile next to their bubble", async ({
+    page,
+    browser,
+}, testInfo) => {
     test.setTimeout(240_000);
     const url = await wamRoom(testInfo, "empty");
     await join(page, url, "Alice");
@@ -236,7 +246,13 @@ test("BC-063 Players in a bubble elsewhere see the live tile next to their bubbl
         [carol, "Bob"],
     ] as const) {
         await expect(listener.getByTestId("live-tag")).toBeVisible({ timeout: 30_000 });
-        await expect(listener.locator("div").filter({ has: listener.getByTestId("live-tag") }).filter({ hasText: "Alice" }).first()).toBeVisible();
+        await expect(
+            listener
+                .locator("div")
+                .filter({ has: listener.getByTestId("live-tag") })
+                .filter({ hasText: "Alice" })
+                .first()
+        ).toBeVisible();
         await expect(listener.getByText(other).first()).toBeVisible();
     }
 });
@@ -258,7 +274,10 @@ test("BC-064 Going live keeps your bubble", async ({ page, browser }, testInfo) 
     await expect(sara.getByText("Alice").first()).toBeVisible();
 });
 
-test("BC-065 World reach: a player in another room of the world sees the live tile", async ({ page, browser }, testInfo) => {
+test("BC-065 World reach: a player in another room of the world sees the live tile", async ({
+    page,
+    browser,
+}, testInfo) => {
     test.setTimeout(180_000);
     const first = await wamRoom(testInfo, "empty");
     const second = await otherWamRoom(testInfo, "b");
@@ -285,7 +304,10 @@ test("BC-067 End stops the broadcast: pill, ring and the listener's tile go", as
     await expect(bob.getByTestId("live-tag")).toHaveCount(0, { timeout: 30_000 });
 });
 
-test("BC-068 Turning mic, camera and screen off from the bar ends the broadcast", async ({ page, browser }, testInfo) => {
+test("BC-068 Turning mic, camera and screen off from the bar ends the broadcast", async ({
+    page,
+    browser,
+}, testInfo) => {
     const { bob } = await speakerAndListener(page, browser, testInfo);
     await goLive(page);
     await expect(bob.getByTestId("live-tag")).toBeVisible({ timeout: 30_000 });
@@ -308,7 +330,10 @@ test("BC-069 Switching This room off while live ends the broadcast", async ({ pa
     await expect(bob.getByTestId("live-tag")).toHaveCount(0, { timeout: 30_000 });
 });
 
-test("BC-070 A listener on Do not disturb loses the live tile and gets it back on Online", async ({ page, browser }, testInfo) => {
+test("BC-070 A listener on Do not disturb loses the live tile and gets it back on Online", async ({
+    page,
+    browser,
+}, testInfo) => {
     const { bob } = await speakerAndListener(page, browser, testInfo);
     await goLive(page);
     await expect(bob.getByTestId("live-tag")).toBeVisible({ timeout: 30_000 });

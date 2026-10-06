@@ -6,12 +6,33 @@ const MAP_STORAGE = process.env.SAFETY_NET_MAP_STORAGE ?? "http://localhost:3000
 const MAP_STORAGE_AUTH = "Basic " + Buffer.from("john.doe:password").toString("base64");
 
 export type Wam = {
-    areas: { id: string; name: string; x: number; y: number; width: number; height: number; properties: { type: string; [k: string]: unknown }[] }[];
-    entities: Record<string, { x: number; y: number; prefabRef: { id: string; collectionName: string }; name?: string; properties?: { type: string; [k: string]: unknown }[] }>;
+    areas: {
+        id: string;
+        name: string;
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+        properties: { type: string; [k: string]: unknown }[];
+    }[];
+    entities: Record<
+        string,
+        {
+            x: number;
+            y: number;
+            prefabRef: { id: string; collectionName: string };
+            name?: string;
+            properties?: { type: string; [k: string]: unknown }[];
+        }
+    >;
 };
 
 /** Joins a fresh editable room as Alice and returns its url. */
-export async function editRoom(page: Page, testInfo: TestInfo, map: "empty" | "map" | "areas" | "online" = "map"): Promise<string> {
+export async function editRoom(
+    page: Page,
+    testInfo: TestInfo,
+    map: "empty" | "map" | "areas" | "online" = "map"
+): Promise<string> {
     const url = await wamRoom(testInfo, map);
     await join(page, url, "Alice");
     return url;
@@ -69,7 +90,12 @@ export async function scene<R, A>(page: Page, fn: (scene: any, arg: A) => R, arg
 }
 
 /** Runs fn on one of the game's own modules (the live instance, not a second copy). @local only. */
-export async function module<R, A>(page: Page, path: string, fn: (mod: any, arg: A) => R, arg?: A): Promise<Awaited<R>> {
+export async function module<R, A>(
+    page: Page,
+    path: string,
+    fn: (mod: any, arg: A) => R,
+    arg?: A
+): Promise<Awaited<R>> {
     return page.evaluate(
         async ({ path, src, a }) => {
             const loaded = performance.getEntriesByType("resource").find((e) => e.name.includes("/src/front/"));
@@ -133,7 +159,10 @@ async function gesture(page: Page, frames: Point[][]): Promise<void> {
 
 /** A finger (phone) or the mouse (desktop) pressed at `from`, moved in steps to `to`, released. */
 export async function drag(page: Page, testInfo: TestInfo, from: Point, to: Point, steps = 10): Promise<void> {
-    const at = (i: number): Point => ({ x: from.x + ((to.x - from.x) * i) / steps, y: from.y + ((to.y - from.y) * i) / steps });
+    const at = (i: number): Point => ({
+        x: from.x + ((to.x - from.x) * i) / steps,
+        y: from.y + ((to.y - from.y) * i) / steps,
+    });
     if (isPhone(testInfo)) {
         await gesture(page, [[from], ...Array.from({ length: steps }, (_, i) => [at(i + 1)]), []]);
         return;
@@ -184,10 +213,13 @@ export async function placeAt(page: Page, testInfo: TestInfo, url: string, world
     }
     let id = "";
     await expect
-        .poll(async () => {
-            id = Object.keys((await readWam(url)).entities).find((k) => !before.includes(k)) ?? "";
-            return id;
-        }, { message: "placed object saved to map-storage" })
+        .poll(
+            async () => {
+                id = Object.keys((await readWam(url)).entities).find((k) => !before.includes(k)) ?? "";
+                return id;
+            },
+            { message: "placed object saved to map-storage" }
+        )
         .not.toBe("");
     return id;
 }
@@ -218,7 +250,11 @@ function crc32(buf: Buffer): number {
 }
 
 /** A solid-colour RGBA PNG of the given size, for upload checks. */
-export function png(width: number, height: number, rgba: [number, number, number, number] = [200, 60, 60, 255]): Buffer {
+export function png(
+    width: number,
+    height: number,
+    rgba: [number, number, number, number] = [200, 60, 60, 255]
+): Buffer {
     const chunk = (type: string, data: Buffer) => {
         const len = Buffer.alloc(4);
         len.writeUInt32BE(data.length);
@@ -254,10 +290,13 @@ export async function newArea(page: Page, url: string, name?: string): Promise<s
     await page.getByTestId("area-draft-next").click();
     let id = "";
     await expect
-        .poll(async () => {
-            id = (await readWam(url)).areas.find((a) => !before.includes(a.id))?.id ?? "";
-            return id;
-        }, { message: "new area saved to map-storage" })
+        .poll(
+            async () => {
+                id = (await readWam(url)).areas.find((a) => !before.includes(a.id))?.id ?? "";
+                return id;
+            },
+            { message: "new area saved to map-storage" }
+        )
         .not.toBe("");
     await expect(page.getByTestId("area-rename")).toBeVisible();
     if (name) await renameArea(page, url, id, name);
@@ -274,7 +313,13 @@ export async function draftBox(page: Page): Promise<Box> {
     });
 }
 
-export async function newAreaAt(page: Page, testInfo: TestInfo, url: string, world: Point, name?: string): Promise<string> {
+export async function newAreaAt(
+    page: Page,
+    testInfo: TestInfo,
+    url: string,
+    world: Point,
+    name?: string
+): Promise<string> {
     const before = (await readWam(url)).areas.map((a) => a.id);
     await page.getByTestId("area-new").click();
     const draft = page.getByTestId("area-draft");
@@ -283,21 +328,30 @@ export async function newAreaAt(page: Page, testInfo: TestInfo, url: string, wor
     const from = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
     const start = await draftBox(page);
     const zoom = (await camera(page)).zoom;
-    const to = { x: from.x + (world.x - (start.x + start.width / 2)) * zoom, y: from.y + (world.y - (start.y + start.height / 2)) * zoom };
+    const to = {
+        x: from.x + (world.x - (start.x + start.width / 2)) * zoom,
+        y: from.y + (world.y - (start.y + start.height / 2)) * zoom,
+    };
     await drag(page, testInfo, from, to, 12);
     await expect
-        .poll(async () => {
-            const d = await draftBox(page);
-            return world.x >= d.x && world.x <= d.x + d.width && world.y >= d.y && world.y <= d.y + d.height;
-        }, { message: "the new area box covers the point" })
+        .poll(
+            async () => {
+                const d = await draftBox(page);
+                return world.x >= d.x && world.x <= d.x + d.width && world.y >= d.y && world.y <= d.y + d.height;
+            },
+            { message: "the new area box covers the point" }
+        )
         .toBe(true);
     await page.getByTestId("area-draft-next").click();
     let id = "";
     await expect
-        .poll(async () => {
-            id = (await readWam(url)).areas.find((a) => !before.includes(a.id))?.id ?? "";
-            return id;
-        }, { message: "new area saved to map-storage" })
+        .poll(
+            async () => {
+                id = (await readWam(url)).areas.find((a) => !before.includes(a.id))?.id ?? "";
+                return id;
+            },
+            { message: "new area saved to map-storage" }
+        )
         .not.toBe("");
     await expect(page.getByTestId("area-rename")).toBeVisible();
     if (name) await renameArea(page, url, id, name);
@@ -340,22 +394,33 @@ export const SPOT_C = { x: 400, y: 304 };
 export async function settle(page: Page): Promise<void> {
     let last = "";
     await expect
-        .poll(async () => {
-            const c = JSON.stringify(await camera(page));
-            const same = c === last;
-            last = c;
-            return same;
-        }, { intervals: [300], message: "camera settles" })
+        .poll(
+            async () => {
+                const c = JSON.stringify(await camera(page));
+                const same = c === last;
+                last = c;
+                return same;
+            },
+            { intervals: [300], message: "camera settles" }
+        )
         .toBe(true);
 }
 
 /** An entity's box on screen, from the game's own bounds of it. @local */
-export async function entityBox(page: Page, id: string): Promise<{ x: number; y: number; width: number; height: number }> {
+export async function entityBox(
+    page: Page,
+    id: string
+): Promise<{ x: number; y: number; width: number; height: number }> {
     const b = await scene(
         page,
         (s, eid: string) => {
             const r = s.getGameMapFrontWrapper().getEntitiesManager().getEntities().get(eid).getBounds();
-            return { left: r.left as number, top: r.top as number, right: r.right as number, bottom: r.bottom as number };
+            return {
+                left: r.left as number,
+                top: r.top as number,
+                right: r.right as number,
+                bottom: r.bottom as number,
+            };
         },
         id
     );
@@ -369,7 +434,14 @@ export async function entityBox(page: Page, id: string): Promise<{ x: number; y:
  * The zoom's resistance wall is time-based, so steps sent one by one from the test (slow on a loaded machine) never
  * push through it the way a steady scroll or pinch does.
  */
-export async function steadyZoom(page: Page, testInfo: TestInfo, centre: Point, direction: "out" | "in", ms = 4000, stopTestId?: string): Promise<void> {
+export async function steadyZoom(
+    page: Page,
+    testInfo: TestInfo,
+    centre: Point,
+    direction: "out" | "in",
+    ms = 4000,
+    stopTestId?: string
+): Promise<void> {
     await page.evaluate(
         async ({ c, out, ms, touch, stop }) => {
             const canvas = document.querySelector("canvas") as HTMLCanvasElement;
@@ -379,16 +451,35 @@ export async function steadyZoom(page: Page, testInfo: TestInfo, centre: Point, 
             if (!touch) {
                 while (performance.now() < end && !done()) {
                     for (let i = 0; i < 3; i++) {
-                        canvas.dispatchEvent(new WheelEvent("wheel", { deltaY: out ? 100 : -100, clientX: c.x, clientY: c.y, bubbles: true, cancelable: true }));
+                        canvas.dispatchEvent(
+                            new WheelEvent("wheel", {
+                                deltaY: out ? 100 : -100,
+                                clientX: c.x,
+                                clientY: c.y,
+                                bubbles: true,
+                                cancelable: true,
+                            })
+                        );
                     }
                     await frame();
                 }
                 return;
             }
             const fingers = (d: number) =>
-                [c.x - d / 2, c.x + d / 2].map((x, i) => new Touch({ identifier: i + 1, target: canvas, clientX: x, clientY: c.y, pageX: x, pageY: c.y }));
+                [c.x - d / 2, c.x + d / 2].map(
+                    (x, i) =>
+                        new Touch({ identifier: i + 1, target: canvas, clientX: x, clientY: c.y, pageX: x, pageY: c.y })
+                );
             const send = (type: string, list: Touch[], changed: Touch[]) =>
-                canvas.dispatchEvent(new TouchEvent(type, { touches: list, targetTouches: list, changedTouches: changed, bubbles: true, cancelable: true }));
+                canvas.dispatchEvent(
+                    new TouchEvent(type, {
+                        touches: list,
+                        targetTouches: list,
+                        changedTouches: changed,
+                        bubbles: true,
+                        cancelable: true,
+                    })
+                );
             let d = out ? 300 : 60;
             send("touchstart", fingers(d), fingers(d));
             await frame();

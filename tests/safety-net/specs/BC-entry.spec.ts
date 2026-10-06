@@ -1,5 +1,14 @@
 import { test, expect, wamRoom, join, isPhone, wa } from "../lib/game";
-import { openBroadcast, openTools, panel, primeAdmin, primeCard, roomNameOf, saveSettings, turnOnBroadcast } from "../lib/bc";
+import {
+    openBroadcast,
+    openTools,
+    panel,
+    primeAdmin,
+    primeCard,
+    roomNameOf,
+    saveSettings,
+    turnOnBroadcast,
+} from "../lib/bc";
 
 test("BC-001 Tools has one Broadcast row in a map-storage room", async ({ page }, testInfo) => {
     await join(page, await wamRoom(testInfo, "empty"), "Alice");
@@ -21,7 +30,9 @@ test("BC-002 Phone: Broadcast is reachable from Tools and opens the card", async
     await expect(panel(page)).toBeVisible();
 });
 
-test("BC-003 Only one broadcasting entry: no Send global message, no Global Messages page", async ({ page }, testInfo) => {
+test("BC-003 Only one broadcasting entry: no Send global message, no Global Messages page", async ({
+    page,
+}, testInfo) => {
     await join(page, await wamRoom(testInfo, "empty"), "Alice");
     await openTools(page);
     await expect(page.getByTestId("broadcast-menu")).toHaveCount(1);
@@ -80,7 +91,9 @@ test("BC-006 Opening Broadcast closes the menu, the chat and edit mode", async (
     await expect(panel(page)).toBeVisible();
 });
 
-test("BC-007 Desktop: a centred 420px dialog with no backdrop; bar and arrow keys still work", async ({ page }, testInfo) => {
+test("BC-007 Desktop: a centred 420px dialog with no backdrop; bar and arrow keys still work", async ({
+    page,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
     await join(page, await wamRoom(testInfo, "empty"), "Alice");
     await openBroadcast(page);
@@ -107,7 +120,9 @@ test("BC-007 Desktop: a centred 420px dialog with no backdrop; bar and arrow key
     await page.keyboard.up("ArrowRight");
 });
 
-test("BC-008 Phone: the card sits at the top with 12px gutters and scrolls inside; the bar stays usable", async ({ page }, testInfo) => {
+test("BC-008 Phone: the card sits at the top with 12px gutters and scrolls inside; the bar stays usable", async ({
+    page,
+}, testInfo) => {
     test.skip(!isPhone(testInfo), "phone only");
     await join(page, await wamRoom(testInfo, "empty"), "Alice");
     await openBroadcast(page);
@@ -191,7 +206,7 @@ test("BC-011 Opening Settings or the room list closes the Broadcast card", async
     await expect(panel(page)).toBeHidden();
 });
 
-test("BC-012 WA.ui.getMenuCommand(\"globalMessages\").open() opens the Broadcast card", async ({ page }, testInfo) => {
+test('BC-012 WA.ui.getMenuCommand("globalMessages").open() opens the Broadcast card', async ({ page }, testInfo) => {
     await join(page, await wamRoom(testInfo, "empty"), "Alice");
     await wa(page, async () => (await WA.ui.getMenuCommand("globalMessages")).open());
     await expect(panel(page)).toBeVisible();
@@ -234,7 +249,9 @@ test("BC-014 Non-admin who may go live sees only Go live on the What step", asyn
     await expect(card.getByText("Next you choose who gets it")).toBeVisible();
 });
 
-test("BC-015 @local Admin sees Write a message, Voice note and Go live, each with a chevron", async ({ page }, testInfo) => {
+test("BC-015 @local Admin sees Write a message, Voice note and Go live, each with a chevron", async ({
+    page,
+}, testInfo) => {
     await join(page, await wamRoom(testInfo, "empty"), "Alice");
     await openBroadcast(page);
     await turnOnBroadcast(page);
@@ -267,7 +284,9 @@ test("BC-016 Fresh room: Broadcasting is off, Turn it on opens Broadcast setting
     await expect(page.getByTestId("broadcast-settings-save")).toBeVisible();
 });
 
-test("BC-018 @local Admin excluded from Who can go live: Go live greyed, Write and Voice work", async ({ page }, testInfo) => {
+test("BC-018 @local Admin excluded from Who can go live: Go live greyed, Write and Voice work", async ({
+    page,
+}, testInfo) => {
     await join(page, await wamRoom(testInfo, "empty"), "Alice");
     await openBroadcast(page);
     await saveSettings(page, { who: "tags", tags: ["nobody-has-this"], room: true });

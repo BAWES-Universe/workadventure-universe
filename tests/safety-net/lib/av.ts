@@ -9,7 +9,13 @@ export async function boxOf(locator: Locator) {
 }
 
 /** Bob joins the same room. On tests/E2E/empty.json both spawn on the same tile, so they meet at once. */
-export async function joinBubble(browser: Browser, testInfo: TestInfo, alice: Page, url: string, name = "Bob"): Promise<Page> {
+export async function joinBubble(
+    browser: Browser,
+    testInfo: TestInfo,
+    alice: Page,
+    url: string,
+    name = "Bob"
+): Promise<Page> {
     const bob = await newPlayer(browser, testInfo, url, name);
     await expectInBubble(alice, name);
     await expectInBubble(bob, "Alice");
@@ -17,17 +23,25 @@ export async function joinBubble(browser: Browser, testInfo: TestInfo, alice: Pa
 }
 
 export async function expectInBubble(page: Page, name: string): Promise<void> {
-    await expect(page.locator("#cameras-container").getByText(name, { exact: true }).first()).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator("#cameras-container").getByText(name, { exact: true }).first()).toBeVisible({
+        timeout: 30_000,
+    });
 }
 
 export async function expectNoBubble(page: Page): Promise<void> {
-    await expect(page.locator("#cameras-container .camera-box").filter({ hasNotText: "You" })).toHaveCount(0, { timeout: 30_000 });
+    await expect(page.locator("#cameras-container .camera-box").filter({ hasNotText: "You" })).toHaveCount(0, {
+        timeout: 30_000,
+    });
 }
 
 export async function teleport(page: Page, x: number, y: number): Promise<void> {
-    await wa(page, async (pos) => {
-        await WA.player.teleport(pos.x, pos.y);
-    }, { x, y });
+    await wa(
+        page,
+        async (pos) => {
+            await WA.player.teleport(pos.x, pos.y);
+        },
+        { x, y }
+    );
 }
 
 export async function position(page: Page): Promise<{ x: number; y: number }> {
@@ -90,7 +104,10 @@ export async function liveTracks(page: Page): Promise<{ video: number; audio: nu
 
 export async function setTabVisible(page: Page, visible: boolean): Promise<void> {
     await page.evaluate((visible) => {
-        Object.defineProperty(document, "visibilityState", { configurable: true, get: () => (visible ? "visible" : "hidden") });
+        Object.defineProperty(document, "visibilityState", {
+            configurable: true,
+            get: () => (visible ? "visible" : "hidden"),
+        });
         Object.defineProperty(document, "hidden", { configurable: true, get: () => !visible });
         document.dispatchEvent(new Event("visibilitychange"));
     }, visible);

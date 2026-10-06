@@ -16,13 +16,16 @@ async function emotesOverWokas(page: Page, emoji: string): Promise<number> {
     return page.evaluate(
         (emoji) =>
             [...document.querySelectorAll("span")].filter(
-                (el) => el.textContent?.trim() === emoji && !el.closest("[data-testid=express]") && el.children.length === 0
+                (el) =>
+                    el.textContent?.trim() === emoji && !el.closest("[data-testid=express]") && el.children.length === 0
             ).length,
         emoji
     );
 }
 
-test("AV-073 AV-074 Express opens a tray with field, Say/Think, phrases and six emotes", async ({ player }, testInfo) => {
+test("AV-073 AV-074 Express opens a tray with field, Say/Think, phrases and six emotes", async ({
+    player,
+}, testInfo) => {
     const button = player.getByTestId("express-button");
     await openTray(player, testInfo);
     const input = player.getByTestId("express-input");
@@ -44,7 +47,11 @@ test("AV-073 AV-074 Express opens a tray with field, Say/Think, phrases and six 
     }
 });
 
-test("AV-075 AV-079 Say bubble and quick phrase show above the WOKA for both players", async ({ player, url, browser }, testInfo) => {
+test("AV-075 AV-079 Say bubble and quick phrase show above the WOKA for both players", async ({
+    player,
+    url,
+    browser,
+}, testInfo) => {
     const bob = await joinBubble(browser, testInfo, player, url);
     await openTray(player, testInfo);
     const input = player.getByTestId("express-input");
@@ -57,7 +64,9 @@ test("AV-075 AV-079 Say bubble and quick phrase show above the WOKA for both pla
     await expect(tray(player)).toHaveCount(0);
     await expect(player.locator(".say-bubble")).toHaveText("hello");
     await expect(bob.locator(".say-bubble")).toHaveText("hello");
-    await expect.poll(() => bob.locator(".say-bubble").evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(/^"?Inter/);
+    await expect
+        .poll(() => bob.locator(".say-bubble").evaluate((el) => getComputedStyle(el).fontFamily))
+        .toMatch(/^"?Inter/);
     await expect(bob.locator(".say-bubble")).toHaveCount(0, { timeout: 15_000 });
 
     await openTray(player, testInfo);
@@ -98,7 +107,11 @@ test("AV-077 Enter opens the tray in Say, Ctrl+Enter in Think", async ({ player 
     await expect(player.getByTestId("express-input")).toHaveAttribute("aria-label", "Think");
 });
 
-test("AV-078 Emotes from the tray and the number keys show over the WOKA for both players", async ({ player, url, browser }, testInfo) => {
+test("AV-078 Emotes from the tray and the number keys show over the WOKA for both players", async ({
+    player,
+    url,
+    browser,
+}, testInfo) => {
     const bob = await joinBubble(browser, testInfo, player, url);
     for (let i = 1; i <= 6; i++) {
         await openTray(player, testInfo);
@@ -111,17 +124,37 @@ test("AV-078 Emotes from the tray and the number keys show over the WOKA for bot
     }
     if (!isPhone(testInfo)) {
         await openTray(player, testInfo);
-        const emoji = ((await player.getByTestId("express-emote-3").locator(".emote-glyph").textContent()) ?? "").trim();
+        const emoji = (
+            (await player.getByTestId("express-emote-3").locator(".emote-glyph").textContent()) ?? ""
+        ).trim();
         await player.keyboard.press("Escape");
+        // The tray's field has the keyboard until the tray has closed: a key pressed before that is typed into it.
+        await expect(tray(player)).toHaveCount(0);
+        // The Express button's burst lasts under a second: note it as it appears rather than looking for it later.
+        await player.evaluate((glyph) => {
+            const root = document.querySelector("[data-testid=express]")!;
+            const seen = () =>
+                [...root.querySelectorAll(".express-burst")].some((el) => el.textContent?.trim() === glyph);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const w = window as any;
+            w.__snBurst = false;
+            new MutationObserver(() => {
+                if (seen()) w.__snBurst = true;
+            }).observe(root, { subtree: true, childList: true, characterData: true });
+        }, emoji);
         await player.locator("canvas").first().focus();
         await player.keyboard.press("Digit3");
         await expect.poll(() => emotesOverWokas(bob, emoji), { intervals: [100] }).toBeGreaterThan(0);
-        await expect(player.getByTestId("express").getByText(emoji)).toBeAttached();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await expect.poll(() => player.evaluate(() => (window as any).__snBurst as boolean)).toBe(true);
     }
     await bob.context().close();
 });
 
-test("AV-080 Right-click or long-press opens Edit Express; a changed phrase is kept after reload", async ({ player, url }, testInfo) => {
+test("AV-080 Right-click or long-press opens Edit Express; a changed phrase is kept after reload", async ({
+    player,
+    url,
+}, testInfo) => {
     const button = player.getByTestId("express-button");
     if (isPhone(testInfo)) {
         const box = (await button.boundingBox())!;
@@ -145,7 +178,12 @@ test("AV-080 Right-click or long-press opens Edit Express; a changed phrase is k
     await expect(player.getByTestId("express-phrase-1")).toContainText("Back soon");
 
     await player.reload();
-    if (await player.getByTestId("loginSceneNameInput").isVisible({ timeout: 10_000 }).catch(() => false)) {
+    if (
+        await player
+            .getByTestId("loginSceneNameInput")
+            .isVisible({ timeout: 10_000 })
+            .catch(() => false)
+    ) {
         await join(player, url, "Alice");
     }
     await openTray(player, testInfo);
@@ -167,7 +205,10 @@ test("AV-080 Right-click or long-press opens Edit Express; a changed phrase is k
 test("AV-081 Hovering Express shows the shortcut card on desktop only", async ({ player }, testInfo) => {
     const card = player.getByTestId("express-shortcuts");
     if (isPhone(testInfo)) {
-        await player.getByTestId("express-button").hover().catch(() => undefined);
+        await player
+            .getByTestId("express-button")
+            .hover()
+            .catch(() => undefined);
         await player.waitForTimeout(1000);
         await expect(card).toHaveCount(0);
         return;
@@ -188,13 +229,18 @@ test("AV-082 Busy forces Think in the tray", async ({ player }, testInfo) => {
     await tapOrClick(player, testInfo, menu.locator(".status-button", { hasText: "Busy" }).last());
     const notNow = player.getByRole("button", { name: "Not now" });
     if (await notNow.isVisible({ timeout: 2000 }).catch(() => false)) await notNow.click();
-    if (await menu.isVisible()) await tapOrClick(player, testInfo, player.locator("[data-testid=action-user] button.profile-button"));
+    if (await menu.isVisible())
+        await tapOrClick(player, testInfo, player.locator("[data-testid=action-user] button.profile-button"));
     await openTray(player, testInfo);
-    await expect(player.getByTestId("express-forced-hint")).toHaveText("While you're away or busy, bubbles are thoughts");
+    await expect(player.getByTestId("express-forced-hint")).toHaveText(
+        "While you're away or busy, bubbles are thoughts"
+    );
     await expect(player.getByTestId("express-input")).toHaveAttribute("aria-label", "Think");
 });
 
-test("AV-083 Express stays in Look around, hides in the map editor and never comes back stuck open", async ({ page }, testInfo) => {
+test("AV-083 Express stays in Look around, hides in the map editor and never comes back stuck open", async ({
+    page,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only (map editor)");
     await join(page, await wamRoom(testInfo, "empty"), "Alice");
     await page.getByTestId("map-overview-button").click();
@@ -218,16 +264,16 @@ test("AV-083 Express stays in Look around, hides in the map editor and never com
     await expect(tray(page)).toHaveCount(0);
 });
 
-test("AV-084 Escape and a click on the map close the tray; Escape returns focus to Express", async ({ player }, testInfo) => {
+test("AV-084 Desktop: Escape and a click on the map close the tray; Escape returns focus to Express", async ({
+    player,
+}, testInfo) => {
+    test.skip(isPhone(testInfo), "desktop only: on a phone a tap on the map leaves the tray open, as on prod");
     await openTray(player, testInfo);
-    if (!isPhone(testInfo)) {
-        await player.keyboard.press("Escape");
-        await expect(tray(player)).toHaveCount(0);
-        await expect(player.getByTestId("express-button")).toBeFocused();
-        await openTray(player, testInfo);
-    }
+    await player.keyboard.press("Escape");
+    await expect(tray(player)).toHaveCount(0);
+    await expect(player.getByTestId("express-button")).toBeFocused();
+    await openTray(player, testInfo);
     const vp = player.viewportSize()!;
-    if (isPhone(testInfo)) await player.touchscreen.tap(vp.width / 2, vp.height / 3);
-    else await player.mouse.click(vp.width / 2, vp.height / 2);
+    await player.mouse.click(vp.width / 2, vp.height / 2);
     await expect(tray(player)).toHaveCount(0);
 });

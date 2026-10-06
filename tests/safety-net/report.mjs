@@ -25,7 +25,7 @@ const unknownIds = new Set();
 function walk(suite, titles) {
     for (const s of suite.suites ?? []) walk(s, [...titles, s.title]);
     for (const spec of suite.specs ?? []) {
-        const ids = [...new Set((spec.title.match(ID) ?? []))];
+        const ids = [...new Set(spec.title.match(ID) ?? [])];
         for (const t of spec.tests) {
             if (t.status === "skipped") continue;
             const last = t.results[t.results.length - 1];
@@ -64,7 +64,11 @@ const reasons = {};
 for (const r of notAutomated) reasons[r.runs] = (reasons[r.runs] ?? 0) + 1;
 
 const lines = [];
-lines.push(`**${passed.length} of ${all.length} checks pass** on ${build} (phone ${byProject("phone")}, desktop ${byProject("desktop")}).`);
+lines.push(
+    `**${passed.length} of ${all.length} checks pass** on ${build} (phone ${byProject("phone")}, desktop ${byProject(
+        "desktop"
+    )}).`
+);
 lines.push("");
 lines.push(
     `${covered.size} of ${checklist.rows.length} checklist rows run automatically. ` +

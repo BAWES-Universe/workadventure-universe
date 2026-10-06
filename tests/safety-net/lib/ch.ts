@@ -16,10 +16,14 @@ export async function alice(page: Page, url: string): Promise<Page> {
 }
 
 export async function teleport(page: Page, spot: { x: number; y: number }): Promise<void> {
-    await wa(page, async ({ x, y }) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (globalThis as any).WA.player.teleport(x, y);
-    }, spot);
+    await wa(
+        page,
+        async ({ x, y }) => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            await (globalThis as any).WA.player.teleport(x, y);
+        },
+        spot
+    );
 }
 
 export async function position(page: Page): Promise<{ x: number; y: number }> {
@@ -51,7 +55,13 @@ export async function closeChat(page: Page): Promise<void> {
 /**
  * Alice (already in the room) steps into the corner, then Bob joins on the spawn: no bubble yet.
  */
-export async function bobApart(browser: Browser, testInfo: TestInfo, alice: Page, url: string, name = "Bob"): Promise<Page> {
+export async function bobApart(
+    browser: Browser,
+    testInfo: TestInfo,
+    alice: Page,
+    url: string,
+    name = "Bob"
+): Promise<Page> {
     await teleport(alice, CORNER);
     return newPlayer(browser, testInfo, url, name);
 }
@@ -72,7 +82,13 @@ export async function expectProximityThread(page: Page): Promise<void> {
  * Alice and Bob in one bubble, each with the proximity thread open. Alice opens her chat before the bubble forms,
  * so it stays open (on the list) when the bubble ends: the game puts the chat back as it was before the bubble.
  */
-export async function inBubble(browser: Browser, testInfo: TestInfo, alice: Page, url: string, name = "Bob"): Promise<Page> {
+export async function inBubble(
+    browser: Browser,
+    testInfo: TestInfo,
+    alice: Page,
+    url: string,
+    name = "Bob"
+): Promise<Page> {
     const bob = await bobApart(browser, testInfo, alice, url, name);
     await openChat(alice);
     await meet(alice, bob);
@@ -86,7 +102,9 @@ export async function inBubble(browser: Browser, testInfo: TestInfo, alice: Page
 export async function openEndedRow(page: Page, title: string): Promise<void> {
     if (!(await chat(page).isVisible())) await openChat(page);
     if (await page.getByTestId("chatBackward").isVisible()) await backToList(page);
-    const row = page.getByTestId("proximitySessionRow").filter({ has: page.getByTestId("proximitySessionRowTitle").getByText(title, { exact: true }) });
+    const row = page
+        .getByTestId("proximitySessionRow")
+        .filter({ has: page.getByTestId("proximitySessionRowTitle").getByText(title, { exact: true }) });
     await expect(row).toHaveCount(1, { timeout: 20_000 });
     await row.click();
     await expect(page.getByTestId("proximityEndedFooter")).toBeVisible();
@@ -195,7 +213,9 @@ async function touch(page: Page, type: "touchStart" | "touchMove" | "touchEnd", 
         cdp = page.context().newCDPSession(page);
         cdpSessions.set(page, cdp);
     }
-    await (await cdp).send("Input.dispatchTouchEvent", {
+    await (
+        await cdp
+    ).send("Input.dispatchTouchEvent", {
         type,
         touchPoints: type === "touchEnd" ? [] : [{ x: Math.round(x), y: Math.round(y) }],
     });
@@ -227,8 +247,11 @@ export async function touchSwipe(page: Page, target: Locator, dx: number, dy = 0
 }
 
 /** Where a remote player's WOKA is on screen, from the running game scene (vite dev only: tests using it are @local). */
-export async function wokaPoint(page: Page, name: string): Promise<{ x: number; y: number } | null> {
-    return withFrontModule<{ x: number; y: number } | null>(
+export async function wokaPoint(
+    page: Page,
+    name: string
+): Promise<{ x: number; y: number; worldX: number; worldY: number } | null> {
+    return withFrontModule<{ x: number; y: number; worldX: number; worldY: number } | null>(
         page,
         "src/front/Phaser/Game/GameManager.ts",
         `m => {
@@ -242,19 +265,30 @@ export async function wokaPoint(page: Page, name: string): Promise<{ x: number; 
             return {
                 x: rect.left + (cam.x + (p.x - cam.worldView.x) * cam.zoom) * sx,
                 y: rect.top + (cam.y + (p.y - 6 - cam.worldView.y) * cam.zoom) * sy,
+                worldX: p.x,
+                worldY: p.y,
             };
         }`
     );
 }
 
-/** Taps (phone) or clicks (desktop) a remote player's WOKA on the map. */
-export async function tapWoka(page: Page, name: string, phone: boolean): Promise<void> {
+/**
+ * Taps (phone) or clicks (desktop) a remote player's WOKA on the map. With `at` (where that player was teleported),
+ * waits until this page shows the WOKA there, so the tap does not land where it stood before (a phone tap on the
+ * empty map walks you there instead).
+ */
+export async function tapWoka(page: Page, name: string, phone: boolean, at?: { x: number; y: number }): Promise<void> {
     let point: { x: number; y: number } | null = null;
     await expect
-        .poll(async () => {
-            point = await wokaPoint(page, name);
-            return point !== null;
-        }, { message: `${name} is not on the map` })
+        .poll(
+            async () => {
+                const found = await wokaPoint(page, name);
+                point = found;
+                if (!found) return false;
+                return !at || Math.hypot(found.worldX - at.x, found.worldY - at.y) < 8;
+            },
+            { message: at ? `${name} is not on the map at ${at.x},${at.y}` : `${name} is not on the map` }
+        )
         .toBe(true);
     const { x, y } = point as unknown as { x: number; y: number };
     if (phone) await page.touchscreen.tap(x, y);
@@ -286,13 +320,28 @@ export async function deviceContext(browser: Browser, testInfo: TestInfo): Promi
 }
 
 const EMOJI_DATA = [
-    ["😀", "grinning face"], ["😃", "grinning face with big eyes"], ["😄", "grinning face with smiling eyes"],
-    ["😁", "beaming face with smiling eyes"], ["😆", "grinning squinting face"], ["😅", "grinning face with sweat"],
-    ["🤣", "rolling on the floor laughing"], ["😂", "face with tears of joy"], ["🙂", "slightly smiling face"],
-    ["🙃", "upside-down face"], ["😉", "winking face"], ["😊", "smiling face with smiling eyes"],
-    ["😇", "smiling face with halo"], ["🥰", "smiling face with hearts"], ["😍", "smiling face with heart-eyes"],
-    ["🤩", "star-struck"], ["😘", "face blowing a kiss"], ["😗", "kissing face"], ["😚", "kissing face with closed eyes"],
-    ["😙", "kissing face with smiling eyes"], ["😋", "face savoring food"], ["😛", "face with tongue"],
+    ["😀", "grinning face"],
+    ["😃", "grinning face with big eyes"],
+    ["😄", "grinning face with smiling eyes"],
+    ["😁", "beaming face with smiling eyes"],
+    ["😆", "grinning squinting face"],
+    ["😅", "grinning face with sweat"],
+    ["🤣", "rolling on the floor laughing"],
+    ["😂", "face with tears of joy"],
+    ["🙂", "slightly smiling face"],
+    ["🙃", "upside-down face"],
+    ["😉", "winking face"],
+    ["😊", "smiling face with smiling eyes"],
+    ["😇", "smiling face with halo"],
+    ["🥰", "smiling face with hearts"],
+    ["😍", "smiling face with heart-eyes"],
+    ["🤩", "star-struck"],
+    ["😘", "face blowing a kiss"],
+    ["😗", "kissing face"],
+    ["😚", "kissing face with closed eyes"],
+    ["😙", "kissing face with smiling eyes"],
+    ["😋", "face savoring food"],
+    ["😛", "face with tongue"],
 ].map(([emoji, annotation], order) => ({
     annotation,
     emoji,
@@ -312,7 +361,11 @@ export async function serveEmojiData(page: Page): Promise<void> {
         route.fulfill({
             status: 200,
             contentType: "application/json",
-            headers: { ETag: '"sn-emoji-1"', "Access-Control-Allow-Origin": "*", "Access-Control-Expose-Headers": "ETag" },
+            headers: {
+                ETag: '"sn-emoji-1"',
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Expose-Headers": "ETag",
+            },
             body: route.request().method() === "HEAD" ? "" : JSON.stringify(EMOJI_DATA),
         })
     );

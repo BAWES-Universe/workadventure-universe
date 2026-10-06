@@ -67,10 +67,17 @@ export function cowebsiteFrame(page: Page): Locator {
 }
 
 /** Answers every request to an outside site with a small page, so links work without internet. */
-export async function fakeOutside(context: BrowserContext, hosts: string[] = ["workadventu.re", "wikipedia.org"]): Promise<void> {
+export async function fakeOutside(
+    context: BrowserContext,
+    hosts: string[] = ["workadventu.re", "wikipedia.org"]
+): Promise<void> {
     for (const host of hosts) {
         await context.route(new RegExp(`^https?://([a-z0-9-]+\\.)*${host.replace(/\./g, "\\.")}/`), (route) =>
-            route.fulfill({ status: 200, contentType: "text/html", body: `<html><body><h1>${host} page</h1></body></html>` })
+            route.fulfill({
+                status: 200,
+                contentType: "text/html",
+                body: `<html><body><h1>${host} page</h1></body></html>`,
+            })
         );
     }
 }
@@ -146,7 +153,9 @@ export async function walkUntilJump(page: Page, key: string, back: string, from:
         await page.keyboard.down(key);
         try {
             await expect
-                .poll(async () => jumped((await recordedTiles(page)).slice(Math.max(start - 1, 0)), from, to), { timeout: 6_000 })
+                .poll(async () => jumped((await recordedTiles(page)).slice(Math.max(start - 1, 0)), from, to), {
+                    timeout: 6_000,
+                })
                 .toBe(true);
             return;
         } catch {
@@ -159,5 +168,8 @@ export async function walkUntilJump(page: Page, key: string, back: string, from:
         await expect.poll(async () => (await recordedTiles(page)).at(-1), { timeout: 6_000 }).not.toBe(end);
         await page.keyboard.up(back);
     }
-    expect(jumped(await recordedTiles(page), from, to), `no jump to ${to}: ${(await recordedTiles(page)).join(" ")}`).toBe(true);
+    expect(
+        jumped(await recordedTiles(page), from, to),
+        `no jump to ${to}: ${(await recordedTiles(page)).join(" ")}`
+    ).toBe(true);
 }

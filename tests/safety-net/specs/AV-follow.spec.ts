@@ -19,7 +19,11 @@ async function askToFollow(page: Page, testInfo: Parameters<typeof tapOrClick>[1
     await expect(page.getByTestId("follow-card")).toBeVisible();
 }
 
-test("AV-085 AV-086 Ask to follow shows the leader's card and the question to the other", async ({ player, url, browser }, testInfo) => {
+test("AV-085 AV-086 Ask to follow shows the leader's card and the question to the other", async ({
+    player,
+    url,
+    browser,
+}, testInfo) => {
     const bob = await joinBubble(browser, testInfo, player, url);
     await askToFollow(player, testInfo);
     const card = player.getByTestId("follow-card");
@@ -37,7 +41,11 @@ test("AV-085 AV-086 Ask to follow shows the leader's card and the question to th
     await bob.context().close();
 });
 
-test("AV-087 AV-089 Following: the follower walks behind; pills on both sides; Stop ends it for both", async ({ player, url, browser }, testInfo) => {
+test("AV-087 AV-089 Following: the follower walks behind; pills on both sides; Stop ends it for both", async ({
+    player,
+    url,
+    browser,
+}, testInfo) => {
     const bob = await joinBubble(browser, testInfo, player, url);
     await askToFollow(player, testInfo);
     await tapOrClick(bob, testInfo, bob.getByTestId("follow-accept"));
@@ -51,10 +59,13 @@ test("AV-087 AV-089 Following: the follower walks behind; pills on both sides; S
         await WA.player.moveTo(250, 250, 10);
     });
     await expect
-        .poll(async () => {
-            const p = await position(bob);
-            return Math.hypot(p.x - start.x, p.y - start.y);
-        }, { timeout: 20_000 })
+        .poll(
+            async () => {
+                const p = await position(bob);
+                return Math.hypot(p.x - start.x, p.y - start.y);
+            },
+            { timeout: 20_000 }
+        )
         .toBeGreaterThan(64);
 
     await tapOrClick(player, testInfo, player.getByTestId("follow-stop"));
@@ -64,7 +75,11 @@ test("AV-087 AV-089 Following: the follower walks behind; pills on both sides; S
     await bob.context().close();
 });
 
-test("AV-088 AV-089 Not now tells the leader; Cancel request removes the question", async ({ player, url, browser }, testInfo) => {
+test("AV-088 AV-089 Not now tells the leader; Cancel request removes the question", async ({
+    player,
+    url,
+    browser,
+}, testInfo) => {
     const bob = await joinBubble(browser, testInfo, player, url);
     await askToFollow(player, testInfo);
     await tapOrClick(bob, testInfo, bob.getByTestId("follow-decline"));
@@ -91,7 +106,11 @@ test("AV-088 Nobody answering for 30 s times the request out", async ({ player, 
     await bob.context().close();
 });
 
-test("AV-090 Asking a bubble of three lists each answer; one no does not end it", async ({ player, url, browser }, testInfo) => {
+test("AV-090 Asking a bubble of three lists each answer; one no does not end it", async ({
+    player,
+    url,
+    browser,
+}, testInfo) => {
     test.slow();
     const bob = await joinBubble(browser, testInfo, player, url);
     const carol = await newPlayer(browser, testInfo, url, "Carol");
@@ -102,16 +121,35 @@ test("AV-090 Asking a bubble of three lists each answer; one no does not end it"
     await expect(card).toContainText("Anyone who says yes starts following right away");
     const list = player.getByTestId("follow-asked-list");
     await expect(list.getByTestId("follow-answer-waiting")).toHaveCount(2);
+    // The card stays while someone is still deciding; once everyone answered it becomes the pill. So each answer
+    // shows in the list while the other one is still waiting: a yes first, then (a second time) a no first.
     await tapOrClick(bob, testInfo, bob.getByTestId("follow-accept"));
     await expect(list.getByTestId("follow-answer-following")).toHaveCount(1);
+    await expect(list.getByTestId("follow-answer-waiting")).toHaveCount(1);
+    await tapOrClick(carol, testInfo, carol.getByTestId("follow-decline"));
+    await expect(bob.getByTestId("follow-pill")).toContainText("Following Alice");
+    await expect(player.getByTestId("follow-pill")).toContainText("Bob is following you");
+    await tapOrClick(player, testInfo, player.getByTestId("follow-stop"));
+    await expect(player.getByTestId("follow-pill")).toHaveCount(0);
+
+    await askToFollow(player, testInfo);
+    await expect(list.getByTestId("follow-answer-waiting")).toHaveCount(2);
     await tapOrClick(carol, testInfo, carol.getByTestId("follow-decline"));
     await expect(list.getByTestId("follow-answer-declined")).toHaveCount(1);
+    await expect(list.getByTestId("follow-answer-waiting")).toHaveCount(1);
+    await expect(card).toContainText("Anyone who says yes starts following right away");
+    await tapOrClick(bob, testInfo, bob.getByTestId("follow-accept"));
     await expect(bob.getByTestId("follow-pill")).toContainText("Following Alice");
+    await expect(player.getByTestId("follow-pill")).toContainText("Bob is following you");
     await carol.context().close();
     await bob.context().close();
 });
 
-test("AV-091 Phone menu row Ask to follow names who will be asked and closes the menu", async ({ player, url, browser }, testInfo) => {
+test("AV-091 Phone menu row Ask to follow names who will be asked and closes the menu", async ({
+    player,
+    url,
+    browser,
+}, testInfo) => {
     test.skip(!isPhone(testInfo), "phone only");
     const bob = await joinBubble(browser, testInfo, player, url);
     const menu = await openProfileMenu(player, testInfo);
@@ -124,7 +162,11 @@ test("AV-091 Phone menu row Ask to follow names who will be asked and closes the
     await bob.context().close();
 });
 
-test("AV-092 AV-093 F asks and F again cancels; Escape cancels the request or answers Not now", async ({ player, url, browser }, testInfo) => {
+test("AV-092 AV-093 F asks and F again cancels; Escape cancels the request or answers Not now", async ({
+    player,
+    url,
+    browser,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only (keyboard)");
     const bob = await joinBubble(browser, testInfo, player, url);
     await player.locator("canvas").first().focus();
