@@ -588,6 +588,31 @@ export class EntityEditorTool extends EntityRelatedEditorTool {
             .catch((e) => console.error(e));
     }
 
+    /**
+     * A file dropped on the map in edit mode: its object goes where the file was dropped (window CSS pixels), once its
+     * picture is loaded. Where it cannot go, it stays in hand there, red, to be put down like any other object.
+     */
+    public async placeDroppedFileAt(clientX: number, clientY: number): Promise<void> {
+        const entityPrefab = this.entityPrefab;
+        if (!entityPrefab) {
+            return;
+        }
+        await TexturesHelper.loadEntityImage(this.scene, entityPrefab.imagePath, entityPrefab.imagePath);
+        if (this.entityPrefab !== entityPrefab) {
+            return;
+        }
+        if (!this.entityPrefabPreview) {
+            this.entityPrefabPreview = this.scene.add.image(0, 0, entityPrefab.imagePath);
+        }
+        const view = this.scene.cameras.main.worldView;
+        const canvas = this.scene.game.canvas.getBoundingClientRect();
+        const scale = view.width > 0 && canvas.width > 0 ? canvas.width / view.width : this.scene.cameras.main.zoom;
+        this.movePreviewTo(view.x + (clientX - canvas.left) / scale, view.y + (clientY - canvas.top) / scale);
+        this.entityPrefabPreview.setVisible(true);
+        this.scene.markDirty();
+        this.placePreview();
+    }
+
     protected unbindEventHandlers(): void {
         this.scene.input.off(Phaser.Input.Events.POINTER_MOVE, this.pointerMoveEventHandler);
         this.shiftKey?.off(Phaser.Input.Keyboard.Events.DOWN);
