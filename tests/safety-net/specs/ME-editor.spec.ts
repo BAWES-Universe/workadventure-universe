@@ -133,7 +133,7 @@ test("ME-005 Desktop: backtick closes; 2 Areas, 3 Objects, 5 Delete, 6 closes, 1
     await expect(page.getByTestId("edit-pill")).toBeHidden();
 });
 
-test("ME-006 @local Desktop: 4 opens Configure my room; Room settings save; Megaphone tab is there", async ({
+test("ME-006 @local Desktop: 4 opens Configure my room; Room settings save; no Megaphone tab", async ({
     page,
 }, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
@@ -144,7 +144,7 @@ test("ME-006 @local Desktop: 4 opens Configure my room; Room settings save; Mega
     const win = page.locator(".configure-my-room");
     await expect(win).toBeVisible();
     await expect(page.getByTestId("edit-rail")).not.toContainText(/settings/i);
-    await expect(win.locator("li", { hasText: "Megaphone" })).toBeVisible();
+    await expect(win.locator("li", { hasText: "Megaphone" })).toHaveCount(0);
     await win.locator("li", { hasText: "Room settings" }).click();
     const description = win.getByRole("textbox", { name: "Room description" });
     await expect(description).toBeVisible();

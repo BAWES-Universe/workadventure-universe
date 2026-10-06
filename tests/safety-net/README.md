@@ -42,6 +42,29 @@ The summary starts with the line for the go-live note, for example
 "**409 of 412 checks pass** on 86bc8b264 (phone 205/206, desktop 204/206)", then the number of rows checked by hand
 and why, then each failure with its row, expected result, error and screenshot.
 
+## How much to run: skip, quick or full
+
+A full run takes about 3 hours, so `tools/pick-tier.mjs` decides from the files a candidate changes. It is plain git and
+the checklist, with no model and no cost:
+
+```sh
+node tools/pick-tier.mjs --game-dir <candidate checkout> --base <build on dev now> --head <candidate> \
+    [--ci-green] [--owner-checked] [--daily]
+```
+
+- **skip**: no game file changed, or a small look-only change (3 files or fewer, 80 lines or fewer, only `.svelte`,
+  `.scss`, `.css` or English text) that no checklist row names. The second case needs `--ci-green` and
+  `--owner-checked` (the owning thread ran its phone and desktop check on the candidate); without them it runs quick.
+- **quick** (about 20-30 minutes): the rows that name a changed file (the Hooks, Expected and Action columns), plus the
+  smoke set in `smoke.json` (join, walk, chat, editor and Broadcast each open). The script prints the exact
+  `npx playwright test --grep '...'` line. Report it with `node report.mjs --build <commit> --tier quick`.
+- **full** (about 3 hours): two or more PRs bundled, shared code (`back`, `libs`, `messages`, `map-storage`, `uploader`,
+  the pusher, `package.json`, build files), a wide change (over 30 files or 1500 lines), or `--daily` (the once-a-day run
+  on the dev head).
+
+It prints the tier and why, so the go-live note can say "safety net: quick, 18 min" or "safety net: skipped (why)".
+Keep `smoke.json` short and keep the checklist's Hooks column up to date: that column is how a changed file finds its rows.
+
 ## What the local stack can't check
 
 There is no Matrix chat server, no Orbit (no login, tags or admin API), no uploader and no LiveKit, and the browser

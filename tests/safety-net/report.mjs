@@ -1,5 +1,5 @@
 // Turns a Playwright run into the safety-net summary the Dev desk pastes at the top of a go-live note.
-// Usage: node report.mjs [--build <commit>] [--out results/summary.md] [--results a.json,b.json]
+// Usage: node report.mjs [--build <commit>] [--out results/summary.md] [--results a.json,b.json] [--tier quick]
 // Reads results/results.json (Playwright JSON reporter), or several result files from a run split in parts, and checklist.json.
 import fs from "node:fs";
 import path from "node:path";
@@ -45,7 +45,9 @@ for (const { spec, t } of tests.values()) {
         if (status === "fail") {
             c.status = "fail";
             const shot = (last?.attachments ?? []).find((a) => a.name === "screenshot")?.path;
-            const msg = (last?.errors?.[0]?.message ?? last?.error?.message ?? "").replace(/\x1b\[[0-9;]*m/g, "").split("\n")[0];
+            const msg = (last?.errors?.[0]?.message ?? last?.error?.message ?? "")
+                .replace(/\x1b\[[0-9;]*m/g, "")
+                .split("\n")[0];
             c.failures.push({ title: spec.title, file: spec.file, line: spec.line, msg, shot });
         } else if (status === "flaky" && c.status === "pass") {
             c.status = "flaky";
@@ -75,15 +77,22 @@ lines.push(
     )}).`
 );
 lines.push("");
-lines.push(
-    `${covered.size} of ${checklist.rows.length} checklist rows run automatically. ` +
-        `The other ${notAutomated.length} are checked by hand: ` +
-        Object.entries(reasons)
-            .sort((a, b) => b[1] - a[1])
-            .map(([k, v]) => `${v} ${k === "yes" ? "not automated yet" : k}`)
-            .join(", ") +
-        "."
-);
+if (arg("--tier", "full") === "quick") {
+    lines.push(
+        `Quick run (tools/pick-tier.mjs): ${covered.size} of ${checklist.rows.length} checklist rows, the ones near the changed files plus the smoke set. ` +
+            "The rest were not run on this build."
+    );
+} else {
+    lines.push(
+        `${covered.size} of ${checklist.rows.length} checklist rows run automatically. ` +
+            `The other ${notAutomated.length} are checked by hand: ` +
+            Object.entries(reasons)
+                .sort((a, b) => b[1] - a[1])
+                .map(([k, v]) => `${v} ${k === "yes" ? "not automated yet" : k}`)
+                .join(", ") +
+            "."
+    );
+}
 if (failed.length || knownFailed.length) {
     lines.push("", `${failed.length} new failure(s), ${knownFailed.length} known gap(s) already with their owners.`);
 }
