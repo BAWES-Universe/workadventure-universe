@@ -18,36 +18,41 @@ const resultFiles = arg("--results", path.join(here, "results/results.json")).sp
 const rows = new Map(checklist.rows.map((r) => [r.id, r]));
 const ID = /\b[A-Z]{2}-\d{3}\b/g;
 
-// One check = one checklist row on one viewport. A row covered by several tests passes only if all pass.
-const checks = new Map(); // `${id}|${project}` -> { status, failures: [] }
-const unknownIds = new Set();
-
-function walk(suite, titles) {
-    for (const s of suite.suites ?? []) walk(s, [...titles, s.title]);
+// Each test's last result wins: with several result files (a run in parts, or a rerun of tests fixed after a run),
+// a later file replaces an earlier file's result for the same test.
+const tests = new Map(); // `${project}|${file}|${title}` -> { spec, test }
+function walk(suite) {
+    for (const s of suite.suites ?? []) walk(s);
     for (const spec of suite.specs ?? []) {
-        const ids = [...new Set(spec.title.match(ID) ?? [])];
         for (const t of spec.tests) {
-            if (t.status === "skipped") continue;
-            const last = t.results[t.results.length - 1];
-            const status = t.status === "expected" ? "pass" : t.status === "flaky" ? "flaky" : "fail";
-            for (const id of ids) {
-                if (!rows.has(id)) unknownIds.add(id);
-                const key = `${id}|${t.projectName}`;
-                const c = checks.get(key) ?? { id, project: t.projectName, status: "pass", failures: [] };
-                if (status === "fail") {
-                    c.status = "fail";
-                    const shot = (last?.attachments ?? []).find((a) => a.name === "screenshot")?.path;
-                    const msg = (last?.errors?.[0]?.message ?? last?.error?.message ?? "").split("\n")[0];
-                    c.failures.push({ title: spec.title, file: spec.file, line: spec.line, msg, shot });
-                } else if (status === "flaky" && c.status === "pass") {
-                    c.status = "flaky";
-                }
-                checks.set(key, c);
-            }
+            if (t.status !== "skipped") tests.set(`${t.projectName}|${spec.file}|${spec.title}`, { spec, t });
         }
     }
 }
-for (const file of resultFiles) for (const s of JSON.parse(fs.readFileSync(file, "utf8")).suites) walk(s, []);
+for (const file of resultFiles) for (const s of JSON.parse(fs.readFileSync(file, "utf8")).suites) walk(s);
+
+// One check = one checklist row on one viewport. A row covered by several tests passes only if all pass.
+const checks = new Map(); // `${id}|${project}` -> { status, failures: [] }
+const unknownIds = new Set();
+for (const { spec, t } of tests.values()) {
+    const ids = [...new Set(spec.title.match(ID) ?? [])];
+    const last = t.results[t.results.length - 1];
+    const status = t.status === "expected" ? "pass" : t.status === "flaky" ? "flaky" : "fail";
+    for (const id of ids) {
+        if (!rows.has(id)) unknownIds.add(id);
+        const key = `${id}|${t.projectName}`;
+        const c = checks.get(key) ?? { id, project: t.projectName, status: "pass", failures: [] };
+        if (status === "fail") {
+            c.status = "fail";
+            const shot = (last?.attachments ?? []).find((a) => a.name === "screenshot")?.path;
+            const msg = (last?.errors?.[0]?.message ?? last?.error?.message ?? "").replace(/\x1b\[[0-9;]*m/g, "").split("\n")[0];
+            c.failures.push({ title: spec.title, file: spec.file, line: spec.line, msg, shot });
+        } else if (status === "flaky" && c.status === "pass") {
+            c.status = "flaky";
+        }
+        checks.set(key, c);
+    }
+}
 
 const all = [...checks.values()];
 const passed = all.filter((c) => c.status !== "fail");

@@ -149,7 +149,9 @@ setup() {
     if [ ! -d "$GAME_DIR/node_modules" ]; then
         echo "Run 'npm ci' in $GAME_DIR first"; exit 1
     fi
-    if [ ! -f "$GAME_DIR/libs/messages/src/ts-proto-generated/messages.ts" ]; then
+    # (Re)generate when missing or when a .proto changed since (e.g. after checking out another build).
+    local generated="$GAME_DIR/libs/messages/src/ts-proto-generated/messages.ts"
+    if [ ! -f "$generated" ] || [ -n "$(find "$GAME_DIR/messages/protos" -name '*.proto' -newer "$generated")" ]; then
         echo "Generating proto files"
         (cd "$GAME_DIR/messages" && { [ -x node_modules/.bin/protoc-gen-ts_proto ] || npm ci --ignore-scripts --no-audit --no-fund; } \
             && { python3 -m grpc_tools.protoc --version >/dev/null 2>&1 || python3 -m pip install -q grpcio-tools; } \
