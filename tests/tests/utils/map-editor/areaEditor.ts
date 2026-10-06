@@ -25,12 +25,23 @@ class AreaEditor {
         timeout: 20_000,
       });
     }
+    // The small test map sits in the middle of the screen, partly under the panel on the right: the panel is closed
+    // while drawing (tapping the lit tool closes it) and opened again on the new area with its Settings button.
+    const panelOpen = await page.getByTestId("edit-panel").isVisible();
+    if (panelOpen) {
+      await page.locator("section.side-bar-container .side-bar .tool-button button#AreaEditor").first().click();
+      await expect(page.getByTestId("edit-panel")).toBeHidden();
+    }
     const start = Map.onScreen(page, topLeft.x, topLeft.y);
     const end = Map.onScreen(page, bottomRight.x, bottomRight.y);
     await page.mouse.move(start.x, start.y);
     await page.mouse.down();
     await page.mouse.move(end.x, end.y);
     await page.mouse.up();
+    if (panelOpen) {
+      await page.getByTestId("area-actions-settings").click();
+      await expect(page.getByTestId("edit-panel")).toBeVisible();
+    }
 
     if (cameraTurnedOff) {
       await Menu.turnOnCamera(page);
