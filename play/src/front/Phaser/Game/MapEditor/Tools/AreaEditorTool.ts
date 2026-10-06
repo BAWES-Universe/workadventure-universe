@@ -54,6 +54,8 @@ export class AreaEditorTool extends MapEditorTool {
 
     private draggingdArea: boolean;
     private wasAreaMoved: boolean;
+    /** Where the pressed area was: its dashed line shows once the pointer moves, so a tap shows none. */
+    private ghostOnMove?: { x: number; y: number; width: number; height: number };
 
     private shiftKey?: Phaser.Input.Keyboard.Key;
     private ctrlKey?: Phaser.Input.Keyboard.Key;
@@ -108,6 +110,7 @@ export class AreaEditorTool extends MapEditorTool {
         editAreaDraftStore.set(undefined);
         editAreaDrawArmedStore.set(false);
         editAreaSketchStore.set(undefined);
+        this.ghostOnMove = undefined;
         editAreaGhostStore.set(undefined);
         this.glide?.stop();
         this.glide = undefined;
@@ -404,6 +407,7 @@ export class AreaEditorTool extends MapEditorTool {
         }
 
         // The dashed line of where a moved or resized area was goes when the pointer lets go, wherever it is.
+        this.ghostOnMove = undefined;
         editAreaGhostStore.set(undefined);
 
         if (get(editAreaDrawArmedStore)) {
@@ -507,6 +511,10 @@ export class AreaEditorTool extends MapEditorTool {
         }
         if (this.draggingdArea) {
             this.wasAreaMoved = true;
+            if (this.ghostOnMove) {
+                editAreaGhostStore.set(this.ghostOnMove);
+                this.ghostOnMove = undefined;
+            }
         }
     }
 
@@ -847,12 +855,13 @@ export class AreaEditorTool extends MapEditorTool {
             // Only the picked area moves or resizes: its old place shows as a faint dashed line meanwhile.
             if (areaPreview.isSelected()) {
                 const { x, y, width, height } = areaPreview.getAreaData();
-                editAreaGhostStore.set({ x, y, width, height });
+                this.ghostOnMove = { x, y, width, height };
             }
             areaPreview.destroyText();
         });
         areaPreview.on(AreaPreviewEvent.Released, () => {
             this.draggingdArea = false;
+            this.ghostOnMove = undefined;
             editAreaGhostStore.set(undefined);
         });
         areaPreview.on(AreaPreviewEvent.Copied, (data: CopyAreaEventData) => {
@@ -874,6 +883,7 @@ export class AreaEditorTool extends MapEditorTool {
         });
         areaPreview.on(AreaPreviewEvent.UpdateVisibility, (visibility: boolean) => {
             if (!visibility) {
+                this.ghostOnMove = undefined;
                 editAreaGhostStore.set(undefined);
                 areaPreview.destroyText();
             }
