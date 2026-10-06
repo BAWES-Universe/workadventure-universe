@@ -1,8 +1,10 @@
 <script lang="ts">
+    import { readable } from "svelte/store";
     import type { Readable } from "svelte/store";
     import { getColorByString } from "../../../Utils/ColorGenerator";
 
-    export let pictureStore: Readable<string | undefined>;
+    /** A chat picture may say it's still downloading: the circle stays plain until then, with no letter flashing. */
+    export let pictureStore: Readable<string | undefined> & { loading?: Readable<boolean> };
     export let name: string;
     /** "xs" is 28px (message senders), "sm" is 32px (headers), "lg" is 40px (chat list rows), "xl" is 88px (profile). */
     export let size: "xs" | "sm" | "lg" | "xl" = "sm";
@@ -10,6 +12,7 @@
     export let ring = true;
 
     $: initial = name.trim().charAt(0) || "?";
+    $: loading = pictureStore.loading ?? readable(false);
 </script>
 
 <div
@@ -21,7 +24,7 @@
         : size === 'xs'
         ? 'h-7 w-7'
         : 'h-8 w-8'} {ring ? 'ring-2 ring-contrast' : ''}"
-    style:background-color={$pictureStore ? undefined : getColorByString(name) ?? undefined}
+    style:background-color={$pictureStore || $loading ? undefined : getColorByString(name) ?? undefined}
     title={name}
 >
     {#if $pictureStore}
@@ -32,7 +35,7 @@
             class="h-full w-full object-contain p-[9%] [image-rendering:pixelated]"
             draggable="false"
         />
-    {:else}
+    {:else if !$loading}
         <span
             class="{size === 'xl'
                 ? 'text-3xl'

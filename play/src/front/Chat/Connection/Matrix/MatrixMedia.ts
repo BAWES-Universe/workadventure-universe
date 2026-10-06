@@ -1,6 +1,6 @@
 import type { MatrixClient } from "matrix-js-sdk";
 import type { Readable } from "svelte/store";
-import { readable } from "svelte/store";
+import { derived, readable } from "svelte/store";
 
 interface KeptFile {
     url: Promise<string | undefined>;
@@ -16,6 +16,8 @@ export const MAX_KEPT_MEDIA = 200;
 // Profile and room pictures are small thumbnails that several places show at once (a chat row and its header), so
 // they're kept for the session.
 const thumbnailUrls = new Map<string, Promise<string | undefined>>();
+// The thumbnails already fetched, so a picture shown again appears at once instead of after its letter.
+const resolvedThumbnails = new Map<string, string | undefined>();
 
 function revoke(url: Promise<string | undefined>): void {
     url.then((resolved) => {
@@ -29,6 +31,7 @@ export function clearMatrixMedia(): void {
     keptFiles.clear();
     for (const url of thumbnailUrls.values()) revoke(url);
     thumbnailUrls.clear();
+    resolvedThumbnails.clear();
 }
 
 function releaseOldFiles(): void {
@@ -44,6 +47,32 @@ function releaseOldFiles(): void {
 }
 
 const ENDPOINT_UNKNOWN_STATUSES = [400, 404, 405];
+
+// matrix-js-sdk 32 builds authenticated media URLs on MSC3916's unstable prefix. Synapse dropped that prefix once the
+// stable endpoints shipped (Matrix 1.11): Synapse 1.160 answers it with 404, so the stable one is asked for instead.
+const UNSTABLE_MEDIA_PREFIX = "/_matrix/client/unstable/org.matrix.msc3916/media/";
+const STABLE_MEDIA_PREFIX = "/_matrix/client/v1/media/";
+
+function authenticatedMediaUrl(
+    client: MatrixClient,
+    mxcUrl: string,
+    thumbnailSize?: number,
+    method?: "scale"
+): string | undefined {
+    const url = client.mxcUrlToHttp(mxcUrl, thumbnailSize, thumbnailSize, method, false, true, true);
+    return url ? url.replace(UNSTABLE_MEDIA_PREFIX, STABLE_MEDIA_PREFIX) : undefined;
+}
+
+/** Whether the server answered that it has no such file, rather than not knowing the endpoint. */
+async function isMissingFile(response: Response): Promise<boolean> {
+    if (response.status !== 404) return false;
+    try {
+        const body: unknown = await response.json();
+        return typeof body === "object" && body !== null && (body as { errcode?: unknown }).errcode === "M_NOT_FOUND";
+    } catch {
+        return false;
+    }
+}
 
 export interface MatrixMediaHold {
     url: Promise<string | undefined>;
@@ -134,8 +163,15 @@ export function resolveMatrixMediaUrl(
         const key = `${source}#${thumbnailSize}`;
         let resolved = thumbnailUrls.get(key);
         if (!resolved) {
-            resolved = fetchMatrixMedia(client, source, () => thumbnailUrls.delete(key), thumbnailSize);
-            thumbnailUrls.set(key, resolved);
+            const fetched = fetchMatrixMedia(client, source, () => thumbnailUrls.delete(key), thumbnailSize);
+            thumbnailUrls.set(key, fetched);
+            fetched
+                .then((url) => {
+                    // Only an answer that is still kept: a forgotten one is fetched again next time.
+                    if (thumbnailUrls.get(key) === fetched) resolvedThumbnails.set(key, url);
+                })
+                .catch(() => undefined);
+            resolved = fetched;
         }
         return resolved;
     }
@@ -144,26 +180,56 @@ export function resolveMatrixMediaUrl(
     return hold.url;
 }
 
+/** A Matrix picture store that also says whether its picture is still downloading. */
+export type MatrixPictureStore = Readable<string | undefined> & {
+    /** True until the first answer: the avatar stays plain meanwhile, so no letter flashes before the picture. */
+    loading: Readable<boolean>;
+};
+
+interface PictureState {
+    url: string | undefined;
+    loading: boolean;
+}
+
+function toPictureStore(state: Readable<PictureState>): MatrixPictureStore {
+    return Object.assign(
+        derived(state, ($state) => $state.url),
+        { loading: derived(state, ($state) => $state.loading) }
+    );
+}
+
 /**
  * A profile or room picture (mxc://…) as a store, shown the same way as chat files. A thumbnail of `size` pixels is
- * asked for, so a large photo set in another chat app isn't downloaded whole.
+ * asked for, so a large photo set in another chat app isn't downloaded whole. A picture fetched before starts shown.
  */
 export function matrixAvatarStore(
     client: MatrixClient,
     mxcUrl: string | null | undefined,
     size: number
-): Readable<string | undefined> {
-    return readable<string | undefined>(undefined, (set) => {
-        let stopped = false;
-        resolveMatrixMediaUrl(client, mxcUrl, size)
-            .then((url) => {
-                if (!stopped) set(url);
-            })
-            .catch((error) => console.error("Could not load a chat picture", error));
-        return () => {
-            stopped = true;
-        };
-    });
+): MatrixPictureStore {
+    const key = `${mxcUrl}#${size}`;
+    const hasPicture = typeof mxcUrl === "string" && mxcUrl.startsWith("mxc://");
+    return toPictureStore(
+        readable<PictureState>({ url: undefined, loading: hasPicture }, (set) => {
+            if (!hasPicture) return;
+            if (resolvedThumbnails.has(key)) {
+                set({ url: resolvedThumbnails.get(key), loading: false });
+                return;
+            }
+            let stopped = false;
+            resolveMatrixMediaUrl(client, mxcUrl, size)
+                .then((url) => {
+                    if (!stopped) set({ url, loading: false });
+                })
+                .catch((error) => {
+                    console.error("Could not load a chat picture", error);
+                    if (!stopped) set({ url: undefined, loading: false });
+                });
+            return () => {
+                stopped = true;
+            };
+        })
+    );
 }
 
 /** `forget` drops the cached answer, so the file is fetched again the next time it's shown. */
@@ -175,20 +241,25 @@ export function changingMatrixAvatarStore(
     client: MatrixClient,
     mxcUrl: Readable<string | null | undefined>,
     size: number
-): Readable<string | undefined> {
-    return readable<string | undefined>(undefined, (set) => {
-        let stopPicture: (() => void) | undefined;
-        const stopUrl = mxcUrl.subscribe((mxc) => {
-            stopPicture?.();
-            stopPicture = matrixAvatarStore(client, mxc, size).subscribe((url) => {
-                if (url !== undefined || !mxc) set(url);
+): MatrixPictureStore {
+    return toPictureStore(
+        readable<PictureState>({ url: undefined, loading: true }, (set) => {
+            let shown: string | undefined;
+            let stopPicture: (() => void) | undefined;
+            const stopUrl = mxcUrl.subscribe((mxc) => {
+                stopPicture?.();
+                const picture = matrixAvatarStore(client, mxc, size);
+                stopPicture = derived([picture, picture.loading], (values) => values).subscribe(([url, loading]) => {
+                    if (url !== undefined || !mxc) shown = url;
+                    set({ url: shown, loading: shown === undefined && loading });
+                });
             });
-        });
-        return () => {
-            stopUrl();
-            stopPicture?.();
-        };
-    });
+            return () => {
+                stopUrl();
+                stopPicture?.();
+            };
+        })
+    );
 }
 
 async function fetchMatrixMedia(
@@ -199,7 +270,7 @@ async function fetchMatrixMedia(
 ): Promise<string | undefined> {
     const method = thumbnailSize ? "scale" : undefined;
     const legacyUrl = client.mxcUrlToHttp(mxcUrl, thumbnailSize, thumbnailSize, method) ?? undefined;
-    const authenticatedUrl = client.mxcUrlToHttp(mxcUrl, thumbnailSize, thumbnailSize, method, false, true, true);
+    const authenticatedUrl = authenticatedMediaUrl(client, mxcUrl, thumbnailSize, method);
     const accessToken = client.getAccessToken();
     if (!authenticatedUrl || !accessToken) {
         return legacyUrl;
@@ -208,18 +279,22 @@ async function fetchMatrixMedia(
         const response = await fetch(authenticatedUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
         if (!response.ok) {
             // Older servers don't know the authenticated endpoint (404/405/400); the legacy one is all they have.
-            // Anything else (server error, rate limit, expired token) may pass next time the file is shown.
-            if (!ENDPOINT_UNKNOWN_STATUSES.includes(response.status)) {
-                forget();
+            // A file the server says it doesn't have is missing from the legacy one too.
+            if (ENDPOINT_UNKNOWN_STATUSES.includes(response.status)) {
+                return (await isMissingFile(response)) ? undefined : legacyUrl;
             }
-            return legacyUrl;
+            // Anything else (server error, rate limit, expired token) may pass next time the file is shown. Servers
+            // with authenticated media refuse the legacy URL for new files, so nothing is shown meanwhile rather
+            // than a broken picture.
+            forget();
+            return undefined;
         }
         return URL.createObjectURL(await response.blob());
     } catch (error) {
         console.error("Could not load a chat file", error);
         // A network blip: try again the next time the file is shown.
         forget();
-        return legacyUrl;
+        return undefined;
     }
 }
 
@@ -241,7 +316,7 @@ async function fetchEncryptedMatrixMedia(
     forget: () => void
 ): Promise<string | undefined> {
     const legacyUrl = client.mxcUrlToHttp(file.url) ?? undefined;
-    const authenticatedUrl = client.mxcUrlToHttp(file.url, undefined, undefined, undefined, false, true, true);
+    const authenticatedUrl = authenticatedMediaUrl(client, file.url);
     const accessToken = client.getAccessToken();
     try {
         let response =
