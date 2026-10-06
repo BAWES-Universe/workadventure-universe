@@ -49,10 +49,9 @@ class Map {
 
     /**
      * A point of the empty test maps (10 x 10 tiles, shown at 1.5x), measured from the map's top left corner, on the
-     * screen of someone playing who just joined. The map is smaller than the screen: while playing it sits in the
-     * middle of the screen, while editing (and right after closing the editor) in its top left corner.
+     * screen. The map is smaller than the screen, so it sits in the middle of it, while playing and while editing.
      */
-    whilePlaying(page: Page, x: number, y: number): { x: number; y: number } {
+    onScreen(page: Page, x: number, y: number): { x: number; y: number } {
         const mapSize = 10 * 32 * 1.5;
         const viewport = page.viewportSize() ?? { width: mapSize, height: mapSize };
         return {

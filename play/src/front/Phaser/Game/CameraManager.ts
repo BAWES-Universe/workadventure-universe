@@ -135,10 +135,14 @@ export class CameraManager extends Phaser.Events.EventEmitter {
 
         // Subscribe to map editor mode store to change camera bounds when the map editor is opened or closed
         this.unsubscribeMapEditorModeStore = mapEditorModeStore.subscribe((isOpened) => {
+            // The editor leaves room to scroll the map out from under its panel; a map smaller than the screen
+            // stays in the middle, where it sits while playing, so opening the editor never moves it.
+            this.editorBounds = isOpened;
+            this.mapBounds = undefined;
             // Define new bounds for camera if the map editor is opened
             if (isOpened) {
-                this.mapBoundsActive = false;
-                this.camera.setBounds(0, 0, this.mapSize.width * 2, this.mapSize.height);
+                this.mapBoundsActive = true;
+                this.applyMapBounds();
             } else {
                 // We set the bounds back after a call to start following the player
                 //this.camera.setBounds(0, 0, this.mapSize.width, this.mapSize.height);
@@ -569,6 +573,8 @@ export class CameraManager extends Phaser.Events.EventEmitter {
     // While following the player, the camera stays on the map. Zoomed out further than the map, the map sits in the
     // middle of the screen instead of in its top left corner.
     private mapBoundsActive = false;
+    // In the editor the camera may also scroll a map's width past the map's right edge, as it always could.
+    private editorBounds = false;
     private mapBounds: { x: number; y: number; width: number; height: number } | undefined;
     private setMapBounds(): void {
         this.mapBoundsActive = true;
@@ -580,9 +586,11 @@ export class CameraManager extends Phaser.Events.EventEmitter {
         const zoom = this.camera.zoom || 1;
         const viewWidth = Number.isFinite(this.camera.width / zoom) ? this.camera.width / zoom : 0;
         const viewHeight = Number.isFinite(this.camera.height / zoom) ? this.camera.height / zoom : 0;
-        const width = Math.max(this.mapSize.width, viewWidth);
+        const fitsWidth = viewWidth >= this.mapSize.width;
+        const width =
+            fitsWidth || !this.editorBounds ? Math.max(this.mapSize.width, viewWidth) : this.mapSize.width * 2;
         const height = Math.max(this.mapSize.height, viewHeight);
-        const x = (this.mapSize.width - width) / 2;
+        const x = fitsWidth ? (this.mapSize.width - width) / 2 : 0;
         const y = (this.mapSize.height - height) / 2;
         const last = this.mapBounds;
         if (

@@ -2,12 +2,14 @@ import path from "path";
 import type { Locator, Page } from "@playwright/test";
 import { expect } from "@playwright/test";
 import Menu from "../menu";
+import Map from "../map";
 
 class AreaEditor {
   async selectMegaphoneItemInCMR(page: Page) {
     await page.locator('li:has-text("Megaphone")').click();
   }
 
+  /** Draws an area between two points of the empty test map, measured from the map's top left corner (see Map.onScreen). */
   async drawArea(
     page: Page,
     topLeft: { x: number; y: number },
@@ -23,9 +25,11 @@ class AreaEditor {
         timeout: 20_000,
       });
     }
-    await page.mouse.move(topLeft.x, topLeft.y);
+    const start = Map.onScreen(page, topLeft.x, topLeft.y);
+    const end = Map.onScreen(page, bottomRight.x, bottomRight.y);
+    await page.mouse.move(start.x, start.y);
     await page.mouse.down();
-    await page.mouse.move(bottomRight.x, bottomRight.y);
+    await page.mouse.move(end.x, end.y);
     await page.mouse.up();
 
     if (cameraTurnedOff) {
