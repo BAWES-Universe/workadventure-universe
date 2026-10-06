@@ -17,7 +17,8 @@ class AreaAccessRights {
   };
 
   public entityPositionInArea: Coordinates = { x: 4 * 32 * 1.5, y: 4 * 32 * 1.5 };
-  public entityPositionOutsideArea: Coordinates = { x: 8 * 32 * 1.5, y: 8 * 32 * 1.5 };
+  // Below the area, left of the editor's panel, which covers the right of the small map.
+  public entityPositionOutsideArea: Coordinates = { x: 5 * 32 * 1.5, y: 8 * 32 * 1.5 };
 
   public mouseCoordinatesToClickOnEntityInsideArea = {
     x: this.entityPositionInArea.x + 10,
