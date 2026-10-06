@@ -181,8 +181,8 @@ function closeBotEditor() {
 }
 
 // The bot page lives in a container of its own, created and mounted as soon as the editor opens. The Phaser tool is
-// then active and the bots are on the map (to drag, or tap for their page) even while the panel is tucked away: on
-// a phone edit mode opens on the whole map, and the lit Bots on the rail tucks the panel away too. The container is
+// then active and the bots are on the map (to drag, or tap for their page) even while the panel is tucked away, as
+// it is when edit mode opens on a phone (on the whole map) or while a bot is being placed. The container is
 // put into the panel's sidebar whenever the panel is there and parked off the page when it is not, so the page keeps
 // its state (and the tool its previews) across the panel coming and going.
 let botEditorContainer: HTMLElement | null = null;
@@ -701,19 +701,7 @@ function setupBotEditor(options: ExtensionModuleOptions) {
         label: get(LL).mapEditor.edit.tools.bots(),
         subtitle: get(LL).mapEditor.edit.bots.subtitle(),
         icon: IconRobot,
-        onSelect: () => {
-            // The lit Bots tapped while its panel is out tucks the panel away, as the other tools do, but keeps the
-            // tool: the bots stay on the map to drag, and a tap on one brings the panel back on its page.
-            if (
-                botEditorOpen &&
-                get(mapEditorSelectedToolStore) === BOT_EDITOR_TOOL_NAME &&
-                get(mapEditorVisibilityStore)
-            ) {
-                mapEditorVisibilityStore.set(false);
-                return;
-            }
-            openBotEditorFromMenu();
-        },
+        onSelect: () => openBotEditorFromMenu(),
     });
     unsubscribeSelectedToolBridge?.();
     unsubscribeSelectedToolBridge = mapEditorSelectedToolStore.subscribe((selectedTool) => {
