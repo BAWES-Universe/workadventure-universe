@@ -516,9 +516,12 @@ export class AreaEditorTool extends MapEditorTool {
         this.scene.markDirty();
     }
 
-    /** On a phone, an area picked on the map puts the Areas sheet away, so the area and its dots are in view. */
+    /**
+     * On a phone, an area picked on the map puts the Areas sheet away, so the area and its dots are in view; a tap that
+     * picks nothing (beside the area) brings the sheet back.
+     */
     private tuckSheetOnPhone(picked: AreaPreview | undefined): void {
-        if (picked && get(mobileLayoutStore)) mapEditorVisibilityStore.set(false);
+        if (get(mobileLayoutStore)) mapEditorVisibilityStore.set(picked === undefined);
     }
 
     private getNewAreaDrawingData(pointer: Phaser.Input.Pointer): {
@@ -577,6 +580,7 @@ export class AreaEditorTool extends MapEditorTool {
         this.deleteAreaPreview(id);
         this.scene.markDirty();
         mapEditorSelectedAreaPreviewStore.set(undefined);
+        this.tuckSheetOnPhone(undefined);
     }
 
     public handleAreaCreation(config: AreaData, localCommand: boolean): void {
