@@ -23,6 +23,7 @@
     } from "../../../Stores/EditModeStore";
     import CustomEntityEditionForm from "../EntityEditor/CustomEntityEditionForm/CustomEntityEditionForm.svelte";
     import EntityPropertiesEditor from "../EntityEditor/EntityPropertiesEditor.svelte";
+    import USelect from "../../UI/USelect.svelte";
     import PanelHeader from "./PanelHeader.svelte";
     import ObjectTile from "./ObjectTile.svelte";
     import UploadGuide from "./UploadGuide.svelte";
@@ -83,6 +84,13 @@
         .filter((variant): variant is EntityVariant => variant !== undefined);
     $: searching = searchTerm.trim() !== "";
     $: searchResults = searching ? variants.filter((variant) => matches(variant, searchTerm)) : [];
+    $: categoryOptions = [
+        { value: "", label: $LL.mapEditor.edit.objects.allCategories() },
+        ...sections.map((section) => ({
+            value: section.tag,
+            label: `${label(section.tag)} · ${section.items.length}`,
+        })),
+    ];
     $: categoryItems = category ? sections.find((section) => section.tag === category)?.items ?? [] : [];
 
     function pick(variant: EntityVariant) {
@@ -168,16 +176,14 @@
         />
     </label>
     {#if !searching}
-        <label class="em-cat">
-            <span class="em-cat-label">{category ? label(category) : $LL.mapEditor.edit.objects.allCategories()}</span>
-            <span class="em-cat-count">{category ? categoryItems.length : sections.length}</span>
-            <select bind:value={$selectCategoryStore} aria-label={$LL.mapEditor.edit.objects.allCategories()}>
-                <option value={undefined}>{$LL.mapEditor.edit.objects.allCategories()}</option>
-                {#each sections as section (section.tag)}
-                    <option value={section.tag}>{label(section.tag)} · {section.items.length}</option>
-                {/each}
-            </select>
-        </label>
+        <div class="em-cat" data-testid="objects-category">
+            <USelect
+                label={$LL.mapEditor.edit.objects.allCategories()}
+                value={$selectCategoryStore ?? ""}
+                options={categoryOptions}
+                onSelect={(tag) => selectCategoryStore.set(tag || undefined)}
+            />
+        </div>
     {/if}
     {#if picked?.variant.defaultPrefab.type === CUSTOM}
         <button type="button" class="em-link" data-testid="editEntity" on:click={() => (editingUpload = true)}>
@@ -265,43 +271,7 @@
         color: rgba(244, 242, 250, 0.45);
     }
     .em-cat {
-        position: relative;
-        display: flex;
-        align-items: center;
-        gap: 8px;
         flex: none;
-        padding: 8px 12px;
-        border-radius: 12px;
-        background: rgba(0, 0, 0, 0.2);
-        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.18);
-        font-size: 14px;
-        cursor: pointer;
-    }
-    .em-cat-label {
-        flex: 1;
-        min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-    .em-cat-count {
-        font-size: 13px;
-        color: rgba(244, 242, 250, 0.64);
-    }
-    .em-cat::after {
-        content: "";
-        width: 8px;
-        height: 8px;
-        border-right: 1.5px solid rgba(244, 242, 250, 0.64);
-        border-bottom: 1.5px solid rgba(244, 242, 250, 0.64);
-        transform: translateY(-2px) rotate(45deg);
-    }
-    .em-cat select {
-        position: absolute;
-        inset: 0;
-        width: 100%;
-        opacity: 0;
-        cursor: pointer;
     }
     .em-link {
         display: inline-flex;

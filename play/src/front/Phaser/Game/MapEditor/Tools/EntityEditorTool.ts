@@ -450,8 +450,8 @@ export class EntityEditorTool extends EntityRelatedEditorTool {
             const placing = this.mouseDownPlacing;
             this.mouseDownPlacing = false;
             if (!placing || !this.entityPrefabPreview || !this.entityPrefab) return;
-            // A press that dragged the map is not a click: nothing is placed.
-            if (this.mapEditorModeManager.isDraggingToLookAround) return;
+            // A press that dragged (the map, or from an object on it) is not a click: nothing is placed.
+            if (this.mapEditorModeManager.isDraggingToLookAround || pointer.getDistance() > 8) return;
             if (!this.canEntityBePlaced()) return;
             this.placePreview();
             return;
