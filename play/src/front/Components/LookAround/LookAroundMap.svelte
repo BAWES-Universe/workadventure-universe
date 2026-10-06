@@ -111,9 +111,8 @@
             const counts = recount ? new Map<string, number>() : undefined;
             for (const [id, area] of areas) {
                 const data = area.getAreaData();
-                const people = recount
-                    ? countPeopleIn(data)
-                    : areaLabels.find((label) => label.id === id)?.people ?? countPeopleIn(data);
+                // Between recounts, the last count of every place, empty ones included.
+                const people = recount ? countPeopleIn(data) : peopleByArea.get(id) ?? countPeopleIn(data);
                 counts?.set(id, people);
                 if (people === 0) continue;
                 const top = toScreen(data.x + data.width / 2, data.y);
