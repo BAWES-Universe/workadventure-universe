@@ -11,6 +11,7 @@
         mapEditorAreaModeStore,
         mapEditorEntityModeStore,
         mapEditorSelectedEntityPrefabStore,
+        mapEditorSelectedAreaPreviewStore,
         mapEditorSelectedEntityStore,
         mapEditorSelectedToolStore,
         mapEditorVisibilityStore,
@@ -31,6 +32,7 @@
     import EditPanel from "./EditPanel.svelte";
     import PlacingBar from "./PlacingBar.svelte";
     import ObjectActions from "./ObjectActions.svelte";
+    import AreaActions from "./AreaActions.svelte";
     import AreaDraft from "./AreaDraft.svelte";
     import { IconArrowBackUp, IconHandMove, IconTrash } from "@wa-icons";
 
@@ -56,6 +58,7 @@
         tool === EditorToolName.EntityEditor &&
         $mapEditorEntityModeStore === "EDIT" &&
         $mapEditorSelectedEntityStore !== undefined;
+    $: areaSelected = tool === EditorToolName.AreaEditor && $mapEditorSelectedAreaPreviewStore !== undefined;
     $: phoneHint = $mobileLayoutStore && !$editHintSeenStore && !panelShown && !barShown;
     $: desktopHint = !$mobileLayoutStore && placingObject;
     $: deleteHint = tool === EditorToolName.TrashEditor;
@@ -93,6 +96,9 @@
     {#if objectSelected && !placingObject && !($mobileLayoutStore && panelShown)}
         <!-- On a phone the panel covers the map, so the actions pinned to the object wait until it is tucked away. -->
         <ObjectActions />
+    {/if}
+    {#if areaSelected && !drawingArea && !($mobileLayoutStore && panelShown)}
+        <AreaActions />
     {/if}
     {#if drawingArea}
         <AreaDraft />
