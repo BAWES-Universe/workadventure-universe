@@ -327,6 +327,8 @@ export async function newAreaAt(
     const box = (await draft.boundingBox())!;
     const from = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
     const start = await draftBox(page);
+    // The editor turns a drag into map pixels with camera.zoom only, without the canvas CSS scale (the desktop
+    // scale bug behind ME-032), so the drag distance uses the same conversion. The poll below checks the outcome.
     const zoom = (await camera(page)).zoom;
     const to = {
         x: from.x + (world.x - (start.x + start.width / 2)) * zoom,
