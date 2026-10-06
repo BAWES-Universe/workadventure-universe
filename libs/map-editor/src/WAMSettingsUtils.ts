@@ -10,20 +10,29 @@ export interface MegaphoneChannelDescription {
     canStream: boolean;
 }
 
+/** The reaches from narrowest to widest: each one includes the ones before it. */
+export const MEGAPHONE_SCOPES: MegaphoneScope[] = ["ROOM", "WORLD", "UNIVERSE"];
+
+/** Who may go live in a room nobody has set up yet: its admins. */
+export const DEFAULT_MEGAPHONE_RIGHTS = ["admin"];
+
 export class WAMSettingsUtils {
     /**
-     * The reaches people may go live at from this room, as the room's settings allow them. Rooms configured before
-     * "scopes" existed carry a single "scope" (WORLD by default), which keeps meaning what it meant.
+     * The reaches people may go live at from this room. A room nobody has set up lets them reach everywhere (who may
+     * is admins, see hasMegaphoneRights). A reach includes the narrower ones: a room saved with "WORLD" alone, or
+     * configured before "scopes" existed with a single "scope" (WORLD by default), also reaches its own room.
      */
     static getMegaphoneScopes(wamSettings: WAMFileFormat["settings"]): MegaphoneScope[] {
         const megaphone = wamSettings?.megaphone;
-        if (!megaphone || !megaphone.enabled) {
+        if (!megaphone) {
+            return [...MEGAPHONE_SCOPES];
+        }
+        if (!megaphone.enabled) {
             return [];
         }
-        const scopes = megaphone.scopes ?? [megaphone.scope ?? "WORLD"];
-        return scopes.filter(
-            (scope): scope is MegaphoneScope => scope === "ROOM" || scope === "WORLD" || scope === "UNIVERSE"
-        );
+        const saved = megaphone.scopes ?? [megaphone.scope ?? "WORLD"];
+        const widest = Math.max(...saved.map((scope) => MEGAPHONE_SCOPES.indexOf(scope as MegaphoneScope)));
+        return MEGAPHONE_SCOPES.slice(0, widest + 1);
     }
 
     /**
@@ -93,9 +102,13 @@ export class WAMSettingsUtils {
         );
     }
 
-    /** The room's own rule for who may go live here: everyone when no tag is set, else people with one of the tags. */
+    /**
+     * The room's own rule for who may go live here: admins in a room nobody has set up, everyone when no tag is set,
+     * else people with one of the tags (the roles Orbit gives: admin, editor, member).
+     */
     static hasMegaphoneRights(wamSettings: WAMFileFormat["settings"], tags: string[]): boolean {
-        const rights = wamSettings?.megaphone?.rights;
+        const megaphone = wamSettings?.megaphone;
+        const rights = megaphone ? megaphone.rights : DEFAULT_MEGAPHONE_RIGHTS;
         if (!rights || rights.length === 0) {
             return true;
         }

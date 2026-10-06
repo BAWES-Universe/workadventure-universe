@@ -31,22 +31,31 @@ export function reachName(reach: BroadcastReach, info: BroadcastReachInfo): stri
     }
 }
 
-/** The line under a reach: "Main Hall · 18 people here now", "BAWES HQ · 4 rooms", "BAWES · 9 worlds". */
+/** The line under a reach: "Main Hall · 18 people here now", "BAWES HQ · 25 people now · 4 rooms",
+ * "BAWES · 60 people now · 9 worlds". */
 export function reachDetail(LL: TranslationFunctions, reach: BroadcastReach, info: BroadcastReachInfo): string {
     const name = reachName(reach, info);
-    let count: string | undefined;
+    const people = (count: number | undefined) =>
+        count !== undefined ? LL.broadcast.reach.peopleNow({ count }) : undefined;
+    let counts: (string | undefined)[];
     switch (reach) {
         case "ROOM":
-            count = LL.broadcast.reach.peopleHere({ count: info.peopleHere });
+            counts = [LL.broadcast.reach.peopleHere({ count: info.peopleHere })];
             break;
         case "WORLD":
-            count = info.worldRooms > 0 ? LL.broadcast.reach.rooms({ count: info.worldRooms }) : undefined;
+            counts = [
+                people(info.worldPeople),
+                info.worldRooms > 0 ? LL.broadcast.reach.rooms({ count: info.worldRooms }) : undefined,
+            ];
             break;
         case "UNIVERSE":
-            count = info.universeWorlds > 0 ? LL.broadcast.reach.worlds({ count: info.universeWorlds }) : undefined;
+            counts = [
+                people(info.universePeople),
+                info.universeWorlds > 0 ? LL.broadcast.reach.worlds({ count: info.universeWorlds }) : undefined,
+            ];
             break;
     }
-    return [name, count].filter((part) => part).join(" · ");
+    return [name, ...counts].filter((part) => part).join(" · ");
 }
 
 /** The header's line once a reach is chosen: "To This world · BAWES HQ, 4 rooms". */

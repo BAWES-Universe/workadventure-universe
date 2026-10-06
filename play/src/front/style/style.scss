@@ -1088,6 +1088,10 @@ div.emoji-picker {
     color: #fff;
     font-weight: 700;
 }
+/* A choice covered by the one picked (a narrower reach of "How far"): a faint violet, under the picked one's. */
+.u-menu-row.u-included {
+    background: rgba(134, 41, 252, 0.07);
+}
 .u-menu-tile {
     flex: none;
     display: grid;

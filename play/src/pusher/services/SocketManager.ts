@@ -64,6 +64,7 @@ import { emitInBatch } from "./IoSocketHelpers";
 import { clientEventsEmitter } from "./ClientEventsEmitter";
 import { gaugeManager } from "./GaugeManager";
 import { apiClientRepository } from "./ApiClientRepository";
+import { getPeopleInRooms } from "./PeopleInRooms";
 import { adminService } from "./AdminService";
 import type { ShortMapDescription } from "./ShortMapDescription";
 import { matrixProvider } from "./MatrixProvider";
@@ -1255,10 +1256,26 @@ export class SocketManager implements ZoneEventListener {
         let answer: AnswerMessage["answer"];
         try {
             const { roomId, userUuid } = client.getUserData();
-            const universe = await adminService.getRoomsFromSameUniverse(roomId, userUuid);
+            const [universe, peopleInRooms] = await Promise.all([
+                adminService.getRoomsFromSameUniverse(roomId, userUuid),
+                // Broadcast shows how many people each reach covers; without the counts it still shows the rest.
+                getPeopleInRooms().catch((e) => {
+                    console.warn("SocketManager => handleRoomsFromSameUniverseQuery => could not count people", e);
+                    return undefined;
+                }),
+            ]);
             answer = {
                 $case: "roomsFromSameUniverseAnswer",
-                roomsFromSameUniverseAnswer: universe,
+                roomsFromSameUniverseAnswer: {
+                    ...universe,
+                    worlds: universe.worlds.map((world) => ({
+                        ...world,
+                        rooms: world.rooms.map((room) => ({
+                            ...room,
+                            peopleNow: peopleInRooms ? peopleInRooms.get(room.roomUrl) ?? 0 : undefined,
+                        })),
+                    })),
+                },
             };
         } catch (e) {
             console.warn("SocketManager => handleRoomsFromSameUniverseQuery => error while getting the rooms", e);
