@@ -24,8 +24,9 @@ function fakeClient(accessToken: string | null = "token"): MatrixClient {
         ) => {
             const kind = width ? `thumbnail` : `download`;
             const size = width ? `?width=${width}` : "";
+            // What matrix-js-sdk 32 builds: authenticated media on MSC3916's unstable prefix.
             return useAuthentication
-                ? `https://matrix.test/_matrix/client/v1/media/${kind}/${mxc.slice(6)}${size}`
+                ? `https://matrix.test/_matrix/client/unstable/org.matrix.msc3916/media/${kind}/${mxc.slice(6)}${size}`
                 : `https://matrix.test/_matrix/media/v3/${kind}/${mxc.slice(6)}${size}`;
         },
     } as unknown as MatrixClient;
@@ -74,14 +75,20 @@ describe("resolveMatrixMediaUrl", () => {
         );
     });
 
+    it("shows nothing for a file the server doesn't have, rather than a broken legacy URL", async () => {
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify({ errcode: "M_NOT_FOUND", error: "Not found" }), { status: 404 })
+        );
+
+        expect(await resolveMatrixMediaUrl(fakeClient(), "mxc://matrix.test/gone", 48)).toBeUndefined();
+    });
+
     it("retries after a network error", async () => {
         fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
         fetchMock.mockResolvedValueOnce(new Response(new Blob(["png"]), { status: 200 }));
         const client = fakeClient();
 
-        expect(await resolveMatrixMediaUrl(client, "mxc://matrix.test/blip")).toBe(
-            "https://matrix.test/_matrix/media/v3/download/matrix.test/blip"
-        );
+        expect(await resolveMatrixMediaUrl(client, "mxc://matrix.test/blip")).toBeUndefined();
         expect(await resolveMatrixMediaUrl(client, "mxc://matrix.test/blip")).toBe("blob:https://play.test/1234");
     });
 
@@ -90,9 +97,7 @@ describe("resolveMatrixMediaUrl", () => {
         fetchMock.mockResolvedValueOnce(new Response(new Blob(["png"]), { status: 200 }));
         const client = fakeClient();
 
-        expect(await resolveMatrixMediaUrl(client, "mxc://matrix.test/serverError")).toBe(
-            "https://matrix.test/_matrix/media/v3/download/matrix.test/serverError"
-        );
+        expect(await resolveMatrixMediaUrl(client, "mxc://matrix.test/serverError")).toBeUndefined();
         expect(await resolveMatrixMediaUrl(client, "mxc://matrix.test/serverError")).toBe(
             "blob:https://play.test/1234"
         );
@@ -336,7 +341,79 @@ describe("matrixAvatarStore", () => {
     });
 
     it("stays empty without a picture", () => {
-        expect(get(matrixAvatarStore(fakeClient(), undefined, 24))).toBeUndefined();
+        const store = matrixAvatarStore(fakeClient(), undefined, 24);
+        expect(get(store)).toBeUndefined();
+        expect(get(store.loading)).toBe(false);
+    });
+
+    it("says it's loading until the picture arrives, then shows it at once the next time", async () => {
+        let finish: (response: Response) => void = () => undefined;
+        vi.stubGlobal(
+            "fetch",
+            vi.fn().mockImplementationOnce(
+                () =>
+                    new Promise<Response>((resolve) => {
+                        finish = resolve;
+                    })
+            )
+        );
+        URL.createObjectURL = vi.fn(() => "blob:https://play.test/again");
+        const first = matrixAvatarStore(fakeClient(), "mxc://matrix.test/again", 48);
+        const loading: boolean[] = [];
+        const stopLoading = first.loading.subscribe((value) => loading.push(value));
+        const stopFirst = first.subscribe(() => undefined);
+        expect(loading).toEqual([true]);
+
+        finish(new Response(new Blob(["png"]), { status: 200 }));
+        await vi.waitFor(() => expect(get(first)).toBe("blob:https://play.test/again"));
+        expect(loading.at(-1)).toBe(false);
+        stopFirst();
+        stopLoading();
+
+        // A row shown again (a new store) starts with the picture: no letter first.
+        const again = matrixAvatarStore(fakeClient(), "mxc://matrix.test/again", 48);
+        const values: (string | undefined)[] = [];
+        const stopAgain = again.subscribe((value) => values.push(value));
+        expect(values).toEqual(["blob:https://play.test/again"]);
+        expect(get(again.loading)).toBe(false);
+        stopAgain();
+    });
+
+    it("stops loading when the picture can't be fetched, so the letter shows", async () => {
+        vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("", { status: 502 })));
+        const store = matrixAvatarStore(fakeClient(), "mxc://matrix.test/down", 48);
+        const stop = store.subscribe(() => undefined);
+        await vi.waitFor(() => expect(get(store.loading)).toBe(false));
+        expect(get(store)).toBeUndefined();
+        stop();
+    });
+
+    it("a changing picture is loading only while nothing is shown yet", async () => {
+        URL.createObjectURL = vi.fn(() => "blob:https://play.test/changing-loading");
+        let finishNew: (response: Response) => void = () => undefined;
+        vi.stubGlobal(
+            "fetch",
+            vi
+                .fn()
+                .mockResolvedValueOnce(new Response(new Blob(["old"]), { status: 200 }))
+                .mockImplementationOnce(
+                    () =>
+                        new Promise<Response>((resolve) => {
+                            finishNew = resolve;
+                        })
+                )
+        );
+        const mxc = writable<string | undefined>("mxc://matrix.test/changing-loading-old");
+        const store = changingMatrixAvatarStore(fakeClient(), mxc, 48);
+        const stop = store.subscribe(() => undefined);
+        expect(get(store.loading)).toBe(true);
+        await vi.waitFor(() => expect(get(store)).toBe("blob:https://play.test/changing-loading"));
+        expect(get(store.loading)).toBe(false);
+
+        mxc.set("mxc://matrix.test/changing-loading-new");
+        expect(get(store.loading)).toBe(false);
+        finishNew(new Response(new Blob(["new"]), { status: 200 }));
+        stop();
     });
 });
 
