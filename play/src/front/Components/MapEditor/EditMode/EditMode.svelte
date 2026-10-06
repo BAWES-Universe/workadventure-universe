@@ -3,7 +3,7 @@
     // it, and the bar at the bottom while something is being placed or drawn. The map stays in view; on phones the
     // action bar is hidden until Done. The editor engine (MapEditorModeManager and its tools) is unchanged.
     import { fade, fly } from "svelte/transition";
-    import { onMount } from "svelte";
+    import { onDestroy, onMount, tick } from "svelte";
     import { LL } from "../../../../i18n/i18n-svelte";
     import { mobileLayoutStore } from "../../../Stores/MobileLayoutStore";
     import { EditorToolName } from "../../../Phaser/Game/MapEditor/MapEditorModeManager";
@@ -20,12 +20,14 @@
         editAreaDraftStore,
         editDeleteMarkStore,
         editHintSeenStore,
+        editObjectsViewStore,
         editPlacingBarStore,
         editTouchPreviewStore,
         editUndoToastStore,
         hideUndoToast,
     } from "../../../Stores/EditModeStore";
     import { gameManager } from "../../../Phaser/Game/GameManager";
+    import type { Entity } from "../../../Phaser/ECS/Entity";
     import ConfigureMyRoom from "../WAMSettingsEditor.svelte";
     import { cameraTilesClearStore } from "../../../Stores/CameraTilesClearStore";
     import EditPill from "./EditPill.svelte";
@@ -69,6 +71,28 @@
     $: deleteMarkTapped = deleteMark?.tapped ? deleteMark : undefined;
     // The chip sits to the right of the box, or to its left when the box is near the right edge.
     $: chipOnLeft = deleteMarkTapped !== undefined && deleteMarkTapped.x + deleteMarkTapped.width + 130 > rootWidth;
+
+    // The selected object is outlined in cyan, as in the old editor, so you can see what you tapped. The settings
+    // form clears the outline when it closes, so it is put back after every change of view too.
+    const SELECTED_OUTLINE = 0x00ffff;
+    let outlined: Entity | undefined;
+    let editModeClosed = false;
+    $: outlineSelected(objectSelected ? $mapEditorSelectedEntityStore : undefined, $editObjectsViewStore);
+    function outlineSelected(entity: Entity | undefined, _view: unknown) {
+        tick()
+            .then(() => {
+                if (editModeClosed) return;
+                if (outlined && outlined !== entity) outlined.removeEditColor();
+                outlined = entity;
+                outlined?.setEditColor(SELECTED_OUTLINE);
+            })
+            .catch((e) => console.error(e));
+    }
+    onDestroy(() => {
+        editModeClosed = true;
+        outlined?.removeEditColor();
+        outlined = undefined;
+    });
 
     function undoLast() {
         hideUndoToast();
