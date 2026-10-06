@@ -292,7 +292,7 @@
     /* Phones: under the pill, above the bar, on the right edge like the editor's panel. */
     .places.phone {
         top: 76px;
-        bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+        bottom: calc(var(--bar-clear, 0px) + 72px + env(safe-area-inset-bottom, 0px));
         right: 10px;
         width: 300px;
     }
