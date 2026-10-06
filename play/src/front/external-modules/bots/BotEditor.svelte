@@ -442,6 +442,8 @@
                 description: typeof createdBot.description === "string" ? createdBot.description : undefined,
                 characterTexture: apiTextureId,
                 characterTextureIds: apiTextureId ? [apiTextureId] : [],
+                companionTextureId:
+                    typeof createdBot.companionTextureId === "string" ? createdBot.companionTextureId : null,
                 behaviorType: createdBot.behaviorType as "idle" | "patrol" | "social",
                 enabled: createdBot.enabled ?? true,
                 behaviorConfig: createdBot.behaviorConfig || {
@@ -493,6 +495,7 @@
                 name: selectedBot.name,
                 description: selectedBot.description,
                 characterTextureId: selectedBot.characterTexture,
+                companionTextureId: selectedBot.companionTextureId ?? null,
                 enabled: selectedBot.enabled,
                 behaviorType, // Guaranteed to be set
                 behaviorConfig: selectedBot.behaviorConfig,
@@ -517,6 +520,8 @@
                 description: typeof updatedBot.description === "string" ? updatedBot.description : undefined,
                 characterTexture: textureId,
                 characterTextureIds: textureId ? [textureId] : [],
+                companionTextureId:
+                    typeof updatedBot.companionTextureId === "string" ? updatedBot.companionTextureId : null,
                 behaviorType: responseBehaviorType, // Guaranteed to be set
                 enabled: updatedBot.enabled ?? true,
                 behaviorConfig: updatedBot.behaviorConfig || {

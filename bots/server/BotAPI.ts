@@ -718,10 +718,13 @@ export class BotAPI {
                 const nameChanged = 'name' in updates && updates.name !== existingConfig.name;
                 const textureChanged = 'characterTextureIds' in updates && 
                     JSON.stringify(updates.characterTextureIds) !== JSON.stringify(existingConfig.characterTextureIds);
+                // The companion joins the bot when it connects, so a new one needs a respawn too
+                const companionChanged = 'companionTextureId' in updatesToApply &&
+                    (updatesToApply.companionTextureId ?? null) !== (existingConfig.companionTextureId ?? null);
 
-                // If name or texture changed and bot is running, despawn and respawn immediately
-                if ((nameChanged || textureChanged) && this.botManager.getBot(botId)) {
-                    console.log(`[BotAPI] Bot ${botId} name or texture changed, respawning with new config`);
+                // If name, texture or companion changed and bot is running, despawn and respawn immediately
+                if ((nameChanged || textureChanged || companionChanged) && this.botManager.getBot(botId)) {
+                    console.log(`[BotAPI] Bot ${botId} name, texture or companion changed, respawning with new config`);
                     // Clear cached MCP tools so fresh tool definitions are fetched on respawn
                     MCPConnector.clearCache(botId);
                     // Despawn first
