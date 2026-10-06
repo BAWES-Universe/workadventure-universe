@@ -582,19 +582,15 @@ export class AreaPreview extends Phaser.GameObjects.Rectangle {
             this.playTextTimeout = null;
             if (!this.scene || !this.scene.sys) return;
             if (this.areaData.name === undefined || this.areaData.name === "") return;
+            // The name sits in the middle of the area, clear of the resize handles on its edges. It lets the pointer
+            // through, so the area can still be grabbed and moved from its middle.
             const x = this.x;
-            this.speechDomElement = new SpeechDomElement(
-                "name",
-                this.areaData.name,
-                this.scene,
-                x,
-                this.y - this.height / 2 - 30,
-                () => this.destroyText()
+            this.speechDomElement = new SpeechDomElement("name", this.areaData.name, this.scene, x, this.y - 15, () =>
+                this.destroyText()
             );
+            (this.speechDomElement.node as HTMLElement).style.pointerEvents = "none";
             this.scene.add.existing(this.speechDomElement);
-            // Need to put the element at the top because
-            // if the SpechDomElement is inside of the area, pointer mouse events will not triggered
-            this.speechDomElement.play(x, this.y - this.height / 2 - 15, -1);
+            this.speechDomElement.play(x, this.y, -1);
         }, 10);
     }
 
