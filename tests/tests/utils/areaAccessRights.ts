@@ -3,6 +3,7 @@ import {expect} from "@playwright/test";
 import AreaEditor from "./map-editor/areaEditor";
 import EntityEditor from "./map-editor/entityEditor";
 import MapEditor from "./mapeditor";
+import Map from "./map";
 import Menu from "./menu";
 
 interface Coordinates {
@@ -24,18 +25,9 @@ class AreaAccessRights {
     y: this.entityPositionInArea.y,
   };
 
-  /**
-   * The same point of the map, on the screen of someone playing (not editing) who just joined. The empty test map
-   * (10 x 10 tiles, shown at 1.5x) is smaller than the screen: while playing it sits in the middle of the screen,
-   * while editing in its top left corner, where the coordinates above are measured.
-   */
+  /** The same point of the map, on the screen of someone playing (see Map.whilePlaying). */
   whilePlaying(page: Page, point: Coordinates): Coordinates {
-    const mapSize = 10 * 32 * 1.5;
-    const viewport = page.viewportSize() ?? { width: mapSize, height: mapSize };
-    return {
-      x: point.x + Math.max(0, (viewport.width - mapSize) / 2),
-      y: point.y + Math.max(0, (viewport.height - mapSize) / 2),
-    };
+    return Map.whilePlaying(page, point.x, point.y);
   }
 
   public mouseCoordinatesToClickOnEntityOutsideArea = {
