@@ -411,6 +411,8 @@ export class AreaEditorTool extends MapEditorTool {
         editAreaGhostStore.set(undefined);
 
         if (get(editAreaDrawArmedStore)) {
+            // A box drawn from inside an area also started a drag of that area: it ends here too.
+            this.draggingdArea = false;
             if (this.drawinNewAreaStartPos) {
                 const drawingData = this.getNewAreaDrawingData(pointer);
                 // Too small to be a drag (a tap): still waiting for the drag that draws the box.
@@ -688,6 +690,9 @@ export class AreaEditorTool extends MapEditorTool {
 
     /** Back to the list: no area selected. */
     public deselectArea(): void {
+        // "New area" comes through here: a glide to an area picked a moment ago stops, so the map holds still to draw on.
+        this.glide?.stop();
+        this.glide = undefined;
         this.changeAreaMode("ADD");
     }
 
