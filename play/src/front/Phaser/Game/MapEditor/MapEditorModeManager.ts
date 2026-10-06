@@ -17,6 +17,7 @@ import {
 import { mapEditorActivated, mapEditorActivatedForThematics } from "../../../Stores/MenuStore";
 import { editUndoRedoStore, turnPlacingPreview } from "../../../Stores/EditModeStore";
 import { localUserStore } from "../../../Connection/LocalUserStore";
+import { userIsAdminStore } from "../../../Stores/GameStore";
 import LL from "../../../../i18n/i18n-svelte";
 import { gameManager } from "../GameManager";
 import { AreaEditorTool } from "./Tools/AreaEditorTool";
@@ -307,7 +308,8 @@ export class MapEditorModeManager {
                 break;
             }
             case "4": {
-                if (!mapEditorModeActivated) break;
+                // Configure my room holds the room's settings, which only admins may change.
+                if (!mapEditorModeActivated || !get(userIsAdminStore)) break;
                 this.equipTool(EditorToolName.WAMSettingsEditor);
                 break;
             }

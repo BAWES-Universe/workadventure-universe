@@ -1,5 +1,5 @@
 import { derived, get, writable } from "svelte/store";
-import type { BroadcastMeta } from "@workadventure/messages";
+import type { BroadcastMeta, CharacterTextureMessage } from "@workadventure/messages";
 import { gameSceneStore } from "./GameSceneStore";
 import { exploreStore } from "./ExploreStore";
 import { playersStore } from "./PlayersStore";
@@ -19,9 +19,13 @@ export interface BroadcastReachInfo {
     /** This world's name and how many rooms it has; undefined when the room belongs to no world. */
     worldName: string | undefined;
     worldRooms: number;
+    /** How many people are in this world right now; undefined when the server sent no counts. */
+    worldPeople: number | undefined;
     /** The universe's name and how many worlds it has; undefined until Orbit has answered, or when there is none. */
     universeName: string | undefined;
     universeWorlds: number;
+    /** How many people are in this universe right now; undefined when the server sent no counts. */
+    universePeople: number | undefined;
 }
 
 function roomNameFromUrl(url: string | undefined): string {
@@ -45,13 +49,23 @@ export const broadcastReachInfoStore = derived(
         // The room's group is "universe/world" for Orbit's rooms.
         const groupWorld = room?.group?.split("/")[1];
         const currentRoom = currentWorld?.rooms.find((candidate) => candidate.isCurrent);
+        const peopleHere = $players.size + 1;
+        // The other rooms as the server counted them, this one as you see it now: a world never has fewer
+        // people than the room you're in.
+        const peopleIn = (rooms: { isCurrent: boolean; peopleNow?: number }[]): number | undefined =>
+            rooms.some((candidate) => candidate.peopleNow !== undefined)
+                ? rooms.reduce((sum, candidate) => sum + (candidate.isCurrent ? 0 : candidate.peopleNow ?? 0), 0) +
+                  peopleHere
+                : undefined;
         return {
             roomName: currentRoom?.name || room?.roomName || roomNameFromUrl(room?.href),
-            peopleHere: $players.size + 1,
+            peopleHere,
             worldName: currentWorld?.name ?? (groupWorld ? groupWorld : undefined),
             worldRooms: currentWorld?.rooms.length ?? 0,
+            worldPeople: currentWorld ? peopleIn(currentWorld.rooms) : undefined,
             universeName: universe?.universeName || undefined,
             universeWorlds: universe?.worlds.length ?? 0,
+            universePeople: universe ? peopleIn(universe.worlds.flatMap((world) => world.rooms)) : undefined,
         };
     }
 );
@@ -71,6 +85,8 @@ export function reachLabel(reach: BroadcastReach, info: BroadcastReachInfo): str
 export interface BroadcastCard {
     id: string;
     senderName: string;
+    /** The sender's Woka, drawn on the card; empty from an older pusher, which shows a plain person instead. */
+    senderTextures: CharacterTextureMessage[];
     /** "room", "world" or "universe", and the name of what it covers when the server knew it. */
     reach: string;
     reachLabel: string | undefined;
@@ -105,11 +121,12 @@ export const broadcastInboxStore = createBroadcastInboxStore();
 export function broadcastMetaReach(
     meta: BroadcastMeta | undefined,
     fallback: string
-): Pick<BroadcastCard, "reach" | "reachLabel" | "senderName"> {
+): Pick<BroadcastCard, "reach" | "reachLabel" | "senderName" | "senderTextures"> {
     return {
         reach: meta?.reach ?? fallback,
         reachLabel: meta?.reachLabel || undefined,
         senderName: meta?.senderName || "",
+        senderTextures: meta?.senderTextures ?? [],
     };
 }
 

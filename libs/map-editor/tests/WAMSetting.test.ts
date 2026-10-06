@@ -75,6 +75,7 @@ describe("Megaphone channels", async () => {
             []
         );
         expect(channels.map((channel) => [channel.scope, channel.canStream])).toEqual([
+            ["ROOM", true],
             ["WORLD", true],
             ["UNIVERSE", false],
         ]);
@@ -85,6 +86,7 @@ describe("Megaphone channels", async () => {
             ["admin"]
         );
         expect(admin.map((channel) => [channel.scope, channel.canStream])).toEqual([
+            ["ROOM", false],
             ["WORLD", false],
             ["UNIVERSE", true],
         ]);
@@ -98,15 +100,48 @@ describe("Megaphone channels", async () => {
             ["admin"]
         );
         expect(admin.map((channel) => [channel.scope, channel.canStream])).toEqual([
+            ["ROOM", true],
             ["WORLD", true],
             ["UNIVERSE", false],
         ]);
     });
 
     it("keeps the single scope of rooms configured before scopes existed, WORLD by default", () => {
-        expect(WAMSettingsUtils.getMegaphoneScopes({ megaphone: { enabled: true } })).toEqual(["WORLD"]);
+        expect(WAMSettingsUtils.getMegaphoneScopes({ megaphone: { enabled: true } })).toEqual(["ROOM", "WORLD"]);
         expect(WAMSettingsUtils.getMegaphoneScopes({ megaphone: { enabled: true, scope: "ROOM" } })).toEqual(["ROOM"]);
         expect(WAMSettingsUtils.getMegaphoneScopes({ megaphone: { enabled: false, scope: "ROOM" } })).toEqual([]);
+    });
+
+    it("makes a reach include the narrower ones", () => {
+        expect(WAMSettingsUtils.getMegaphoneScopes({ megaphone: { enabled: true, scopes: ["WORLD"] } })).toEqual([
+            "ROOM",
+            "WORLD",
+        ]);
+        expect(WAMSettingsUtils.getMegaphoneScopes({ megaphone: { enabled: true, scopes: ["UNIVERSE"] } })).toEqual([
+            "ROOM",
+            "WORLD",
+            "UNIVERSE",
+        ]);
+    });
+
+    it("lets admins go live everywhere in a room nobody has set up, and no one else", () => {
+        expect(WAMSettingsUtils.getMegaphoneScopes({})).toEqual(["ROOM", "WORLD", "UNIVERSE"]);
+        expect(WAMSettingsUtils.getMegaphoneScopes(undefined)).toEqual(["ROOM", "WORLD", "UNIVERSE"]);
+        const admin = WAMSettingsUtils.getMegaphoneChannels(undefined, "bawes/hq", roomUrl, ["admin"]);
+        expect(admin.map((channel) => [channel.scope, channel.canStream])).toEqual([
+            ["ROOM", true],
+            ["WORLD", true],
+            ["UNIVERSE", true],
+        ]);
+        const member = WAMSettingsUtils.getMegaphoneChannels(undefined, "bawes/hq", roomUrl, ["member"]);
+        expect(member.map((channel) => channel.canStream)).toEqual([false, false, false]);
+    });
+
+    it("lets the roles chosen go live: admins and editors, or all members", () => {
+        const settings = { megaphone: { enabled: true, scopes: ["ROOM", "WORLD"], rights: ["admin", "editor"] } };
+        expect(WAMSettingsUtils.hasMegaphoneRights(settings, ["editor"])).toBe(true);
+        expect(WAMSettingsUtils.hasMegaphoneRights(settings, ["member"])).toBe(false);
+        expect(WAMSettingsUtils.hasMegaphoneRights(settings, [])).toBe(false);
     });
 
     it("makes the host the world without a group, and has no universe channel without an Orbit group", () => {
@@ -125,6 +160,6 @@ describe("Megaphone channels", async () => {
                 roomUrl,
                 ["admin"]
             ).map((channel) => channel.scope)
-        ).toEqual(["WORLD"]);
+        ).toEqual(["ROOM", "WORLD"]);
     });
 });

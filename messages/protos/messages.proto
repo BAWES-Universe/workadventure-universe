@@ -457,6 +457,8 @@ message BroadcastMeta {
   optional string reachLabel = 3;
   // A line of text sent with a voice note.
   optional string caption = 4;
+  // The sender's Woka, so the card shows who sent it. Set by the pusher from the sender's own connection.
+  repeated CharacterTextureMessage senderTextures = 5;
 }
 
 /************ Queries and answers ****************/
@@ -824,6 +826,8 @@ message UniverseRoomDescription {
   int32 visits = 5;
   optional int32 peakHourUtc = 6;
   bool isCurrent = 7;
+  // How many people are in the room right now, when the back servers answered in time.
+  optional int32 peopleNow = 8;
 }
 
 message UniverseWorldDescription {

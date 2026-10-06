@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onDestroy } from "svelte";
+    import { onDestroy, onMount } from "svelte";
     import { fly } from "svelte/transition";
     import LL from "../../../i18n/i18n-svelte";
     import type { BroadcastKind, BroadcastReach } from "../../Stores/BroadcastStore";
@@ -9,8 +9,8 @@
         broadcastReachInfoStore,
     } from "../../Stores/BroadcastStore";
     import { megaphoneChannelsStore } from "../../Stores/MegaphoneStore";
+    import { exploreStore } from "../../Stores/ExploreStore";
     import { userIsAdminStore } from "../../Stores/GameStore";
-    import { mapEditorActivated } from "../../Stores/MenuStore";
     import { displayedMegaphoneScreenStore } from "../../Stores/MediaStore";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
@@ -29,8 +29,8 @@
     let kind: BroadcastKind | undefined = undefined;
     let reach: BroadcastReach | undefined = undefined;
 
-    // Admins and people who may edit the room set who can go live here and how far they reach.
-    $: canConfigure = $userIsAdminStore || $mapEditorActivated;
+    // Admins set who can go live here and how far they reach.
+    $: canConfigure = $userIsAdminStore;
     // Written and voice notes are sent by the server to whole rooms: admins only.
     $: canMessage = $userIsAdminStore;
 
@@ -89,6 +89,8 @@
         if (event.key === "Escape") close();
     }
 
+    // The reaches say how many people they cover right now: ask again each time the card opens.
+    onMount(() => exploreStore.refresh());
     onDestroy(() => {
         displayedMegaphoneScreenStore.set(false);
         broadcastPanelSettingsStore.set(false);

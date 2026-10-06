@@ -5,6 +5,7 @@
     import LL from "../../../i18n/i18n-svelte";
     import type { BroadcastCard } from "../../Stores/BroadcastStore";
     import { gameManager } from "../../Phaser/Game/GameManager";
+    import { CharacterLayerManager } from "../../Phaser/Entity/CharacterLayerManager";
     import WaveBars from "./WaveBars.svelte";
     import { describeAudioFile, formatDuration, WAVE_BARS } from "./voiceRecorder";
     import { IconPauseFilled, IconPlayFilled, IconSpeakerPhone, IconUser } from "@wa-icons";
@@ -25,6 +26,9 @@
         ? $LL.broadcast.reach.everyoneIn({ name: card.reachLabel })
         : $LL.broadcast.reach.everyone();
 
+    // The sender's Woka, drawn once; a plain person shows until it is ready, or when it can't be drawn.
+    let wokaSrc: string | undefined;
+
     function togglePlay() {
         if (!player) return;
         if (playing) player.pause();
@@ -35,6 +39,13 @@
     let destroyed = false;
 
     onMount(() => {
+        if (card.senderTextures.length > 0) {
+            CharacterLayerManager.wokaBase64(card.senderTextures)
+                .then((src) => {
+                    if (!destroyed) wokaSrc = src;
+                })
+                .catch((e) => console.warn("Broadcast: the sender's Woka could not be drawn", e));
+        }
         if (!card.audioUrl) {
             gameManager.getCurrentGameScene().playSound("audio-megaphone");
             return;
@@ -84,26 +95,27 @@
 >
     <header class="flex items-center gap-3">
         <span
-            class="grid place-items-center w-10 h-10 rounded-full bg-white/10 text-white/80 flex-none"
+            class="grid place-items-center w-10 h-10 rounded-full bg-white/10 text-white/80 flex-none overflow-hidden"
             aria-hidden="true"
+            data-testid="broadcast-received-woka"
         >
-            <IconUser font-size="20" />
+            {#if wokaSrc}
+                <img src={wokaSrc} alt="" class="w-8 h-8 [image-rendering:pixelated]" draggable="false" />
+            {:else}
+                <IconUser font-size="20" />
+            {/if}
         </span>
         <div class="flex-1 min-w-0 leading-tight">
             <div class="font-bold truncate">{card.senderName}</div>
             <div class="text-xs text-white/60 truncate">{reachText} · {$LL.broadcast.received.now()}</div>
         </div>
-        <span
-            class="grid place-items-center w-8 h-8 rounded-full text-white flex-none"
-            style="background: linear-gradient(135deg, #8629fc, #4156f6)"
-            aria-hidden="true"
-        >
-            <IconSpeakerPhone font-size="16" />
-        </span>
+        <!-- A plain white glyph, like the other icons in the game. -->
+        <IconSpeakerPhone font-size="20" class="flex-none text-white" aria-hidden="true" />
     </header>
 
+    <!-- The note and the message line up under the sender's name, clear of the Woka. -->
     {#if card.audioUrl}
-        <div class="flex items-center gap-3 rounded-2xl bg-white/5 border border-white/10 p-3">
+        <div class="ms-[52px] flex items-center gap-3 rounded-2xl bg-white/5 border border-white/10 p-3">
             <button
                 type="button"
                 class="u-cta rounded-full grid place-items-center w-11 h-11 flex-none"
@@ -136,7 +148,7 @@
     {/if}
 
     {#if card.html}
-        <div class="broadcast-text text-base leading-snug break-words max-h-48 overflow-y-auto">
+        <div class="broadcast-text ms-[52px] text-base leading-snug break-words max-h-48 overflow-y-auto">
             {@html card.html}
         </div>
     {/if}

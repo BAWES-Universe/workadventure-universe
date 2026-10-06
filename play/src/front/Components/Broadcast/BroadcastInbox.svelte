@@ -48,7 +48,7 @@
     <div
         class="fixed {settingsOverCards ? 'z-[890]' : 'z-[1090]'} pointer-events-none inset-x-3 {$liveBroadcastStore
             ? 'top-20'
-            : 'top-3'} flex flex-col gap-2 lg:inset-x-auto lg:right-4 lg:top-20 lg:w-[380px]"
+            : 'top-3'} flex flex-col gap-2 lg:inset-x-auto lg:right-4 lg:top-24 lg:w-[380px]"
         data-testid="broadcast-inbox"
     >
         {#each $broadcastInboxStore as card (card.id)}

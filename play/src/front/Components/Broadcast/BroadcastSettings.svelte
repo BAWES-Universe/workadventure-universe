@@ -1,93 +1,70 @@
 <script lang="ts">
-    import { createEventDispatcher, onDestroy, onMount, tick } from "svelte";
-    import { WAMSettingsUtils } from "@workadventure/map-editor";
+    import { createEventDispatcher, onDestroy, onMount } from "svelte";
+    import { DEFAULT_MEGAPHONE_RIGHTS, MEGAPHONE_SCOPES, WAMSettingsUtils } from "@workadventure/map-editor";
     import LL from "../../../i18n/i18n-svelte";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { executeUpdateWAMSettings } from "../../Phaser/Game/MapEditor/Commands/Facades";
+    import type { BroadcastReach } from "../../Stores/BroadcastStore";
     import { broadcastReachInfoStore } from "../../Stores/BroadcastStore";
     import { menuInputFocusStore } from "../../Stores/MenuInputFocusStore";
     import { reachDetail, reachTitle } from "./reach";
-    import { IconCheck, IconDoor, IconRocket, IconPlus, IconShield, IconWorld, IconX } from "@wa-icons";
+    import { IconCheck, IconDoor, IconInfoCircle, IconRocket, IconUsers, IconWorld, IconX } from "@wa-icons";
 
     const dispatch = createEventDispatcher<{ saved: void }>();
 
-    type Who = "admins" | "everyone" | "tags";
+    // Who can go live, from narrowest to widest: the roles Orbit gives people in a world (admin, editor, member),
+    // or everyone. Each is saved as the tags that may go live; none means everyone.
+    type Who = "admins" | "editors" | "members" | "everyone";
+    const WHO_RIGHTS: Record<Who, string[]> = {
+        admins: ["admin"],
+        editors: ["admin", "editor"],
+        members: ["admin", "editor", "member"],
+        everyone: [],
+    };
+    const WHO_ORDER: Who[] = ["admins", "editors", "members", "everyone"];
 
-    const existing = gameManager.getCurrentGameScene().wamFile?.settings?.megaphone;
-    const existingRights = existing?.rights ?? [];
-    let who: Who =
-        existingRights.length === 0
-            ? "everyone"
-            : existingRights.length === 1 && existingRights[0] === "admin"
-            ? "admins"
-            : "tags";
-    let tags: string[] = who === "tags" ? [...existingRights] : [];
-    /** The tags Orbit knows for this room, picked from a list. Outside Orbit there is no list, so tags are typed. */
-    let availableTags: string[] = [];
-    // A tag saved earlier that Orbit no longer lists stays pickable, so it can still be taken off.
-    $: pickableTags = [...availableTags, ...tags.filter((tag) => !availableTags.includes(tag))];
-    let newTag = "";
-    let addingTag = false;
-    let tagInput: HTMLInputElement | undefined;
-
-    const existingScopes = WAMSettingsUtils.getMegaphoneScopes(
-        gameManager.getCurrentGameScene().wamFile?.settings ?? {}
+    const settings = gameManager.getCurrentGameScene().wamFile?.settings;
+    // A room nobody has set up lets its admins go live.
+    const existingRights = settings?.megaphone ? settings.megaphone.rights ?? [] : DEFAULT_MEGAPHONE_RIGHTS;
+    // Tags saved by the older settings that match none of the roles leave nothing picked until someone picks.
+    let who: Who | undefined = WHO_ORDER.find(
+        (candidate) =>
+            WHO_RIGHTS[candidate].length === existingRights.length &&
+            WHO_RIGHTS[candidate].every((right) => existingRights.includes(right))
     );
-    let roomOn = existingScopes.includes("ROOM");
-    let worldOn = existingScopes.includes("WORLD");
-    let universeOn = existingScopes.includes("UNIVERSE");
+
+    // Rooms outside Orbit have no world and no universe to reach.
+    const roomGroup = gameManager.currentStartedRoom?.group ?? null;
+    const reaches: BroadcastReach[] = roomGroup !== null ? MEGAPHONE_SCOPES : ["ROOM"];
+    const icons = { ROOM: IconDoor, WORLD: IconWorld, UNIVERSE: IconRocket };
+
+    // How far is one pick: the widest reach saved (a room nobody has set up reaches everywhere). A room switched
+    // off with the older settings starts at the widest too, which saving turns back on.
+    const savedReaches = WAMSettingsUtils.getMegaphoneScopes(settings ?? {}).filter((reach) => reaches.includes(reach));
+    let far: BroadcastReach = savedReaches[savedReaches.length - 1] ?? reaches[reaches.length - 1];
+    $: farIndex = reaches.indexOf(far);
 
     let saving = false;
     let error: string | undefined;
 
-    // Rooms outside Orbit have no world and no universe to reach.
-    const roomGroup = gameManager.currentStartedRoom?.group ?? null;
-
-    function toggleTag(tag: string) {
-        tags = tags.includes(tag) ? tags.filter((candidate) => candidate !== tag) : [...tags, tag];
-        if (tags.length > 0) error = undefined;
-    }
-
-    async function showTagInput() {
-        addingTag = true;
-        await tick();
-        tagInput?.focus();
-    }
-
-    function addTag() {
-        const tag = newTag.trim().toLowerCase();
-        if (tag && !tags.includes(tag)) tags = [...tags, tag];
-        newTag = "";
-        addingTag = false;
-        if (tag) error = undefined;
-    }
-
-    function removeTag(tag: string) {
-        tags = tags.filter((candidate) => candidate !== tag);
-    }
-
     async function save() {
         if (saving) return;
-        if (who === "tags" && tags.length === 0) {
-            error = $LL.broadcast.config.noTag();
+        if (!who) {
+            error = $LL.broadcast.config.pickWho();
             return;
         }
-        const scopes = [
-            roomOn ? "ROOM" : undefined,
-            worldOn ? "WORLD" : undefined,
-            universeOn && roomGroup !== null ? "UNIVERSE" : undefined,
-        ].filter((scope): scope is string => scope !== undefined);
-        const rights = who === "admins" ? ["admin"] : who === "everyone" ? [] : tags;
+        const scopes = reaches.slice(0, farIndex + 1);
         saving = true;
         error = undefined;
         try {
             await executeUpdateWAMSettings({
                 $case: "updateMegaphoneSettingMessage",
                 updateMegaphoneSettingMessage: {
-                    enabled: scopes.length > 0,
-                    title: existing?.title || "MyMegaphone",
-                    scope: scopes[0] ?? existing?.scope ?? "WORLD",
-                    rights,
+                    enabled: true,
+                    title: settings?.megaphone?.title || "MyMegaphone",
+                    // Older clients read one reach, ROOM or WORLD: the widest of those chosen.
+                    scope: scopes.includes("WORLD") ? "WORLD" : "ROOM",
+                    rights: WHO_RIGHTS[who],
                     scopes: { scopes },
                 },
             });
@@ -101,163 +78,90 @@
         }
     }
 
-    onMount(() => {
-        menuInputFocusStore.set(true);
-        gameManager
-            .getCurrentGameScene()
-            .connection?.queryTags("")
-            .then((found) => {
-                availableTags = found;
-            })
-            .catch((e) => console.warn("Broadcast: the tags could not be loaded", e));
-    });
+    function whoLabel(candidate: Who): string {
+        switch (candidate) {
+            case "admins":
+                return $LL.broadcast.config.adminsOnly();
+            case "editors":
+                return $LL.broadcast.config.adminsAndEditors();
+            case "members":
+                return $LL.broadcast.config.allMembers();
+            case "everyone":
+                return $LL.broadcast.config.everyone();
+        }
+    }
+
+    onMount(() => menuInputFocusStore.set(true));
     onDestroy(() => menuInputFocusStore.set(false));
 </script>
 
 <div class="u-eyebrow">{$LL.broadcast.config.who()}</div>
-<div class="flex flex-col gap-1" role="radiogroup" aria-label={$LL.broadcast.config.who()}>
-    {#each [["admins", $LL.broadcast.config.adminsOnly()], ["everyone", $LL.broadcast.config.everyone()], ["tags", $LL.broadcast.config.tags()]] as [value, label] (value)}
+<div class="flex flex-col" role="radiogroup" aria-label={$LL.broadcast.config.who()}>
+    {#each WHO_ORDER as candidate (candidate)}
         <button
             type="button"
             class="u-menu-row"
-            class:u-selected={who === value}
+            class:u-selected={who === candidate}
             role="radio"
-            aria-checked={who === value}
+            aria-checked={who === candidate}
             on:click={() => {
-                who = value === "admins" ? "admins" : value === "everyone" ? "everyone" : "tags";
-                if (who === "tags" && tags.length === 0 && availableTags.length === 0) {
-                    showTagInput().catch((e) => console.error(e));
-                }
+                who = candidate;
+                error = undefined;
             }}
-            data-testid="broadcast-settings-who-{value}"
+            data-testid="broadcast-settings-who-{candidate}"
         >
-            <span class="u-menu-label ps-1">{label}</span>
-            {#if who === value}<IconCheck font-size="16" aria-hidden="true" />{/if}
+            <span class="u-menu-label ps-1">{whoLabel(candidate)}</span>
+            {#if who === candidate}<IconCheck font-size="16" aria-hidden="true" />{/if}
         </button>
     {/each}
 </div>
-{#if who === "tags" && pickableTags.length > 0}
-    <div class="flex flex-col gap-1 ps-4" role="group" aria-label={$LL.broadcast.config.tags()}>
-        {#each pickableTags as tag (tag)}
-            <button
-                type="button"
-                class="u-menu-row"
-                class:u-selected={tags.includes(tag)}
-                role="checkbox"
-                aria-checked={tags.includes(tag)}
-                on:click={() => toggleTag(tag)}
-                data-testid="broadcast-settings-tag-{tag}"
-            >
-                <IconShield font-size="16" class="flex-none text-white/60" aria-hidden="true" />
-                <span class="u-menu-label">{tag}</span>
-                {#if tags.includes(tag)}<IconCheck font-size="16" aria-hidden="true" />{/if}
-            </button>
-        {/each}
-    </div>
-{:else if who === "tags"}
-    <div class="flex flex-wrap items-center gap-2 px-1">
-        {#each tags as tag (tag)}
-            <span class="u-chip">
-                <IconShield font-size="14" class="text-white/60" aria-hidden="true" />
-                {tag}
-                <button
-                    type="button"
-                    class="u-chip-remove"
-                    on:click={() => removeTag(tag)}
-                    aria-label={$LL.broadcast.config.removeTag({ tag })}
-                >
-                    <IconX font-size="14" />
-                </button>
-            </span>
-        {/each}
-        {#if addingTag}
-            <input
-                type="text"
-                class="u-field !w-32 !py-1.5 !px-3 !text-sm"
-                placeholder={$LL.broadcast.config.tagPlaceholder()}
-                bind:value={newTag}
-                bind:this={tagInput}
-                on:keydown={(event) => {
-                    if (event.key === "Enter") addTag();
-                    if (event.key === "Escape") {
-                        newTag = "";
-                        addingTag = false;
-                    }
-                }}
-                on:blur={addTag}
-                data-testid="broadcast-settings-tag"
-            />
-        {:else}
-            <button type="button" class="u-chip-add" on:click={showTagInput} data-testid="broadcast-settings-add-tag">
-                <IconPlus font-size="14" aria-hidden="true" />
-                {$LL.broadcast.config.addTag()}
-            </button>
-        {/if}
-    </div>
+{#if roomGroup !== null}
+    <p class="m-0 flex items-center gap-2 px-1 text-xs text-white/60">
+        <IconUsers font-size="16" class="flex-none" aria-hidden="true" />
+        {$LL.broadcast.config.rolesNote()}
+    </p>
 {/if}
 
 <div class="u-eyebrow mt-1">{$LL.broadcast.config.reach()}</div>
-<div class="flex flex-col">
-    <div class="u-menu-row cursor-default hover:bg-transparent">
-        <span class="u-menu-tile" aria-hidden="true"><IconDoor /></span>
-        <span class="u-menu-label !whitespace-normal leading-tight">
-            <span class="block">{reachTitle($LL, "ROOM")}</span>
-            <span class="block text-xs text-white/60">{$broadcastReachInfoStore.roomName}</span>
-        </span>
+<div class="flex flex-col" role="radiogroup" aria-label={$LL.broadcast.config.reach()}>
+    {#each reaches as reach, index (reach)}
+        {@const included = index < farIndex}
         <button
             type="button"
-            class="u-switch"
-            role="switch"
-            aria-checked={roomOn}
-            aria-label={reachTitle($LL, "ROOM")}
-            on:click={() => (roomOn = !roomOn)}
-            data-testid="broadcast-settings-reach-ROOM"
-        />
-    </div>
-    {#if roomGroup !== null}
-        <div class="u-menu-row cursor-default hover:bg-transparent">
-            <span class="u-menu-tile" aria-hidden="true"><IconWorld /></span>
+            class="u-menu-row"
+            class:u-selected={far === reach}
+            class:u-included={included}
+            role="radio"
+            aria-checked={far === reach}
+            on:click={() => (far = reach)}
+            data-testid="broadcast-settings-reach-{reach}"
+        >
+            <span class="u-menu-tile" aria-hidden="true"><svelte:component this={icons[reach]} /></span>
             <span class="u-menu-label !whitespace-normal leading-tight">
-                <span class="block">{reachTitle($LL, "WORLD")}</span>
-                <span class="block text-xs text-white/60">{reachDetail($LL, "WORLD", $broadcastReachInfoStore)}</span>
-            </span>
-            <button
-                type="button"
-                class="u-switch"
-                role="switch"
-                aria-checked={worldOn}
-                aria-label={reachTitle($LL, "WORLD")}
-                on:click={() => (worldOn = !worldOn)}
-                data-testid="broadcast-settings-reach-WORLD"
-            />
-        </div>
-        <!-- Universe-wide reach is a switch like the others; whoever the room lets go live, this one is admins only. -->
-        <div class="u-menu-row cursor-default hover:bg-transparent">
-            <span class="u-menu-tile" aria-hidden="true"><IconRocket /></span>
-            <span class="u-menu-label !whitespace-normal leading-tight">
-                <span class="block">{reachTitle($LL, "UNIVERSE")}</span>
-                <span class="block text-xs text-white/60">
-                    {[reachDetail($LL, "UNIVERSE", $broadcastReachInfoStore), $LL.broadcast.config.adminsOnly()]
+                <span class="block">{reachTitle($LL, reach)}</span>
+                <span class="block text-xs font-normal text-white/60">
+                    {[
+                        reachDetail($LL, reach, $broadcastReachInfoStore),
+                        reach === "UNIVERSE" ? $LL.broadcast.config.universeAdminsOnly() : "",
+                    ]
                         .filter((part) => part)
                         .join(" · ")}
                 </span>
             </span>
-            <button
-                type="button"
-                class="u-switch"
-                role="switch"
-                aria-checked={universeOn}
-                aria-label={reachTitle($LL, "UNIVERSE")}
-                on:click={() => (universeOn = !universeOn)}
-                data-testid="broadcast-settings-reach-UNIVERSE"
-            />
-        </div>
-    {/if}
+            {#if included}
+                <span class="flex-none text-[11px] font-semibold text-[#c4b5fd]">{$LL.broadcast.config.included()}</span
+                >
+            {/if}
+            {#if far === reach}<IconCheck font-size="16" class="flex-none" aria-hidden="true" />{/if}
+        </button>
+    {/each}
 </div>
-<p class="m-0 flex items-center gap-2 text-xs text-white/60">
-    <IconShield font-size="16" class="flex-none" aria-hidden="true" />
-    {$LL.broadcast.config.rolesLater()}
-</p>
+{#if reaches.length > 1}
+    <p class="m-0 flex items-center gap-2 px-1 text-xs text-white/60">
+        <IconInfoCircle font-size="16" class="flex-none" aria-hidden="true" />
+        {$LL.broadcast.config.includesAbove()}
+    </p>
+{/if}
 {#if error}
     <div class="u-error-line" role="alert">
         <span class="flex-1">{error}</span>

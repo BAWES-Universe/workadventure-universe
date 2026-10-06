@@ -109,6 +109,11 @@ class Menu {
             await worldReach.click();
             await page.getByTestId('broadcast-next').click();
         }
+        // Go live leaves the mic and camera as they are: turn the mic on here if it is off.
+        await expect(page.getByTestId('broadcast-live-mic')).toBeVisible();
+        if ((await page.getByTestId('broadcast-live-mic').getAttribute('aria-pressed')) !== 'true') {
+            await page.getByTestId('broadcast-live-mic').click();
+        }
         await expect(page.getByTestId('broadcast-go-live')).toBeEnabled({ timeout: 10_000 });
         await page.getByTestId('broadcast-go-live').click();
         await expect(page.getByTestId('broadcast-live-pill')).toBeVisible();
