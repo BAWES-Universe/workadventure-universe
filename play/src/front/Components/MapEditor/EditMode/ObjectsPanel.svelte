@@ -2,6 +2,7 @@
     // The Objects panel: search, categories, pictures with names, "Add your own", and the settings of an object you
     // tapped on the map. Picking an object starts placing it; on phones the panel steps aside while you place.
     import { onDestroy } from "svelte";
+    import { readable } from "svelte/store";
     import type { EntityPrefab } from "@workadventure/map-editor";
     import { LL } from "../../../../i18n/i18n-svelte";
     import { gameManager } from "../../../Phaser/Game/GameManager";
@@ -33,8 +34,10 @@
     const CUSTOM = "Custom";
     const PREVIEW_COUNT = 6;
 
-    const entitiesCollectionsManager = gameManager.getCurrentGameScene().getEntitiesCollectionsManager();
-    const variantsStore = entitiesCollectionsManager.getEntitiesPrefabsVariantStore();
+    // Safe lookup: while the map changes there may be no scene, and the panel then shows no objects.
+    const variantsStore =
+        gameManager.tryGetCurrentGameScene()?.getEntitiesCollectionsManager().getEntitiesPrefabsVariantStore() ??
+        readable<EntityVariant[]>([]);
 
     let searchTerm = "";
     let editingUpload = false;
