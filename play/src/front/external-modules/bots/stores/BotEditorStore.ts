@@ -317,10 +317,21 @@ export function undoRouteChange(): void {
 /** Replace all of a route bot's stops, as Undo does. */
 export function setRouteStops(botId: string, stops: Array<{ x: number; y: number }>): void {
     let updated: BotData | undefined;
+    let moved = false;
     botPreviewsStore.update((bots) => {
         const bot = bots.get(botId);
         if (!bot) return bots;
-        updated = { ...bot, behaviorConfig: { ...bot.behaviorConfig, patrolWaypoints: stops } };
+        // Stop 1 is where the bot starts, so the bot goes back with it
+        const center = bot.behaviorConfig.assignedSpace?.center;
+        moved = stops.length > 0 && (!center || center.x !== stops[0].x || center.y !== stops[0].y);
+        updated = {
+            ...bot,
+            behaviorConfig: {
+                ...bot.behaviorConfig,
+                patrolWaypoints: stops,
+                ...(moved ? { assignedSpace: { ...bot.behaviorConfig.assignedSpace, center: { ...stops[0] } } } : {}),
+            },
+        };
         const newMap = new Map(bots);
         newMap.set(botId, updated);
         if (get(selectedBotStore)?.id === botId) {
@@ -329,7 +340,10 @@ export function setRouteStops(botId: string, stops: Array<{ x: number; y: number
         return newMap;
     });
     if (updated) {
-        void sendLiveUpdate(botId, { behaviorConfig: { patrolWaypoints: stops } });
+        void sendLiveUpdate(botId, {
+            ...(moved ? { position: { ...stops[0] } } : {}),
+            behaviorConfig: { patrolWaypoints: stops },
+        });
     }
 }
 
@@ -410,6 +424,9 @@ export function updateBotPosition(botId: string, x: number, y: number): void {
     botPreviewsStore.update((bots) => {
         const bot = bots.get(botId);
         if (bot) {
+            // Moving the bot while its route is being edited moves stop 1: Undo puts both back
+            const was = bot.behaviorConfig.assignedSpace?.center;
+            if (walksRoute(bot) && (!was || was.x !== x || was.y !== y)) rememberRouteForUndo(bot);
             // On a route, stop 1 is where the bot starts, so it moves with the bot. The other stops stay where they
             // are: they are map positions, not offsets from the bot.
             const stops = routeStops(bot);
@@ -656,21 +673,32 @@ export function addWaypoint(botId: string, x: number, y: number, index?: number)
  */
 export function updateWaypoint(botId: string, waypointIndex: number, x: number, y: number): void {
     let updatedWaypoints: Array<{ x: number; y: number }> | undefined;
+    let movedBot = false;
 
     botPreviewsStore.update((bots) => {
         const bot = bots.get(botId);
         if (bot && walksRoute(bot)) {
-            rememberRouteForUndo(bot);
             const waypoints = routeStops(bot);
+            // Let go where it was picked up: nothing moved, so nothing to undo or send
+            const was = waypoints[waypointIndex];
+            if (was && was.x === x && was.y === y) {
+                return bots;
+            }
+            rememberRouteForUndo(bot);
             if (waypointIndex >= 0 && waypointIndex < waypoints.length) {
                 waypoints[waypointIndex] = { x, y };
                 updatedWaypoints = waypoints;
+                // Stop 1 is where the bot starts: moving it moves the bot, as moving the bot moves stop 1
+                movedBot = waypointIndex === 0;
 
                 const updatedBot: BotData = {
                     ...bot,
                     behaviorConfig: {
                         ...bot.behaviorConfig,
                         patrolWaypoints: waypoints,
+                        ...(movedBot
+                            ? { assignedSpace: { ...bot.behaviorConfig.assignedSpace, center: { x, y } } }
+                            : {}),
                     },
                 };
 
@@ -692,6 +720,7 @@ export function updateWaypoint(botId: string, waypointIndex: number, x: number, 
     // Send live update with new waypoints
     if (updatedWaypoints) {
         void sendLiveUpdate(botId, {
+            ...(movedBot ? { position: { x, y } } : {}),
             behaviorConfig: { patrolWaypoints: updatedWaypoints },
         });
     }

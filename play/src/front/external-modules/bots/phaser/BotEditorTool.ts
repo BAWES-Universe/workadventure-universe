@@ -300,6 +300,15 @@ export class BotEditorTool {
                 return;
             }
 
+            // A press on a bot is for the bot (dragging it moves stop 1 with it), not a new stop under it
+            const hitBotPreview = hitObjects?.some((obj) => {
+                const botId = (obj as BotPreview).getBotId?.();
+                return !!botId && this.botPreviews.has(botId);
+            });
+            if (hitBotPreview) {
+                return;
+            }
+
             // Click anywhere on the map to add a stop: a route isn't limited to the bot's circle
             const selectedBot = get(selectedBotStore);
             if (selectedBot) {
@@ -487,6 +496,13 @@ export class BotEditorTool {
 
         // Setup event handlers
         preview.on(BotPreviewEvent.Selected, (selectedPreview: BotPreview) => {
+            // Its route is being edited: a tap on the bot keeps the route open, only Done ends it
+            if (
+                get(botEditorModeStore) === "waypoint-edit" &&
+                get(selectedBotStore)?.id === selectedPreview.getBotId()
+            ) {
+                return;
+            }
             selectBot(selectedPreview.getBotData());
             // Tapped with the panel tucked away (a phone opens on the whole map): the panel comes out on the page
             if (!get(mapEditorVisibilityStore)) {

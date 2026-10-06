@@ -257,9 +257,10 @@ export class BotPreview extends Phaser.GameObjects.Container {
             this.botData = { ...this.botData, ...newData };
         }
 
-        // Update position
+        // Update position, unless the bot is being dragged: it stays under the finger, and its new spot is saved
+        // when it is let go
         const center = this.botData.behaviorConfig?.assignedSpace?.center;
-        if (center) {
+        if (center && !this.isDragging) {
             this.setPosition(center.x, center.y);
         }
 

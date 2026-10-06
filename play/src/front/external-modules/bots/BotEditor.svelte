@@ -350,6 +350,12 @@
     onDestroy(() => {
         destroyed = true;
 
+        // Leaving the editor (the Done at the top, another tool) in the middle of a route ends it as the route's own
+        // Done does, so a changed route starts again from stop 1 there too
+        if (get(botEditorModeStore) === "waypoint-edit") {
+            stopWaypointEditing();
+        }
+
         // Unsubscribe from room changes
         if (roomChangeUnsubscribe) {
             roomChangeUnsubscribe();
@@ -610,8 +616,17 @@
     // While its companion is picked, the title is the bot's name over "Companion" and the back circle returns to
     // the bot's page, leaving the companion as it was
     let editingCompanion = false;
+    // Its WOKA the same way: the bot's name over "Body", and the back circle returns to the page
+    let editingTexture = false;
     $: editPanelBackStore.set(
-        currentMode === "detail" && selectedBot && editingCompanion
+        currentMode === "detail" && selectedBot && editingTexture
+            ? {
+                  onBack: () => (editingTexture = false),
+                  label: $LL.mapEditor.edit.bots.page.companion.back({ name: selectedBot.name ?? "" }),
+                  title: selectedBot.name || undefined,
+                  subtitle: $LL.mapEditor.edit.bots.page.body.title(),
+              }
+            : currentMode === "detail" && selectedBot && editingCompanion
             ? {
                   onBack: () => (editingCompanion = false),
                   label: $LL.mapEditor.edit.bots.page.companion.back({ name: selectedBot.name ?? "" }),
@@ -736,6 +751,7 @@
             <BotDetailView
                 bind:this={detailView}
                 bind:editingCompanion
+                bind:editingTexture
                 bot={selectedBot}
                 onSave={handleSave}
                 onDelete={handleDelete}
