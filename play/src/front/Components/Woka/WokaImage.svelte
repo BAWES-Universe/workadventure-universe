@@ -1,3 +1,20 @@
+<script lang="ts" context="module">
+    // Every WOKA picture is loaded once and shared by all the tiles that draw it
+    const imageCache = new Map<string, HTMLImageElement>();
+
+    function cachedImage(url: string): HTMLImageElement {
+        let img = imageCache.get(url);
+        if (!img) {
+            img = new window.Image();
+            // Set crossOrigin before src so the image is only fetched once
+            img.crossOrigin = "user-credentials";
+            img.src = url;
+            imageCache.set(url, img);
+        }
+        return img;
+    }
+</script>
+
 <script lang="ts">
     import { afterUpdate, onDestroy, onMount } from "svelte";
     import type { WokaData, WokaTexture } from "./WokaTypes";
@@ -43,13 +60,16 @@
         for (const part of bodyPartOrder) {
             const url = urls[part];
             if (!url) continue;
-            const img = new window.Image();
-            // Set crossOrigin before src so the image is only fetched once
-            img.crossOrigin = "user-credentials";
-            img.onload = () => {
-                if (images[part] === img) draw();
-            };
-            img.src = url;
+            const img = cachedImage(url);
+            if (!img.complete) {
+                img.addEventListener(
+                    "load",
+                    () => {
+                        if (images[part] === img) draw();
+                    },
+                    { once: true }
+                );
+            }
             nextImages[part] = img;
         }
         images = nextImages;

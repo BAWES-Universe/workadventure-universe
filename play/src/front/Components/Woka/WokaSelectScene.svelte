@@ -156,18 +156,21 @@
         {$LL.woka.selectWoka.save()}
     </svelte:fragment>
 
+    <!-- The card also draws the collections on either side, ready to slide in: only the one on screen has the ids -->
     <div
         slot="tiles"
-        id="woka-grid"
+        let:index
+        let:active
+        id={active ? "woka-grid" : undefined}
         class="grid grid-cols-4 md:grid-cols-6 gap-2 p-1"
         role="radiogroup"
         aria-label={$LL.woka.selectWoka.heading()}
     >
-        {#each textures as texture (texture.id)}
+        {#each collections[index]?.textures ?? [] as texture (texture.id)}
             <button
                 type="button"
                 role="radio"
-                id="woka-{texture.id}"
+                id={active ? `woka-${texture.id}` : undefined}
                 class="u-join-tile"
                 aria-checked={selectedId === texture.id}
                 aria-label={texture.name}

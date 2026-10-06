@@ -4,7 +4,7 @@
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { joinDesktopStore } from "../../Stores/JoinDesktopStore";
     import HatOutlineIcon from "../Join/HatOutlineIcon.svelte";
-    import type { WokaBodyPart, WokaData } from "./WokaTypes";
+    import type { WokaBodyPart, WokaData, WokaTexture } from "./WokaTypes";
     import WokaImage from "./WokaImage.svelte";
     import WokaCard from "./WokaCard.svelte";
     import { fetchWokaData, getWokaTextureUrl, texturesByPart } from "./WokaData";
@@ -32,7 +32,12 @@
         icon: partIcons[index],
     }));
     // Every option of the part, across its collections
-    $: options = (wokaData?.[part]?.collections ?? []).flatMap((collection) => collection.textures);
+    $: options = partOptions(part, wokaData);
+
+    function partOptions(bodyPart: WokaBodyPart | undefined, data: WokaData | null): WokaTexture[] {
+        if (!bodyPart) return [];
+        return (data?.[bodyPart]?.collections ?? []).flatMap((collection) => collection.textures);
+    }
 
     async function loadWokaData() {
         isLoading = true;
@@ -163,32 +168,35 @@
         {$LL.woka.customWoka.nextPart()}
     </svelte:fragment>
 
+    <!-- The card also draws the parts on either side, ready to slide in: only the one on screen has the ids -->
     <div
         slot="tiles"
-        id="woka-grid"
+        let:index
+        let:active
+        id={active ? "woka-grid" : undefined}
         class="grid grid-cols-4 md:grid-cols-6 gap-2 p-1"
         role="radiogroup"
-        aria-label={categories[partIndex]?.label}
+        aria-label={categories[index]?.label}
     >
-        {#each options as texture (texture.id)}
+        {#each partOptions(bodyPartOrder[index], wokaData) as texture (texture.id)}
             <button
                 type="button"
                 role="radio"
-                id="texture-{part}-{texture.id}"
+                id={active ? `texture-${bodyPartOrder[index]}-${texture.id}` : undefined}
                 class="u-join-tile"
-                aria-checked={selectedTextures[part] === texture.id}
+                aria-checked={selectedTextures[bodyPartOrder[index]] === texture.id}
                 aria-label={texture.name}
                 on:click={() => select(texture.id)}
             >
                 <!-- Each option on your own WOKA -->
                 <WokaImage
-                    selectedTextures={{ ...selectedTextures, [part]: texture.id }}
+                    selectedTextures={{ ...selectedTextures, [bodyPartOrder[index]]: texture.id }}
                     {wokaData}
                     getTextureUrl={getWokaTextureUrl}
                     canvasSize={tileSize}
                     {direction}
                 />
-                {#if selectedTextures[part] === texture.id}
+                {#if selectedTextures[bodyPartOrder[index]] === texture.id}
                     <span class="u-join-tile-check"><IconCheck font-size="12" /></span>
                 {/if}
             </button>
