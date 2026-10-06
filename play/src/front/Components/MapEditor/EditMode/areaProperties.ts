@@ -445,8 +445,8 @@ export function createAppProperty(app: ApplicationDefinitionInterface): AreaData
 function speakerZones(): Map<string, string> {
     const zones = new Map<string, string>();
     gameManager
-        .getCurrentGameScene()
-        .getGameMap()
+        .tryGetCurrentGameScene()
+        ?.getGameMap()
         .getGameMapAreas()
         ?.getAreas()
         .forEach((area) => {

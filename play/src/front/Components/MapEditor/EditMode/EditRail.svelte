@@ -15,7 +15,9 @@
 
     function pick(tool: EditorToolName) {
         editHintSeenStore.set(true);
-        const manager = gameManager.getCurrentGameScene().getMapEditorModeManager();
+        // Safe lookup: while the map changes there may be no scene, and the tap does nothing.
+        const manager = gameManager.tryGetCurrentGameScene()?.getMapEditorModeManager();
+        if (!manager) return;
         // The lit tool tapped again: its panel tucks away and the tool stays in your hand, so you keep selecting and
         // dragging on a bigger map (as hiding the old editor's sidebar did); a tap brings the panel back. Delete has
         // no panel, so tapping it again puts it down.

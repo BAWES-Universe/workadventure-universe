@@ -13,13 +13,13 @@
     function done() {
         analyticsClient.toggleMapEditor(false);
         mapEditorVisibilityStore.set(false);
-        gameManager.getCurrentGameScene().getMapEditorModeManager().equipTool(EditorToolName.CloseMapEditor);
+        gameManager.tryGetCurrentGameScene()?.getMapEditorModeManager().equipTool(EditorToolName.CloseMapEditor);
     }
     function undo() {
-        gameManager.getCurrentGameScene().getMapEditorModeManager().undo();
+        gameManager.tryGetCurrentGameScene()?.getMapEditorModeManager().undo();
     }
     function redo() {
-        gameManager.getCurrentGameScene().getMapEditorModeManager().redo();
+        gameManager.tryGetCurrentGameScene()?.getMapEditorModeManager().redo();
     }
 </script>
 
