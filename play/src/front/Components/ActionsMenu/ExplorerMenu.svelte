@@ -109,9 +109,9 @@
             aria-pressed={$mapExplorationModeStore}
             data-testid="map-overview-button"
             on:click={tapMap}
-            on:touchstart|passive={holdStart}
+            on:touchstart={holdStart}
             on:touchend={holdEnd}
-            on:touchmove|passive={holdEnd}
+            on:touchmove={holdEnd}
             on:touchcancel={holdEnd}
             on:contextmenu|preventDefault
         >
