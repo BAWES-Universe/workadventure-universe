@@ -551,29 +551,34 @@ export class CameraManager extends Phaser.Events.EventEmitter {
     // While following the player, the camera stays on the map. Zoomed out further than the map, the map sits in the
     // middle of the screen instead of in its top left corner.
     private mapBoundsActive = false;
+    private mapBounds: { x: number; y: number; width: number; height: number } | undefined;
     private setMapBounds(): void {
         this.mapBoundsActive = true;
+        this.mapBounds = undefined;
         this.applyMapBounds();
     }
     private readonly applyMapBounds = (): void => {
         if (!this.mapBoundsActive || !this.camera) return;
-        const viewWidth = this.camera.width / this.camera.zoom;
-        const viewHeight = this.camera.height / this.camera.zoom;
+        const zoom = this.camera.zoom || 1;
+        const viewWidth = Number.isFinite(this.camera.width / zoom) ? this.camera.width / zoom : 0;
+        const viewHeight = Number.isFinite(this.camera.height / zoom) ? this.camera.height / zoom : 0;
         const width = Math.max(this.mapSize.width, viewWidth);
         const height = Math.max(this.mapSize.height, viewHeight);
         const x = (this.mapSize.width - width) / 2;
         const y = (this.mapSize.height - height) / 2;
-        const bounds = this.camera.getBounds();
+        const last = this.mapBounds;
         if (
-            Math.abs(bounds.x - x) < 0.5 &&
-            Math.abs(bounds.y - y) < 0.5 &&
-            Math.abs(bounds.width - width) < 0.5 &&
-            Math.abs(bounds.height - height) < 0.5
+            last &&
+            Math.abs(last.x - x) < 0.5 &&
+            Math.abs(last.y - y) < 0.5 &&
+            Math.abs(last.width - width) < 0.5 &&
+            Math.abs(last.height - height) < 0.5
         ) {
             return;
         }
+        this.mapBounds = { x, y, width, height };
         this.camera.setBounds(x, y, width, height);
-        this.scene.markDirty();
+        this.scene.markDirty?.();
     };
 
     private onFollowUpdate = () => {
