@@ -65,10 +65,15 @@
                 groups.set(tag, list);
             }
         }
+        // Objects someone tagged "Custom" join Your uploads, the section that tag is shown as, rather than repeat it.
+        const taggedCustom = groups.get(CUSTOM) ?? [];
+        groups.delete(CUSTOM);
         const sections = [...groups.entries()]
             .sort(([a], [b]) => a.localeCompare(b))
             .map(([tag, items]) => ({ tag, items }));
-        const uploads = all.filter((variant) => variant.defaultPrefab.type === CUSTOM);
+        const uploads = [
+            ...new Set([...all.filter((variant) => variant.defaultPrefab.type === CUSTOM), ...taggedCustom]),
+        ];
         if (uploads.length > 0) sections.push({ tag: CUSTOM, items: uploads });
         return sections;
     }
@@ -82,9 +87,14 @@
 
     $: sections = byTag(variants);
     $: category = $selectCategoryStore;
-    $: recent = $editRecentObjectsStore
-        .map((id) => variants.find((variant) => variant.id === id))
-        .filter((variant): variant is EntityVariant => variant !== undefined);
+    // An object placed turned or in another colour is kept by that side's id; it shows once, as the object.
+    $: recent = [
+        ...new Set(
+            $editRecentObjectsStore
+                .map((id) => variants.find((variant) => variant.id === id || variant.hasPrefab(id)))
+                .filter((variant): variant is EntityVariant => variant !== undefined)
+        ),
+    ];
     $: searching = searchTerm.trim() !== "";
     $: searchResults = searching ? variants.filter((variant) => matches(variant, searchTerm)) : [];
     $: categoryOptions = [
