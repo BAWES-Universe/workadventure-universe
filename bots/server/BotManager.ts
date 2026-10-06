@@ -25,7 +25,6 @@ import * as Sentry from '@sentry/node';
 import { resolveWsUrl } from '../utils/resolveWsUrl';
 import {
     buildBehaviorConfig,
-    resolveBehaviorModel,
     waypointsOf,
     type BehaviorModel,
     type LegacyBehaviorType,
@@ -66,28 +65,19 @@ export function idleHomeAfterSwitch(
 }
 
 /**
- * Where a route bot goes when the editor changes its route: onto stop 1, so it starts walking the new route from the
- * beginning instead of walking back from wherever it was. Only when the route changed, or the bot just started
- * walking one: the editor's saves repeat the same stops, and those leave the bot where it is.
+ * Where a route bot goes when the editor asks it to start its route again (Done after editing the route): stop 1,
+ * so it walks the route from the beginning instead of walking back to it from wherever it was. Undefined when the
+ * bot doesn't walk a route or has no stops.
  */
-export function routeStartAfterEdit(
-    previousType: string | undefined,
-    previousConfig: Record<string, unknown> | undefined,
-    nextModel: BehaviorModel,
-    nextConfig: Record<string, unknown> | undefined
+export function routeStart(
+    model: BehaviorModel,
+    config: Record<string, unknown> | undefined
 ): { x: number; y: number } | undefined {
-    if (nextModel.moves !== 'route') {
+    if (model.moves !== 'route') {
         return undefined;
     }
-    const stops = waypointsOf(nextConfig ?? {});
-    if (stops.length === 0) {
-        return undefined;
-    }
-    const wasRoute = resolveBehaviorModel(previousType, previousConfig).moves === 'route';
-    const before = waypointsOf(previousConfig ?? {});
-    const sameStops =
-        before.length === stops.length && before.every((p, i) => p.x === stops[i].x && p.y === stops[i].y);
-    return wasRoute && sameStops ? undefined : { x: stops[0].x, y: stops[0].y };
+    const stops = waypointsOf(config ?? {});
+    return stops.length > 0 ? { x: stops[0].x, y: stops[0].y } : undefined;
 }
 
 type BehaviorClasses = {
@@ -610,7 +600,8 @@ export class BotManager {
      */
     async updateBot(
         botId: string,
-        updates: Partial<BotConfiguration>
+        updates: Partial<BotConfiguration>,
+        options: { restartRoute?: boolean } = {}
     ): Promise<{ updated: boolean; reason?: string; changes?: string[] }> {
         const instance = this.bots.get(botId);
         if (!instance) {
@@ -670,7 +661,6 @@ export class BotManager {
             if (updates.behaviorType) {
                 instance.config.behaviorType = updates.behaviorType as 'idle' | 'patrol' | 'social';
             }
-            const previousBehaviorConfig = instance.config.behaviorConfig;
             if (updates.behaviorConfig) {
                 instance.config.behaviorConfig = { ...instance.config.behaviorConfig, ...updates.behaviorConfig };
             }
@@ -687,16 +677,11 @@ export class BotManager {
             if (behavior.setConversationMemory) {
                 behavior.setConversationMemory(this.conversationMemory);
             }
-            // A route that was just drawn or changed starts again from stop 1: the bot is put there before the new
-            // behavior starts, so it walks the new route from the beginning
-            const routeStart = routeStartAfterEdit(
-                previousBehaviorType,
-                previousBehaviorConfig,
-                built.model,
-                instance.config.behaviorConfig
-            );
-            if (routeStart) {
-                instance.client.teleportTo(routeStart.x, routeStart.y);
+            // Done after editing a route: the bot starts it again from stop 1. Only then: each stop added or dragged
+            // while editing is also sent here, and the bot shouldn't jump on every one.
+            const restartAt = options.restartRoute ? routeStart(built.model, instance.config.behaviorConfig) : undefined;
+            if (restartAt) {
+                instance.client.teleportTo(restartAt.x, restartAt.y);
                 changes.push('position');
             }
             instance.client.setBehavior(behavior);

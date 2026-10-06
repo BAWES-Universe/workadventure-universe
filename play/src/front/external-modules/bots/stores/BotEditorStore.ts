@@ -246,6 +246,9 @@ export function confirmPlacement(): BotData | undefined {
     return undefined;
 }
 
+// The stops when Edit route was pressed, to tell on Done whether the route changed.
+let routeAtEditStart: Array<{ x: number; y: number }> | undefined;
+
 /**
  * Enter waypoint editing mode for patrol bots
  * Auto-creates first waypoint at bot's center if none exist
@@ -255,6 +258,7 @@ export function startWaypointEditing(): void {
     if (bot && walksRoute(bot)) {
         routeUndoStack = [];
         routeUndoCountStore.set(0);
+        routeAtEditStart = routeStops(bot).map((p) => ({ ...p }));
         // Auto-create first waypoint at bot's center if no waypoints exist
         if (routeStops(bot).length === 0) {
             const center = bot.behaviorConfig.assignedSpace?.center || { x: 0, y: 0 };
@@ -268,6 +272,21 @@ export function startWaypointEditing(): void {
  * Exit waypoint editing mode
  */
 export function stopWaypointEditing(): void {
+    // Done after the route changed: the bot starts it again from stop 1 instead of walking back to it. Only on Done,
+    // so it doesn't jump while the stops are being added or dragged.
+    const bot = get(selectedBotStore);
+    if (bot && walksRoute(bot)) {
+        const stops = routeStops(bot);
+        const before = routeAtEditStart;
+        const changed =
+            !before ||
+            before.length !== stops.length ||
+            before.some((p, i) => p.x !== stops[i].x || p.y !== stops[i].y);
+        if (changed && stops.length > 0) {
+            void sendLiveUpdate(bot.id, { behaviorConfig: { patrolWaypoints: stops }, restartRoute: true });
+        }
+    }
+    routeAtEditStart = undefined;
     editingWaypointIndexStore.set(undefined);
     routeUndoStack = [];
     routeUndoCountStore.set(0);
@@ -324,6 +343,7 @@ export async function sendLiveUpdate(
         position?: { x: number; y: number };
         behaviorConfig?: Record<string, unknown>;
         behaviorType?: string;
+        restartRoute?: boolean;
     }
 ): Promise<void> {
     if (!botApiService.isInitialized()) {
