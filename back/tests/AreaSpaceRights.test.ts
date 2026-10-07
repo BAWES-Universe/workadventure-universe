@@ -64,6 +64,13 @@ describe("refusedAreaSpaces", () => {
         ).toEqual([]);
     });
 
+    it("still refuses when an older map file has no writeTags field", () => {
+        const oldRights = { id: "r", type: "restrictedRightsPropertyData", readTags: ["staff"] } as unknown as Property;
+        expect(refusedAreaSpaces(wam(area("a1", [meeting("Board"), oldRights])), ROOM, player)).toEqual([
+            room("Board"),
+        ]);
+    });
+
     it("never refuses an open area", () => {
         expect(refusedAreaSpaces(wam(area("a1", [meeting("Cafe")])), ROOM, player)).toEqual([]);
     });
