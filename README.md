@@ -1,11 +1,4 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/bawes-universe-logo-dark.svg">
-    <img src="docs/images/bawes-universe-logo-light.svg" alt="BAWES Universe" width="320">
-  </picture>
-</p>
-
-<p align="center">
   <a href="https://universe.bawes.net"><img src="play/public/static/images/universe-card.png" alt="Enter the Universe" width="100%"></a>
 </p>
 
@@ -15,6 +8,13 @@
   <a href="https://discord.gg/CXceJWnwNT"><img src="https://img.shields.io/badge/Discord-Join%20us-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
   <a href="https://bawes.net"><img src="https://img.shields.io/badge/website-bawes.net-0A0814" alt="Website"></a>
   <a href="https://github.com/workadventure/workadventure"><img src="https://img.shields.io/badge/built%20on-WorkAdventure-1E88E5" alt="Built on WorkAdventure"></a>
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/bawes-universe-logo-dark.svg">
+    <img src="docs/images/bawes-universe-logo-light.svg" alt="BAWES Universe" width="200">
+  </picture>
 </p>
 
 # BAWES Universe
