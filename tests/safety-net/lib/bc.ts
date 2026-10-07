@@ -64,42 +64,70 @@ export async function primeCard(page: Page, card: PrimedCard): Promise<void> {
     );
 }
 
-async function setSwitch(page: Page, testId: string, on: boolean): Promise<void> {
-    const toggle = page.getByTestId(testId);
-    if ((await toggle.getAttribute("aria-checked")) !== String(on)) await toggle.click();
-    await expect(toggle).toHaveAttribute("aria-checked", String(on));
-}
+/** Who can go live, as the Broadcast settings name it: one of the Orbit roles from narrowest to widest, or everyone. */
+export type BroadcastWho = "admins" | "editors" | "members" | "everyone";
+/** How far: one pick, each reach includes the ones above it. */
+export type BroadcastFar = "ROOM" | "WORLD" | "UNIVERSE";
 
 export interface BroadcastSetup {
-    who?: "admins" | "everyone" | "tags";
-    tags?: string[];
-    room?: boolean;
-    world?: boolean;
+    who?: BroadcastWho;
+    far?: BroadcastFar;
 }
 
-/** Broadcast settings from the What step: who may go live and which reaches are on, then Save. */
+/** Whether the page currently treats this player as an admin (userIsAdminStore). */
+export async function isPrimedAdmin(page: Page): Promise<boolean> {
+    return withFrontModule<boolean>(
+        page,
+        "src/front/Stores/GameStore.ts",
+        "m => { let v = false; m.userIsAdminStore.subscribe((x) => { v = x; })(); return v; }"
+    );
+}
+
+export async function setPrimedAdmin(page: Page, admin: boolean): Promise<void> {
+    await withFrontModule(page, "src/front/Stores/GameStore.ts", `m => m.userIsAdminStore.set(${admin})`);
+}
+
+/**
+ * Broadcast settings from the What step (#627): who may go live and how far, then Save. The settings are for admins
+ * only, so the page is primed as admin for the save and set back to what it was afterwards. The local stack gives
+ * players no Orbit roles, so on the server only "Everyone" lets a local player go live.
+ */
 export async function saveSettings(page: Page, setup: BroadcastSetup): Promise<void> {
     if (!(await panel(page).isVisible())) await openBroadcast(page);
+    const wasAdmin = await isPrimedAdmin(page);
+    if (!wasAdmin) await setPrimedAdmin(page, true);
     await page.getByTestId("broadcast-settings").click();
     await expect(panel(page).getByRole("dialog", { name: "Broadcast settings" })).toBeVisible();
-    await page.getByTestId(`broadcast-settings-who-${setup.who ?? "everyone"}`).click();
-    for (const tag of setup.tags ?? []) {
-        if (!(await page.getByTestId("broadcast-settings-tag").isVisible())) {
-            await page.getByTestId("broadcast-settings-add-tag").click();
-        }
-        await page.getByTestId("broadcast-settings-tag").fill(tag);
-        await page.getByTestId("broadcast-settings-tag").press("Enter");
-    }
-    await setSwitch(page, "broadcast-settings-reach-ROOM", setup.room ?? true);
-    await setSwitch(page, "broadcast-settings-reach-WORLD", setup.world ?? false);
+    const who = page.getByTestId(`broadcast-settings-who-${setup.who ?? "everyone"}`);
+    await who.click();
+    await expect(who).toHaveAttribute("aria-checked", "true");
+    const far = page.getByTestId(`broadcast-settings-reach-${setup.far ?? "ROOM"}`);
+    await far.click();
+    await expect(far).toHaveAttribute("aria-checked", "true");
     await page.getByTestId("broadcast-settings-save").click();
     await expect(panel(page).getByRole("dialog", { name: "Broadcast" })).toBeVisible();
+    if (!wasAdmin) await setPrimedAdmin(page, false);
 }
 
-/** Turns broadcasting on (Everyone, This room by default) and waits until Go live can be used. */
+/** Turns Go live on for everyone (Everyone, This room by default) and waits until Go live can be used. */
 export async function turnOnBroadcast(page: Page, setup: BroadcastSetup = {}): Promise<void> {
     await saveSettings(page, setup);
     await expect(page.getByTestId("broadcast-kind-live")).toBeEnabled();
+}
+
+/** Writes the room's broadcast settings straight into its WAM file, as an older build would have saved them. */
+export async function setWamMegaphone(url: string, megaphone: Record<string, unknown>): Promise<void> {
+    const path = url.replace(/^\/~/, "");
+    const res = await fetch(MAP_STORAGE + path, { headers: { Authorization: MAP_STORAGE_AUTH } });
+    if (!res.ok) throw new Error(`map-storage read failed: ${res.status}`);
+    const wam = await res.json();
+    wam.settings = { ...(wam.settings ?? {}), megaphone };
+    const put = await fetch(MAP_STORAGE + path, {
+        method: "PUT",
+        headers: { Authorization: MAP_STORAGE_AUTH, "Content-Type": "application/json" },
+        body: JSON.stringify(wam),
+    });
+    if (!put.ok) throw new Error(`map-storage write failed: ${put.status} ${await put.text()}`);
 }
 
 /** Go live from the What step on the given reach (the Who step shows only when there is a choice). */

@@ -6,7 +6,7 @@ import {
     primeAdmin,
     primeCard,
     roomNameOf,
-    saveSettings,
+    setWamMegaphone,
     turnOnBroadcast,
 } from "../lib/bc";
 
@@ -217,7 +217,7 @@ test('BC-012 WA.ui.getMenuCommand("globalMessages").open() opens the Broadcast c
 test("BC-013 Three progress dots fill one per step; settings has none", async ({ page }, testInfo) => {
     await join(page, await wamRoom(testInfo, "empty"), "Alice");
     await openBroadcast(page);
-    await turnOnBroadcast(page, { room: true, world: true });
+    await turnOnBroadcast(page, { far: "WORLD" });
     const dots = panel(page).locator(".u-step");
     const filled = () => dots.evaluateAll((all) => all.map((dot) => dot.getAttribute("data-done")));
     await expect.poll(filled).toEqual(["true", "false", "false"]);
@@ -229,6 +229,7 @@ test("BC-013 Three progress dots fill one per step; settings has none", async ({
     await expect.poll(filled).toEqual(["true", "true", "true"]);
     await page.getByRole("button", { name: "Back" }).click();
     await page.getByRole("button", { name: "Back" }).click();
+    await primeAdmin(page);
     await page.getByTestId("broadcast-settings").click();
     await expect(page.getByRole("dialog", { name: "Broadcast settings" })).toBeVisible();
     await expect(dots).toHaveCount(0);
@@ -271,26 +272,20 @@ test("BC-015 @local Admin sees Write a message, Voice note and Go live, each wit
     await expect(panel(page).locator(".u-option")).toHaveCount(3);
 });
 
-test("BC-016 Fresh room: Broadcasting is off, Turn it on opens Broadcast settings", async ({ page }, testInfo) => {
-    await join(page, await wamRoom(testInfo, "empty"), "Alice");
-    await openBroadcast(page);
-    await expect(panel(page).getByText("Broadcasting is off in this room")).toBeVisible();
-    await expect(
-        panel(page).getByText("Turn it on in the broadcast settings and people here can go live.")
-    ).toBeVisible();
-    await expect(page.getByTestId("broadcast-turn-on")).toHaveText("Turn it on");
-    await page.getByTestId("broadcast-turn-on").click();
-    await expect(page.getByRole("dialog", { name: "Broadcast settings" })).toBeVisible();
-    await expect(page.getByTestId("broadcast-settings-save")).toBeVisible();
-});
-
-test("BC-018 @local Admin excluded from Who can go live: Go live greyed, Write and Voice work", async ({
+test("BC-018 @local Admin left out by tags saved by the old settings: Go live greyed, Write and Voice work", async ({
     page,
 }, testInfo) => {
-    await join(page, await wamRoom(testInfo, "empty"), "Alice");
-    await openBroadcast(page);
-    await saveSettings(page, { who: "tags", tags: ["nobody-has-this"], room: true });
+    const url = await wamRoom(testInfo, "empty");
+    await setWamMegaphone(url, {
+        enabled: true,
+        title: "MyMegaphone",
+        scope: "ROOM",
+        rights: ["nobody-has-this"],
+        scopes: ["ROOM"],
+    });
+    await join(page, url, "Alice");
     await primeAdmin(page);
+    await openBroadcast(page);
     const live = page.getByTestId("broadcast-kind-live");
     await expect(live).toBeDisabled();
     await expect(live).toContainText("You can't go live here. Ask a room admin.");
@@ -300,9 +295,16 @@ test("BC-018 @local Admin excluded from Who can go live: Go live greyed, Write a
     await expect(page.getByTestId("broadcast-reach-ROOM").or(page.getByTestId("broadcast-send")).first()).toBeVisible();
 });
 
-test("BC-019 The sliders button opens Broadcast settings with the room name", async ({ page }, testInfo) => {
+test("BC-019 Only admins see the sliders button; it opens Broadcast settings with the room name", async ({
+    page,
+}, testInfo) => {
     const url = await wamRoom(testInfo, "empty");
     await join(page, url, "Alice");
+    await openBroadcast(page);
+    await expect(panel(page).getByRole("heading", { name: "Broadcast" })).toBeVisible();
+    await expect(page.getByTestId("broadcast-settings")).toHaveCount(0);
+    await page.getByTestId("broadcast-close").click();
+    await primeAdmin(page);
     await openBroadcast(page);
     await expect(page.getByTestId("broadcast-settings")).toHaveAttribute("aria-label", "Broadcast settings");
     await page.getByTestId("broadcast-settings").click();

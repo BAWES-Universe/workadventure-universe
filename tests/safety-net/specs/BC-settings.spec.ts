@@ -53,74 +53,92 @@ async function backToAreaList(page: Page) {
     await expect(page.getByTestId("area-new")).toBeVisible();
 }
 
-test("BC-083 Broadcast settings: who can go live, reach switches, the Orbit line and Save", async ({
+const WHO_LABELS = ["Admins only", "Admins and editors", "All members", "Everyone"];
+const REACHES = ["ROOM", "WORLD", "UNIVERSE"] as const;
+
+/** The How far rows: which one is picked, and which say "Included". */
+async function expectFar(page: Page, picked: (typeof REACHES)[number]) {
+    const index = REACHES.indexOf(picked);
+    for (const [i, reach] of REACHES.entries()) {
+        const row = page.getByTestId(`broadcast-settings-reach-${reach}`);
+        await expect(row).toHaveAttribute("aria-checked", String(i === index));
+        await expect(row.locator("svg")).toHaveCount(i === index ? 2 : 1);
+        if (i < index) {
+            await expect(row).toHaveClass(/u-included/);
+            await expect(row).toContainText("Included");
+        } else {
+            await expect(row).not.toHaveClass(/u-included/);
+            await expect(row).not.toContainText("Included");
+        }
+    }
+}
+
+test("BC-083 Broadcast settings: Who can go live (roles), How far (one pick), the notes and Save", async ({
     page,
 }, testInfo) => {
     const url = await wamRoom(testInfo, "empty");
     await join(page, url, "Alice");
+    await primeAdmin(page);
     await openSettingsView(page);
     const card = settingsCard(page);
     await expect(card.locator("header p")).toContainText(roomNameOf(url));
-    await expect(card.getByText("Who can go live here")).toBeVisible();
+    await expect(card.getByText("Who can go live here", { exact: true })).toBeVisible();
     const who = card.getByRole("radiogroup", { name: "Who can go live here" });
-    await expect(who.getByRole("radio")).toHaveText(["Admins only", "Everyone", "People with chosen tags"]);
-    await expect(page.getByTestId("broadcast-settings-who-everyone")).toHaveAttribute("aria-checked", "true");
-    await expect(page.getByTestId("broadcast-settings-who-everyone").locator("svg")).toHaveCount(1);
-    await expect(page.getByTestId("broadcast-settings-who-admins")).toHaveAttribute("aria-checked", "false");
-    await expect(page.getByTestId("broadcast-settings-who-admins").locator("svg")).toHaveCount(0);
-    await expect(card.getByText("How far they can reach")).toBeVisible();
-    await expect(card.getByRole("switch")).not.toHaveCount(0);
-    await expect(card.getByText("Roles from Orbit will plug in here later.")).toBeVisible();
+    await expect(who.getByRole("radio")).toHaveText(WHO_LABELS);
+    // A room nobody has set up: Admins only, Everywhere in this universe.
+    await expect(page.getByTestId("broadcast-settings-who-admins")).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByTestId("broadcast-settings-who-admins").locator("svg")).toHaveCount(1);
+    for (const other of ["editors", "members", "everyone"]) {
+        await expect(page.getByTestId(`broadcast-settings-who-${other}`)).toHaveAttribute("aria-checked", "false");
+        await expect(page.getByTestId(`broadcast-settings-who-${other}`).locator("svg")).toHaveCount(0);
+    }
+    await expect(card.getByText("You give people a role on the world's Members page in Orbit.")).toBeVisible();
+    await expect(card.getByText("How far they can reach", { exact: true })).toBeVisible();
+    const far = card.getByRole("radiogroup", { name: "How far they can reach" });
+    await expect(far.getByRole("radio")).toHaveCount(3);
+    await expect(far.locator(".u-menu-label > span:first-child")).toHaveText([
+        "This room",
+        "This world",
+        "Everywhere in this universe",
+    ]);
+    await expectFar(page, "UNIVERSE");
+    await expect(card.getByText("Each one includes the ones above it.")).toBeVisible();
     await expect(page.getByTestId("broadcast-settings-save")).toHaveText("Save");
+    await expect(card.getByRole("switch")).toHaveCount(0);
     await expect(card.locator("input")).toHaveCount(0);
-    await expect(card.getByText(/space name/i)).toHaveCount(0);
+    await expect(card.getByText(/tag/i)).toHaveCount(0);
+    await expect(card.getByText("Roles from Orbit will plug in here later.")).toHaveCount(0);
 });
 
-test("BC-084 Chosen tags: typed tags become lower-case chips; Escape cancels, clicking away adds, x removes", async ({
+test("BC-098 Picking: one role at a time; the reaches above the picked one are tinted and say Included", async ({
     page,
 }, testInfo) => {
     await join(page, await wamRoom(testInfo, "empty"), "Alice");
+    await primeAdmin(page);
     await openSettingsView(page);
-    await page.getByTestId("broadcast-settings-who-tags").click();
-    const input = page.getByTestId("broadcast-settings-tag");
-    await expect(input).toBeFocused();
-    await input.fill("Staff");
-    await input.press("Enter");
-    const chips = settingsCard(page).locator(".u-chip");
-    await expect(chips).toHaveText(["staff"]);
-    await expect(chips.getByRole("button", { name: "Remove staff" })).toBeVisible();
-
-    await page.getByTestId("broadcast-settings-add-tag").click();
-    await expect(input).toBeFocused();
-    await input.fill("dropped");
-    await input.press("Escape");
-    await expect(input).toHaveCount(0);
-    await expect(chips).toHaveText(["staff"]);
-    await expect(panel(page)).toBeVisible();
-
-    await page.getByTestId("broadcast-settings-add-tag").click();
-    await input.fill("Guest");
-    await settingsCard(page).getByText("How far they can reach").click();
-    await expect(chips).toHaveText(["staff", "guest"]);
-
-    await chips.getByRole("button", { name: "Remove staff" }).click();
-    await expect(chips).toHaveText(["guest"]);
+    const whoIds = ["admins", "editors", "members", "everyone"];
+    for (const picked of whoIds) {
+        await page.getByTestId(`broadcast-settings-who-${picked}`).click();
+        for (const id of whoIds) {
+            const row = page.getByTestId(`broadcast-settings-who-${id}`);
+            await expect(row).toHaveAttribute("aria-checked", String(id === picked));
+            await expect(row.locator("svg")).toHaveCount(id === picked ? 1 : 0);
+        }
+    }
+    for (const picked of REACHES) {
+        await page.getByTestId(`broadcast-settings-reach-${picked}`).click();
+        await expectFar(page, picked);
+    }
+    // This world picked: This room is tinted (Included), the universe row is not.
+    await page.getByTestId("broadcast-settings-reach-WORLD").click();
+    await page.mouse.move(1, 1);
+    const background = (reach: string) =>
+        page.getByTestId(`broadcast-settings-reach-${reach}`).evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(await background("ROOM")).not.toBe(await background("UNIVERSE"));
+    expect(await background("ROOM")).not.toBe(await background("WORLD"));
 });
 
-test("BC-085 Chosen tags with no tag: Save says so and nothing is saved", async ({ page }, testInfo) => {
-    await join(page, await wamRoom(testInfo, "empty"), "Alice");
-    await openSettingsView(page);
-    await page.getByTestId("broadcast-settings-who-tags").click();
-    await page.getByTestId("broadcast-settings-save").click();
-    await expect(settingsCard(page).getByRole("alert")).toHaveText("Add at least one tag, or pick another option.");
-    await expect(settingsCard(page)).toBeVisible();
-    await page.getByTestId("broadcast-close").click();
-    await expect(panel(page)).toBeHidden();
-    await openSettingsView(page);
-    await expect(page.getByTestId("broadcast-settings-who-everyone")).toHaveAttribute("aria-checked", "true");
-});
-
-test("BC-087 Admins only takes Go live away from everyone at once; Everyone brings it back without reload", async ({
+test("BC-087 Admins only takes Go live away from everyone else at once; Everyone brings it back without reload", async ({
     page,
     browser,
 }, testInfo) => {
@@ -133,26 +151,25 @@ test("BC-087 Admins only takes Go live away from everyone at once; Everyone brin
     await openBroadcast(bob);
     await expect(bob.getByTestId("broadcast-kind-live")).toBeEnabled();
 
-    await saveSettings(page, { who: "admins", room: true });
-    await expect(panel(page).getByText("Broadcasting is off in this room")).toBeVisible();
+    await saveSettings(page, { who: "admins" });
     await expect(bob.getByTestId("broadcast-kind-live")).toHaveCount(0);
     await expect(panel(bob).getByText("Broadcasting is off in this room")).toBeVisible();
 
-    await saveSettings(page, { who: "everyone", room: true });
+    await saveSettings(page, { who: "everyone" });
     await expect(bob.getByTestId("broadcast-kind-live")).toBeEnabled();
     await expect(panel(bob).getByText("What do you want to share?")).toBeVisible();
 });
 
-test("BC-088 This world only: Go live skips Who; Write a message still offers This room", async ({
-    page,
-}, testInfo) => {
+test("BC-088 How far This world: Go live offers This room and This world", async ({ page }, testInfo) => {
     await join(page, await wamRoom(testInfo, "empty"), "Alice");
     await openBroadcast(page);
-    await turnOnBroadcast(page, { room: false, world: true });
+    await turnOnBroadcast(page, { far: "WORLD" });
     await page.getByTestId("broadcast-kind-live").click();
-    await expect(page.getByTestId("broadcast-go-live")).toBeVisible();
-    await expect(page.getByTestId("broadcast-next")).toHaveCount(0);
-    await expect(panel(page).locator("header p")).toHaveText(/^To This world/);
+    const group = panel(page).getByRole("radiogroup", { name: "Who should hear it?" });
+    await expect(group.getByRole("radio")).toHaveCount(2);
+    await expect(page.getByTestId("broadcast-reach-ROOM")).toBeVisible();
+    await expect(page.getByTestId("broadcast-reach-WORLD")).toBeVisible();
+    await expect(page.getByTestId("broadcast-reach-UNIVERSE")).toHaveCount(0);
     await page.getByRole("button", { name: "Back" }).click();
     await primeAdmin(page);
     await page.getByTestId("broadcast-kind-message").click();
@@ -160,33 +177,25 @@ test("BC-088 This world only: Go live skips Who; Write a message still offers Th
     await expect(page.getByTestId("broadcast-reach-WORLD")).toBeVisible();
 });
 
-test("BC-089 Every reach off: broadcasting is off in the room", async ({ page }, testInfo) => {
-    await join(page, await wamRoom(testInfo, "empty"), "Alice");
-    await openBroadcast(page);
-    await turnOnBroadcast(page);
-    await saveSettings(page, { room: false, world: false });
-    await expect(panel(page).getByText("Broadcasting is off in this room")).toBeVisible();
-    await expect(page.getByTestId("broadcast-kind-live")).toHaveCount(0);
-});
-
 test("BC-090 Saved settings come back after a reload", async ({ page }, testInfo) => {
     await join(page, await wamRoom(testInfo, "empty"), "Alice");
     await openBroadcast(page);
-    await saveSettings(page, { who: "tags", tags: ["staff"], room: false, world: true });
+    await saveSettings(page, { who: "editors", far: "WORLD" });
     await page.reload();
     await inRoom(page);
+    await primeAdmin(page);
     await openSettingsView(page);
-    await expect(page.getByTestId("broadcast-settings-who-tags")).toHaveAttribute("aria-checked", "true");
-    await expect(
-        settingsCard(page).locator(".u-chip, [data-testid='broadcast-settings-tag-staff']").first()
-    ).toContainText("staff");
-    await expect(page.getByTestId("broadcast-settings-reach-ROOM")).toHaveAttribute("aria-checked", "false");
-    await expect(page.getByTestId("broadcast-settings-reach-WORLD")).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByTestId("broadcast-settings-who-editors")).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByTestId("broadcast-settings-who-admins")).toHaveAttribute("aria-checked", "false");
+    await expectFar(page, "WORLD");
 });
 
-test("BC-091 Desktop edit mode: key 4 opens Configure my room on Megaphone", async ({ page }, testInfo) => {
+test("BC-091 @local Desktop edit mode: key 4 opens Configure my room with Room settings only, no Megaphone", async ({
+    page,
+}, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
     await join(page, await wamRoom(testInfo, "empty"), "Alice");
+    await primeAdmin(page);
     await page.getByTestId("map-menu").click();
     await page.getByRole("button", { name: "Map editor", exact: true }).click();
     await expect(page.getByTestId("edit-pill")).toBeVisible();
@@ -194,13 +203,10 @@ test("BC-091 Desktop edit mode: key 4 opens Configure my room on Megaphone", asy
     await page.keyboard.press("4");
     const window = page.locator(".configure-my-room");
     await expect(window).toBeVisible();
-    await expect(window.locator("li", { hasText: "Megaphone" })).toBeVisible();
-    const toggle = window.locator("#megaphone-switch");
-    await expect(toggle).toBeAttached();
-    if (!(await toggle.isChecked())) await window.getByTestId("megaphone-switch").click();
-    await expect(toggle).toBeChecked();
-    await expect(window.locator("input[type='text']").first()).toBeVisible();
-    await expect(window.getByRole("button", { name: /save/i }).first()).toBeVisible();
+    await expect(window.locator("li", { hasText: "Room settings" })).toBeVisible();
+    await expect(window.locator("li")).toHaveCount(1);
+    await expect(window.getByText("Megaphone")).toHaveCount(0);
+    await expect(window.locator("#megaphone-switch")).toHaveCount(0);
 });
 
 test("BC-092 A video-call area still offers Stage and Audience (KNOWN GAP)", async ({ page }, testInfo) => {

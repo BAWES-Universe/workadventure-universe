@@ -1,6 +1,15 @@
 import type { Page } from "@playwright/test";
 import { test, expect, wamRoom, join, isPhone, newPlayer, wa } from "../lib/game";
-import { goLive, openBroadcast, openGoLive, otherWamRoom, panel, primeCard, turnOnBroadcast } from "../lib/bc";
+import {
+    goLive,
+    openBroadcast,
+    openGoLive,
+    otherWamRoom,
+    panel,
+    primeCard,
+    saveSettings,
+    turnOnBroadcast,
+} from "../lib/bc";
 
 async function setBar(page: Page, testId: "microphone-button" | "camera-button", on: boolean) {
     const button = page.getByTestId(testId);
@@ -284,10 +293,10 @@ test("BC-065 World reach: a player in another room of the world sees the live ti
     await join(page, first, "Alice");
     const bob = await newPlayer(browser, testInfo, second, "Bob");
     await openBroadcast(bob);
-    await turnOnBroadcast(bob, { room: true, world: true });
+    await turnOnBroadcast(bob, { far: "WORLD" });
     await bob.getByTestId("broadcast-close").click();
     await openBroadcast(page);
-    await turnOnBroadcast(page, { room: true, world: true });
+    await turnOnBroadcast(page, { far: "WORLD" });
     await goLive(page, "WORLD");
     await expect(page.getByTestId("broadcast-live-pill")).toContainText("This world");
     await expect(bob.getByTestId("live-tag")).toBeVisible({ timeout: 30_000 });
@@ -317,15 +326,23 @@ test("BC-068 Turning mic, camera and screen off from the bar ends the broadcast"
     await expect(bob.getByTestId("live-tag")).toHaveCount(0, { timeout: 30_000 });
 });
 
-test("BC-069 Switching This room off while live ends the broadcast", async ({ page, browser }, testInfo) => {
-    const { bob } = await speakerAndListener(page, browser, testInfo);
-    await goLive(page);
+test("BC-069 Narrowing How far to This room while live on This world ends the broadcast", async ({
+    page,
+    browser,
+}, testInfo) => {
+    test.setTimeout(180_000);
+    const url = await wamRoom(testInfo, "empty");
+    await join(page, url, "Alice");
+    const bob = await newPlayer(browser, testInfo, url, "Bob");
+    await wa(page, () => WA.player.teleport(16, 16));
+    await wa(bob, () => WA.player.teleport(300, 300));
+    await openBroadcast(page);
+    await turnOnBroadcast(page, { far: "WORLD" });
+    await goLive(page, "WORLD");
+    await expect(page.getByTestId("broadcast-live-pill")).toContainText("This world");
     await expect(bob.getByTestId("live-tag")).toBeVisible({ timeout: 30_000 });
     await openBroadcast(bob);
-    await bob.getByTestId("broadcast-settings").click();
-    await bob.getByTestId("broadcast-settings-reach-ROOM").click();
-    await expect(bob.getByTestId("broadcast-settings-reach-ROOM")).toHaveAttribute("aria-checked", "false");
-    await bob.getByTestId("broadcast-settings-save").click();
+    await saveSettings(bob, { who: "everyone", far: "ROOM" });
     await expect(page.getByTestId("broadcast-live-pill")).toBeHidden({ timeout: 30_000 });
     await expect(bob.getByTestId("live-tag")).toHaveCount(0, { timeout: 30_000 });
 });
