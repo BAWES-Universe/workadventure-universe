@@ -1,5 +1,6 @@
 import type { Page, TestInfo } from "@playwright/test";
-import { expect, isPhone, newPlayer, test, wa } from "../lib/game";
+import { expect, isPhone, join, newPlayer, test, wa, wamRoom } from "../lib/game";
+import { addWamAreas } from "../lib/or";
 import {
     areaCentre,
     areaProps,
@@ -13,6 +14,7 @@ import {
     openEditor,
     pickTool,
     playerPosition,
+    rail,
     readWam,
     renameArea,
     toScreen,
@@ -330,7 +332,6 @@ test("ME-039 Add to this area: the plain rows, apps row and coral Delete", async
         "Focus the camera",
         "Highlight",
         "Show a message",
-        "Jitsi call",
         "Add an app: YouTube, Google Docs…",
     ];
     const shown = (await panel.locator("button.em-row .em-t").allInnerTexts()).map((t) => t.trim());
@@ -349,10 +350,10 @@ test("ME-039 Add to this area: the plain rows, apps row and coral Delete", async
         "focusable",
         "highlight",
         "addTooltipProperty",
-        "jitsiRoomProperty",
     ]) {
         await expect(panel.getByTestId(testId)).toBeVisible();
     }
+    await expect(panel.getByTestId("jitsiRoomProperty"), "Jitsi call is no longer offered").toHaveCount(0);
     await expect(panel.getByTestId("personalAreaPropertyData"), "Personal desk only with an admin").toHaveCount(0);
     await expect(panel.getByTestId("matrixRoomPropertyData"), "Chat room only with Matrix").toHaveCount(0);
     const del = page.getByTestId("area-delete");
@@ -678,17 +679,56 @@ test("ME-053 @local Focus, Highlight and Show a message act when you walk in", a
         .toBeGreaterThan(16);
 });
 
-test("ME-055 Jitsi call: room name on its page; not offered next to a video call", async ({ page }, testInfo) => {
-    const url = await areasOpen(page, testInfo);
-    const id = await newArea(page, url, "Jitsi room");
-    await page.getByTestId("jitsiRoomProperty").click();
+test("ME-055 Jitsi call is not offered; an area that already has one keeps its page and Remove", async ({
+    page,
+}, testInfo) => {
+    const url = await wamRoom(testInfo, "empty");
+    await addWamAreas(url, [
+        {
+            id: "old-jitsi",
+            name: "Old Jitsi room",
+            x: 160,
+            y: 0,
+            width: 128,
+            height: 96,
+            properties: [
+                {
+                    id: "p1",
+                    type: "jitsiRoomProperty",
+                    roomName: "safety-net",
+                    trigger: "onaction",
+                    jitsiRoomConfig: {},
+                },
+            ],
+        },
+        { id: "fresh", name: "Fresh room", x: 0, y: 160, width: 128, height: 96, properties: [] },
+    ]);
+    await join(page, url, "Alice");
+    await openEditor(page, testInfo);
+    await rail(page, "AreaEditor").click();
+    const openArea = async (name: string): Promise<void> => {
+        // On a phone the list is behind "All areas" in the bottom sheet.
+        if (isPhone(testInfo) && !(await page.getByTestId("area-row").first().isVisible())) {
+            await page.getByTestId("area-all").click();
+        }
+        await page.getByTestId("area-row").filter({ hasText: name }).click();
+        // A phone picks the area first; its pill's Settings opens the page.
+        if (isPhone(testInfo)) await page.getByTestId("area-actions-settings").click();
+    };
+    await openArea("Fresh room");
+    await expect(settings(page).getByTestId("livekitRoomProperty")).toBeVisible();
+    await expect(settings(page).getByTestId("jitsiRoomProperty"), "Jitsi call is no longer offered").toHaveCount(0);
+    await page.getByTestId("edit-panel-back").click();
+    await openArea("Old Jitsi room");
+    const on = settings(page).locator(".em-row.on", { hasText: "Jitsi call" });
+    await expect(on).toBeVisible();
+    await expect(settings(page).getByTestId("jitsiRoomProperty"), "no second Jitsi call is offered").toHaveCount(0);
+    await on.locator(".em-row-main").click();
     await expect(propertyPage(page).locator("#roomName")).toBeVisible();
-    await expect.poll(async () => (await areaProps(url, id)).some((p) => p.type === "jitsiRoomProperty")).toBe(true);
-    await backToAreaList(page);
-    await newArea(page, url, "Call room");
-    await page.getByTestId("livekitRoomProperty").click();
-    await backToAreaRows(page);
-    await expect(settings(page).getByTestId("jitsiRoomProperty")).toHaveCount(0);
+    await propertyPage(page).locator(".em-remove").click();
+    await expect(propertyPage(page)).toBeHidden();
+    await expect.poll(async () => (await areaProps(url, "old-jitsi")).length).toBe(0);
+    await expect(settings(page).getByTestId("jitsiRoomProperty"), "still not offered after Remove").toHaveCount(0);
 });
 
 test("ME-057 Delete an area from its settings or with the Delete key; Undo brings it back", async ({
