@@ -2,7 +2,6 @@
     import type { HighlightPropertyData } from "@workadventure/map-editor";
     import { createEventDispatcher } from "svelte";
     import { LL } from "../../../../i18n/i18n-svelte";
-    import Input from "../../Input/Input.svelte";
     import RangeSlider from "../../Input/RangeSlider.svelte";
     import { IconFocus } from "../../Icons";
     import PropertyEditorBase from "./PropertyEditorBase.svelte";
@@ -16,6 +15,13 @@
 
     function onValueChange() {
         dispatch("change");
+    }
+
+    $: isBlack = (property.color ?? "#000000").toLowerCase() === "#000000";
+
+    function resetColour() {
+        property.color = "#000000";
+        onValueChange();
     }
 </script>
 
@@ -65,12 +71,70 @@
             buttonShape="square"
             unit="ms"
         />
-        <Input
-            label={$LL.mapEditor.properties.highlight.colorLabel()}
-            type="color"
-            size="lg"
-            bind:value={property.color}
-            onInput={onValueChange}
-        />
+        <!-- The colour as the game's field: the swatch and its name, so a colour other than the usual black is
+             plain to see, with a way back to black. Tapping the swatch opens the colour picker, as before. -->
+        <div class="hl-colour">
+            <span class="hl-label">{$LL.mapEditor.properties.highlight.colorLabel()}</span>
+            <label class="u-join-field hl-field">
+                <span class="hl-swatch" style="background: {property.color}" />
+                <input
+                    class="hl-input"
+                    type="color"
+                    aria-label={$LL.mapEditor.properties.highlight.colorLabel()}
+                    data-testid="highlightColor"
+                    bind:value={property.color}
+                    on:input={onValueChange}
+                />
+                <span class="hl-value"
+                    >{isBlack ? $LL.mapEditor.properties.highlight.black() : property.color.toUpperCase()}</span
+                >
+            </label>
+            {#if !isBlack}
+                <button
+                    type="button"
+                    class="u-cta-secondary hl-reset h-11 m-0 px-4 rounded-full text-sm font-bold"
+                    on:click={resetColour}>{$LL.mapEditor.properties.highlight.resetToBlack()}</button
+                >
+            {/if}
+        </div>
     </span>
 </PropertyEditorBase>
+
+<style>
+    .hl-colour {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 0 12px;
+    }
+    .hl-label {
+        font-size: 14px;
+        color: #fff;
+    }
+    .hl-field {
+        position: relative;
+        cursor: pointer;
+    }
+    .hl-swatch {
+        flex: none;
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+    }
+    /* The browser's own colour box, invisible over the whole field: a tap anywhere opens the picker. */
+    .hl-input {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        opacity: 0;
+        cursor: pointer;
+    }
+    .hl-value {
+        font-size: 15px;
+    }
+    .hl-reset {
+        align-self: flex-start;
+    }
+</style>

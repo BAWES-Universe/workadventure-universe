@@ -1721,6 +1721,7 @@ export class SocketManager implements ZoneEventListener {
                 name: member.name ?? undefined,
                 id: member.id,
                 email: member.email ?? undefined,
+                characterTextures: member.characterTextures ?? [],
             })),
         };
     }
@@ -1742,9 +1743,9 @@ export class SocketManager implements ZoneEventListener {
         return { iceServers: await adminService.getIceServers(userId, userUuid, roomId) };
     }
 
-    async handleGetMemberQuery(getMemberQuery: GetMemberQuery): Promise<GetMemberAnswer | undefined> {
+    async handleGetMemberQuery(client: Socket, getMemberQuery: GetMemberQuery): Promise<GetMemberAnswer | undefined> {
         try {
-            const memberFromApi = await adminService.getMember(getMemberQuery.uuid);
+            const memberFromApi = await adminService.getMember(getMemberQuery.uuid, client.getUserData().roomId);
             return {
                 member: {
                     id: memberFromApi.id,
@@ -1752,6 +1753,7 @@ export class SocketManager implements ZoneEventListener {
                     email: memberFromApi.email ?? undefined,
                     visitCardUrl: memberFromApi.visitCardUrl ?? undefined,
                     chatID: memberFromApi.chatID ?? undefined,
+                    characterTextures: memberFromApi.characterTextures ?? [],
                 },
             };
         } catch (e) {

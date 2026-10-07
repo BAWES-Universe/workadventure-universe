@@ -64,6 +64,8 @@ export class AreaPreview extends Phaser.GameObjects.Rectangle {
      * its dots here only catch the pointer, at the same places.
      */
     private framed = false;
+    /** The pointer is over it while looking around: the page brightens its frame. */
+    public pointedAt = false;
     /** Where the top edge's dot sits, from the area's left, when the name label would cover the middle. */
     private topHandleOffset: number | undefined;
     private playTextTimeout: ReturnType<typeof setTimeout> | null = null;

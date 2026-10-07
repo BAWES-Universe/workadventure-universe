@@ -879,6 +879,8 @@ message Member {
   optional string email = 3;
   optional string visitCardUrl = 4;
   optional string chatID = 5;
+  // The member's WOKA in this world, so pickers show it like the People list does.
+  repeated CharacterTextureMessage characterTextures = 6;
 }
 
 message IceServer {

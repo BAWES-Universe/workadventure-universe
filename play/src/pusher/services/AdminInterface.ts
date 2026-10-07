@@ -145,7 +145,8 @@ export interface AdminInterface {
 
     searchTags(world: string, searchText: string): Promise<string[]>;
 
-    getMember(memberUUID: string): Promise<MemberData>;
+    /** With the room, the back office can also send the member's WOKA in that world. */
+    getMember(memberUUID: string, roomUrl?: string): Promise<MemberData>;
 
     getWorldChatMembers(playUri: string, searchText: string): Promise<WorldChatMembersData>;
 

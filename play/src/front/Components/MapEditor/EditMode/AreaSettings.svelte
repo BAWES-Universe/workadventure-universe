@@ -402,9 +402,18 @@
                     on:highlightAreaOnEnter={() => add("highlight", undefined, false)}
                 />
             {/if}
-            <button type="button" class="em-remove" on:click={() => removeOpenProperty(property.id)}>
-                <IconTrash font-size="16" />{$LL.mapEditor.edit.areas.remove()}
-            </button>
+            <!-- Last, alone under a line, and saying what it does: it turns this setting off (as its switch in the
+                 list does); the area stays. -->
+            <div class="em-danger-zone">
+                <button
+                    type="button"
+                    class="em-remove"
+                    data-testid="area-property-turn-off"
+                    on:click={() => removeOpenProperty(property.id)}
+                >
+                    <IconTrash font-size="16" />{$LL.mapEditor.edit.areas.turnOff({ name: described.title })}
+                </button>
+            </div>
         </div>
     {:else}
         <PanelHeader
@@ -558,9 +567,11 @@
                     <p class="em-apps-off">{$LL.mapEditor.properties[subtype].disabled()}</p>
                 {/each}
             {/if}
-            <button type="button" class="em-remove" data-testid="area-delete" on:click={deleteArea}>
-                <IconTrash font-size="16" />{$LL.mapEditor.edit.tools.delete()}
-            </button>
+            <div class="em-danger-zone">
+                <button type="button" class="em-remove" data-testid="area-delete" on:click={deleteArea}>
+                    <IconTrash font-size="16" />{$LL.mapEditor.edit.areas.deleteArea()}
+                </button>
+            </div>
         </div>
     {/if}
 {/if}
@@ -804,7 +815,8 @@
         gap: 8px;
         align-self: flex-start;
         margin: 14px 0 4px;
-        padding: 8px 14px;
+        min-height: 44px;
+        padding: 0 16px;
         border: 0;
         border-radius: 999px;
         background: rgba(233, 109, 81, 0.14);
@@ -816,6 +828,16 @@
     }
     .em-prop-page {
         gap: 8px;
+    }
+    /* What deletes or turns off: last on the page, under a line, away from everything else. */
+    .em-danger-zone {
+        display: flex;
+        margin-top: 14px;
+        padding-top: 14px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .em-danger-zone .em-remove {
+        margin: 0 0 4px;
     }
     /* A setting that cannot go with one already on (Stage next to a video call): shown, greyed, not tappable. */
     button.em-row.em-row-off {
