@@ -3,12 +3,14 @@
     // how it looks while placing. Every added side or colour is its own picture that carries the first picture's id,
     // so the pictures group into one object and Turn and the colour choice work for it while placing.
     import { createEventDispatcher } from "svelte";
+    import { readable } from "svelte/store";
     import type { EntityPrefab } from "@workadventure/map-editor";
     import { ENTITY_UPLOAD_SUPPORTED_FORMATS_FRONT } from "@workadventure/map-editor";
     import { CustomEntityDirection } from "@workadventure/messages";
     import { v4 as uuidv4 } from "uuid";
     import { LL } from "../../../../i18n/i18n-svelte";
     import { gameManager } from "../../../Phaser/Game/GameManager";
+    import type { EntityVariant } from "../../../Phaser/Game/MapEditor/Entities/EntityVariant";
     import { mobileLayoutStore } from "../../../Stores/MobileLayoutStore";
     import {
         mapEditorDeleteCustomEntityEventStore,
@@ -28,10 +30,10 @@
     export let color = "";
 
     const dispatch = createEventDispatcher<{ done: undefined }>();
-    const variantsStore = gameManager
-        .getCurrentGameScene()
-        .getEntitiesCollectionsManager()
-        .getEntitiesPrefabsVariantStore();
+    // Safe lookup: while the map changes there may be no scene, and the sheet then shows no sides.
+    const variantsStore =
+        gameManager.tryGetCurrentGameScene()?.getEntitiesCollectionsManager().getEntitiesPrefabsVariantStore() ??
+        readable<EntityVariant[]>([]);
 
     type Direction = EntityPrefab["direction"];
     type Size = { width: number; height: number };
@@ -57,6 +59,10 @@
     let colorInput: HTMLInputElement;
 
     $: variant = $variantsStore.find((each) => each.id === variantId);
+    // The object went (someone else deleted it): back to the objects, not an empty panel.
+    let hadVariant = false;
+    $: if (variant) hadVariant = true;
+    else if (hadVariant) dispatch("done");
     $: first = variant?.defaultPrefab;
     $: colors = variant
         ? [
