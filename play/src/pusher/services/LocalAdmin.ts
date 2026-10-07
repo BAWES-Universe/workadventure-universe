@@ -67,7 +67,9 @@ class LocalAdmin implements AdminInterface {
         characterTextureIds: string[],
         companionTextureId?: string,
         locale?: string,
-        tags?: string[]
+        tags?: string[],
+        chatID?: string,
+        guestName?: string
     ): Promise<FetchMemberDataByUuidResponse> {
         let canEdit = false;
         const roomUrl = new URL(playUri);

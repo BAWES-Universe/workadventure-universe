@@ -20,6 +20,7 @@ export interface AdminInterface {
      * @var userIdentifier can to be undefined or email or uuid
      * @var ipAddress
      * @var characterTextures
+     * @var guestName the name a guest (a visitor who is not logged in) typed, so the admin can show them by name
      * @return MapDetailsData|RoomRedirect
      */
     fetchMemberDataByUuid(
@@ -31,7 +32,8 @@ export interface AdminInterface {
         companionTextureId?: string,
         locale?: string,
         tags?: string[],
-        chatID?: string
+        chatID?: string,
+        guestName?: string
     ): Promise<FetchMemberDataByUuidResponse>;
 
     /**

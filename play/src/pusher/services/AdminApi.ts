@@ -364,7 +364,8 @@ class AdminApi implements AdminInterface {
         companionTextureId?: string,
         locale?: string,
         tags?: string[],
-        chatID?: string
+        chatID?: string,
+        guestName?: string
     ): Promise<FetchMemberDataByUuidResponse> {
         try {
             /**
@@ -415,6 +416,11 @@ class AdminApi implements AdminInterface {
              *        in: "query"
              *        type: "string"
              *        example: "dog1"
+             *      - name: "name"
+             *        in: "query"
+             *        description: "The name a guest (not logged in) typed. Only sent for guests."
+             *        type: "string"
+             *        example: "Nova"
              *     responses:
              *       200:
              *         description: The details of the member
@@ -431,6 +437,7 @@ class AdminApi implements AdminInterface {
                     accessToken,
                     isLogged: accessToken ? "1" : "0", // deprecated, use accessToken instead,
                     chatID,
+                    name: guestName,
                 },
                 headers: { Authorization: `${ADMIN_API_TOKEN}`, "Accept-Language": locale ?? "en" },
             });
