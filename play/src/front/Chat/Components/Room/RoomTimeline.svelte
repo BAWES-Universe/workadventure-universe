@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { afterUpdate, beforeUpdate, hasContext, onMount, setContext } from "svelte";
+    import { afterUpdate, beforeUpdate, hasContext, onDestroy, onMount, setContext } from "svelte";
     import { derived, get, readable, writable } from "svelte/store";
     import type { Readable } from "svelte/store";
     import { gameManager } from "../../../Phaser/Game/GameManager";
@@ -35,6 +35,8 @@
     import { MatrixChatRoom } from "../../Connection/Matrix/MatrixChatRoom";
     import { openProfileRoomIdStore } from "../../Stores/PartnerProfileStore";
     import { chatCarriesItsCloseStore } from "../../ChatSidebarWidthStore";
+    import { installStrayFileDropGuard, isFileDrag } from "../../../Utils/strayFileDropGuard";
+    import { mapEditorToolbarInUseStore } from "../../../Stores/MapEditorStore";
     import Message from "./Message.svelte";
     import MessageInputBar from "./MessageInputBar.svelte";
     import MessageSystem from "./MessageSystem.svelte";
@@ -161,6 +163,7 @@
     $: isEmptyProximityView = shownSession !== undefined && shownSession.messages.length === 0;
 
     onMount(() => {
+        installStrayFileDropGuard();
         initMessages()
             .catch((error) => console.error(error))
             .finally(() => {
@@ -311,21 +314,119 @@
     }
 
     function onDropFiles(event: DragEvent) {
+        endFileDrag();
         if (event.dataTransfer?.files && event.dataTransfer.files.length > 0) {
             messageInputBarRef?.handleFiles({
                 detail: event.dataTransfer.files,
             } as CustomEvent<FileList>);
         }
     }
+
+    // While this conversation is open, a file dropped anywhere in the window goes into its message box, and the
+    // conversation lights up while the file is dragged. Whatever takes a drop itself first (the map in edit mode, an
+    // upload box) keeps it. Nothing is sent until Send, as with a drop on the conversation itself.
+    let timelineRef: HTMLDivElement;
+    let fileDragOver = false;
+    let fileDragTimer: ReturnType<typeof setTimeout> | undefined;
+
+    function takesFileDrop(event: DragEvent): boolean {
+        if (!isFileDrag(event) || isEnded || !messageInputBarRef) return false;
+        return !event.defaultPrevented || (event.target instanceof Node && timelineRef?.contains(event.target));
+    }
+
+    function endFileDrag() {
+        fileDragOver = false;
+        clearTimeout(fileDragTimer);
+    }
+
+    function onDocumentDragOver(event: DragEvent) {
+        if (!takesFileDrop(event)) return;
+        acceptFileDrag(event);
+    }
+
+    function acceptFileDrag(event: DragEvent) {
+        event.preventDefault();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+        fileDragOver = true;
+        // Dragover repeats while a file is held over the window. When it stops coming, the file has gone somewhere
+        // that takes it itself, or out of the window.
+        clearTimeout(fileDragTimer);
+        fileDragTimer = setTimeout(() => (fileDragOver = false), 700);
+    }
+
+    // The map takes files only in edit mode. While playing, a file over the map is the chat's: it is caught on the
+    // way down, before the map's own drop listener can show its overlay or take it.
+    function isOverPlayingMap(event: DragEvent): boolean {
+        return (
+            event.target instanceof HTMLCanvasElement &&
+            event.target.closest("#game") !== null &&
+            !get(mapEditorToolbarInUseStore)
+        );
+    }
+
+    function onMapFileDragCapture(event: DragEvent) {
+        if (!isFileDrag(event) || isEnded || !messageInputBarRef || !isOverPlayingMap(event)) return;
+        event.stopPropagation();
+        if (event.type === "drop") {
+            event.preventDefault();
+            onDropFiles(event);
+        } else {
+            acceptFileDrag(event);
+        }
+    }
+
+    onMount(() => {
+        document.addEventListener("dragenter", onMapFileDragCapture, true);
+        document.addEventListener("dragover", onMapFileDragCapture, true);
+        document.addEventListener("drop", onMapFileDragCapture, true);
+    });
+
+    function onDocumentDragLeave(event: DragEvent) {
+        // Leaving the window (relatedTarget can't tell: WebKit leaves it empty on every element).
+        if (
+            event.clientX <= 0 ||
+            event.clientY <= 0 ||
+            event.clientX >= window.innerWidth ||
+            event.clientY >= window.innerHeight
+        ) {
+            endFileDrag();
+        }
+    }
+
+    function onDocumentDrop(event: DragEvent) {
+        if (!takesFileDrop(event) || event.defaultPrevented) {
+            endFileDrag();
+            return;
+        }
+        event.preventDefault();
+        onDropFiles(event);
+    }
+
+    onDestroy(() => {
+        clearTimeout(fileDragTimer);
+        document.removeEventListener("dragenter", onMapFileDragCapture, true);
+        document.removeEventListener("dragover", onMapFileDragCapture, true);
+        document.removeEventListener("drop", onMapFileDragCapture, true);
+    });
 </script>
+
+<svelte:document on:dragover={onDocumentDragOver} on:dragleave={onDocumentDragLeave} on:drop={onDocumentDrop} />
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div
+    bind:this={timelineRef}
     class="relative isolate flex flex-col flex-auto h-full w-full max-w-full"
     class:profile-open={profileOpen && matrixRoom && $directPartner}
     on:dragover|preventDefault
     on:drop|preventDefault|stopPropagation={onDropFiles}
 >
+    {#if fileDragOver}
+        <div class="file-drop-target" data-testid="chatFileDropTarget" aria-hidden="true">
+            {matrixRoom
+                ? $LL.chat.fileAttachment.dropToAdd({ name: $roomName })
+                : $LL.chat.fileAttachment.dropToAddHere()}
+        </div>
+    {/if}
     {#if profileOpen && matrixRoom && $directPartner}
         <!-- Over the conversation, which stays as it was (draft, files, scroll) for when you come back. Above the
              message options (z-50) and menus that live in it; "isolate" keeps all of that inside this panel. -->
@@ -535,6 +636,22 @@
 </div>
 
 <style>
+    /* Over the whole conversation while a file is dragged anywhere in the window. */
+    .file-drop-target {
+        position: absolute;
+        inset: 6px;
+        z-index: 60;
+        display: grid;
+        place-items: center;
+        padding: 12px;
+        border: 2px dashed #c4b5fd;
+        border-radius: 16px;
+        background: rgb(134 41 252 / 0.22);
+        color: #fff;
+        font-weight: 700;
+        text-align: center;
+        pointer-events: none;
+    }
     /* The profile has no background of its own: it sits on the chat panel's surface, like the conversation. What it
        covers is hidden instead, and keeps its draft, files and scroll for when you come back. */
     .profile-open > :global(:not([data-testid="partnerProfilePanel"])) {

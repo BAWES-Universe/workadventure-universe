@@ -547,6 +547,8 @@ const chat: BaseTranslation = {
         title: "File attachment",
         description: "Upload and share a file",
         featureComingSoon: "Coming soon!",
+        dropToAdd: "Drop to add to your chat with {name}",
+        dropToAddHere: "Drop to add to this chat",
         maxFileCount: "Maximum {count} files at a time.",
         unsafeFileType: '"{name}" has an unsafe file type and cannot be uploaded.',
         fileTooLarge: '"{name}" is too large. Maximum size is {size} MB.',
