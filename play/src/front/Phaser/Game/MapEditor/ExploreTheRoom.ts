@@ -1,5 +1,5 @@
 import { get } from "svelte/store";
-import { lookAroundNormalZoomStore, lookAroundPlacesOpenStore } from "../../../Stores/LookAroundStore";
+import { lookAroundBottomCoverStore } from "../../../Stores/LookAroundStore";
 import {
     mapEditorModeStore,
     mapExplorationAreasStore,
@@ -58,8 +58,7 @@ export function clearLookAroundStores(): void {
     mapExplorationModeStore.set(false);
     mapExplorationAreasStore.set(undefined);
     mapExplorationEntitiesStore.set(new Map());
-    lookAroundPlacesOpenStore.set(false);
-    lookAroundNormalZoomStore.set(undefined);
+    lookAroundBottomCoverStore.set(0);
 }
 
 /** True while "Look around the map" is open. */

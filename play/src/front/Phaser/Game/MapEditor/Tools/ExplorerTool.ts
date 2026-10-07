@@ -12,7 +12,7 @@ import {
     mapExplorationModeStore,
     mapExplorationObjectSelectedStore,
 } from "../../../../Stores/MapEditorStore";
-import { lookAroundDraggedStore, lookAroundNormalZoomStore } from "../../../../Stores/LookAroundStore";
+import { lookAroundDraggedStore } from "../../../../Stores/LookAroundStore";
 import { clearLookAroundStores, EXPLORE_ZOOM_OUT_END, leaveExploreTheRoom } from "../ExploreTheRoom";
 import { gameManager } from "../../GameManager";
 import type { GameScene } from "../../GameScene";
@@ -290,7 +290,6 @@ export class ExplorerTool implements MapEditorTool {
         this.scene.input.on(Phaser.Input.Events.GAME_OUT, this.pointerUpHandler);
 
         this.zoomLevelBeforeExplorerMode = waScaleManager.zoomModifier;
-        lookAroundNormalZoomStore.set(this.zoomLevelBeforeExplorerMode);
 
         // Make all entities interactive
         this.setAllEntitiesInteractive();

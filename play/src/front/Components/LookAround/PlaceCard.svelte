@@ -1,6 +1,7 @@
 <script lang="ts">
-    // The card of the place you tapped while looking around: its name, what it is, and "Walk there".
-    // "Back to me" stays in the pill at the top, so the card has no second Back.
+    // The card of the place you tapped while looking around: its name, what it is, "Walk there", and for an object
+    // that opens a link, a file or a sound, a button that does it right here. The X of the sheet leaves Look around,
+    // so the card has no second Back.
     import { onDestroy } from "svelte";
     import { fly } from "svelte/transition";
     import { LL } from "../../../i18n/i18n-svelte";
@@ -81,6 +82,16 @@
         leaveExploreTheRoom();
     }
 
+    // What the object does when you use it: open its link or file, play its sound.
+    const DOES_SOMETHING = ["openWebsite", "openFile", "playAudio"];
+    function doIt() {
+        const place = $mapExplorationObjectSelectedStore;
+        if (!(place instanceof Entity)) return;
+        place.runAction(DOES_SOMETHING);
+        mapExplorationObjectSelectedStore.set(undefined);
+        leaveExploreTheRoom();
+    }
+
     $: place = $mapExplorationObjectSelectedStore;
     $: name = place ? getPlaceName(place, $LL) : "";
     $: propertyLabel = place ? getPlacePropertyLabel(place, $LL) : undefined;
@@ -88,13 +99,12 @@
         const parts: string[] = [];
         if (propertyLabel) parts.push(propertyLabel);
         if (place instanceof AreaPreview) {
-            parts.push(
-                peopleInside === 0
-                    ? $LL.mapEditor.lookAround.empty()
-                    : peopleInside === 1
-                    ? $LL.mapEditor.lookAround.onePerson()
-                    : $LL.mapEditor.lookAround.people({ count: peopleInside })
-            );
+            if (peopleInside > 0)
+                parts.push(
+                    peopleInside === 1
+                        ? $LL.mapEditor.lookAround.onePerson()
+                        : $LL.mapEditor.lookAround.people({ count: peopleInside })
+                );
         }
         return parts.join(" · ");
     })();
@@ -117,16 +127,24 @@
             {/if}
             <div class="place-card-text">
                 <h1 class="place-card-name">{name}</h1>
-                <p class="place-card-sub">{place.description || subtitle}</p>
+                <p class="place-card-sub">{subtitle}</p>
             </div>
             <button type="button" class="u-close" aria-label={$LL.mapEditor.lookAround.close()} on:click={close}>
                 <IconX font-size="18" />
             </button>
         </div>
-        <button type="button" class="place-card-walk u-cta" on:click={walkThere}>
-            <IconWalk font-size="18" />
-            {$LL.mapEditor.lookAround.walkThere()}
-        </button>
+        {#if place.description}<p class="place-card-desc">{place.description}</p>{/if}
+        <div class="place-card-actions">
+            <button type="button" class="place-card-walk u-cta" on:click={walkThere}>
+                <IconWalk font-size="18" />
+                {$LL.mapEditor.lookAround.walkThere()}
+            </button>
+            {#if place instanceof Entity && place.getProperties().some((p) => DOES_SOMETHING.includes(p.type))}
+                <button type="button" class="place-card-do" data-testid="look-around-do" on:click={doIt}>
+                    {place.actionButtonLabel}
+                </button>
+            {/if}
+        </div>
     </div>
 {/if}
 
@@ -170,6 +188,34 @@
         max-height: 36px;
         object-fit: contain;
         image-rendering: pixelated;
+    }
+    .place-card-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 12px;
+    }
+    .place-card-actions .place-card-walk {
+        flex: 1;
+        margin-top: 0;
+    }
+    .place-card-do {
+        flex: 1;
+        height: 44px;
+        border: 0;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.12);
+        box-shadow: inset 0 0 0 1px rgba(196, 181, 253, 0.35);
+        color: #fff;
+        font: inherit;
+        font-size: 15px;
+        font-weight: 600;
+        cursor: pointer;
+    }
+    .place-card-desc {
+        margin: 10px 2px 0;
+        font-size: 13.5px;
+        line-height: 1.4;
+        color: rgba(244, 242, 250, 0.86);
     }
     .place-card-text {
         flex: 1;
