@@ -73,7 +73,7 @@ function spaceNamesOf(area: AreaData, byId: Map<string, AreaData>, roomUrl: stri
                 // The listener names the stage by its area id
                 const stage = byId.get(property.speakerZoneName);
                 const stageName = stage?.properties.find((candidate) => candidate.type === "speakerMegaphone");
-                if (stageName !== undefined && stageName.type === "speakerMegaphone") {
+                if (stageName !== undefined && stageName.type === "speakerMegaphone" && stageName.name !== undefined) {
                     names.push(areaSpaceName(stageName.name, roomUrl));
                 }
                 break;
