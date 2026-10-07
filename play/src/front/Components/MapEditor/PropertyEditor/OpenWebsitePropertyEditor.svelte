@@ -16,7 +16,6 @@
         EraserException,
         YoutubeException,
     } from "@workadventure/shared-utils";
-    import InputSwitch from "../../Input/InputSwitch.svelte";
     import { LL } from "../../../../i18n/i18n-svelte";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import youtubeSvg from "../../images/applications/icon_youtube.svg";
@@ -32,34 +31,24 @@
     import pickerSvg from "../../images/applications/picker.svg";
     import { connectionManager } from "../../../Connection/ConnectionManager";
     import { GOOGLE_DRIVE_PICKER_APP_ID, GOOGLE_DRIVE_PICKER_CLIENT_ID } from "../../../Enum/EnvironmentVariable";
-    import Tooltip from "../../Util/Tooltip.svelte";
-    import InputTags from "../../Input/InputTags.svelte";
-    import type { InputTagOption } from "../../Input/InputTagOption";
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
-    import Input from "../../Input/Input.svelte";
-    import Select from "../../Input/Select.svelte";
-    import RangeSlider from "../../Input/RangeSlider.svelte";
-    import InputCheckbox from "../../Input/InputCheckbox.svelte";
     import {
         ON_ACTION_TRIGGER_BUTTON,
         ON_ACTION_TRIGGER_ENTER,
         ON_ICON_TRIGGER_BUTTON,
     } from "../../../WebRtc/LayoutManager";
+    import USelect from "../../UI/USelect.svelte";
     import PropertyEditorBase from "./PropertyEditorBase.svelte";
-    import { IconAlertTriangle } from "@wa-icons";
+    import PanelSwitch from "./PanelSwitch.svelte";
+    import PolicyChips from "./PolicyChips.svelte";
+    import { IconAlertTriangle, IconLink } from "@wa-icons";
 
     export let property: OpenWebsitePropertyData;
     export let triggerOnActionChoosen: boolean = property.trigger === ON_ACTION_TRIGGER_BUTTON;
     export let triggerOptionActivated = true;
     export let icon = "resources/icons/icon_link.png";
     export let isArea = false;
-
-    type Option = {
-        value: string;
-        label: string;
-        created: boolean | undefined;
-    };
 
     let optionAdvancedActivated = shouldDisplayAdvancedOption();
 
@@ -69,41 +58,42 @@
     let warning = "";
     let oldNewTabValue = property.newTab;
     let isLinkValid = true;
-    let policy: Option[] | undefined = undefined;
-    let policyOption: InputTagOption[] = [
-        { value: "accelerometer", label: "accelerometer", created: undefined },
-        { value: "ambient-light-sensor", label: "ambient-light-sensor", created: undefined },
-        { value: "autoplay", label: "autoplay", created: undefined },
-        { value: "battery", label: "battery", created: undefined },
-        { value: "browsing-topics", label: "browsing-topics", created: undefined },
-        { value: "camera", label: "camera", created: undefined },
-        { value: "document-domain", label: "document-domain", created: undefined },
-        { value: "encrypted-media", label: "encrypted-media", created: undefined },
-        { value: "execution-while-not-rendered", label: "execution-while-not-rendered", created: undefined },
-        { value: "execution-while-out-of-viewport", label: "execution-while-out-of-viewport", created: undefined },
-        { value: "fullscreen", label: "fullscreen", created: undefined },
-        { value: "gamepad", label: "gamepad", created: undefined },
-        { value: "geolocation", label: "geolocation", created: undefined },
-        { value: "gyroscope", label: "gyroscope", created: undefined },
-        { value: "hid", label: "hid", created: undefined },
-        { value: "identity-credentials-get", label: "identity-credentials-get", created: undefined },
-        { value: "idle-detection", label: "idle-detection", created: undefined },
-        { value: "local-fonts ", label: "local-fonts", created: undefined },
-        { value: "magnetometer", label: "magnetometer", created: undefined },
-        { value: "microphone", label: "microphone", created: undefined },
-        { value: "midi", label: "midi", created: undefined },
-        { value: "otp-credentials", label: "otp-credentials", created: undefined },
-        { value: "payment", label: "payment", created: undefined },
-        { value: "picture-in-picture", label: "picture-in-picture", created: undefined },
-        { value: "publickey-credentials-get", label: "publickey-credentials-get", created: undefined },
-        { value: "screen-wake-lock", label: "screen-wake-lock", created: undefined },
-        { value: "serial", label: "serial", created: undefined },
-        { value: "speaker-selection", label: "speaker-selection", created: undefined },
-        { value: "storage-access", label: "storage-access", created: undefined },
-        { value: "usb", label: "usb", created: undefined },
-        { value: "web-share", label: "web-share", created: undefined },
-        { value: "window-management", label: "window-management", created: undefined },
-        { value: "xr-spatial-tracking", label: "xr-spatial-tracking", created: undefined },
+    // The permissions of the iFrame Allow list. Undefined (no list at all) hides the field, as before.
+    let policy: string[] | undefined = undefined;
+    const policyOptions: string[] = [
+        "accelerometer",
+        "ambient-light-sensor",
+        "autoplay",
+        "battery",
+        "browsing-topics",
+        "camera",
+        "document-domain",
+        "encrypted-media",
+        "execution-while-not-rendered",
+        "execution-while-out-of-viewport",
+        "fullscreen",
+        "gamepad",
+        "geolocation",
+        "gyroscope",
+        "hid",
+        "identity-credentials-get",
+        "idle-detection",
+        "local-fonts",
+        "magnetometer",
+        "microphone",
+        "midi",
+        "otp-credentials",
+        "payment",
+        "picture-in-picture",
+        "publickey-credentials-get",
+        "screen-wake-lock",
+        "serial",
+        "speaker-selection",
+        "storage-access",
+        "usb",
+        "web-share",
+        "window-management",
+        "xr-spatial-tracking",
     ];
 
     const dispatch = createEventDispatcher<{
@@ -131,16 +121,11 @@
             console.error("Error checking embeddable website", e);
         });
 
-        // Format policy for input tag policy
+        // Format policy for the iFrame Allow chips
         policy = property.policy
             ?.split(";")
-            .reduce(
-                (options: Option[], value) =>
-                    value != ""
-                        ? [...options, { value: value.trim(), label: value.trim(), created: undefined }]
-                        : options,
-                []
-            ) as Option[];
+            .map((value) => value.trim())
+            .filter((value) => value !== "");
 
         if (property.forceNewTab == true) {
             property.newTab = true;
@@ -506,12 +491,59 @@
         analyticsClient.openApplicationWithoutPicker(property.application);
     }
 
-    function handlePolicyChange() {
-        if (policy == undefined) {
-            policy = [];
-        }
-        property.policy = policy?.reduce((policyStr, policy) => `${policyStr}${policy.value};`, "");
+    function handlePolicyChange(values: string[]) {
+        policy = values;
+        property.policy = values.reduce((policyStr, value) => `${policyStr}${value};`, "");
         onValueChange();
+    }
+
+    function onTriggerSelect(value: string) {
+        property.trigger = value as OpenWebsitePropertyData["trigger"];
+        onTriggerValueChange();
+    }
+
+    function onWidthInput(event: Event) {
+        property.width = Number((event.currentTarget as HTMLInputElement).value);
+        onValueChange();
+    }
+
+    // What the width slider shows: the saved width, or the 50 % every link starts with
+    $: widthValue = property.width ?? 50;
+
+    $: triggerOptions = [
+        { value: ON_ACTION_TRIGGER_ENTER, label: $LL.mapEditor.properties.openWebsite.triggerShowImmediately() },
+        ...(property.newTab
+            ? []
+            : [{ value: ON_ICON_TRIGGER_BUTTON, label: $LL.mapEditor.properties.openWebsite.triggerOnClick() }]),
+        { value: ON_ACTION_TRIGGER_BUTTON, label: $LL.mapEditor.properties.openWebsite.triggerOnAction() },
+    ];
+
+    $: linkPlaceholder =
+        property.application === "youtube"
+            ? $LL.mapEditor.properties.youtube.linkPlaceholder()
+            : property.placeholder ?? $LL.mapEditor.properties.openWebsite.linkPlaceholder();
+
+    $: pickerLabel = isAppWithPicker(property.application)
+        ? $LL.mapEditor.properties.openWebsite.openPickerSelector()
+        : `${$LL.mapEditor.properties.openWebsite.openApplication()} ${property.application}`;
+
+    function isAppWithPicker(application: string | undefined): boolean {
+        return (
+            application === "googleDocs" ||
+            application === "googleSheets" ||
+            application === "googleSlides" ||
+            application === "klaxoon" ||
+            application === "googleDrive"
+        );
+    }
+
+    function isAppWithoutPicker(application: string | undefined): boolean {
+        return (
+            application === "cards" ||
+            application === "eraser" ||
+            application === "excalidraw" ||
+            application === "tldraw"
+        );
     }
 
     onDestroy(() => {
@@ -604,7 +636,7 @@
             {property.label}
         {/if}
     </span>
-    <span slot="content">
+    <span slot="content" class="op">
         {#if property.poster}
             <div class="text-center">
                 <img class="w-20 me-1" src={property.poster} alt="" draggable="false" />
@@ -612,127 +644,112 @@
         {/if}
 
         {#if isArea}
-            <Select
-                id="trigger"
-                label={$LL.mapEditor.properties.openWebsite.trigger()}
-                bind:value={property.trigger}
-                onChange={onTriggerValueChange}
-            >
-                <option value={ON_ACTION_TRIGGER_ENTER}
-                    >{$LL.mapEditor.properties.openWebsite.triggerShowImmediately()}</option
-                >
-                {#if !property.newTab}
-                    <option value={ON_ICON_TRIGGER_BUTTON}
-                        >{$LL.mapEditor.properties.openWebsite.triggerOnClick()}</option
-                    >
-                {/if}
-                <option value={ON_ACTION_TRIGGER_BUTTON}
-                    >{$LL.mapEditor.properties.openWebsite.triggerOnAction()}</option
-                >
-            </Select>
+            <div class="op-field">
+                <span class="op-label">{$LL.mapEditor.properties.openWebsite.trigger()}</span>
+                <USelect
+                    label={$LL.mapEditor.properties.openWebsite.trigger()}
+                    value={property.trigger}
+                    options={triggerOptions}
+                    onSelect={onTriggerSelect}
+                />
+            </div>
         {/if}
 
-        <div class="flex flex-col">
-            <label for="tabLink" class="px-3 pb-[0.375rem] grow font-light"
-                >{$LL.mapEditor.properties.openWebsite.linkLabel()}</label
-            >
-            <div class="flex flex-row">
-                <Input
-                    id="tabLink"
-                    type="url"
-                    placeholder={property.placeholder ?? $LL.mapEditor.properties.openWebsite.linkPlaceholder()}
-                    onKeyPress={onKeyPressed}
-                    bind:value={property.link}
-                    onChange={onValueChange}
-                    onBlur={() => checkWebsiteProperty()}
-                    disabled={embeddableLoading}
-                />
+        <div class="op-field">
+            <label for="tabLink" class="op-label">{$LL.mapEditor.properties.openWebsite.linkLabel()}</label>
+            <div class="op-line">
+                <div class="u-join-field op-link" class:u-join-field-error={error !== ""}>
+                    <IconLink font-size="18" class="flex-none text-white/75" />
+                    <input
+                        id="tabLink"
+                        type="url"
+                        placeholder={linkPlaceholder}
+                        bind:value={property.link}
+                        on:keypress={onKeyPressed}
+                        on:change={onValueChange}
+                        on:blur={() => checkWebsiteProperty()}
+                        disabled={embeddableLoading}
+                    />
+                </div>
 
-                {#if property.application === "googleDocs" || property.application === "googleSheets" || property.application === "googleSlides" || property.application === "klaxoon" || property.application === "googleDrive"}
-                    <div class="flex flex-row items-center justify-center">
-                        <!-- svelte-ignore a11y-click-events-have-key-events -->
-                        <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-                        <img
-                            class="w-6 ms-4 items-center cursor-pointer"
-                            src={pickerSvg}
-                            alt={$LL.mapEditor.properties.openWebsite.openPickerSelector()}
-                            draggable="false"
-                            on:keydown
-                            on:keyup
-                            on:keypress
-                            on:click|preventDefault|stopPropagation={openPicker}
-                        />
-                        <Tooltip text={$LL.mapEditor.properties.openWebsite.openPickerSelector()} leftPosition="true" />
-                    </div>
-                {:else if property.application === "cards" || property.application === "eraser" || property.application === "excalidraw" || property.application === "tldraw"}
-                    <div class="flex flex-row items-center justify-center">
-                        <!-- svelte-ignore a11y-click-events-have-key-events -->
-                        <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-                        <img
-                            class="w-6 ms-4 items-center cursor-pointer"
-                            src={pickerSvg}
-                            alt={`${$LL.mapEditor.properties.openWebsite.openApplication()} ${property.application}`}
-                            draggable="false"
-                            on:keydown
-                            on:keyup
-                            on:keypress
-                            on:click|preventDefault|stopPropagation={openApplicationWithoutPicker}
-                        />
-                        <Tooltip
-                            text={`${$LL.mapEditor.properties.openWebsite.openApplication()} ${property.application}`}
-                            leftPosition="true"
-                        />
-                    </div>
+                {#if isAppWithPicker(property.application)}
+                    <button
+                        type="button"
+                        class="u-cta-secondary op-picker"
+                        on:click|preventDefault|stopPropagation={openPicker}
+                    >
+                        <img src={pickerSvg} alt="" draggable="false" />
+                        {pickerLabel}
+                    </button>
+                {:else if isAppWithoutPicker(property.application)}
+                    <button
+                        type="button"
+                        class="u-cta-secondary op-picker"
+                        on:click|preventDefault|stopPropagation={openApplicationWithoutPicker}
+                    >
+                        <img src={pickerSvg} alt="" draggable="false" />
+                        {pickerLabel}
+                    </button>
                 {/if}
             </div>
             {#if error !== ""}
-                <span class="err text-danger-900 text-xs italic mt-1">{error}</span>
+                <div class="u-error-line">{error}</div>
             {/if}
             {#if warning !== ""}
-                <span class="err text-warning-900 text-xs italic mt-1">{warning}</span>
+                <div class="op-warn">
+                    <IconAlertTriangle font-size="16" class="flex-none" />
+                    <span>{warning}</span>
+                </div>
             {/if}
             {#if !embeddable && property.newTab == false && error === ""}
-                <span class="err text-warning-900 text-xs italic mt-1"
-                    ><IconAlertTriangle font-size="12" />
-                    {$LL.mapEditor.properties.openWebsite.messageNotEmbeddableLink()}.
-                    <a
-                        href="https://workadventu.re/map-building/troubleshooting.md#content-issues-embedding-a-website"
-                        target="_blank">{$LL.mapEditor.properties.openWebsite.findOutMoreHere()}</a
-                    >.</span
-                >
+                <div class="op-warn">
+                    <IconAlertTriangle font-size="16" class="flex-none" />
+                    <span
+                        >{$LL.mapEditor.properties.openWebsite.messageNotEmbeddableLink()}.
+                        <a
+                            href="https://workadventu.re/map-building/troubleshooting.md#content-issues-embedding-a-website"
+                            target="_blank">{$LL.mapEditor.properties.openWebsite.findOutMoreHere()}</a
+                        ></span
+                    >
+                </div>
             {/if}
         </div>
+
         {#if !property.hideButtonLabel}
-            <div class=" flex flex-col">
-                <Input
-                    label={$LL.mapEditor.entityEditor.buttonLabel()}
-                    id="linkButton"
-                    type="text"
-                    bind:value={property.buttonLabel}
-                    onChange={onValueChange}
-                />
+            <div class="op-field">
+                <label for="linkButton" class="op-label">{$LL.mapEditor.entityEditor.buttonLabel()}</label>
+                <div class="u-join-field">
+                    <input id="linkButton" type="text" bind:value={property.buttonLabel} on:change={onValueChange} />
+                </div>
             </div>
         {/if}
 
-        <InputSwitch
+        <PanelSwitch
             id="advancedOption"
+            strong
             label={$LL.mapEditor.properties.advancedOptions()}
             bind:value={optionAdvancedActivated}
         />
 
-        <div class:active={optionAdvancedActivated} class="advanced-option">
+        <div class:active={optionAdvancedActivated} class="advanced-option op-group">
             {#if (isArea && triggerOptionActivated && triggerOnActionChoosen) || !isArea}
-                <Input
-                    id="triggerMessage"
-                    type="text"
-                    placeholder={$LL.trigger.object()}
-                    label={$LL.mapEditor.properties.openWebsite.triggerMessage()}
-                    bind:value={property.triggerMessage}
-                    onChange={onValueChange}
-                />
+                <div class="op-field">
+                    <label for="triggerMessage" class="op-label"
+                        >{$LL.mapEditor.properties.openWebsite.triggerMessage()}</label
+                    >
+                    <div class="u-join-field">
+                        <input
+                            id="triggerMessage"
+                            type="text"
+                            placeholder={$LL.trigger.object()}
+                            bind:value={property.triggerMessage}
+                            on:change={onValueChange}
+                        />
+                    </div>
+                </div>
             {/if}
 
-            <InputSwitch
+            <PanelSwitch
                 id="newTab"
                 label={$LL.mapEditor.properties.openWebsite.newTabLabel()}
                 bind:value={property.newTab}
@@ -746,15 +763,13 @@
             />
 
             {#if property.forceNewTab == true}
-                <div class="mb-3">
-                    <span class="err text-warning-900 text-xs italic">
-                        <IconAlertTriangle font-size="12" />
-                        {$LL.mapEditor.properties.openWebsite.forcedInNewTab()}
-                    </span>
+                <div class="op-warn">
+                    <IconAlertTriangle font-size="16" class="flex-none" />
+                    <span>{$LL.mapEditor.properties.openWebsite.forcedInNewTab()}</span>
                 </div>
             {/if}
 
-            <InputSwitch
+            <PanelSwitch
                 id="hideUrl"
                 label={$LL.mapEditor.properties.openWebsite.hideUrlLabel()}
                 bind:value={property.hideUrl}
@@ -765,27 +780,34 @@
             />
 
             {#if !property.newTab}
-                <div class="mt-3 mb-3">
-                    <RangeSlider
-                        id="websiteWidth"
-                        min={15}
-                        label={$LL.mapEditor.properties.openWebsite.width()}
-                        max={85}
-                        bind:value={property.width}
-                        onChange={onValueChange}
-                        variant="secondary"
-                        buttonShape="square"
-                    />
+                <div class="op-slider">
+                    <div class="op-slider-top">
+                        <label for="websiteWidth">{$LL.mapEditor.properties.openWebsite.width()}</label>
+                        <span class="op-slider-value">{widthValue} %</span>
+                    </div>
+                    <div class="op-track">
+                        <div class="op-track-fill" style="width: {((widthValue - 15) / (85 - 15)) * 100}%" />
+                        <div class="op-track-thumb" style="left: {((widthValue - 15) / (85 - 15)) * 100}%" />
+                        <input
+                            id="websiteWidth"
+                            type="range"
+                            min={15}
+                            max={85}
+                            value={widthValue}
+                            on:input={onWidthInput}
+                        />
+                    </div>
+                    <div class="op-slider-ends"><span>15 %</span><span>85 %</span></div>
                 </div>
 
-                <InputCheckbox
+                <PanelSwitch
                     id="closable"
                     label={$LL.mapEditor.properties.openWebsite.closable()}
                     bind:value={property.closable}
                     onChange={onValueChange}
                 />
 
-                <InputCheckbox
+                <PanelSwitch
                     id="allowAPI"
                     label={$LL.mapEditor.properties.openWebsite.allowAPI()}
                     bind:value={property.allowAPI}
@@ -793,13 +815,9 @@
                 />
 
                 {#if policy != undefined}
-                    <div class="value-input flex flex-col">
-                        <InputTags
-                            label={$LL.mapEditor.properties.openWebsite.policy()}
-                            options={policyOption}
-                            bind:value={policy}
-                            handleChange={handlePolicyChange}
-                        />
+                    <div class="op-field">
+                        <span class="op-label">{$LL.mapEditor.properties.openWebsite.policy()}</span>
+                        <PolicyChips value={policy} options={policyOptions} onChange={handlePolicyChange} />
                     </div>
                 {/if}
             {/if}
@@ -808,11 +826,146 @@
 </PropertyEditorBase>
 
 <style lang="scss">
+    .op {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        min-width: 0;
+    }
+    .op-field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        min-width: 0;
+    }
+    .op-label {
+        padding-inline-start: 2px;
+        font-size: 0.8125rem;
+        font-weight: 500;
+        color: rgba(255, 255, 255, 0.72);
+    }
+    .op-line {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    .op-link {
+        flex: 1 1 12rem;
+    }
+    .op-picker {
+        display: inline-flex;
+        flex: none;
+        align-items: center;
+        gap: 6px;
+        max-width: 100%;
+        height: 3rem;
+        margin: 0;
+        padding: 0 16px;
+        border-radius: 999px;
+        font: inherit;
+        font-size: 0.8125rem;
+        font-weight: 600;
+        cursor: pointer;
+        img {
+            width: 18px;
+            height: 18px;
+        }
+    }
+    .op-warn {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 10px 12px;
+        border-radius: 12px;
+        background: rgba(251, 191, 36, 0.1);
+        box-shadow: inset 0 0 0 1px rgba(251, 191, 36, 0.32);
+        color: #fde7a6;
+        font-size: 0.8125rem;
+        line-height: 1.4;
+        :global(svg) {
+            margin-top: 1px;
+            color: #fbbf24;
+        }
+        a {
+            color: #fff;
+            font-weight: 600;
+        }
+    }
     .advanced-option {
         display: none;
 
         &.active {
-            display: block;
+            display: flex;
         }
+    }
+    .op-group {
+        flex-direction: column;
+        gap: 12px;
+        padding: 12px;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.04);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+    }
+    .op-slider {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+    .op-slider-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 0.9375rem;
+    }
+    .op-slider-value {
+        padding: 3px 10px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+        font-size: 0.8125rem;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+    }
+    .op-track {
+        position: relative;
+        height: 6px;
+        margin-inline: 11px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.14);
+    }
+    .op-track-fill {
+        position: absolute;
+        inset-block: 0;
+        inset-inline-start: 0;
+        border-radius: 999px;
+        background: linear-gradient(90deg, #8629fc, #4156f6);
+    }
+    .op-track-thumb {
+        position: absolute;
+        top: -8px;
+        width: 22px;
+        height: 22px;
+        margin-inline-start: -11px;
+        border-radius: 999px;
+        background: #fff;
+        box-shadow: 0 0 0 4px rgba(134, 41, 252, 0.25), 0 2px 6px rgba(0, 0, 0, 0.4);
+        pointer-events: none;
+    }
+    .op-track input {
+        position: absolute;
+        /* The tap area is the 44px band around the track, and runs the full track so the thumb ends reach 15 % and 85 % */
+        inset-block: -19px;
+        inset-inline: -11px;
+        width: calc(100% + 22px);
+        height: 44px;
+        margin: 0;
+        opacity: 0;
+        cursor: pointer;
+    }
+    .op-slider-ends {
+        display: flex;
+        justify-content: space-between;
+        font-size: 0.6875rem;
+        color: rgba(255, 255, 255, 0.4);
+        font-variant-numeric: tabular-nums;
     }
 </style>
