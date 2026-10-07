@@ -205,6 +205,10 @@
             error = "";
             warning = "";
             try {
+                // A pasted link without a scheme (e.g. "youtu.be/ID") is not a valid URL yet: add the scheme first
+                if (!/^[a-z][a-z0-9+.-]*:/i.test(property.link.trim())) {
+                    property.link = "https://" + property.link.trim();
+                }
                 const mediaLink = new MediaLinkManager(property.link);
 
                 // Vérify that the link matches with properties
@@ -760,18 +764,6 @@
                 disabled={property.newTab}
             />
 
-            {#if !embeddable && !property.newTab}
-                <div class="mb-3">
-                    <span class="err text-warning-900 text-xs italic"
-                        ><IconAlertTriangle font-size="12" />
-                        {$LL.mapEditor.properties.openWebsite.warningEmbeddableLink()}.
-                        <a
-                            href="https://workadventu.re/map-building/troubleshooting.md#content-issues-embedding-a-website"
-                            target="_blank">{$LL.mapEditor.properties.openWebsite.findOutMoreHere()}</a
-                        >.</span
-                    >àà
-                </div>
-            {/if}
             {#if !property.newTab}
                 <div class="mt-3 mb-3">
                     <RangeSlider
