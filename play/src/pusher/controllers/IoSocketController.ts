@@ -387,7 +387,10 @@ export class IoSocketController {
                                     companionTextureId,
                                     locale,
                                     userData.tags,
-                                    botChatID
+                                    botChatID,
+                                    // Only a guest's typed name goes to Orbit. A member's name comes from their
+                                    // account, and a bot has its own.
+                                    isLogged || botChatID ? undefined : name.trim().slice(0, 100) || undefined
                                 );
 
                                 if (userData.status === "ok" && !userData.isCharacterTexturesValid) {
