@@ -227,6 +227,8 @@ const mapEditor: BaseTranslation = {
             dynamicAccessDescription: "Anyone with appropriate user tags can claim the property of the zone.",
             staticAccessDescription: "Manually define the owner of the zone.",
             allowedTags: "Allowed user tags",
+            allowedTagsInfo:
+                "Only signed-in people with one of these tags can claim this desk. Leave it empty and any signed-in person can claim it.",
             allowedUser: "Allowed user",
             owner: "Owner",
             revokeAccess: "Revoke access",

@@ -137,6 +137,9 @@ export const editAreaGhostStore = writable<AreaDraft | undefined>(undefined);
 /** On a phone, the Areas sheet pulled up to the list of all areas (otherwise it peeks at the bottom). */
 export const editAreaSheetOpenStore = writable<boolean>(false);
 
+/** Counts the taps on "Settings" of the bar pinned under an area: the area's settings come back to the front. */
+export const editAreaSettingsRequestStore = writable<number>(0);
+
 /** Shown once per phone until the first tool is picked: "Pick a tool on the right..." */
 function createEditHintSeenStore() {
     const { subscribe, set } = writable<boolean>(localUserStore.getEditHintSeen());
