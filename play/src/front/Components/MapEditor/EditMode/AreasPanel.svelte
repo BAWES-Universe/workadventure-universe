@@ -5,15 +5,23 @@
     import { LL } from "../../../../i18n/i18n-svelte";
     import { mobileLayoutStore } from "../../../Stores/MobileLayoutStore";
     import { mapEditorSelectedAreaPreviewStore } from "../../../Stores/MapEditorStore";
+    import { editAreaListShownStore } from "../../../Stores/EditModeStore";
     import PanelHeader from "./PanelHeader.svelte";
     import AreaSettings from "./AreaSettings.svelte";
     import AreaRows from "./AreaRows.svelte";
     import { roomAreasStore } from "./roomAreas";
     import { startNewArea } from "./newArea";
     import { IconPlus } from "@wa-icons";
+
+    // Picking another area (or none) shows its page again; only pressing Settings on its bar puts the list back.
+    let lastPicked = $mapEditorSelectedAreaPreviewStore;
+    $: if ($mapEditorSelectedAreaPreviewStore !== lastPicked) {
+        lastPicked = $mapEditorSelectedAreaPreviewStore;
+        editAreaListShownStore.set(false);
+    }
 </script>
 
-{#if $mapEditorSelectedAreaPreviewStore}
+{#if $mapEditorSelectedAreaPreviewStore && !$editAreaListShownStore}
     <AreaSettings />
 {:else}
     <PanelHeader

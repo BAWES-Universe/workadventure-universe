@@ -4,7 +4,8 @@
     // and gets eight round dots; while it moves or resizes, a faint dashed line shows where it was. A new area being
     // drawn has the same frame. Phaser still catches the pointer at the same places (AreaPreview.useMapFrame); this
     // only draws, and lets every tap through to the map. The camera does not report its moves, so this reads it
-    // every frame.
+    // every frame. In the Objects tool (quiet) the same frames are drawn faded, without fill, dots or clicks, so you can
+    // see where areas are while you place things.
     import { onDestroy, onMount } from "svelte";
     import { get } from "svelte/store";
     import { LL } from "../../../../i18n/i18n-svelte";
@@ -12,7 +13,7 @@
     import { screenSpace } from "../../../Phaser/Game/MapEditor/ScreenSpace";
     import { areaColour } from "../../../Phaser/Components/MapEditor/AreaPreview";
     import type { AreaEditorTool } from "../../../Phaser/Game/MapEditor/Tools/AreaEditorTool";
-    import { editAreaGhostStore, editAreaSketchStore } from "../../../Stores/EditModeStore";
+    import { editAreaGhostStore, editAreaNamingStore, editAreaSketchStore } from "../../../Stores/EditModeStore";
     import { areaLook } from "./areaLook";
 
     interface Frame {
@@ -37,6 +38,8 @@
     const DOT_GAP = 18;
     const DOT_CORNER_GAP = 30;
 
+    export let quiet = false;
+
     let frames: Frame[] = [];
     let dots: Dot[] = [];
     let ghost: { look: string; x: number; y: number; width: number; height: number } | undefined;
@@ -54,6 +57,30 @@
     function update() {
         frame = requestAnimationFrame(update);
         const scene = gameManager.tryGetCurrentGameScene();
+        if (quiet && scene) {
+            const space = screenSpace(scene);
+            const unnamed = get(LL).mapEditor.edit.areas.unnamed();
+            const areas = scene.getGameMapFrontWrapper().getAreas();
+            frames = areas
+                ? [...areas.values()].map((data) => {
+                      const r = space.rect(data.x, data.y, data.width, data.height);
+                      return {
+                          id: data.id,
+                          name: data.name.trim() || unnamed,
+                          look: areaLook(areaColour(data.properties)),
+                          x: r.x,
+                          y: r.y,
+                          width: r.width,
+                          height: r.height,
+                          picked: false,
+                      };
+                  })
+                : [];
+            dots = [];
+            ghost = undefined;
+            sketch = undefined;
+            return;
+        }
         const previews = tool()?.getAreaPreviews?.();
         if (!scene || !previews) {
             frames = [];
@@ -64,6 +91,8 @@
         }
         const space = screenSpace(scene);
         const unnamed = get(LL).mapEditor.edit.areas.unnamed();
+        const nameThis = get(LL).mapEditor.edit.areas.namePlaceholder();
+        const naming = get(editAreaNamingStore);
         const next: Frame[] = [];
         let nextDots: Dot[] = [];
         let pickedLook = "";
@@ -74,9 +103,11 @@
             const data = preview.getAreaData();
             const picked = preview.isSelected();
             const look = areaLook(areaColour(data.properties));
+            // While the name field is open and empty, the label says what to do.
+            const named = data.name.trim() || (picked && naming ? nameThis : unnamed);
             next.push({
                 id: data.id,
-                name: data.name.trim() || unnamed,
+                name: named,
                 look,
                 x: r.x,
                 y: r.y,
@@ -121,7 +152,7 @@
     });
 </script>
 
-<div class="af-root" data-testid="area-frames">
+<div class="af-root" class:af-quiet={quiet} data-testid={quiet ? "area-frames-quiet" : "area-frames"}>
     {#if ghost}
         <i
             class="af-was"
@@ -169,6 +200,13 @@
         position: absolute;
         border-radius: 14px;
         box-shadow: 0 0 0 2px var(--af-c), 0 0 0 6px var(--af-halo);
+    }
+    /* Faded, a line and a name only: the objects stay in front. */
+    .af-quiet {
+        opacity: 0.6;
+    }
+    .af-quiet .af-frame {
+        box-shadow: 0 0 0 2px var(--af-c);
     }
     .af-pick {
         background: var(--af-fill);

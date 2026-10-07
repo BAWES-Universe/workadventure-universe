@@ -15,6 +15,7 @@ import {
     editAreaDrawArmedStore,
     editAreaGhostStore,
     editAreaSheetOpenStore,
+    editAreaJustDrawnStore,
     editAreaSketchStore,
     showUndoToast,
 } from "../../../../Stores/EditModeStore";
@@ -780,6 +781,11 @@ export class AreaEditorTool extends MapEditorTool {
 
     private createNewArea(x: number, y: number, width: number, height: number): void {
         const id = uuid();
+        // Its page opens with the cursor in the name field. Only for a moment: a page opened on it later is just a page.
+        editAreaJustDrawnStore.set(id);
+        setTimeout(() => {
+            if (get(editAreaJustDrawnStore) === id) editAreaJustDrawnStore.set(undefined);
+        }, 1500);
         this.mapEditorModeManager
             .executeCommand(
                 new CreateAreaFrontCommand(

@@ -20,7 +20,9 @@ function keyOf(areas: AreaData[]): string {
     return areas
         .map((a) => {
             const settings = a.properties.map((p) =>
-                p.type === "areaDescriptionProperties" ? `listed=${p.searchable === true}` : p.type
+                p.type === "areaDescriptionProperties"
+                    ? `listed=${p.searchable === true},about=${p.description ?? ""}`
+                    : p.type
             );
             return `${a.id}:${a.name}:${settings.join(",")}`;
         })

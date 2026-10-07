@@ -129,6 +129,9 @@
     {#if tool === EditorToolName.AreaEditor}
         <AreaFrames />
     {/if}
+    {#if tool === EditorToolName.EntityEditor}
+        <AreaFrames quiet />
+    {/if}
     <EditPill />
     <EditRail />
     {#if panelShown}
