@@ -193,7 +193,9 @@
         {#if confirmingDelete}
             <div class="flex flex-col gap-2 p-2 text-sm" data-testid="deleteChatConfirm">
                 <span class="font-bold">{$LL.chat.directChat.deleteChat.confirm()}</span>
-                <span class="max-w-56 text-xs text-white/60">{$LL.chat.directChat.deleteChat.hint()}</span>
+                <span class="max-w-56 text-xs text-white/60"
+                    >{$LL.chat.directChat.deleteChat.hint({ name: $roomName })}</span
+                >
                 <div class="flex gap-2">
                     <button
                         type="button"

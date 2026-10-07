@@ -3,6 +3,7 @@ import type { EmojiClickEvent } from "emoji-picker-element/shared";
 import type { ChatMessage } from "../../../Connection/ChatConnection";
 import { selectedChatMessageToEdit, selectedChatMessageToReply } from "../../../Stores/ChatStore";
 import { notificationPlayingStore } from "../../../../Stores/NotificationStore";
+import { showCopiedPill } from "../../../Stores/CopiedPillStore";
 import LL from "../../../../../i18n/i18n-svelte";
 import { showFloatingUi } from "../../../../Utils/svelte-floatingui-show";
 import LazyEmote from "../../../../Components/EmoteMenu/LazyEmote.svelte";
@@ -73,7 +74,7 @@ export function deleteMessage(message: ChatMessage): void {
 export async function copyText(text: string): Promise<void> {
     try {
         await navigator.clipboard.writeText(text);
-        notificationPlayingStore.playNotification(get(LL).chat.messageActions.textCopied());
+        showCopiedPill();
     } catch (error) {
         console.warn("Could not copy the message text", error);
     }

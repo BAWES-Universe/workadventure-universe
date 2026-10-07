@@ -16,7 +16,8 @@
     import TopRowAvatar from "../TopRow/TopRowAvatar.svelte";
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import type { PictureStore } from "../../../Stores/PictureStore";
-    import { WOKA_BY_CHAT_ID_CONTEXT, personPicture } from "../../Stores/ChatUserWokaStore";
+    import { PERSON_COLOUR_CONTEXT, WOKA_BY_CHAT_ID_CONTEXT, personPicture } from "../../Stores/ChatUserWokaStore";
+    import type { PersonColourOf } from "../../Stores/ChatUserWokaStore";
     import EncryptionBadge from "../EncryptionBadge.svelte";
     import { formatTypingLine } from "../TopRow/TopRowSummary";
     import { formatRowTime, formatUnreadCount, normalizeTimestamp, toPlainText } from "../OneList/OneListOrder";
@@ -39,6 +40,9 @@
     const wokaByChatId: Readable<Map<string, PictureStore>> = hasContext(WOKA_BY_CHAT_ID_CONTEXT)
         ? getContext(WOKA_BY_CHAT_ID_CONTEXT)
         : readable(new Map<string, PictureStore>());
+    const colourOf: Readable<PersonColourOf> = hasContext(PERSON_COLOUR_CONTEXT)
+        ? getContext(PERSON_COLOUR_CONTEXT)
+        : readable(() => undefined);
     const myChatId = localUserStore.getChatId();
     $: partnerId = room.type === "direct" ? $members.find((member) => member.id !== myChatId)?.id : undefined;
     $: partnerWoka = partnerId ? personPicture($wokaByChatId, partnerId, undefined) : undefined;
@@ -103,7 +107,13 @@
     <div class="relative shrink-0">
         {#if room.type === "direct"}
             <!-- Their woka: live while they're in Universe, else the one saved as their chat picture. -->
-            <TopRowAvatar pictureStore={partnerWoka ?? room.pictureStore} name={$roomName} size="lg" ring={false} />
+            <TopRowAvatar
+                pictureStore={partnerWoka ?? room.pictureStore}
+                name={$roomName}
+                color={$colourOf(partnerId, $roomName)}
+                size="lg"
+                ring={false}
+            />
         {:else}
             <Avatar pictureStore={room.pictureStore} fallbackName={$roomName} size="lg" />
         {/if}
