@@ -2,6 +2,7 @@
     // The settings of one area as plain rows: its name, what is turned on (with a switch), and what can be added
     // (with a plus). A row opens the setting's own page; the engine's property editors are reused there.
     import { onDestroy } from "svelte";
+    import { get } from "svelte/store";
     import type { AreaDataProperties, AreaDataProperty, PlayAudioPropertyData } from "@workadventure/map-editor";
     import type { KlaxoonEvent } from "@workadventure/shared-utils";
     import { KlaxoonService } from "@workadventure/shared-utils";
@@ -11,7 +12,12 @@
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import type { AreaEditorTool } from "../../../Phaser/Game/MapEditor/Tools/AreaEditorTool";
     import { mapEditorSelectedAreaPreviewStore } from "../../../Stores/MapEditorStore";
-    import { editAreaSettingsRequestStore } from "../../../Stores/EditModeStore";
+    import {
+        editAreaJustDrawnStore,
+        editAreaNamingStore,
+        editAreaSettingPageOpenStore,
+        editAreaSettingsRequestStore,
+    } from "../../../Stores/EditModeStore";
     import type { AreaPreview } from "../../../Phaser/Components/MapEditor/AreaPreview";
     import { extensionModuleStore } from "../../../Stores/GameSceneStore";
     import type { ExtensionModule, ExtensionModuleAreaProperty } from "../../../ExternalModule/ExtensionModule";
@@ -70,6 +76,12 @@
             openProperty = undefined;
             renaming = false;
             lastPreview = preview;
+            // An area just drawn opens with the cursor in its name, so naming is the first thing to do.
+            if (preview && get(editAreaJustDrawnStore) === preview.getAreaData().id) {
+                renaming = true;
+                requestAnimationFrame(() => nameInput?.focus());
+            }
+            editAreaJustDrawnStore.set(undefined);
         }
         if (!preview) return;
         properties = structuredClone(preview.getProperties());
@@ -101,6 +113,11 @@
         renaming = false;
         showApps = false;
     }
+
+    $: editAreaSettingPageOpenStore.set(openProperty !== undefined);
+    onDestroy(() => editAreaSettingPageOpenStore.set(false));
+    $: editAreaNamingStore.set(renaming && areaName.trim() === "");
+    onDestroy(() => editAreaNamingStore.set(false));
 
     $: preview = $mapEditorSelectedAreaPreviewStore;
     $: flags = flagsOf(properties);
@@ -237,7 +254,8 @@
         if (nameInput && document.activeElement === nameInput) {
             nameInput.blur();
         }
-        preview?.setAreaName(areaName);
+        // Leaving the name as it was changes nothing: no update, nothing to undo.
+        if (preview && areaName !== preview.getAreaData().name) preview.setAreaName(areaName);
     }
     function startRename() {
         renaming = true;
@@ -418,6 +436,7 @@
     {:else}
         <PanelHeader
             title={areaName || $LL.mapEditor.edit.areas.unnamed()}
+            alignTop
             onBack={back}
             backLabel={$LL.mapEditor.edit.areas.back()}
         >
@@ -440,7 +459,9 @@
                     </button>
                 {/if}
             </svelte:fragment>
-            <svelte:fragment slot="subtitle">{$LL.mapEditor.edit.areas.rename()}</svelte:fragment>
+            <svelte:fragment slot="subtitle"
+                >{renaming ? $LL.mapEditor.edit.areas.nameHint() : $LL.mapEditor.edit.areas.rename()}</svelte:fragment
+            >
         </PanelHeader>
         <div class="em-scroll">
             <!-- The description belongs with the name: it is the first thing under it. Several lines, as in the old
@@ -454,6 +475,7 @@
                     placeholder={$LL.mapEditor.edit.areas.descriptionPlaceholder()}
                     on:change={saveDescription}
                 />
+                <span class="em-hint">{$LL.mapEditor.edit.areas.descriptionHint()}</span>
             </label>
             {#if turnedOn.length > 0}
                 <div class="em-ebi">{$LL.mapEditor.edit.areas.turnedOn()}</div>
@@ -716,6 +738,11 @@
         flex-direction: column;
         gap: 6px;
         padding: 4px 0 8px;
+    }
+    .em-hint {
+        font-size: 12.5px;
+        line-height: 1.35;
+        color: rgba(244, 242, 250, 0.6);
     }
     .em-desc textarea {
         width: 100%;

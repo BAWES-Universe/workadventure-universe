@@ -9,7 +9,11 @@
     import type { AreaEditorTool } from "../../../Phaser/Game/MapEditor/Tools/AreaEditorTool";
     import { mobileLayoutStore } from "../../../Stores/MobileLayoutStore";
     import { mapEditorSelectedAreaPreviewStore, mapEditorVisibilityStore } from "../../../Stores/MapEditorStore";
-    import { editAreaSettingsRequestStore } from "../../../Stores/EditModeStore";
+    import {
+        editAreaListShownStore,
+        editAreaSettingPageOpenStore,
+        editAreaSettingsRequestStore,
+    } from "../../../Stores/EditModeStore";
     import { IconSettings, IconTrash } from "@wa-icons";
 
     let left = 0;
@@ -68,9 +72,19 @@
             | undefined;
     }
 
+    // Settings brings the area's page back. While that page is showing it is lit, and pressing it closes the page: on
+    // a computer the Areas list shows again with the area still picked, on a phone the panel tucks away. On one of its
+    // settings' own pages it is not lit, and goes back to the area's page.
+    $: showing = $mapEditorVisibilityStore && !$editAreaListShownStore && !$editAreaSettingPageOpenStore;
     function settings() {
+        if (showing) {
+            if ($mobileLayoutStore) mapEditorVisibilityStore.set(false);
+            else editAreaListShownStore.set(true);
+            return;
+        }
         // The panel opens if it was tucked away, and an open setting page goes back to the area's own settings, so
         // the button always shows something.
+        editAreaListShownStore.set(false);
         mapEditorVisibilityStore.set(true);
         editAreaSettingsRequestStore.update((n) => n + 1);
     }
@@ -91,7 +105,14 @@
     data-testid="area-actions"
 >
     <div class="em-actions-row">
-        <button type="button" class="em-act" data-testid="area-actions-settings" on:click={settings}>
+        <button
+            type="button"
+            class="em-act"
+            class:em-act-on={showing}
+            aria-pressed={showing}
+            data-testid="area-actions-settings"
+            on:click={settings}
+        >
             <IconSettings font-size="18" />{$LL.mapEditor.edit.objects.actions.settings()}
         </button>
         <button type="button" class="em-act em-act-del" data-testid="area-actions-delete" on:click={remove}>
@@ -137,6 +158,11 @@
         .em-act:hover {
             background: rgba(255, 255, 255, 0.08);
         }
+    }
+    /* Lit while the area's page is showing: grey like the bar's pressed buttons. */
+    .em-act-on {
+        background: rgba(255, 255, 255, 0.16);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
     }
     .em-act-del {
         color: #f7a48f;

@@ -11,13 +11,15 @@
     export let subtitle: string | undefined = undefined;
     export let onBack: (() => void) | undefined = undefined;
     export let backLabel = "Back";
+    /** The buttons stay at the top when the lines beside them change height (the name field and its hint). */
+    export let alignTop = false;
 
     function hidePanel() {
         mapEditorVisibilityStore.set(false);
     }
 </script>
 
-<div class="em-head">
+<div class="em-head" class:em-top={alignTop}>
     {#if onBack}
         <button type="button" class="em-back" aria-label={backLabel} data-testid="edit-panel-back" on:click={onBack}>
             <IconChevronLeft font-size="18" />
@@ -51,6 +53,15 @@
         gap: 8px;
         flex: none;
         min-height: 40px;
+    }
+    .em-top {
+        align-items: flex-start;
+    }
+    /* The title line is as tall as the name field, so swapping the name for its field moves nothing. */
+    .em-top .em-title {
+        display: flex;
+        align-items: center;
+        min-height: 34px;
     }
     .em-head-text {
         flex: 1;

@@ -139,6 +139,14 @@ export const editAreaSheetOpenStore = writable<boolean>(false);
 
 /** Counts the taps on "Settings" of the bar pinned under an area: the area's settings come back to the front. */
 export const editAreaSettingsRequestStore = writable<number>(0);
+/** On a computer: the Areas list shows in the panel although an area is picked (Settings pressed again to close its page). */
+export const editAreaListShownStore = writable<boolean>(false);
+/** A setting's own page is open inside the picked area's page (Settings on the bar then goes back to the area's page). */
+export const editAreaSettingPageOpenStore = writable<boolean>(false);
+/** The id of the area just drawn: its page opens with the cursor in the name field. */
+export const editAreaJustDrawnStore = writable<string | undefined>(undefined);
+/** The name field of the picked area is open and empty: its label on the map says "Name this area". */
+export const editAreaNamingStore = writable<boolean>(false);
 
 /** Shown once per phone until the first tool is picked: "Pick a tool on the right..." */
 function createEditHintSeenStore() {

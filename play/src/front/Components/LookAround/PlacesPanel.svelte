@@ -96,6 +96,7 @@
     let selectedFilters: string[] = [];
 
     const PROPERTY_FILTERS = [
+        "highlight",
         "livekitRoomProperty",
         "jitsiRoomProperty",
         "speakerMegaphone",
@@ -139,6 +140,18 @@
     );
     $: objects = [...$mapExplorationEntitiesStore.entries()].filter(([, entity]) =>
         matches(entity, search, selectedFilters)
+    );
+    $: roomAreaCount = ($mapExplorationAreasStore ?? new Map()).size;
+    $: roomObjectCount = $mapExplorationEntitiesStore.size;
+    $: allPlaces = [
+        ...($mapExplorationAreasStore ?? new Map<string, AreaPreview>()).values(),
+        ...$mapExplorationEntitiesStore.values(),
+    ] as Place[];
+    $: presentFilters = PROPERTY_FILTERS.filter(
+        (f) => selectedFilters.includes(f) || allPlaces.some((p) => placeHasProperty(p, f))
+    );
+    $: presentApps = connectionManager.applications.filter(
+        (app) => selectedFilters.includes(app.name) || allPlaces.some((p) => placeHasProperty(p, app.name))
     );
 
     function peopleText(areaId: string): string {
@@ -235,24 +248,24 @@
                 data-testid="look-around-search"
             />
         </label>
-        <button
-            type="button"
-            class="chip places-filter"
-            class:open={filtersOpen}
-            aria-pressed={filtersOpen}
-            data-testid="look-around-filter"
-            on:click={() => (filtersOpen = !filtersOpen)}
-        >
-            <IconAdjustements font-size="15" />
-            {$LL.mapEditor.lookAround.filter()}
-            {#if selectedFilters.length > 0}<b>{selectedFilters.length}</b>{/if}
-        </button>
+        {#if presentFilters.length + presentApps.length > 0}<button
+                type="button"
+                class="chip places-filter"
+                class:open={filtersOpen}
+                aria-pressed={filtersOpen}
+                data-testid="look-around-filter"
+                on:click={() => (filtersOpen = !filtersOpen)}
+            >
+                <IconAdjustements font-size="15" />
+                {$LL.mapEditor.lookAround.filter()}
+                {#if selectedFilters.length > 0}<b>{selectedFilters.length}</b>{/if}
+            </button>{/if}
     </div>
 
-    {#if filtersOpen}
+    {#if filtersOpen && presentFilters.length + presentApps.length > 0}
         <div class="places-filters-label">{$LL.mapEditor.lookAround.showOnlyWith()}</div>
         <div class="places-filters">
-            {#each PROPERTY_FILTERS as filter (filter)}
+            {#each presentFilters as filter (filter)}
                 <button
                     type="button"
                     class="chip chip-sm"
@@ -260,7 +273,7 @@
                     on:click={() => toggleFilter(filter)}>{filterLabel(filter)}</button
                 >
             {/each}
-            {#each connectionManager.applications as app (app.name)}
+            {#each presentApps as app (app.name)}
                 <button
                     type="button"
                     class="chip chip-sm"
@@ -272,54 +285,65 @@
     {/if}
 
     <div class="places-list">
-        <button type="button" class="group-head areas" on:click={() => (openGroups.areas = !openGroups.areas)}>
-            <span class="u-eyebrow">{$LL.mapEditor.lookAround.areas()}</span><b>{areas.length}</b>
-            <span class="group-chev" class:shut={!openGroups.areas}><IconChevronDown font-size="16" /></span>
-        </button>
-        <div class="area-items" class:folded={!openGroups.areas}>
-            {#each areas as [id, area] (id)}
-                <button
-                    type="button"
-                    class="place-row item"
-                    class:active={$mapExplorationObjectSelectedStore === area}
-                    on:click={() => select(area)}
-                >
-                    <span class="place-tile"><svelte:component this={getPlaceIcon(area)} font-size="18" /></span>
-                    <span class="place-text">
-                        <span class="place-name">{getPlaceName(area, $LL)}</span>
-                        <span class="place-sub">{subtitle(area, id)}</span>
-                    </span>
-                    <span class="place-go"><IconLocation font-size="15" /></span>
-                </button>
-            {:else}
-                <div class="places-empty">{$LL.mapEditor.lookAround.nothingFound()}</div>
-            {/each}
-        </div>
-        <button type="button" class="group-head entities" on:click={() => (openGroups.objects = !openGroups.objects)}>
-            <span class="u-eyebrow">{$LL.mapEditor.lookAround.objects()}</span><b>{objects.length}</b>
-            <span class="group-chev" class:shut={!openGroups.objects}><IconChevronDown font-size="16" /></span>
-        </button>
-        <div class="entity-items" class:folded={!openGroups.objects}>
-            {#each objects as [id, entity] (id)}
-                <button
-                    type="button"
-                    class="place-row item"
-                    class:active={$mapExplorationObjectSelectedStore === entity}
-                    on:click={() => select(entity)}
-                >
-                    <span class="place-tile place-tile-image">
-                        <img src={entity.getPrefab().imagePath} alt="" draggable="false" />
-                    </span>
-                    <span class="place-text">
-                        <span class="place-name">{getPlaceName(entity, $LL)}</span>
-                        <span class="place-sub">{subtitle(entity)}</span>
-                    </span>
-                    <span class="place-go"><IconLocation font-size="15" /></span>
-                </button>
-            {:else}
-                <div class="places-empty">{$LL.mapEditor.lookAround.nothingFound()}</div>
-            {/each}
-        </div>
+        {#if roomAreaCount === 0 && roomObjectCount === 0}
+            <div class="places-empty">{$LL.mapEditor.lookAround.nothingFound()}</div>
+        {/if}
+        {#if roomAreaCount > 0}<button
+                type="button"
+                class="group-head areas"
+                on:click={() => (openGroups.areas = !openGroups.areas)}
+            >
+                <span class="u-eyebrow">{$LL.mapEditor.lookAround.areas()}</span><b>{areas.length}</b>
+                <span class="group-chev" class:shut={!openGroups.areas}><IconChevronDown font-size="16" /></span>
+            </button>
+            <div class="area-items" class:folded={!openGroups.areas}>
+                {#each areas as [id, area] (id)}
+                    <button
+                        type="button"
+                        class="place-row item"
+                        class:active={$mapExplorationObjectSelectedStore === area}
+                        on:click={() => select(area)}
+                    >
+                        <span class="place-tile"><svelte:component this={getPlaceIcon(area)} font-size="18" /></span>
+                        <span class="place-text">
+                            <span class="place-name">{getPlaceName(area, $LL)}</span>
+                            <span class="place-sub">{subtitle(area, id)}</span>
+                        </span>
+                        <span class="place-go"><IconLocation font-size="15" /></span>
+                    </button>
+                {:else}
+                    <div class="places-empty">{$LL.mapEditor.lookAround.nothingFound()}</div>
+                {/each}
+            </div>{/if}
+        {#if roomObjectCount > 0}<button
+                type="button"
+                class="group-head entities"
+                on:click={() => (openGroups.objects = !openGroups.objects)}
+            >
+                <span class="u-eyebrow">{$LL.mapEditor.lookAround.objects()}</span><b>{objects.length}</b>
+                <span class="group-chev" class:shut={!openGroups.objects}><IconChevronDown font-size="16" /></span>
+            </button>
+            <div class="entity-items" class:folded={!openGroups.objects}>
+                {#each objects as [id, entity] (id)}
+                    <button
+                        type="button"
+                        class="place-row item"
+                        class:active={$mapExplorationObjectSelectedStore === entity}
+                        on:click={() => select(entity)}
+                    >
+                        <span class="place-tile place-tile-image">
+                            <img src={entity.getPrefab().imagePath} alt="" draggable="false" />
+                        </span>
+                        <span class="place-text">
+                            <span class="place-name">{getPlaceName(entity, $LL)}</span>
+                            <span class="place-sub">{subtitle(entity)}</span>
+                        </span>
+                        <span class="place-go"><IconLocation font-size="15" /></span>
+                    </button>
+                {:else}
+                    <div class="places-empty">{$LL.mapEditor.lookAround.nothingFound()}</div>
+                {/each}
+            </div>{/if}
     </div>
 
     {#if $mapEditorMenuVisibleStore}

@@ -7,7 +7,7 @@
     import { areaColour } from "../../../Phaser/Components/MapEditor/AreaPreview";
     import type { AreaEditorTool } from "../../../Phaser/Game/MapEditor/Tools/AreaEditorTool";
     import { mobileLayoutStore } from "../../../Stores/MobileLayoutStore";
-    import { editAreaSheetOpenStore } from "../../../Stores/EditModeStore";
+    import { editAreaListShownStore, editAreaSheetOpenStore } from "../../../Stores/EditModeStore";
     import { IconChevronRight, IconTexture } from "@wa-icons";
 
     export let areas: AreaData[] = [];
@@ -41,11 +41,19 @@
         // Measured before the sheet goes: picking the area puts it away on a phone.
         const free = freeSpace();
         editAreaSheetOpenStore.set(false);
+        // The picked area's own row opens its page again.
+        editAreaListShownStore.set(false);
         tool()?.glideToArea?.(area.id, free);
     }
 
     function nameOf(area: AreaData): string {
         return area.name.trim() || $LL.mapEditor.edit.areas.unnamed();
+    }
+
+    /** What the area is for, as its description says: one line under the name. */
+    function descriptionOf(area: AreaData): string {
+        const description = area.properties.find((p) => p.type === "areaDescriptionProperties");
+        return description?.type === "areaDescriptionProperties" ? (description.description ?? "").trim() : "";
     }
 
     function whatOf(area: AreaData): string {
@@ -70,6 +78,7 @@
         <span class="ar-mark" style="color: #{areaColour(area.properties)}"><IconTexture font-size="22" /></span>
         <span class="ar-tx">
             <span class="ar-t">{nameOf(area)}</span>
+            {#if descriptionOf(area) !== ""}<span class="ar-d">{descriptionOf(area)}</span>{/if}
             <span class="ar-m">{whatOf(area)}</span>
         </span>
         <IconChevronRight font-size="18" class="ar-chev" />
@@ -112,6 +121,13 @@
     }
     .ar-t {
         font-weight: 600;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .ar-d {
+        font-size: 13px;
+        color: rgba(244, 242, 250, 0.86);
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
