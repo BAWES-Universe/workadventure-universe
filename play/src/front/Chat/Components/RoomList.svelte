@@ -246,7 +246,9 @@
     {/if}
     {#if $selectedRoomStore !== undefined}
         <div class="overflow-y-auto">
-            <RoomTimeline room={$selectedRoomStore} />
+            {#key $selectedRoomStore.id}
+                <RoomTimeline room={$selectedRoomStore} />
+            {/key}
         </div>
     {:else if $selectedRoomStore === undefined && sideBarWidth >= CHAT_LAYOUT_LIMIT}
         <div class="flex flex-col flex-1 ps-4 items-center pt-8">
