@@ -3,7 +3,13 @@
     import { get } from "svelte/store";
     import LL from "../../../i18n/i18n-svelte";
     import type { TranslationFunctions } from "../../../i18n/i18n-types";
-    import { editPanelBackStore, editPlacingBarStore, type PlacingBar } from "../../Stores/EditModeStore";
+    import {
+        editPanelBackStore,
+        editPillStore,
+        editPlacingBarStore,
+        type EditPillOverride,
+        type PlacingBar,
+    } from "../../Stores/EditModeStore";
     import { mapEditorVisibilityStore } from "../../Stores/MapEditorStore";
     import { mobileLayoutStore } from "../../Stores/MobileLayoutStore";
     import BotList from "./components/BotList.svelte";
@@ -24,6 +30,8 @@
         cancelPlacement,
         loadBotPreviews,
         queueBotSave,
+        redoRouteChange,
+        routeRedoCountStore,
         routeUndoCountStore,
         stopWaypointEditing,
         undoRouteChange,
@@ -32,7 +40,7 @@
     import { routeStops } from "./behaviorModel";
     import { getBotEditorTool } from "./phaser/BotEditorTool";
     import { botApiService } from "./services/BotApiService";
-    import { IconArrowBackUp, IconMapPin, IconRoute } from "@wa-icons";
+    import { IconMapPin } from "@wa-icons";
 
     let detailView: BotDetailView | undefined;
     let botEditorTool = getBotEditorTool();
@@ -350,6 +358,12 @@
     onDestroy(() => {
         destroyed = true;
 
+        // Leaving the editor (the Done at the top, another tool) in the middle of a route ends it as the route's own
+        // Done does, so a changed route starts again from stop 1 there too
+        if (get(botEditorModeStore) === "waypoint-edit") {
+            stopWaypointEditing();
+        }
+
         // Unsubscribe from room changes
         if (roomChangeUnsubscribe) {
             roomChangeUnsubscribe();
@@ -610,8 +624,17 @@
     // While its companion is picked, the title is the bot's name over "Companion" and the back circle returns to
     // the bot's page, leaving the companion as it was
     let editingCompanion = false;
+    // Its WOKA the same way: the bot's name over "Body", and the back circle returns to the page
+    let editingTexture = false;
     $: editPanelBackStore.set(
-        currentMode === "detail" && selectedBot && editingCompanion
+        currentMode === "detail" && selectedBot && editingTexture
+            ? {
+                  onBack: () => (editingTexture = false),
+                  label: $LL.mapEditor.edit.bots.page.companion.back({ name: selectedBot.name ?? "" }),
+                  title: selectedBot.name || undefined,
+                  subtitle: $LL.mapEditor.edit.bots.page.body.title(),
+              }
+            : currentMode === "detail" && selectedBot && editingCompanion
             ? {
                   onBack: () => (editingCompanion = false),
                   label: $LL.mapEditor.edit.bots.page.companion.back({ name: selectedBot.name ?? "" }),
@@ -625,20 +648,19 @@
             : undefined
     );
 
-    // Editing a route or placing a new bot: the panel tucks away to show the map, and the bar at the bottom says
-    // what is going on with its actions (route: whose route and how many stops, with Undo and Done; placing: whose
+    // Editing a route or placing a new bot: the panel tucks away to show the map. A route takes the pill at the top
+    // over (whose route and how many stops, with Done, Undo and Redo); placing puts up the bar at the bottom (whose
     // spot to tap, with Cancel). A line at the top of the map says what to do.
     let bottomBarShown = false;
-    $: syncBottomBar(
+    $: syncMapJob(
         currentMode === "waypoint-edit" && selectedBot
-            ? routeBar(selectedBot, $routeUndoCountStore, $mobileLayoutStore, $LL)
-            : $placingBotStore
-            ? placeBar($placingBotStore, $mobileLayoutStore, $LL)
-            : undefined
+            ? routePill(selectedBot, $routeUndoCountStore, $routeRedoCountStore, $mobileLayoutStore, $LL)
+            : undefined,
+        $placingBotStore ? placeBar($placingBotStore, $mobileLayoutStore, $LL) : undefined
     );
 
-    function syncBottomBar(bar: PlacingBar | undefined) {
-        if (!bar) {
+    function syncMapJob(pill: EditPillOverride | undefined, bar: PlacingBar | undefined) {
+        if (!pill && !bar) {
             hideBottomBar();
             return;
         }
@@ -646,11 +668,18 @@
             bottomBarShown = true;
             mapEditorVisibilityStore.set(false);
         }
-        editPlacingBarStore.set(bar);
+        editPillStore.set(pill);
+        editPlacingBarStore.set(pill ? undefined : bar);
     }
 
-    // The translations come in as an argument so the bar follows a change of language
-    function routeBar(bot: BotData, undoCount: number, phone: boolean, ll: TranslationFunctions): PlacingBar {
+    // The translations come in as an argument so the pill follows a change of language
+    function routePill(
+        bot: BotData,
+        undoCount: number,
+        redoCount: number,
+        phone: boolean,
+        ll: TranslationFunctions
+    ): EditPillOverride {
         const page = ll.mapEditor.edit.bots.page;
         const stops = routeStops(bot).length;
         const loops = bot.behaviorConfig.loop !== false;
@@ -659,19 +688,15 @@
             subtitle: `${page.moves.stops({ count: stops })} · ${
                 loops ? page.moves.loops() : page.moves.backAndForthBrief()
             }`,
-            icon: IconRoute,
             hint: phone ? page.route.hintPhone() : page.route.hintDesktop(),
-            actions: [
-                {
-                    label: page.route.undo(),
-                    kind: "secondary",
-                    icon: IconArrowBackUp,
-                    disabled: undoCount === 0,
-                    testId: "bot-route-undo",
-                    onClick: undoRouteChange,
-                },
-                { label: page.route.done(), kind: "primary", testId: "bot-route-done", onClick: stopWaypointEditing },
-            ],
+            onDone: stopWaypointEditing,
+            onUndo: undoRouteChange,
+            onRedo: redoRouteChange,
+            canUndo: undoCount > 0,
+            canRedo: redoCount > 0,
+            doneTestId: "bot-route-done",
+            undoTestId: "bot-route-undo",
+            redoTestId: "bot-route-redo",
         };
     }
 
@@ -697,6 +722,7 @@
     function hideBottomBar() {
         if (!bottomBarShown) return;
         bottomBarShown = false;
+        editPillStore.set(undefined);
         editPlacingBarStore.set(undefined);
         mapEditorVisibilityStore.set(true);
     }
@@ -736,6 +762,7 @@
             <BotDetailView
                 bind:this={detailView}
                 bind:editingCompanion
+                bind:editingTexture
                 bot={selectedBot}
                 onSave={handleSave}
                 onDelete={handleDelete}

@@ -4,41 +4,65 @@
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import { EditorToolName } from "../../../Phaser/Game/MapEditor/MapEditorModeManager";
     import { mapEditorVisibilityStore } from "../../../Stores/MapEditorStore";
-    import { editUndoRedoStore } from "../../../Stores/EditModeStore";
+    import { editPillStore, editUndoRedoStore } from "../../../Stores/EditModeStore";
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
     import { IconArrowBackUp, IconCheck } from "@wa-icons";
 
     const roomName = gameManager.currentStartedRoom?.roomName ?? "";
 
+    // A module's own job (a bot's route) takes the pill over: its title, and Done, Undo and Redo do its job
+    $: job = $editPillStore;
+    $: canUndo = job ? job.canUndo : $editUndoRedoStore.canUndo;
+    $: canRedo = job ? job.canRedo : $editUndoRedoStore.canRedo;
+
     function done() {
+        if (job) {
+            job.onDone();
+            return;
+        }
         analyticsClient.toggleMapEditor(false);
         mapEditorVisibilityStore.set(false);
         gameManager.getCurrentGameScene().getMapEditorModeManager().equipTool(EditorToolName.CloseMapEditor);
     }
     function undo() {
+        if (job) {
+            job.onUndo();
+            return;
+        }
         gameManager.getCurrentGameScene().getMapEditorModeManager().undo();
     }
     function redo() {
+        if (job) {
+            job.onRedo();
+            return;
+        }
         gameManager.getCurrentGameScene().getMapEditorModeManager().redo();
     }
 </script>
 
 <div class="em-pill u-surface pointer-events-auto" data-testid="edit-pill">
-    <button type="button" class="em-done u-cta" data-testid="closeMapEditorButton" on:click={done}>
+    <button type="button" class="em-done u-cta" data-testid={job?.doneTestId ?? "closeMapEditorButton"} on:click={done}>
         <IconCheck font-size="18" />
         {$LL.mapEditor.edit.done()}
     </button>
     <div class="em-mid">
-        <span class="em-eyebrow">{$LL.mapEditor.edit.eyebrow()}</span>
-        <b class="em-room">{roomName}</b>
+        {#if job}
+            <b class="em-room">{job.title}</b>
+            {#if job.subtitle}
+                <span class="em-sub">{job.subtitle}</span>
+            {/if}
+        {:else}
+            <span class="em-eyebrow">{$LL.mapEditor.edit.eyebrow()}</span>
+            <b class="em-room">{roomName}</b>
+        {/if}
     </div>
     <button
         type="button"
         class="em-circ"
         aria-label={$LL.mapEditor.edit.undo()}
         title={$LL.mapEditor.edit.undo()}
-        disabled={!$editUndoRedoStore.canUndo}
-        data-testid="edit-undo"
+        disabled={!canUndo}
+        data-testid={job?.undoTestId ?? "edit-undo"}
         on:click={undo}
     >
         <IconArrowBackUp font-size="20" />
@@ -48,8 +72,8 @@
         class="em-circ em-redo"
         aria-label={$LL.mapEditor.edit.redo()}
         title={$LL.mapEditor.edit.redo()}
-        disabled={!$editUndoRedoStore.canRedo}
-        data-testid="edit-redo"
+        disabled={!canRedo}
+        data-testid={job?.redoTestId ?? "edit-redo"}
         on:click={redo}
     >
         <IconArrowBackUp font-size="20" />
@@ -110,6 +134,15 @@
     .em-room {
         max-width: 100%;
         font-size: 15px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .em-sub {
+        max-width: 100%;
+        font-size: 12.5px;
+        font-weight: 500;
+        color: rgba(255, 255, 255, 0.6);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;

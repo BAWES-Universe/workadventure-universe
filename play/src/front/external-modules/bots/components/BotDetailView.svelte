@@ -23,7 +23,7 @@
         ensureBotCompanionCatalog,
         findCompanion,
     } from "../stores/BotCompanionCatalogStore";
-    import BotTexturePicker from "./BotTexturePicker.svelte";
+    import BotWokaPicker from "./BotWokaPicker.svelte";
     import BotCompanionPicker from "./BotCompanionPicker.svelte";
     import PageSwitch from "./page/PageSwitch.svelte";
     import PageGroup from "./page/PageGroup.svelte";
@@ -40,7 +40,8 @@
     export let onLocate: (() => void) | undefined = undefined;
 
     let currentBot: BotData | null = null;
-    let editingTexture = false;
+    /** The WOKA picker fills the panel in place of the page, as the companion picker does */
+    export let editingTexture = false;
     /** The companion picker fills the panel in place of the page (BotEditor puts its title and back circle up) */
     export let editingCompanion = false;
     let switching = false;
@@ -100,8 +101,9 @@
     // Initialize from prop - handle both bot changes and bot becoming null
     $: if (bot) {
         if (bot.id !== currentBot?.id) {
-            // Another bot: its page opens, not the last one's companion picker
+            // Another bot: its page opens, not the last one's pickers
             editingCompanion = false;
+            editingTexture = false;
             // Ensure behaviorType is never undefined - check both top-level and behaviorConfig
             const behaviorType = bot.behaviorType || bot.behaviorConfig?.behaviorType || "idle";
 
@@ -406,16 +408,40 @@
         };
         fit();
         node.addEventListener("input", fit);
+        // The page can open while the panel is tucked away (the box is then off the page and measures 0), and the
+        // panel can be resized: measure again whenever the box's width changes
+        let width = node.clientWidth;
+        const resizeObserver = new ResizeObserver(() => {
+            if (node.clientWidth === width) return;
+            width = node.clientWidth;
+            fit();
+        });
+        resizeObserver.observe(node);
         return {
             update: fit,
-            destroy: () => node.removeEventListener("input", fit),
+            destroy: () => {
+                node.removeEventListener("input", fit);
+                resizeObserver.disconnect();
+            },
         };
     }
 </script>
 
 <svelte:window on:keydown={handleTextureKeydown} />
 
-{#if currentBot && editingCompanion}
+{#if currentBot && editingTexture}
+    <BotWokaPicker
+        selectedId={currentBot.characterTexture || ""}
+        onSave={(textureId) => {
+            if (textureId && textureId !== currentBot?.characterTexture) {
+                void handleTextureSelect(textureId);
+            } else {
+                editingTexture = false;
+            }
+        }}
+        onCancel={() => (editingTexture = false)}
+    />
+{:else if currentBot && editingCompanion}
     <BotCompanionPicker
         selectedId={currentBot.companionTextureId ?? null}
         botUrl={botSheetUrl}
@@ -524,38 +550,6 @@
     </div>
 {/if}
 
-<!-- Texture Picker Modal -->
-{#if editingTexture && $botWokaCatalogStore && currentBot}
-    <!-- svelte-ignore a11y-click-events-have-key-events -->
-    <div
-        role="presentation"
-        class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
-        tabindex="-1"
-        on:click={() => (editingTexture = false)}
-    >
-        <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-        <div
-            role="dialog"
-            aria-modal="true"
-            aria-label={page.changeLooks()}
-            class="bp-dialog u-surface max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6"
-            on:click|stopPropagation
-        >
-            <h3 class="text-xl font-semibold text-white mb-4">{page.changeLooks()}</h3>
-            <BotTexturePicker
-                selectedTextureId={currentBot.characterTexture || ""}
-                botId={currentBot.id}
-                onSelect={handleTextureSelect}
-            />
-            <div class="flex justify-end mt-4">
-                <button type="button" class="bp-pill" on:click={() => (editingTexture = false)}>
-                    {$LL.actionbar.close()}
-                </button>
-            </div>
-        </div>
-    </div>
-{/if}
-
 <style>
     .bot-page {
         display: flex;
@@ -634,6 +628,10 @@
         outline: none;
         text-overflow: ellipsis;
     }
+    /* The box around the name is the purple one above: no second (blue) focus ring from the page's form styles */
+    .bp-name:focus {
+        box-shadow: none;
+    }
     .bp-pen {
         flex: none;
         color: rgba(255, 255, 255, 0.5);
@@ -644,7 +642,8 @@
     /* What the bot is for, under its name, edited in place */
     .bp-desc {
         display: block;
-        min-height: 0;
+        /* One line at least, so it never shows clipped, even when it was measured off the page */
+        min-height: calc(13.5px * 1.45 + 12px);
         width: calc(100% + 8px);
         margin: -6px 0 0 -8px;
         padding: 6px 8px;
@@ -687,10 +686,10 @@
         flex-direction: column;
         gap: 6px;
     }
-    .bp-dialog {
-        border-radius: 24px;
-    }
     .bp-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
         height: 40px;
         padding: 0 18px;
         border: 0;

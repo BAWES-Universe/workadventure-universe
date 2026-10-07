@@ -3,6 +3,7 @@
     import type { BotData } from "../types";
     import { hoveredBotIdStore } from "../stores/BotEditorStore";
     import { setBotEnabled } from "../services/botEnabled";
+    import { ensureBotWokaCatalog } from "../stores/BotWokaCatalogStore";
     import LL from "../../../../i18n/i18n-svelte";
     import BotRow from "./BotRow.svelte";
     import { IconChevronDown, IconPlus, IconRobot } from "@wa-icons";
@@ -120,6 +121,8 @@
     }
 
     onMount(() => {
+        // The rows draw each bot's WOKA from the room's catalogue, so it is loaded here too, not only on a bot's page
+        void ensureBotWokaCatalog();
         // Only load if bots array is empty
         // If bots are already provided via prop, skip loading
         if (bots.length === 0) {
