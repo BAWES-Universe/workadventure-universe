@@ -1350,12 +1350,12 @@
       "area": "Bar, camera, calls and moving",
       "topic": "Device arrow",
       "action": "Phone: tap a person so their card opens above the bar.",
-      "expected": "The person's card (Walk to etc.) is drawn above the \"^\" tab; the tab does not cover \"Walk to\".",
+      "expected": "The person's card sits just above the \"^\" tab on phones; the tab covers no part of Walk to, View profile or the ⋯ button.",
       "source": "prod (sweep A#9 bug, owner Dev desk)",
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "woka card `data-testid=\"actions-menu\"` (Components/ActionsMenu/WokaMenu.svelte:89), `.device-arrow` ActionBar.svelte:108"
+      "hooks": "woka card `data-testid=\"actions-menu\"` (Components/ActionsMenu/WokaMenu.svelte:89), card wrapper `.person-card-stack` (MainLayout.svelte, bottom: 44px on phones), `.device-arrow` ActionBar.svelte:108"
     },
     {
       "id": "AV-016",
