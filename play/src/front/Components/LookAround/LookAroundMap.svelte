@@ -1,5 +1,5 @@
 <script lang="ts">
-    // What is drawn over the map while looking around: a frame and a name tag on every named area and a tag on every
+    // What is drawn over the map while looking around: a frame and a name tag on every area and a tag on every
     // object that does something (the same look as the Areas tool in the editor), the "You are here" tag over you,
     // and the "You" tab on the edge when you are off-screen.
     // The game camera does not report its moves while exploring, so this reads it every frame.
@@ -25,6 +25,7 @@
         area: Place;
         name: string;
         look: string;
+        pointed: boolean;
         people: number;
         x: number;
         y: number;
@@ -128,14 +129,15 @@
                 // Between recounts, the last count of every place, empty ones included.
                 const people = recount ? countPeopleIn(data) : peopleByArea.get(id) ?? countPeopleIn(data);
                 counts?.set(id, people);
-                if (!data.name) continue;
                 const from = toScreen(data.x, data.y);
                 const to = toScreen(data.x + data.width, data.y + data.height);
                 nextFrames.push({
                     id,
                     area,
-                    name: data.name,
+                    // Its name in the list (an unnamed one by what it does, or "Area").
+                    name: getPlaceName(area, $LL),
                     look: areaLook(areaColour(data.properties)),
+                    pointed: area.pointedAt,
                     people,
                     x: from.x,
                     y: from.y,
@@ -185,6 +187,7 @@
     {#each frames as f (f.id)}
         <div
             class="la-frame"
+            class:la-pointed={f.pointed}
             style="{f.look} left:{f.x}px;top:{f.y}px;width:{f.width}px;height:{f.height}px"
             data-testid="look-around-area-frame"
         >
@@ -240,6 +243,10 @@
         position: absolute;
         border-radius: 14px;
         box-shadow: 0 0 0 2px var(--af-c), 0 0 0 6px var(--af-halo);
+    }
+    /* Pointed at with the mouse: its colour fills it, like a picked area in the Areas tool. */
+    .la-pointed {
+        background: var(--af-fill);
     }
     .la-tag {
         position: absolute;

@@ -14,6 +14,11 @@ import { EditorToolName, type MapEditorModeManager } from "./MapEditorModeManage
 export const EXPLORE_ZOOM_OUT_START = 0.6;
 /** Zooming out past this level enters "Look around the map"; entering by button glides out to it. */
 export const EXPLORE_ZOOM_OUT_END = 0.3;
+/**
+ * Opening "Look around the map" with its button glides out to here: halfway into the zone, so the map still fills
+ * the screen and the area names stay readable. Zooming out further still works, down to EXPLORE_ZOOM_OUT_END.
+ */
+export const EXPLORE_GLIDE_OUT_TO = 0.45;
 /** While looking around, zooming back in only leaves when the camera is this close to your avatar (world pixels). */
 export const EXPLORE_ZOOM_IN_RADIUS_AROUND_WOKA = 320;
 

@@ -13,7 +13,7 @@ import {
     mapExplorationObjectSelectedStore,
 } from "../../../../Stores/MapEditorStore";
 import { lookAroundDraggedStore } from "../../../../Stores/LookAroundStore";
-import { clearLookAroundStores, EXPLORE_ZOOM_OUT_END, leaveExploreTheRoom } from "../ExploreTheRoom";
+import { clearLookAroundStores, EXPLORE_GLIDE_OUT_TO, leaveExploreTheRoom } from "../ExploreTheRoom";
 import { gameManager } from "../../GameManager";
 import type { GameScene } from "../../GameScene";
 import { Entity } from "../../../ECS/Entity";
@@ -150,15 +150,12 @@ export class ExplorerTool implements MapEditorTool {
         this.scene.markDirty();
     };
 
+    // The page draws the areas (LookAroundMap.svelte); pointing at one brightens its frame there.
     private pointerOverHandler = (gameObject: AreaPreview) => {
-        if (gameObject.strokeColor === 0xf9e82d) return;
-        gameObject.setStrokeStyle(2, 0xf9e82d);
-        this.scene.markDirty();
+        gameObject.pointedAt = true;
     };
     private pointerOutHandler = (gameObject: AreaPreview) => {
-        if (gameObject.strokeColor === 0x000000) return;
-        gameObject.setStrokeStyle(2, 0x000000);
-        this.scene.markDirty();
+        gameObject.pointedAt = false;
     };
 
     /** A second finger came down during this drag: it was a pinch. */
@@ -297,11 +294,11 @@ export class ExplorerTool implements MapEditorTool {
 
         this.scene.playSound("audio-cloud");
 
-        // Glide out around you. Entering by zooming out is already past this level, so nothing moves then.
-        if (waScaleManager.zoomModifier > EXPLORE_ZOOM_OUT_END) {
+        // Glide out around you, a little. Already further out (entering by zooming out), nothing moves.
+        if (waScaleManager.zoomModifier > EXPLORE_GLIDE_OUT_TO) {
             this.scene
                 .getCameraManager()
-                .centerCameraOn({ x: this.scene.CurrentPlayer.x, y: this.scene.CurrentPlayer.y }, EXPLORE_ZOOM_OUT_END);
+                .centerCameraOn({ x: this.scene.CurrentPlayer.x, y: this.scene.CurrentPlayer.y }, EXPLORE_GLIDE_OUT_TO);
         }
 
         // Mark the scene as dirty
@@ -352,8 +349,8 @@ export class ExplorerTool implements MapEditorTool {
             });
             areaPreviews.set(key, areaPreview);
 
-            // Set the initial stroke color to edit color
-            areaPreview.setStrokeStyle(2, 0x000000);
+            // Drawn by the page with its name, like the Areas tool; here it only catches the pointer.
+            areaPreview.useMapFrame();
         }
         mapExplorationAreasStore.set(areaPreviews);
     }
