@@ -44,6 +44,7 @@
     import cardsSvg from "../../images/applications/icon_cards.svg";
     import tldrawJpeg from "../../images/applications/icon_tldraw.jpeg";
     import PanelHeader from "./PanelHeader.svelte";
+    import type { AreaSettingRow } from "./areaProperties";
     import {
         WEB_APP_SUBTYPES,
         areaSettingRows,
@@ -104,7 +105,7 @@
 
     $: preview = $mapEditorSelectedAreaPreviewStore;
     $: flags = flagsOf(properties);
-    $: rows = areaSettingRows($LL, flags).filter((row) => row.available || row.blocked);
+    $: allRows = areaSettingRows($LL, flags);
     $: turnedOn = properties.filter((p) => p.type !== "areaDescriptionProperties");
 
     let extensionRows = $extensionModuleStore.reduce(
@@ -115,6 +116,32 @@
         },
         []
     );
+
+    // What can be added, in the list's order. A module's settings follow the built-in ones, except the portal: it
+    // goes to a room like "Exit to a room", so it sits right under it.
+    type AddItem =
+        | { key: string; row: AreaSettingRow }
+        | { key: string; subtype: string; areaProperty: ExtensionModuleAreaProperty };
+    $: moduleItems = extensionRows.flatMap((extensionRow) =>
+        Object.entries(extensionRow)
+            .filter(([, areaProperty]) => areaProperty.shouldDisplayButton(properties))
+            .map(([subtype, areaProperty]) => ({ key: `module-${subtype}`, subtype, areaProperty }))
+    );
+    $: addItems = ((): AddItem[] => {
+        const items: AddItem[] = [];
+        const placed = new Set<string>();
+        for (const row of allRows) {
+            if (row.available || row.blocked) items.push({ key: row.key + (row.subtype ?? ""), row });
+            if (row.key === "exit") {
+                for (const item of moduleItems.filter((m) => m.subtype === "teleport")) {
+                    items.push(item);
+                    placed.add(item.key);
+                }
+            }
+        }
+        for (const item of moduleItems) if (!placed.has(item.key)) items.push(item);
+        return items;
+    })();
 
     function refresh() {
         if (!preview) return;
@@ -493,46 +520,44 @@
             </div>
 
             <div class="em-ebi">{$LL.mapEditor.edit.areas.addToArea()}</div>
-            {#each rows as row (row.key + (row.subtype ?? ""))}
-                <button
-                    type="button"
-                    class="em-row"
-                    class:em-row-off={row.blocked}
-                    disabled={row.blocked}
-                    data-testid={row.testId}
-                    on:click={() => add(row.key, row.subtype, row.opensPage)}
-                >
-                    <span class="em-tile"><svelte:component this={row.icon} font-size="18" /></span>
-                    <span class="em-tx">
-                        <span class="em-t">{row.title}</span>
-                        <span class="em-m">{row.text}</span>
-                    </span>
-                    <span class="em-plus"><IconPlus font-size="14" /></span>
-                </button>
-            {/each}
-            {#each extensionRows as extensionRow, index (`extension-${index}`)}
-                {#each Object.entries(extensionRow) as [subtype, areaProperty] (subtype)}
-                    {#if areaProperty.shouldDisplayButton(properties)}
-                        <button
-                            type="button"
-                            class="em-row"
-                            data-testid={subtype}
-                            on:click={() => add("extensionModule", subtype)}
+            {#each addItems as item (item.key)}
+                {#if "row" in item}
+                    {@const row = item.row}
+                    <button
+                        type="button"
+                        class="em-row"
+                        class:em-row-off={row.blocked}
+                        disabled={row.blocked}
+                        data-testid={row.testId}
+                        on:click={() => add(row.key, row.subtype, row.opensPage)}
+                    >
+                        <span class="em-tile"><svelte:component this={row.icon} font-size="18" /></span>
+                        <span class="em-tx">
+                            <span class="em-t">{row.title}</span>
+                            <span class="em-m">{row.text}</span>
+                        </span>
+                        <span class="em-plus"><IconPlus font-size="14" /></span>
+                    </button>
+                {:else}
+                    <button
+                        type="button"
+                        class="em-row"
+                        data-testid={item.subtype}
+                        on:click={() => add("extensionModule", item.subtype)}
+                    >
+                        <span class="em-tile"
+                            ><svelte:component this={item.areaProperty.label?.icon ?? IconLink} font-size="18" /></span
                         >
-                            <span class="em-tile"
-                                ><svelte:component this={areaProperty.label?.icon ?? IconLink} font-size="18" /></span
+                        <span class="em-tx">
+                            <span class="em-t">{item.areaProperty.label?.title ?? item.subtype}</span>
+                            <span class="em-m"
+                                >{item.areaProperty.label?.text ??
+                                    $LL.mapEditor.edit.properties.extensionModule.text()}</span
                             >
-                            <span class="em-tx">
-                                <span class="em-t">{areaProperty.label?.title ?? subtype}</span>
-                                <span class="em-m"
-                                    >{areaProperty.label?.text ??
-                                        $LL.mapEditor.edit.properties.extensionModule.text()}</span
-                                >
-                            </span>
-                            <span class="em-plus"><IconPlus font-size="14" /></span>
-                        </button>
-                    {/if}
-                {/each}
+                        </span>
+                        <span class="em-plus"><IconPlus font-size="14" /></span>
+                    </button>
+                {/if}
             {/each}
             <button type="button" class="em-row" data-testid="area-add-app" on:click={() => (showApps = !showApps)}>
                 <span class="em-tile"><IconLink font-size="18" /></span>

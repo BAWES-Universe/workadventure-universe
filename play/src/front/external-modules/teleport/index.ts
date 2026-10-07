@@ -29,8 +29,8 @@ const teleportExtensionModule: ExtensionModule = {
             AreaPropertyEditor: TeleportPropertyEditor,
             AddAreaPropertyButton: AddTeleportPropertyButton,
             label: {
-                title: "Teleport",
-                text: "Teleport people to another universe/world/room",
+                title: "Portal to any room",
+                text: "Hop to a friend’s room in any universe",
                 icon: IconRoute,
             },
             handleAreaPropertyOnEnter(area: AreaData, signal: AbortSignal) {

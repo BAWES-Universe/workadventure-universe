@@ -106,11 +106,18 @@
         "playAudio",
         "start",
         "exit",
+        "teleport",
         "focusable",
         "personalAreaPropertyData",
         "restrictedRightsPropertyData",
         "matrixRoomPropertyData",
     ];
+
+    // The portal is a module's setting: its filter shows only in a room that has one.
+    $: hasPortal = [...($mapExplorationAreasStore ?? new Map<string, AreaPreview>()).values()].some((area) =>
+        placeHasProperty(area, "teleport")
+    );
+    $: shownFilters = PROPERTY_FILTERS.filter((filter) => filter !== "teleport" || hasPortal);
 
     function filterLabel(filter: string): string {
         return getSettingTitle(filter, $LL) ?? filter;
@@ -252,7 +259,7 @@
     {#if filtersOpen}
         <div class="places-filters-label">{$LL.mapEditor.lookAround.showOnlyWith()}</div>
         <div class="places-filters">
-            {#each PROPERTY_FILTERS as filter (filter)}
+            {#each shownFilters as filter (filter)}
                 <button
                     type="button"
                     class="chip chip-sm"
