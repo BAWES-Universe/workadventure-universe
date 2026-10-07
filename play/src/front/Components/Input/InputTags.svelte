@@ -78,33 +78,71 @@
         on:blur={onBlur}
         showChevron={true}
         listAutoWidth={false}
-        --clear-select-color="hsl(var(--danger-500))"
+        --background="rgba(255, 255, 255, 0.06)"
+        --border="none"
+        --border-hover="none"
+        --border-focused="none"
+        --border-radius="14px"
+        --font-size="15px"
+        --height="48px"
+        --clear-select-color="rgba(255, 255, 255, 0.7)"
         --input-color="white"
-        --chevron-icon-colour="white"
-        --internal-padding="0px"
-        --multi-item-color="hsl(var(--contrast-900))"
-        --multi-item-bg="hsl(var(--contrast-200))"
-        --multi-select-padding="0 0 0 6px"
-        --multi-item-outline="none"
-        --padding="0px"
-        --list-background="hsl(var(--contrast))"
-        --list-empty-color="hsl(var(--contrast-400))"
-        --selected-item-color="hsl(var(--contrast-500)) !important"
-        --selected-item-padding="0 0 0 32px"
-        --list-border-radius="12px"
-        --list-border="solid 1px hsl(var(--contrast-400))"
+        --placeholder-color="rgba(255, 255, 255, 0.5)"
+        --chevron-color="rgba(255, 255, 255, 0.7)"
+        --value-container-padding="6px 0"
+        --multi-item-color="#fff"
+        --multi-item-bg="rgba(134, 41, 252, 0.16)"
+        --multi-item-outline="1px solid rgba(167, 139, 250, 0.45)"
+        --multi-item-border-radius="999px"
+        --multi-item-height="30px"
+        --multi-item-padding="0 4px 0 12px"
+        --multi-item-gap="6px"
+        --multi-item-clear-icon-color="rgba(255, 255, 255, 0.7)"
+        --multi-select-padding="0 8px 0 14px"
+        --padding="0 8px 0 14px"
+        --list-background="linear-gradient(160deg, rgb(31 28 47), rgb(20 18 30))"
+        --list-border="none"
+        --list-border-radius="14px"
+        --list-shadow="0 0 0 1px rgba(167, 139, 250, 0.18), 0 12px 32px rgba(0, 0, 0, 0.45)"
+        --list-empty-color="rgba(255, 255, 255, 0.6)"
         --list-empty-padding="12px"
-        --item-color="hsl(var(--contrast-200))"
-        --item-is-active-bg="hsl(var(--contrast-900))"
-        --item-is-active-color="hsl(var(--contrast-200))"
-        --item-hover-bg="hsl(var(--contrast-900))"
-        --item-hover-color="hsl(var(--contrast-200))"
+        --item-color="rgba(255, 255, 255, 0.88)"
+        --item-height="44px"
+        --item-is-active-bg="rgba(134, 41, 252, 0.16)"
+        --item-is-active-color="#fff"
+        --item-hover-bg="rgba(255, 255, 255, 0.06)"
+        --item-hover-color="#fff"
         inputStyles="box-shadow:none !important; margin:0"
         inputAttributes={{ "data-testid": testId }}
-        class="!bg-contrast !rounded-md !border-contrast-400 !outline-none !w-full"
+        class="u-tag-field !outline-none !w-full"
     >
         <div slot="item" let:item>
             {item.created ? $LL.notification.addNewTag({ tag: filterText }) : item.label}
         </div>
     </Select>
 </div>
+
+<style>
+    /* The game's field (u-join-field) and dropdown (UI/USelect): a white/6 field with a faint ring, lavender when
+       typing; picked tags are tinted pills; the list is the ink panel with rounded rows. */
+    :global(.svelte-select.u-tag-field) {
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+    }
+    :global(.svelte-select.u-tag-field.focused) {
+        box-shadow: inset 0 0 0 2px rgba(196, 181, 253, 0.85);
+    }
+    /* As wide as the field, never wider: a wider list would push the panel sideways. */
+    :global(.svelte-select.u-tag-field .svelte-select-list) {
+        left: 0 !important;
+        width: 100% !important;
+        padding: 6px;
+    }
+    :global(.svelte-select.u-tag-field .svelte-select-list .item) {
+        border-radius: 12px;
+        line-height: 44px;
+    }
+    :global(.svelte-select.u-tag-field .multi-item) {
+        font-size: 13px;
+        font-weight: 600;
+    }
+</style>
