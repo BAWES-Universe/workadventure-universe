@@ -1,12 +1,13 @@
 <script lang="ts">
     import { createEventDispatcher, onMount } from "svelte";
     import type { PersonalAreaPropertyData } from "@workadventure/map-editor";
+    import type { CharacterTextureMessage } from "@workadventure/messages";
     import { PersonalAreaAccessClaimMode } from "@workadventure/map-editor";
     import { closeModal, openModal } from "svelte-modals";
-    import { Color } from "@workadventure/shared-utils";
     import LL from "../../../../i18n/i18n-svelte";
     import RolePicker from "../../Input/RolePicker.svelte";
     import MemberAutocomplete from "../../Input/MemberAutocomplete.svelte";
+    import MemberWoka from "../../Input/MemberWoka.svelte";
     import type { InputTagOption } from "../../Input/InputTagOption";
     import { toTags } from "../../Input/InputTagOption";
     import { gameManager } from "../../../Phaser/Game/GameManager";
@@ -25,11 +26,9 @@
           }))
         : undefined;
 
+    // The owner shows like the People list: WOKA and name (the email only stands in for someone without a name).
     let personalAreaOwner: string | null = personalAreaPropertyData.ownerId;
-    // The owner is shown as "Name (email)", an email or an id, as before; the card splits the name from the email.
-    $: ownerMatch = personalAreaOwner ? /^(.*) \((.*)\)\s*$/.exec(personalAreaOwner) : null;
-    $: ownerName = (ownerMatch ? ownerMatch[1] : personalAreaOwner ?? "").trim();
-    $: ownerEmail = ownerMatch ? ownerMatch[2] : "";
+    let ownerTextures: CharacterTextureMessage[] = [];
 
     const dispatch = createEventDispatcher<{
         change: boolean | undefined;
@@ -42,18 +41,16 @@
             const connection = gameManager.getCurrentGameScene().connection;
             if (connection) {
                 const member = await connection.queryMember(personalAreaPropertyData.ownerId);
-                personalAreaOwner = member.name
-                    ? `${member.name} ${member.email ? `(${member.email})` : ""}`
-                    : member.email
-                    ? member.email
-                    : member.id;
+                personalAreaOwner = member.name || member.email || member.id;
+                ownerTextures = member.characterTextures;
             }
         }
     });
 
-    function setOwnerId(selectedOwner: { value: string; label: string }) {
+    function setOwnerId(selectedOwner: { value: string; label: string; textures?: CharacterTextureMessage[] }) {
         personalAreaPropertyData.ownerId = selectedOwner.value;
         personalAreaOwner = selectedOwner.label;
+        ownerTextures = selectedOwner.textures ?? [];
         dispatch("change");
     }
 
@@ -90,6 +87,7 @@
     function resetAreaOwner() {
         personalAreaPropertyData.ownerId = null;
         personalAreaOwner = null;
+        ownerTextures = [];
     }
 
     function openModalForActionOnAreaEntities(dispatchType: "change" | "close", callback?: () => void) {
@@ -142,16 +140,9 @@
                     <div class="pa-owner">
                         <span class="pa-label">{$LL.mapEditor.properties.personalAreaPropertyData.owner()}</span>
                         <div class="pa-owner-card">
-                            <span
-                                class="pa-face"
-                                style="background: {Color.getColorByString(
-                                    ownerName
-                                )}; color: {Color.getTextColorByBackgroundColor(Color.getColorByString(ownerName))}"
-                                >{ownerName.charAt(0).toUpperCase()}</span
-                            >
+                            <MemberWoka name={personalAreaOwner} textures={ownerTextures} />
                             <span class="pa-tx">
-                                <span class="pa-t">{ownerName}</span>
-                                {#if ownerEmail}<span class="pa-m">{ownerEmail}</span>{/if}
+                                <span class="pa-t">{personalAreaOwner}</span>
                             </span>
                             <button
                                 type="button"
@@ -277,17 +268,6 @@
         border-radius: 14px;
         background: rgba(255, 255, 255, 0.06);
         box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
-    }
-    .pa-face {
-        flex: none;
-        display: grid;
-        place-items: center;
-        width: 36px;
-        height: 36px;
-        border-radius: 50%;
-        font-size: 15px;
-        font-weight: 700;
-        color: #fff;
     }
     .pa-revoke {
         flex: none;

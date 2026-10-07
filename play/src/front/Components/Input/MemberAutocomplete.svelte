@@ -1,14 +1,17 @@
 <script lang="ts">
     import Select from "svelte-select";
     import { createEventDispatcher } from "svelte";
-    import { Color } from "@workadventure/shared-utils";
+    import type { CharacterTextureMessage } from "@workadventure/messages";
     import { gameManager } from "../../Phaser/Game/GameManager";
+    import MemberWoka from "./MemberWoka.svelte";
     import { IconSearch } from "@wa-icons";
 
     export let placeholder: string;
     export let value: string | undefined | null = undefined;
 
-    let selectedValue: { index: number; label: string; value: string } | undefined = value
+    type MemberOption = { index: number; label: string; value: string; textures?: CharacterTextureMessage[] };
+
+    let selectedValue: MemberOption | undefined = value
         ? {
               index: 1,
               label: value,
@@ -17,37 +20,28 @@
         : undefined;
 
     const dispatch = createEventDispatcher<{
-        onSelect: { index: number; label: string; value: string };
+        onSelect: MemberOption;
     }>();
 
     async function searchMembers(filterText: string) {
         const connection = gameManager.getCurrentGameScene().connection;
         if (connection) {
             try {
-                return (await connection.queryMembers(filterText)).map((member, index) => ({
-                    index,
-                    value: member.id,
-                    label: member.name
-                        ? `${member.name} ${member.email ? `(${member.email})` : ""}`
-                        : member.email
-                        ? member.email
-                        : member.id,
-                }));
+                // Found by name or email, shown like the People list: WOKA and name. The email only stands in
+                // for someone who has no name.
+                return (await connection.queryMembers(filterText)).map(
+                    (member, index): MemberOption => ({
+                        index,
+                        value: member.id,
+                        label: member.name || member.email || member.id,
+                        textures: member.characterTextures,
+                    })
+                );
             } catch (error) {
                 console.error(error);
             }
         }
         return [];
-    }
-
-    // The label is "Name (email)", "email" or an id, as before.
-    function nameOf(label: string): string {
-        const match = /^(.*) \((.*)\)\s*$/.exec(label);
-        return (match ? match[1] : label).trim();
-    }
-    function emailOf(label: string): string {
-        const match = /^(.*) \((.*)\)\s*$/.exec(label);
-        return match ? match[2] : "";
     }
 
     function handleSelectOption() {
@@ -94,25 +88,16 @@
         class="u-member-field !outline-none !w-full"
     >
         <div slot="item" let:item class="ma-row">
-            <span
-                class="ma-face"
-                style="background: {Color.getColorByString(
-                    nameOf(item.label)
-                )}; color: {Color.getTextColorByBackgroundColor(Color.getColorByString(nameOf(item.label)))}"
-                >{nameOf(item.label).charAt(0).toUpperCase()}</span
-            >
-            <span class="ma-tx">
-                <span class="ma-t">{nameOf(item.label)}</span>
-                {#if emailOf(item.label)}<span class="ma-m">{emailOf(item.label)}</span>{/if}
-            </span>
+            <MemberWoka name={item.label} textures={item.textures} />
+            <span class="ma-t">{item.label}</span>
         </div>
     </Select>
     <IconSearch class="ma-icon" font-size="18" />
 </div>
 
 <style>
-    /* The game's field (u-join-field) with a search icon; each result shows the person's face colour, name and
-       email, in the game's dropdown (UI/USelect). */
+    /* The game's field (u-join-field) with a search icon; each result shows the person's WOKA and name, like the
+       People list, in the game's dropdown (UI/USelect). */
     .ma {
         position: relative;
     }
@@ -147,32 +132,10 @@
         gap: 10px;
         min-width: 0;
     }
-    .ma-face {
-        flex: none;
-        display: grid;
-        place-items: center;
-        width: 32px;
-        height: 32px;
-        border-radius: 50%;
-        font-size: 14px;
-        font-weight: 700;
-        color: #fff;
-    }
-    .ma-tx {
-        display: flex;
-        flex-direction: column;
-        min-width: 0;
-    }
     .ma-t {
+        min-width: 0;
         font-size: 14px;
         font-weight: 600;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-    .ma-m {
-        font-size: 12.5px;
-        color: rgba(244, 242, 250, 0.64);
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;

@@ -1147,8 +1147,9 @@ class AdminApi implements AdminInterface {
      *       404:
      *        description: No member found.
      */
-    async getMember(memberUUID: string): Promise<MemberData> {
+    async getMember(memberUUID: string, playUri?: string): Promise<MemberData> {
         const response = await axios.get<MemberData>(`${ADMIN_API_URL}/api/members/${memberUUID}`, {
+            params: playUri ? { playUri } : undefined,
             headers: { Authorization: `${ADMIN_API_TOKEN}` },
         });
         return response.data;

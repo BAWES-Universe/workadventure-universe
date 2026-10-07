@@ -899,6 +899,7 @@ export class IoSocketController {
                                         }
                                         case "getMemberQuery": {
                                             const getMemberAnswer = await socketManager.handleGetMemberQuery(
+                                                socket,
                                                 message.message.queryMessage.query.getMemberQuery
                                             );
                                             if (!getMemberAnswer) {
