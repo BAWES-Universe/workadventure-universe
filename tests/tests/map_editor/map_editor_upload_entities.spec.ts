@@ -309,54 +309,68 @@ test.describe("Map editor @oidc @nomobile @nowebkit", () => {
         const buffer = fs.readFileSync(filePath);
         const base64 = buffer.toString('base64');
 
-        // Drop file via drag-and-drop simulation
-        await page.evaluate(
-            async ({ selector, fileName, mimeType, base64Data }) => {
-                function base64ToUint8Array(base64: string): Uint8Array {
-                    const binary = atob(base64);
-                    const len = binary.length;
-                    const bytes = new Uint8Array(len);
-                    for (let i = 0; i < len; i++) {
-                        bytes[i] = binary.charCodeAt(i);
+        // Drag the file over the middle of the map and drop it there (drag-and-drop simulation)
+        const dropOnCanvas = (eventTypes: string[]) =>
+            page.evaluate(
+                ({ selector, fileName, mimeType, base64Data, types }) => {
+                    function base64ToUint8Array(base64: string): Uint8Array {
+                        const binary = atob(base64);
+                        const len = binary.length;
+                        const bytes = new Uint8Array(len);
+                        for (let i = 0; i < len; i++) {
+                            bytes[i] = binary.charCodeAt(i);
+                        }
+                        return bytes;
                     }
-                    return bytes;
+
+                    const target = document.querySelector(selector);
+                    if (!target) throw new Error(`Selector "${selector}" not found`);
+                    const rect = target.getBoundingClientRect();
+
+                    const fileBytes = base64ToUint8Array(base64Data);
+                    const blob = new Blob([fileBytes], { type: mimeType });
+                    const file = new File([blob], fileName, { type: mimeType });
+
+                    const dataTransfer = new DataTransfer();
+                    dataTransfer.items.add(file);
+
+                    const eventInit: DragEventInit = {
+                        bubbles: true,
+                        cancelable: true,
+                        dataTransfer,
+                        clientX: rect.left + rect.width * 0.6,
+                        clientY: rect.top + rect.height * 0.5,
+                    };
+
+                    for (const eventType of types) {
+                        const event = new DragEvent(eventType, eventInit);
+                        target.dispatchEvent(event);
+                    }
+                },
+                {
+                    selector: '#game canvas',
+                    fileName: 'lorem-ipsum.pdf',
+                    mimeType: 'application/pdf',
+                    base64Data: base64,
+                    types: eventTypes,
                 }
+            );
 
-                const target = document.querySelector(selector);
-                if (!target) throw new Error(`Selector "${selector}" not found`);
+        // While playing, the map takes no file: no drop sign, nothing opens, nothing is placed
+        await dropOnCanvas(['dragenter', 'dragover']);
+        await expect(page.getByTestId('drop-file-target')).toHaveCount(0);
+        await dropOnCanvas(['drop']);
+        await expect(page.getByText('Choose an object')).toHaveCount(0);
+        await expect(page.getByTestId('edit-panel')).toHaveCount(0);
 
-                const fileBytes = base64ToUint8Array(base64Data);
-                const blob = new Blob([fileBytes], { type: mimeType });
-                const file = new File([blob], fileName, { type: mimeType });
+        // In edit mode the spot under the cursor lights up, and the file lands there with its settings open
+        await Menu.openMapEditor(page);
+        await dropOnCanvas(['dragenter', 'dragover']);
+        await expect(page.getByTestId('drop-file-target')).toBeVisible();
+        await dropOnCanvas(['drop']);
+        await expect(page.getByTestId('drop-file-target')).toHaveCount(0);
+        await expect(page.getByText('Choose an object')).toHaveCount(0);
 
-                const dataTransfer = new DataTransfer();
-                dataTransfer.items.add(file);
-
-                const eventInit: DragEventInit = {
-                    bubbles: true,
-                    cancelable: true,
-                    dataTransfer,
-                };
-
-                for (const eventType of ['dragenter', 'dragover', 'drop']) {
-                    const event = new DragEvent(eventType, eventInit);
-                    target.dispatchEvent(event);
-                }
-            },
-            {
-                selector: '#game canvas',
-                fileName: 'lorem-ipsum.pdf',
-                mimeType: 'application/pdf',
-                base64Data: base64
-            }
-        );
-
-        await expect(page.getByText('Choose an object')).toBeVisible();
-        await page.getByText('Save').click();
-
-        await EntityEditor.moveAndClick(page, 32, 300);
-
-        // The placed object opens in the edit panel; the placing bar at the bottom names the same object.
         await expect(page.getByTestId('edit-panel').getByText('Books (Variant 5)')).toBeVisible();
         await expect(page.getByText('lorem-ipsum.pdf')).toBeVisible();
     });
