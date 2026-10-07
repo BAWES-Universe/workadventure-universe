@@ -85,6 +85,8 @@ export interface ChatRoom {
     readonly setTimelineAsRead: () => void;
     readonly hasPreviousMessage: Readable<boolean>;
     readonly loadMorePreviousMessages: () => Promise<void>;
+    /** True while the room is still getting its first messages (so an empty list is not yet "no message"). */
+    readonly isLoadingMessages?: Readable<boolean>;
     readonly isEncrypted: Readable<boolean>;
     readonly typingMembers: Readable<Array<{ id: string; name: string | null; pictureStore: PictureStore }>>;
     readonly startTyping: () => Promise<object>;

@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { afterUpdate, beforeUpdate, hasContext, onDestroy, onMount, setContext } from "svelte";
+    import { afterUpdate, beforeUpdate, hasContext, onDestroy, onMount, setContext, tick } from "svelte";
     import { derived, get, readable, writable } from "svelte/store";
     import type { Readable } from "svelte/store";
     import { gameManager } from "../../../Phaser/Game/GameManager";
@@ -86,6 +86,9 @@
 
     let scrollTimer: ReturnType<typeof setTimeout>;
     let shouldDisplayLoader = false;
+    // False until the chat's first messages are in and it sits at the bottom. Until then the list stays hidden
+    // (it is still measured) behind a spinner, so the chat opens already filled instead of building up on screen.
+    let initialLoadDone = false;
 
     let messageInputBarRef: MessageInputBar;
 
@@ -161,15 +164,33 @@
               })
         : "";
     $: isEmptyProximityView = shownSession !== undefined && shownSession.messages.length === 0;
+    // The proximity chat is in memory: it has nothing to wait for and keeps its own empty states.
+    $: isLoadingMessages = room?.isLoadingMessages ?? readable(false);
+    $: firstFillPending = !proximityRoom && !initialLoadDone;
+    $: showLoading = !proximityRoom && (!initialLoadDone || ($isLoadingMessages && $messages.length === 0));
 
     onMount(() => {
         installStrayFileDropGuard();
         initMessages()
             .catch((error) => console.error(error))
             .finally(() => {
-                scrollToMessageListBottom();
+                // The first time, jump to the bottom while the list is still hidden, then show it.
+                scrollToMessageListBottom(proximityRoom !== undefined);
+                initialLoadDone = true;
             });
     });
+
+    // Resolves once the room has its first messages (at once for a room with nothing to wait for).
+    async function waitForRoomToLoad() {
+        if (!get(isLoadingMessages)) return;
+        let unsubscribe = () => {};
+        await new Promise<void>((resolve) => {
+            unsubscribe = isLoadingMessages.subscribe((loading) => {
+                if (!loading) resolve();
+            });
+        });
+        unsubscribe();
+    }
 
     async function initMessages() {
         if (!messageListRef) return;
@@ -180,10 +201,18 @@
                     return;
                 }
 
-                await room.loadMorePreviousMessages();
-
-                if (get(room.hasPreviousMessage) && isViewportNotFilled()) {
-                    await loadMessages();
+                // The room loads its first messages itself: take what it has, and ask for more only if the screen
+                // is not filled yet (a chat that already has enough opens with no request at all).
+                await waitForRoomToLoad();
+                await tick();
+                while (messageListRef && get(room.hasPreviousMessage) && isViewportNotFilled()) {
+                    const messageCount = get(room.messages).length;
+                    // eslint-disable-next-line no-await-in-loop
+                    await room.loadMorePreviousMessages();
+                    // eslint-disable-next-line no-await-in-loop
+                    await tick();
+                    // Nothing came back: stop rather than ask again and again.
+                    if (get(room.messages).length === messageCount) break;
                 }
             } catch (error) {
                 console.error(`Failed to load messages: ${error}`);
@@ -192,7 +221,7 @@
 
         try {
             await loadMessages();
-            scrollToMessageListBottom();
+            scrollToMessageListBottom(proximityRoom !== undefined);
             setFirstListItem();
         } catch (error) {
             console.error(`Failed to load messages: ${error}`);
@@ -210,6 +239,8 @@
 
     afterUpdate(() => {
         room.setTimelineAsRead();
+        // While the list is hidden for its first fill, it is scrolled once, when it is done.
+        if (firstFillPending) return;
         if (autoScroll) {
             scrollToMessageListBottom();
         } else if (onScrollTop) {
@@ -223,11 +254,11 @@
         }
     });
 
-    function scrollToMessageListBottom() {
+    function scrollToMessageListBottom(smooth = true) {
         // Safety check for undefined reference
         // After disposing the component, the reference can be undefined
         if (messageListRef == undefined) return;
-        messageListRef.scroll({ top: messageListRef.scrollHeight, behavior: "smooth" });
+        messageListRef.scroll({ top: messageListRef.scrollHeight, behavior: smooth ? "smooth" : "auto" });
     }
 
     function goBackAndClearSelectedChatMessage() {
@@ -302,6 +333,7 @@
     }
 
     function onUpdateMessageBody(event: CustomEvent) {
+        if (firstFillPending) return;
         if (
             autoScroll ||
             (event.detail != undefined &&
@@ -540,10 +572,20 @@
             class="flex overflow-auto h-full justify-center items-end relative"
             on:scroll={handleScroll}
         >
+            {#if showLoading}
+                <div
+                    class="absolute inset-0 flex items-center justify-center pointer-events-none"
+                    data-testid="chatMessagesLoading"
+                    role="status"
+                >
+                    <IconLoader class="animate-[spin_2s_linear_infinite]" font-size={25} />
+                </div>
+            {/if}
             <ul
                 class="list-none p-0 flex-1 flex flex-col max-h-full pt-10 {$messages.length === 0
                     ? 'items-center justify-center pb-4'
                     : 'max-w-6xl'}"
+                class:invisible={firstFillPending}
             >
                 <!--{#if room.id === "proximity" && $connectedUsers !== undefined}-->
                 <!--    <div class="flex flex-row items-center gap-2">-->
@@ -572,7 +614,7 @@
                                 {$LL.chat.getCloserDesc()}
                             </div>
                         </li>
-                    {:else}
+                    {:else if !showLoading}
                         <li class="text-center px-3 max-w-md relative">
                             <IconMailBox font-size="40" />
                             <div class="text-lg font-bold text-center">{$LL.chat.noMessage()}</div>
