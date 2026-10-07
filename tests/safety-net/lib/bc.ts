@@ -33,7 +33,7 @@ export function panel(page: Page): Locator {
 /** Opens the Tools menu: the Tools pill, or the profile menu when Tools fell into it. */
 export async function openTools(page: Page): Promise<void> {
     if (await page.getByTestId("map-menu").isVisible()) await page.getByTestId("map-menu").click();
-    else await page.getByTestId("action-user").getByRole("button").first().click();
+    else await page.getByRole("button", { name: "Open menu" }).click();
     await expect(page.getByTestId("broadcast-menu")).toBeVisible();
 }
 

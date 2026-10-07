@@ -416,7 +416,9 @@ export async function entityBox(
     const b = await scene(
         page,
         (s, eid: string) => {
-            const r = s.getGameMapFrontWrapper().getEntitiesManager().getEntities().get(eid).getBounds();
+            const entity = s.getGameMapFrontWrapper().getEntitiesManager().getEntities().get(eid);
+            if (!entity) throw new Error(`no entity ${eid} on the map`);
+            const r = entity.getBounds();
             return {
                 left: r.left as number,
                 top: r.top as number,
