@@ -9,7 +9,7 @@ import type { AreaEditorTool } from "../../../Phaser/Game/MapEditor/Tools/AreaEd
  */
 function loadAreas(): AreaData[] {
     const scene = gameManager.tryGetCurrentGameScene();
-    const all = scene?.getGameMapFrontWrapper().getAreas();
+    const all = scene?.getGameMapFrontWrapper()?.getAreas();
     if (!all) return [];
     const tool = scene?.getMapEditorModeManager()?.currentlyActiveTool as Partial<AreaEditorTool> | undefined;
     return [...all.values()].map((area) => tool?.getAreaPreviewConfig?.(area.id) ?? area);
