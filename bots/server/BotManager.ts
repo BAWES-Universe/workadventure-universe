@@ -1095,6 +1095,17 @@ export class BotManager {
         }
     }
 
+    /** Our bots that are in the room as far as the game can tell: a disconnected one is not in its room list. */
+    private connectedBotCount(roomId: string): number {
+        let connected = 0;
+        for (const botId of this.roomsWithBots.get(roomId)?.botIds ?? []) {
+            if (this.bots.get(botId)?.status === 'connected') {
+                connected++;
+            }
+        }
+        return connected;
+    }
+
     /**
      * Whether people (not our own bots) are in a room right now, according to the game. See hasPlayersInRoom.
      */
@@ -1102,7 +1113,7 @@ export class BotManager {
         return hasPlayersInRoom(
             () => this.fetchWorkAdventureRooms(),
             roomId,
-            () => this.roomsWithBots.get(roomId)?.botIds.size ?? 0,
+            () => this.connectedBotCount(roomId),
             attempts,
             delayMs
         );
