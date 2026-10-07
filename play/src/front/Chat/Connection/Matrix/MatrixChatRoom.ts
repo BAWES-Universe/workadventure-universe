@@ -56,6 +56,11 @@ import { changingMatrixAvatarStore } from "./MatrixMedia";
 /** How long leaving waits for pending invitations to be withdrawn before it leaves anyway. */
 const INVITE_WITHDRAWAL_DEADLINE_MS = 3000;
 
+/** Events asked from the server per request while loading earlier messages. */
+const PREVIOUS_EVENTS_PAGE_SIZE = 30;
+/** One load of earlier messages keeps asking until it has this many messages (reactions and deletions don't count). */
+const PREVIOUS_MESSAGES_PER_LOAD = 20;
+
 type EventId = string;
 
 type ModerationAction = "ban" | "kick" | "invite" | "redact";
@@ -74,6 +79,8 @@ export class MatrixChatRoom
     members: Writable<MatrixChatRoomMember[]>;
     myMembership: Writable<ChatRoomMembership>;
     hasPreviousMessage: Writable<boolean>;
+    /** True from the start until the room's first messages are loaded (also when loading failed). */
+    readonly isLoadingMessages: Writable<boolean> = writable(true);
     timelineWindow: TimelineWindow;
     inMemoryEventsContent: Map<EventId, IContent>;
     isEncrypted!: Writable<boolean>;
@@ -83,6 +90,11 @@ export class MatrixChatRoom
     currentRoomMember: Readable<MatrixChatRoomMember>;
     private notSentEvents: MapStore<string, MatrixEvent> = new MapStore<string, MatrixEvent>();
     shouldRetrySendingEvents = derived(this.notSentEvents, (notSentEvents) => notSentEvents.size > 0);
+
+    /** The first load of the room's messages, which later loads of earlier messages wait for. */
+    private readonly initialLoad: Promise<void>;
+    /** The load of earlier messages under way, shared by everyone who asks meanwhile (one window, one pagination). */
+    private previousMessagesLoad: Promise<void> | undefined;
 
     private handleRoomTimeline = this.onRoomTimeline.bind(this);
     private handleRoomName = this.onRoomName.bind(this);
@@ -156,7 +168,7 @@ export class MatrixChatRoom
                 })
         );
 
-        (async () => {
+        this.initialLoad = (async () => {
             await matrixSecurity.restoreRoomsMessages();
         })()
             .catch((error) => {
@@ -167,6 +179,9 @@ export class MatrixChatRoom
             })
             .catch((error) => {
                 console.error("Failed to init Matrix room messages:", error);
+            })
+            .finally(() => {
+                this.isLoadingMessages.set(false);
             });
 
         //Necessary to keep matrix event content for local event deletions after initialization
@@ -200,6 +215,17 @@ export class MatrixChatRoom
         const messages = result.filter((message) => message !== undefined);
         this.messages.push(...messages);
         this.hasPreviousMessage.set(this.timelineWindow.canPaginate(Direction.Backward));
+
+        // The first events of a room can all be reactions or deletions: older history holds its latest message,
+        // which the chat list shows. Fetch it now rather than when the chat is first opened.
+        if (
+            this.messages.length === 0 &&
+            !this.isRoomFolder &&
+            this.matrixRoom.getMyMembership() === KnownMembership.Join &&
+            get(this.hasPreviousMessage)
+        ) {
+            await this.loadPreviousMessages();
+        }
     }
 
     private async readEventsToAddMessagesAndReactions(
@@ -471,24 +497,57 @@ export class MatrixChatRoom
         return eventRelation?.rel_type === "m.replace";
     }
 
+    /** Loads earlier messages (about a screen of them), after the room's first load. */
     async loadMorePreviousMessages() {
-        if (get(this.hasPreviousMessage)) {
-            const existingEventsBeforePagination = this.timelineWindow.getEvents();
-            await this.timelineWindow.paginate(Direction.Backward, 8);
-            this.timelineWindow.unpaginate(existingEventsBeforePagination.length, false);
-            const tempMatrixChatMessages: Promise<MatrixChatMessage | undefined>[] = [];
-            this.timelineWindow.getEvents().forEach((event) => {
-                tempMatrixChatMessages.push(this.readEventsToAddMessagesAndReactions(event, this.messages));
-            });
+        await this.initialLoad;
+        await this.loadPreviousMessages();
+    }
 
-            const result = await Promise.all(tempMatrixChatMessages);
+    private loadPreviousMessages(): Promise<void> {
+        // Two callers (the first load of the room, a chat being opened) must not paginate the same window at once.
+        if (this.previousMessagesLoad) return this.previousMessagesLoad;
+        if (!get(this.hasPreviousMessage)) return Promise.resolve();
 
-            const messages = result.filter((message) => message !== undefined);
-            this.messages.unshift(...messages);
-            this.hasPreviousMessage.set(this.timelineWindow.canPaginate(Direction.Backward));
-            if (messages.length === 0) {
-                await this.loadMorePreviousMessages();
+        const load = this.paginatePreviousMessages().finally(() => {
+            if (this.previousMessagesLoad === load) this.previousMessagesLoad = undefined;
+        });
+        this.previousMessagesLoad = load;
+        return load;
+    }
+
+    /**
+     * Asks for earlier events, in big pages, until there are enough earlier messages or the history runs out, then
+     * adds them all to the list at once.
+     */
+    private async paginatePreviousMessages(): Promise<void> {
+        // The oldest page comes last, and goes first in the list.
+        const pages: MatrixChatMessage[][] = [];
+        let collected = 0;
+        try {
+            while (collected < PREVIOUS_MESSAGES_PER_LOAD && this.timelineWindow.canPaginate(Direction.Backward)) {
+                const eventCountBefore = this.timelineWindow.getEvents().length;
+                // Each page depends on the one before (what is already read is dropped from the window).
+                // eslint-disable-next-line no-await-in-loop
+                await this.timelineWindow.paginate(Direction.Backward, PREVIOUS_EVENTS_PAGE_SIZE);
+                if (this.timelineWindow.getEvents().length <= eventCountBefore) break;
+                // Drop what was read already (from the newer end): the window now holds only the new page.
+                this.timelineWindow.unpaginate(eventCountBefore, false);
+
+                // eslint-disable-next-line no-await-in-loop
+                const result = await Promise.all(
+                    this.timelineWindow
+                        .getEvents()
+                        .map((event) => this.readEventsToAddMessagesAndReactions(event, this.messages))
+                );
+                const messages = result.filter((message) => message !== undefined);
+                pages.unshift(messages);
+                collected += messages.length;
             }
+        } finally {
+            // What was read stays, even when a later request failed: the window has moved past those events.
+            this.hasPreviousMessage.set(this.timelineWindow.canPaginate(Direction.Backward));
+            const messages = pages.flat();
+            if (messages.length > 0) this.messages.unshift(...messages);
         }
     }
 
