@@ -54,6 +54,8 @@ export class AreaEditorTool extends MapEditorTool {
 
     private draggingdArea: boolean;
     private wasAreaMoved: boolean;
+    /** Where the pressed area was: its dashed line shows once the pointer moves, so a tap shows none. */
+    private ghostOnMove?: { x: number; y: number; width: number; height: number };
 
     private shiftKey?: Phaser.Input.Keyboard.Key;
     private ctrlKey?: Phaser.Input.Keyboard.Key;
@@ -108,6 +110,7 @@ export class AreaEditorTool extends MapEditorTool {
         editAreaDraftStore.set(undefined);
         editAreaDrawArmedStore.set(false);
         editAreaSketchStore.set(undefined);
+        this.ghostOnMove = undefined;
         editAreaGhostStore.set(undefined);
         this.glide?.stop();
         this.glide = undefined;
@@ -404,9 +407,12 @@ export class AreaEditorTool extends MapEditorTool {
         }
 
         // The dashed line of where a moved or resized area was goes when the pointer lets go, wherever it is.
+        this.ghostOnMove = undefined;
         editAreaGhostStore.set(undefined);
 
         if (get(editAreaDrawArmedStore)) {
+            // A box drawn from inside an area also started a drag of that area: it ends here too.
+            this.draggingdArea = false;
             if (this.drawinNewAreaStartPos) {
                 const drawingData = this.getNewAreaDrawingData(pointer);
                 // Too small to be a drag (a tap): still waiting for the drag that draws the box.
@@ -507,6 +513,10 @@ export class AreaEditorTool extends MapEditorTool {
         }
         if (this.draggingdArea) {
             this.wasAreaMoved = true;
+            if (this.ghostOnMove) {
+                editAreaGhostStore.set(this.ghostOnMove);
+                this.ghostOnMove = undefined;
+            }
         }
     }
 
@@ -680,6 +690,9 @@ export class AreaEditorTool extends MapEditorTool {
 
     /** Back to the list: no area selected. */
     public deselectArea(): void {
+        // "New area" comes through here: a glide to an area picked a moment ago stops, so the map holds still to draw on.
+        this.glide?.stop();
+        this.glide = undefined;
         this.changeAreaMode("ADD");
     }
 
@@ -706,6 +719,8 @@ export class AreaEditorTool extends MapEditorTool {
     public glideToArea(id: string, free?: { left: number; top: number; right: number; bottom: number }): void {
         const preview = this.getAreaPreview(id);
         if (!preview) return;
+        // Picking an area from the list ends "New area", or the next drag on it would also draw a box.
+        editAreaDrawArmedStore.set(false);
         this.changeAreaMode("EDIT", preview);
         if (get(mobileLayoutStore)) mapEditorVisibilityStore.set(false);
         const camera = this.scene.cameras.main;
@@ -847,12 +862,13 @@ export class AreaEditorTool extends MapEditorTool {
             // Only the picked area moves or resizes: its old place shows as a faint dashed line meanwhile.
             if (areaPreview.isSelected()) {
                 const { x, y, width, height } = areaPreview.getAreaData();
-                editAreaGhostStore.set({ x, y, width, height });
+                this.ghostOnMove = { x, y, width, height };
             }
             areaPreview.destroyText();
         });
         areaPreview.on(AreaPreviewEvent.Released, () => {
             this.draggingdArea = false;
+            this.ghostOnMove = undefined;
             editAreaGhostStore.set(undefined);
         });
         areaPreview.on(AreaPreviewEvent.Copied, (data: CopyAreaEventData) => {
@@ -874,6 +890,7 @@ export class AreaEditorTool extends MapEditorTool {
         });
         areaPreview.on(AreaPreviewEvent.UpdateVisibility, (visibility: boolean) => {
             if (!visibility) {
+                this.ghostOnMove = undefined;
                 editAreaGhostStore.set(undefined);
                 areaPreview.destroyText();
             }
