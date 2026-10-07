@@ -23,6 +23,7 @@ import { SelfImprovementLoop } from '../improvement/SelfImprovementLoop';
 import type { AutoPilotImprovement } from '../services/AutoPilotImprovement';
 import * as Sentry from '@sentry/node';
 import { resolveWsUrl } from '../utils/resolveWsUrl';
+import { hasPlayersInRoom } from './roomOccupancy';
 import {
     buildBehaviorConfig,
     waypointsOf,
@@ -1047,15 +1048,23 @@ export class BotManager {
 
     /**
      * Query WorkAdventure /rooms endpoint to get actual room occupancy
-     * Returns a map of roomUrl -> userCount (includes bots)
+     * Returns a map of roomUrl -> userCount (includes bots). The map is empty when the query could not be made.
      */
     private async queryWorkAdventureRooms(): Promise<Map<string, number>> {
+        return (await this.fetchWorkAdventureRooms()) ?? new Map();
+    }
+
+    /**
+     * The same query, but undefined when it could not be made (no admin token, the game did not answer), so that
+     * "nobody is anywhere" can be told apart from "could not ask".
+     */
+    private async fetchWorkAdventureRooms(): Promise<Map<string, number> | undefined> {
         const pusherUrl = process.env.PUSHER_URL || process.env.WORKADVENTURE_URL || 'http://localhost:8080';
         const adminToken = process.env.ADMIN_API_TOKEN || '';
         
         if (!adminToken) {
             console.warn('[BotManager] ADMIN_API_TOKEN not set, skipping room verification');
-            return new Map();
+            return undefined;
         }
 
         try {
@@ -1069,7 +1078,7 @@ export class BotManager {
 
             if (!response.ok) {
                 console.warn(`[BotManager] Failed to query WA rooms: ${response.status} ${response.statusText}`);
-                return new Map();
+                return undefined;
             }
 
             const rooms: Record<string, number> = await response.json() as Record<string, number>;
@@ -1082,8 +1091,21 @@ export class BotManager {
             return roomMap;
         } catch (error) {
             console.error('[BotManager] Error querying WA rooms:', error);
-            return new Map();
+            return undefined;
         }
+    }
+
+    /**
+     * Whether people (not our own bots) are in a room right now, according to the game. See hasPlayersInRoom.
+     */
+    async hasPlayersIn(roomId: string, attempts = 4, delayMs = 1500): Promise<boolean> {
+        return hasPlayersInRoom(
+            () => this.fetchWorkAdventureRooms(),
+            roomId,
+            () => this.roomsWithBots.get(roomId)?.botIds.size ?? 0,
+            attempts,
+            delayMs
+        );
     }
 
     /**

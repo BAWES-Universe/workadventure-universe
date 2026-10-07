@@ -122,6 +122,18 @@ function requireGameToken(req: BotAPIRequest, res: Response, next: NextFunction)
     }
 }
 
+/** Whether two room addresses name the same room: the same /@/universe/world/room path, whatever the host or scheme. */
+function sameRoomAddress(a: string, b: string): boolean {
+    const pathOf = (address: string): string => {
+        try {
+            return new URL(address).pathname.replace(/\/+$/, '');
+        } catch {
+            return address.replace(/\/+$/, '');
+        }
+    };
+    return pathOf(a) === pathOf(b);
+}
+
 export class BotAPI {
     private app: express.Application;
     private botManager: BotManager;
@@ -191,15 +203,17 @@ export class BotAPI {
                     return;
                 }
 
+                // Bots wake only for a room people are really in: the call comes from any player, so it must not
+                // wake the bots of a room the caller is not in. The answer never says how many bots a room has.
+                if (typeof roomId !== 'string' || !(await this.botManager.hasPlayersIn(roomId))) {
+                    res.json({ roomId });
+                    return;
+                }
+
                 // Handle player entering room (spawns bots)
                 await this.botManager.handlePlayerEnterRoom(roomId);
 
-                const roomState = this.botManager.getRoomState(roomId);
-                res.json({
-                    roomId,
-                    botsSpawned: roomState?.botIds.size || 0,
-                    // playerCount removed - verification system queries WA /rooms API for actual count
-                });
+                res.json({ roomId });
             } catch (error: any) {
                 console.error('[BotAPI] Error handling room enter:', error);
                 res.status(500).json({ error: error.message });
@@ -219,12 +233,7 @@ export class BotAPI {
                 // Handle player leaving (verification will despawn bots if room becomes empty)
                 await this.botManager.handlePlayerLeaveRoom(roomId);
 
-                const roomState = this.botManager.getRoomState(roomId);
-                res.json({
-                    roomId,
-                    botsActive: roomState?.botIds.size || 0,
-                    // playerCount removed - verification system queries WA /rooms API for actual count
-                });
+                res.json({ roomId });
             } catch (error: any) {
                 console.error('[BotAPI] Error handling room leave:', error);
                 res.status(500).json({ error: error.message });
@@ -349,12 +358,25 @@ export class BotAPI {
         // Spawn a specific bot immediately (called when bot is created in editor)
         this.app.post('/api/bots/spawn', requireSession, requireManager, async (req: Request, res: Response) => {
             try {
-                const { botId, roomId } = req.body;
+                const { botId } = req.body;
+                let { roomId } = req.body;
 
-                if (!botId || !roomId) {
-                    res.status(400).json({ error: 'Missing botId or roomId' });
+                if (!botId) {
+                    res.status(400).json({ error: 'Missing botId' });
                     return;
                 }
+
+                // The bot starts in its own room. A manager may name that room (the editor does), but never another one.
+                const botConfig = await this.adminApiService.getBotConfiguration(botId);
+                if (!botConfig) {
+                    res.status(404).json({ error: 'Bot not found in Admin API' });
+                    return;
+                }
+                if (roomId && !sameRoomAddress(roomId, botConfig.roomUrl)) {
+                    res.status(403).json({ error: 'That bot belongs to another room' });
+                    return;
+                }
+                roomId = roomId || botConfig.roomUrl;
 
                 // Check if bot is already spawned
                 if (this.botManager.getBot(botId)) {
@@ -386,15 +408,6 @@ export class BotAPI {
                         });
                         return;
                     }
-                }
-
-                // Fetch bot config from Admin API
-                const bots = await this.adminApiService.getBotConfigurations({ roomUrl: roomId });
-                const botConfig = bots.find(b => b.botId === botId);
-
-                if (!botConfig) {
-                    res.status(404).json({ error: 'Bot not found in Admin API' });
-                    return;
                 }
 
                 // Clear cached MCP tools so fresh tool definitions are fetched on respawn

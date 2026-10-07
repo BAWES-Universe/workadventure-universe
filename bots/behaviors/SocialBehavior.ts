@@ -67,6 +67,10 @@ export class SocialBehavior extends BaseBehavior {
     private routeDirection: 1 | -1 = 1;
     private routePauseUntil: number = 0;
     private routeStopFailures: number = 0;
+    // Stops the bot gave up on. A bot off the route would otherwise rejoin at the nearest stop, the one it can't
+    // reach, and stand there forever. They count again once the route changes or the bot reaches a stop.
+    private skippedStops: Set<number> = new Set();
+    private skippedStopsRoute: string = '';
     private leashMoveInProgress: boolean = false;
     private lastLeashMoveFailure: number = 0;
     private readonly ROUTE_STOP_REACHED = 32; // A path ends on a tile centre, up to half a tile's diagonal off
@@ -2423,8 +2427,13 @@ export class SocialBehavior extends BaseBehavior {
 
         const pos = this.bot.getState().getPosition();
         if (this.routeIndex >= stops.length) this.routeIndex = 0;
+        const routeShape = JSON.stringify(stops);
+        if (routeShape !== this.skippedStopsRoute) {
+            this.skippedStopsRoute = routeShape;
+            this.skippedStops.clear();
+        }
         if (distanceToRoute(pos, stops, config.loop !== false) > this.OFF_ROUTE_DISTANCE) {
-            const nearest = nearestStopIndex(pos, stops);
+            const nearest = nearestStopIndex(pos, stops, this.skippedStops);
             if (nearest !== this.routeIndex) {
                 this.routeIndex = nearest;
                 this.routeStopFailures = 0;
@@ -2433,6 +2442,7 @@ export class SocialBehavior extends BaseBehavior {
 
         const stop = stops[this.routeIndex];
         if (distance(pos, stop) <= this.ROUTE_STOP_REACHED) {
+            this.skippedStops.clear();
             if (this.bot.getState().isMoving()) this.bot.stop();
             const pauseSeconds = config.pauseAtWaypoints ?? 0;
             if (pauseSeconds > 0) this.routePauseUntil = now + pauseSeconds * 1000;
@@ -2447,6 +2457,7 @@ export class SocialBehavior extends BaseBehavior {
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.warn(`[SocialBehavior] Can't reach stop ${this.routeIndex + 1}, skipping it`);
                 }
+                this.skippedStops.add(this.routeIndex);
                 this.advanceRoute(config, stops.length);
             }
         } else if (reached === 'walking') {

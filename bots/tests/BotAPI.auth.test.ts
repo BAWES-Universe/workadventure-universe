@@ -20,6 +20,7 @@ const botManager = {
     handlePlayerLeaveRoom: vi.fn(),
     getRoomState: vi.fn(),
     handlePlayerEnterRoom: vi.fn(),
+    hasPlayersIn: vi.fn(),
     spawnBot: vi.fn(),
     despawnBot: vi.fn(),
     updateBot: vi.fn(),
@@ -56,6 +57,7 @@ beforeEach(() => {
     adminApiService.validateSessionToken.mockResolvedValue({ userId: 'u1', uuid: 'uuid-1', email: 'a@b.c' });
     adminApiService.canSessionManageBot.mockResolvedValue(true);
     botManager.getBot.mockReturnValue({});
+    botManager.hasPlayersIn.mockResolvedValue(true);
     botManager.despawnBot.mockResolvedValue(undefined);
     botManager.updateBot.mockResolvedValue({ updated: true, changes: [] });
     botManager.summonBot.mockResolvedValue(undefined);
@@ -146,6 +148,25 @@ describe('bot server control routes', () => {
         expect(botManager.handlePlayerEnterRoom).toHaveBeenCalledWith('r1');
     });
 
+    it('wakes nothing for a room nobody is in, and says nothing about its bots', async () => {
+        botManager.hasPlayersIn.mockResolvedValue(false);
+        botManager.getRoomState.mockReturnValue({ botIds: new Set(['b1', 'b2']) });
+        const response = await withGameToken('/api/bots/room-enter', { roomId: 'private-room' }, GAME_TOKEN);
+        expect(response.status).toBe(200);
+        expect(botManager.hasPlayersIn).toHaveBeenCalledWith('private-room');
+        expect(botManager.handlePlayerEnterRoom).not.toHaveBeenCalled();
+        expect(await response.json()).toEqual({ roomId: 'private-room' });
+    });
+
+    it('does not give the number of bots when a room is woken, or when a player leaves', async () => {
+        botManager.handlePlayerEnterRoom.mockResolvedValue(undefined);
+        botManager.getRoomState.mockReturnValue({ botIds: new Set(['b1', 'b2']) });
+        const entered = await withGameToken('/api/bots/room-enter', { roomId: 'r1' }, GAME_TOKEN);
+        expect(await entered.json()).toEqual({ roomId: 'r1' });
+        const left = await withGameToken('/api/bots/room-leave', { roomId: 'r1' }, GAME_TOKEN);
+        expect(await left.json()).toEqual({ roomId: 'r1' });
+    });
+
     it('refuses a bot\'s feelings about a player without a game token', async () => {
         const response = await fetch(`${base}/api/bots/b1/emotions/guest-uuid`);
         expect(response.status).toBe(401);
@@ -222,5 +243,55 @@ describe('bot server control routes', () => {
         process.env.BOT_SERVICE_TOKEN = 'service-secret';
         const response = await call('POST', '/api/bots/metrics', { metrics: [] }, { 'x-bot-service-token': 'service-secret' });
         expect(response.status).not.toBe(403);
+    });
+});
+
+describe('starting a bot by hand', () => {
+    const botConfig = { botId: 'b1', roomUrl: 'https://play.example.com/@/acme/office/lobby' };
+
+    beforeEach(() => {
+        adminApiService.getBotConfiguration.mockResolvedValue(botConfig);
+        botManager.getBot.mockReturnValue(undefined);
+        botManager.getRoomState.mockReturnValue({ botIds: new Set() });
+        botManager.spawnBot.mockResolvedValue(undefined);
+    });
+
+    it('starts the bot in its own room when the manager names that room, even through another host', async () => {
+        const response = await post(
+            '/api/bots/spawn',
+            { botId: 'b1', roomId: 'http://localhost:8080/@/acme/office/lobby/' },
+            SESSION
+        );
+        expect(response.status).toBe(200);
+        expect(botManager.spawnBot).toHaveBeenCalledWith('b1', botConfig);
+    });
+
+    it('starts the bot in its own room when no room is named', async () => {
+        const response = await post('/api/bots/spawn', { botId: 'b1' }, SESSION);
+        expect(response.status).toBe(200);
+        expect((await response.json()).roomId).toBe(botConfig.roomUrl);
+        expect(botManager.spawnBot).toHaveBeenCalled();
+    });
+
+    it('refuses a room that is not the bot\'s own, wakes nothing and starts nothing', async () => {
+        const response = await post(
+            '/api/bots/spawn',
+            { botId: 'b1', roomId: 'https://play.example.com/@/acme/office/vault' },
+            SESSION
+        );
+        expect(response.status).toBe(403);
+        expect(botManager.handlePlayerEnterRoom).not.toHaveBeenCalled();
+        expect(botManager.spawnBot).not.toHaveBeenCalled();
+    });
+
+    it('starts the manager\'s bot even when nobody else is in the room', async () => {
+        botManager.getRoomState.mockReturnValue(null);
+        botManager.handlePlayerEnterRoom.mockImplementation(async () => {
+            botManager.getRoomState.mockReturnValue({ botIds: new Set() });
+        });
+        const response = await post('/api/bots/spawn', { botId: 'b1', roomId: botConfig.roomUrl }, SESSION);
+        expect(response.status).toBe(200);
+        expect(botManager.hasPlayersIn).not.toHaveBeenCalled();
+        expect(botManager.spawnBot).toHaveBeenCalled();
     });
 });
