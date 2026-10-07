@@ -48,7 +48,7 @@ class MapEditor {
   }
 
   async openPlaces(page: Page) {
-    await page.getByTestId("look-around-places-button").click();
+    // The Places sheet is part of Look around: it is open as soon as Look around is.
     await expect(page.getByTestId("look-around-places")).toBeVisible();
   }
 

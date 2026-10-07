@@ -11,6 +11,7 @@
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import type { AreaEditorTool } from "../../../Phaser/Game/MapEditor/Tools/AreaEditorTool";
     import { mapEditorSelectedAreaPreviewStore } from "../../../Stores/MapEditorStore";
+    import { editAreaSettingsRequestStore } from "../../../Stores/EditModeStore";
     import type { AreaPreview } from "../../../Phaser/Components/MapEditor/AreaPreview";
     import { extensionModuleStore } from "../../../Stores/GameSceneStore";
     import type { ExtensionModule, ExtensionModuleAreaProperty } from "../../../ExternalModule/ExtensionModule";
@@ -91,6 +92,15 @@
         }
     });
     onDestroy(unsubscribe);
+
+    // "Settings" on the bar under the area: back from an open setting page to the area's own settings.
+    let settingsRequests = $editAreaSettingsRequestStore;
+    $: if ($editAreaSettingsRequestStore !== settingsRequests) {
+        settingsRequests = $editAreaSettingsRequestStore;
+        openProperty = undefined;
+        renaming = false;
+        showApps = false;
+    }
 
     $: preview = $mapEditorSelectedAreaPreviewStore;
     $: flags = flagsOf(properties);

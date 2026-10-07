@@ -1,24 +1,41 @@
 <script lang="ts">
-    // What is drawn over the map while looking around: the glowing box of what you normally see, with you in it,
-    // the "You" tab on the edge when you are off-screen, and a small label on every place that has people in it.
+    // What is drawn over the map while looking around: a frame and a name tag on every named area and a tag on every
+    // object that does something (the same look as the Areas tool in the editor), the "You are here" tag over you,
+    // and the "You" tab on the edge when you are off-screen.
     // The game camera does not report its moves while exploring, so this reads it every frame.
     import { onDestroy, onMount } from "svelte";
     import { gameManager } from "../../Phaser/Game/GameManager";
-    import { waScaleManager } from "../../Phaser/Services/WaScaleManager";
-    import { mapExplorationAreasStore, mapExplorationObjectSelectedStore } from "../../Stores/MapEditorStore";
-    import { lookAroundNormalZoomStore } from "../../Stores/LookAroundStore";
+    import {
+        mapExplorationAreasStore,
+        mapExplorationEntitiesStore,
+        mapExplorationObjectSelectedStore,
+    } from "../../Stores/MapEditorStore";
+    import { areaLook } from "../MapEditor/EditMode/areaLook";
+    import { areaColour } from "../../Phaser/Components/MapEditor/AreaPreview";
+    import { lookAroundBottomCoverStore } from "../../Stores/LookAroundStore";
     import { currentPlayerWokaStore } from "../../Stores/CurrentPlayerWokaStore";
     import { mobileLayoutStore } from "../../Stores/MobileLayoutStore";
-    import type { AreaPreview } from "../../Phaser/Components/MapEditor/AreaPreview";
     import { LL } from "../../../i18n/i18n-svelte";
     import type { ExplorerTool } from "../../Phaser/Game/MapEditor/Tools/ExplorerTool";
+    import { getPlaceMainProperty, getPlaceName, getPlaceRect, type Place } from "./placeInfo";
     import { IconChevronLeft, IconChevronRight, IconChevronUp, IconChevronDown } from "@wa-icons";
 
-    interface AreaLabel {
+    interface AreaFrame {
         id: string;
-        area: AreaPreview;
+        area: Place;
         name: string;
+        look: string;
         people: number;
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+    }
+
+    interface ObjectTag {
+        id: string;
+        object: Place;
+        name: string;
         x: number;
         y: number;
     }
@@ -27,9 +44,12 @@
     export let peopleByArea: Map<string, number> = new Map();
 
     let overlay: HTMLElement;
-    let box = { x: 0, y: 0, width: 0, height: 0, visible: false };
+    let pin = { x: 0, y: 0 };
     let youTab: { side: "left" | "right" | "top" | "bottom"; x: number; y: number } | undefined;
-    let areaLabels: AreaLabel[] = [];
+    let frames: AreaFrame[] = [];
+    let tags: ObjectTag[] = [];
+    // How much of the bottom of this layer the sheet covers (0 when it is not up).
+    let coveredBottom = 0;
     let frame: number | undefined;
     let lastPeopleCount = 0;
 
@@ -62,37 +82,31 @@
             y: (wy - view.y) * scale + canvas.top - bounds.top,
         });
 
-        // The box: what the usual zoom shows, centred on you. Only drawn once the camera is further out than that.
         const player = scene.CurrentPlayer;
-        const normalZoom = $lookAroundNormalZoomStore ?? waScaleManager.zoomModifier;
-        const ratio = waScaleManager.zoomModifier / normalZoom;
-        const boxWidth = canvas.width * ratio;
-        const boxHeight = canvas.height * ratio;
         const centre = toScreen(player.x, player.y);
-        box = {
-            x: centre.x - boxWidth / 2,
-            y: centre.y - boxHeight / 2,
-            width: boxWidth,
-            height: boxHeight,
-            visible: ratio < 0.92,
-        };
+        pin = toScreen(player.x, player.y - 40);
+        // On a phone the sheet covers the bottom of the map: "off-screen" is measured above it.
+        const cover = $lookAroundBottomCoverStore;
+        const visibleHeight =
+            cover > 0 ? Math.min(bounds.height, window.innerHeight - cover - bounds.top) : bounds.height;
+        coveredBottom = bounds.height - visibleHeight;
 
         // The "You" tab: on the edge nearest to you, once you are off-screen.
         if (
             centre.x < -EDGE_MARGIN ||
             centre.x > bounds.width + EDGE_MARGIN ||
             centre.y < -EDGE_MARGIN ||
-            centre.y > bounds.height + EDGE_MARGIN
+            centre.y > visibleHeight + EDGE_MARGIN
         ) {
             const clampedX = Math.min(Math.max(centre.x, 80), bounds.width - 80);
-            const clampedY = Math.min(Math.max(centre.y, 120), bounds.height - 160);
+            const clampedY = Math.min(Math.max(centre.y, 120), visibleHeight - 160);
             // Off-screen in two directions at once (far above, a little to the left): the tab goes on the edge you
             // are furthest beyond, which is the direction the tab's arrow should point.
             const beyond = {
                 left: -centre.x,
                 right: centre.x - bounds.width,
                 top: -centre.y,
-                bottom: centre.y - bounds.height,
+                bottom: centre.y - visibleHeight,
             };
             const side = (Object.keys(beyond) as (keyof typeof beyond)[]).reduce((best, each) =>
                 beyond[each] > beyond[best] ? each : best
@@ -102,37 +116,60 @@
             youTab = undefined;
         }
 
-        // Labels on the places that have people: counted a few times a second, positioned every frame.
+        // Frames and tags on the named places, counted a few times a second, positioned every frame.
         const areas = $mapExplorationAreasStore;
         if (areas) {
             const recount = now - lastPeopleCount > 400;
             if (recount) lastPeopleCount = now;
-            const labels: AreaLabel[] = [];
             const counts = recount ? new Map<string, number>() : undefined;
+            const nextFrames: AreaFrame[] = [];
             for (const [id, area] of areas) {
                 const data = area.getAreaData();
                 // Between recounts, the last count of every place, empty ones included.
                 const people = recount ? countPeopleIn(data) : peopleByArea.get(id) ?? countPeopleIn(data);
                 counts?.set(id, people);
-                if (people === 0) continue;
-                const top = toScreen(data.x + data.width / 2, data.y);
-                labels.push({ id, area, name: data.name || area.nameFromProperties, people, x: top.x, y: top.y });
+                if (!data.name) continue;
+                const from = toScreen(data.x, data.y);
+                const to = toScreen(data.x + data.width, data.y + data.height);
+                nextFrames.push({
+                    id,
+                    area,
+                    name: data.name,
+                    look: areaLook(areaColour(data.properties)),
+                    people,
+                    x: from.x,
+                    y: from.y,
+                    width: to.x - from.x,
+                    height: to.y - from.y,
+                });
             }
-            areaLabels = labels;
+            frames = nextFrames;
             if (counts) peopleByArea = counts;
         }
+        const nextTags: ObjectTag[] = [];
+        for (const [id, entity] of $mapExplorationEntitiesStore) {
+            if (!getPlaceMainProperty(entity)) continue;
+            const rect = getPlaceRect(entity);
+            const top = toScreen(rect.x + rect.width / 2, rect.y);
+            nextTags.push({ id, object: entity, name: getPlaceName(entity, $LL), x: top.x, y: top.y });
+        }
+        tags = nextTags;
     }
 
     function goHome() {
         const scene = gameManager.tryGetCurrentGameScene();
         if (!scene) return;
-        scene.getCameraManager().centerCameraOn({ x: scene.CurrentPlayer.x, y: scene.CurrentPlayer.y });
+        // With the sheet up, "you" go in the middle of the part of the map that is not under it.
+        const view = scene.cameras.main.worldView;
+        const scale = scene.game.canvas.getBoundingClientRect().width / view.width;
+        const lift = scale > 0 ? coveredBottom / 2 / scale : 0;
+        scene.getCameraManager().centerCameraOn({ x: scene.CurrentPlayer.x, y: scene.CurrentPlayer.y + lift });
         (
             scene.getMapEditorModeManager().currentlyActiveTool as ExplorerTool | undefined
         )?.defineZoomToCenterCameraPosition?.();
     }
 
-    function selectArea(area: AreaPreview) {
+    function selectArea(area: Place) {
         mapExplorationObjectSelectedStore.set(area);
     }
 
@@ -145,37 +182,43 @@
 </script>
 
 <div class="absolute inset-0 overflow-hidden pointer-events-none" class:phone={$mobileLayoutStore} bind:this={overlay}>
-    {#if box.visible}
+    {#each frames as f (f.id)}
         <div
-            class="you-box"
-            style="transform:translate({box.x}px,{box.y}px);width:{box.width}px;height:{box.height}px"
-            data-testid="look-around-you-box"
+            class="la-frame"
+            style="{f.look} left:{f.x}px;top:{f.y}px;width:{f.width}px;height:{f.height}px"
+            data-testid="look-around-area-frame"
         >
-            <span class="you-box-label u-surface">{$LL.mapEditor.lookAround.youAreHere()}</span>
+            <button type="button" class="la-tag u-surface pointer-events-auto" on:click={() => selectArea(f.area)}
+                >{f.name}{#if f.people > 0}<em
+                        >· {f.people === 1
+                            ? $LL.mapEditor.lookAround.onePerson()
+                            : $LL.mapEditor.lookAround.people({ count: f.people })}</em
+                    >{/if}</button
+            >
         </div>
-    {/if}
-
-    {#each areaLabels as label (label.id)}
+    {/each}
+    {#each tags as t (t.id)}
         <button
             type="button"
-            class="area-label u-surface pointer-events-auto"
-            style="left:{label.x}px;top:{label.y}px"
-            on:click={() => selectArea(label.area)}
+            class="la-tag la-tag-obj u-surface pointer-events-auto"
+            style="{areaLook()} left:{t.x}px;top:{t.y}px"
+            on:click={() => selectArea(t.object)}>{t.name}</button
         >
-            <span class="area-label-name">{label.name}</span>
-            <span class="area-label-people"
-                >{label.people === 1
-                    ? $LL.mapEditor.lookAround.onePerson()
-                    : $LL.mapEditor.lookAround.people({ count: label.people })}</span
-            >
-        </button>
     {/each}
+
+    <span class="you-pin u-surface" style="transform:translate({pin.x}px,{pin.y}px) translate(-50%,-100%)"
+        ><b>{$LL.mapEditor.lookAround.youAreHere()}</b></span
+    >
 
     {#if youTab}
         <button
             type="button"
             class="you-tab you-tab-{youTab.side} u-surface pointer-events-auto"
-            style={youTab.side === "left" || youTab.side === "right" ? `top:${youTab.y}px` : `left:${youTab.x}px`}
+            style={youTab.side === "left" || youTab.side === "right"
+                ? `top:${youTab.y}px`
+                : youTab.side === "bottom" && $lookAroundBottomCoverStore > 0
+                ? `left:${youTab.x}px;bottom:${coveredBottom + 12}px`
+                : `left:${youTab.x}px`}
             aria-label={$LL.mapEditor.lookAround.backToMe()}
             data-testid="look-around-you-tab"
             on:click={goHome}
@@ -193,58 +236,54 @@
 </div>
 
 <style>
-    /* The box glows lavender over the map; nothing outside it is dimmed, so the whole room stays readable while you
-       look around. It is moved with a transform and has no transitions, so it keeps up with the camera on a phone. */
-    .you-box {
+    .la-frame {
         position: absolute;
-        left: 0;
-        top: 0;
-        border-radius: 16px;
-        box-shadow: 0 0 0 2px rgba(196, 181, 253, 0.95), 0 0 0 6px rgba(167, 139, 250, 0.22);
-        will-change: transform, width, height;
+        border-radius: 14px;
+        box-shadow: 0 0 0 2px var(--af-c), 0 0 0 6px var(--af-halo);
     }
-    .you-box-label {
+    .la-tag {
         position: absolute;
-        left: 8px;
+        left: 22px;
         top: -14px;
         padding: 4px 10px;
+        border: 0;
         border-radius: 999px;
         font-size: 11px;
         font-weight: 700;
         letter-spacing: 0.12em;
         text-transform: uppercase;
         white-space: nowrap;
+        line-height: 1.2;
+        color: var(--af-t);
+        cursor: pointer;
+    }
+    .la-tag em {
+        font-style: normal;
+        margin-left: 6px;
+        opacity: 0.8;
+    }
+    .la-tag-obj {
+        transform: translate(-50%, -100%) translateY(-6px);
+        top: 0;
+    }
+    .you-pin {
+        position: absolute;
+        left: 0;
+        top: 0;
+        padding: 4px 10px;
+        border-radius: 999px;
+        box-shadow: 0 0 0 2px rgba(196, 181, 253, 0.95), 0 0 0 6px rgba(167, 139, 250, 0.22);
+        white-space: nowrap;
+    }
+    .you-pin b {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
         background-image: linear-gradient(90deg, #c4b5fd, #f5c451);
         -webkit-background-clip: text;
         background-clip: text;
         color: transparent;
-    }
-    .area-label {
-        position: absolute;
-        transform: translate(-50%, -100%) translateY(-6px);
-        display: flex;
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 0;
-        padding: 6px 10px;
-        border: 0;
-        border-radius: 12px;
-        color: #fff;
-        font: inherit;
-        line-height: 1.2;
-        text-align: start;
-        cursor: pointer;
-        -webkit-tap-highlight-color: transparent;
-    }
-    .area-label-name {
-        font-size: 13px;
-        font-weight: 600;
-        white-space: nowrap;
-    }
-    .area-label-people {
-        font-size: 11.5px;
-        color: rgba(244, 242, 250, 0.64);
-        white-space: nowrap;
     }
     .you-tab {
         position: absolute;
@@ -270,14 +309,14 @@
         border-radius: 0 26px 26px 0;
         transform: translateY(-50%);
     }
-    /* The top tab hangs under the pill; on a phone the bottom one sits above the bar. */
+    /* The top tab hangs from the top edge; on a phone the bottom one sits above the bar (above the sheet while it is up). */
     .you-tab-top {
-        top: calc(var(--tiles-clear, 0px) + 72px);
+        top: calc(var(--tiles-clear, 0px) + 12px);
         border-radius: 0 0 26px 26px;
         transform: translateX(-50%);
     }
     .phone .you-tab-top {
-        top: calc(var(--tiles-clear, 0px) + 76px + env(safe-area-inset-top, 0px));
+        top: calc(var(--tiles-clear, 0px) + 12px + env(safe-area-inset-top, 0px));
     }
     .you-tab-bottom {
         bottom: 0;

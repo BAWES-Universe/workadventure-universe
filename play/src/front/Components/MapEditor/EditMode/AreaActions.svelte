@@ -9,6 +9,7 @@
     import type { AreaEditorTool } from "../../../Phaser/Game/MapEditor/Tools/AreaEditorTool";
     import { mobileLayoutStore } from "../../../Stores/MobileLayoutStore";
     import { mapEditorSelectedAreaPreviewStore, mapEditorVisibilityStore } from "../../../Stores/MapEditorStore";
+    import { editAreaSettingsRequestStore } from "../../../Stores/EditModeStore";
     import { IconSettings, IconTrash } from "@wa-icons";
 
     let left = 0;
@@ -68,7 +69,10 @@
     }
 
     function settings() {
+        // The panel opens if it was tucked away, and an open setting page goes back to the area's own settings, so
+        // the button always shows something.
         mapEditorVisibilityStore.set(true);
+        editAreaSettingsRequestStore.update((n) => n + 1);
     }
     function remove() {
         const preview = $mapEditorSelectedAreaPreviewStore;

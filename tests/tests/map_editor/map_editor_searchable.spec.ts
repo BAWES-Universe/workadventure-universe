@@ -73,7 +73,7 @@ test.describe("Map editor @oidc @nomobile @nowebkit", () => {
         // Click on the entity and check that Title and description are correct
         await places.locator(".entity-items .item").first().click();
         await expect(page.locator(".object-menu h1")).toContainText("My Play Audio Entity");
-        await expect(page.locator(".object-menu p"))
+        await expect(page.locator(".object-menu .place-card-desc"))
             .toContainText("This is a Play Audio entity to test the search feature in the exploration mode. It should be searchable.");
 
         // Test if the area is searchable

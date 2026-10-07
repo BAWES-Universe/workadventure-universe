@@ -14,6 +14,7 @@ import {
     editAreaDraftStore,
     editAreaDrawArmedStore,
     editAreaGhostStore,
+    editAreaSheetOpenStore,
     editAreaSketchStore,
     showUndoToast,
 } from "../../../../Stores/EditModeStore";
@@ -531,7 +532,11 @@ export class AreaEditorTool extends MapEditorTool {
      * picks nothing (beside the area) brings the sheet back.
      */
     private tuckSheetOnPhone(picked: AreaPreview | undefined): void {
-        if (get(mobileLayoutStore)) mapEditorVisibilityStore.set(picked === undefined);
+        if (!get(mobileLayoutStore)) return;
+        // Put away, the sheet also goes back to its small size, as when an area is picked from its list: otherwise
+        // it comes back open the next time a tap picks nothing.
+        if (picked !== undefined) editAreaSheetOpenStore.set(false);
+        mapEditorVisibilityStore.set(picked === undefined);
     }
 
     private getNewAreaDrawingData(pointer: Phaser.Input.Pointer): {
@@ -719,6 +724,8 @@ export class AreaEditorTool extends MapEditorTool {
     public glideToArea(id: string, free?: { left: number; top: number; right: number; bottom: number }): void {
         const preview = this.getAreaPreview(id);
         if (!preview) return;
+        // A glide still running goes to the area picked before this one: it stops first, whatever happens next.
+        this.glide?.stop();
         // Picking an area from the list ends "New area", or the next drag on it would also draw a box.
         editAreaDrawArmedStore.set(false);
         this.changeAreaMode("EDIT", preview);
@@ -741,7 +748,6 @@ export class AreaEditorTool extends MapEditorTool {
         const dx = data.x + data.width / 2 - fromX;
         const dy = data.y + data.height / 2 - fromY;
         const cameraManager = this.scene.getCameraManager();
-        this.glide?.stop();
         let done = 0;
         this.glide = this.scene.tweens.addCounter({
             from: 0,

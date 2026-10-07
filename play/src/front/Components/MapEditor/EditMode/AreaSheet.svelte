@@ -19,6 +19,8 @@
     function swipeStart(event: PointerEvent) {
         swipeFrom = event.clientY;
     }
+    // The finger can lift outside the handle: the end is caught on the window, or the start would linger and the next
+    // tap would count as the end of this swipe.
     function swipeEnd(event: PointerEvent) {
         if (swipeFrom === undefined) return;
         const moved = event.clientY - swipeFrom;
@@ -32,6 +34,8 @@
     }
 </script>
 
+<svelte:window on:pointerup={swipeEnd} on:pointercancel={() => (swipeFrom = undefined)} />
+
 <div
     class="as-sheet u-surface pointer-events-auto"
     class:as-open={open}
@@ -39,12 +43,7 @@
     data-testid="area-sheet"
 >
     <!-- svelte-ignore a11y-no-static-element-interactions -->
-    <div
-        class="as-top"
-        on:pointerdown={swipeStart}
-        on:pointerup={swipeEnd}
-        on:pointercancel={() => (swipeFrom = undefined)}
-    >
+    <div class="as-top" on:pointerdown={swipeStart}>
         <button
             type="button"
             class="as-grab"

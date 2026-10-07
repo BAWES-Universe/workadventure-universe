@@ -202,7 +202,12 @@
                                 bind:value={_tags}
                                 handleChange={() => handleTagChange(_tags)}
                                 testId="allowedTags"
-                            />
+                            >
+                                <span slot="info">
+                                    <IconInfoCircle font-size="15" />
+                                    {$LL.mapEditor.properties.personalAreaPropertyData.allowedTagsInfo()}
+                                </span>
+                            </InputRoomTags>
                         {/if}
                     </div>
                 {/if}
