@@ -132,7 +132,7 @@
         display: flex;
         flex-direction: column;
         gap: 14px;
-        padding: 4px 12px 0;
+        padding: 4px 0 0;
     }
     .pt-field {
         display: flex;
