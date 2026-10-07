@@ -28,6 +28,7 @@
         getPlaceName,
         getPlacePropertyLabel,
         getPlaceSearchText,
+        getSettingTitle,
         placeHasProperty,
         type Place,
     } from "./placeInfo";
@@ -112,9 +113,7 @@
     ];
 
     function filterLabel(filter: string): string {
-        const properties = $LL.mapEditor.properties as unknown as Record<string, { label?: () => string } | undefined>;
-        const translation = properties[filter];
-        return translation && typeof translation.label === "function" ? translation.label() : filter;
+        return getSettingTitle(filter, $LL) ?? filter;
     }
 
     function toggleFilter(filter: string) {

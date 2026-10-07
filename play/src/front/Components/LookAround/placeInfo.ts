@@ -67,7 +67,10 @@ export function getPlaceIcon(place: Place): ComponentType {
     return place instanceof AreaPreview ? IconTexture : IconLamp;
 }
 
-/** The name shown for a place: its own name, else the object's prefab name, else what its main property is called. */
+/**
+ * The name shown for a place: its own name, else the object's prefab name. An area without a name is "Unnamed area",
+ * as the editor calls it; what it does shows on the line under the name, not as its name.
+ */
 export function getPlaceName(place: Place, ll: TranslationFunctions): string {
     if (place instanceof Entity) {
         const name = place.getEntityData().name;
@@ -75,21 +78,32 @@ export function getPlaceName(place: Place, ll: TranslationFunctions): string {
     }
     const name = place.getAreaData().name;
     if (name && name !== "") return name;
-    return getPlacePropertyLabel(place, ll) ?? ll.mapEditor.lookAround.area();
+    return ll.mapEditor.edit.areas.unnamed();
 }
 
-/** What the main property is called in the user's language ("Video call", "Exit"...), if it has a label. */
+/**
+ * What a setting is called, in the words the editor uses for it ("Video call", "Quiet zone", "Highlight"...), so Look
+ * around and the editor say the same. An app of "Open a website" keeps its own name (YouTube...).
+ */
+export function getSettingTitle(type: string, ll: TranslationFunctions, application?: string): string | undefined {
+    const labels = ll.mapEditor.properties as unknown as Record<string, { label?: () => string } | undefined>;
+    if (type === "openWebsite" && application && application !== "website") {
+        const app = labels[application];
+        if (app && typeof app.label === "function") return app.label();
+    }
+    const titles = ll.mapEditor.edit.properties as unknown as Record<string, { title?: () => string } | undefined>;
+    const title = titles[type];
+    if (title && typeof title.title === "function") return title.title();
+    const label = labels[type];
+    if (label && typeof label.label === "function") return label.label();
+    return undefined;
+}
+
+/** What the main property is called in the user's language ("Video call", "Exit to a room"...), if it has a name. */
 export function getPlacePropertyLabel(place: Place, ll: TranslationFunctions): string | undefined {
     const property = getPlaceMainProperty(place);
     if (!property) return undefined;
-    const properties = ll.mapEditor.properties as unknown as Record<string, { label?: () => string } | undefined>;
-    let key = property.type;
-    if (property.type === "openWebsite" && property.application && property.application !== "website") {
-        key = property.application;
-    }
-    const translation = properties[key];
-    if (translation && typeof translation.label === "function") return translation.label();
-    return undefined;
+    return getSettingTitle(property.type, ll, property.application);
 }
 
 /** True if the place matches a property filter (a property type, or an application name for websites). */

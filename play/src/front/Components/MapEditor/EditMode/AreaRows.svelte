@@ -58,6 +58,9 @@
                 return entry?.title?.() ?? "";
             })
             .filter((title) => title !== "");
+        // "Listed in Places" is a switch on the area's page next to the settings it has, so the row names it too.
+        const listed = area.properties.some((p) => p.type === "areaDescriptionProperties" && p.searchable === true);
+        if (listed) titles.push($LL.mapEditor.edit.areas.searchable());
         return titles.length > 0 ? titles.join(" · ") : $LL.mapEditor.edit.areas.noSettings();
     }
 </script>

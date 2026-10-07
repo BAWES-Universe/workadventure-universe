@@ -1,4 +1,5 @@
 import { GameScene } from "../../Game/GameScene";
+import { screenSpace } from "../../Game/MapEditor/ScreenSpace";
 
 export enum SizeAlteringSquarePosition {
     TopLeft = 0,
@@ -26,6 +27,12 @@ export class SizeAlteringSquare extends Phaser.GameObjects.Rectangle {
     private static readonly SIZE = window.matchMedia?.("(pointer: coarse)").matches ? 22 : 9;
     /** With a mouse, the handle catches the pointer a little around it, so it is easy to land on. */
     private static readonly HIT_SIZE = Math.max(SizeAlteringSquare.SIZE, 20);
+    /**
+     * When the page draws the dot (28 CSS pixels with its ring, see AreaFrames.svelte), the square catches the pointer
+     * over all of it and a little around, whatever the zoom: a world-sized square shrinks under the dot when zoomed out,
+     * and the pointer then falls on the area (the move hand) or the map (the + for drawing).
+     */
+    private static readonly DRAWN_CATCH_PX = 36;
 
     constructor(scene: Phaser.Scene, pos: { x: number; y: number }, private cursor: string) {
         super(scene, pos.x, pos.y, SizeAlteringSquare.SIZE, SizeAlteringSquare.SIZE, 0xffffff);
@@ -40,8 +47,17 @@ export class SizeAlteringSquare extends Phaser.GameObjects.Rectangle {
         const pad = (SizeAlteringSquare.HIT_SIZE - SizeAlteringSquare.SIZE) / 2;
         this.setInteractive({
             hitArea: new Phaser.Geom.Rectangle(-pad, -pad, SizeAlteringSquare.HIT_SIZE, SizeAlteringSquare.HIT_SIZE),
-            hitAreaCallback: (area: Phaser.Geom.Rectangle, x: number, y: number) =>
-                Phaser.Geom.Rectangle.Contains(area, x, y),
+            hitAreaCallback: (area: Phaser.Geom.Rectangle, x: number, y: number) => {
+                if (!this.caughtOnly) return Phaser.Geom.Rectangle.Contains(area, x, y);
+                const half = Math.max(
+                    SizeAlteringSquare.HIT_SIZE / 2,
+                    SizeAlteringSquare.DRAWN_CATCH_PX / 2 / screenSpace(this.scene).scale
+                );
+                return (
+                    Math.abs(x - SizeAlteringSquare.SIZE / 2) <= half &&
+                    Math.abs(y - SizeAlteringSquare.SIZE / 2) <= half
+                );
+            },
             cursor,
         });
         this.scene.input.setDraggable(this);
