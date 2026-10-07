@@ -719,6 +719,8 @@ export class AreaEditorTool extends MapEditorTool {
     public glideToArea(id: string, free?: { left: number; top: number; right: number; bottom: number }): void {
         const preview = this.getAreaPreview(id);
         if (!preview) return;
+        // A glide still running goes to the area picked before this one: it stops first, whatever happens next.
+        this.glide?.stop();
         // Picking an area from the list ends "New area", or the next drag on it would also draw a box.
         editAreaDrawArmedStore.set(false);
         this.changeAreaMode("EDIT", preview);
@@ -741,7 +743,6 @@ export class AreaEditorTool extends MapEditorTool {
         const dx = data.x + data.width / 2 - fromX;
         const dy = data.y + data.height / 2 - fromY;
         const cameraManager = this.scene.getCameraManager();
-        this.glide?.stop();
         let done = 0;
         this.glide = this.scene.tweens.addCounter({
             from: 0,
