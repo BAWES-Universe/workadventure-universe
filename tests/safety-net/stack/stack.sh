@@ -170,9 +170,12 @@ setup() {
 load_maps() {
     local zip="$STATE_DIR/assets.zip"
     rm -f "$zip"
+    # The checkout is restored whether or not the archive step works, so the game directory is never left modified.
+    local ok=0
     (cd "$GAME_DIR/map-storage/tests/assets" && find . -type f -name "*.wam" -exec sed -i "s|http://play.workadventure.localhost|http://localhost:8000|g" {} \; \
-        && python3 -c "import shutil,sys; shutil.make_archive(sys.argv[1][:-4], 'zip', '.')" "$zip" \
-        && git -C "$GAME_DIR" checkout -- map-storage/tests/assets) || return 1
+        && python3 -c "import shutil,sys; shutil.make_archive(sys.argv[1][:-4], 'zip', '.')" "$zip") || ok=1
+    git -C "$GAME_DIR" checkout -- map-storage/tests/assets
+    [ "$ok" = 0 ] || return 1
     curl -sf -u john.doe:password -F "file=@$zip" -F "directory=/e2e/tests" http://localhost:3000/upload >/dev/null \
         && echo "WAM maps loaded under /~/e2e/tests/maps/"
 }
