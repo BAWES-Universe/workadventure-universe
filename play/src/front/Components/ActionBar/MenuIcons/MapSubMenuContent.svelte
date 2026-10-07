@@ -1,18 +1,11 @@
 <script lang="ts">
     import { getContext } from "svelte";
-    import {
-        globalMessageVisibleStore,
-        mapManagerActivated,
-        mapEditorMenuVisibleStore,
-        openedMenuStore,
-    } from "../../../Stores/MenuStore";
+    import { globalMessageVisibleStore, mapEditorMenuVisibleStore, openedMenuStore } from "../../../Stores/MenuStore";
     import { LL } from "../../../../i18n/i18n-svelte";
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
     import { modalIframeStore, modalVisibilityStore } from "../../../Stores/ModalStore";
     import { broadcastPanelOpenStore, toggleBroadcastPanel } from "../../../Stores/BroadcastStore";
-    import { mapEditorModeStore, mapExplorationModeStore } from "../../../Stores/MapEditorStore";
-    import { lookAroundNoteSeenStore } from "../../../Stores/LookAroundStore";
-    import { enterExploreTheRoom } from "../../../Phaser/Game/MapEditor/ExploreTheRoom";
+    import { mapEditorModeStore, mapEditorToolbarInUseStore } from "../../../Stores/MapEditorStore";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import { isTodoListVisibleStore } from "../../../Stores/TodoListStore";
     import { isCalendarVisibleStore } from "../../../Stores/CalendarStore";
@@ -20,7 +13,7 @@
     import ActionBarButton from "../ActionBarButton.svelte";
     import { botEditorAvailableStore, openBotEditorFromMenu } from "../../../external-modules/bots/index";
     import AdditionalMenuItems from "./AdditionalMenuItems.svelte";
-    import { IconMapEditor, IconRobot, IconSpeakerPhone, IconZoomOutArea } from "@wa-icons";
+    import { IconMapEditor, IconRobot, IconSpeakerPhone } from "@wa-icons";
 
     // On a phone these tools sit inside the profile menu rather than in their own Tools menu.
     const inProfileMenu = getContext("profileMenu");
@@ -69,25 +62,19 @@
         closeMapMenu();
     }
 
-    function openLookAround() {
-        isTodoListVisibleStore.set(false);
-        isCalendarVisibleStore.set(false);
-        closeMapMenu();
-        lookAroundNoteSeenStore.set(true);
-        enterExploreTheRoom();
-    }
-
     /** Closes the menu these tools are listed in, whichever one hosts them, so it never stays open behind the tool. */
     function closeMapMenu() {
         openedMenuStore.close(inProfileMenu ? "profileMenu" : "mapMenu");
     }
 </script>
 
+<!-- "Look around the map" is not listed here: the zoom column's map button opens it. The editor shows as active only
+     while its own tools are in use, not while looking around (which runs on the editor engine underneath). -->
 {#if $mapEditorMenuVisibleStore}
     <ActionBarButton
         on:click={toggleMapEditorMode}
         label={$LL.actionbar.mapEditor()}
-        state={$mapEditorModeStore ? "active" : "normal"}
+        state={$mapEditorToolbarInUseStore ? "active" : "normal"}
     >
         <IconMapEditor font-size="20" />
     </ActionBarButton>
@@ -95,15 +82,6 @@
 {#if $botEditorAvailableStore && $mapEditorMenuVisibleStore}
     <ActionBarButton on:click={openBotEditorMenu} label={$LL.actionbar.botEditor()}>
         <IconRobot font-size="20" />
-    </ActionBarButton>
-{/if}
-{#if $mapManagerActivated}
-    <ActionBarButton
-        on:click={openLookAround}
-        label={$LL.mapEditor.lookAround.title()}
-        state={$mapExplorationModeStore ? "active" : "normal"}
-    >
-        <IconZoomOutArea font-size="20" />
     </ActionBarButton>
 {/if}
 {#if $globalMessageVisibleStore}

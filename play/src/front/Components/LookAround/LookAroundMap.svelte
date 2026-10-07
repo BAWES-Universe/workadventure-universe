@@ -111,9 +111,8 @@
             const counts = recount ? new Map<string, number>() : undefined;
             for (const [id, area] of areas) {
                 const data = area.getAreaData();
-                const people = recount
-                    ? countPeopleIn(data)
-                    : areaLabels.find((label) => label.id === id)?.people ?? countPeopleIn(data);
+                // Between recounts, the last count of every place, empty ones included.
+                const people = recount ? countPeopleIn(data) : peopleByArea.get(id) ?? countPeopleIn(data);
                 counts?.set(id, people);
                 if (people === 0) continue;
                 const top = toScreen(data.x + data.width / 2, data.y);
@@ -149,7 +148,7 @@
     {#if box.visible}
         <div
             class="you-box"
-            style="left:{box.x}px;top:{box.y}px;width:{box.width}px;height:{box.height}px"
+            style="transform:translate({box.x}px,{box.y}px);width:{box.width}px;height:{box.height}px"
             data-testid="look-around-you-box"
         >
             <span class="you-box-label u-surface">{$LL.mapEditor.lookAround.youAreHere()}</span>
@@ -194,13 +193,15 @@
 </div>
 
 <style>
-    /* The box glows lavender and dims the rest of the map a little, so what you normally see stands out. */
+    /* The box glows lavender over the map; nothing outside it is dimmed, so the whole room stays readable while you
+       look around. It is moved with a transform and has no transitions, so it keeps up with the camera on a phone. */
     .you-box {
         position: absolute;
+        left: 0;
+        top: 0;
         border-radius: 16px;
-        box-shadow: 0 0 0 2px rgba(196, 181, 253, 0.95), 0 0 0 6px rgba(167, 139, 250, 0.22),
-            0 0 0 4000px rgba(10, 8, 20, 0.34);
-        transition: width 120ms ease, height 120ms ease;
+        box-shadow: 0 0 0 2px rgba(196, 181, 253, 0.95), 0 0 0 6px rgba(167, 139, 250, 0.22);
+        will-change: transform, width, height;
     }
     .you-box-label {
         position: absolute;
@@ -271,12 +272,12 @@
     }
     /* The top tab hangs under the pill; on a phone the bottom one sits above the bar. */
     .you-tab-top {
-        top: 72px;
+        top: calc(var(--tiles-clear, 0px) + 72px);
         border-radius: 0 0 26px 26px;
         transform: translateX(-50%);
     }
     .phone .you-tab-top {
-        top: calc(76px + env(safe-area-inset-top, 0px));
+        top: calc(var(--tiles-clear, 0px) + 76px + env(safe-area-inset-top, 0px));
     }
     .you-tab-bottom {
         bottom: 0;
@@ -284,7 +285,7 @@
         transform: translateX(-50%);
     }
     .phone .you-tab-bottom {
-        bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+        bottom: calc(var(--bar-clear, 0px) + 72px + env(safe-area-inset-bottom, 0px));
     }
     .you-tab-woka {
         width: 30px;

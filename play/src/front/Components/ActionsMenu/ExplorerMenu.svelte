@@ -1,10 +1,8 @@
 <script lang="ts">
-    import { fade } from "svelte/transition";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
     import { mapExplorationModeStore } from "../../Stores/MapEditorStore";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { enterExploreTheRoom, leaveExploreTheRoom } from "../../Phaser/Game/MapEditor/ExploreTheRoom";
-    import { lookAroundNoteSeenStore } from "../../Stores/LookAroundStore";
     import LL from "../../../i18n/i18n-svelte";
     import { roomListActivated } from "../../Stores/MenuStore";
     import { roomListVisibilityStore } from "../../Stores/ModalStore";
@@ -36,8 +34,31 @@
             return;
         }
         analyticsClient.clickTopOpenMapExplorer();
-        lookAroundNoteSeenStore.set(true);
         enterExploreTheRoom();
+    }
+
+    // On a touch screen there is no hover: holding a finger on the map button shows its tip, as a long press does
+    // elsewhere on a phone. The tip goes when the finger lifts or moves away, and the press itself does not open.
+    let tipHeld = false;
+    let holdTimer: ReturnType<typeof setTimeout> | undefined;
+    let tipShown = false;
+    function holdStart() {
+        holdTimer = setTimeout(() => {
+            tipHeld = true;
+            tipShown = true;
+        }, 450);
+    }
+    function holdEnd() {
+        if (holdTimer) clearTimeout(holdTimer);
+        holdTimer = undefined;
+        tipShown = false;
+    }
+    function tapMap() {
+        if (tipHeld) {
+            tipHeld = false;
+            return;
+        }
+        toggleLookAround();
     }
 </script>
 
@@ -87,28 +108,20 @@
                 : $LL.mapEditor.lookAround.title()}
             aria-pressed={$mapExplorationModeStore}
             data-testid="map-overview-button"
-            on:click={toggleLookAround}
+            on:click={tapMap}
+            on:touchstart={holdStart}
+            on:touchend={holdEnd}
+            on:touchmove={holdEnd}
+            on:touchcancel={holdEnd}
+            on:contextmenu|preventDefault
         >
             <IconZoomOutArea font-size="20" />
-            <span class="explorer-tip" aria-hidden="true"
+            <span class="explorer-tip" class:shown={tipShown} aria-hidden="true"
                 >{$mapExplorationModeStore
                     ? $LL.mapEditor.explorer.showMyLocation()
                     : $LL.mapEditor.lookAround.title()}</span
             >
         </button>
-        <!-- The first time only: a small note beside the button says what it does. It goes once Look around has opened. -->
-        {#if !$lookAroundNoteSeenStore && !$mapExplorationModeStore}
-            <button
-                type="button"
-                class="explorer-note u-surface"
-                data-testid="look-around-note"
-                transition:fade={{ duration: 200 }}
-                on:click={toggleLookAround}
-            >
-                <b>{$LL.mapEditor.lookAround.noteTitle()}</b>
-                <span>{$LL.mapEditor.lookAround.noteBody()}</span>
-            </button>
-        {/if}
     </span>
 </div>
 
@@ -180,34 +193,6 @@
         position: relative;
         display: block;
     }
-    /* The one-time note, to the left of the map button, in the raised ink surface. */
-    .explorer-note {
-        position: absolute;
-        top: 50%;
-        right: calc(100% + 16px);
-        transform: translateY(-50%);
-        width: 170px;
-        padding: 10px 12px;
-        border: 0;
-        border-radius: 16px;
-        color: #fff;
-        font: inherit;
-        font-size: 13px;
-        line-height: 1.3;
-        text-align: start;
-        cursor: pointer;
-        -webkit-tap-highlight-color: transparent;
-    }
-    .explorer-note b {
-        display: block;
-        font-weight: 600;
-    }
-    .explorer-note span {
-        display: block;
-        margin-top: 2px;
-        color: rgba(244, 242, 250, 0.64);
-        font-size: 12.5px;
-    }
     .explorer-divider {
         width: 22px;
         height: 1px;
@@ -238,7 +223,8 @@
             opacity: 1;
         }
     }
-    .explorer-btn:focus-visible .explorer-tip {
+    .explorer-btn:focus-visible .explorer-tip,
+    .explorer-tip.shown {
         opacity: 1;
     }
 </style>
