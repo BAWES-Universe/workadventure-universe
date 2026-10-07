@@ -7,6 +7,7 @@ import {
     primeAdmin,
     roomNameOf,
     saveSettings,
+    limitStageToRole,
     stageRoom,
     turnOnBroadcast,
 } from "../lib/bc";
@@ -276,4 +277,55 @@ test("BC-095 Live from Broadcast, walking across a Stage or an Audience keeps th
     await wa(page, () => WA.player.teleport(160, 160));
     await page.waitForTimeout(1_000);
     await expect(page.getByTestId("broadcast-live-pill")).toBeVisible();
+});
+
+/**
+ * What a modified browser would send: join the Stage's space directly, as the front names it. The front keeps players
+ * without the role out of the area itself; the server must refuse the join too. Needs a stack where players are
+ * ordinary ones (MAP_EDITOR_ALLOW_ALL_USERS=false): people who may edit the room are never refused.
+ */
+async function joinStageSpace(page: Page): Promise<"joined" | "refused"> {
+    return page.evaluate(async () => {
+        const loaded = performance.getEntriesByType("resource").find((e) => e.name.includes("/src/front/"));
+        const origin = loaded ? new URL(loaded.name).origin : location.origin;
+        const { gameManager } = await import(/* @vite-ignore */ origin + "/src/front/Phaser/Game/GameManager.ts");
+        const { areaSpaceName } = await import(
+            /* @vite-ignore */ origin + "/@fs" + (window as unknown as { __sharedUtils: string }).__sharedUtils
+        );
+        const scene = gameManager.getCurrentGameScene();
+        const name = areaSpaceName("Main stage", scene.roomUrl);
+        const LIVE_STREAMING_USERS = 1;
+        try {
+            await scene.spaceRegistry.joinSpace(
+                name,
+                LIVE_STREAMING_USERS,
+                ["cameraState", "microphoneState", "screenShareState"],
+                new AbortController().signal
+            );
+            return "joined";
+        } catch {
+            return "refused";
+        }
+    });
+}
+
+test("BC-096 A Stage limited to a role: the server turns away someone without the role, an open Stage still lets them in", async ({
+    page,
+    browser,
+}, testInfo) => {
+    test.skip(
+        process.env.MAP_EDITOR_ALLOW_ALL_USERS !== "false",
+        "needs a stack where players can't edit (MAP_EDITOR_ALLOW_ALL_USERS=false)"
+    );
+    const sharedUtils = new URL("../../../libs/shared-utils/src/Space/areaSpaceName.ts", import.meta.url).pathname;
+    const open = await stageRoom(testInfo);
+    await join(page, open, "Alice");
+    await page.evaluate((path) => ((window as unknown as { __sharedUtils: string }).__sharedUtils = path), sharedUtils);
+    expect(await joinStageSpace(page)).toBe("joined");
+
+    const limited = await stageRoom(testInfo, "limited");
+    await limitStageToRole(limited, "vip");
+    const bob = await newPlayer(browser, testInfo, limited, "Bob");
+    await bob.evaluate((path) => ((window as unknown as { __sharedUtils: string }).__sharedUtils = path), sharedUtils);
+    expect(await joinStageSpace(bob)).toBe("refused");
 });
