@@ -472,7 +472,8 @@ export class AreaEditorTool extends MapEditorTool {
                 return;
             }
             this.changeAreaMode("EDIT", sortedAreaPreviews[0]);
-            this.tuckSheetOnPhone(sortedAreaPreviews[0]);
+            // Nothing under the pointer (a handle let go over the empty map): nothing was picked, the sheet stays.
+            if (sortedAreaPreviews.length > 0) this.tuckSheetOnPhone(sortedAreaPreviews[0]);
         } else if (mode === "EDIT") {
             const currentlySelectedArea = get(mapEditorSelectedAreaPreviewStore);
 
