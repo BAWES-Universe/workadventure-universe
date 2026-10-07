@@ -18,6 +18,7 @@ import { mapEditorActivated, mapEditorActivatedForThematics } from "../../../Sto
 import { editPillStore, editUndoRedoStore, turnPlacingPreview } from "../../../Stores/EditModeStore";
 import { localUserStore } from "../../../Connection/LocalUserStore";
 import { userIsAdminStore } from "../../../Stores/GameStore";
+import { warningMessageStore } from "../../../Stores/ErrorStore";
 import LL from "../../../../i18n/i18n-svelte";
 import { gameManager } from "../GameManager";
 import { AreaEditorTool } from "./Tools/AreaEditorTool";
@@ -388,6 +389,8 @@ export class MapEditorModeManager {
                         logger("removing command of pendingList : ", editMapCommandMessage.id);
                         this.pendingCommands.splice(this.pendingCommands.indexOf(command), 1);
                     }
+                    // The refusal only reaches the player who made the edit.
+                    warningMessageStore.addWarningMessage(get(LL).mapEditor.editNotSaved());
                     return;
                 }
 

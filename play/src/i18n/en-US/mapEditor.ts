@@ -4,6 +4,7 @@ const mapEditor: BaseTranslation = {
     map: {
         refreshPrompt: "New version of map detected. Refresh needed",
     },
+    editNotSaved: "That change wasn't saved: you can't edit there.",
     sideBar: {
         areaEditor: "Area editor tool",
         entityEditor: "Entity editor tool",
