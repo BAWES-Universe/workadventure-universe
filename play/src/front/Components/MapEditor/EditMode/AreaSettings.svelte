@@ -53,8 +53,6 @@
     } from "./areaProperties";
     import { IconLink, IconPencil, IconPlus, IconSearch, IconTrash } from "@wa-icons";
 
-    const TILE = 32;
-
     let properties: AreaDataProperties = [];
     let areaName = "";
     let areaDescription = "";
@@ -95,16 +93,9 @@
     onDestroy(unsubscribe);
 
     $: preview = $mapEditorSelectedAreaPreviewStore;
-    $: data = preview?.getAreaData();
     $: flags = flagsOf(properties);
     $: rows = areaSettingRows($LL, flags).filter((row) => row.available || row.blocked);
     $: turnedOn = properties.filter((p) => p.type !== "areaDescriptionProperties");
-    $: size = data
-        ? $LL.mapEditor.edit.areas.tiles({
-              width: Math.round((data.width / TILE) * 10) / 10,
-              height: Math.round((data.height / TILE) * 10) / 10,
-          })
-        : "";
 
     let extensionRows = $extensionModuleStore.reduce(
         (acc: { [key: string]: ExtensionModuleAreaProperty }[], module: ExtensionModule) => {
@@ -430,7 +421,7 @@
                     </button>
                 {/if}
             </svelte:fragment>
-            <svelte:fragment slot="subtitle">{size} · {$LL.mapEditor.edit.areas.rename()}</svelte:fragment>
+            <svelte:fragment slot="subtitle">{$LL.mapEditor.edit.areas.rename()}</svelte:fragment>
         </PanelHeader>
         <div class="em-scroll">
             <!-- The description belongs with the name: it is the first thing under it. Several lines, as in the old

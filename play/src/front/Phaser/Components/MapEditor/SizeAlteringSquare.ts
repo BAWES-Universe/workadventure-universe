@@ -19,6 +19,8 @@ export enum SizeAlteringSquareEvent {
 
 export class SizeAlteringSquare extends Phaser.GameObjects.Rectangle {
     private selected: boolean;
+    /** Drawn by the page instead (see AreaPreview.useMapFrame): the square only catches the pointer. */
+    private caughtOnly = false;
 
     /** Fingers need a bigger handle than a mouse: on a touch screen the handles are big white dots with a violet ring. */
     private static readonly SIZE = window.matchMedia?.("(pointer: coarse)").matches ? 22 : 9;
@@ -49,6 +51,12 @@ export class SizeAlteringSquare extends Phaser.GameObjects.Rectangle {
         this.scene.add.existing(this);
     }
 
+    public catchOnly(): void {
+        this.caughtOnly = true;
+        this.setFillStyle(0xffffff, 0);
+        this.setStrokeStyle(0, 0, 0);
+    }
+
     public update(time: number, dt: number): void {
         // NOTE: We use update instead of PointerMove to not loose focus when moving too fast with pointer
     }
@@ -58,7 +66,7 @@ export class SizeAlteringSquare extends Phaser.GameObjects.Rectangle {
             return;
         }
         this.selected = value;
-        this.setFillStyle(value ? 0x000000 : 0xffffff);
+        this.setFillStyle(value ? 0x000000 : 0xffffff, this.caughtOnly ? 0 : 1);
         if (this.scene instanceof GameScene) {
             this.scene.markDirty();
         } else {
