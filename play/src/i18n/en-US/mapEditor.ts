@@ -610,9 +610,12 @@ const mapEditor: BaseTranslation = {
             turnedOn: "Turned on",
             addToArea: "Add to this area",
             searchable: "Listed in Places",
-            searchableText: "People find it when they look around",
+            searchableText: "People find it when they look around, and bots can walk them here once it has a name",
+            nameHint:
+                "People see this name in Look around, and bots use it to walk them here once it's Listed in Places.",
             description: "Description",
             descriptionPlaceholder: "What this area is for",
+            descriptionHint: "Shown when someone taps this area in Look around.",
             back: "Back",
             remove: "Remove",
             turnOff: "Turn off “{name}”",

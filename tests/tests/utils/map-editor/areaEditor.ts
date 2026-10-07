@@ -51,9 +51,18 @@ class AreaEditor {
 
   // The area panel shows the area's rows, or one setting's page over them: this goes back to the rows.
   private async showAreaRows(page: Page) {
+    // A freshly drawn area opens with the cursor in its name: leaving it empty keeps "Unnamed area".
+    const nameField = page.locator("#map-editor-right input#objectName");
     await expect(
-      page.getByTestId("area-rename").or(page.getByTestId("area-property-page"))
+      page
+        .getByTestId("area-rename")
+        .or(page.getByTestId("area-property-page"))
+        .or(nameField)
     ).toBeVisible();
+    if (await nameField.isVisible()) {
+      await nameField.press("Enter");
+      await expect(page.getByTestId("area-rename")).toBeVisible();
+    }
     const propertyPage = page.getByTestId("area-property-page");
     if (await propertyPage.isVisible()) {
       await page.getByTestId("edit-panel-back").click();

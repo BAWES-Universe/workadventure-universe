@@ -62,7 +62,6 @@ export function flagsOf(properties: AreaDataProperties): AreaSettingFlags {
 /** The rows of "Add to this area", in the order of the mock: calls first, then access, then what happens inside. */
 export function areaSettingRows(LL: TranslationFunctions, flags: AreaSettingFlags): AreaSettingRow[] {
     const t = LL.mapEditor.edit.properties;
-    const hasCall = !!flags.livekitRoomProperty || !!flags.speakerMegaphone || !!flags.listenerMegaphone;
     const hasAccess = !!flags.personalAreaPropertyData || !!flags.restrictedRightsPropertyData;
     return [
         {
@@ -223,7 +222,9 @@ export function areaSettingRows(LL: TranslationFunctions, flags: AreaSettingFlag
             text: t.jitsiRoomProperty.text(),
             icon: IconUsersGroup,
             testId: "jitsiRoomProperty",
-            available: !flags.jitsiRoomProperty && !hasCall,
+            // Jitsi is no longer offered: the video call runs on our own calls. The row stays so an area that already
+            // has one still shows its title, its page and its Remove button.
+            available: false,
             opensPage: true,
         },
     ];

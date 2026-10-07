@@ -64,8 +64,8 @@ export class EntityEditorTool extends EntityRelatedEditorTool {
 
     public activate(): void {
         super.activate();
+        // The areas stay out of sight here: the page draws them as faded frames with their names (AreaFrames, quiet).
         this.createAreaPreviews();
-        this.setAreaPreviewsVisibility(true);
         this.subscribeToEntityUpload();
         this.subscribeToModifyCustomEntityEventStore();
         this.subscribeToDeleteCustomEntityEventStore();

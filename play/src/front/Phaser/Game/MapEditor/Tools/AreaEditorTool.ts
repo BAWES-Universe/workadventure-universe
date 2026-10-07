@@ -15,6 +15,7 @@ import {
     editAreaDrawArmedStore,
     editAreaGhostStore,
     editAreaSheetOpenStore,
+    editAreaJustDrawnStore,
     editAreaSketchStore,
     showUndoToast,
 } from "../../../../Stores/EditModeStore";
@@ -333,6 +334,7 @@ export class AreaEditorTool extends MapEditorTool {
                 this.scene.input.setDefaultCursor("grab");
             }
         }
+        this.keepDotCursor(pointer);
     };
 
     private pointerOutEventHandler = (pointer: Phaser.Input.Pointer, gameObjects: Phaser.GameObjects.GameObject[]) => {
@@ -345,7 +347,20 @@ export class AreaEditorTool extends MapEditorTool {
                 this.scene.input.setDefaultCursor("crosshair");
             }
         }
+        this.keepDotCursor(pointer);
     };
+
+    /**
+     * The hand and the + above are set on the whole canvas, so entering or leaving an area under a dot used to replace
+     * the dot's resize arrow. A dot under the pointer keeps its arrow.
+     */
+    private keepDotCursor(pointer: Phaser.Input.Pointer): void {
+        const dot = this.scene.input
+            .hitTestPointer(pointer)
+            .find((object): object is SizeAlteringSquare => object instanceof SizeAlteringSquare && object.visible);
+        const cursor = dot?.input?.cursor;
+        if (typeof cursor === "string" && cursor !== "") this.scene.game.canvas.style.cursor = cursor;
+    }
 
     private handlePointerDownEvent(pointer: Phaser.Input.Pointer, gameObjects: Phaser.GameObjects.GameObject[]): void {
         const areaEditorToolObjects = this.getAreaEditorToolObjectsFromGameObjects(gameObjects);
@@ -509,6 +524,7 @@ export class AreaEditorTool extends MapEditorTool {
     }
 
     private handlePointerMoveEvent(pointer: Phaser.Input.Pointer): void {
+        this.keepDotCursor(pointer);
         if (this.drawingNewArea && this.drawinNewAreaStartPos) {
             this.drawNewArea(pointer);
         }
@@ -765,6 +781,11 @@ export class AreaEditorTool extends MapEditorTool {
 
     private createNewArea(x: number, y: number, width: number, height: number): void {
         const id = uuid();
+        // Its page opens with the cursor in the name field. Only for a moment: a page opened on it later is just a page.
+        editAreaJustDrawnStore.set(id);
+        setTimeout(() => {
+            if (get(editAreaJustDrawnStore) === id) editAreaJustDrawnStore.set(undefined);
+        }, 1500);
         this.mapEditorModeManager
             .executeCommand(
                 new CreateAreaFrontCommand(

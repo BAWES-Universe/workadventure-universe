@@ -30,18 +30,22 @@ const MAXIMUM_DEPTH = 100000; // we use a high depth to ensure the area preview 
 const DEFAULT_AREA_PREVIEW_ALPHA = 0.5;
 /** The colour of an area with no setting that has a colour of its own. */
 const NO_SETTINGS_COLOUR = "6f7dff";
+/** Highlight has no icon or fill of its own in the old drawing, but on the editor's map it is gold. */
+const HIGHLIGHT_COLOUR = "f5c451";
 
 /**
  * An area's own colour on the editor's map, as hex without "#": the colour of its last setting that has one (a quiet
- * zone is red, a meeting blue, as the old editor filled them), or violet blue when it has none.
+ * zone is red, a meeting blue, as the old editor filled them), else gold when it has Highlight, or violet blue when it has none.
  */
 export function areaColour(properties: AreaDataProperties): string {
-    let colour = NO_SETTINGS_COLOUR;
+    let colour: string | undefined;
     for (const property of properties) {
         const look = propertyLook(property.type);
         if (look.name !== "") colour = look.color;
     }
-    return colour;
+    // A quiet zone or a call adds a highlight of its own, so Highlight only colours an area that has no colour already.
+    if (colour === undefined && properties.some((property) => property.type === "highlight")) return HIGHLIGHT_COLOUR;
+    return colour ?? NO_SETTINGS_COLOUR;
 }
 
 export class AreaPreview extends Phaser.GameObjects.Rectangle {
