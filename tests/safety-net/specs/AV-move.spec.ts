@@ -276,12 +276,35 @@ test("AV-102 AV-015 A player's card opens on tap/click; Walk to walks next to th
     const walkTo = card.getByText("Walk to", { exact: true });
     await expect(walkTo).toBeVisible();
     if (isPhone(testInfo)) {
-        const w = await boxOf(walkTo);
-        const onTop = await player.evaluate(
-            ({ x, y }) => document.elementFromPoint(x, y)?.closest("[data-testid=actions-menu]") !== null,
-            { x: w.x + w.width / 2, y: w.y + w.height / 2 }
-        );
-        expect(onTop, "Walk to is on top at its centre").toBe(true);
+        // The ^ tab must not cover any part of a card button: Walk to, the ⋯ button and (for signed-in players)
+        // View profile are each checked on a 5x3 grid across their whole area, edges included.
+        const buttons = [
+            ["Walk to", walkTo],
+            ["⋯", card.getByTestId("wokamenu-more-button")],
+            ["View profile", card.getByText("View profile", { exact: true })],
+        ] as const;
+        let checked = 0;
+        for (const [name, button] of buttons) {
+            if ((await button.count()) === 0) continue;
+            const b = await boxOf(button);
+            const covered = await player.evaluate(({ x, y, width, height }) => {
+                const hits: string[] = [];
+                for (let i = 0; i <= 4; i++) {
+                    for (let j = 0; j <= 2; j++) {
+                        const px = x + 1 + ((width - 2) * i) / 4;
+                        const py = y + 1 + ((height - 2) * j) / 2;
+                        const top = document.elementFromPoint(px, py);
+                        if (!top?.closest("[data-testid=actions-menu]")) {
+                            hits.push(`${Math.round(px)},${Math.round(py)} -> ${top?.className ?? "nothing"}`);
+                        }
+                    }
+                }
+                return hits;
+            }, b);
+            expect(covered, `${name} is on top across its whole area`).toEqual([]);
+            checked++;
+        }
+        expect(checked, "at least Walk to and the ⋯ button were checked").toBeGreaterThanOrEqual(2);
     }
     const bobAt = await position(bob);
     if (isPhone(testInfo)) await walkTo.tap();

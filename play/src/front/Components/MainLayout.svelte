@@ -297,7 +297,7 @@
             {#if $requestVisitCardsStore || $wokaMenuStore || $actionsMenuStore}
                 <div
                     transition:fly={{ x: 210, duration: 500 }}
-                    class="absolute bottom-0 w-full h-fit max-h-[calc(100dvh-100px)] md:top-0 md:right-0 md:w-fit flex flex-col gap-2 items-end justify-start p-0 m-0 mr-3 overflow-y-auto no-scroll-bar"
+                    class="person-card-stack absolute bottom-0 w-full h-fit max-h-[calc(100dvh-100px)] md:top-0 md:right-0 md:w-fit flex flex-col gap-2 items-end justify-start p-0 m-0 mr-3 overflow-y-auto no-scroll-bar"
                 >
                     {#if $requestVisitCardsStore}
                         <VisitCard visitCardUrl={$requestVisitCardsStore} />
@@ -357,6 +357,16 @@
 
     #main-layout {
         container-type: size;
+    }
+
+    /* Phones: the ^ tab (44px tap zone) sits just above the bottom bar, on top of the person card's last row.
+       Lift the card above it so Walk to, View profile and the ⋯ button are never covered. Same query the tab uses. */
+    @media (max-height: 960px) and (max-width: 480px) and (pointer: coarse),
+        (max-height: 480px) and (max-width: 960px) and (pointer: coarse) {
+        .person-card-stack {
+            bottom: 44px;
+            max-height: calc(100dvh - 144px);
+        }
     }
 
     .no-scroll-bar {
