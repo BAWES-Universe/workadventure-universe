@@ -2,11 +2,13 @@
     // The Objects panel: search, categories, pictures with names, "Add your own", and the settings of an object you
     // tapped on the map. Picking an object starts placing it; on phones the panel steps aside while you place.
     import { onDestroy } from "svelte";
+    import { readable } from "svelte/store";
     import type { EntityPrefab } from "@workadventure/map-editor";
     import { LL } from "../../../../i18n/i18n-svelte";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import type { EntityVariant } from "../../../Phaser/Game/MapEditor/Entities/EntityVariant";
     import { mobileLayoutStore } from "../../../Stores/MobileLayoutStore";
+    import { gameSceneStore } from "../../../Stores/GameSceneStore";
     import {
         mapEditorDeleteCustomEntityEventStore,
         mapEditorEntityModeStore,
@@ -23,6 +25,7 @@
     } from "../../../Stores/EditModeStore";
     import CustomEntityEditionForm from "../EntityEditor/CustomEntityEditionForm/CustomEntityEditionForm.svelte";
     import EntityPropertiesEditor from "../EntityEditor/EntityPropertiesEditor.svelte";
+    import USelect from "../../UI/USelect.svelte";
     import PanelHeader from "./PanelHeader.svelte";
     import ObjectTile from "./ObjectTile.svelte";
     import UploadGuide from "./UploadGuide.svelte";
@@ -32,8 +35,12 @@
     const CUSTOM = "Custom";
     const PREVIEW_COUNT = 6;
 
-    const entitiesCollectionsManager = gameManager.getCurrentGameScene().getEntitiesCollectionsManager();
-    const variantsStore = entitiesCollectionsManager.getEntitiesPrefabsVariantStore();
+    // The objects of the room on screen, followed when the room changes. While the map changes there may be no scene,
+    // and the panel then shows no objects.
+    $: variantsStore =
+        ($gameSceneStore ?? gameManager.tryGetCurrentGameScene())
+            ?.getEntitiesCollectionsManager()
+            .getEntitiesPrefabsVariantStore() ?? readable<EntityVariant[]>([]);
 
     let searchTerm = "";
     let editingUpload = false;
@@ -72,7 +79,7 @@
     function byTag(all: EntityVariant[]): { tag: string; items: EntityVariant[] }[] {
         const groups = new Map<string, EntityVariant[]>();
         for (const variant of all) {
-            if (variant.defaultPrefab.type === CUSTOM) continue;
+            // Your uploads show in the categories you gave them too, as they did in the old picker.
             // A prefab repeats a tag when the collection carries it too; one tile per section.
             for (const tag of new Set(variant.defaultPrefab.tags)) {
                 const list = groups.get(tag) ?? [];
@@ -80,10 +87,15 @@
                 groups.set(tag, list);
             }
         }
+        // Objects someone tagged "Custom" join Your uploads, the section that tag is shown as, rather than repeat it.
+        const taggedCustom = groups.get(CUSTOM) ?? [];
+        groups.delete(CUSTOM);
         const sections = [...groups.entries()]
             .sort(([a], [b]) => a.localeCompare(b))
             .map(([tag, items]) => ({ tag, items }));
-        const uploads = all.filter((variant) => variant.defaultPrefab.type === CUSTOM);
+        const uploads = [
+            ...new Set([...all.filter((variant) => variant.defaultPrefab.type === CUSTOM), ...taggedCustom]),
+        ];
         if (uploads.length > 0) sections.push({ tag: CUSTOM, items: uploads });
         return sections;
     }
@@ -97,11 +109,23 @@
 
     $: sections = byTag(variants);
     $: category = $selectCategoryStore;
-    $: recent = $editRecentObjectsStore
-        .map((id) => variants.find((variant) => variant.id === id))
-        .filter((variant): variant is EntityVariant => variant !== undefined);
+    // An object placed turned or in another colour is kept by that side's id; it shows once, as the object.
+    $: recent = [
+        ...new Set(
+            $editRecentObjectsStore
+                .map((id) => variants.find((variant) => variant.id === id || variant.hasPrefab(id)))
+                .filter((variant): variant is EntityVariant => variant !== undefined)
+        ),
+    ];
     $: searching = searchTerm.trim() !== "";
     $: searchResults = searching ? variants.filter((variant) => matches(variant, searchTerm)) : [];
+    $: categoryOptions = [
+        { value: "", label: $LL.mapEditor.edit.objects.allCategories() },
+        ...sections.map((section) => ({
+            value: section.tag,
+            label: `${label(section.tag)} · ${section.items.length}`,
+        })),
+    ];
     $: categoryItems = category ? sections.find((section) => section.tag === category)?.items ?? [] : [];
 
     function pick(variant: EntityVariant) {
@@ -201,16 +225,14 @@
         />
     </label>
     {#if !searching}
-        <label class="em-cat">
-            <span class="em-cat-label">{category ? label(category) : $LL.mapEditor.edit.objects.allCategories()}</span>
-            <span class="em-cat-count">{category ? categoryItems.length : sections.length}</span>
-            <select bind:value={$selectCategoryStore} aria-label={$LL.mapEditor.edit.objects.allCategories()}>
-                <option value={undefined}>{$LL.mapEditor.edit.objects.allCategories()}</option>
-                {#each sections as section (section.tag)}
-                    <option value={section.tag}>{label(section.tag)} · {section.items.length}</option>
-                {/each}
-            </select>
-        </label>
+        <div class="em-cat" data-testid="objects-category">
+            <USelect
+                label={$LL.mapEditor.edit.objects.allCategories()}
+                value={$selectCategoryStore ?? ""}
+                options={categoryOptions}
+                onSelect={(tag) => selectCategoryStore.set(tag || undefined)}
+            />
+        </div>
     {/if}
     {#if picked?.variant.defaultPrefab.type === CUSTOM}
         <div class="em-links">
@@ -308,43 +330,7 @@
         color: rgba(244, 242, 250, 0.45);
     }
     .em-cat {
-        position: relative;
-        display: flex;
-        align-items: center;
-        gap: 8px;
         flex: none;
-        padding: 8px 12px;
-        border-radius: 12px;
-        background: rgba(0, 0, 0, 0.2);
-        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.18);
-        font-size: 14px;
-        cursor: pointer;
-    }
-    .em-cat-label {
-        flex: 1;
-        min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-    .em-cat-count {
-        font-size: 13px;
-        color: rgba(244, 242, 250, 0.64);
-    }
-    .em-cat::after {
-        content: "";
-        width: 8px;
-        height: 8px;
-        border-right: 1.5px solid rgba(244, 242, 250, 0.64);
-        border-bottom: 1.5px solid rgba(244, 242, 250, 0.64);
-        transform: translateY(-2px) rotate(45deg);
-    }
-    .em-cat select {
-        position: absolute;
-        inset: 0;
-        width: 100%;
-        opacity: 0;
-        cursor: pointer;
     }
     .em-links {
         display: flex;

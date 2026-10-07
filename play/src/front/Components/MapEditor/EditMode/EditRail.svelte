@@ -15,15 +15,23 @@
 
     function pick(tool: EditorToolName) {
         editHintSeenStore.set(true);
-        const manager = gameManager.getCurrentGameScene().getMapEditorModeManager();
-        // The lit tool tapped again: its panel closes and the tool is put down, like the bar's buttons. On a phone
-        // the panel hides on its own while placing, so there the first tap brings it back and the second closes.
-        if (
-            $mapEditorSelectedToolStore === tool &&
-            ($mapEditorVisibilityStore || tool === EditorToolName.TrashEditor)
-        ) {
+        // Safe lookup: while the map changes there may be no scene, and the tap does nothing.
+        const manager = gameManager.tryGetCurrentGameScene()?.getMapEditorModeManager();
+        if (!manager) return;
+        // The lit tool tapped again: its panel tucks away and the tool stays in your hand, so you keep selecting and
+        // dragging on a bigger map (as hiding the old editor's sidebar did); a tap brings the panel back. Delete has
+        // no panel, so tapping it again puts it down.
+        if ($mapEditorSelectedToolStore === tool && tool === EditorToolName.TrashEditor) {
             mapEditorVisibilityStore.set(false);
             manager.equipTool(undefined);
+            return;
+        }
+        if ($mapEditorSelectedToolStore === tool && $mapEditorVisibilityStore) {
+            mapEditorVisibilityStore.set(false);
+            return;
+        }
+        if ($mapEditorSelectedToolStore === tool) {
+            mapEditorVisibilityStore.set(true);
             return;
         }
         analyticsClient.openMapEditorTool(tool);
@@ -101,7 +109,7 @@
 <style>
     .em-rail {
         position: absolute;
-        top: 64px;
+        top: calc(var(--tiles-clear, 0px) + 64px);
         right: 14px;
         width: 62px;
         border-radius: 31px;
@@ -110,7 +118,7 @@
         z-index: 3;
     }
     :global(.em-phone) .em-rail {
-        top: calc(78px + env(safe-area-inset-top, 0px));
+        top: calc(var(--tiles-clear, 0px) + 78px + env(safe-area-inset-top, 0px));
         right: 10px;
     }
     .em-rail-items {

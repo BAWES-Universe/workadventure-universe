@@ -63,7 +63,7 @@
 <style>
     .em-panel {
         position: absolute;
-        top: 64px;
+        top: calc(var(--tiles-clear, 0px) + 64px);
         bottom: 14px;
         right: 92px;
         border-radius: 24px;
@@ -72,7 +72,7 @@
         z-index: 2;
     }
     :global(.em-phone) .em-panel {
-        top: calc(78px + env(safe-area-inset-top, 0px));
+        top: calc(var(--tiles-clear, 0px) + 78px + env(safe-area-inset-top, 0px));
         bottom: calc(12px + env(safe-area-inset-bottom, 0px));
         left: 10px;
         right: 80px;

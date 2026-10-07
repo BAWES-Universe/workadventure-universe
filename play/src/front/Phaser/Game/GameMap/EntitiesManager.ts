@@ -359,8 +359,11 @@ export class EntitiesManager extends Phaser.Events.EventEmitter {
                     entity.setPosition(oldPos.x, oldPos.y);
                     entity.clearTint();
                 } else {
+                    const oldPosition = entity.getOldPosition();
                     if (this.ctrlKey?.isDown) {
                         this.copyEntity(entity);
+                    } else if (entity.x === oldPosition.x && entity.y === oldPosition.y) {
+                        // A tap that did not move the object: nothing to save, and no empty step for Undo.
                     } else {
                         const data: Partial<EntityData> = {
                             id: entity.entityId,

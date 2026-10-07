@@ -107,6 +107,11 @@ export class CameraManager extends Phaser.Events.EventEmitter {
     private freedByDrag = false;
     // The player-moved listener that drag set, so that following resumes once and the listener can be dropped.
     private dragListener: { player: Player | RemotePlayer; handler: () => void } | undefined;
+    // The focus (a focusable area) a drag while editing took the camera off, to go back to when the drag is over.
+    private dragFocus:
+        | { target: WaScaleManagerFocusTarget; margin: number; offset: { x: number; y: number } }
+        | undefined;
+    private focusMargin = 0;
     private focusTargetSpeed = 0.2;
 
     // The tween for the camera offset
@@ -132,9 +137,14 @@ export class CameraManager extends Phaser.Events.EventEmitter {
 
         // Subscribe to map editor mode store to change camera bounds when the map editor is opened or closed
         this.unsubscribeMapEditorModeStore = mapEditorModeStore.subscribe((isOpened) => {
+            // The editor leaves room to scroll the map out from under its panel; a map smaller than the screen
+            // stays in the middle, where it sits while playing, so opening the editor never moves it.
+            this.editorBounds = isOpened;
+            this.mapBounds = undefined;
             // Define new bounds for camera if the map editor is opened
             if (isOpened) {
-                this.camera.setBounds(0, 0, this.mapSize.width * 2, this.mapSize.height);
+                this.mapBoundsActive = true;
+                this.applyMapBounds();
             } else {
                 // We set the bounds back after a call to start following the player
                 //this.camera.setBounds(0, 0, this.mapSize.width, this.mapSize.height);
@@ -162,6 +172,7 @@ export class CameraManager extends Phaser.Events.EventEmitter {
         this.waScaleManager.zoomOutPastMapFit = undefined;
         this.scene.game.events.off(WaScaleManagerEvent.RefreshFocusOnTarget);
         this.camera.off("followupdate", this.onFollowUpdate);
+        this.scene.events.off(Phaser.Scenes.Events.POST_UPDATE, this.applyMapBounds);
         this.unsubscribeMapEditorModeStore();
         super.destroy();
     }
@@ -220,10 +231,22 @@ export class CameraManager extends Phaser.Events.EventEmitter {
      * @param setTo Viewport on which the camera should focus on
      * @param duration Time for the transition im MS. If set to 0, transition will occur immediately
      */
-    public enterFocusMode(focusOn: WaScaleManagerFocusTarget, margin = 0, duration = 1000): void {
+    public enterFocusMode(
+        focusOn: WaScaleManagerFocusTarget,
+        margin = 0,
+        duration = 1000,
+        // False when going back to a focus a drag left: the zoom saved on the way in is still the one to go back to.
+        saveZoom = true
+    ): void {
+        this.dragFocus = undefined;
+        this.freedByDrag = false;
+        this.clearDragListener();
+        this.focusMargin = margin;
         this.setCameraMode(CameraMode.Focus);
         this.followedRemotePlayerUuid = undefined;
-        this.waScaleManager.saveZoom();
+        if (saveZoom) {
+            this.waScaleManager.saveZoom();
+        }
         this.waScaleManager.setFocusTarget(focusOn);
 
         this.cameraLocked = false;
@@ -307,13 +330,14 @@ export class CameraManager extends Phaser.Events.EventEmitter {
         targetZoomLevel: number | undefined = undefined
     ): void {
         this.freedByDrag = false;
+        this.dragFocus = undefined;
         this.clearDragListener();
         this.playerToFollow = player;
         this.setCameraMode(CameraMode.Follow);
         if (duration === 0) {
             this.camera.startFollow(player, true);
             this.scene.markDirty();
-            this.camera.setBounds(0, 0, this.mapSize.width, this.mapSize.height);
+            this.setMapBounds();
             return;
         }
         this.setExplorationMode();
@@ -364,7 +388,7 @@ export class CameraManager extends Phaser.Events.EventEmitter {
                     return;
                 }
                 this.camera.startFollow(player, true);
-                this.camera.setBounds(0, 0, this.mapSize.width, this.mapSize.height);
+                this.setMapBounds();
                 // Back to following: the player is placed in the space the chat panel and videos leave free again.
                 this.setCameraMode(CameraMode.Follow);
                 this.scene.reposition();
@@ -546,8 +570,46 @@ export class CameraManager extends Phaser.Events.EventEmitter {
 
     private initCamera() {
         this.camera = this.scene.cameras.main;
-        this.camera.setBounds(0, 0, this.mapSize.width, this.mapSize.height);
+        this.setMapBounds();
+        this.scene.events.on(Phaser.Scenes.Events.POST_UPDATE, this.applyMapBounds);
     }
+
+    // While following the player, the camera stays on the map. Zoomed out further than the map, the map sits in the
+    // middle of the screen instead of in its top left corner.
+    private mapBoundsActive = false;
+    // In the editor the camera may also scroll a map's width past the map's right edge, as it always could.
+    private editorBounds = false;
+    private mapBounds: { x: number; y: number; width: number; height: number } | undefined;
+    private setMapBounds(): void {
+        this.mapBoundsActive = true;
+        this.mapBounds = undefined;
+        this.applyMapBounds();
+    }
+    private readonly applyMapBounds = (): void => {
+        if (!this.mapBoundsActive || !this.camera) return;
+        const zoom = this.camera.zoom || 1;
+        const viewWidth = Number.isFinite(this.camera.width / zoom) ? this.camera.width / zoom : 0;
+        const viewHeight = Number.isFinite(this.camera.height / zoom) ? this.camera.height / zoom : 0;
+        const fitsWidth = viewWidth >= this.mapSize.width;
+        const width =
+            fitsWidth || !this.editorBounds ? Math.max(this.mapSize.width, viewWidth) : this.mapSize.width * 2;
+        const height = Math.max(this.mapSize.height, viewHeight);
+        const x = fitsWidth ? (this.mapSize.width - width) / 2 : 0;
+        const y = (this.mapSize.height - height) / 2;
+        const last = this.mapBounds;
+        if (
+            last &&
+            Math.abs(last.x - x) < 0.5 &&
+            Math.abs(last.y - y) < 0.5 &&
+            Math.abs(last.width - width) < 0.5 &&
+            Math.abs(last.height - height) < 0.5
+        ) {
+            return;
+        }
+        this.mapBounds = { x, y, width, height };
+        this.camera.setBounds(x, y, width, height);
+        this.scene.markDirty?.();
+    };
 
     private onFollowUpdate = () => {
         this.emit(CameraManagerEvent.CameraUpdate, this.getCameraUpdateEventData());
@@ -595,6 +657,7 @@ export class CameraManager extends Phaser.Events.EventEmitter {
 
         this.camera.setFollowOffset(0, 0);
 
+        this.mapBoundsActive = false;
         this.camera.setBounds(
             -this.mapSize.width,
             -this.mapSize.height,
@@ -1011,7 +1074,22 @@ export class CameraManager extends Phaser.Events.EventEmitter {
      * the camera over from the glide.
      */
     dragCamera(x: number, y: number): void {
-        if (this.playerToFollow && (this.cameraMode === CameraMode.Follow || this.startFollowTween)) {
+        const focusTarget = this.cameraMode === CameraMode.Focus ? this.waScaleManager.getFocusTarget() : undefined;
+        if (focusTarget) {
+            // Standing in a focusable area: the camera lets go of the area the same way, and goes back to it after.
+            const offset = { x: this.camera.followOffset.x, y: this.camera.followOffset.y };
+            this.dragFocus = { target: focusTarget, margin: this.focusMargin, offset };
+            this.setExplorationMode();
+            this.freedByDrag = true;
+            this.clearDragListener();
+            const player = this.scene.CurrentPlayer;
+            const handler = () => {
+                this.dragListener = undefined;
+                this.endDragFreedom();
+            };
+            this.dragListener = { player, handler };
+            player.once(hasMovedEventName, handler);
+        } else if (this.playerToFollow && (this.cameraMode === CameraMode.Follow || this.startFollowTween)) {
             const player = this.playerToFollow;
             this.setExplorationMode();
             this.freedByDrag = true;
@@ -1029,6 +1107,13 @@ export class CameraManager extends Phaser.Events.EventEmitter {
 
     /** The editor closed: a camera that a drag took off the player glides back to them. */
     endDragFreedom(): void {
+        if (this.freedByDrag && this.dragFocus) {
+            const { target, margin, offset } = this.dragFocus;
+            this.enterFocusMode(target, margin, 1000, false);
+            // The area sits where it sat before the drag: in the space the open panels leave free.
+            this.camera.setFollowOffset(offset.x, offset.y);
+            return;
+        }
         if (!this.freedByDrag || !this.playerToFollow) {
             return;
         }

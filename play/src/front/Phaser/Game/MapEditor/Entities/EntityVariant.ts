@@ -43,6 +43,16 @@ export class EntityVariant {
         return [...entityPrefabsPositions.values()];
     }
 
+    /** Whether one of this object's colours or sides is the prefab with this id. */
+    public hasPrefab(id: string): boolean {
+        for (const sides of this.variants.values()) {
+            for (const prefab of sides.values()) {
+                if (prefab.id === id) return true;
+            }
+        }
+        return false;
+    }
+
     public addPrefab(prefab: EntityPrefab) {
         let colorMap = this.variants.get(prefab.color);
         if (colorMap === undefined) {

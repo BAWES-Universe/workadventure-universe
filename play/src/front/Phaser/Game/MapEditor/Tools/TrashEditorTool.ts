@@ -1,6 +1,7 @@
 import type { AreaData } from "@workadventure/map-editor";
 import type { EditMapCommandMessage } from "@workadventure/messages";
 import { get } from "svelte/store";
+import { screenSpace } from "../ScreenSpace";
 import { userIsAdminStore, userIsEditorStore } from "../../../../Stores/GameStore";
 import { mapEditorSelectedAreaPreviewStore, mapEditorVisibilityStore } from "../../../../Stores/MapEditorStore";
 import { editDeleteMarkStore, showUndoToast, type DeleteMark } from "../../../../Stores/EditModeStore";
@@ -334,17 +335,12 @@ export class TrashEditorTool extends EntityRelatedEditorTool {
             }
             return;
         }
-        const camera = this.scene.cameras.main;
-        const zoom = camera.zoom;
         const topLeft =
             target instanceof Entity
                 ? target.getTopLeft()
                 : { x: target.x - target.displayWidth * 0.5, y: target.y - target.displayHeight * 0.5 };
         const next: DeleteMark = {
-            x: ((topLeft.x ?? 0) - camera.worldView.x) * zoom,
-            y: ((topLeft.y ?? 0) - camera.worldView.y) * zoom,
-            width: target.displayWidth * zoom,
-            height: target.displayHeight * zoom,
+            ...screenSpace(this.scene).rect(topLeft.x ?? 0, topLeft.y ?? 0, target.displayWidth, target.displayHeight),
             tapped: target === this.marked,
             remove: () => this.remove(target),
         };

@@ -1,6 +1,7 @@
 import * as path from "path";
 import type { Page } from "@playwright/test";
 import { expect } from "@playwright/test";
+import Map from "../map";
 
 class EntityEditor {
   async selectEntity(page: Page, nb: number, search?: string) {
@@ -50,7 +51,9 @@ class EntityEditor {
     return page.getByTestId("entity-item").nth(0);
   }
 
-  async moveAndClick(page: Page, x: number, y: number) {
+  /** Clicks a point of the empty test map, measured from the map's top left corner (see Map.onScreen). */
+  async moveAndClick(page: Page, mapX: number, mapY: number) {
+    const { x, y } = Map.onScreen(page, mapX, mapY);
     await this.wait2Frames(page);
     await page.mouse.move(x, y);
     await page.mouse.move(x, y);
@@ -59,7 +62,9 @@ class EntityEditor {
     await this.wait2Frames(page);
   }
 
-  async moveAndRightClick(page: Page, x: number, y: number) {
+  /** Right-clicks a point of the empty test map, measured from the map's top left corner (see Map.onScreen). */
+  async moveAndRightClick(page: Page, mapX: number, mapY: number) {
+    const { x, y } = Map.onScreen(page, mapX, mapY);
     await this.wait2Frames(page);
     await page.mouse.move(x, y);
     await page.mouse.move(x, y);

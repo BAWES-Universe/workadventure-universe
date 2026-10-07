@@ -32,6 +32,16 @@
     import TooltipPropertyButton from "../PropertyEditor/TooltipPropertyButton.svelte";
     import LivekitRoomPropertyEditor from "../PropertyEditor/LivekitRoomPropertyEditor.svelte";
     import HighlightPropertyEditor from "../PropertyEditor/HighlightPropertyEditor.svelte";
+    import youtubeSvg from "../../images/applications/icon_youtube.svg";
+    import klaxoonSvg from "../../images/applications/icon_klaxoon.svg";
+    import googleDriveSvg from "../../images/applications/icon_google_drive.svg";
+    import googleDocsSvg from "../../images/applications/icon_google_docs.svg";
+    import googleSheetsSvg from "../../images/applications/icon_google_sheets.svg";
+    import googleSlidesSvg from "../../images/applications/icon_google_slides.svg";
+    import eraserSvg from "../../images/applications/icon_eraser.svg";
+    import excalidrawSvg from "../../images/applications/icon_excalidraw.svg";
+    import cardsSvg from "../../images/applications/icon_cards.svg";
+    import tldrawJpeg from "../../images/applications/icon_tldraw.jpeg";
     import PanelHeader from "./PanelHeader.svelte";
     import {
         WEB_APP_SUBTYPES,
@@ -87,12 +97,12 @@
     $: preview = $mapEditorSelectedAreaPreviewStore;
     $: data = preview?.getAreaData();
     $: flags = flagsOf(properties);
-    $: rows = areaSettingRows($LL, flags).filter((row) => row.available);
+    $: rows = areaSettingRows($LL, flags).filter((row) => row.available || row.blocked);
     $: turnedOn = properties.filter((p) => p.type !== "areaDescriptionProperties");
     $: size = data
         ? $LL.mapEditor.edit.areas.tiles({
-              width: Math.max(1, Math.round(data.width / TILE)),
-              height: Math.max(1, Math.round(data.height / TILE)),
+              width: Math.round((data.width / TILE) * 10) / 10,
+              height: Math.round((data.height / TILE) * 10) / 10,
           })
         : "";
 
@@ -113,7 +123,7 @@
     }
 
     function tool(): AreaEditorTool | undefined {
-        return gameManager.getCurrentGameScene().getMapEditorModeManager().currentlyActiveTool as
+        return gameManager.tryGetCurrentGameScene()?.getMapEditorModeManager()?.currentlyActiveTool as
             | AreaEditorTool
             | undefined;
     }
@@ -124,6 +134,23 @@
             return;
         }
         tool()?.deselectArea?.();
+    }
+
+    // The app logos and the "integration is disabled" lines the old Add property list had.
+    const APP_LOGOS: Record<(typeof WEB_APP_SUBTYPES)[number], string> = {
+        youtube: youtubeSvg,
+        klaxoon: klaxoonSvg,
+        googleDrive: googleDriveSvg,
+        googleDocs: googleDocsSvg,
+        googleSheets: googleSheetsSvg,
+        googleSlides: googleSlidesSvg,
+        eraser: eraserSvg,
+        excalidraw: excalidrawSvg,
+        cards: cardsSvg,
+        tldraw: tldrawJpeg,
+    };
+    function appActivated(subtype: (typeof WEB_APP_SUBTYPES)[number]): boolean {
+        return connectionManager[`${subtype}ToolActivated`];
     }
 
     function add(type: AreaDataProperty["type"], subtype?: string, opensPage = true) {
@@ -166,6 +193,18 @@
         preview.deleteProperty(id, removeAreaEntities);
         refresh();
         if (openProperty?.id === id) openProperty = undefined;
+    }
+
+    // The page has one title and one Remove; the property form's own header (a second title and ✕) is hidden.
+    // Remove still goes through that form's own ✕, so anything it asked before removing (a personal area with
+    // objects in it asks what to do with them) is still asked.
+    let propertyPage: HTMLElement | undefined;
+    function removeOpenProperty(id: string) {
+        const formClose = propertyPage?.querySelector<HTMLButtonElement>(
+            ":scope > .property-settings-container > .header button"
+        );
+        if (formClose) formClose.click();
+        else remove(id);
     }
 
     function update(property: AreaDataProperty, removeAreaEntities?: boolean) {
@@ -230,14 +269,18 @@
 {#if preview}
     {#if openProperty}
         {@const property = openProperty}
-        {@const described = describeAreaProperty($LL, property)}
+        {@const described = describeAreaProperty($LL, property, extensionRows)}
         <PanelHeader
             title={described.title}
             subtitle={areaName || $LL.mapEditor.edit.areas.unnamed()}
             onBack={back}
             backLabel={$LL.mapEditor.edit.areas.back()}
         />
-        <div class="em-scroll properties-container em-prop-page" data-testid="area-property-page">
+        <div
+            bind:this={propertyPage}
+            class="em-scroll properties-container em-prop-page"
+            data-testid="area-property-page"
+        >
             {#if property.type === "focusable"}
                 <FocusablePropertyEditor
                     {property}
@@ -358,7 +401,7 @@
                     on:highlightAreaOnEnter={() => add("highlight", undefined, false)}
                 />
             {/if}
-            <button type="button" class="em-remove" on:click={() => remove(property.id)}>
+            <button type="button" class="em-remove" on:click={() => removeOpenProperty(property.id)}>
                 <IconTrash font-size="16" />{$LL.mapEditor.edit.areas.remove()}
             </button>
         </div>
@@ -390,10 +433,22 @@
             <svelte:fragment slot="subtitle">{size} · {$LL.mapEditor.edit.areas.rename()}</svelte:fragment>
         </PanelHeader>
         <div class="em-scroll">
+            <!-- The description belongs with the name: it is the first thing under it. Several lines, as in the old
+                 editor, so line breaks are kept. -->
+            <label class="em-desc">
+                <span class="em-t">{$LL.mapEditor.edit.areas.description()}</span>
+                <textarea
+                    id="objectDescription"
+                    rows="3"
+                    bind:value={areaDescription}
+                    placeholder={$LL.mapEditor.edit.areas.descriptionPlaceholder()}
+                    on:change={saveDescription}
+                />
+            </label>
             {#if turnedOn.length > 0}
                 <div class="em-ebi">{$LL.mapEditor.edit.areas.turnedOn()}</div>
                 {#each turnedOn as property (property.id)}
-                    {@const described = describeAreaProperty($LL, property)}
+                    {@const described = describeAreaProperty($LL, property, extensionRows)}
                     <div class="em-row on">
                         <button type="button" class="em-row-main" on:click={() => (openProperty = property)}>
                             <span class="em-tile g"><svelte:component this={described.icon} font-size="18" /></span>
@@ -426,22 +481,14 @@
                     on:change={saveDescription}
                 />
             </div>
-            <label class="em-row em-desc">
-                <span class="em-t">{$LL.mapEditor.edit.areas.description()}</span>
-                <input
-                    type="text"
-                    id="objectDescription"
-                    bind:value={areaDescription}
-                    placeholder={$LL.mapEditor.edit.areas.descriptionPlaceholder()}
-                    on:change={saveDescription}
-                />
-            </label>
 
             <div class="em-ebi">{$LL.mapEditor.edit.areas.addToArea()}</div>
             {#each rows as row (row.key + (row.subtype ?? ""))}
                 <button
                     type="button"
                     class="em-row"
+                    class:em-row-off={row.blocked}
+                    disabled={row.blocked}
                     data-testid={row.testId}
                     on:click={() => add(row.key, row.subtype, row.opensPage)}
                 >
@@ -456,11 +503,21 @@
             {#each extensionRows as extensionRow, index (`extension-${index}`)}
                 {#each Object.entries(extensionRow) as [subtype, areaProperty] (subtype)}
                     {#if areaProperty.shouldDisplayButton(properties)}
-                        <button type="button" class="em-row" on:click={() => add("extensionModule", subtype)}>
-                            <span class="em-tile"><IconLink font-size="18" /></span>
+                        <button
+                            type="button"
+                            class="em-row"
+                            data-testid={subtype}
+                            on:click={() => add("extensionModule", subtype)}
+                        >
+                            <span class="em-tile"
+                                ><svelte:component this={areaProperty.label?.icon ?? IconLink} font-size="18" /></span
+                            >
                             <span class="em-tx">
-                                <span class="em-t">{subtype}</span>
-                                <span class="em-m">{$LL.mapEditor.edit.properties.extensionModule.text()}</span>
+                                <span class="em-t">{areaProperty.label?.title ?? subtype}</span>
+                                <span class="em-m"
+                                    >{areaProperty.label?.text ??
+                                        $LL.mapEditor.edit.properties.extensionModule.text()}</span
+                                >
                             </span>
                             <span class="em-plus"><IconPlus font-size="14" /></span>
                         </button>
@@ -481,16 +538,24 @@
                         <button
                             type="button"
                             class="em-chip"
+                            disabled={!appActivated(subtype)}
                             data-testid="openWebsite{subtype.charAt(0).toUpperCase() + subtype.slice(1)}"
                             on:click={() => add("openWebsite", subtype)}
                         >
+                            <img class="em-chip-logo" src={APP_LOGOS[subtype]} alt="" />
                             {$LL.mapEditor.properties[subtype].label()}
                         </button>
                     {/each}
                     {#each connectionManager.applications as app, index (`app-${index}`)}
-                        <button type="button" class="em-chip" on:click={() => addApp(app)}>{app.name}</button>
+                        <button type="button" class="em-chip" on:click={() => addApp(app)}>
+                            {#if app.image}<img class="em-chip-logo" src={app.image} alt="" />{/if}
+                            {app.name}
+                        </button>
                     {/each}
                 </div>
+                {#each WEB_APP_SUBTYPES.filter((subtype) => !appActivated(subtype)) as subtype (subtype)}
+                    <p class="em-apps-off">{$LL.mapEditor.properties[subtype].disabled()}</p>
+                {/each}
             {/if}
             <button type="button" class="em-remove" data-testid="area-delete" on:click={deleteArea}>
                 <IconTrash font-size="16" />{$LL.mapEditor.edit.tools.delete()}
@@ -600,7 +665,7 @@
         background: rgba(255, 255, 255, 0.08);
     }
     @media (hover: hover) {
-        button.em-row:hover .em-plus {
+        button.em-row:not(:disabled):hover .em-plus {
             background: rgba(255, 255, 255, 0.16);
         }
     }
@@ -634,22 +699,29 @@
     .em-switch:checked::after {
         left: 19px;
     }
-    .em-desc input {
-        flex: 1;
-        min-width: 0;
-        height: 36px;
-        padding: 0 12px;
+    .em-desc {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 4px 0 8px;
+    }
+    .em-desc textarea {
+        width: 100%;
+        min-height: 64px;
+        padding: 9px 12px;
         border: 0;
-        border-radius: 10px;
+        border-radius: 12px;
         background: rgba(0, 0, 0, 0.25);
         box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.18);
         font: inherit;
         font-size: 14px;
+        line-height: 1.4;
         color: #fff;
         outline: none;
+        resize: vertical;
     }
-    .em-desc .em-t {
-        flex: none;
+    .em-desc textarea:focus-visible {
+        box-shadow: inset 0 0 0 2px rgba(196, 181, 253, 0.9);
     }
     .em-name {
         display: inline-flex;
@@ -704,6 +776,25 @@
         font-size: 13px;
         color: #fff;
         cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .em-chip:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+    }
+    .em-chip-logo {
+        width: 16px;
+        height: 16px;
+        border-radius: 3px;
+        object-fit: contain;
+    }
+    .em-apps-off {
+        margin: 0;
+        padding: 0 0 4px 35px;
+        font-size: 12px;
+        color: rgba(244, 242, 250, 0.6);
     }
     .em-remove {
         display: inline-flex;
@@ -724,6 +815,14 @@
     }
     .em-prop-page {
         gap: 8px;
+    }
+    /* A setting that cannot go with one already on (Stage next to a video call): shown, greyed, not tappable. */
+    button.em-row.em-row-off {
+        opacity: 0.45;
+        cursor: not-allowed;
+    }
+    .em-prop-page > :global(.property-settings-container > .header) {
+        display: none;
     }
     .em-prop-page :global(.property-settings-container) {
         /* Today's property forms, on the panel's ink. */

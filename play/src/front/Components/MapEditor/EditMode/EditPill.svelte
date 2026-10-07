@@ -22,21 +22,21 @@
         }
         analyticsClient.toggleMapEditor(false);
         mapEditorVisibilityStore.set(false);
-        gameManager.getCurrentGameScene().getMapEditorModeManager().equipTool(EditorToolName.CloseMapEditor);
+        gameManager.tryGetCurrentGameScene()?.getMapEditorModeManager().equipTool(EditorToolName.CloseMapEditor);
     }
     function undo() {
         if (job) {
             job.onUndo();
             return;
         }
-        gameManager.getCurrentGameScene().getMapEditorModeManager().undo();
+        gameManager.tryGetCurrentGameScene()?.getMapEditorModeManager().undo();
     }
     function redo() {
         if (job) {
             job.onRedo();
             return;
         }
-        gameManager.getCurrentGameScene().getMapEditorModeManager().redo();
+        gameManager.tryGetCurrentGameScene()?.getMapEditorModeManager().redo();
     }
 </script>
 
@@ -83,7 +83,7 @@
 <style>
     .em-pill {
         position: absolute;
-        top: 0;
+        top: var(--tiles-clear, 0px);
         left: 50%;
         transform: translateX(-50%);
         width: min(430px, calc(100% - 24px));
@@ -94,9 +94,11 @@
         padding: 0 6px;
         border-radius: 999px;
         color: #fff;
+        /* Over the actions pinned to what you tapped on the map, under the panel. */
+        z-index: 2;
     }
     :global(.em-phone) .em-pill {
-        top: calc(10px + env(safe-area-inset-top, 0px));
+        top: calc(var(--tiles-clear, 0px) + 10px + env(safe-area-inset-top, 0px));
         left: 10px;
         right: 10px;
         width: auto;

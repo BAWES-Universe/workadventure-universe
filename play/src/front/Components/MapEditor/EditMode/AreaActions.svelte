@@ -1,55 +1,48 @@
 <script lang="ts">
-    // The actions of an object you tapped, right next to it: Move, Copy, Settings, Delete. (Turning a placed object
-    // is not something the engine can do yet: it keeps the picture it was placed with.)
+    // The actions of an area you tapped on the map, pinned under it: Settings and Delete. Moving and resizing happen
+    // on the area itself (drag inside it, drag its corners), so they need no button here.
     import { onDestroy, onMount } from "svelte";
     import { fade } from "svelte/transition";
     import { LL } from "../../../../i18n/i18n-svelte";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import { screenSpace } from "../../../Phaser/Game/MapEditor/ScreenSpace";
-    import type { EntityEditorTool } from "../../../Phaser/Game/MapEditor/Tools/EntityEditorTool";
+    import type { AreaEditorTool } from "../../../Phaser/Game/MapEditor/Tools/AreaEditorTool";
     import { mobileLayoutStore } from "../../../Stores/MobileLayoutStore";
-    import {
-        mapEditorEntityModeStore,
-        mapEditorSelectedEntityStore,
-        mapEditorVisibilityStore,
-    } from "../../../Stores/MapEditorStore";
-    import { editObjectsViewStore, showUndoToast } from "../../../Stores/EditModeStore";
-    import { IconCopy, IconHandMove, IconSettings, IconTrash } from "@wa-icons";
+    import { mapEditorSelectedAreaPreviewStore, mapEditorVisibilityStore } from "../../../Stores/MapEditorStore";
+    import { IconSettings, IconTrash } from "@wa-icons";
 
     let left = 0;
     let top = 0;
     let visible = false;
-    let moveHint = false;
-    let moveHintTimeout: ReturnType<typeof setTimeout> | undefined;
     let frame: number | undefined;
     let root: HTMLElement;
 
     function place() {
         // Every frame, also while there is nothing to place: during a map change the scene is gone for a moment.
         frame = requestAnimationFrame(place);
-        const entity = $mapEditorSelectedEntityStore;
+        const preview = $mapEditorSelectedAreaPreviewStore;
         const scene = gameManager.tryGetCurrentGameScene();
-        if (!entity || !scene) {
+        if (!preview || !scene) {
             visible = false;
             return;
         }
-        const bounds = entity.getBounds();
+        const bounds = preview.getBounds();
         const {
             x: screenLeft,
             y: screenTop,
             width: screenWidth,
             height: screenHeight,
         } = screenSpace(scene).rect(bounds.left, bounds.top, bounds.width, bounds.height);
-        const width = root?.offsetWidth ?? 260;
+        const width = root?.offsetWidth ?? 130;
         const height = root?.offsetHeight ?? 60;
         const parentWidth = root?.parentElement?.clientWidth ?? window.innerWidth;
         const parentHeight = root?.parentElement?.clientHeight ?? window.innerHeight;
         left = Math.min(Math.max(8, screenLeft + screenWidth / 2 - width / 2), parentWidth - width - 8);
-        // Below the object; above it when there is no room below.
-        top = screenTop + screenHeight + 10;
+        // Below the area, clear of its corner handles; above it when there is no room below.
+        top = screenTop + screenHeight + 18;
         // Never under the edit pill at the top, so Done and Undo stay in reach.
         const minTop = editPillBottom();
-        if (top + height > parentHeight - 90) top = screenTop - height - 10;
+        if (top + height > parentHeight - 90) top = screenTop - height - 18;
         top = Math.max(minTop, top);
         visible = true;
     }
@@ -66,37 +59,21 @@
     });
     onDestroy(() => {
         if (frame !== undefined) cancelAnimationFrame(frame);
-        if (moveHintTimeout) clearTimeout(moveHintTimeout);
     });
 
-    function tool(): EntityEditorTool | undefined {
+    function tool(): AreaEditorTool | undefined {
         return gameManager.tryGetCurrentGameScene()?.getMapEditorModeManager()?.currentlyActiveTool as
-            | EntityEditorTool
+            | AreaEditorTool
             | undefined;
     }
 
-    function move() {
-        moveHint = true;
-        if (moveHintTimeout) clearTimeout(moveHintTimeout);
-        moveHintTimeout = setTimeout(() => (moveHint = false), 2500);
-    }
-    function copy() {
-        const entity = $mapEditorSelectedEntityStore;
-        if (!entity) return;
-        tool()?.duplicateEntity?.(entity);
-    }
     function settings() {
-        editObjectsViewStore.set("settings");
         mapEditorVisibilityStore.set(true);
     }
     function remove() {
-        const entity = $mapEditorSelectedEntityStore;
-        if (!entity) return;
-        const name = entity.getEntityData().name || entity.getPrefab().name || $LL.mapEditor.edit.tools.objects();
-        entity.delete();
-        mapEditorSelectedEntityStore.set(undefined);
-        mapEditorEntityModeStore.set("ADD");
-        showUndoToast($LL.mapEditor.edit.deleteTool.removed({ name }));
+        const preview = $mapEditorSelectedAreaPreviewStore;
+        if (!preview) return;
+        tool()?.handleDeleteAreaFrontCommandExecution(preview.getId(), undefined, () => tool()?.deselectArea?.());
     }
 </script>
 
@@ -107,24 +84,13 @@
     class:phone={$mobileLayoutStore}
     style="left: {left}px; top: {top}px;"
     transition:fade={{ duration: 120 }}
-    data-testid="object-actions"
+    data-testid="area-actions"
 >
-    {#if moveHint}
-        <div class="em-move-hint">
-            {$LL.mapEditor.edit.objects.actions.move()}: {$LL.mapEditor.edit.areas.draftSubtitle()}
-        </div>
-    {/if}
     <div class="em-actions-row">
-        <button type="button" class="em-act" on:click={move}>
-            <IconHandMove font-size="18" />{$LL.mapEditor.edit.objects.actions.move()}
-        </button>
-        <button type="button" class="em-act" data-testid="object-copy" on:click={copy}>
-            <IconCopy font-size="18" />{$LL.mapEditor.edit.objects.actions.copy()}
-        </button>
-        <button type="button" class="em-act" data-testid="object-settings" on:click={settings}>
+        <button type="button" class="em-act" data-testid="area-actions-settings" on:click={settings}>
             <IconSettings font-size="18" />{$LL.mapEditor.edit.objects.actions.settings()}
         </button>
-        <button type="button" class="em-act em-act-del" data-testid="object-delete" on:click={remove}>
+        <button type="button" class="em-act em-act-del" data-testid="area-actions-delete" on:click={remove}>
             <IconTrash font-size="18" />{$LL.mapEditor.edit.objects.actions.delete()}
         </button>
     </div>
@@ -170,11 +136,5 @@
     }
     .em-act-del {
         color: #f7a48f;
-    }
-    .em-move-hint {
-        padding: 4px 10px 6px;
-        font-size: 12px;
-        color: rgba(244, 242, 250, 0.8);
-        text-align: center;
     }
 </style>

@@ -3,7 +3,7 @@
     // it, and the bar at the bottom while something is being placed or drawn. The map stays in view; on phones the
     // action bar is hidden until Done. The editor engine (MapEditorModeManager and its tools) is unchanged.
     import { fade, fly } from "svelte/transition";
-    import { onMount } from "svelte";
+    import { onDestroy, onMount, tick } from "svelte";
     import { LL } from "../../../../i18n/i18n-svelte";
     import { mobileLayoutStore } from "../../../Stores/MobileLayoutStore";
     import { EditorToolName } from "../../../Phaser/Game/MapEditor/MapEditorModeManager";
@@ -11,6 +11,7 @@
         mapEditorAreaModeStore,
         mapEditorEntityModeStore,
         mapEditorSelectedEntityPrefabStore,
+        mapEditorSelectedAreaPreviewStore,
         mapEditorSelectedEntityStore,
         mapEditorSelectedToolStore,
         mapEditorVisibilityStore,
@@ -19,6 +20,7 @@
         editAreaDraftStore,
         editDeleteMarkStore,
         editHintSeenStore,
+        editObjectsViewStore,
         editPillStore,
         editPlacingBarStore,
         editTouchPreviewStore,
@@ -26,12 +28,15 @@
         hideUndoToast,
     } from "../../../Stores/EditModeStore";
     import { gameManager } from "../../../Phaser/Game/GameManager";
+    import type { Entity } from "../../../Phaser/ECS/Entity";
     import ConfigureMyRoom from "../WAMSettingsEditor.svelte";
+    import { cameraTilesClearStore } from "../../../Stores/CameraTilesClearStore";
     import EditPill from "./EditPill.svelte";
     import EditRail from "./EditRail.svelte";
     import EditPanel from "./EditPanel.svelte";
     import PlacingBar from "./PlacingBar.svelte";
     import ObjectActions from "./ObjectActions.svelte";
+    import AreaActions from "./AreaActions.svelte";
     import AreaDraft from "./AreaDraft.svelte";
     import { IconArrowBackUp, IconHandMove, IconTrash } from "@wa-icons";
 
@@ -57,6 +62,7 @@
         tool === EditorToolName.EntityEditor &&
         $mapEditorEntityModeStore === "EDIT" &&
         $mapEditorSelectedEntityStore !== undefined;
+    $: areaSelected = tool === EditorToolName.AreaEditor && $mapEditorSelectedAreaPreviewStore !== undefined;
     $: phoneHint = $mobileLayoutStore && !$editHintSeenStore && !panelShown && !barShown;
     $: desktopHint = !$mobileLayoutStore && placingObject;
     $: deleteHint = tool === EditorToolName.TrashEditor;
@@ -67,9 +73,31 @@
     // The chip sits to the right of the box, or to its left when the box is near the right edge.
     $: chipOnLeft = deleteMarkTapped !== undefined && deleteMarkTapped.x + deleteMarkTapped.width + 130 > rootWidth;
 
+    // The selected object is outlined in cyan, as in the old editor, so you can see what you tapped. The settings
+    // form clears the outline when it closes, so it is put back after every change of view too.
+    const SELECTED_OUTLINE = 0x00ffff;
+    let outlined: Entity | undefined;
+    let editModeClosed = false;
+    $: outlineSelected(objectSelected ? $mapEditorSelectedEntityStore : undefined, $editObjectsViewStore);
+    function outlineSelected(entity: Entity | undefined, _view: unknown) {
+        tick()
+            .then(() => {
+                if (editModeClosed) return;
+                if (outlined && outlined !== entity) outlined.removeEditColor();
+                outlined = entity;
+                outlined?.setEditColor(SELECTED_OUTLINE);
+            })
+            .catch((e) => console.error(e));
+    }
+    onDestroy(() => {
+        editModeClosed = true;
+        outlined?.removeEditColor();
+        outlined = undefined;
+    });
+
     function undoLast() {
         hideUndoToast();
-        gameManager.getCurrentGameScene().getMapEditorModeManager().undo();
+        gameManager.tryGetCurrentGameScene()?.getMapEditorModeManager().undo();
     }
 </script>
 
@@ -84,6 +112,7 @@
     class="em-root absolute inset-0 z-[100] pointer-events-none text-white"
     class:em-phone={$mobileLayoutStore}
     data-testid="edit-mode"
+    style="--tiles-clear: {$cameraTilesClearStore}px"
     bind:clientWidth={rootWidth}
 >
     <EditPill />
@@ -94,6 +123,9 @@
     {#if objectSelected && !placingObject && !($mobileLayoutStore && panelShown)}
         <!-- On a phone the panel covers the map, so the actions pinned to the object wait until it is tucked away. -->
         <ObjectActions />
+    {/if}
+    {#if areaSelected && !drawingArea && !($mobileLayoutStore && panelShown)}
+        <AreaActions />
     {/if}
     {#if drawingArea}
         <AreaDraft />
@@ -106,7 +138,10 @@
         {@const p = $editTouchPreviewStore}
         <div
             class="em-tap u-surface"
-            style="left: {p.x + p.width / 2}px; top: {Math.max(8, p.y - 40)}px;"
+            style="left: {Math.min(Math.max(90, p.x + p.width / 2), Math.max(90, rootWidth - 90))}px; top: {Math.max(
+                8,
+                p.y - 40
+            )}px;"
             transition:fade={{ duration: 120 }}
         >
             {$LL.mapEditor.edit.objects.tapAgain()}
@@ -230,14 +265,14 @@
         bottom: calc(18px + env(safe-area-inset-bottom, 0px));
     }
     .em-hint-top {
-        top: 64px;
+        top: calc(var(--tiles-clear, 0px) + 64px);
         left: 50%;
         transform: translateX(-50%);
         width: max-content;
         max-width: min(480px, calc(100% - 120px));
     }
     .em-phone .em-hint-top {
-        top: calc(80px + env(safe-area-inset-top, 0px));
+        top: calc(var(--tiles-clear, 0px) + 80px + env(safe-area-inset-top, 0px));
         left: 14px;
         right: 84px;
         width: auto;

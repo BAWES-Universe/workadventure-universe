@@ -96,11 +96,13 @@ test.describe("Map editor area with rights @oidc @nomobile @nowebkit", () => {
     //Need to wait for player move action
     // eslint-disable-next-line
     await page.waitForTimeout(1000);
-    await page.mouse.click(
+    // The small map sits in the middle of the screen.
+    const insideArea = Map.onScreen(
+      page,
       AreaAccessRights.mouseCoordinatesToClickOnEntityInsideArea.x,
-      AreaAccessRights.mouseCoordinatesToClickOnEntityInsideArea.y,
-      { button: "right" }
+      AreaAccessRights.mouseCoordinatesToClickOnEntityInsideArea.y
     );
+    await page.mouse.click(insideArea.x, insideArea.y, { button: "right" });
 // eslint-disable-next-line
 await page.pause();
     //Need to wait for player move action

@@ -4,6 +4,7 @@ import type { EditMapCommandMessage } from "@workadventure/messages";
 import type { Unsubscriber } from "svelte/store";
 import { get } from "svelte/store";
 import { v4 as uuidv4 } from "uuid";
+import { screenSpace } from "../ScreenSpace";
 import {
     mapEditorCopiedEntityDataPropertiesStore,
     mapEditorDeleteCustomEntityEventStore,
@@ -383,15 +384,13 @@ export class EntityEditorTool extends EntityRelatedEditorTool {
             editTouchPreviewStore.set(undefined);
             return;
         }
-        const camera = this.scene.cameras.main;
-        const zoom = camera.zoom;
         const topLeft = this.entityPrefabPreview.getTopLeft();
-        const next = {
-            x: ((topLeft.x ?? 0) - camera.worldView.x) * zoom,
-            y: ((topLeft.y ?? 0) - camera.worldView.y) * zoom,
-            width: this.entityPrefabPreview.displayWidth * zoom,
-            height: this.entityPrefabPreview.displayHeight * zoom,
-        };
+        const next = screenSpace(this.scene).rect(
+            topLeft.x ?? 0,
+            topLeft.y ?? 0,
+            this.entityPrefabPreview.displayWidth,
+            this.entityPrefabPreview.displayHeight
+        );
         const last = get(editTouchPreviewStore);
         if (
             last &&
@@ -409,7 +408,7 @@ export class EntityEditorTool extends EntityRelatedEditorTool {
         if (!this.entityPrefabPreview || !this.touchPreviewWaiting) return false;
         const bounds = this.entityPrefabPreview.getBounds();
         // A finger is wider than the picture: a tap just beside a thin object still counts.
-        const margin = 12 / this.scene.cameras.main.zoom;
+        const margin = 12 / screenSpace(this.scene).scale;
         return (
             pointer.worldX >= bounds.left - margin &&
             pointer.worldX <= bounds.right + margin &&
@@ -451,9 +450,13 @@ export class EntityEditorTool extends EntityRelatedEditorTool {
             const placing = this.mouseDownPlacing;
             this.mouseDownPlacing = false;
             if (!placing || !this.entityPrefabPreview || !this.entityPrefab) return;
-            // A press that dragged the map is not a click: nothing is placed.
-            if (this.mapEditorModeManager.isDraggingToLookAround) return;
-            if (!this.canEntityBePlaced()) return;
+            // A press that dragged (the map, or from an object on it) is not a click: nothing is placed.
+            if (this.mapEditorModeManager.isDraggingToLookAround || pointer.getDistance() > 8) return;
+            if (!this.canEntityBePlaced()) {
+                // Show why nothing was placed: the preview turns red where it cannot go.
+                this.changePreviewTint();
+                return;
+            }
             this.placePreview();
             return;
         }
