@@ -76,6 +76,19 @@ export class ChatIdVerifier {
     }
 }
 
+/**
+ * What may go to the logs and the error tracker about a failed check. The error axios throws carries the whole request,
+ * including the player's access token (the Authorization header), so only what failed is kept: the message, the error
+ * code and the HTTP status.
+ */
+export function describeChatIdError(e: unknown): Error {
+    if (axios.isAxiosError(e)) {
+        const details = [e.code, e.response?.status && `HTTP ${e.response.status}`].filter(Boolean).join(", ");
+        return new Error(`Matrix server check failed: ${e.message}${details ? ` (${details})` : ""}`);
+    }
+    return e instanceof Error ? e : new Error(String(e));
+}
+
 type ChatIdSocketData = Pick<SocketData, "isLogged" | "chatID" | "chatIdVerification" | "disconnecting">;
 
 interface VerificationQueue {
@@ -147,8 +160,9 @@ export function verifyChatId(
             } catch (e) {
                 // Usually the Matrix server not answering: the chat ID stays as it was, and the same token can be
                 // sent again.
-                console.error("Could not check the player's chat ID", e);
-                Sentry.captureException(e);
+                const safeError = describeChatIdError(e);
+                console.error("Could not check the player's chat ID", safeError.message);
+                Sentry.captureException(safeError);
             }
             token = queue.next;
             queue.next = undefined;
