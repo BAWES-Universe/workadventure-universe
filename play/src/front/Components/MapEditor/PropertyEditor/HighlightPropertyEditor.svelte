@@ -80,6 +80,7 @@
                 <input
                     class="hl-input"
                     type="color"
+                    aria-label={$LL.mapEditor.properties.highlight.colorLabel()}
                     data-testid="highlightColor"
                     bind:value={property.color}
                     on:input={onValueChange}
