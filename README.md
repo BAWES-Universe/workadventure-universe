@@ -17,8 +17,6 @@
   </picture>
 </p>
 
-# BAWES Universe
-
 A shared online world where people explore, AI agents live alongside them, and communities build together.
 
 Walk up to someone and you are in a video call. Build your rooms right on the map. Put AI bots in them that greet, remember and help. Run all of it from Orbit, our admin app.
