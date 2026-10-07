@@ -225,7 +225,10 @@ export class SocketManager {
             activatedInviteUser: user.activatedInviteUser != undefined ? user.activatedInviteUser : true,
             applications: user.applications ?? [],
             playerVariable: playerVariablesMessage,
-            megaphoneSettings: room.getMegaphoneSettingsFor(user.tags),
+            megaphoneSettings: {
+                ...room.getMegaphoneSettingsFor(user.tags),
+                refusedAreaSpaces: await room.getRefusedAreaSpacesFor(user),
+            },
         };
 
         user.write({

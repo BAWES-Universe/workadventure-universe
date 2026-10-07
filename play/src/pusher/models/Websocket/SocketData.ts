@@ -73,6 +73,9 @@ export type SocketData = {
     // The broadcast channels of the room, by the space name the front joins them with, and whether this user may go
     // live on each (undefined until the room is joined)
     megaphoneChannels: Map<string, boolean> | undefined;
+    // The meeting rooms and speaker zones of the room this user may not join (areas limited to roles they do not
+    // have), by the space name the front joins them with. The back sends it with the broadcast channels.
+    refusedAreaSpaces?: ReadonlySet<string>;
     // The abort controllers for each queries received
     queryAbortControllers: Map<number, AbortController>;
     keepAliveInterval: NodeJS.Timeout | undefined;
