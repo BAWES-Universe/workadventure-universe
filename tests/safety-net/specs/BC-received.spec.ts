@@ -33,7 +33,11 @@ test("BC-075 @local A received text card: sender, reach line, formatting and Got
     await expect(header.locator("> span").first().locator("svg")).toBeVisible();
     await expect(header.getByText("Khalid", { exact: true })).toHaveCSS("font-weight", "700");
     await expect(header.getByText("To everyone in BAWES HQ · now")).toBeVisible();
-    await expect(header.locator("> span").last()).toHaveCSS("background-image", /linear-gradient/);
+    // Item 30 (approved 10-06): the speaker is a plain white glyph, no gradient box behind it.
+    const speaker = header.locator("> svg").last();
+    await expect(speaker).toBeVisible();
+    await expect(speaker).toHaveCSS("color", "rgb(255, 255, 255)");
+    await expect(header.locator("> span")).toHaveCount(1);
     const text = card.locator(".broadcast-text");
     await expect(text.locator("ul")).toHaveCSS("list-style-type", "disc");
     await expect(text.locator("ol")).toHaveCSS("list-style-type", "decimal");
@@ -91,7 +95,7 @@ test("BC-078 @local Received cards stack newest first, each until its own Got it
         expect(Math.round(inbox.width)).toBe(428 - 24);
     } else {
         expect(Math.round(inbox.x)).toBe(1440 - 16 - 380);
-        expect(Math.round(inbox.y)).toBe(80);
+        expect(Math.round(inbox.y)).toBe(96);
         expect(Math.round(inbox.width)).toBe(380);
     }
     await cards.nth(1).getByTestId("broadcast-received-dismiss").click();

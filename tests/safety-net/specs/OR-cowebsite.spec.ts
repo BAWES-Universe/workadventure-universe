@@ -353,15 +353,13 @@ test("OR-086 WAM website areas: cowebsite on enter, Open Website popup on action
 });
 
 async function stubJitsi(page: Page): Promise<void> {
-    await page
-        .context()
-        .route(/^https:\/\/jitsi\.invalid\//, (route) =>
-            route.fulfill({
-                status: 200,
-                contentType: "application/javascript",
-                body: "window.JitsiMeetExternalAPI = function () { return { addListener() {}, removeListener() {}, executeCommand() {}, dispose() {}, getIFrame() { return document.createElement('iframe'); } }; };",
-            })
-        );
+    await page.context().route(/^https:\/\/jitsi\.invalid\//, (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "application/javascript",
+            body: "window.JitsiMeetExternalAPI = function () { return { addListener() {}, removeListener() {}, executeCommand() {}, dispose() {}, getIFrame() { return document.createElement('iframe'); } }; };",
+        })
+    );
 }
 
 async function expectJitsiFlow(

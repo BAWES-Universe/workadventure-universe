@@ -126,6 +126,16 @@ test("BC-008 Phone: the card sits at the top with 12px gutters and scrolls insid
     test.skip(!isPhone(testInfo), "phone only");
     await join(page, await wamRoom(testInfo, "empty"), "Alice");
     await openBroadcast(page);
+    // The card slides in; measure it once it has stopped.
+    let last = "";
+    await expect
+        .poll(async () => {
+            const now = JSON.stringify(await panel(page).boundingBox());
+            const same = now === last;
+            last = now;
+            return same;
+        })
+        .toBe(true);
     const box = await panel(page).boundingBox();
     if (!box) throw new Error("no panel box");
     expect(Math.round(box.x)).toBe(12);

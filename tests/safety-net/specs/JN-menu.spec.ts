@@ -2,9 +2,12 @@ import { test, expect, isPhone, inRoom, join, newPlayer, roomUrl, wa } from "../
 import {
     cameraHeading,
     checkedTile,
+    deviceSelect,
+    deviceShown,
     continueButton,
     nameInput,
     openMenu,
+    pickOtherDevice,
     inBubble,
     profileButton,
     profileMenu,
@@ -404,9 +407,9 @@ test.describe("Profile menu: edit name, WOKA, companion, devices", () => {
         await expect(cameraHeading(player)).toBeVisible();
         const back = player.locator("button.enableCameraSceneBack");
         await expect(back).toHaveAttribute("aria-label", "Back to your room");
-        const mic = player.getByRole("combobox", { name: "Microphone" });
+        const mic = deviceSelect(player, "Microphone");
         await expect(mic).toBeEnabled();
-        const before = await mic.inputValue();
+        const before = (await deviceShown(mic).innerText()).trim();
         await back.click();
         await inRoom(player);
         await expect(player.getByTestId("microphone-button")).toHaveAttribute("data-state", "normal");
@@ -414,17 +417,14 @@ test.describe("Profile menu: edit name, WOKA, companion, devices", () => {
         await openMenu(player);
         await profileMenu(player).getByRole("button", { name: "Edit cam / mic" }).click();
         await expect(mic).toBeEnabled();
-        await expect(mic).toHaveValue(before);
-        const options = await mic
-            .locator("option")
-            .evaluateAll((all) => all.map((o) => (o as HTMLOptionElement).value));
-        const other = options.find((value) => value !== before) ?? "";
-        await mic.selectOption(other);
+        await expect(deviceShown(mic)).toHaveText(before);
+        const other = await pickOtherDevice(player, mic, "Microphone");
+        expect(other).not.toBe(before);
         await player.getByRole("button", { name: "Save", exact: true }).click();
         await inRoom(player);
         await openMenu(player);
         await profileMenu(player).getByRole("button", { name: "Edit cam / mic" }).click();
-        await expect(mic).toHaveValue(other);
+        await expect(deviceShown(mic)).toHaveText(other);
     });
 
     test("JN-063 Device arrow: Test my settings opens the camera screen with the X", async ({ player }) => {

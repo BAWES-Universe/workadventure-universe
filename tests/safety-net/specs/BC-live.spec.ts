@@ -52,7 +52,7 @@ function videosOutsidePanel(page: Page) {
     );
 }
 
-test("BC-054 Go live: preview, You chip, mic/camera/screen buttons, mic on at open, notice and Go live", async ({
+test("BC-054 Go live: preview, You chip, mic/camera/screen buttons, mic and camera untouched at open, notice and Go live", async ({
     page,
 }, testInfo) => {
     await join(page, await wamRoom(testInfo, "empty"), "Alice");
@@ -60,8 +60,9 @@ test("BC-054 Go live: preview, You chip, mic/camera/screen buttons, mic on at op
     await openBroadcast(page);
     await turnOnBroadcast(page);
     await openGoLive(page);
-    await expect(page.getByTestId("microphone-button")).toHaveAttribute("data-state", "normal");
-    await expect(page.getByTestId("broadcast-live-mic")).toHaveAttribute("aria-pressed", "true");
+    // Go live never switches the mic or camera (Khalid 6 Oct 14:51Z, #627): the mic that was off stays off.
+    await expect(page.getByTestId("microphone-button")).toHaveAttribute("data-state", "forbidden");
+    await expect(page.getByTestId("broadcast-live-mic")).toHaveAttribute("aria-pressed", "false");
     const preview = panel(page).locator(".aspect-\\[16\\/10\\]");
     const cameraOn = (await page.getByTestId("camera-button").getAttribute("data-state")) === "normal";
     if (cameraOn) {
@@ -71,14 +72,24 @@ test("BC-054 Go live: preview, You chip, mic/camera/screen buttons, mic on at op
         await expect(preview.locator("svg").first()).toBeVisible();
     }
     await expect(preview.getByText("You", { exact: true })).toBeVisible();
-    await expect(panel(page).getByText("Mic on", { exact: true })).toBeVisible();
+    await expect(panel(page).getByText("Mic off", { exact: true })).toBeVisible();
     await expect(panel(page).getByText(cameraOn ? "Camera on" : "Camera off", { exact: true })).toBeVisible();
     await expect(panel(page).getByText("Share screen", { exact: true })).toBeVisible();
     for (const id of ["broadcast-live-mic", "broadcast-live-camera", "broadcast-live-screen"]) {
         await expect(page.getByTestId(id)).toHaveCSS("border-radius", /^(9999|26|50)/);
     }
-    await expect(panel(page).locator("p.text-center")).toHaveText(/sees and hears you until you press End\.$/);
     await expect(page.getByTestId("broadcast-go-live")).toHaveText("Go live");
+    if (!cameraOn) {
+        // Nothing is on yet: the notice says so and Go live waits.
+        await expect(panel(page).locator("p.text-center")).toHaveText("Turn on your mic, camera or screen to go live.");
+        await expect(page.getByTestId("broadcast-go-live")).toBeDisabled();
+    }
+    // The player turns the mic on here: the label, the bar and the notice follow, and Go live is ready.
+    await page.getByTestId("broadcast-live-mic").click();
+    await expect(page.getByTestId("broadcast-live-mic")).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByTestId("microphone-button")).toHaveAttribute("data-state", "normal");
+    await expect(panel(page).getByText("Mic on", { exact: true })).toBeVisible();
+    await expect(panel(page).locator("p.text-center")).toHaveText(/sees and hears you until you press End\.$/);
     await expect(page.getByTestId("broadcast-go-live")).toBeEnabled();
 });
 
@@ -138,7 +149,7 @@ test("BC-057 With mic, camera and screen all off, Go live is disabled and says w
     await expect(panel(page).locator("p.text-center")).toHaveText("Turn on your mic, camera or screen to go live.");
 });
 
-test("BC-058 Leaving Go live without touching the mic turns it back off; a chosen mic state stays", async ({
+test("BC-058 Leaving Go live without touching the mic leaves it off; a mic turned on in the step stays on", async ({
     page,
 }, testInfo) => {
     await join(page, await wamRoom(testInfo, "empty"), "Alice");
@@ -146,14 +157,21 @@ test("BC-058 Leaving Go live without touching the mic turns it back off; a chose
     await openBroadcast(page);
     await turnOnBroadcast(page);
     await openGoLive(page);
-    await expect(page.getByTestId("microphone-button")).toHaveAttribute("data-state", "normal");
+    // Go live never switched the mic on (Khalid 6 Oct 14:51Z, #627), so leaving has nothing to switch back.
+    await expect(page.getByTestId("microphone-button")).toHaveAttribute("data-state", "forbidden");
     await page.getByRole("button", { name: "Back" }).click();
     await expect(page.getByTestId("microphone-button")).toHaveAttribute("data-state", "forbidden");
 
     await openGoLive(page);
-    await page.getByTestId("broadcast-live-mic").click();
+    await page.getByTestId("broadcast-close").click();
+    await expect(panel(page)).toBeHidden();
+    await expect(page.getByTestId("microphone-button")).toHaveAttribute("data-state", "forbidden");
+
+    await openBroadcast(page);
+    await openGoLive(page);
     await page.getByTestId("broadcast-live-mic").click();
     await expect(page.getByTestId("broadcast-live-mic")).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByTestId("microphone-button")).toHaveAttribute("data-state", "normal");
     await page.getByTestId("broadcast-close").click();
     await expect(panel(page)).toBeHidden();
     await expect(page.getByTestId("microphone-button")).toHaveAttribute("data-state", "normal");

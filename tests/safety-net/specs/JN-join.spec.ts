@@ -1,18 +1,23 @@
 import { test, expect, roomUrl, isPhone, inRoom, join } from "../lib/game";
 import {
+    activeTiles,
     blockMedia,
     builderSelection,
     cameraHeading,
     canvasPicture,
+    deviceSelect,
+    deviceShown,
     checkedTile,
     continueButton,
     nameInput,
     openCameraScreen,
+    openDeviceList,
     openMenu,
     profileMenu,
     openNameScreen,
     openWokaBuilder,
     openWokaPicker,
+    pickOtherDevice,
     playedSounds,
     recordSounds,
     serveManyCollections,
@@ -128,10 +133,13 @@ test.describe("Join: WOKA picker", () => {
         // One collection on the local stack: no pills.
         await expect(page.getByRole("tab")).toHaveCount(0);
         const tile = wokaTiles(page).first().locator("canvas");
+        // Khalid 10-06 (dev findings, item 21): the preview no longer turns on its own, only when you press Rotate.
+        // (The row still describes the old 2.4 s loop.) Wait two turns' worth, then check nothing moved.
         const before = await canvasPicture(tile);
-        await expect
-            .poll(() => canvasPicture(tile), { message: "tiles turn on their own every 2.4 s", timeout: 6_000 })
-            .not.toBe(before);
+        await page.waitForTimeout(5_000);
+        expect(await canvasPicture(tile), "tiles must not turn on their own").toBe(before);
+        await card.getByRole("button", { name: "Rotate" }).click();
+        await expect.poll(() => canvasPicture(tile), { message: "Rotate turns the tiles" }).not.toBe(before);
     });
 
     test("JN-008 JN-013 Collection pills with counts, switching and the More arrow", async ({ page }, testInfo) => {
@@ -142,16 +150,14 @@ test.describe("Join: WOKA picker", () => {
         await expect(tabs.first()).toHaveAttribute("aria-selected", "true");
         await expect(tabs.first().locator("b.woka-count")).toHaveText(String(await wokaTiles(page).count()));
         await expect(tabs.nth(1).locator("b.woka-count")).toHaveText("3");
-        await page.locator(".woka-tiles-scroll").evaluate((node) => (node.scrollTop = node.scrollHeight));
-        await expect
-            .poll(() => page.locator(".woka-tiles-scroll").evaluate((node) => node.scrollTop))
-            .toBeGreaterThan(0);
+        await activeTiles(page).evaluate((node) => (node.scrollTop = node.scrollHeight));
+        await expect.poll(() => activeTiles(page).evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
         await tabs.nth(1).click();
         await expect(tabs.nth(1)).toHaveAttribute("aria-selected", "true");
         await expect(tabs.first()).toHaveAttribute("aria-selected", "false");
         await expect(wokaTiles(page)).toHaveCount(3);
         await expect(wokaTiles(page).first()).toHaveAttribute("id", /^woka-copy-1-/);
-        await expect.poll(() => page.locator(".woka-tiles-scroll").evaluate((node) => node.scrollTop)).toBe(0);
+        await expect.poll(() => activeTiles(page).evaluate((node) => node.scrollTop)).toBe(0);
         const more = page.getByRole("button", { name: "More" });
         await expect(more).toBeVisible();
         await expect(page.locator(".woka-pills-more")).toHaveCount(1);
@@ -189,11 +195,11 @@ test.describe("Join: WOKA picker", () => {
         await openWokaPicker(page, roomUrl(testInfo));
         await expect(page.locator(".woka-swipe-hint")).toHaveText("swipe the tiles for the next collection");
         const tabs = page.getByRole("tab");
-        await swipe(page.locator(".woka-tiles-scroll"), -120);
+        await swipe(activeTiles(page), -120);
         await expect(tabs.nth(1)).toHaveAttribute("aria-selected", "true");
-        await swipe(page.locator(".woka-tiles-scroll"), 120);
+        await swipe(activeTiles(page), 120);
         await expect(tabs.nth(0)).toHaveAttribute("aria-selected", "true");
-        await swipe(page.locator(".woka-tiles-scroll"), -40);
+        await swipe(activeTiles(page), -40);
         await expect(tabs.nth(0)).toHaveAttribute("aria-selected", "true");
     });
 
@@ -281,7 +287,7 @@ test.describe("Join: WOKA picker", () => {
         const box = page.locator(".woka-tiles");
         await expect(box).toHaveClass(/woka-tiles-more/);
         await expect(page.locator(".woka-scrollbar")).toBeVisible();
-        const fraction = await page.locator(".woka-tiles-scroll").evaluate((scroller) => {
+        const fraction = await activeTiles(page).evaluate((scroller) => {
             const grid = scroller.firstElementChild as HTMLElement;
             const tile = grid.firstElementChild as HTMLElement;
             const gap = parseFloat(getComputedStyle(grid).rowGap) || 0;
@@ -291,7 +297,7 @@ test.describe("Join: WOKA picker", () => {
         });
         expect(fraction).toBeGreaterThanOrEqual(0.2);
         expect(fraction).toBeLessThanOrEqual(0.8);
-        await page.locator(".woka-tiles-scroll").evaluate((node) => (node.scrollTop = node.scrollHeight));
+        await activeTiles(page).evaluate((node) => (node.scrollTop = node.scrollHeight));
         await expect(box).not.toHaveClass(/woka-tiles-more/);
         await expect(wokaTiles(page).last()).toBeInViewport();
     });
@@ -330,7 +336,11 @@ test.describe("Join: Build your WOKA", () => {
         await expect(page.getByRole("tab")).toHaveText(["Body", "Eyes", "Hair", "Clothes", "Hat", "Accessory"]);
         for (const tab of await page.getByRole("tab").all()) await expect(tab.locator("svg")).toHaveCount(1);
         await expect(page.getByRole("tab", { name: "Body" })).toHaveAttribute("aria-selected", "true");
-        await expect(page.locator("button.wokaBuildBack")).toHaveText("Back");
+        // Khalid 10-06 (dev findings, item 21): this button is not a "Back", Build and the ready-made picker are two
+        // modes. The build relabels it "Ready-made WOKAs" (phone: "Ready-made"), with a grid icon. The row still says "Back".
+        await expect(page.locator("button.wokaBuildBack span:visible")).toHaveText(
+            isPhone(testInfo) ? "Ready-made" : "Ready-made WOKAs"
+        );
         await expect(page.locator("button.wokaBuildBack svg")).toBeVisible();
         await expect(page.locator("button.selectCharacterSceneFormSubmit")).toHaveText("Finish");
         if (!isPhone(testInfo)) {
@@ -393,7 +403,7 @@ test.describe("Join: Build your WOKA", () => {
         test.skip(!isPhone(testInfo), "phone only");
         await openWokaBuilder(page, roomUrl(testInfo));
         await expect(page.locator(".woka-swipe-hint")).toHaveText("swipe the tiles for the next part");
-        await swipe(page.locator(".woka-tiles-scroll"), -120);
+        await swipe(activeTiles(page), -120);
         await expect(page.getByRole("tab", { name: "Eyes" })).toHaveAttribute("aria-selected", "true");
         const pills = page.locator(".woka-pills");
         const overflows = await pills.evaluate((node) => node.scrollWidth > node.clientWidth + 2);
@@ -454,11 +464,11 @@ test.describe("Join: camera and microphone", () => {
         await expect(page.getByRole("switch", { name: "Camera" })).toHaveAttribute("aria-checked", "true");
         await expect(page.getByRole("switch", { name: "Microphone" })).toHaveAttribute("aria-checked", "true");
         await expect(page.locator(".device-state")).toHaveText(["On", "On"]);
-        await expect(page.getByRole("combobox", { name: "Camera" })).toBeEnabled();
-        await expect(page.getByRole("combobox", { name: "Microphone" })).toBeEnabled();
+        await expect(deviceSelect(page, "Camera")).toBeEnabled();
+        await expect(deviceSelect(page, "Microphone")).toBeEnabled();
         await expect(page.locator(".horizontal-sound-meter > div")).toHaveCount(30);
         await expect(page.getByText("Say something: the bars should move.")).toBeVisible();
-        await expect(page.getByRole("combobox", { name: "Speaker" })).toBeVisible();
+        await expect(deviceSelect(page, "Speaker")).toBeVisible();
         await expect(page.getByRole("button", { name: "Play a test sound" })).toBeVisible();
         await expect(page.getByRole("button", { name: "Save", exact: true })).toBeVisible();
         await expect(page.locator("button.enableCameraSceneBack")).toHaveCount(0);
@@ -489,9 +499,11 @@ test.describe("Join: camera and microphone", () => {
     test("JN-025 Camera switch off and on", async ({ page }, testInfo) => {
         await openCameraScreen(page, roomUrl(testInfo));
         const cameraSwitch = page.getByRole("switch", { name: "Camera" });
-        const select = page.getByRole("combobox", { name: "Camera" });
+        const select = deviceSelect(page, "Camera");
         await expect(page.locator("video.myCamVideoSetup")).toBeVisible();
-        const device = await select.inputValue();
+        await expect(select).toBeEnabled();
+        const device = await deviceShown(select).innerText();
+        expect(device.trim()).not.toBe("");
         await cameraSwitch.click();
         await expect(cameraSwitch).toHaveAttribute("aria-checked", "false");
         await expect(page.getByText("Camera is off")).toBeVisible();
@@ -504,13 +516,13 @@ test.describe("Join: camera and microphone", () => {
         await expect(page.locator(".device-state").first()).toHaveText("On");
         await expect(page.locator("video.myCamVideoSetup")).toBeVisible();
         await expect(select).toBeEnabled();
-        await expect(select).toHaveValue(device);
+        await expect(deviceShown(select)).toHaveText(device);
     });
 
     test("JN-026 Microphone switch off and on", async ({ page }, testInfo) => {
         await openCameraScreen(page, roomUrl(testInfo));
         const micSwitch = page.getByRole("switch", { name: "Microphone" });
-        const select = page.getByRole("combobox", { name: "Microphone" });
+        const select = deviceSelect(page, "Microphone");
         await expect(page.locator(".horizontal-sound-meter")).toBeVisible();
         await micSwitch.click();
         await expect(micSwitch).toHaveAttribute("aria-checked", "false");
@@ -526,52 +538,45 @@ test.describe("Join: camera and microphone", () => {
 
     test("JN-027 Chosen microphone is saved as preferred and used", async ({ page }, testInfo) => {
         await openCameraScreen(page, roomUrl(testInfo));
-        const select = page.getByRole("combobox", { name: "Microphone" });
-        await expect(select.locator("option")).toHaveCount(3);
+        const select = deviceSelect(page, "Microphone");
         await expect(select).toBeEnabled();
-        const options = await select
-            .locator("option")
-            .evaluateAll((all) => all.map((o) => (o as HTMLOptionElement).value));
-        const current = await select.inputValue();
-        const other =
-            options.find((value) => value !== current && value !== "default") ?? options.find((v) => v !== current);
-        expect(other).toBeTruthy();
-        await select.selectOption(other ?? "");
-        await expect(select).toHaveValue(other ?? "");
-        await expect
-            .poll(() =>
-                page.evaluate(
-                    () => Object.entries(localStorage).find(([k]) => /preferredAudioInputDevice/i.test(k))?.[1]
-                )
-            )
-            .toBe(other);
+        const preferred = () =>
+            page.evaluate(() => Object.entries(localStorage).find(([k]) => /preferredAudioInputDevice/i.test(k))?.[1]);
+        const current = (await deviceShown(select).innerText()).trim();
+        const list = await openDeviceList(page, select, "Microphone");
+        await expect(list.getByRole("option")).toHaveCount(3);
+        await expect(list.getByRole("option", { selected: true })).toHaveText(current);
+        await page.keyboard.press("Escape");
+        await expect(list).toBeHidden();
+        const before = await preferred();
+        const other = await pickOtherDevice(page, select, "Microphone");
+        expect(other).not.toBe(current);
+        await expect(deviceShown(select)).toHaveText(other);
+        await expect.poll(preferred).not.toBe(before);
+        const preferredId = await preferred();
+        expect(preferredId).toBeTruthy();
         await page.getByRole("button", { name: "Save", exact: true }).click();
         await inRoom(page);
         // Chromium's fake devices get new ids on every page load, so the next visit itself is a hand check.
         await openMenu(page);
         await profileMenu(page).getByRole("button", { name: "Edit cam / mic" }).click();
         await expect(cameraHeading(page)).toBeVisible();
-        await expect(page.getByRole("combobox", { name: "Microphone" })).toHaveValue(other ?? "");
+        await expect(deviceShown(deviceSelect(page, "Microphone"))).toHaveText(other);
+        expect(await preferred()).toBe(preferredId);
     });
 
     test("JN-028 Speaker change and test button play the join chime", async ({ page }, testInfo) => {
         await recordSounds(page);
         await openCameraScreen(page, roomUrl(testInfo));
-        const speaker = page.getByRole("combobox", { name: "Speaker" });
+        const speaker = deviceSelect(page, "Speaker");
         await expect(speaker).toBeVisible();
+        // The build plays the game's real bubble sound (webrtc-in-ding.mp3 by default); the 6 Oct fix for issue 24.
+        const chimes = async () => (await playedSounds(page)).filter((src) => /webrtc-in-ding\.mp3/.test(src)).length;
         await page.getByRole("button", { name: "Play a test sound" }).click();
-        await expect
-            .poll(async () => (await playedSounds(page)).filter((src) => src.includes("webrtc-in.mp3")).length)
-            .toBe(1);
-        const options = await speaker
-            .locator("option")
-            .evaluateAll((all) => all.map((o) => (o as HTMLOptionElement).value));
-        const other = options.find((value) => value !== (options[0] ?? ""));
-        await speaker.selectOption(other ?? "");
-        await expect
-            .poll(async () => (await playedSounds(page)).filter((src) => src.includes("webrtc-in.mp3")).length)
-            .toBe(2);
-        await expect(speaker).toHaveValue(other ?? "");
+        await expect.poll(chimes).toBe(1);
+        const other = await pickOtherDevice(page, speaker, "Speaker");
+        await expect.poll(chimes).toBe(2);
+        await expect(deviceShown(speaker)).toHaveText(other);
     });
 
     test("JN-029 JN-030 Blocked camera and mic: screen texts and the access card", async ({ page }, testInfo) => {

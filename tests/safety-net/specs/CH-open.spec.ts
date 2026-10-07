@@ -3,6 +3,7 @@ import {
     alice,
     bobApart,
     chat,
+    chatSettled,
     closeChat,
     dragHandle,
     meet,
@@ -254,6 +255,7 @@ test("CH-012 Desktop: the panel's edge handle resizes, is kept, and double-click
     test.skip(isPhone(testInfo), "desktop only");
     const player = await alice(page, url);
     await openChat(player);
+    await chatSettled(player);
     const bar = player.locator("#resize-bar");
     const start = (await chat(player).boundingBox())!.width;
     const b = (await bar.boundingBox())!;
@@ -266,6 +268,7 @@ test("CH-012 Desktop: the panel's edge handle resizes, is kept, and double-click
     const widened = Math.round((await chat(player).boundingBox())!.width);
     await closeChat(player);
     await openChat(player);
+    await chatSettled(player);
     await expect.poll(async () => Math.round((await chat(player).boundingBox())!.width)).toBe(widened);
 
     const b2 = (await bar.boundingBox())!;
@@ -290,6 +293,7 @@ test("CH-013 Desktop: a wide panel shows list and thread side by side, a narrow 
     test.skip(isPhone(testInfo), "desktop only");
     const player = await alice(page, url);
     await openChat(player);
+    await chatSettled(player);
     await expect(player.getByTestId("chatBackward")).toHaveCount(0);
     const bar = player.locator("#resize-bar");
     const b = (await bar.boundingBox())!;

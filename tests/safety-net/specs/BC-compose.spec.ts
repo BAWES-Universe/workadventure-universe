@@ -97,12 +97,16 @@ test("BC-038 @local Sending an empty message shows Write something first. and ke
     await expect(page.getByTestId("broadcast-text-editor")).toBeVisible();
 });
 
-test("BC-042 @local Voice note: nothing records until Record is pressed (KNOWN GAP)", async ({ page }, testInfo) => {
+test("BC-042 @local Voice note: nothing records until Record is pressed", async ({ page }, testInfo) => {
     await openCompose(page, "voice", testInfo);
     await expect(panel(page).getByRole("dialog", { name: "Voice note" })).toBeVisible();
     await page.waitForTimeout(2_500);
-    await expect(page.getByTestId("broadcast-voice-stop")).not.toBeEnabled();
+    // Ready, not recording: the big Record button shows, there is no stop button and the timer has not moved.
+    await expect(page.getByTestId("broadcast-voice-stop")).toHaveCount(0);
+    await expect(panel(page).locator(".text-3xl")).toHaveText("0:00");
     await expect(panel(page).getByRole("button", { name: "Record", exact: true })).toBeVisible();
+    await panel(page).getByRole("button", { name: "Record", exact: true }).click();
+    await expect(page.getByTestId("broadcast-voice-stop")).toBeEnabled();
 });
 
 test("BC-043 @local While recording: timer, coloured wave, coral stop, Use a file", async ({ page }, testInfo) => {

@@ -56,7 +56,8 @@ export interface PrimedCard {
 }
 
 export async function primeCard(page: Page, card: PrimedCard): Promise<void> {
-    const full = { reachLabel: undefined, html: undefined, audioUrl: undefined, ...card };
+    // A card from the pusher always carries the sender's textures (empty: the person icon shows, no Woka drawn).
+    const full = { reachLabel: undefined, html: undefined, audioUrl: undefined, senderTextures: [], ...card };
     await withFrontModule(
         page,
         "src/front/Stores/BroadcastStore.ts",

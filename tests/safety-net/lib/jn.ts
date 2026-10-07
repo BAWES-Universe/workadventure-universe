@@ -205,3 +205,37 @@ export async function inBubble(page: Page): Promise<boolean> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return wa(page, () => (globalThis as any).__jnInBubble === true);
 }
+
+/** The tile scroller on screen. The card keeps the neighbouring collection or part beside it for swiping (.woka-page-side). */
+export const activeTiles = (page: Page) => page.locator(".woka-tiles-scroll:not(.woka-page-side)");
+
+/**
+ * The camera, microphone or speaker menu on the camera screen. It is the game's own dropdown (UI/USelect, a button
+ * that opens a listbox of option buttons), no longer the browser's <select>.
+ */
+export const deviceSelect = (page: Page, name: "Camera" | "Microphone" | "Speaker") =>
+    page.locator(`button.u-select-head[aria-label="${name}"]`);
+
+/** The device name the dropdown field shows. */
+export const deviceShown = (select: Locator) => select.locator(".u-select-value");
+
+/** Opens the dropdown and returns its list. */
+export async function openDeviceList(page: Page, select: Locator, name: string): Promise<Locator> {
+    await select.click();
+    const list = page.getByRole("listbox", { name, exact: true });
+    await expect(list).toBeVisible();
+    return list;
+}
+
+/** Picks another option than the shown one and returns its label. */
+export async function pickOtherDevice(page: Page, select: Locator, name: string): Promise<string> {
+    const list = await openDeviceList(page, select, name);
+    const others = list.getByRole("option", { selected: false });
+    await expect(others.first()).toBeVisible();
+    const labels = (await others.locator(".u-select-option-label").allInnerTexts()).map((l) => l.trim());
+    // Prefer a real device over the browser's "Default" entry
+    const label = labels.find((l) => !/^default/i.test(l)) ?? labels[0];
+    await list.getByRole("option", { name: label, exact: true }).click();
+    await expect(list).toBeHidden();
+    return label;
+}

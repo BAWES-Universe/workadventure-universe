@@ -44,6 +44,20 @@ export function chat(page: Page) {
 export async function openChat(page: Page): Promise<void> {
     await page.getByTestId("chat-btn").click();
     await expect(chat(page)).toBeVisible();
+    await chatSettled(page);
+}
+
+/** Waits until the chat panel has stopped sliding in (it flies in over 200 ms), so a mouse drag starts on its handle. */
+export async function chatSettled(page: Page): Promise<void> {
+    let last = "";
+    await expect
+        .poll(async () => {
+            const now = JSON.stringify(await chat(page).boundingBox());
+            const same = now === last;
+            last = now;
+            return same;
+        })
+        .toBe(true);
 }
 
 /** The chat's close: the bar's X on a desktop, the chat's own X when the bar is hidden (phone sheet, narrow). */
