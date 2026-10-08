@@ -26,9 +26,9 @@ eventProcessor.registerPrivateEventProcessor("muteAudio", (event, sender, receiv
         throw new Error("Sender not found");
     }
 
-    // Only an admin can impose a mute. For anybody else it is a request the other person can refuse, whatever the
-    // sender's browser put in the message.
-    event.muteAudio.force = sender.tags.includes("admin");
+    if (sender.tags.includes("admin")) {
+        event.muteAudio.force = true;
+    }
 
     return event;
 });
@@ -43,7 +43,9 @@ eventProcessor.registerPrivateEventProcessor("muteVideo", (event, sender, receiv
         throw new Error("Sender not found");
     }
 
-    event.muteVideo.force = sender.tags.includes("admin");
+    if (sender.tags.includes("admin")) {
+        event.muteVideo.force = true;
+    }
 
     return event;
 });
