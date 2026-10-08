@@ -690,3 +690,91 @@ describe("Space raised hands", () => {
         vi.useRealTimers();
     });
 });
+
+describe("Space megaphone right", () => {
+    const makeLiveSpace = (localName: string, socketData: Record<string, unknown>) => {
+        const space = new Space(
+            `world.${localName}`,
+            localName,
+            new EventProcessor(),
+            FilterType.LIVE_STREAMING_USERS,
+            vi.fn(),
+            mock<SpaceConnectionInterface>({ getSpaceStreamToBackPromise: vi.fn(), removeSpace: vi.fn() }),
+            "world",
+            [],
+            () => ({} as unknown as SpaceToBackForwarder),
+            () => ({} as unknown as SpaceToFrontDispatcher)
+        );
+        const alice = {
+            ...SpaceUser.fromPartial({ spaceUserId: "alice_1", uuid: "alice-uuid", name: "Alice" }),
+            lowercaseName: "alice",
+        };
+        const aliceSocket = mock<Socket>({
+            getUserData: vi.fn().mockReturnValue({ spaceUserId: "alice_1", ...socketData }),
+        });
+        space._localConnectedUserWithSpaceUser.set(aliceSocket, alice);
+        space._localConnectedUser.set("alice_1", aliceSocket);
+        return { space, alice, aliceSocket };
+    };
+
+    const goLive = (megaphoneState: boolean) => ({
+        spaceName: "world.any",
+        user: SpaceUser.fromPartial({ spaceUserId: "alice_1", megaphoneState, microphoneState: true }),
+        updateMask: ["megaphoneState", "microphoneState"],
+    });
+
+    const noRight = { megaphoneChannels: new Map([["host-lobby-megaphone-room", false]]) };
+    const withRight = { megaphoneChannels: new Map([["host-lobby-megaphone-room", true]]) };
+
+    it("refuses going live on a broadcast channel without the right", () => {
+        const { space, alice, aliceSocket } = makeLiveSpace("host-lobby-megaphone-room", noRight);
+
+        const result = space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(aliceSocket, goLive(true));
+
+        expect(result?.changedFields).toEqual(["microphoneState"]);
+        expect(alice.megaphoneState).toBe(false);
+    });
+
+    it("lets a player with the right go live on the broadcast channel", () => {
+        const { space, alice, aliceSocket } = makeLiveSpace("host-lobby-megaphone-room", withRight);
+
+        const result = space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(aliceSocket, goLive(true));
+
+        expect(result?.changedFields).toEqual(["megaphoneState", "microphoneState"]);
+        expect(alice.megaphoneState).toBe(true);
+    });
+
+    it("refuses going live on another room's broadcast channel", () => {
+        const { space, alice, aliceSocket } = makeLiveSpace("host-other-megaphone-room", withRight);
+
+        space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(aliceSocket, goLive(true));
+
+        expect(alice.megaphoneState).toBe(false);
+    });
+
+    it("still lets anyone go live in other live spaces, such as speaker zones", () => {
+        const { space, alice, aliceSocket } = makeLiveSpace("abc123-stage", noRight);
+
+        space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(aliceSocket, goLive(true));
+
+        expect(alice.megaphoneState).toBe(true);
+    });
+
+    it("always lets a player stop going live", () => {
+        const { space, alice, aliceSocket } = makeLiveSpace("host-lobby-megaphone-room", noRight);
+        alice.megaphoneState = true;
+
+        const result = space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(aliceSocket, goLive(false));
+
+        expect(result?.changedFields).toEqual(["megaphoneState", "microphoneState"]);
+        expect(alice.megaphoneState).toBe(false);
+    });
+
+    it("refuses going live before the room is joined", () => {
+        const { space, alice, aliceSocket } = makeLiveSpace("abc123-stage", { megaphoneChannels: undefined });
+
+        space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(aliceSocket, goLive(true));
+
+        expect(alice.megaphoneState).toBe(false);
+    });
+});
