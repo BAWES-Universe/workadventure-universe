@@ -376,6 +376,40 @@ describe('MatrixDmBridge', () => {
         expect(deps.reply).toHaveBeenCalledWith(BOT, expect.anything(), 'left while resting', [], expect.anything());
     });
 
+    it('a waiting message stays in line when Orbit cannot check access, and is answered once it can', async () => {
+        await bridge.onEvent(invite());
+        deps.getBotConfig.mockResolvedValue(resting as never);
+        await bridge.onEvent(message('left while resting'));
+        deps.getBotConfig.mockResolvedValue({ ...resting, enabled: true } as never);
+        (bridge as any).accessCache.clear();
+        deps.checkAccess.mockResolvedValueOnce({ allowed: false, reason: 'admin_api_error', user: null });
+        await bridge.checkWaiting();
+        expect(deps.reply).not.toHaveBeenCalled();
+        expect(noteStates()).toEqual(['resting']);
+        await bridge.checkWaiting();
+        expect(deps.reply).toHaveBeenCalledWith(BOT, expect.anything(), 'left while resting', [], expect.anything());
+    });
+
+    it('says it could not answer, not that you have no access, when Orbit cannot check, and asks Orbit again next time', async () => {
+        await bridge.onEvent(invite());
+        (bridge as any).accessCache.clear();
+        deps.checkAccess.mockResolvedValueOnce({ allowed: false, reason: 'admin_api_status_500', user: null });
+        await bridge.onEvent(message('hi'));
+        expect(noteStates()).toEqual(['trouble']);
+        expect(deps.reply).not.toHaveBeenCalled();
+        await bridge.onEvent(message('hi again'));
+        expect(deps.reply).toHaveBeenCalledWith(BOT, expect.anything(), 'hi again', [], expect.anything());
+    });
+
+    it('stays in a new chat when Orbit cannot check access at the invite, and answers once it can', async () => {
+        deps.checkAccess.mockResolvedValueOnce({ allowed: false, reason: 'admin_api_error', user: null });
+        await bridge.onEvent(invite());
+        expect(client.leaveRoom).not.toHaveBeenCalled();
+        expect(noteStates()).toEqual([]);
+        await bridge.onEvent(message('hello'));
+        expect(deps.reply).toHaveBeenCalledWith(BOT, expect.anything(), 'hello', [], expect.anything());
+    });
+
     it('a waiting message keeps its failed tries when the bot rests again', async () => {
         await bridge.onEvent(invite());
         deps.getBotConfig.mockResolvedValue(resting as never);

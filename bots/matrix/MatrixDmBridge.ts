@@ -13,6 +13,11 @@ export interface DmAccessResult {
     user: { uuid: string; name: string | null; isGuest: boolean } | null;
 }
 
+/** Orbit could not be asked (down, erroring or not set up), as opposed to saying the person may not chat. */
+function accessCheckFailed(result: DmAccessResult): boolean {
+    return !result.allowed && (result.reason ?? '').startsWith('admin_api_');
+}
+
 export interface MatrixDmBridgeDeps {
     /** `fresh` skips any cache, for checking whether a resting bot is back. */
     getBotConfig(botId: string, fresh?: boolean): Promise<BotConfiguration | null>;
@@ -202,6 +207,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const cached = this.accessCache.get(key);
         if (!fresh && cached && Date.now() - cached.at < ACCESS_CACHE_MS) return cached.result;
         const result = await this.deps.checkAccess(botId, chatId);
+        // Orbit could not answer, which says nothing about the person, so ask again next time.
+        if (accessCheckFailed(result)) return result;
         // Re-insert so the map stays ordered oldest first, then drop the oldest once it is full.
         this.accessCache.delete(key);
         this.accessCache.set(key, { result, at: Date.now() });
@@ -271,8 +278,10 @@ export class MatrixDmBridge implements MatrixEventHandler {
         );
 
         // Check after joining, so a ban that lands while the join is retried still applies.
+        // When Orbit can't be asked right now the bot stays: each message checks again and gets "couldn't answer" until
+        // it can, so nothing the person sends is refused or lost.
         const access = await this.access(botId, event.sender, true);
-        if (!access.allowed) {
+        if (!access.allowed && !accessCheckFailed(access)) {
             const language = detectLanguage(String(earlier[earlier.length - 1]?.content?.body ?? ''));
             await this.sendNote(botId, event.room_id, 'no_access', language, config);
             await this.client.leaveRoom(botUserId, event.room_id).catch(() => undefined);
@@ -378,6 +387,10 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
 
         const access = await this.access(botId, event.sender);
+        if (accessCheckFailed(access)) {
+            await couldNotAnswer(config);
+            return;
+        }
         if (!access.allowed || !access.user) {
             if (!catchUp && !this.recentlySent(this.lastNote, `${event.room_id}|no_access`, NOTE_REPEAT_MS)) {
                 await this.sendNote(botId, event.room_id, 'no_access', language, config);
