@@ -5,7 +5,7 @@ import type { ICommunicationStrategy } from "../Interfaces/ICommunicationStrateg
 import type { LiveKitService } from "../Services/LivekitService";
 
 // A person whose invitation was just sent may take a moment to appear in the media room.
-const PERMISSION_SYNC_ATTEMPTS = 5;
+const PERMISSION_SYNC_ATTEMPTS = 10;
 const PERMISSION_SYNC_DELAY_MS = 1000;
 
 export class LivekitCommunicationStrategy implements ICommunicationStrategy {
@@ -32,8 +32,13 @@ export class LivekitCommunicationStrategy implements ICommunicationStrategy {
 
         await this.createRoomPromise;
 
+        const isFirstStreamer = this.streamingUsers.size === 0;
+        // Register the user as streaming. This comes before the invitations below, so that a listener who starts
+        // streaming gets a token that already lets them send.
+        this.streamingUsers.set(user.spaceUserId, user);
+
         // Send invitation to all receiving users if this is the first room creation
-        if (this.receivingUsers.size > 0 && this.streamingUsers.size === 0) {
+        if (this.receivingUsers.size > 0 && isFirstStreamer) {
             for (const receivingUser of this.receivingUsers.values()) {
                 this.sendLivekitInvitationMessage(receivingUser).catch((error) => {
                     console.error(`Error generating token for user ${receivingUser.spaceUserId} in Livekit:`, error);
@@ -41,8 +46,6 @@ export class LivekitCommunicationStrategy implements ICommunicationStrategy {
                 });
             }
         }
-        // Register the user as streaming
-        this.streamingUsers.set(user.spaceUserId, user);
 
         // Send invitation to the new user if not already receiving
         if (!this.receivingUsers.has(user.spaceUserId)) {
