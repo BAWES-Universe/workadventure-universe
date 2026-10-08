@@ -406,8 +406,33 @@ export class GameMapPropertiesListener {
             }
         });
 
+        this.gameMapFrontWrapper.onPropertyChange(GameMapProperties.AUDIO_VOLUME, (newValue, oldValue, allProps) => {
+            const url = allProps.get(GameMapProperties.PLAY_AUDIO);
+            if (
+                !localUserStore.getBlockAudio() &&
+                url !== undefined &&
+                get(audioManagerFileStore) === new URL(String(url), this.scene.getMapUrl()).toString()
+            ) {
+                audioManagerFileStore.setVolume(newValue as number | undefined);
+            }
+        });
+        this.gameMapFrontWrapper.onPropertyChange(GameMapProperties.AUDIO_LOOP, (newValue, oldValue, allProps) => {
+            const url = allProps.get(GameMapProperties.PLAY_AUDIO);
+            if (
+                !localUserStore.getBlockAudio() &&
+                url !== undefined &&
+                get(audioManagerFileStore) === new URL(String(url), this.scene.getMapUrl()).toString()
+            ) {
+                audioManagerFileStore.setLoop(newValue === true);
+            }
+        });
+
         // TODO: This legacy property should be removed at some point
         this.gameMapFrontWrapper.onPropertyChange(GameMapProperties.PLAY_AUDIO_LOOP, (newValue) => {
+            if (localUserStore.getBlockAudio()) {
+                audioManagerVisibilityStore.set(newValue === undefined ? "hidden" : "disabledBySettings");
+                return;
+            }
             if (newValue !== undefined) {
                 audioManagerFileStore.playAudio(newValue, this.scene.getMapUrl(), undefined, true);
                 // FIXME: maybe we can switch to "visible" only when the sound actually starts playing?
