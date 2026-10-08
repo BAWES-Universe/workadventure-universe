@@ -36,13 +36,13 @@ import { HttpResponseDevice } from "./HttpResponseDevice";
 // Files a person may drop in chat at once, and the size of each (the front applies the same limits). multer stops
 // reading a body that is over them, so a refused upload is never held in memory or stored.
 const MAX_FILES_PER_UPLOAD = 10;
-const maxFileSize = UPLOAD_MAX_FILESIZE ? parseInt(UPLOAD_MAX_FILESIZE) : NaN;
+const maxFileSize = parseInt(UPLOAD_MAX_FILESIZE);
 
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
     files: MAX_FILES_PER_UPLOAD,
-    ...(maxFileSize > 0 ? { fileSize: maxFileSize } : {}),
+    fileSize: maxFileSize,
   },
 }).any();
 
@@ -66,7 +66,7 @@ export class FileController {
 
     if (!SECRET_KEY) {
       console.warn(
-        "SECRET_KEY is not set: file uploads are not tied to a game session. Set it to the same value as play's SECRET_KEY."
+        "SECRET_KEY is not set: uploads from players are refused. Set it to the same value as play's SECRET_KEY."
       );
     }
     this.uploadAudioMessage();
@@ -79,18 +79,14 @@ export class FileController {
   }
 
   uploadAudioMessage() {
-    if (!SECRET_KEY) {
-      console.warn(
-        "SECRET_KEY is not set: audio message uploads are not authenticated. Set it to the same value as play's SECRET_KEY."
-      );
-    }
-
     this.App.post("/upload-audio-message", (request, response) => {
-      // Checked before multer so that unauthenticated bodies are never buffered.
-      if (
-        SECRET_KEY &&
-        !isValidPlayAuthToken(request.header("authorization"), SECRET_KEY)
-      ) {
+      // Checked before multer so that unauthenticated bodies are never buffered. Without a key there is nothing to
+      // check a session against, so nobody gets in.
+      if (!SECRET_KEY) {
+        response.status(503).json({ message: "uploads-not-configured" });
+        return;
+      }
+      if (!isValidPlayAuthToken(request.header("authorization"), SECRET_KEY)) {
         response.status(401).json({ message: "not-logged" });
         return;
       }
@@ -201,11 +197,16 @@ export class FileController {
       response: Response,
       next: NextFunction
     ) => {
-      if (
-        isFromBotService(request) ||
-        !SECRET_KEY ||
-        isValidPlayGameSession(request.header("authorization"), SECRET_KEY)
-      ) {
+      if (isFromBotService(request)) {
+        next();
+        return;
+      }
+      // Without a key there is nothing to check a session against, so nobody gets in (it used to let everyone in).
+      if (!SECRET_KEY) {
+        response.status(503).json({ message: "uploads-not-configured" });
+        return;
+      }
+      if (isValidPlayGameSession(request.header("authorization"), SECRET_KEY)) {
         next();
         return;
       }
@@ -296,10 +297,7 @@ export class FileController {
           if (!ENABLE_CHAT_UPLOAD) {
             throw new DisabledChat("Upload is disabled");
           }
-          if (
-            UPLOAD_MAX_FILESIZE &&
-            file.buffer.byteLength > parseInt(UPLOAD_MAX_FILESIZE)
-          ) {
+          if (file.buffer.byteLength > maxFileSize) {
             throw new ByteLenghtBufferException(`file-too-big`);
           }
           const fileUuid = await uploaderService.uploadFile(
