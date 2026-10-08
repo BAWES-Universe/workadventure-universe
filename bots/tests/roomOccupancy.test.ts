@@ -27,7 +27,15 @@ describe('hasPlayersInRoom', () => {
         expect(fetchRooms).toHaveBeenCalledTimes(2);
     });
 
-    it('says yes when the game cannot be asked, so a game hiccup never stops the bots', async () => {
-        expect(await ask([undefined]).run()).toBe(true);
+    it('says no when the game cannot be asked at all, so nobody wakes a room\'s bots without proof', async () => {
+        const { run, fetchRooms } = ask([undefined, undefined, undefined]);
+        expect(await run()).toBe(false);
+        expect(fetchRooms).toHaveBeenCalledTimes(3);
+    });
+
+    it('asks again after a hiccup and then says yes when the game lists the player', async () => {
+        const { run, fetchRooms } = ask([undefined, new Map([['room-1', 1]])]);
+        expect(await run()).toBe(true);
+        expect(fetchRooms).toHaveBeenCalledTimes(2);
     });
 });
