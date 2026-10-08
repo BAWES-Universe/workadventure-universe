@@ -271,7 +271,7 @@
         {#if depth === "custom"}
             <label class="em-field">
                 <span class="em-m"
-                    >{$LL.mapEditor.entityEditor.customEntityEditorForm.wokaAbove()} ↔ {$LL.mapEditor.entityEditor.customEntityEditorForm.wokaBelow()}</span
+                    >{$LL.mapEditor.entityEditor.customEntityEditorForm.wokaBelow()} ↔ {$LL.mapEditor.entityEditor.customEntityEditorForm.wokaAbove()}</span
                 >
                 <input type="range" min="0" max={naturalHeight} bind:value={depthOffset} />
             </label>
