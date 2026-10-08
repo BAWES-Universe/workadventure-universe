@@ -280,6 +280,10 @@ describe("native audio playback", () => {
     it("handles source errors without keeping an old track audible", async () => {
         player.setSource(source("a"));
         await flush();
+        // The new source fails before its playback is confirmed.
+        nextPlayPromise = new Promise<void>(() => {
+            // Never settles: playback is not confirmed.
+        });
         player.setSource(source("broken"));
         await flush();
         media[1].onerror?.();
@@ -362,7 +366,28 @@ describe("native audio playback", () => {
         expect(vi.getTimerCount()).toBe(0);
     });
 
+    it("keeps the state and the audio when an error arrives after playback was confirmed", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        player.setSource(source("a"));
+        await flush();
+        expect(state).toHaveBeenLastCalledWith("playing");
+        state.mockClear();
+        // Firefox reports one on a file it is already playing; the old player only logged it.
+        media[0].onerror?.();
+        expect(state).not.toHaveBeenCalled();
+        expect(media[0].paused).toBe(false);
+        expect(media[0].load).toHaveBeenCalledTimes(1);
+        // An element that has really stopped still fails.
+        media[0].paused = true;
+        media[0].onerror?.();
+        expect(state).toHaveBeenLastCalledWith("error");
+    });
+
     it("reloads a resource error on explicit retry", async () => {
+        // The error arrives before playback is confirmed.
+        nextPlayPromise = new Promise<void>(() => {
+            // Never settles: playback is not confirmed.
+        });
         player.setSource(source("a"));
         await flush();
         media[0].onerror?.();

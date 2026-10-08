@@ -23,6 +23,8 @@ type Slot = {
     attempt: number;
     pending: boolean;
     ended: boolean;
+    // Set once play() has resolved for this load; cleared when a failed load is retried.
+    confirmed: boolean;
     failed: "not_allowed" | "error" | undefined;
 };
 
@@ -93,6 +95,7 @@ export class AudioPlayback {
             attempt: 0,
             pending: false,
             ended: false,
+            confirmed: false,
             failed: undefined,
         };
         this.current = slot;
@@ -107,7 +110,12 @@ export class AudioPlayback {
             this.onEnded();
         };
         media.onerror = () => {
-            if (this.current === slot) this.fail(slot, "error");
+            if (this.current !== slot) return;
+            console.warn("AudioPlayback: media error", media.error?.code, media.error?.message);
+            // Firefox can report an error on a file it is already playing; the old player only logged it and kept
+            // playing. So an error after playback was confirmed fails the slot only if the element has stopped.
+            if (slot.confirmed && !media.paused) return;
+            this.fail(slot, "error");
         };
         this.applyVolumes();
         media.src = source.url;
@@ -131,7 +139,10 @@ export class AudioPlayback {
         if (this.current) {
             // A resource error needs a fresh media load. Autoplay recovery must remain
             // in the original gesture and must not reset an otherwise healthy source.
-            if (this.current.failed === "error") this.current.media.load();
+            if (this.current.failed === "error") {
+                this.current.media.load();
+                this.current.confirmed = false;
+            }
             this.current.failed = undefined;
         }
         this.playCurrent();
@@ -173,6 +184,7 @@ export class AudioPlayback {
             () => {
                 if (this.current !== slot || slot.attempt !== attempt || !this.canPlay()) return;
                 slot.pending = false;
+                slot.confirmed = true;
                 this.startFade();
                 this.onState("playing");
             },
