@@ -48,7 +48,12 @@ import type {
     UserMovesMessage,
     ViewportMessage,
 } from "@workadventure/messages";
-import { FilterType as FilterTypeValue, noUndefined, ServerToClientMessage } from "@workadventure/messages";
+import {
+    FilterType as FilterTypeValue,
+    noUndefined,
+    ServerToClientMessage,
+    SetPlayerDetailsMessage as SetPlayerDetailsMessageTsProto,
+} from "@workadventure/messages";
 import * as Sentry from "@sentry/node";
 import type { AxiosResponse } from "axios";
 import axios, { isAxiosError } from "axios";
@@ -72,6 +77,7 @@ import { gaugeManager } from "./GaugeManager";
 import { apiClientRepository } from "./ApiClientRepository";
 import { getPeopleInRooms } from "./PeopleInRooms";
 import { adminService } from "./AdminService";
+import { chatIdVerifier, verifyChatId, withoutChatIdUpdate, withoutUncheckedChatId } from "./ChatIdVerifier";
 import type { ShortMapDescription } from "./ShortMapDescription";
 import { matrixProvider } from "./MatrixProvider";
 import { MatrixAreaMembership } from "./MatrixAreaMembership";
@@ -1190,7 +1196,11 @@ export class SocketManager implements ZoneEventListener {
     }
 
     async handleUpdateSpaceUser(client: Socket, updateSpaceUserMessage: UpdateSpaceUserMessage) {
-        const message = noUndefined(updateSpaceUserMessage);
+        // The chat ID is only ever set by the server, once checked (handleUpdateChatId).
+        const message = withoutChatIdUpdate(noUndefined(updateSpaceUserMessage));
+        if (message.updateMask.length === 0) {
+            return;
+        }
 
         await this.checkClientIsPartOfSpace(client, message.spaceName);
         const space = this.spaces.get(message.spaceName);
@@ -1706,10 +1716,33 @@ export class SocketManager implements ZoneEventListener {
         };
     }
 
-    handleUpdateChatId(client: Socket, email: string, chatId: string): Promise<void> {
+    /**
+     * The browser sends the player's Matrix access token; the Matrix server tells us whose token it is, and that is
+     * the player's chat ID. It is saved for this socket's own user only, and shown to the other players.
+     * Whatever chat ID or email the browser sends along is ignored.
+     */
+    handleUpdateChatId(client: Socket, matrixAccessToken: string): Promise<void> {
         const userData = client.getUserData();
-        userData.chatID = chatId;
-        return adminService.updateChatId(email, chatId, client.getUserData().roomId);
+        return verifyChatId(userData, matrixAccessToken, chatIdVerifier, async (chatId) => {
+            await Promise.all([
+                adminService.updateChatId(userData.userUuid, chatId, userData.roomId).catch((e) => {
+                    console.error("Could not save the checked chat ID", e);
+                    Sentry.captureException(e);
+                }),
+                // Same message the browser used to send itself: shows the chat ID to the other players.
+                this.handleSetPlayerDetails(client, SetPlayerDetailsMessageTsProto.fromPartial({ chatID: chatId })),
+            ]);
+        });
+    }
+
+    /**
+     * A chat ID in a player details message is only accepted when it is the checked one (see handleUpdateChatId).
+     */
+    sanitizePlayerDetailsFromClient(
+        client: Socket,
+        playerDetailsMessage: SetPlayerDetailsMessage
+    ): SetPlayerDetailsMessage {
+        return withoutUncheckedChatId(playerDetailsMessage, client.getUserData().chatID);
     }
 
     async handleOauthRefreshTokenQuery(
@@ -1792,6 +1825,11 @@ export class SocketManager implements ZoneEventListener {
     }
 
     async handleEnterChatRoomAreaQuery(socket: Socket, roomID: string): Promise<void> {
+        const { chatID, chatIdVerification } = socket.getUserData();
+        if (!chatID && chatIdVerification) {
+            // The player walked into the area while their chat ID was being checked: wait for it.
+            await chatIdVerification;
+        }
         return this.matrixAreaMembership.enter(socket, roomID);
     }
 

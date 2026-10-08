@@ -24,6 +24,7 @@ import type { AdminSocketData } from "../models/Websocket/AdminSocketData";
 import type { AdminMessageInterface } from "../models/Websocket/Admin/AdminMessages";
 import { isAdminMessageInterface } from "../models/Websocket/Admin/AdminMessages";
 import { adminService } from "../services/AdminService";
+import { chatIdVerifier } from "../services/ChatIdVerifier";
 import { worldSpaceNamespace } from "../services/SpaceNamespace";
 import { validateWebsocketQuery } from "../services/QueryValidator";
 import type { SocketData, SpaceName } from "../models/Websocket/SocketData";
@@ -296,7 +297,9 @@ export class IoSocketController {
                         microphoneState,
                     } = query;
 
-                    const chatID = query.chatID ? query.chatID : undefined;
+                    // The chat ID the browser claims is not trusted (it could be anyone's). Only a bot may use one
+                    // given here, and only its own bot account; see below.
+                    const claimedChatID = query.chatID ? query.chatID : undefined;
 
                     try {
                         if (version !== apiVersionHash) {
@@ -343,6 +346,10 @@ export class IoSocketController {
 
                         const userIdentifier = tokenData ? tokenData.identifier : "";
                         const isLogged = !!tokenData?.accessToken;
+                        // Bot tokens are signed with our secret and carry no OpenID access token.
+                        const botChatID = isLogged
+                            ? undefined
+                            : chatIdVerifier.getBotChatId(tokenData?.identifier, claimedChatID);
 
                         let memberTags: string[] = [];
                         let memberVisitCardUrl: string | null = null;
@@ -362,7 +369,7 @@ export class IoSocketController {
                             activatedInviteUser: true,
                             canEdit: false,
                             world: "",
-                            chatID,
+                            chatID: botChatID,
                         };
 
                         let characterTextures: WokaDetail[];
@@ -379,10 +386,10 @@ export class IoSocketController {
                                     companionTextureId,
                                     locale,
                                     userData.tags,
-                                    chatID,
+                                    botChatID,
                                     // Only a guest's typed name goes to Orbit. A member's name comes from their
                                     // account, and a bot has its own.
-                                    isLogged || chatID ? undefined : name.trim().slice(0, 100) || undefined
+                                    isLogged || botChatID ? undefined : name.trim().slice(0, 100) || undefined
                                 );
 
                                 if (userData.status === "ok" && !userData.isCharacterTexturesValid) {
@@ -502,7 +509,9 @@ export class IoSocketController {
                             pusherRoom: undefined,
                             spaces: new Set<SpaceName>(),
                             joinSpacesPromise: new Map<SpaceName, Promise<void>>(),
-                            chatID,
+                            // A person starts with the chat ID Orbit has on file (only ever saved once checked); the
+                            // browser then sends proof of its Matrix login (updateChatIdMessage).
+                            chatID: botChatID ?? (userData.status === "ok" ? userData.chatID || undefined : undefined),
                             // Every space of the room is named under this, so same-named worlds of two universes stay apart.
                             world: worldSpaceNamespace(roomId, userData.world),
                             currentChatRoomArea: [],
@@ -762,7 +771,10 @@ export class IoSocketController {
                             case "setPlayerDetailsMessage": {
                                 await socketManager.handleSetPlayerDetails(
                                     socket,
-                                    message.message.setPlayerDetailsMessage
+                                    socketManager.sanitizePlayerDetailsFromClient(
+                                        socket,
+                                        message.message.setPlayerDetailsMessage
+                                    )
                                 );
                                 break;
                             }
@@ -807,8 +819,7 @@ export class IoSocketController {
                             case "updateChatIdMessage": {
                                 await socketManager.handleUpdateChatId(
                                     socket,
-                                    message.message.updateChatIdMessage.email,
-                                    message.message.updateChatIdMessage.chatId
+                                    message.message.updateChatIdMessage.matrixAccessToken
                                 );
                                 break;
                             }
