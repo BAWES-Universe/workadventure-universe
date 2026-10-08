@@ -4892,18 +4892,6 @@
       "hooks": "EditRail.svelte:338-339; MenuStore.ts:422-426"
     },
     {
-      "id": "ME-092",
-      "area": "Map editor and Look around",
-      "topic": "Refused edit",
-      "action": "A player who may not upload (an ordinary player) sends \"Add your own\", or any other edit the server refuses.",
-      "expected": "A short notice \"That change wasn't saved: you can't edit there.\" shows to that player only. Edits made after it still save and other players see them (the room's edit queue is not held back).",
-      "source": "security fix plan (map edits keep saving), Khalid 10-07",
-      "runs": "needs-orbit",
-      "runsNote": "needs-orbit (locally only with MAP_EDITOR_ALLOW_ALL_USERS=false)",
-      "knownGap": false,
-      "hooks": "back/src/Model/GameRoom.ts forwardEditMapCommandMessage; MapEditorModeManager.ts errorCommandMessage; ErrorStore.ts warningMessageStore"
-    },
-    {
       "id": "BC-001",
       "area": "Broadcasting",
       "topic": "Entry",

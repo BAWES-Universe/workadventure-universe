@@ -42,10 +42,6 @@
             ?.getEntitiesCollectionsManager()
             .getEntitiesPrefabsVariantStore() ?? readable<EntityVariant[]>([]);
 
-    // An upload is shared by the whole world and deleting it removes it everywhere, so only people who may edit the
-    // room are offered "Add your own". Others keep placing, moving and deleting objects inside their own area.
-    $: canUpload = ($gameSceneStore ?? gameManager.tryGetCurrentGameScene())?.connection?.userCanEdit ?? false;
-
     let searchTerm = "";
     let editingUpload = false;
     let editingVariants = false;
@@ -297,16 +293,14 @@
             {/each}
         {/if}
     </div>
-    {#if canUpload}
-        <button
-            type="button"
-            class="em-upload-btn"
-            data-testid="objects-add-your-own"
-            on:click={() => editObjectsViewStore.set("upload")}
-        >
-            <IconCloudUpload font-size="16" />{$LL.mapEditor.edit.objects.addYourOwn()}
-        </button>
-    {/if}
+    <button
+        type="button"
+        class="em-upload-btn"
+        data-testid="objects-add-your-own"
+        on:click={() => editObjectsViewStore.set("upload")}
+    >
+        <IconCloudUpload font-size="16" />{$LL.mapEditor.edit.objects.addYourOwn()}
+    </button>
 {/if}
 
 <style>

@@ -1101,8 +1101,6 @@ export class GameRoom implements BrothersFinder {
             new Promise<void>((resolve, reject) => {
                 if (!this._wamUrl) {
                     emitError(user.socket, "WAM file url is undefined. Cannot edit map without WAM file.");
-                    // A refused edit must not keep the lock: the edits that follow it still have to be saved.
-                    resolve();
                     return;
                 }
 
@@ -1137,8 +1135,6 @@ export class GameRoom implements BrothersFinder {
                                     },
                                 },
                             });
-                            // Same here: release the lock even though nothing is dispatched to the room.
-                            resolve();
                             return;
                         }
                         if (editMapCommandMessage.editMapMessage?.message?.$case === "updateWAMSettingsMessage") {
