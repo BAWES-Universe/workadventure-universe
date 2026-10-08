@@ -33,10 +33,10 @@ export function clampAudioVolume(volume: number | undefined): number {
 export class AudioPlayback {
     private current: Slot | undefined;
     private outgoing: Slot | undefined;
-    private frame: number | undefined;
+    private fadeTimer: ReturnType<typeof setTimeout> | undefined;
+    private volumeSupported: boolean | undefined;
     // Reuse media elements: some browsers grant autoplay permission per element.
     private readonly idleMedia: HTMLAudioElement[] = [];
-    private hidden = false;
     private destroyed = false;
     private controls: AudioControls = {
         volume: 1,
@@ -80,13 +80,14 @@ export class AudioPlayback {
             return;
         }
         const media = this.idleMedia.pop() ?? this.createAudio();
+        this.detectVolumeSupport(media);
         const slot: Slot = {
             media,
             source: { ...source, volume: clampAudioVolume(source.volume) },
             envelope: this.outgoing ? 0 : 1,
             attempt: 0,
             pending: false,
-            ended: this.hidden && !source.loop,
+            ended: false,
             failed: undefined,
         };
         this.current = slot;
@@ -120,18 +121,6 @@ export class AudioPlayback {
         }
     }
 
-    setHidden(hidden: boolean): void {
-        if (hidden === this.hidden) return;
-        this.hidden = hidden;
-        if (hidden) {
-            this.suspend();
-            // A one-shot cue missed in the background must not be replayed on return.
-            if (this.current && !this.current.source.loop) this.current.ended = true;
-        } else {
-            this.playCurrent();
-        }
-    }
-
     /** Called synchronously in the native user gesture handler for autoplay recovery. */
     retry(): void {
         if (this.current) {
@@ -154,7 +143,7 @@ export class AudioPlayback {
     }
 
     private canPlay(): boolean {
-        return !this.destroyed && !this.hidden && !this.controls.paused && !this.controls.stopped;
+        return !this.destroyed && !this.controls.paused && !this.controls.stopped;
     }
 
     private suspend(): void {
@@ -179,8 +168,8 @@ export class AudioPlayback {
             () => {
                 if (this.current !== slot || slot.attempt !== attempt || !this.canPlay()) return;
                 slot.pending = false;
-                this.onState("playing");
                 this.startFade();
+                this.onState("playing");
             },
             (error: unknown) => {
                 if (this.current !== slot || slot.attempt !== attempt || !this.canPlay()) return;
@@ -200,7 +189,7 @@ export class AudioPlayback {
         slot.media.pause();
         this.cancelFade();
         // Keep a working bed while the browser waits for permission for its second
-        // element. Pause/stop/hide/unload still silence both immediately.
+        // element. Pause/stop/unload still silence both immediately.
         if (state !== "not_allowed") {
             this.release(this.outgoing);
             this.outgoing = undefined;
@@ -213,26 +202,50 @@ export class AudioPlayback {
         const incoming = this.current;
         if (!incoming) return;
         const outgoing = this.outgoing;
+        // Some mobile browsers ignore element volume. Never run a gain-based
+        // overlap there: retire the old slot as soon as the new one confirms play.
+        if (!this.volumeSupported) {
+            incoming.envelope = 1;
+            this.release(outgoing);
+            this.outgoing = undefined;
+            this.applyVolumes();
+            return;
+        }
         const incomingStart = incoming.envelope;
         const outgoingStart = outgoing?.envelope ?? 0;
         if (incomingStart === 1 && !outgoing) return;
-        let start: number | undefined;
-        const step = (now: number) => {
+        const start = performance.now();
+        const step = () => {
+            this.fadeTimer = undefined;
             if (this.current !== incoming || !this.canPlay()) return;
-            start ??= now;
-            const progress = Math.min(1, (now - start) / this.duration);
+            // Background timers may be late. Use elapsed time rather than frame/tick
+            // counts so the first late tick completes a finished transition.
+            const progress = Math.min(1, Math.max(0, (performance.now() - start) / this.duration));
             incoming.envelope = incomingStart + (1 - incomingStart) * progress;
             if (outgoing) outgoing.envelope = outgoingStart * (1 - progress);
             this.applyVolumes();
             if (progress < 1) {
-                this.frame = requestAnimationFrame(step);
+                this.fadeTimer = setTimeout(step, 50);
             } else {
-                this.frame = undefined;
                 this.release(outgoing);
                 this.outgoing = undefined;
             }
         };
-        this.frame = requestAnimationFrame(step);
+        step();
+    }
+
+    private detectVolumeSupport(media: HTMLAudioElement): void {
+        if (this.volumeSupported !== undefined) return;
+        // Probe a newly created, silent element before assigning a source. Avoid
+        // browser/OS sniffing, including assumptions about future iOS versions.
+        const initial = media.volume;
+        try {
+            media.volume = 0.5;
+            this.volumeSupported = Math.abs(media.volume - 0.5) < 0.001;
+            media.volume = initial;
+        } catch {
+            this.volumeSupported = false;
+        }
     }
 
     private applyVolumes(): void {
@@ -240,14 +253,16 @@ export class AudioPlayback {
         for (const slot of [this.current, this.outgoing]) {
             if (!slot) continue;
             slot.media.muted = this.controls.muted;
-            slot.media.volume = clampAudioVolume(master * slot.source.volume * slot.envelope);
+            if (this.volumeSupported) {
+                slot.media.volume = clampAudioVolume(master * slot.source.volume * slot.envelope);
+            }
             slot.media.loop = slot.source.loop;
         }
     }
 
     private cancelFade(): void {
-        if (this.frame !== undefined) cancelAnimationFrame(this.frame);
-        this.frame = undefined;
+        if (this.fadeTimer !== undefined) clearTimeout(this.fadeTimer);
+        this.fadeTimer = undefined;
     }
 
     private release(slot: Slot | undefined): void {

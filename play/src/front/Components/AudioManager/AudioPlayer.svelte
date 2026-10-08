@@ -16,11 +16,17 @@
     import { AudioPlayback } from "./AudioPlayback";
 
     onMount(() => {
+        let sourceUrl: string | undefined;
+        let openOnPlay = false;
         const player = new AudioPlayback(
             (state) => {
                 audioManagerPlayerState.set(state);
                 if (state === "playing") {
                     audioManagerVisibilityStore.set("visible");
+                    if (openOnPlay) {
+                        openOnPlay = false;
+                        activeSecondaryZoneActionBarStore.set("audio-manager");
+                    }
                 } else if (state === "not_allowed") {
                     // Keep the existing native retry button and player speech bubble.
                     audioManagerVisibilityStore.set("visible");
@@ -47,14 +53,18 @@
                 }
             }
         );
-        const onVisibilityChange = () => player.setHidden(document.hidden);
-        onVisibilityChange();
         const unsubscribeVolume = audioManagerVolumeStore.subscribe((controls) => player.setControls(controls));
-        const unsubscribeSource = audioManagerSourceStore.subscribe((source) => player.setSource(source));
+        const unsubscribeSource = audioManagerSourceStore.subscribe((source) => {
+            if (source?.url !== sourceUrl) {
+                sourceUrl = source?.url;
+                // Preserve the existing source-start panel behavior without reopening it
+                // on gain updates or pause/resume after the user has closed it.
+                openOnPlay = sourceUrl !== undefined;
+            }
+            player.setSource(source);
+        });
         const retrySubscription = audioManagerRetryPlaySubject.subscribe(() => player.retry());
-        document.addEventListener("visibilitychange", onVisibilityChange);
         return () => {
-            document.removeEventListener("visibilitychange", onVisibilityChange);
             unsubscribeVolume();
             unsubscribeSource();
             retrySubscription.unsubscribe();

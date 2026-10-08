@@ -42,18 +42,23 @@ describe("native audio playback", () => {
     let media: FakeAudio[];
     let nextPlayFailure: Error | undefined;
     let nextPlayPromise: Promise<void> | undefined;
+    let writableVolume: boolean;
     let player: AudioPlayback;
     let state: ReturnType<typeof vi.fn>;
     let ended: ReturnType<typeof vi.fn>;
     beforeEach(() => {
         vi.useFakeTimers();
         media = [];
+        writableVolume = true;
         nextPlayFailure = undefined;
         nextPlayPromise = undefined;
         state = vi.fn();
         ended = vi.fn();
         player = new AudioPlayback(state, ended, () => {
             const audio = new FakeAudio();
+            if (!writableVolume) {
+                Object.defineProperty(audio, "volume", { get: () => 1, set: () => undefined });
+            }
             if (nextPlayPromise) {
                 audio.play.mockReturnValueOnce(nextPlayPromise);
                 nextPlayPromise = undefined;
@@ -69,6 +74,7 @@ describe("native audio playback", () => {
     });
     afterEach(() => {
         player.destroy();
+        vi.restoreAllMocks();
         vi.useRealTimers();
     });
 
@@ -185,38 +191,33 @@ describe("native audio playback", () => {
         expect(vi.getTimerCount()).toBe(0);
     });
 
-    it("silences background tabs and never replays missed one-shot cues", async () => {
-        player.setSource(source("a"));
-        await flush();
-        player.setSource(source("b"));
-        await flush();
-        player.setHidden(true);
-        expect(media.every((audio) => audio.paused)).toBe(true);
-        media.forEach((audio) => audio.play.mockClear());
+    it("keeps a one-shot playing across visibility changes and reports its end", async () => {
+        const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(false);
         player.setSource(source("cue", 0.5, false));
-        player.setHidden(false);
-        player.retry();
         await flush();
-        expect(media.find((audio) => audio.src === "cue")?.play).not.toHaveBeenCalled();
-        player.setSource(source("bed"));
-        await flush();
-        expect(media.find((audio) => audio.src === "bed")?.play).toHaveBeenCalledTimes(1);
+        hidden.mockReturnValue(true);
+        document.dispatchEvent(new Event("visibilitychange"));
+        hidden.mockReturnValue(false);
+        document.dispatchEvent(new Event("visibilitychange"));
+        expect(media[0].paused).toBe(false);
+        expect(media[0].play).toHaveBeenCalledTimes(1);
+        media[0].paused = true;
+        media[0].onended?.();
+        expect(ended).toHaveBeenCalledTimes(1);
+        expect(state).toHaveBeenLastCalledWith(undefined);
     });
 
-    it("resumes a looping bed after backgrounding without changing pause or mute", async () => {
+    it("plays a source first set while hidden without changing mute or pause", async () => {
+        vi.spyOn(document, "hidden", "get").mockReturnValue(true);
         player.setControls({ ...controls, muted: true });
         player.setSource(source("a"));
         await flush();
-        player.setHidden(true);
-        player.setHidden(false);
-        await flush();
-        expect(media[0].play).toHaveBeenCalledTimes(2);
+        expect(media[0].play).toHaveBeenCalledTimes(1);
         expect(media[0].muted).toBe(true);
         player.setControls({ ...controls, paused: true });
-        player.setHidden(true);
-        player.setHidden(false);
-        await flush();
-        expect(media[0].play).toHaveBeenCalledTimes(2);
+        document.dispatchEvent(new Event("visibilitychange"));
+        expect(media[0].paused).toBe(true);
+        expect(media[0].play).toHaveBeenCalledTimes(1);
     });
 
     it("retries autoplay synchronously only for the latest source", async () => {
@@ -228,8 +229,8 @@ describe("native audio playback", () => {
         expect(state).toHaveBeenLastCalledWith("not_allowed");
         player.setSource(source("b"));
         await flush();
-        player.setHidden(true);
-        player.setHidden(false);
+        player.setControls({ ...controls, paused: true });
+        player.setControls(controls);
         expect(media).toHaveLength(1);
         expect(media[0].src).toBe("b");
         expect(media[0].play).toHaveBeenCalledTimes(3);
@@ -348,7 +349,7 @@ describe("native audio playback", () => {
         expect(media[1].volume).toBe(0.8);
     });
 
-    it.each(["pause", "stop", "hidden", "unload"])("silences a retained autoplay bed on %s", async (action) => {
+    it.each(["pause", "stop", "unload"])("silences a retained autoplay bed on %s", async (action) => {
         player.setSource(source("a"));
         await flush();
         nextPlayFailure = new DOMException("gesture", "NotAllowedError");
@@ -356,7 +357,6 @@ describe("native audio playback", () => {
         await flush();
         if (action === "pause") player.setControls({ ...controls, paused: true });
         if (action === "stop") player.setControls({ ...controls, stopped: true });
-        if (action === "hidden") player.setHidden(true);
         if (action === "unload") player.setSource(undefined);
         expect(media.every((audio) => audio.paused)).toBe(true);
         expect(vi.getTimerCount()).toBe(0);
@@ -405,6 +405,58 @@ describe("native audio playback", () => {
         expect(state).toHaveBeenLastCalledWith("playing");
         expect(ended).not.toHaveBeenCalled();
         expect(media).toHaveLength(2);
+    });
+
+    it("finishes a throttled fade on its first late timer tick without animation frames", async () => {
+        const clock = vi.spyOn(performance, "now").mockReturnValue(0);
+        const animationFrame = vi.spyOn(globalThis, "requestAnimationFrame");
+        player.setSource(source("a"));
+        await flush();
+        player.setSource(source("b"));
+        await flush();
+        expect(media[0].src).toBe("a");
+        expect(media[1].volume).toBe(0);
+        clock.mockReturnValue(2400);
+        vi.advanceTimersByTime(50);
+        expect(animationFrame).not.toHaveBeenCalled();
+        expect(media[0].src).toBe("");
+        expect(media[0].paused).toBe(true);
+        expect(media[1].volume).toBe(0.8);
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("switches immediately after incoming playback confirms when volume is unsupported", async () => {
+        writableVolume = false;
+        player.setSource(source("a"));
+        await flush();
+        player.setSource(source("b"));
+        await flush();
+        expect(media[0].paused).toBe(true);
+        expect(media[0].src).toBe("");
+        expect(media[1].paused).toBe(false);
+        expect(media.filter((audio) => !audio.paused)).toHaveLength(1);
+        expect(vi.getTimerCount()).toBe(0);
+        expect(state).toHaveBeenLastCalledWith("playing");
+    });
+
+    it("keeps the outgoing slot on unsupported-volume autoplay rejection until a gesture succeeds", async () => {
+        writableVolume = false;
+        player.setSource(source("a"));
+        await flush();
+        nextPlayFailure = new DOMException("gesture", "NotAllowedError");
+        player.setSource(source("b"));
+        await flush();
+        expect(state).toHaveBeenLastCalledWith("not_allowed");
+        expect(media[0].paused).toBe(false);
+        expect(media[0].src).toBe("a");
+        expect(media[1].paused).toBe(true);
+        player.retry();
+        await flush();
+        expect(media[0].paused).toBe(true);
+        expect(media[0].src).toBe("");
+        expect(media[1].paused).toBe(false);
+        expect(media.filter((audio) => !audio.paused)).toHaveLength(1);
+        expect(vi.getTimerCount()).toBe(0);
     });
 
     it("destroys both slots and cancels every scheduled callback", async () => {
