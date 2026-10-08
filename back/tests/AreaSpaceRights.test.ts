@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AreaData } from "@workadventure/map-editor";
 import { areaSpaceName } from "@workadventure/shared-utils/src/Space/areaSpaceName";
-import { refusedAreaSpaces } from "../src/Services/AreaSpaceRights";
+import { listenOnlyAreaSpaces, refusedAreaSpaces } from "../src/Services/AreaSpaceRights";
 
 const ROOM = "http://play.example.com/@/acme/office/lobby";
 
@@ -115,5 +115,35 @@ describe("refusedAreaSpaces", () => {
             player
         );
         expect(refused).toEqual([room("lk-1")]);
+    });
+});
+
+describe("listenOnlyAreaSpaces", () => {
+    it("lists a stage whose speaker area is closed to the player, even when the audience is open", () => {
+        const map = wam(area("stage1", [stage("Keynote"), onlyStaff]), area("crowd", [audienceOf("stage1")]));
+        expect(listenOnlyAreaSpaces(map, ROOM, player)).toEqual([room("Keynote")]);
+    });
+
+    it("lists nothing for a player who has the role", () => {
+        const map = wam(area("stage1", [stage("Keynote"), onlyStaff]));
+        expect(listenOnlyAreaSpaces(map, ROOM, { ...player, tags: ["staff"] })).toEqual([]);
+    });
+
+    it("lists nothing for an open stage or a meeting room", () => {
+        const map = wam(area("stage1", [stage("Keynote")]), area("a1", [meeting("Board"), onlyStaff]));
+        expect(listenOnlyAreaSpaces(map, ROOM, player)).toEqual([]);
+    });
+
+    it("lists nothing when another open area carries the same stage name", () => {
+        const map = wam(area("stage1", [stage("Keynote"), onlyStaff]), area("stage2", [stage("Keynote")]));
+        expect(listenOnlyAreaSpaces(map, ROOM, player)).toEqual([]);
+    });
+
+    it("never limits editors, bots or admins, and copes with an unreadable map", () => {
+        const map = wam(area("stage1", [stage("Keynote"), onlyStaff]));
+        expect(listenOnlyAreaSpaces(map, ROOM, { ...player, canEdit: true })).toEqual([]);
+        expect(listenOnlyAreaSpaces(map, ROOM, { ...player, tags: ["bot"] })).toEqual([]);
+        expect(listenOnlyAreaSpaces(map, ROOM, { ...player, tags: ["admin"] })).toEqual([]);
+        expect(listenOnlyAreaSpaces(undefined, ROOM, player)).toEqual([]);
     });
 });

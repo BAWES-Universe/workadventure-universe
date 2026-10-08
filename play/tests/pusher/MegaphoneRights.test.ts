@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { canGoLiveIn, setMegaphoneSettings } from "../../src/pusher/models/MegaphoneRights";
+import {
+    canGoLiveIn,
+    forgetSpeakInvitation,
+    recordSpeakInvitation,
+    setMegaphoneSettings,
+} from "../../src/pusher/models/MegaphoneRights";
 
 describe("setMegaphoneSettings", () => {
     it("remembers each broadcast channel under the name the front joins it with", () => {
@@ -65,5 +70,48 @@ describe("canGoLiveIn", () => {
 
     it("refuses going live before the room is joined", () => {
         expect(canGoLiveIn("abc123-stage", { megaphoneChannels: undefined })).toBe(false);
+    });
+});
+
+describe("area rules sent with the settings", () => {
+    const fresh = () => ({
+        megaphoneChannels: undefined as Map<string, boolean> | undefined,
+        refusedAreaSpaces: undefined as Set<string> | undefined,
+        areaSpacePolicyUnknown: undefined as boolean | undefined,
+        listenOnlyAreaSpaces: undefined as Set<string> | undefined,
+        invitedToSpeak: new Set<string>(),
+    });
+
+    it("remembers the listen-only stages and whether the back could read the areas", () => {
+        const socketData = fresh();
+        setMegaphoneSettings(socketData, {
+            enabled: false,
+            channels: [],
+            listenOnlyAreaSpaces: ["Key Note"],
+            areaSpacesUnknown: true,
+        });
+        expect(socketData.areaSpacePolicyUnknown).toBe(true);
+        expect(socketData.listenOnlyAreaSpaces).toEqual(new Set(["Key Note", "key-note"]));
+
+        setMegaphoneSettings(socketData, { enabled: false, channels: [] });
+        expect(socketData.areaSpacePolicyUnknown).toBe(false);
+        expect(socketData.listenOnlyAreaSpaces).toEqual(new Set());
+    });
+
+    it("lets a listen-only player stream only after a speaker invited them, until it is over", () => {
+        const socketData = fresh();
+        setMegaphoneSettings(socketData, { enabled: false, channels: [], listenOnlyAreaSpaces: ["abc123-stage"] });
+
+        expect(canGoLiveIn("abc123-stage", socketData)).toBe(false);
+        recordSpeakInvitation(socketData, "abc123-stage");
+        expect(canGoLiveIn("abc123-stage", socketData)).toBe(true);
+        forgetSpeakInvitation(socketData, "abc123-stage");
+        expect(canGoLiveIn("abc123-stage", socketData)).toBe(false);
+    });
+
+    it("leaves other stages open to anyone in them", () => {
+        const socketData = fresh();
+        setMegaphoneSettings(socketData, { enabled: false, channels: [], listenOnlyAreaSpaces: ["abc123-stage"] });
+        expect(canGoLiveIn("other-stage", socketData)).toBe(true);
     });
 });
