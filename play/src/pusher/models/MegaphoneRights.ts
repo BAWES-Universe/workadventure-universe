@@ -5,6 +5,7 @@ interface MegaphoneSettingsLike {
     enabled: boolean;
     url?: string | undefined;
     channels?: { url: string; canStream: boolean }[];
+    refusedAreaSpaces?: string[];
 }
 
 /**
@@ -13,7 +14,7 @@ interface MegaphoneSettingsLike {
  * channel's space under slugify(url).
  */
 export function setMegaphoneSettings(
-    socketData: Pick<SocketData, "megaphoneChannels">,
+    socketData: Pick<SocketData, "megaphoneChannels" | "refusedAreaSpaces">,
     megaphoneSettings: MegaphoneSettingsLike | undefined
 ): void {
     const channels = new Map<string, boolean>();
@@ -26,6 +27,10 @@ export function setMegaphoneSettings(
         channels.set(slugify(megaphoneSettings.url), megaphoneSettings.enabled);
     }
     socketData.megaphoneChannels = channels;
+    // The front may join a space under its name or under the slugified name: refuse both
+    socketData.refusedAreaSpaces = new Set(
+        (megaphoneSettings?.refusedAreaSpaces ?? []).flatMap((name) => [name, slugify(name)])
+    );
 }
 
 // The spaces of broadcast channels, as WAMSettingsUtils.getMegaphoneChannels names them and the front slugifies them.
