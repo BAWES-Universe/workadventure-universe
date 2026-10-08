@@ -4,7 +4,6 @@ import { v4 } from "uuid";
 import { AxiosError } from "axios";
 import { Express } from "express";
 import multer from "multer";
-import * as Sentry from "@sentry/node";
 import { uploaderService, CdnNotConfiguredError } from "../Service/UploaderService";
 import { getCdnProvider, isCdnConfigured } from "../Service/StorageProviderService";
 import { ByteLenghtBufferException } from "../Exception/ByteLenghtBufferException";
@@ -16,28 +15,14 @@ import {
   S3_CDN_USER_REFS_BUCKET,
   S3_CDN_BOT_GENS_BUCKET,
   BOT_SERVICE_TOKEN,
-  SECRET_KEY,
   UPLOAD_MAX_FILESIZE,
   UPLOADER_URL,
 } from "../Enum/EnvironmentVariable";
-import {
-  AUDIO_MESSAGE_ID_REGEX,
-  AUDIO_MESSAGE_MAX_FILE_SIZE,
-  getAudioContentType,
-  getAudioExtension,
-  validateAudioMessage,
-} from "../Service/AudioMessageValidator";
-import { isValidPlayAuthToken } from "../Service/PlayAuthToken";
 import { HttpResponseDevice } from "./HttpResponseDevice";
 
 const upload = multer({
   storage: multer.memoryStorage(),
 });
-
-const uploadAudio = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: AUDIO_MESSAGE_MAX_FILE_SIZE, files: 1 },
-}).single("file");
 
 class DisabledChat extends Error {}
 class NotLoggedUser extends Error {}
@@ -56,107 +41,47 @@ export class FileController {
   }
 
   uploadAudioMessage() {
-    if (!SECRET_KEY) {
-      console.warn(
-        "SECRET_KEY is not set: audio message uploads are not authenticated. Set it to the same value as play's SECRET_KEY."
-      );
-    }
+    /*this.App.options("/upload-audio-message", (req: Request, res: Response) => {
+            res.status(200).send("");
+        });*/
 
-    this.App.post("/upload-audio-message", (request, response) => {
-      // Checked before multer so that unauthenticated bodies are never buffered.
-      if (
-        SECRET_KEY &&
-        !isValidPlayAuthToken(request.header("authorization"), SECRET_KEY)
-      ) {
-        response.status(401).json({ message: "not-logged" });
-        return;
-      }
+    this.App.post(
+      "/upload-audio-message",
+      upload.single("file"),
+      async (request, response) => {
+        if (!request.file) {
+          return response.status(400).send("No files were uploaded.");
+        }
 
-      uploadAudio(request, response, (err: unknown) => {
-        (async () => {
-          if (err instanceof multer.MulterError) {
-            if (err.code === "LIMIT_FILE_SIZE") {
-              return response.status(413).json({
-                message: "file-too-big",
-                maxFileSize: AUDIO_MESSAGE_MAX_FILE_SIZE,
-              });
-            }
-            return response.status(400).send("Invalid upload.");
-          }
-          if (err) {
-            throw err;
-          }
-          if (!request.file) {
-            return response.status(400).send("No files were uploaded.");
-          }
+        const audioMessageId = v4();
 
-          const extension = validateAudioMessage(
-            request.file.originalname,
-            request.file.mimetype,
-            request.file.buffer
-          );
-          if (extension === undefined) {
-            return response
-              .status(415)
-              .json({ message: "unsupported-audio-file" });
-          }
+        await uploaderService.uploadTempFile(
+          audioMessageId,
+          request.file.buffer,
+          60
+        );
 
-          // The extension is part of the id so that the download serves an audio Content-Type.
-          const audioMessageId = `${v4()}.${extension}`;
-
-          await uploaderService.uploadTempFile(
-            audioMessageId,
-            request.file.buffer,
-            60
-          );
-
-          return response.status(200).json({
-            id: audioMessageId,
-            path: `/download-audio-message/${audioMessageId}`,
-          });
-        })().catch((e) => {
-          console.error(e);
-          Sentry.captureException(e);
-          if (!response.headersSent) {
-            response.status(500).send("Internal server error");
-          }
+        return response.status(200).json({
+          id: audioMessageId,
+          path: `/download-audio-message/${audioMessageId}`,
         });
-      });
-    });
+      }
+    );
   }
 
   downloadAudioMessage() {
     this.App.get("/download-audio-message/:id", (request, response) => {
-      (async () => {
-        const id = request.params["id"];
-        const extension = getAudioExtension(id);
-        if (!AUDIO_MESSAGE_ID_REGEX.test(id) || extension === undefined) {
-          return response.status(404).send("Cannot find file");
-        }
-
-        const buffer = await uploaderService.getTemp(id);
-        if (buffer == undefined) {
-          return response.status(404).send("Cannot find file");
-        }
-
-        response.setHeader("X-Content-Type-Options", "nosniff");
-        response.setHeader(
-          "Content-Disposition",
-          `inline; filename="audio.${extension}"`
-        );
-        response.setHeader(
-          "Content-Security-Policy",
-          "default-src 'none'; sandbox"
-        );
-        response.type(getAudioContentType(extension));
-        return response.status(200).send(buffer);
-      })().catch((e) => {
-        console.error(e);
-        Sentry.captureException(e);
-        if (!response.headersSent) {
-          response.status(500).send("Internal server error");
-        }
-      });
+      const id = request.params["id"];
+      uploaderService
+        .getTemp(id)
+        .then((buffer) => {
+          const targetDevice = new HttpResponseDevice(id, response);
+          return targetDevice.copyFromBuffer(buffer);
+        })
+        .catch((e) => {
+          console.error(e);
+          return response.status(500).send("Internal server error");
+        });
     });
   }
 

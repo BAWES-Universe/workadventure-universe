@@ -24,8 +24,7 @@
 
     /** Three minutes is plenty for a voice note; longer goes in as a file. */
     const MAX_SECONDS = 180;
-    // Matches the uploader's audio message limit.
-    const MAX_FILE_BYTES = 10 * 1024 * 1024;
+    const MAX_FILE_BYTES = 20 * 1024 * 1024;
     const FILE_TYPES = [
         "audio/mpeg",
         "audio/mp3",
@@ -174,8 +173,7 @@
     }
 
     async function useFile(file: File) {
-        const looksLikeAudio =
-            FILE_TYPES.includes(file.type) || /\.(mp3|wav|ogg|oga|opus|m4a|aac|webm|flac)$/i.test(file.name);
+        const looksLikeAudio = FILE_TYPES.includes(file.type) || /\.(mp3|wav|ogg|oga|m4a|aac|webm)$/i.test(file.name);
         if (!looksLikeAudio || file.size > MAX_FILE_BYTES) {
             error = $LL.broadcast.voice.wrongFile();
             return;
@@ -306,7 +304,7 @@
 <input
     class="hidden"
     type="file"
-    accept="audio/*,.mp3,.wav,.ogg,.oga,.opus,.m4a,.aac,.webm,.flac"
+    accept="audio/*,.mp3,.wav,.ogg,.m4a"
     bind:this={fileInput}
     on:change={onFile}
     data-testid="broadcast-voice-file"

@@ -59,15 +59,10 @@ spec:
             - secretRef:
                 name: {{ .Values.uploader.externalSecretName }}
             {{- end }}
+          {{- if .Values.uploader.extraEnvVars }}
           env:
-            - name: SECRET_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "workadventure.fullname" . }}-secret-env-shared
-                  key: SECRET_KEY
-            {{- if .Values.uploader.extraEnvVars }}
             {{- include "common.tplvalues.render" (dict "value" .Values.uploader.extraEnvVars "context" $) | nindent 12 }}
-            {{- end }}
+          {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.uploader.service.port }}

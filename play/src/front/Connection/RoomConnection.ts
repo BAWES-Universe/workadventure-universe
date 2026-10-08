@@ -1012,9 +1012,7 @@ export class RoomConnection implements RoomConnection {
 
     public uploadAudio(file: FormData) {
         return axios
-            .post<unknown>(`${UPLOADER_URL}/upload-audio-message`, file, {
-                headers: { Authorization: localUserStore.getAuthToken() ?? "" },
-            })
+            .post<unknown>(`${UPLOADER_URL}/upload-audio-message`, file)
             .then((res: { data: unknown }) => {
                 return res.data;
             })

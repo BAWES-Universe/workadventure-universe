@@ -24,10 +24,6 @@ const REDIS_PORT = process.env.REDIS_PORT || "6379";
 const REDIS_DB_NUMBER = process.env.REDIS_DB_NUMBER;
 const REDIS_PASSWORD = process.env.REDIS_PASSWORD;
 
-// Same value as play's SECRET_KEY: used to verify the play session token sent with audio message uploads.
-// "" must read as unset.
-const SECRET_KEY = process.env.SECRET_KEY || undefined;
-
 const UPLOADER_URL = process.env.UPLOADER_URL;
 const PLAY_URL = process.env.PLAY_URL;
 
@@ -71,5 +67,4 @@ export {
     S3_CDN_USER_REFS_PUBLIC_URL,
     S3_CDN_BOT_GENS_PUBLIC_URL,
     BOT_SERVICE_TOKEN,
-    SECRET_KEY,
 };
