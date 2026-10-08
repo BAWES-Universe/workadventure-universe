@@ -288,8 +288,10 @@ export class MatrixDmBridge implements MatrixEventHandler {
             return;
         }
         await this.rememberRoom(event.room_id, botId);
+        // Messages typed before the join arrive together, so a failure among them gets one "couldn't answer" note.
+        const batch = { troubleSent: false };
         for (const message of earlier) {
-            await this.onMessage({ ...message, room_id: event.room_id });
+            await this.onMessage({ ...message, room_id: event.room_id }, batch);
         }
     }
 
@@ -323,21 +325,22 @@ export class MatrixDmBridge implements MatrixEventHandler {
         return true;
     }
 
-    private async onMessage(event: MatrixEvent): Promise<void> {
+    private async onMessage(event: MatrixEvent, batch?: { troubleSent: boolean }): Promise<void> {
         // Ignore other bots (ours included), edits and notices.
         if (botIdFromMatrixId(this.config.domain, event.sender)) return;
         const content = event.content ?? {};
         if (content['m.relates_to']?.rel_type === 'm.replace' || content.msgtype === 'm.notice') return;
         if (!this.firstSighting(event.event_id)) return;
-        await this.handleMessage(event, false);
+        await this.handleMessage(event, false, batch);
     }
 
     /**
      * Answer one message, or say plainly why the bot can't. `catchUp` is a message a resting bot is answering now that
      * it is back: it gets an answer or nothing, never a second round of notes. If answering it fails, it goes back in
-     * line for the next check, and only after the last try is the person told to send it again.
+     * line for the next check, and only after the last try is the person told to send it again. Messages in one `batch`
+     * share a single "couldn't answer" note.
      */
-    private async handleMessage(event: MatrixEvent, catchUp: boolean): Promise<void> {
+    private async handleMessage(event: MatrixEvent, catchUp: boolean, batch?: { troubleSent: boolean }): Promise<void> {
         const content = event.content ?? {};
         const botId = await this.botForRoom(event.room_id);
         if (!botId) return;
@@ -350,6 +353,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 await this.rememberWaiting(botId, event, attempts);
                 return;
             }
+            if (batch?.troubleSent) return;
+            if (batch) batch.troubleSent = true;
             await this.sendNote(botId, event.room_id, 'trouble', language, config);
         };
 

@@ -546,6 +546,18 @@ describe('MatrixDmBridge', () => {
         expect(noteStates()).toEqual(['trouble']);
     });
 
+    it('messages typed before the bot joined get one "couldn\'t answer" note between them when answering fails', async () => {
+        const early = (body: string, ts: number): MatrixEvent => ({ ...message(body), origin_server_ts: ts });
+        client.getRecentMessages.mockResolvedValueOnce([early('hi', 2000), early('anyone there?', 2100), early('hello??', 2200)]);
+        deps.reply.mockResolvedValue({ text: '', media: [], failed: true });
+        await bridge.onEvent(invite({ origin_server_ts: 1500 }));
+        expect(deps.reply).toHaveBeenCalledTimes(3);
+        expect(noteStates()).toEqual(['trouble']);
+        // A message sent afterwards is its own try, so it gets its own note.
+        await bridge.onEvent(message('again'));
+        expect(noteStates()).toEqual(['trouble', 'trouble']);
+    });
+
     it('a bot with no AI provider leaves one "not ready" note instead of silence', async () => {
         await bridge.onEvent(invite());
         deps.getBotConfig.mockResolvedValue({ botId: BOT, name: 'Guide', enabled: true } as never);
