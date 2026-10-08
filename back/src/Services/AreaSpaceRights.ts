@@ -49,8 +49,7 @@ function canEnter(area: AreaData, userTags: string[]): boolean {
     if (rights === undefined) {
         return true;
     }
-    // Older map files may predate these fields (the wam is read raw, not through the schema defaults).
-    return [...(rights.writeTags ?? []), ...(rights.readTags ?? [])].some((tag) => userTags.includes(tag));
+    return [...rights.writeTags, ...rights.readTags].some((tag) => userTags.includes(tag));
 }
 
 /** The spaces an area's meeting room or speaker zone is joined under (see AreasPropertiesListener in the front). */
