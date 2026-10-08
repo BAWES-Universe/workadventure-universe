@@ -177,7 +177,9 @@
             .finally(() => {
                 // The first time, jump to the bottom while the list is still hidden, then show it.
                 scrollToMessageListBottom(proximityRoom !== undefined);
-                initialLoadDone = true;
+                // The proximity chat has no first fill, and a state change here would run afterUpdate right after
+                // the smooth scroll above starts: its "keep the reader's place" write to scrollTop cancels that scroll.
+                if (!proximityRoom) initialLoadDone = true;
             });
     });
 
