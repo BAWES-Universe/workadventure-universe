@@ -801,8 +801,9 @@ export class BotManager {
         botId: string,
         options: {
             playerUuid: string;
+            targetPosition: { x: number; y: number };
         }
-    ): Promise<{ x: number; y: number } | undefined> {
+    ): Promise<void> {
         const instance = this.bots.get(botId);
         if (!instance) {
             throw new Error(`Bot ${botId} not found or not spawned`);
@@ -813,20 +814,12 @@ export class BotManager {
             throw new Error(`Bot ${botId} is not connected`);
         }
 
-        // The bot goes where it sees the player, never to a spot the caller names. A player the bot cannot see in
-        // its own room cannot summon it.
-        const targetPosition = bot.getPlayerPositionByUuid(options.playerUuid);
-        if (!targetPosition) {
-            return undefined;
-        }
-
         // Call summon on the bot client
-        await bot.summonToPlayer(options.playerUuid, targetPosition);
+        await bot.summonToPlayer(options.playerUuid, options.targetPosition);
         
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-            console.log(`[BotManager] Bot ${botId} summoned to player ${options.playerUuid} at (${targetPosition.x}, ${targetPosition.y})`);
+            console.log(`[BotManager] Bot ${botId} summoned to player ${options.playerUuid} at (${options.targetPosition.x}, ${options.targetPosition.y})`);
         }
-        return targetPosition;
     }
 
     /**
