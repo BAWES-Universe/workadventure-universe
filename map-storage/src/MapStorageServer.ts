@@ -175,10 +175,6 @@ const mapStorageServer: MapStorageServer = {
                 // With a size, the whole object must fit inside that area, as the map editor checks when placing it.
                 const canEditEntityAt = (coordinates: EntityCoordinates, width = 0, height = 0): boolean =>
                     userCanEdit || (entityCommandPermissions?.canEdit(coordinates, width, height) ?? false);
-                // Placing or moving: the size comes from the player's browser, so it has to be a real one.
-                const canPlaceEntityAt = (coordinates: EntityCoordinates, width: number, height: number): boolean =>
-                    userCanEdit ||
-                    (isUsableFootprint(coordinates, width, height) && canEditEntityAt(coordinates, width, height));
 
                 const commandId = editMapCommandMessage.id;
 
@@ -296,11 +292,7 @@ const mapStorageServer: MapStorageServer = {
                             // Both where the object is now and where it is going
                             if (
                                 !canEditEntityAt({ x: entity.x, y: entity.y }) ||
-                                !canPlaceEntityAt(
-                                    getEntityCenterCoordinates({ x, y }, { width, height }),
-                                    width,
-                                    height
-                                )
+                                !canEditEntityAt(getEntityCenterCoordinates({ x, y }, { width, height }), width, height)
                             ) {
                                 throw new Error(
                                     `User ${userUUID} is not allowed to modify entity ${message.id} on map ${mapUrl}`
@@ -327,7 +319,7 @@ const mapStorageServer: MapStorageServer = {
                     case "createEntityMessage": {
                         const message = editMapMessage.createEntityMessage;
                         const { x, y, width, height } = message;
-                        if (!canPlaceEntityAt(getEntityCenterCoordinates({ x, y }, { width, height }), width, height)) {
+                        if (!canEditEntityAt(getEntityCenterCoordinates({ x, y }, { width, height }), width, height)) {
                             throw new Error(`User ${userUUID} is not allowed to create an entity on map ${mapUrl}`);
                         }
                         await mapsManager.executeCommand(
@@ -476,24 +468,6 @@ function getMessageFromError(error: unknown): string {
     } else {
         return "Unknown error";
     }
-}
-
-// The size of an object comes from the player's browser. A size that is missing, zero, negative or not a number
-// would make the "whole object inside the area" check pass for any spot, so players who are not editors must send
-// a real one. A positive size is still the browser's word: reading it from the object's picture on the server is
-// the stronger fix.
-const MAX_ENTITY_SIDE = 8192;
-function isUsableFootprint(centre: EntityCoordinates, width: number, height: number): boolean {
-    return (
-        Number.isFinite(centre.x) &&
-        Number.isFinite(centre.y) &&
-        Number.isFinite(width) &&
-        Number.isFinite(height) &&
-        width >= 1 &&
-        height >= 1 &&
-        width <= MAX_ENTITY_SIDE &&
-        height <= MAX_ENTITY_SIDE
-    );
 }
 
 function getEntityCenterCoordinates(entityCoordinates: EntityCoordinates, entityDimensions: EntityDimensions) {
