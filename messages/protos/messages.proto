@@ -1096,10 +1096,6 @@ message MegaphoneSettings{
   optional string url = 2;
   // Every broadcast channel this room listens to, and whether this user may go live on each.
   repeated MegaphoneChannel channels = 3;
-  // The meeting rooms and speaker zones this user may not join, because every area that carries them is limited to
-  // roles this user does not have (the names the front joins them with). Sent with the channels because the pusher
-  // learns this user's rights in the room from the same place.
-  repeated string refusedAreaSpaces = 4;
 }
 
 message MegaphoneChannel {

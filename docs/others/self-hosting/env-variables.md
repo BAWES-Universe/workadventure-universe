@@ -43,7 +43,6 @@ Environment variables for the Play service (frontend and pusher).
 | `OPENID_WOKA_NAME_POLICY` | No | Policy for avatar naming: 'user_input' or 'openid_nickname' |
 | `OPENID_TAGS_CLAIM` | No | JWT claim containing user tags/roles |
 | `DISABLE_ANONYMOUS` | No | If true, anonymous users cannot access the platform. Defaults to false |
-| `ENFORCE_AREA_SPACE_RIGHTS` | No | If true (the default), the server refuses to let a player join the meeting room or speaker zone of an area limited to roles the player does not have. Set to false to leave that check to the browser only. |
 | `PROMETHEUS_AUTHORIZATION_TOKEN` | No | The token to access the Prometheus metrics. |
 | `PROMETHEUS_PORT` | No | The port to access the Prometheus metrics. If not set, the default port is used AND an authorization token is required. |
 | `ENABLE_CHAT` | No | Enable/disable the chat feature. Defaults to true |

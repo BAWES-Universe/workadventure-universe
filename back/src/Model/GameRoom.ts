@@ -53,7 +53,6 @@ import { adminApi } from "../Services/AdminApi";
 import { MapLoadingError } from "../Services/MapLoadingError";
 import { getMapStorageClient } from "../Services/MapStorageClient";
 import { emitError, emitErrorOnRoomSocket } from "../Services/MessageHelpers";
-import { refusedAreaSpaces } from "../Services/AreaSpaceRights";
 import { ModeratorTagFinder } from "../Services/ModeratorTagFinder";
 import { VariableError } from "../Services/VariableError";
 import { VariablesManager } from "../Services/VariablesManager";
@@ -1160,7 +1159,7 @@ export class GameRoom implements BrothersFinder {
                                     rights: update.rights,
                                     scopes: update.scopes?.scopes,
                                 };
-                                void this.sendMegaphoneSettingsToUsers();
+                                this.sendMegaphoneSettingsToUsers();
                             }
                         }
                         if (editMapCommandMessage.editMapMessage?.message?.$case === "modifyAreaMessage") {
@@ -1170,16 +1169,6 @@ export class GameRoom implements BrothersFinder {
                             // IMPROVE ME: We could imagine directly updating the jitsi admin tag in the finder moderator tag and don't have useless reloads or calls to get the WAM file.
                             this.wamPromise = undefined;
                             this.jitsiModeratorTagFinderPromise = undefined;
-                        }
-                        const editedCase = editMapCommandMessage.editMapMessage?.message?.$case;
-                        if (
-                            editedCase === "modifyAreaMessage" ||
-                            editedCase === "createAreaMessage" ||
-                            editedCase === "deleteAreaMessage"
-                        ) {
-                            // Who may join which meeting room depends on the areas: read them again and tell the users.
-                            this.wamPromise = undefined;
-                            void this.sendMegaphoneSettingsToUsers();
                         }
                         if (editMapCommandMessage.editMapMessage?.message?.$case === "modifyEntityMessage") {
                             // If the area is modified, we need to reset the WAM and the moderator tag finder.
@@ -1272,56 +1261,32 @@ export class GameRoom implements BrothersFinder {
             enabled: firstStreamable !== undefined,
             url: firstStreamable?.url,
             channels,
-            // Filled in from the room's areas by whoever sends it (see getRefusedAreaSpacesFor)
-            refusedAreaSpaces: [],
         };
     }
 
     /**
-     * The meeting rooms and speaker zones of this room that this user may not join (see refusedAreaSpaces). Asked from
-     * the room's saved map, which is read again after every area change, so a rule changed while people are inside
-     * applies from their next join. When the map cannot be read nothing is refused: a hiccup must not lock people out.
+     * After the room's broadcast settings change, every user learns which channels the room now listens to and
+     * which they may go live on (the pusher does not know the room's group or settings, so the back tells them).
      */
-    public async getRefusedAreaSpacesFor(user: Pick<User, "tags" | "uuid" | "canEdit">): Promise<string[]> {
-        try {
-            const wam = await this.getWam();
-            return refusedAreaSpaces(wam, this._roomUrl, user);
-        } catch (e) {
-            console.warn(`Could not read the areas of ${this._roomUrl} to check who may join them`, e);
-            return [];
-        }
-    }
-
-    /**
-     * After the room's broadcast settings or its areas change, every user learns which channels the room now listens
-     * to and which they may go live on, and which meeting rooms they may not join (the pusher does not know the
-     * room's group, settings or areas, so the back tells them).
-     */
-    private async sendMegaphoneSettingsToUsers(): Promise<void> {
-        await Promise.all(
-            [...this.getUsers().values()].map(async (user) => {
-                const refusedAreaSpaces = await this.getRefusedAreaSpacesFor(user);
-                user.socket.write({
-                    message: {
-                        $case: "batchMessage",
-                        batchMessage: {
-                            event: "",
-                            payload: [
-                                {
-                                    message: {
-                                        $case: "megaphoneSettingsMessage",
-                                        megaphoneSettingsMessage: {
-                                            ...this.getMegaphoneSettingsFor(user.tags),
-                                            refusedAreaSpaces,
-                                        },
-                                    },
+    private sendMegaphoneSettingsToUsers(): void {
+        for (const user of this.getUsers().values()) {
+            user.socket.write({
+                message: {
+                    $case: "batchMessage",
+                    batchMessage: {
+                        event: "",
+                        payload: [
+                            {
+                                message: {
+                                    $case: "megaphoneSettingsMessage",
+                                    megaphoneSettingsMessage: this.getMegaphoneSettingsFor(user.tags),
                                 },
-                            ],
-                        },
+                            },
+                        ],
                     },
-                });
-            })
-        );
+                },
+            });
+        }
     }
 
     get wamSettings(): WAMFileFormat["settings"] {
