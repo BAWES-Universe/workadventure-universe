@@ -114,6 +114,24 @@ describe("LivekitCommunicationStrategy media permissions", () => {
         expect(listenerGrant.sources ?? []).toHaveLength(0);
     });
 
+    it("gives a listener who is the first to stream a token that already lets them send", async () => {
+        const fixture = makeFixture();
+        const listener = user("room_2", "B");
+        const other = user("room_3", "C");
+        await fixture.strategy.addUserToNotify(listener);
+        await fixture.strategy.addUserToNotify(other);
+        await flush();
+
+        await fixture.strategy.addUser(listener);
+        await flush();
+
+        const grantsByInvitation = await Promise.all(
+            fixture.invitations.filter((entry) => entry.receiver === "room_2").map((entry) => decode(entry.token))
+        );
+        expect(grantsByInvitation.at(-1)?.video?.canPublish).toBe(true);
+        expect((await grants(fixture, "room_3")).canPublish).toBe(false);
+    });
+
     it("lets a listener send once they stream, and stops them again when they stop", async () => {
         const fixture = makeFixture(["room_2"]);
         const speaker = user("room_1", "A");

@@ -421,7 +421,10 @@ export class LiveKitRoom implements LiveKitRoomInterface {
      * - Us, now allowed: what we could not send before is sent.
      * - Somebody else, now allowed: they appear like anybody who was allowed when we joined.
      */
-    private handleParticipantPermissionsChanged(_previous: Participant["permissions"], participant: Participant): void {
+    private readonly handleParticipantPermissionsChanged = (
+        _previous: Participant["permissions"],
+        participant: Participant
+    ): void => {
         if (this.abortSignal.aborted || participant.permissions?.canPublish !== true) {
             return;
         }
@@ -432,7 +435,7 @@ export class LiveKitRoom implements LiveKitRoomInterface {
         if (!this.participants.has(participant.sid)) {
             this.handleParticipantConnected(participant);
         }
-    }
+    };
 
     private async unpublishAllScreenShareTrack() {
         if (!this.localParticipant) {
@@ -511,7 +514,7 @@ export class LiveKitRoom implements LiveKitRoomInterface {
         this.room.on(RoomEvent.ParticipantConnected, this.handleParticipantConnected.bind(this));
         this.room.on(RoomEvent.ParticipantDisconnected, this.handleParticipantDisconnected.bind(this));
         this.room.on(RoomEvent.ActiveSpeakersChanged, this.handleActiveSpeakersChanged.bind(this));
-        this.room.on(RoomEvent.ParticipantPermissionsChanged, this.handleParticipantPermissionsChanged.bind(this));
+        this.room.on(RoomEvent.ParticipantPermissionsChanged, this.handleParticipantPermissionsChanged);
     }
 
     private parseParticipantMetadata(participant: Participant): ParticipantMetadata {
@@ -689,6 +692,7 @@ export class LiveKitRoom implements LiveKitRoomInterface {
             this.room?.off(RoomEvent.ParticipantConnected, this.handleParticipantConnected.bind(this));
             this.room?.off(RoomEvent.ParticipantDisconnected, this.handleParticipantDisconnected.bind(this));
             this.room?.off(RoomEvent.ActiveSpeakersChanged, this.handleActiveSpeakersChanged.bind(this));
+            this.room?.off(RoomEvent.ParticipantPermissionsChanged, this.handleParticipantPermissionsChanged);
 
             this.leaveRoom();
         } finally {
