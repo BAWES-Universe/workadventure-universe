@@ -477,6 +477,41 @@ describe('MatrixDmBridge', () => {
         expect(deps.reply.mock.calls.map((call: any[]) => call[2])).toEqual(['second']);
     });
 
+    it('a chat with one waiting message in the store and a newer one kept here is answered once, with the newer', async () => {
+        const store = new Map<string, string>();
+        let storeUp = true;
+        deps.waiting = {
+            hasSharedStore: () => true,
+            rememberWaitingDm: vi.fn(async (_b: string, r: string, m: string) => {
+                if (!storeUp) throw new Error('Shared store is not connected');
+                store.set(r, m);
+            }),
+            waitingDmBots: vi.fn(async () => (store.size ? [BOT] : [])),
+            hasWaitingDms: vi.fn(async () => store.size > 0),
+            takeWaitingDms: vi.fn(async () => {
+                const all = [...store.values()];
+                store.clear();
+                return all;
+            }),
+        };
+        await bridge.onEvent(invite());
+        deps.getBotConfig.mockResolvedValue(resting as never);
+        await bridge.onEvent(message('first'));
+        storeUp = false;
+        await bridge.onEvent(message('second'));
+        storeUp = true;
+        deps.getBotConfig.mockResolvedValue({ ...resting, enabled: true } as never);
+        await bridge.checkWaiting();
+        expect(deps.reply.mock.calls.map((call: any[]) => call[2])).toEqual(['second']);
+    });
+
+    it('says it could not answer instead of going silent when no reply could be made', async () => {
+        await bridge.onEvent(invite());
+        deps.reply.mockResolvedValueOnce(null);
+        await bridge.onEvent(message('hello?'));
+        expect(noteStates()).toEqual(['trouble']);
+    });
+
     it('a bot with no AI provider leaves one "not ready" note instead of silence', async () => {
         await bridge.onEvent(invite());
         deps.getBotConfig.mockResolvedValue({ botId: BOT, name: 'Guide', enabled: true } as never);

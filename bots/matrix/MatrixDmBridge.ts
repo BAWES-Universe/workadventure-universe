@@ -435,12 +435,13 @@ export class MatrixDmBridge implements MatrixEventHandler {
                     if (typing) startTyping();
                 },
             });
-            if (reply?.failed) {
+            // No reply at all means the bot couldn't be set up to answer (no AI service here): say so, as for a failure.
+            if (!reply || reply.failed) {
                 await couldNotAnswer(config);
                 return;
             }
-            if (reply?.text) await this.client.sendText(botUserId, event.room_id, reply.text);
-            for (const item of reply?.media ?? []) {
+            if (reply.text) await this.client.sendText(botUserId, event.room_id, reply.text);
+            for (const item of reply.media ?? []) {
                 await this.sendMedia(botUserId, event.room_id, item).catch((error) =>
                     console.warn(`[MatrixDmBridge] Could not send media from bot ${botId}:`, error?.message ?? error)
                 );
@@ -561,18 +562,25 @@ export class MatrixDmBridge implements MatrixEventHandler {
         return [...shared, ...local];
     }
 
-    /** Kept messages less than a day old, oldest first. */
+    /**
+     * Kept messages less than a day old, oldest first, one per chat. A chat can have two when the shared store dropped
+     * out after keeping one (a newer one was kept here meanwhile): only the newest is answered, as when nothing failed.
+     */
     private readWaiting(messages: string[]): MatrixEvent[] {
-        return messages
-            .map((message) => {
-                try {
-                    return JSON.parse(message) as MatrixEvent;
-                } catch {
-                    return null;
-                }
-            })
-            .filter((event): event is MatrixEvent => !!event && Date.now() - (event.origin_server_ts ?? 0) < WAITING_MAX_AGE_MS)
-            .sort((a, b) => (a.origin_server_ts ?? 0) - (b.origin_server_ts ?? 0));
+        const newestByRoom = new Map<string, MatrixEvent>();
+        for (const message of messages) {
+            let event: MatrixEvent;
+            try {
+                event = JSON.parse(message) as MatrixEvent;
+            } catch {
+                continue;
+            }
+            if (Date.now() - (event.origin_server_ts ?? 0) >= WAITING_MAX_AGE_MS) continue;
+            const kept = newestByRoom.get(event.room_id);
+            // Local copies come after the shared store's, so on a tie the later one (written last) wins.
+            if (!kept || (event.origin_server_ts ?? 0) >= (kept.origin_server_ts ?? 0)) newestByRoom.set(event.room_id, event);
+        }
+        return [...newestByRoom.values()].sort((a, b) => (a.origin_server_ts ?? 0) - (b.origin_server_ts ?? 0));
     }
 
     /** Answer the messages left while the bot rested, oldest first, if they are less than a day old. */
