@@ -386,6 +386,10 @@ export class AreaEditorTool extends MapEditorTool {
             if (pointer.wasTouch) {
                 return;
             }
+            // With the box of a new area up, a mouse drag beside it does not start a second area.
+            if (get(editAreaDraftStore)) {
+                return;
+            }
             if (mode === "ADD") {
                 this.drawingNewArea = true;
                 this.drawinNewAreaStartPos = { x: pointer.worldX, y: pointer.worldY };
