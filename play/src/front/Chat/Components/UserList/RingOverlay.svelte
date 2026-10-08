@@ -3,16 +3,24 @@
     import { fly } from "svelte/transition";
     import { LL } from "../../../../i18n/i18n-svelte";
     import { gameManager } from "../../../Phaser/Game/GameManager";
-    import { RING_MS, incomingRingStore, ringClockStore, ringStore, ringToastsStore } from "../../Stores/RingStore";
+    import {
+        RING_MS,
+        incomingRingStore,
+        outgoingRingsStore,
+        ringClockStore,
+        ringStore,
+        ringToastsStore,
+    } from "../../Stores/RingStore";
     import type { RingToast } from "../../Stores/RingStore";
     import FriendAvatar from "./FriendAvatar.svelte";
     import { goToPersonRoom, walkToPerson } from "./PersonNavigation";
-    import { lookOfCaller } from "./Ring";
-    import { IconBellRinging, IconCheck, IconInfoCircle, IconMapPin, IconSend } from "@wa-icons";
+    import { lookOfCaller, ringLine } from "./Ring";
+    import { IconCheck, IconInfoCircle, IconMapPin, IconSend, IconUsersPlus, IconX } from "@wa-icons";
 
     /**
-     * Over the game, at the top: a friend ringing you (Come over / Not now, 30 seconds, a ring around their face counts
-     * down), and one-line news about the rings you made ("Sara came over").
+     * Over the game, at the top: someone inviting you (Come over / Not now, 30 seconds, a ring around their face counts
+     * down), a pill while your own invite waits for an answer ("Inviting Ali · 24 s", with Stop), and one-line news
+     * about the invites you made ("Sara came over").
      */
 
     // The ring around the face: a circle whose stroke empties as the time runs out.
@@ -91,6 +99,11 @@
         ringStore.decline().catch((e) => console.error(e));
     }
 
+    // Your own invites waiting for an answer: the card you sent from a player card closes at once, so this stays.
+    $: waiting = [...$outgoingRingsStore.entries()]
+        .map(([uuid, entry]) => ({ uuid, entry, line: ringLine(entry, $ringClockStore, RING_MS) }))
+        .filter(({ line }) => line?.kind === "ringing");
+
     function toastText(toast: RingToast): string {
         return $LL.chat.friends.ring.toast[toast.kind]({ userName: toast.name, minutes: toast.minutes ?? 0 });
     }
@@ -156,7 +169,7 @@
                             {seconds % 10 === 0 ? $LL.chat.friends.ring.card.secondsLeft({ seconds }) : ""}
                         </span>
                     </div>
-                    <IconBellRinging font-size="20" class="ring-bell ms-auto shrink-0 self-start text-[#c4b5fd]" />
+                    <IconUsersPlus font-size="20" class="ms-auto shrink-0 self-start text-[#c4b5fd]" />
                 </div>
                 <div class="flex items-center gap-2">
                     <button
@@ -187,6 +200,32 @@
             </section>
         {/key}
     {/if}
+    {#each waiting as { uuid, entry, line } (uuid)}
+        <div
+            class="ring-toast pointer-events-auto flex max-w-[400px] items-center gap-2 rounded-full py-1.5 pe-1.5 ps-3 text-sm font-semibold text-white"
+            role="status"
+            data-testid="ringWaiting"
+            transition:fly={{ y: -16, duration: 200 }}
+        >
+            <IconUsersPlus font-size="16" class="shrink-0 text-[#c4b5fd]" />
+            <span class="min-w-0 truncate">
+                {$LL.chat.friends.ring.inviting({
+                    userName: entry.name,
+                    seconds: line?.kind === "ringing" ? line.seconds : 0,
+                })}
+            </span>
+            <button
+                type="button"
+                class="u-cta-secondary m-0 flex h-8 shrink-0 items-center gap-1 rounded-full px-3 text-xs font-bold text-white"
+                aria-label={$LL.chat.friends.ring.stopRinging({ userName: entry.name })}
+                data-testid="ringWaitingStop"
+                on:click={() => ringStore.stop(uuid).catch((e) => console.error(e))}
+            >
+                <IconX font-size="14" />
+                {$LL.chat.friends.ring.stop()}
+            </button>
+        </div>
+    {/each}
     {#each $ringToastsStore as toast (toast.id)}
         <div
             class="ring-toast pointer-events-auto flex max-w-[400px] items-center gap-2 rounded-full py-2 pe-4 ps-3 text-sm font-semibold text-white"
@@ -216,33 +255,7 @@
     .ring-countdown {
         transition: stroke-dashoffset 1s linear;
     }
-    :global(.ring-bell) {
-        animation: ring-bell 1.6s ease-in-out infinite;
-        transform-origin: 50% 10%;
-    }
-    @keyframes ring-bell {
-        0%,
-        60%,
-        100% {
-            transform: rotate(0);
-        }
-        10% {
-            transform: rotate(14deg);
-        }
-        20% {
-            transform: rotate(-12deg);
-        }
-        30% {
-            transform: rotate(8deg);
-        }
-        40% {
-            transform: rotate(-4deg);
-        }
-    }
     @media (prefers-reduced-motion: reduce) {
-        :global(.ring-bell) {
-            animation: none;
-        }
         .ring-countdown {
             transition: none;
         }

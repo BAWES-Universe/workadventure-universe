@@ -127,9 +127,10 @@ export class SocketManager implements ZoneEventListener {
     });
     public readonly friendsRings = new FriendsRings<Socket>({
         send: (socket, friendsUpdateMessage) => this.sendFriendsUpdate(socket, friendsUpdateMessage),
-        socketsOf: (userUuid) => this.friendsPresence.socketsOf(userUuid),
-        statusOf: (userUuid) => this.friendsPresence.statusOf(userUuid),
+        socketsOf: (userUuid) => this.friendsPresence.reachableSocketsOf(userUuid),
+        statusOf: (userUuid) => this.friendsPresence.reachableStatusOf(userUuid),
         getRelationship: (userUuid, targetUuid) => friendsService.getRelationship(userUuid, targetUuid),
+        getSettings: (userUuid) => friendsService.getSettings(userUuid),
         lookupPlace: (playUri) => this.friendsPresence.placeOf(playUri),
     });
     private readonly friendActionLimiter = new PerSocketRateLimiter<Socket>(20, 60_000);
@@ -1571,7 +1572,7 @@ export class SocketManager implements ZoneEventListener {
     }
 
     async handleRingQuery(client: Socket, query: RingQuery): Promise<AnswerMessage["answer"]> {
-        const refused = this.refuseFriendsQuery(client);
+        const refused = this.refuseRingQuery();
         if (refused) {
             return refused;
         }
@@ -1587,7 +1588,7 @@ export class SocketManager implements ZoneEventListener {
     }
 
     handleRingReplyQuery(client: Socket, query: RingReplyQuery): AnswerMessage["answer"] {
-        const refused = this.refuseFriendsQuery(client);
+        const refused = this.refuseRingQuery();
         if (refused) {
             return refused;
         }
@@ -1595,6 +1596,14 @@ export class SocketManager implements ZoneEventListener {
             $case: "ringReplyAnswer",
             ringReplyAnswer: this.friendsRings.reply(client, query.ringId, query.action),
         };
+    }
+
+    /** Invites need an admin but not a signed-in player: guests can send and answer them. */
+    private refuseRingQuery(): AnswerMessage["answer"] | undefined {
+        if (!friendsService.isEnabled()) {
+            return { $case: "error", error: { message: "friends_unavailable" } };
+        }
+        return undefined;
     }
 
     /** Friends need an admin and a signed-in player: answers why not, or undefined when the query can go on. */
