@@ -50,13 +50,6 @@ eventProcessor.registerPrivateEventProcessor("muteVideo", (event, sender, receiv
     return event;
 });
 
-eventProcessor.registerPrivateEventProcessor("kickOffUser", (event, sender) => {
-    if (!sender || !sender.tags.includes("admin")) {
-        throw new Error("Only admins can kick off a user");
-    }
-    return event;
-});
-
 eventProcessor.registerPrivateEventProcessor("lowerHand", (event, sender) => {
     if (!sender || !sender.tags.includes("admin")) {
         throw new Error("Only admins can lower someone else's hand");
