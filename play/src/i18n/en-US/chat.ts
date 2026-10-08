@@ -764,6 +764,7 @@ const chat: BaseTranslation = {
                 too_soon: "You can invite {userName} again in {minutes} min",
                 already_ringing: "You're already inviting someone",
                 ended: "That invite has ended",
+                unavailable: "Can't invite {userName} right now. Try again soon.",
                 failed: "Couldn't invite {userName}. Try again.",
             },
         },

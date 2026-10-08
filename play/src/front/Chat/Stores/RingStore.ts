@@ -56,6 +56,7 @@ export type RingToastKind =
     | "too_soon"
     | "already_ringing"
     | "ended"
+    | "unavailable"
     | "failed";
 
 const TOAST_MS = 5000;
@@ -222,6 +223,8 @@ export function createRingStore(now: () => number = Date.now) {
                 if (e instanceof Error && e.message === "friends_unavailable") invitesEnabled.set(false);
                 // Too many rings in a minute: the limit lifts within a minute.
                 if (e instanceof Error && e.message === "rate_limited") toast("too_soon", name, 1);
+                // The server could not check what they allow right now: say so rather than "try again" blindly.
+                else if (e instanceof Error && e.message === "friends_error") toast("unavailable", name);
                 else toast("failed", name);
                 return false;
             }

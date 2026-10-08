@@ -301,29 +301,15 @@ export class FriendsRings<S extends RingsSocket> {
                 if (e instanceof FriendsError && e.code === "player_not_found" && targetSockets.length === 0) {
                     return refusal("offline");
                 }
-                // Same world needs no Orbit to reach: if Orbit is down, carry on as if there is no block and the
-                // default setting.
-                if (!sameWorld) {
-                    throw e;
-                }
-                console.warn(
-                    "FriendsRings => Orbit unreachable, inviting within the world with the default setting",
-                    e
-                );
+                // Orbit holds the player setting and blocks: when it cannot be asked, the invite is declined.
+                throw e;
             }
         } else {
             // A guest invites a signed-in player: the same world only, and the player's own choice decides.
             if (!sameWorld) {
                 return refusal("not_friends");
             }
-            try {
-                ringFrom = (await this.deps.getSettings(targetUuid)).ringFrom;
-            } catch (e) {
-                console.warn(
-                    "FriendsRings => Orbit unreachable, inviting within the world with the default setting",
-                    e
-                );
-            }
+            ringFrom = (await this.deps.getSettings(targetUuid)).ringFrom;
         }
 
         if (!sameWorld && !friends && !sharedWorld) {

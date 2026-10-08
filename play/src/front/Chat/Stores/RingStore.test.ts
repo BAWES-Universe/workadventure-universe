@@ -213,6 +213,16 @@ describe("ringStore", () => {
         expect(get(store.invitesEnabled)).toBe(false);
     });
 
+    it("says so when the server cannot check what they allow right now", async () => {
+        const store = createRingStore();
+        const { connection, queryRing } = fakeConnection(ringing);
+        queryRing.mockRejectedValueOnce(new Error("friends_error"));
+        store.attach(connection);
+        expect(await store.ring("sara", "Sara")).toBe(false);
+        expect(get(store.toasts)[0]?.kind).toBe("unavailable");
+        expect(get(store.invitesEnabled)).toBe(true);
+    });
+
     it("turns Invite off when the server has no friends service", async () => {
         const store = createRingStore();
         const { connection, queryRing } = fakeConnection(ringing);
