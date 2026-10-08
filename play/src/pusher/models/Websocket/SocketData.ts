@@ -76,6 +76,13 @@ export type SocketData = {
     // The meeting rooms and speaker zones of the room this user may not join (areas limited to roles they do not
     // have), by the space name the front joins them with. The back sends it with the broadcast channels.
     refusedAreaSpaces?: ReadonlySet<string>;
+    // True when the back could not say which meeting rooms and speaker zones this user may join (it has never been
+    // able to read the room's areas): they are all refused until it can.
+    areaSpacePolicyUnknown?: boolean;
+    // The stages of the room this user may listen to but not speak on, by the space name the front joins them with
+    // (the back sends it with the broadcast channels), and the ones where a speaker invited them to speak.
+    listenOnlyAreaSpaces?: ReadonlySet<string>;
+    invitedToSpeak?: Set<string>;
     // The abort controllers for each queries received
     queryAbortControllers: Map<number, AbortController>;
     keepAliveInterval: NodeJS.Timeout | undefined;
