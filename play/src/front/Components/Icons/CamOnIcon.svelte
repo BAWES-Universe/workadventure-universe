@@ -3,7 +3,8 @@
     export let width = "w-6";
     export let strokeColor = "stroke-white";
     export let fillColor = "fill-transparent";
-    export let hover = "group-hover/btn-cam:fill-white";
+    // Filled under the mouse only: a phone keeps a tap as a hover, which would leave the icon filled.
+    export let hover = "[@media(hover:hover)]:group-hover/btn-cam:fill-white";
     export let strokeWidth = "1.5";
     export let classList = "aspect-ratio transition-all";
 </script>

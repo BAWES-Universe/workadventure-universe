@@ -478,6 +478,7 @@
     thumbnails={lightboxThumbnails}
     currentIndex={lightboxIndex}
     isVideo={currentLightboxItem?.type === "video"}
+    filename={currentLightboxItem?.filename}
     hasPrev={lightboxItems.length > 1}
     hasNext={lightboxItems.length > 1}
     on:close={() => (showLightbox = false)}

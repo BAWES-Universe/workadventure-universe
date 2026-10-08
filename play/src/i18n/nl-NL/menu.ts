@@ -25,6 +25,46 @@ const menu: DeepPartial<Translation["menu"]> = {
         logout: "Uitloggen",
     },
     settings: {
+        tabs: {
+            general: "Algemeen",
+            soundAndVideo: "Geluid en video",
+            keyboard: "Toetsenbord",
+        },
+        sections: {
+            video: "Video",
+            sound: "Geluid",
+            notifications: "Meldingen",
+            away: "Als je de app verlaat",
+            screen: "Scherm",
+            help: "Hulp",
+        },
+        quality: {
+            saveData: "Data besparen",
+            saveDataHint: "Gebruikt minder internet",
+            normal: "Normaal",
+            best: "Beste",
+            bestHint: "Scherpste beeld",
+        },
+        cameraQuality: "Camerakwaliteit",
+        screenShareQuality: "Kwaliteit van schermdelen",
+        voicesNearby: "Stemmen in de buurt",
+        joinSound: "Geluid als iemand binnenkomt",
+        joinSoundShort: "Binnenkomstgeluid",
+        playJoinSound: "Geluid afspelen",
+        lowerMusicWhileTalking: "Muziek zachter als ik praat",
+        muteMapSounds: "Muziek en geluiden van de kaart dempen",
+        ignoreFollowRequests: "Volgverzoeken negeren",
+        keepCameraOn: "Mijn camera aan laten",
+        keepMicOn: "Mijn microfoon aan laten",
+        keptOnWhenAway: "Blijft aan als je naar een ander tabblad of andere app gaat",
+        turnedOffWhenAway: "Gaat uit als je naar een ander tabblad of andere app gaat",
+        askBeforeWebsites: "Vragen voordat websites openen",
+        calmMap: "Rustige kaart (geen animaties)",
+        pictureInPicture: "Beeld in beeld",
+        mapCredits: "Kaartcredits",
+        report: "Een probleem melden",
+        back: "Terug",
+        close: "Sluiten",
         videoBandwidth: {
             title: "Videokwaliteit",
             low: "Laag",
@@ -76,17 +116,6 @@ const menu: DeepPartial<Translation["menu"]> = {
             "Fout bij het uploaden van bestand. Controleer je bestand en probeer het opnieuw. Als het probleem aanhoudt, neem dan contact op met de beheerder.",
         dragAndDrop: "Sleep hier je bestand of klik hier om je bestand te uploaden 🎧",
     },
-    contact: {
-        gettingStarted: {
-            title: "Aan de slag",
-            description:
-                "Universe stelt je in staat om een online ruimte te creëren om spontaan met anderen te communiceren. En het begint allemaal met het creëren van je eigen ruimte. Kies uit een grote selectie van prefab-kaarten door ons team.",
-        },
-        createMap: {
-            title: "Maak je kaart",
-            description: "Je kunt ook je eigen aangepaste kaart maken door de stappen van de documentatie te volgen.",
-        },
-    },
     about: {
         mapInfo: "Informatie over de kaart",
         mapLink: "link naar deze kaart",
@@ -111,7 +140,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         invite: "Uitnodigen",
         credit: "Credits",
         globalMessages: "Wereldwijde berichten",
-        contact: "Contact",
         report: "Problemen melden",
     },
 };

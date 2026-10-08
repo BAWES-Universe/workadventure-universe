@@ -13,6 +13,8 @@ export const floatingUiComponents = writable(
             props?: ComponentProps<SvelteComponentTyped>;
             action: ContentAction;
             arrowAction: ArrowAction | undefined;
+            /** Kept on the page but not shown (see showHideableFloatingUi). */
+            hidden?: boolean;
         }
     >()
 );
@@ -30,6 +32,52 @@ export function showFloatingUi<Component extends SvelteComponentTyped>(
     offsetMainAxis = 0,
     withArrow = true
 ): () => void {
+    return mountFloatingUi(referenceNode, component, props, options, offsetMainAxis, withArrow).destroy;
+}
+
+export interface HideableFloatingUi {
+    show(): void;
+    hide(): void;
+    destroy(): void;
+}
+
+/**
+ * Like `showFloatingUi`, but closing hides the popup instead of removing it: opening it again shows the same one,
+ * as it was. For popups that are slow to build or that must not be built twice in a row (the emoji picker).
+ */
+export function showHideableFloatingUi<Component extends SvelteComponentTyped>(
+    referenceNode: Element,
+    component: ComponentType<Component>,
+    props: ComponentProps<Component>,
+    options?: Partial<ComputePositionConfig>,
+    offsetMainAxis = 0,
+    withArrow = true
+): HideableFloatingUi {
+    const { id, destroy } = mountFloatingUi(referenceNode, component, props, options, offsetMainAxis, withArrow);
+    const setHidden = (hidden: boolean) => {
+        floatingUiComponents.update((components) => {
+            const entry = components.get(id);
+            if (entry && entry.hidden !== hidden) {
+                components.set(id, { ...entry, hidden });
+            }
+            return components;
+        });
+    };
+    return {
+        show: () => setHidden(false),
+        hide: () => setHidden(true),
+        destroy,
+    };
+}
+
+function mountFloatingUi<Component extends SvelteComponentTyped>(
+    referenceNode: Element,
+    component: ComponentType<Component>,
+    props: ComponentProps<Component>,
+    options: Partial<ComputePositionConfig> | undefined,
+    offsetMainAxis: number,
+    withArrow: boolean
+): { id: string; destroy: () => void } {
     let arrowNode: HTMLElement | undefined;
     let contentNode: HTMLElement | undefined;
     let cleanup: (() => void) | null = null;
@@ -139,12 +187,15 @@ export function showFloatingUi<Component extends SvelteComponentTyped>(
         }
     };
 
-    return () => {
-        cleanup?.();
-        cleanup = null;
-        floatingUiComponents.update((components) => {
-            components.delete(id);
-            return components;
-        });
+    return {
+        id,
+        destroy: () => {
+            cleanup?.();
+            cleanup = null;
+            floatingUiComponents.update((components) => {
+                components.delete(id);
+                return components;
+            });
+        },
     };
 }

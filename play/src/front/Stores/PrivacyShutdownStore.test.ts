@@ -79,4 +79,12 @@ describe("privacyShutdownStore (away mode)", () => {
         stores.live.set(false);
         expect(get(store)).toBe(true);
     });
+
+    it("comes back when the page is touched while the browser still says it is hidden", async () => {
+        const store = await load();
+        stores.visible.set(false);
+        expect(get(store)).toBe(true);
+        document.dispatchEvent(new Event("pointerdown"));
+        expect(get(store)).toBe(false);
+    });
 });

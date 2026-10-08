@@ -1350,12 +1350,12 @@
       "area": "Bar, camera, calls and moving",
       "topic": "Device arrow",
       "action": "Phone: tap a person so their card opens above the bar.",
-      "expected": "The person's card (Walk to etc.) is drawn above the \"^\" tab; the tab does not cover \"Walk to\".",
+      "expected": "The person's card sits just above the \"^\" tab on phones; the tab covers no part of Walk to, View profile or the ⋯ button.",
       "source": "prod (sweep A#9 bug, owner Dev desk)",
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "woka card `data-testid=\"actions-menu\"` (Components/ActionsMenu/WokaMenu.svelte:89), `.device-arrow` ActionBar.svelte:108"
+      "hooks": "woka card `data-testid=\"actions-menu\"` (Components/ActionsMenu/WokaMenu.svelte:89), card wrapper `.person-card-stack` (MainLayout.svelte, bottom: 44px on phones), `.device-arrow` ActionBar.svelte:108"
     },
     {
       "id": "AV-016",
@@ -3012,12 +3012,12 @@
       "area": "Chat",
       "topic": "Msg actions desktop",
       "action": "Desktop: hover a proximity message, click More, then Copy text. Also right-click a message (not a link or selected text).",
-      "expected": "More opens a small menu with \"Copy text\". The text goes to the clipboard and a \"Text copied\" note shows. Right-click opens the same message menu as a long-press. On a link the browser's own menu shows.",
-      "source": "approved Msg actions",
+      "expected": "More opens a small menu with \"Copy text\". The text goes to the clipboard and a small \"Copied\" pill shows over the bottom of the chat for about 1.5 seconds. Right-click opens the same message menu as a long-press. On a link the browser's own menu shows.",
+      "source": "approved Msg actions + Khalid 10-06 (#682: small Copied pill, no logo)",
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "`[data-testid=messageMoreButton]`, `[data-testid=copyMessageTextButton]` Chat/Components/Room/MessageActions/MessageMoreMenu.svelte:46. Right-click → `[data-testid=messageActionMenu]` MessageActionMenu.svelte:164"
+      "hooks": "`[data-testid=messageMoreButton]`, `[data-testid=copyMessageTextButton]` Chat/Components/Room/MessageActions/MessageMoreMenu.svelte:46. Pill `[data-testid=copiedPill]` MessageActions/CopiedPill.svelte:37, shown by copyText() availableActions.ts:74-77. Right-click → `[data-testid=messageActionMenu]` MessageActionMenu.svelte:164"
     },
     {
       "id": "CH-042",
@@ -3924,12 +3924,12 @@
       "area": "Map editor and Look around",
       "topic": "Objects panel",
       "action": "Desktop and phone: open Objects.",
-      "expected": "Title \"Objects\", line \"Pick one, then click the map\" (desktop) / \"Pick one, then tap the map\" (phone), search pill \"Search objects\", category dropdown \"All categories\" + count, \"Recently used\" (after placing), sections per category with count and \"All\" when more than 6, picture tiles with names, \"Your uploads\" section when you have uploads, \"Add your own\" button at the bottom.",
+      "expected": "Title \"Objects\", line \"Pick one, then click the map\" (desktop) / \"Pick one, then tap the map\" (phone), search pill \"Search objects\", category dropdown (the game's own dropdown: head \"All categories\", its options name each category with its count), \"Recently used\" (after placing), sections per category with count and \"All\" when more than 6, picture tiles with names, \"Your uploads\" section when you have uploads, \"Add your own\" button at the bottom.",
       "source": "approved B2p1 frame 2",
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "ObjectsPanel.svelte:183-279; tiles `entity-item` ObjectTile.svelte:15; texts mapEditor.ts:473-484"
+      "hooks": "ObjectsPanel.svelte:183-279; tiles `entity-item` ObjectTile.svelte:15; texts mapEditor.ts:473-484; dropdown `objects-category` > `button.u-select-head` (aria-label \"All categories\"), options role=option (USelect.svelte)"
     },
     {
       "id": "ME-012",
@@ -3947,13 +3947,13 @@
       "id": "ME-013",
       "area": "Map editor and Look around",
       "topic": "Objects panel",
-      "action": "Pick a category from the dropdown; press the back circle. Also press a section's \"All\".",
+      "action": "Pick a category from the dropdown (head \"All categories\", then an option \"<Category> · N\"); press the back circle. Also press a section's \"All\".",
       "expected": "Grid shows only that category; header gets a back circle that returns to all sections. (Find 29 asks whether pills should replace the dropdown: open question, not changed yet.)",
       "source": "prod + approved B2p1",
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "`select[aria-label=\"All categories\"]` ObjectsPanel.svelte:207; `.em-all` button \"All\" :261; `edit-panel-back` PanelHeader.svelte:13"
+      "hooks": "`objects-category` > `button.u-select-head` + `[role=option]` USelect.svelte, ObjectsPanel.svelte:232; `.em-all` button \"All\" :287; `edit-panel-back` PanelHeader.svelte:13"
     },
     {
       "id": "ME-014",
@@ -4056,7 +4056,7 @@
       "area": "Map editor and Look around",
       "topic": "Placed object: delete",
       "action": "Select a placed object, press Delete in its chip. Repeat with the Delete/Backspace key. Press Undo in the toast.",
-      "expected": "Object removed; toast \"<name> removed · Undo\" for about 6 s; Undo in the toast brings it back. (Undo after a delete also failed on prod: sweep \"not regressions\".)",
+      "expected": "Object deleted; toast \"<name> deleted · Undo\" for about 6 s; Undo in the toast brings it back. (Undo after a delete also failed on prod: sweep \"not regressions\".)",
       "source": "prod + approved Delete option C 10-04",
       "runs": "yes",
       "runsNote": "yes",
@@ -4164,54 +4164,54 @@
       "area": "Map editor and Look around",
       "topic": "Areas panel",
       "action": "Open Areas (desktop and phone).",
-      "expected": "Title \"Areas\", line \"Click an area, or drag on the map to draw one\" (desktop) / \"Tap an area, or draw a new one\" (phone), gradient \"New area\" pill, \"In this room\" list of rows (name or \"Unnamed area\", size in tiles, chevron) or \"No areas yet\". Existing areas show on the map.",
+      "expected": "Computer: panel titled \"Areas\", line \"Click an area, or drag on the map to draw one\", gradient \"New area\" pill, \"In this room\" list of rows (name or \"Unnamed area\", its description, what it has turned on or \"No settings yet\", chevron) or \"No areas yet\". Phone: the map stays in view and a sheet at the bottom says \"Areas / Tap one on the map to edit it, or draw a new one.\" with the \"New area\" pill and \"All areas · N\", which pulls the sheet up to the same rows (or \"No areas yet\"). Existing areas show on the map.",
       "source": "approved B2p1 frame 5-6",
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "`area-new` AreasPanel.svelte:86; `area-row` :95; texts mapEditor.ts:560-574"
+      "hooks": "`area-new` AreasPanel.svelte:33 (computer) / AreaSheet.svelte:74 (phone); `area-sheet` :43; `area-all` :81; `area-row` AreaRows.svelte:79; texts mapEditor.ts:592-624"
     },
     {
       "id": "ME-032",
       "area": "Map editor and Look around",
       "topic": "Areas: new area box",
-      "action": "Press New area. Drag a corner, drag inside the box, drag outside it. Press Next. Repeat and press Cancel.",
-      "expected": "A 6 × 5 tile box appears mid-screen on the grid with four round corners and a size pill (\"6 × 5 tiles\"); hint \"Drag the corners to fit. Drag outside to move around.\"; bar \"New area / Drag inside the box to move it\" with Cancel and Next. Corners resize and inside-drag moves (both snap); outside drag pans. Next creates the area exactly where the box was and opens its settings; Cancel removes the box. Phone: panel tucks while drawing. KNOWN FAIL Find 13 (desktop only): area created at a different place than drawn.",
+      "action": "Press New area, then drag on the map to draw the box. Drag a dot, drag inside the box, drag outside it (phone). Press Next. Repeat and press Cancel.",
+      "expected": "Pressing New area shows the bar \"New area / Drag on the map to draw it\" with Cancel and a Next that waits for the box (phone: the panel and sheet tuck). A drag on the map draws the box: the same frame as a picked area, labelled \"New area\", with eight round dots; the bar says \"Drag inside the box to move it\". Dots resize and inside-drag moves (to the pixel; Shift snaps to tiles on a computer). A finger drag outside the box pans (a mouse drag on a computer draws, see ME-033). Next creates the area exactly where the box was and opens its settings; Cancel removes the box.",
       "source": "approved B2p1 frame 5",
       "runs": "yes",
       "runsNote": "yes",
-      "knownGap": true,
-      "hooks": "AreasPanel.svelte:46-60; `area-draft` AreaDraft.svelte:130 (corners `.em-corner.em-nw/ne/sw/se` :139-146); `area-draft-next` PlacingBar.svelte:100; `area-draft-cancel` :97"
+      "knownGap": false,
+      "hooks": "`area-new`; `placing-bar` PlacingBar.svelte:66; `area-draft` AreaDraft.svelte:126 (dots `.em-dot.em-nw/n/ne/w/e/sw/s/se`); `area-draft-next` PlacingBar.svelte:116; `area-draft-cancel` :108; draw armed AreaEditorTool.ts:373, draft set :429-438"
     },
     {
       "id": "ME-033",
       "area": "Map editor and Look around",
       "topic": "Areas: draw by dragging",
-      "action": "Desktop, Areas tool: drag on empty map (with and without Shift). Phone: drag a finger on empty map.",
-      "expected": "Desktop draws a blue rectangle and creates an area on release (Shift snaps to tiles); settings open. Phone: the finger only pans, never draws. (Find 18: drawn and New-area boxes behave differently: open.)",
+      "action": "Computer, Areas tool: drag on empty map (with and without Shift). Phone: drag a finger on empty map; then press New area and drag again.",
+      "expected": "Computer: the drag draws a rectangle and creates an area on release (Shift snaps to tiles); its settings open with the cursor in the name. Phone: without New area the finger only pans, never draws; after New area the same drag draws the box (ME-032). (Find 18: drawn and New-area boxes behave differently: open.)",
       "source": "prod (desktop) + approved B2p1 touch rule",
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "AreaEditorTool.ts:333-360, :486-505"
+      "hooks": "AreaEditorTool.ts:365-400 (armed draw :373; a finger on empty map returns :394; computer draw :396-:405), :429-:465"
     },
     {
       "id": "ME-034",
       "area": "Map editor and Look around",
       "topic": "Areas: select",
-      "action": "Click/tap an area on the map; click an area row in the panel; click a spot where two areas overlap twice.",
-      "expected": "The area gets resize handles and its settings open. Overlap: second click selects the next area, with the tip \"click again to select another zone\". A finger pan keeps the selection; a tap on empty map deselects.",
+      "action": "Click/tap an area on the map; tap an area row in the list (phone: pull the sheet up with All areas); click a spot where two areas overlap twice.",
+      "expected": "The area gets resize dots and its settings open (computer: in the panel; phone: the panel stays tucked and the bar under the area has Settings). Overlap: second click selects the next area, with the tip \"click again to select another zone\". A finger pan keeps the selection; a tap on empty map deselects.",
       "source": "prod + approved B2p1",
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "AreasPanel.svelte:62-64; AreaEditorTool.ts:370-447"
+      "hooks": "AreaRows.svelte:79 (glideToArea AreaEditorTool.ts:741); `area-frame.af-pick` AreaFrames.svelte:165; `area-actions-settings` AreaActions.svelte:113; AreaEditorTool.ts:477-540"
     },
     {
       "id": "ME-035",
       "area": "Map editor and Look around",
       "topic": "Areas: move and resize on the map",
-      "action": "Desktop: drag a selected area; drag a handle (Shift snaps). Phone: same with a finger. Ctrl+drag an area (desktop).",
+      "action": "Computer: drag a selected area; drag a dot (Shift snaps). Phone: tuck the panel (Areas on the rail), then the same with a finger. Ctrl+drag an area (computer).",
       "expected": "Area moves/resizes on the map and saves; Ctrl+drag leaves a copy. KNOWN FAIL Find 11: name label covers the handle; handles small on desktop.",
       "source": "prod + Rule 10-05",
       "runs": "yes",
@@ -4224,71 +4224,71 @@
       "area": "Map editor and Look around",
       "topic": "Area settings: name",
       "action": "In an area's settings tap the name (pencil), type, press Enter.",
-      "expected": "Name field `#objectName` replaces the title; Enter or leaving it saves; the map label updates; line under it \"W × H tiles · tap to rename\".",
+      "expected": "Name field `#objectName` replaces the title; Enter or leaving it saves; the map label updates; the line under the name reads \"tap to rename\". (A newly drawn area opens with the cursor already in the field.)",
       "source": "prod + approved B2p1 frame 6",
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "`area-rename` AreaSettings.svelte:384; `#objectName` :377"
+      "hooks": "`area-rename` AreaSettings.svelte:483; `#objectName` :476; name label `.af-label` of `area-frame.af-pick` AreaFrames.svelte:165"
     },
     {
       "id": "ME-037",
       "area": "Map editor and Look around",
       "topic": "Area settings: description",
       "action": "Type a two-line description (Shift+Enter or Enter), leave the field, reopen the area.",
-      "expected": "Saved, both lines kept. KNOWN FAIL sweep 21: single-line input loses line breaks; Find 12: field should sit with the name.",
+      "expected": "Saved, both lines kept.",
       "source": "prod (TextArea, AreaPropertiesEditor.svelte:806) + approved B2p1 (\"every setting stays\")",
       "runs": "yes",
       "runsNote": "yes",
-      "knownGap": true,
+      "knownGap": false,
       "hooks": "`#objectDescription` AreaSettings.svelte:433"
     },
     {
       "id": "ME-038",
       "area": "Map editor and Look around",
       "topic": "Area settings: Listed in Places",
-      "action": "Turn on \"Listed in Places\", open Look around > Places.",
-      "expected": "The area appears under Areas in Places. Off: it does not. (Find 19: placement of this switch is open.)",
+      "action": "Turn on \"Listed in Places\", open Look around (the map button).",
+      "expected": "The area appears under Areas in the Look around panel (its Places list). Off: it does not. (Find 19: placement of this switch is open.)",
       "source": "prod (searchable) + approved B2p1",
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "`#searchable` AreaSettings.svelte:424; e2e tests/tests/map_editor/map_editor_searchable.spec.ts"
+      "hooks": "`#searchable` AreaSettings.svelte:538; `look-around-places` PlacesPanel.svelte:209 (`.area-items`); e2e tests/tests/map_editor/map_editor_searchable.spec.ts"
     },
     {
       "id": "ME-039",
       "area": "Map editor and Look around",
       "topic": "Area settings: rows",
       "action": "Open an empty area's settings and read \"Add to this area\".",
-      "expected": "Plain rows, white icon + title + one line + plus: Video call, Quiet zone, Stage, Audience (when the broadcast-areas flag is on), Who can enter, Personal desk (only with an admin/Orbit), Open a website, Open a file, Play a sound, Exit to a room, Start point, Focus the camera, Highlight, Show a message, Chat room (only with Matrix), Jitsi call, any module rows, \"Add an app: YouTube, Google Docs…\", and a coral Delete at the bottom.",
+      "expected": "Plain rows, white icon + title + one line + plus: Video call, Quiet zone, Stage, Audience (when the broadcast-areas flag is on), Who can enter, Personal desk (only with an admin/Orbit), Open a website, Open a file, Play a sound, Exit to a room, Start point, Focus the camera, Highlight, Show a message, Chat room (only with Matrix), any module rows (the portal \"Portal to any room\" sits right under Exit to a room, only when the room has that module), \"Add an app: YouTube, Google Docs…\", and a coral \"Delete area\" alone at the bottom under a line. Jitsi call is not offered any more (Jitsi is discontinued; an area that already has one keeps its page).",
       "source": "approved B2p1 frame 6",
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "AreaSettings.svelte:443-497; rows areaProperties.ts:60-218; testids per row (`livekitRoomProperty`, `addSilentProperty`, `speakerMegaphone`, `listenerMegaphone`, `restrictedRightsPropertyData`, `personalAreaPropertyData`, `openWebsite`, `openFile`, `playAudio`, `exitAreaProperty`, `startAreaProperty`, `focusable`, `highlight`, `addTooltipProperty`, `matrixRoomPropertyData`, `jitsiRoomProperty`)"
+      "hooks": "AreaSettings.svelte:556-616; rows areaProperties.ts:60-228 (Jitsi `available: false` :225); testids per row (`livekitRoomProperty`, `addSilentProperty`, `speakerMegaphone`, `listenerMegaphone`, `restrictedRightsPropertyData`, `personalAreaPropertyData`, `openWebsite`, `openFile`, `playAudio`, `exitAreaProperty`, `startAreaProperty`, `focusable`, `highlight`, `addTooltipProperty`, `matrixRoomPropertyData`); `area-delete` :618 inside `.em-danger-zone`"
     },
     {
       "id": "ME-040",
       "area": "Map editor and Look around",
       "topic": "Area settings: turned on",
       "action": "Add any setting, press back to the area, then tap its row under \"Turned on\", then turn its switch off.",
-      "expected": "The setting shows under \"Turned on\" with a switch; tapping the row opens its page (title, area name, back, coral Remove); the switch off removes it. (GPT R1: off deletes its values: see Questions.)",
+      "expected": "The setting shows under \"Turned on\" with a switch; tapping the row opens its page (title, area name, back, and a coral \"Turn off “<setting>”\" at the bottom); the switch off removes it. (GPT R1: off deletes its values: see Questions.)",
       "source": "approved B2p1 frame 6",
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "`area-property-page` AreaSettings.svelte:240; `.em-row-main` :398; `.em-switch` :405-411; Remove `.em-remove` :361; `edit-panel-back`"
+      "hooks": "`area-property-page` AreaSettings.svelte:328; `.em-row-main`, `.em-switch` (Turned on rows); `area-property-turn-off` :456; `edit-panel-back`"
     },
     {
       "id": "ME-041",
       "area": "Map editor and Look around",
       "topic": "Area: video call",
       "action": "Add \"Video call\"; set a room name; open \"More options\". Then look at \"Add to this area\".",
-      "expected": "Page with room name and more options (start muted, chat). A Highlight is added by itself a moment later. Stage and Audience stay offered (B2p1 \"speaker and audience zones stay\"). KNOWN FAIL sweep 22: dev hides Stage and Audience while a video call is on. (Runs: the editor part is yes; play effect needs-livekit.)",
+      "expected": "Page with room name and more options (start muted, chat). A Highlight is added by itself a moment later. Stage and Audience stay offered (B2p1 \"speaker and audience zones stay\"). (Runs: the editor part is yes; play effect needs-livekit.)",
       "source": "prod + approved B2p1 frame 6",
       "runs": "yes",
       "runsNote": "yes",
-      "knownGap": true,
+      "knownGap": false,
       "hooks": "`livekitRoomProperty`; `#roomName` LivekitRoomPropertyEditor.svelte:54; `livekitRoomMoreOptionsButton` :65; rule areaProperties.ts:88-105"
     },
     {
@@ -4368,11 +4368,11 @@
       "area": "Map editor and Look around",
       "topic": "Area: apps",
       "action": "Tap \"Add an app: YouTube, Google Docs…\", pick YouTube, paste a video link.",
-      "expected": "Chips: YouTube, Klaxoon, Google Drive, Google Docs, Google Sheets, Google Slides, Eraser, Excalidraw, Cards, tldraw (+ admin apps). Picking one adds an Open-a-website preset and opens its page. KNOWN FAIL sweep 31c: chips for integrations that are off should be greyed with a reason (prod AddPropertyButtonWrapper.svelte:260-268); logos gone.",
+      "expected": "Chips: YouTube, Klaxoon, Google Drive, Google Docs, Google Sheets, Google Slides, Eraser, Excalidraw, Cards, tldraw (+ admin apps). Picking one adds an Open-a-website preset and opens its page.",
       "source": "prod + approved B2p1",
       "runs": "yes",
       "runsNote": "yes",
-      "knownGap": true,
+      "knownGap": false,
       "hooks": "`area-add-app` AreaSettings.svelte:470; chips `openWebsiteYoutube`, `openWebsiteGoogleDocs`… :484"
     },
     {
@@ -4403,13 +4403,13 @@
       "id": "ME-051",
       "area": "Map editor and Look around",
       "topic": "Area: Exit to a room",
-      "action": "Add \"Exit to a room\", pick another map and its start area; walk in.",
-      "expected": "You move to the other map at that start area.",
+      "action": "Add \"Exit to a room\", pick another map and its start area; walk in. Also add \"Portal to any room\" (a room with the portal module), paste a room link, name a start point to arrive at; walk in.",
+      "expected": "Exit to a room: you move to the other map at that start area. Portal to any room: its row sits right under Exit to a room (title \"Portal to any room\", line \"Hop to a friend’s room in any universe\"); its page has \"Room link\" (cursor already in it) and an optional \"Arrive at\"; walking in takes you to that room at that start point.",
       "source": "prod + approved B2p1",
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "`exitAreaProperty`; `#exitMapSelector` ExitPropertyEditor.svelte:97, `#startAreaNameSelector` :118; e2e map_editor_start_exit.spec.ts"
+      "hooks": "`exitAreaProperty`; `#exitMapSelector` ExitPropertyEditor.svelte:97, `#startAreaNameSelector` :118; portal row `teleport` (module row AreaSettings.svelte:575), `portal-url`, `portal-start-area` external-modules/teleport/TeleportPropertyEditor.svelte; e2e map_editor_start_exit.spec.ts"
     },
     {
       "id": "ME-052",
@@ -4451,13 +4451,13 @@
       "id": "ME-055",
       "area": "Map editor and Look around",
       "topic": "Area: Jitsi call",
-      "action": "Area with no call: add \"Jitsi call\", set room name. Area with a video call: look for Jitsi.",
-      "expected": "Page with room name, advanced options. With a video call/stage/audience: dev hides the row (prod showed it greyed): see Questions. (Runs: the editor part is yes; play not local.)",
+      "action": "Look for \"Jitsi call\" in \"Add to this area\" (empty area, and one with a video call). Open an area that already has a Jitsi call.",
+      "expected": "Jitsi call is not offered any more (Jitsi is discontinued: dev hides it everywhere). An area that already has one keeps it under \"Turned on\": its page shows the room name and \"Turn off “Jitsi call”\" removes it. (Runs: the editor part is yes; play not local.)",
       "source": "prod",
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "`jitsiRoomProperty`; `#roomName` JitsiRoomPropertyEditor.svelte:73"
+      "hooks": "`jitsiRoomProperty`; `available: false` areaProperties.ts:225; `#roomName` JitsiRoomPropertyEditor.svelte:73"
     },
     {
       "id": "ME-056",
@@ -4476,12 +4476,12 @@
       "area": "Map editor and Look around",
       "topic": "Area: delete",
       "action": "In an area's settings press Delete; then select another area and press the Delete key.",
-      "expected": "Area removed, \"Area removed · Undo\" toast; Undo brings it back. KNOWN FAIL Find 14 (delete on a selected area reported not working; Khalid suggests a confirm: not decided).",
+      "expected": "Area removed, \"<name> deleted · Undo\" toast; Undo brings it back.",
       "source": "prod + approved B2p1",
       "runs": "yes",
       "runsNote": "yes",
-      "knownGap": true,
-      "hooks": "`area-delete` AreaSettings.svelte:495; key AreaEditorTool.ts:242-252"
+      "knownGap": false,
+      "hooks": "`area-delete` AreaSettings.svelte:618; `area-actions-delete` AreaActions.svelte:118; toast AreaEditorTool.ts:213; key AreaEditorTool.ts:242-252"
     },
     {
       "id": "ME-058",
@@ -4500,7 +4500,7 @@
       "area": "Map editor and Look around",
       "topic": "Delete tool: desktop",
       "action": "Desktop: click Delete on the rail; hover a placed object; click it; click an area; press Undo in the toast.",
-      "expected": "Rail item lit, no panel; top hint \"Tap what you want to remove\"; hovering outlines red and shows \"Click to remove\"; one click removes; toast \"<name> removed · Undo\" for about 6 s; Undo restores.",
+      "expected": "Rail item lit, no panel; top hint \"Tap what you want to delete\"; hovering outlines red and shows \"Click to delete\"; one click deletes; toast \"<name> deleted · Undo\" for about 6 s; Undo restores. A click on an area deletes it too (areas show in this tool for editors and admins; the local stack has no tags, so the check gives itself the editor tag).",
       "source": "prod + approved Delete option C 10-04",
       "runs": "yes",
       "runsNote": "yes",
@@ -4511,8 +4511,8 @@
       "id": "ME-060",
       "area": "Map editor and Look around",
       "topic": "Delete tool: phone",
-      "action": "Phone: Delete; tap an object; tap elsewhere; tap it again, tap again; mark another and press the Remove chip.",
-      "expected": "First tap marks it (coral dashed box + Remove chip + \"Tap again to remove · tap elsewhere to keep\"); tapping elsewhere keeps it; second tap or Remove deletes; Undo toast.",
+      "action": "Phone: Delete; tap an object; tap elsewhere; tap it again, tap again; mark another and press the Delete chip.",
+      "expected": "First tap marks it (coral dashed box + Delete chip + \"Tap again to delete · tap elsewhere to keep\"); tapping elsewhere keeps it; second tap or Delete deletes; Undo toast \"<name> deleted\".",
       "source": "approved Delete option C 10-04",
       "runs": "yes",
       "runsNote": "yes",
@@ -4656,19 +4656,19 @@
       "area": "Map editor and Look around",
       "topic": "Look around: open (desktop)",
       "action": "Desktop: click the map button in the zoom column (aria-label \"Look around the map\").",
-      "expected": "Camera glides out. Pill under the bar: gradient \"Back to me\", \"LOOKING AROUND\" + \"<room> · N here\", search circle. Glowing \"You are here\" box around your normal view. Hint \"Drag to look around / Scroll to zoom · Esc to go back\". Map button turns grey (aria-pressed). No editing toolbar for anyone; bar unchanged.",
+      "expected": "Camera glides out. Panel on the right edge titled \"Look around\" with the line \"<room> · Just you here\" (or \"<room> · N people here\") and an X (aria-label \"Close and go back to you\"), a search field, and the Areas and Objects lists. A \"You are here\" tag over your avatar. Hint \"Drag to look around / Scroll to zoom · Esc to go back\". Map button turns grey (aria-pressed; its label becomes \"Show my location\"). No editing toolbar for anyone; bar unchanged.",
       "source": "approved B2p2 frames 1-2 + desktop",
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "`map-overview-button` ExplorerMenu.svelte:89; `look-around` LookAround.svelte:41; `look-around-back` :46; `look-around-places-button` :62; `look-around-hint` :70; `look-around-you-box` LookAroundMap.svelte:153; e2e utils/mapeditor.ts:44-48"
+      "hooks": "`map-overview-button` ExplorerMenu.svelte; `look-around` LookAround.svelte:71; X `look-around-back` PlacesPanel.svelte:232; `look-around-room-line` :226; `look-around-hint` LookAround.svelte:76; `.you-pin` LookAroundMap.svelte:216; e2e utils/mapeditor.ts:44-48"
     },
     {
       "id": "ME-073",
       "area": "Map editor and Look around",
       "topic": "Look around: open (phone)",
       "action": "Phone: tap the map button in the right column.",
-      "expected": "Same mode; pill spans the top; hint \"Pinch to zoom in and out\"; the phone column has no + and − (pinch only).",
+      "expected": "Same mode; the panel is a bottom sheet over the bar like the chat (full width, grip, three heights); hint \"Pinch to zoom in and out\"; the phone column has no + and − (pinch only).",
       "source": "approved B2p2 frame 1-2 + batch 1 button map",
       "runs": "yes",
       "runsNote": "yes",
@@ -4691,7 +4691,7 @@
       "id": "ME-075",
       "area": "Map editor and Look around",
       "topic": "Look around: move",
-      "action": "Drag the map (hint disappears after the first drag); desktop: arrow keys or WASD; quick tap on the map.",
+      "action": "Drag the map (on the part the sheet or panel does not cover; hint disappears after the first drag); desktop: arrow keys or WASD; quick tap on the map.",
       "expected": "Map pans; keys pan; a quick tap does not fling the camera away.",
       "source": "approved B2p2 frames 2-3",
       "runs": "yes",
@@ -4715,44 +4715,44 @@
       "id": "ME-077",
       "area": "Map editor and Look around",
       "topic": "Look around: leave",
-      "action": "Press \"Back to me\"; reopen and press Esc (desktop); reopen and press the grey map button.",
+      "action": "Press the X (\"Close and go back to you\"); reopen and press Esc (desktop); reopen and press the grey map button (desktop: on a phone the sheet covers that button, so pull the sheet down from its lowest height instead).",
       "expected": "Leaves Look around, camera returns to you at the previous zoom.",
       "source": "approved B2p2 frames 2, desktop",
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "`look-around-back`; Esc ExplorerTool.ts:43-47; ExplorerMenu.svelte:32-41"
+      "hooks": "`look-around-back` PlacesPanel.svelte:232; grip `look-around-grip` :216, drag down from the lowest height leaves (gripUp); Esc ExplorerTool.ts:43-47; ExplorerMenu.svelte:32-41"
     },
     {
       "id": "ME-078",
       "area": "Map editor and Look around",
       "topic": "Look around: area labels",
       "action": "With people inside some areas, open Look around. Tap a label.",
-      "expected": "Places with people show a small label (name + \"2 people\"); tapping it opens that place's card. (Find 10/26: the \"You are here\" box and labels are under review: not decided.)",
+      "expected": "Every listed place has a frame with a name tag (its name, plus \"· 1 person\" / \"· N people\" when someone is inside) and a listed object has a tag with its name; tapping a tag opens that place's card. (Find 10/26: the \"You are here\" tag and labels are under review: not decided.)",
       "source": "approved B2p2 frame 3",
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "`.area-label` LookAroundMap.svelte:162-172"
+      "hooks": "`look-around-area-frame` > `.la-tag` and `.la-tag-obj` LookAroundMap.svelte:188-211; `look-around-place-card`"
     },
     {
       "id": "ME-079",
       "area": "Map editor and Look around",
       "topic": "Look around: Places",
-      "action": "Press the search circle. Type in search; switch All / Areas / Objects chips; open the sliders chip and pick a filter; close with X.",
-      "expected": "Panel \"Places / Tap one to fly there\" on the right: search \"Places and objects\", chips with counts, filters (video call, Jitsi, stage, audience, quiet, website, file, sound, start, exit, focus, desk, who can enter, chat room, + apps), Areas rows (property · people / \"Empty\"), Objects rows. No People list. X closes.",
+      "action": "Open Look around (Places is the panel itself). Type in search; fold and unfold the Areas and Objects groups; open Filter and pick a filter; close with the X.",
+      "expected": "Panel \"Look around\" on the right: search \"Places and objects\", a Filter button (shown when the places of the room use some setting; count badge when one is picked) that lists only the settings in use (video call, Jitsi, stage, audience, quiet, website, file, sound, start, exit, focus, desk, who can enter, chat room, + apps), an Areas group (count; rows: name, \"property · people\") and an Objects group (count; rows), each foldable. No People list. The X leaves Look around.",
       "source": "approved B2p2 frame 4",
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "`look-around-places` PlacesPanel.svelte:143; `look-around-search` :170; chips :175-190 (filter chip aria-label \"Filters\"); filter buttons :204; rows :227 / :249; close `closeVisitCardButton` :154"
+      "hooks": "`look-around-places` PlacesPanel.svelte:209; `look-around-search` :249; `look-around-filter` :257; groups `.group-head.areas` / `.entities`, rows `.area-items .place-row` :299 / `.entity-items .place-row` :327; X `look-around-back` :186"
     },
     {
       "id": "ME-080",
       "area": "Map editor and Look around",
       "topic": "Look around: place card",
       "action": "Tap an area row; tap an object row; press Walk there; tap a place you cannot reach.",
-      "expected": "Camera flies there and outlines it; card with name, description/what it does, \"Walk there\", X (no second Back). Phone: Places closes so the card shows. Walk there walks you there; unreachable shows \"The object is not accessible yet 🚫\".",
+      "expected": "Camera flies there and outlines it; card with name, description/what it does, \"Walk there\", X (no second Back). Phone: the sheet steps aside so the card shows. Walk there walks you there; unreachable shows \"The object is not accessible yet 🚫\".",
       "source": "prod (explorer) + approved B2p2 frame 5",
       "runs": "yes",
       "runsNote": "yes",
@@ -4763,13 +4763,13 @@
       "id": "ME-081",
       "area": "Map editor and Look around",
       "topic": "Look around: Edit this room",
-      "action": "As an editor open Places, press \"Edit this room\". As a non-editor open Places.",
+      "action": "As an editor open Look around, press \"Edit this room\". As a non-editor open Look around.",
       "expected": "Editor: leaves Look around and opens the editor on Objects. Non-editor: the button is not there. (Runs: non-editor half needs-orbit.)",
       "source": "approved B2p2 frame 4",
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "`look-around-edit` PlacesPanel.svelte:268 (shown when mapEditorMenuVisibleStore)"
+      "hooks": "`look-around-edit` PlacesPanel.svelte:351 (shown when mapEditorMenuVisibleStore)"
     },
     {
       "id": "ME-082",
@@ -4890,6 +4890,18 @@
       "runsNote": "needs-orbit",
       "knownGap": false,
       "hooks": "EditRail.svelte:338-339; MenuStore.ts:422-426"
+    },
+    {
+      "id": "ME-092",
+      "area": "Map editor and Look around",
+      "topic": "Refused edit",
+      "action": "A player who may not upload (an ordinary player) sends \"Add your own\", or any other edit the server refuses.",
+      "expected": "A short notice \"That change wasn't saved: you can't edit there.\" shows to that player only. Edits made after it still save and other players see them (the room's edit queue is not held back).",
+      "source": "security fix plan (map edits keep saving), Khalid 10-07",
+      "runs": "needs-orbit",
+      "runsNote": "needs-orbit (locally only with MAP_EDITOR_ALLOW_ALL_USERS=false)",
+      "knownGap": false,
+      "hooks": "back/src/Model/GameRoom.ts forwardEditMapCommandMessage; MapEditorModeManager.ts errorCommandMessage; ErrorStore.ts warningMessageStore"
     },
     {
       "id": "BC-001",
@@ -5988,11 +6000,11 @@
       "area": "Broadcasting",
       "topic": "Stage/Audience",
       "action": "Desktop edit mode: draw an area, turn on \"Video call\", then look at \"Add to this area\"",
-      "expected": "\"Stage\" (\"Speak to the audience\") and \"Audience\" (\"Hear the stage\") are still offered. KNOWN GAP: dev hides them when the area has a video call (F/Components/MapEditor/EditMode/areaProperties.ts:83-106)",
+      "expected": "\"Stage\" (\"Speak to the audience\") and \"Audience\" (\"Hear the stage\") are still offered.",
       "source": "Khalid 10-05 \"Speaker/Stage zone must come back\" + Batch 2 part 1 frame 6 (\"every area setting stays\")",
       "runs": "yes",
       "runsNote": "yes",
-      "knownGap": true,
+      "knownGap": false,
       "hooks": "rows testid `speakerMegaphone`, `listenerMegaphone` (F/Components/MapEditor/EditMode/AreaSettings.svelte:445; areaProperties.ts:87,100); labels F/../i18n/en-US/mapEditor.ts:592-593"
     },
     {
@@ -6005,7 +6017,7 @@
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "testids `speakerMegaphone`, `listenerMegaphone`; default name `MySpeakerZone1` (areaProperties.ts:351-359)"
+      "hooks": "testids `speakerMegaphone`, `listenerMegaphone`; default name `MySpeakerZone1` (areaProperties.ts:351-359); area drawn with New area, drag, Next (me-areas.ts drawArea)"
     },
     {
       "id": "BC-094",
@@ -7128,7 +7140,7 @@
       "area": "Orbit and map scripts",
       "topic": "Jitsi area (WAM)",
       "action": "WAM area with a Jitsi call (no video-call property on the same area), walk in.",
-      "expected": "Same as OR-087. Areas that already have a video call don't offer Jitsi in the editor (ME, sweep row 22 Jitsi still Khalid's call).",
+      "expected": "Same as OR-087. Jitsi is no longer offered in the editor (ME-055); areas that already have one keep working.",
       "source": "prod",
       "runs": "yes",
       "runsNote": "yes",

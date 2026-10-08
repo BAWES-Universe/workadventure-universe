@@ -12,6 +12,8 @@ import {
     mapExplorationModeStore,
     mapExplorationObjectSelectedStore,
 } from "../../../../Stores/MapEditorStore";
+import { lookAroundDraggedStore } from "../../../../Stores/LookAroundStore";
+import { clearLookAroundStores, EXPLORE_GLIDE_OUT_TO, leaveExploreTheRoom } from "../ExploreTheRoom";
 import { gameManager } from "../../GameManager";
 import type { GameScene } from "../../GameScene";
 import { Entity } from "../../../ECS/Entity";
@@ -38,6 +40,11 @@ export class ExplorerTool implements MapEditorTool {
     private zoomLevelBeforeExplorerMode: number | undefined;
 
     private keyDownHandler = (event: KeyboardEvent) => {
+        if (event.key === "Escape") {
+            // Esc goes back to you, as the "Back to me" button does.
+            leaveExploreTheRoom();
+            return;
+        }
         if (!get(enableUserInputsStore)) return;
         if (event.key === "ArrowDown" || event.key === "s") {
             this.downIsPressed = true;
@@ -91,40 +98,71 @@ export class ExplorerTool implements MapEditorTool {
     };
     private pointerMoveHandler = (pointer: Phaser.Input.Pointer) => {
         if (!this.explorationMouseIsActive) return;
+        // Two fingers are a pinch (the zoom), not a drag: moving the map with the first finger would carry the camera
+        // away from you, and zooming back in near you would then never close "Look around".
+        if (this.scene.input.pointer1.isDown && this.scene.input.pointer2.isDown) {
+            this.pinchedDuringDrag = true;
+            return;
+        }
 
         this.scene
             .getCameraManager()
             .scrollCamera(pointer.prevPosition.x - pointer.x, pointer.prevPosition.y - pointer.y);
     };
-    private pointerUpHandler = (pointer: Phaser.Input.Pointer, gameObjects: Phaser.GameObjects.GameObject[]) => {
+    private pointerUpHandler = (
+        pointerOrTime: Phaser.Input.Pointer | number,
+        gameObjects?: Phaser.GameObjects.GameObject[]
+    ) => {
+        // The pointer leaving the canvas (over the pill, the hint, a panel) ends the drag too, and that event
+        // carries the time instead of the pointer.
+        const pointer = pointerOrTime instanceof Phaser.Input.Pointer ? pointerOrTime : this.scene.input.activePointer;
         this.scene.input.setDefaultCursor("grab");
+        const wasDragging = this.explorationMouseIsActive;
         this.explorationMouseIsActive = false;
-
-        if (gameObjects.length > 0) {
-            const gameObject = gameObjects[0];
-            if (gameObject instanceof Entity || gameObject instanceof AreaPreview)
-                mapExplorationObjectSelectedStore.set(gameObject);
+        // After a pinch, lifting the fingers neither flings the map nor picks what is under them.
+        if (this.pinchedDuringDrag) {
+            this.pinchedDuringDrag = false;
+            this.scene.markDirty();
+            return;
         }
 
-        // The velocity will be null if the cursor is no longer above the game when the button is released
-        if (pointer.velocity) {
-            // Let's compute the remaining velocity
-            this.scene.getCameraManager().setSpeed({ x: -pointer.velocity.x * 10, y: -pointer.velocity.y * 10 });
+        // A tap is a release close to where the pointer went down. Only a real drag keeps the camera gliding:
+        // a plain tap used to fling the map away because the pointer's velocity is never exactly zero.
+        const dragged = wasDragging && pointer.getDistance() > ExplorerTool.TAP_MAX_DISTANCE;
+
+        if (dragged) {
+            lookAroundDraggedStore.set(true);
+            // The velocity will be null if the cursor is no longer above the game when the button is released
+            if (pointer.velocity) {
+                // Let's compute the remaining velocity
+                this.scene.getCameraManager().setSpeed({ x: -pointer.velocity.x * 10, y: -pointer.velocity.y * 10 });
+            }
+        } else if (wasDragging && Array.isArray(gameObjects)) {
+            const gameObject = gameObjects.find((object) => object instanceof Entity || object instanceof AreaPreview);
+            if (gameObject instanceof Entity || gameObject instanceof AreaPreview) {
+                mapExplorationObjectSelectedStore.set(gameObject);
+            } else {
+                // Tapping the empty map closes the place card.
+                mapExplorationObjectSelectedStore.set(undefined);
+            }
         }
 
         this.scene.markDirty();
     };
 
+    // The page draws the areas (LookAroundMap.svelte); pointing at one brightens its frame there.
     private pointerOverHandler = (gameObject: AreaPreview) => {
-        if (gameObject.strokeColor === 0xf9e82d) return;
-        gameObject.setStrokeStyle(2, 0xf9e82d);
-        this.scene.markDirty();
+        gameObject.pointedAt = true;
     };
     private pointerOutHandler = (gameObject: AreaPreview) => {
-        if (gameObject.strokeColor === 0x000000) return;
-        gameObject.setStrokeStyle(2, 0x000000);
-        this.scene.markDirty();
+        gameObject.pointedAt = false;
     };
+
+    /** A second finger came down during this drag: it was a pinch. */
+    private pinchedDuringDrag = false;
+
+    /** Releases closer than this (in screen pixels) to where the pointer went down are taps, not drags. */
+    private static readonly TAP_MAX_DISTANCE = 8;
 
     constructor(private mapEditorModeManager: MapEditorModeManager, private readonly scene: GameScene) {
         this.entitiesManager = this.scene.getGameMapFrontWrapper().getEntitiesManager();
@@ -208,9 +246,7 @@ export class ExplorerTool implements MapEditorTool {
         if (this.enableUserInputsStoreSubscribe) this.enableUserInputsStoreSubscribe();
 
         // Disable store of map exploration mode
-        mapExplorationObjectSelectedStore.set(undefined);
-        mapExplorationModeStore.set(false);
-        mapExplorationAreasStore.set(undefined);
+        clearLookAroundStores();
     }
     public activate(): void {
         // Put analytics for exploration mode
@@ -218,7 +254,8 @@ export class ExplorerTool implements MapEditorTool {
 
         // Active store of map exploration mode
         mapExplorationModeStore.set(true);
-        mapEditorVisibilityStore.set(true);
+        // Looking around has its own overlay (LookAround.svelte): the editor's side bar and panel stay hidden.
+        mapEditorVisibilityStore.set(false);
 
         const entitySearchableMap = new Map<string, Entity>();
         gameManager
@@ -257,11 +294,15 @@ export class ExplorerTool implements MapEditorTool {
 
         this.scene.playSound("audio-cloud");
 
+        // Glide out around you, a little. Already further out (entering by zooming out), nothing moves.
+        if (waScaleManager.zoomModifier > EXPLORE_GLIDE_OUT_TO) {
+            this.scene
+                .getCameraManager()
+                .centerCameraOn({ x: this.scene.CurrentPlayer.x, y: this.scene.CurrentPlayer.y }, EXPLORE_GLIDE_OUT_TO);
+        }
+
         // Mark the scene as dirty
         this.scene.markDirty();
-
-        // Create flash animation
-        this.scene.cameras.main.flash();
     }
     public destroy(): void {
         this.clear();
@@ -269,6 +310,10 @@ export class ExplorerTool implements MapEditorTool {
     public subscribeToGameMapFrontWrapperEvents(gameMapFrontWrapper: GameMapFrontWrapper): void {
         logger("subscribeToGameMapFrontWrapperEvents => Method not implemented.");
     }
+    public canDragToLookAround(pointer: Phaser.Input.Pointer): boolean {
+        return false;
+    }
+
     public handleKeyDownEvent(event: KeyboardEvent): void {
         logger("handleKeyDownEvent => Method not implemented.");
     }
@@ -304,8 +349,8 @@ export class ExplorerTool implements MapEditorTool {
             });
             areaPreviews.set(key, areaPreview);
 
-            // Set the initial stroke color to edit color
-            areaPreview.setStrokeStyle(2, 0x000000);
+            // Drawn by the page with its name, like the Areas tool; here it only catches the pointer.
+            areaPreview.useMapFrame();
         }
         mapExplorationAreasStore.set(areaPreviews);
     }

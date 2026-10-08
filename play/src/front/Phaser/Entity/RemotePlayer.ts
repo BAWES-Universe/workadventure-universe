@@ -17,6 +17,8 @@ import { userIsConnected } from "../../Stores/MenuStore";
 import { localUserStore } from "../../Connection/LocalUserStore";
 import { analyticsClient } from "../../Administration/AnalyticsClient";
 import { canOpenOrbit, openOrbitProfile } from "../../external-modules/admin-api/index";
+import { friendsEnabledStore, relationshipsStore } from "../../Chat/Stores/FriendsStore";
+import { friendMenuAction } from "../../Chat/Components/UserList/FriendMenuAction";
 import { IconMessage, IconUserCircle, IconWalk } from "@wa-icons";
 
 export enum RemotePlayerEvent {
@@ -229,6 +231,25 @@ export class RemotePlayer extends Character implements ActivatableInterface {
                 },
                 actionIcon: IconMessage,
             });
+        }
+        // Add friend beside Message when you are both signed in; once asked or friends, the follow-up (cancel,
+        // remove) waits under "more", and accepting their request stays beside Message.
+        if (chatID !== undefined && get(friendsEnabledStore) && !isMyOtherSession) {
+            const relationship = get(relationshipsStore).get(this.userUuid) ?? "none";
+            const friendAction = friendMenuAction(relationship, this.userUuid, this.playerName, get(LL));
+            if (friendAction) {
+                const inMain = relationship === "none" || relationship === "request_received";
+                actions.push({
+                    actionName: friendAction.label,
+                    protected: false,
+                    priority: inMain ? 1.5 : -0.5,
+                    overflow: !inMain,
+                    style: friendAction.danger ? "text-red-500" : "bg-white/10 hover:bg-white/30",
+                    testId: "wokamenu-friend-button",
+                    callback: friendAction.act,
+                    actionIcon: friendAction.icon,
+                });
+            }
         }
         // Their profile in Orbit, when you are both signed in (only signed-in players have a chat id): after Message.
         if (chatID !== undefined && canOpenOrbit()) {

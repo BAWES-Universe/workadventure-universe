@@ -59,7 +59,11 @@ const foldersOpened = "foldersOpened";
 const cameraContainerHeightKey = "cameraContainerHeight";
 const chatSideBarWidthKey = "chatSideBarWidth";
 const mapEditorSideBarWidthKey = "mapEditorSideBarWidthKey";
+const lookAroundHintSeenKey = "lookAroundHintSeen";
+const editHintSeenKey = "editHintSeen";
+const recentEditObjectsKey = "recentEditObjects";
 const bubbleSound = "bubbleSound";
+const knownMediaDevices = "knownMediaDevices";
 
 const INITIAL_MAP_EDITOR_SIDEBAR_WIDTH = 448;
 
@@ -72,6 +76,7 @@ const JwtAuthToken = z
 type JwtAuthToken = z.infer<typeof JwtAuthToken>;
 
 const FoldersOpenedSchema = z.union([z.null(), z.array(z.string()).transform((arr) => new Set(arr))]);
+const KnownMediaDevicesSchema = z.array(z.string());
 
 interface PlayerVariable {
     value: undefined;
@@ -388,6 +393,32 @@ class LocalUserStore {
         this.setFoldersOpened(folders);
     }
 
+    /**
+     * Media devices this browser has already seen, as "kind:label" keys (see NewMediaDevices.ts).
+     */
+    getKnownMediaDevices(): string[] {
+        const stored = localStorage.getItem(knownMediaDevices);
+        if (!stored) {
+            return [];
+        }
+        try {
+            return KnownMediaDevicesSchema.parse(JSON.parse(stored));
+        } catch (e) {
+            console.warn("Error parsing known media devices from localStorage:", e);
+            localStorage.removeItem(knownMediaDevices);
+            return [];
+        }
+    }
+
+    setKnownMediaDevices(keys: string[]) {
+        try {
+            localStorage.setItem(knownMediaDevices, JSON.stringify(keys));
+        } catch (e) {
+            // A full or blocked storage must not stop the device list from updating.
+            console.warn("Error saving known media devices to localStorage:", e);
+        }
+    }
+
     setPreferredVideoInputDevice(deviceId?: string) {
         if (deviceId === undefined) {
             localStorage.removeItem(preferredVideoInputDevice);
@@ -424,6 +455,38 @@ class LocalUserStore {
         }
 
         return deviceId;
+    }
+
+    /** The "Drag to look around" hint has been seen: it goes after the first real drag. */
+    setLookAroundHintSeen(value: boolean): void {
+        localStorage.setItem(lookAroundHintSeenKey, value.toString());
+    }
+
+    getLookAroundHintSeen(): boolean {
+        return localStorage.getItem(lookAroundHintSeenKey) === "true";
+    }
+
+    /** The "Pick a tool on the right" hint of the room editor has been seen (a tool was picked once). */
+    setEditHintSeen(value: boolean): void {
+        localStorage.setItem(editHintSeenKey, value.toString());
+    }
+
+    getEditHintSeen(): boolean {
+        return localStorage.getItem(editHintSeenKey) === "true";
+    }
+
+    /** The objects placed most recently in the room editor, newest first, by prefab id. */
+    setRecentEditObjects(ids: string[]): void {
+        localStorage.setItem(recentEditObjectsKey, JSON.stringify(ids));
+    }
+
+    getRecentEditObjects(): string[] {
+        try {
+            const parsed: unknown = JSON.parse(localStorage.getItem(recentEditObjectsKey) ?? "[]");
+            return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
+        } catch {
+            return [];
+        }
     }
 
     setCameraPrivacySettings(option: boolean) {
@@ -629,6 +692,15 @@ class LocalUserStore {
         return parseInt(value);
     }
 
+    // Microphone noise filter: "standard" (browser), "strong" (on-device model) or "voiceOnly" (browser voice isolation)
+    setNoiseFilter(value: string) {
+        localStorage.setItem("noiseFilter", value);
+    }
+
+    getNoiseFilter(): string | null {
+        return localStorage.getItem("noiseFilter");
+    }
+
     // Background transformation settings
     setBackgroundMode(value: string) {
         localStorage.setItem("backgroundMode", value);
@@ -653,14 +725,6 @@ class LocalUserStore {
 
     getBackgroundImage(): string | null {
         return localStorage.getItem("backgroundImage");
-    }
-
-    setBackgroundVideo(value: string) {
-        localStorage.setItem("backgroundVideo", value);
-    }
-
-    getBackgroundVideo(): string | null {
-        return localStorage.getItem("backgroundVideo");
     }
 
     getRequestedStatus(): RequestedStatus | null {

@@ -6,7 +6,7 @@ import AnimatedTiles from "phaser-animated-tiles";
 import { Queue } from "queue-typescript";
 import type { ComponentType } from "svelte";
 import type { Readable, Unsubscriber } from "svelte/store";
-import { get } from "svelte/store";
+import { derived, get } from "svelte/store";
 import { throttle } from "throttle-debounce";
 import { ForwardableStore, MapStore } from "@workadventure/store-utils";
 import { MathUtils } from "@workadventure/math-utils";
@@ -61,6 +61,8 @@ import {
 import { Room } from "../../Connection/Room";
 import { CharacterTextureError } from "../../Exception/CharacterTextureError";
 import { localUserStore } from "../../Connection/LocalUserStore";
+import { myHandRaisedStore, raisedHandsStore } from "../../Space/RaiseHand/RaiseHandStore";
+import { bindPodiumToRaiseHand } from "../../Space/RaiseHand/PodiumStore";
 import { HtmlUtils } from "../../WebRtc/HtmlUtils";
 import { Loader } from "../Components/Loader";
 import { RemotePlayer } from "../Entity/RemotePlayer";
@@ -94,7 +96,6 @@ import {
     userIsJitsiDominantSpeakerStore,
 } from "../../Stores/GameStore";
 import {
-    contactPageStore,
     inviteUserActivated,
     mapEditorActivated,
     mapManagerActivated,
@@ -103,11 +104,12 @@ import {
 } from "../../Stores/MenuStore";
 import type { WasCameraUpdatedEvent } from "../../Api/Events/WasCameraUpdatedEvent";
 import { audioManagerFileStore, bubbleSoundStore } from "../../Stores/AudioManagerStore";
-import { currentPlayerGroupLockStateStore } from "../../Stores/CurrentPlayerGroupStore";
+import { bubbleMatesStore, currentPlayerGroupLockStateStore } from "../../Stores/CurrentPlayerGroupStore";
 import { errorScreenStore } from "../../Stores/ErrorScreenStore";
 import {
     availabilityStatusStore,
     batchGetUserMediaStore,
+    deviceListStore,
     lastNewMediaDeviceDetectedStore,
     localVoiceIndicatorStore,
     requestedCameraDeviceIdStore,
@@ -120,9 +122,20 @@ import { LL, locale } from "../../../i18n/i18n-svelte";
 import { GameSceneUserInputHandler } from "../UserInput/GameSceneUserInputHandler";
 import { followUsersColorStore, followUsersStore } from "../../Stores/FollowStore";
 import { axiosWithRetry, hideConnectionIssueMessage } from "../../Connection/AxiosUtils";
-import { RESUME_NETWORK_WAIT_MS, showReconnectingScreen, waitForNetwork } from "../../Connection/ReconnectScreen";
+import {
+    RESUME_NETWORK_WAIT_MS,
+    keepLogoInMemory,
+    showReconnectingScreen,
+    waitForNetwork,
+} from "../../Connection/ReconnectScreen";
 import { reconnectWatchdog } from "../../Connection/AppReconnectWatchdog";
+import { BackgroundLeave, markLeftInBackground, waitToComeBack } from "../../Connection/BackgroundLeave";
+import { privacyShutdownStore } from "../../Stores/PrivacyShutdownStore";
+import { isLiveStreamingStore } from "../../Stores/IsStreamingStore";
+import { isAndroid, isIOS } from "../../WebRtc/DeviceUtils";
 import { StringUtils } from "../../Utils/StringUtils";
+import { groupMediaDevicesByLabel } from "../../Utils/NewMediaDevices";
+import { visibilityStore } from "../../Stores/VisibilityStore";
 
 import { SuperLoaderPlugin } from "../Services/SuperLoaderPlugin";
 import { embedScreenLayoutStore } from "../../Stores/EmbedScreenLayoutStore";
@@ -134,16 +147,16 @@ import { openChat } from "../../Chat/openChat";
 import type { HasPlayerMovedInterface } from "../../Api/Events/HasPlayerMovedInterface";
 import { extensionModuleStore, gameSceneIsLoadedStore, gameSceneStore } from "../../Stores/GameSceneStore";
 import { exploreStore } from "../../Stores/ExploreStore";
-import { myCameraBlockedStore, myMicrophoneBlockedStore } from "../../Stores/MyMediaStore";
+import { friendsStore } from "../../Chat/Stores/FriendsStore";
+import { ringStore } from "../../Chat/Stores/RingStore";
+import { inExternalServiceStore, myCameraBlockedStore, myMicrophoneBlockedStore } from "../../Stores/MyMediaStore";
 import type { GameStateEvent } from "../../Api/Events/GameStateEvent";
 import { currentPlayerWokaStore } from "../../Stores/CurrentPlayerWokaStore";
 import {
     mapEditorModeStore,
     mapEditorRestrictedPropertiesStore,
     mapEditorSelectedToolStore,
-    mapEditorWamSettingsEditorToolCurrentMenuItemStore,
     mapExplorationModeStore,
-    WAM_SETTINGS_EDITOR_TOOL_MENU_ITEM,
 } from "../../Stores/MapEditorStore";
 import { refreshPromptStore } from "../../Stores/RefreshPromptStore";
 import { SpaceRegistry } from "../../Space/SpaceRegistry/SpaceRegistry";
@@ -151,7 +164,13 @@ import { SpaceScriptingBridgeService } from "../../Space/Utils/SpaceScriptingBri
 import { debugAddPlayer, debugRemovePlayer, debugUpdatePlayer, debugZoom } from "../../Utils/Debuggers";
 import { checkCoturnServer } from "../../Components/Video/utils";
 import { BroadcastService } from "../../Streaming/BroadcastService";
-import { megaphoneCanBeUsedStore, megaphoneSpaceStore } from "../../Stores/MegaphoneStore";
+import {
+    liveBroadcastStore,
+    megaphoneCanBeUsedStore,
+    megaphoneChannelsStore,
+    megaphoneSpacesStore,
+} from "../../Stores/MegaphoneStore";
+import { endLiveBroadcast } from "../../Components/Broadcast/live";
 import { CompanionTextureError } from "../../Exception/CompanionTextureError";
 import { SelectCompanionScene, SelectCompanionSceneName } from "../Login/SelectCompanionScene";
 import { scriptUtils } from "../../Api/ScriptUtils";
@@ -164,6 +183,7 @@ import { ProximitySpaceManager } from "../../WebRtc/ProximitySpaceManager";
 import type { SpaceRegistryInterface } from "../../Space/SpaceRegistry/SpaceRegistryInterface";
 import { WorldUserProvider } from "../../Chat/UserProvider/WorldUserProvider";
 import { ChatUserProvider } from "../../Chat/UserProvider/ChatUserProvider";
+import { startChatBlockSync } from "../../Chat/Services/ChatBlockSync";
 import { UserProviderMerger } from "../../Chat/UserProviderMerger/UserProviderMerger";
 import { AdminUserProvider } from "../../Chat/UserProvider/AdminUserProvider";
 import { ExtensionModuleStatusSynchronization } from "../../Rules/StatusRules/ExtensionModuleStatusSynchronization";
@@ -182,7 +202,7 @@ import PopUpMapEditorNotEnabled from "../../Components/PopUp/PopUpMapEditorNotEn
 import PopUpMapEditorShortcut from "../../Components/PopUp/PopUpMapEditorShortcut.svelte";
 import { enableUserInputsStore } from "../../Stores/UserInputStore";
 import { ScriptLoadedError } from "../../Api/ScriptLoadedError";
-import { videoStreamStore, screenShareStreamStore } from "../../Stores/PeerStore";
+import { videoStreamStore, screenShareStreamStore, videoStreamElementsStore } from "../../Stores/PeerStore";
 import type {
     ChatConnectionInterface,
     ChatRoom,
@@ -211,6 +231,13 @@ import type { AddPlayerInterface } from "./AddPlayerInterface";
 import type { CameraManagerEventCameraUpdateData } from "./CameraManager";
 import { CameraManager, CameraManagerEvent } from "./CameraManager";
 import { EditorToolName, MapEditorModeManager } from "./MapEditor/MapEditorModeManager";
+import {
+    EXPLORE_ZOOM_IN_RADIUS_AROUND_WOKA,
+    EXPLORE_ZOOM_OUT_END,
+    EXPLORE_ZOOM_OUT_START,
+    enterExploreTheRoom,
+    leaveExploreTheRoom,
+} from "./MapEditor/ExploreTheRoom";
 import type { PlayerDetailsUpdate } from "./RemotePlayersRepository";
 import { RemotePlayersRepository } from "./RemotePlayersRepository";
 import { IframeEventDispatcher } from "./IframeEventDispatcher";
@@ -291,6 +318,8 @@ export class GameScene extends DirtyScene {
     private initPosition?: PositionInterface;
     private playersPositionInterpolator = new PlayersPositionInterpolator();
     private connectionAnswerPromiseDeferred: Deferred<RoomJoinedMessageInterface>;
+    // The last Matrix token handed to the server to check this player's chat ID.
+    private chatIdProofSent: string | undefined;
     // A promise that will resolve when the "create" method is called (signaling loading is ended)
     private createPromiseDeferred: Deferred<void>;
     // A promise that will resolve when the scene is ready to start (all assets have been loaded and the connection to the room is established)
@@ -311,6 +340,7 @@ export class GameScene extends DirtyScene {
     private mapExplorationStoreUnsubscriber!: Unsubscriber;
     private modalVisibilityStoreUnsubscriber!: Unsubscriber;
     private lastNewMediaDeviceDetectedStoreUnsubscriber!: Unsubscriber;
+    private readonly pendingNewMediaDevices = new Map<string, MediaDeviceInfo>();
     private peerStoreUnsubscriber!: Unsubscriber;
     private unsubscribers: Unsubscriber[] = [];
     private entityPermissions: EntityPermissions | undefined;
@@ -378,6 +408,7 @@ export class GameScene extends DirtyScene {
     private isLiveStreamingUnsubscriber: Unsubscriber | undefined;
     private _proximityChatRoom: ProximityChatRoom | undefined;
     private _userProviderMergerDeferred: Deferred<UserProviderMerger> = new Deferred();
+    private unsubscribeChatBlockSync: (() => void) | undefined;
     private _worldUserCounter: ForwardableStore<number> = new ForwardableStore(0);
     // Everyone in the world space (the unfiltered source behind the People tab), undefined until the space is joined
     private _allUsersInWorldStore: ForwardableStore<Map<string, SpaceUserExtended> | undefined> = new ForwardableStore<
@@ -420,6 +451,140 @@ export class GameScene extends DirtyScene {
     }
 
     private _broadcastService: BroadcastService | undefined;
+    /** The broadcast channels last asked for, so a join that lands late settles on the latest ones. */
+    private latestBroadcastChannels: { scope: string; url: string }[] = [];
+    /** The scopes whose space join is still in flight (the registry joins a name twice if asked twice). */
+    private readonly pendingBroadcastJoins = new Set<string>();
+    /** Set once the scene is closing: a join that lands after that must not touch the destroyed registry. */
+    private broadcastSceneClosing = false;
+    /** Failed joins per scope and space name, so a broadcast space that could not be joined is tried again, a few times. */
+    private readonly broadcastJoinFailures = new Map<string, number>();
+    /** One pending retry per scope and space name: a new failure replaces the timer instead of adding a second. */
+    private readonly broadcastJoinRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+    /**
+     * Joins one space per broadcast channel of this room (this room, this world, everywhere in the universe) and
+     * leaves the ones that are gone, so a live broadcast on any reach that covers this room arrives here.
+     */
+    private syncBroadcastSpaces(channels: { scope: string; url: string }[], broadcastService: BroadcastService): void {
+        if (this.broadcastSceneClosing) {
+            return;
+        }
+        this.latestBroadcastChannels = channels;
+        if (!this._spaceRegistry) {
+            console.warn("No space registry available for megaphone space management");
+            return;
+        }
+        const spaces = new Map(get(megaphoneSpacesStore));
+        const wanted = new Map(channels.map((channel) => [channel.scope, slugify(channel.url)]));
+
+        for (const [scope, space] of spaces) {
+            if (wanted.get(scope) === space.getName()) {
+                continue;
+            }
+            spaces.delete(scope);
+            // Through the service, so its own list of joined spaces stays in step for destroy().
+            broadcastService.leaveSpace(space.getName()).catch((e) => {
+                console.error("Error while leaving a broadcast space", e);
+                Sentry.captureException(e);
+            });
+        }
+        megaphoneSpacesStore.set(spaces);
+
+        for (const [scope, spaceName] of wanted) {
+            // A join still in flight for this scope re-syncs when it lands, so it is never asked for twice.
+            if (spaces.has(scope) || this.pendingBroadcastJoins.has(scope)) {
+                continue;
+            }
+            this.pendingBroadcastJoins.add(scope);
+            broadcastService
+                .joinSpace(spaceName, this.abortController.signal)
+                .then((space) => {
+                    // The scene went away while this join was in flight: the next scene must not pick the space up.
+                    if (this.broadcastSceneClosing) {
+                        broadcastService.leaveSpace(space.getName()).catch((e) => {
+                            console.error("Error while leaving a broadcast space joined after the scene closed", e);
+                            Sentry.captureException(e);
+                        });
+                        return;
+                    }
+                    this.broadcastJoinFailures.delete(`${scope} ${spaceName}`);
+                    // The tiles of whoever goes live here get the live ring, and sit first in the strip.
+                    space.setMetadata(
+                        new Map<string, unknown>([
+                            ["isMegaphoneSpace", true],
+                            ["megaphoneScope", scope],
+                        ])
+                    );
+                    megaphoneSpacesStore.update((current) => {
+                        const next = new Map(current);
+                        next.set(scope, space);
+                        return next;
+                    });
+                    const subscription = space.onLeaveSpace.subscribe(() => {
+                        megaphoneSpacesStore.update((current) => {
+                            if (current.get(scope) !== space) {
+                                return current;
+                            }
+                            const next = new Map(current);
+                            next.delete(scope);
+                            return next;
+                        });
+                        subscription.unsubscribe();
+                    });
+                })
+                .catch((e) => {
+                    console.error(e);
+                    Sentry.captureException(e);
+                    this.retryBroadcastJoinLater(scope, spaceName, broadcastService);
+                })
+                .finally(() => {
+                    this.pendingBroadcastJoins.delete(scope);
+                    // The channels may have changed while this join was in flight: settle on the latest.
+                    if (this.latestBroadcastChannels !== channels && !this.broadcastSceneClosing) {
+                        this.syncBroadcastSpaces(this.latestBroadcastChannels, broadcastService);
+                    }
+                });
+        }
+    }
+
+    /**
+     * A join that failed (the network dropped, the pusher timed out) is tried again after a while, as long as the
+     * scene is open and the channel is still wanted: the channels only re-sync when they change, so without this a
+     * passing failure would keep the player out of that broadcast for good. Three tries, each waiting twice as long.
+     * The tries are counted per space name, so a scope that moves to another space starts its count afresh.
+     */
+    private retryBroadcastJoinLater(scope: string, spaceName: string, broadcastService: BroadcastService): void {
+        if (this.broadcastSceneClosing || this.abortController.signal.aborted) {
+            return;
+        }
+        const failureKey = `${scope} ${spaceName}`;
+        const failures = (this.broadcastJoinFailures.get(failureKey) ?? 0) + 1;
+        this.broadcastJoinFailures.set(failureKey, failures);
+        // A channel change during a failed join asks again at once; if that fails too, the earlier timer goes.
+        const pending = this.broadcastJoinRetryTimers.get(failureKey);
+        if (pending !== undefined) {
+            clearTimeout(pending);
+            this.broadcastJoinRetryTimers.delete(failureKey);
+        }
+        if (failures > GameScene.BROADCAST_JOIN_RETRIES) {
+            return;
+        }
+        const timer = setTimeout(() => {
+            this.broadcastJoinRetryTimers.delete(failureKey);
+            if (
+                this.broadcastSceneClosing ||
+                get(availabilityStatusStore) === AvailabilityStatus.DO_NOT_DISTURB ||
+                !this.latestBroadcastChannels.some((c) => c.scope === scope && slugify(c.url) === spaceName)
+            ) {
+                return;
+            }
+            this.syncBroadcastSpaces(this.latestBroadcastChannels, broadcastService);
+        }, GameScene.BROADCAST_JOIN_RETRY_MS * 2 ** (failures - 1));
+        this.broadcastJoinRetryTimers.set(failureKey, timer);
+    }
+    private static readonly BROADCAST_JOIN_RETRIES = 3;
+    private static readonly BROADCAST_JOIN_RETRY_MS = 5_000;
 
     public get broadcastService(): BroadcastService {
         if (this._broadcastService === undefined) {
@@ -668,9 +833,10 @@ export class GameScene extends DirtyScene {
 
         this.outlineManager = new OutlineManager(this);
         gameManager.gameSceneIsCreated(this);
+        // While the network is up: the reconnecting screen will need the logo when it is not.
+        keepLogoInMemory(this._room.errorSceneLogo);
         urlManager.pushRoomIdToUrl(this._room);
         analyticsClient.enteredRoom(this._room.id, this._room.group);
-        contactPageStore.set(this._room.contactPage);
 
         if (touchScreenManager.supportTouchScreen) {
             this.pinchManager = new PinchManager(this);
@@ -1021,16 +1187,11 @@ export class GameScene extends DirtyScene {
                 errorScreenStore.setException(e);
             });
 
-        gameManager
-            .getChatConnection()
+        // A first login only gets its Matrix token once the chat is connected: send it then (the server ignores a
+        // token it already checked).
+        Promise.all([gameManager.getChatConnection(), this.connectionAnswerPromiseDeferred.promise])
             .then(() => {
-                const connection = this.connection;
-                const chatId = localUserStore.getChatId();
-                const email: string | null = localUserStore.getLocalUser()?.email || null;
-                if (email && chatId && connection) {
-                    connection.emitUpdateChatId(email, chatId);
-                    connection.emitPlayerChatID(chatId);
-                }
+                this.sendChatIdProof();
             })
             .catch((e) => {
                 console.error(e);
@@ -1153,6 +1314,17 @@ export class GameScene extends DirtyScene {
     }
 
     public cleanupClosingScene(): void {
+        this.unsubscribeChatBlockSync?.();
+        this.unsubscribeChatBlockSync = undefined;
+        // No broadcast join may land on a destroyed registry.
+        this.broadcastSceneClosing = true;
+        this.pendingBroadcastJoins.clear();
+        this.latestBroadcastChannels = [];
+        for (const timer of this.broadcastJoinRetryTimers.values()) {
+            clearTimeout(timer);
+        }
+        this.broadcastJoinRetryTimers.clear();
+        this.broadcastJoinFailures.clear();
         // A person card belongs to this map: close it before the map and its players go (a reconnect, a map change).
         wokaMenuStore.clear();
         // make sure we restart own medias
@@ -1164,6 +1336,7 @@ export class GameScene extends DirtyScene {
         iframeListener.cleanup();
         uiWebsiteManager.closeAll();
         followUsersStore.stopFollowing();
+        bubbleMatesStore.set([]);
 
         audioManagerFileStore.unloadAudio();
         // Area-leave handlers do not run when the scene closes: forget the areas the chat top row names.
@@ -1175,6 +1348,11 @@ export class GameScene extends DirtyScene {
             waScaleManager.zoomModifier = waScaleManager.getSaveZoom();
         }
 
+        // Friends and rings stop listening and retrying on this connection; the next one attaches.
+        if (this.connection) {
+            friendsStore.detach(this.connection);
+            ringStore.detach(this.connection);
+        }
         this.connection?.closeConnection();
         this.outlineManager?.clear();
         this.userInputManager?.destroy();
@@ -1184,6 +1362,10 @@ export class GameScene extends DirtyScene {
         this.cameraManager?.destroy();
         this.mapEditorModeManager?.destroy();
         this.pathfindingManager?.cleanup();
+        // A broadcast you were giving ends with the scene: pill, ring and megaphone state all go.
+        endLiveBroadcast();
+        megaphoneSpacesStore.set(new Map());
+        megaphoneChannelsStore.set([]);
         this._broadcastService?.destroy().catch((e) => {
             console.error("Error while destroying broadcast service", e);
             Sentry.captureException(e);
@@ -1433,6 +1615,7 @@ export class GameScene extends DirtyScene {
         }
         group.destroy();
         this.groups.delete(groupId);
+        this.refreshBubbleMates();
     }
 
     doUpdateGroupUsers(groupId: number, userIds: number[]): void {
@@ -1442,6 +1625,28 @@ export class GameScene extends DirtyScene {
             return;
         }
         group.updateUsers(userIds);
+        this.refreshBubbleMates();
+    }
+
+    /**
+     * Keeps the list of the others in the current player's bubble up to date (who "Ask to follow" asks).
+     */
+    private refreshBubbleMates(): void {
+        const userId = this.connection?.getUserId();
+        let mates: number[] = [];
+        if (userId !== undefined) {
+            for (const group of this.groups.values()) {
+                const userIds = group.getUserIds();
+                if (userIds.includes(userId)) {
+                    mates = userIds.filter((id) => id !== userId);
+                    break;
+                }
+            }
+        }
+        const current = get(bubbleMatesStore);
+        if (current.length !== mates.length || current.some((id, index) => id !== mates[index])) {
+            bubbleMatesStore.set(mates);
+        }
     }
 
     doUpdatePlayerDetails(update: PlayerDetailsUpdate): void {
@@ -1753,12 +1958,34 @@ export class GameScene extends DirtyScene {
     }
 
     /**
+     * Asks the server to check this player's chat ID with the Matrix server. Sent as soon as the room is joined
+     * when the browser already has a Matrix login, so that the chat ID is ready before the player walks into an
+     * area chat, and again once the chat is connected (a first login only gets its token then).
+     */
+    private sendChatIdProof(): void {
+        const matrixAccessToken = localUserStore.getMatrixAccessToken();
+        if (
+            !this.connection ||
+            !matrixAccessToken ||
+            !localUserStore.getChatId() ||
+            matrixAccessToken === this.chatIdProofSent
+        ) {
+            return;
+        }
+        this.chatIdProofSent = matrixAccessToken;
+        this.connection.emitUpdateChatId(matrixAccessToken);
+    }
+
+    /**
      * Initializes the connection to Pusher.
      */
     private connect(): void {
         const camera = this.cameraManager.getCamera();
-        // Back in the app with the connection closed: give the phone's network a moment before the first attempt.
-        const networkReady = this.isReconnecting ? waitForNetwork(RESUME_NETWORK_WAIT_MS) : Promise.resolve();
+        // Left in the background (see BackgroundLeave): stay out until the page is on screen again. Then, as for any
+        // return to the app with the connection closed, give the phone's network a moment before the first attempt.
+        const networkReady = waitToComeBack().then(() =>
+            this.isReconnecting ? waitForNetwork(RESUME_NETWORK_WAIT_MS) : undefined
+        );
 
         networkReady
             .then(() => {
@@ -1792,7 +2019,11 @@ export class GameScene extends DirtyScene {
                     return;
                 }
                 this.connection = onConnect.connection;
+                // A new connection has not checked any chat ID yet.
+                this.chatIdProofSent = undefined;
                 exploreStore.load(this.connection);
+                friendsStore.attach(this.connection, localUserStore.isLogged());
+                ringStore.attach(this.connection, localUserStore.isLogged());
 
                 // Initialize TURN credentials manager
                 iceServersManager.init(this.connection, this.abortController.signal);
@@ -1849,7 +2080,9 @@ export class GameScene extends DirtyScene {
                             userProviders.push(worldUserProvider);
                         }
 
-                        this._userProviderMergerDeferred.resolve(new UserProviderMerger(userProviders));
+                        const userProviderMerger = new UserProviderMerger(userProviders);
+                        this.unsubscribeChatBlockSync = startChatBlockSync(chatConnection, userProviderMerger);
+                        this._userProviderMergerDeferred.resolve(userProviderMerger);
                     })
                     .catch((e) => {
                         const errorMessage = "Failed to get chatConnection from gameManager : " + e;
@@ -1982,6 +2215,7 @@ export class GameScene extends DirtyScene {
 
                     this.createSuccessorGameScene(true, true);
                 });
+                this.watchBackgroundLeave();
                 hideConnectionIssueMessage();
 
                 // The itemEventMessageStream stream is completed in the RoomConnection. No need to unsubscribe.
@@ -2111,51 +2345,29 @@ export class GameScene extends DirtyScene {
                 // The megaphoneSettingsMessageStream is completed in the RoomConnection. No need to unsubscribe.
                 //eslint-disable-next-line rxjs/no-ignored-subscription, svelte/no-ignored-unsubscribe
                 this.connection.megaphoneSettingsMessageStream.subscribe((megaphoneSettingsMessage) => {
-                    if (megaphoneSettingsMessage) {
-                        megaphoneCanBeUsedStore.set(megaphoneSettingsMessage.enabled);
-                        if (
-                            megaphoneSettingsMessage.url &&
-                            get(availabilityStatusStore) !== AvailabilityStatus.DO_NOT_DISTURB
-                        ) {
-                            const oldMegaphoneSpace = get(megaphoneSpaceStore);
-                            const spaceName = slugify(megaphoneSettingsMessage.url);
-
-                            // Early return if no space registry available
-                            if (!this._spaceRegistry) {
-                                console.warn("No space registry available for megaphone space management");
-                                return;
-                            }
-
-                            // Handle existing megaphone space
-                            if (oldMegaphoneSpace) {
-                                if (oldMegaphoneSpace.getName() === spaceName) {
-                                    return;
-                                }
-                                // Different space, leave the old one
-                                this._spaceRegistry.leaveSpace(oldMegaphoneSpace).catch((e) => {
-                                    console.error("Error while leaving space", e);
-                                    Sentry.captureException(e);
-                                });
-                            }
-
-                            broadcastService
-                                .joinSpace(spaceName, this.abortController.signal)
-                                .then((space) => {
-                                    // Update space to add metadata "isMegaphoneSpace" to true
-                                    space.setMetadata(new Map([["isMegaphoneSpace", true]]));
-                                    megaphoneSpaceStore.set(space);
-                                    // eslint-disable-next-line @smarttools/rxjs/no-nested-subscribe
-                                    const subscription = space.onLeaveSpace.subscribe(() => {
-                                        megaphoneSpaceStore.set(undefined);
-                                        subscription.unsubscribe();
-                                    });
-                                })
-                                .catch((e) => {
-                                    console.error(e);
-                                    Sentry.captureException(e);
-                                });
-                        }
+                    if (!megaphoneSettingsMessage) {
+                        return;
                     }
+                    megaphoneCanBeUsedStore.set(megaphoneSettingsMessage.enabled);
+                    // An older server sends one url: the world's channel, streamable when enabled.
+                    const channels =
+                        megaphoneSettingsMessage.channels.length > 0
+                            ? megaphoneSettingsMessage.channels
+                            : megaphoneSettingsMessage.url
+                            ? [
+                                  {
+                                      scope: "WORLD",
+                                      url: megaphoneSettingsMessage.url,
+                                      canStream: megaphoneSettingsMessage.enabled,
+                                  },
+                              ]
+                            : [];
+                    megaphoneChannelsStore.set(channels);
+                    // Do not disturb: no broadcast reaches this player.
+                    if (get(availabilityStatusStore) === AvailabilityStatus.DO_NOT_DISTURB) {
+                        return;
+                    }
+                    this.syncBroadcastSpaces(channels, broadcastService);
                 });
                 this._broadcastService = broadcastService;
 
@@ -2167,6 +2379,7 @@ export class GameScene extends DirtyScene {
                 // });
 
                 this.connectionAnswerPromiseDeferred.resolve(onConnect.room);
+                this.sendChatIdProof();
                 // Analyze tags to find if we are admin. If yes, show console.
 
                 const error = get(errorScreenStore);
@@ -2342,6 +2555,7 @@ export class GameScene extends DirtyScene {
             this.tryChangeShowVoiceIndicatorState(this.jitsiDominantSpeaker && this.jitsiParticipantsCount > 1);
         });
 
+        let previousAvailabilityStatus: AvailabilityStatus | undefined;
         this.availabilityStatusStoreUnsubscriber = availabilityStatusStore.subscribe((availabilityStatus) => {
             if (!this.connection) {
                 throw new Error("Connection is undefined");
@@ -2351,6 +2565,28 @@ export class GameScene extends DirtyScene {
             if (availabilityStatus === AvailabilityStatus.SILENT) {
                 this.CurrentPlayer.toggleTalk(false, true);
             }
+            // Leaving Do not disturb: join the broadcast channels skipped while it was on.
+            if (
+                previousAvailabilityStatus === AvailabilityStatus.DO_NOT_DISTURB &&
+                availabilityStatus !== AvailabilityStatus.DO_NOT_DISTURB &&
+                this._broadcastService
+            ) {
+                this.syncBroadcastSpaces(get(megaphoneChannelsStore), this._broadcastService);
+            }
+            // Entering Do not disturb: leave the broadcast spaces already joined, so no broadcast reaches this
+            // player. A live broadcast this player is running keeps its own space.
+            if (
+                availabilityStatus === AvailabilityStatus.DO_NOT_DISTURB &&
+                previousAvailabilityStatus !== AvailabilityStatus.DO_NOT_DISTURB &&
+                this._broadcastService
+            ) {
+                const live = get(liveBroadcastStore);
+                this.syncBroadcastSpaces(
+                    get(megaphoneChannelsStore).filter((channel) => channel.scope === live?.scope),
+                    this._broadcastService
+                );
+            }
+            previousAvailabilityStatus = availabilityStatus;
         });
 
         this.emoteUnsubscriber = emoteStore.subscribe((emote) => {
@@ -2392,6 +2628,7 @@ export class GameScene extends DirtyScene {
                 // add interactions back only for activatables
                 this.gameMapFrontWrapper.getEntitiesManager().makeAllEntitiesInteractive(true);
             }
+            this.updateExploreZoomResistance();
             this.markDirty();
         });
 
@@ -2401,63 +2638,24 @@ export class GameScene extends DirtyScene {
             } else {
                 this.input.keyboard?.enableGlobalCapture();
             }
+            this.updateExploreZoomResistance();
         });
 
         this.lastNewMediaDeviceDetectedStoreUnsubscriber = lastNewMediaDeviceDetectedStore.subscribe((devices) => {
             if (devices.length === 0) return;
-            // filter device by name tu avoid multiple notification for the same device
-            const devicesToNotify = devices.reduce((devices: MediaDeviceInfo[], currentDevice: MediaDeviceInfo) => {
-                if (
-                    devices.find((device_) => device_.label == currentDevice.label) != undefined ||
-                    get(requestedCameraDeviceIdStore) == currentDevice.deviceId ||
-                    get(requestedMicrophoneDeviceIdStore) == currentDevice.deviceId ||
-                    get(speakerSelectedStore) == currentDevice.deviceId
-                )
-                    return devices;
-
-                devices.push(currentDevice);
-                return devices;
-            }, []);
-
-            for (const device of devicesToNotify) {
-                const id = `playtext-mediadevice-${device.deviceId}`;
-                this.CurrentPlayer.destroyText(id);
-                this.CurrentPlayer.playText(
-                    id,
-                    get(LL).camera.webrtc.newDeviceDetected({ device: device.label }),
-                    5000,
-                    () => {
-                        this.CurrentPlayer.destroyText(id);
-
-                        // get all devices with the same label
-                        const devicesToUse = devices.filter((device_) => device_.label === device.label);
-
-                        for (const deviceToUse of devicesToUse) {
-                            switch (deviceToUse.kind) {
-                                case "videoinput":
-                                    requestedCameraDeviceIdStore.set(deviceToUse.deviceId);
-                                    localUserStore.setPreferredVideoInputDevice(deviceToUse.deviceId);
-                                    break;
-                                // use the new device
-                                case "audioinput":
-                                    requestedMicrophoneDeviceIdStore.set(deviceToUse.deviceId);
-                                    localUserStore.setPreferredAudioInputDevice(deviceToUse.deviceId);
-                                    break;
-
-                                case "audiooutput":
-                                    localUserStore.setSpeakerDeviceId(deviceToUse.deviceId);
-                                    speakerSelectedStore.set(deviceToUse.deviceId);
-                                    break;
-                                default:
-                                    console.warn("Unknown device kind: ", deviceToUse.kind);
-                            }
-                        }
-                    },
-                    true,
-                    "message"
-                );
+            for (const device of devices) {
+                this.pendingNewMediaDevices.set(device.deviceId, device);
             }
+            // Consume the devices so that the next scene does not offer them again.
+            lastNewMediaDeviceDetectedStore.set([]);
+            this.offerPendingNewMediaDevices();
         });
+        // Devices detected while the tab was hidden are offered once the user is back.
+        this.unsubscribers.push(
+            visibilityStore.subscribe((isVisible) => {
+                if (isVisible) this.offerPendingNewMediaDevices();
+            })
+        );
 
         this.isLiveStreamingUnsubscriber = this.spaceRegistry.isLiveStreamingStore.subscribe((isStreaming) => {
             if (isStreaming) {
@@ -2467,6 +2665,24 @@ export class GameScene extends DirtyScene {
             }
         });
 
+        // A gold hand with the number in line next to the name of everyone whose hand is up.
+        this.unsubscribers.push(
+            derived([raisedHandsStore, myHandRaisedStore, this.MapPlayersByKey], (values) => values).subscribe(
+                ([hands, myHandRaised, players]) => {
+                    const positions = new Map(hands.map((hand) => [hand.uuid, hand.position]));
+                    for (const player of players.values()) {
+                        player.setRaisedHand(positions.get(player.userUuid));
+                    }
+                    const myUuid = localUserStore.getLocalUser()?.uuid ?? "";
+                    // Our own hand shows at once, and gets its number when the server answers.
+                    this.CurrentPlayer?.setRaisedHand(myHandRaised ? positions.get(myUuid) ?? 0 : undefined);
+                }
+            )
+        );
+
+        // On a podium, the audience raises hands and the speakers invite them to speak.
+        this.unsubscribers.push(bindPodiumToRaiseHand());
+
         // Subscribe to bubble sound changes
         this.unsubscribers.push(
             bubbleSoundStore.subscribe((soundType) => {
@@ -2474,6 +2690,98 @@ export class GameScene extends DirtyScene {
                 this.load.audio(`audio-webrtc-out-${soundType}`, `/resources/objects/webrtc-out-${soundType}.mp3`);
                 this.load.start();
             })
+        );
+    }
+
+    /**
+     * On a phone, leaves the room after a while in the background while away and alone (see BackgroundLeave). The
+     * time only runs with nobody near, no live session and no meeting app open, so calls are never cut.
+     */
+    private watchBackgroundLeave(): void {
+        if (!isIOS() && !isAndroid()) return;
+        const backgroundLeave = new BackgroundLeave({
+            isHidden: () => document.visibilityState === "hidden",
+            leave: () => {
+                markLeftInBackground();
+                this.connection?.leaveInBackground();
+            },
+        });
+        const awayAndAlone = derived(
+            [
+                privacyShutdownStore,
+                visibilityStore,
+                videoStreamElementsStore,
+                isLiveStreamingStore,
+                inExternalServiceStore,
+            ],
+            ([$privacyShutdown, $visible, $peers, $live, $inExternalService]) =>
+                $privacyShutdown && !$visible && $peers.length === 0 && !$live && !$inExternalService
+        );
+        const unsubscribe = awayAndAlone.subscribe((value) => backgroundLeave.update(value));
+        this.unsubscribers.push(() => {
+            unsubscribe();
+            backgroundLeave.stop();
+        });
+    }
+
+    /**
+     * Shows a single "New device detected" bubble for the devices waiting to be offered. With
+     * several new devices (a virtual audio app registers a handful at once), the bubble names the
+     * best one and says how many others there are; they stay available in the device settings.
+     */
+    private offerPendingNewMediaDevices(): void {
+        if (this.pendingNewMediaDevices.size === 0 || document.visibilityState !== "visible") return;
+
+        const presentDevices = get(deviceListStore) ?? [];
+        const selectedDeviceIds = [
+            get(requestedCameraDeviceIdStore),
+            get(requestedMicrophoneDeviceIdStore),
+            get(speakerSelectedStore),
+        ];
+        const devices = Array.from(this.pendingNewMediaDevices.values()).filter(
+            (device) =>
+                presentDevices.some((present) => present.deviceId === device.deviceId) &&
+                !selectedDeviceIds.includes(device.deviceId)
+        );
+        this.pendingNewMediaDevices.clear();
+
+        const groups = groupMediaDevicesByLabel(devices);
+        const firstGroup = groups.entries().next();
+        if (firstGroup.done) return;
+        const [label, devicesToUse] = firstGroup.value;
+        const otherCount = groups.size - 1;
+
+        const id = "playtext-mediadevice";
+        this.CurrentPlayer.playText(
+            id,
+            otherCount === 0
+                ? get(LL).camera.webrtc.newDeviceDetected({ device: label })
+                : get(LL).camera.webrtc.newDevicesDetected({ device: label, count: otherCount }),
+            5000,
+            () => {
+                this.CurrentPlayer.destroyText(id);
+
+                for (const deviceToUse of devicesToUse) {
+                    switch (deviceToUse.kind) {
+                        case "videoinput":
+                            requestedCameraDeviceIdStore.set(deviceToUse.deviceId);
+                            localUserStore.setPreferredVideoInputDevice(deviceToUse.deviceId);
+                            break;
+                        case "audioinput":
+                            requestedMicrophoneDeviceIdStore.set(deviceToUse.deviceId);
+                            localUserStore.setPreferredAudioInputDevice(deviceToUse.deviceId);
+                            break;
+                        case "audiooutput":
+                            localUserStore.setSpeakerDeviceId(deviceToUse.deviceId);
+                            speakerSelectedStore.set(deviceToUse.deviceId);
+                            break;
+                        default:
+                            console.warn("Unknown device kind: ", deviceToUse.kind);
+                    }
+                }
+            },
+            true,
+            "message"
         );
     }
 
@@ -3321,23 +3629,10 @@ ${escapedMessage}
             } else {
                 switch (toolEditorParam) {
                     case "wamSettingsEditorTool": {
+                        // Configure my room holds the room's settings, which only admins may change.
+                        if (!get(userIsAdminStore)) break;
                         mapEditorModeStore.switchMode(true);
                         mapEditorSelectedToolStore.set(EditorToolName.WAMSettingsEditor);
-                        const menuItem = urlManager.getHashParameter("menuItem");
-                        if (menuItem) {
-                            switch (menuItem) {
-                                case "megaphone": {
-                                    mapEditorWamSettingsEditorToolCurrentMenuItemStore.set(
-                                        WAM_SETTINGS_EDITOR_TOOL_MENU_ITEM.Megaphone
-                                    );
-                                    break;
-                                }
-                                default: {
-                                    mapEditorWamSettingsEditorToolCurrentMenuItemStore.set(undefined);
-                                    break;
-                                }
-                            }
-                        }
                         break;
                     }
                     case "floor": {
@@ -3902,6 +4197,7 @@ ${escapedMessage}
         );
 
         this.groups.set(groupPositionMessage.groupId, conversationBubble);
+        this.refreshBubbleMates();
     }
 
     //todo: put this into an 'orchestrator' scene (EntryScene?)
@@ -3909,10 +4205,10 @@ ${escapedMessage}
         errorScreenStore.setError(
             ErrorScreenMessage.fromPartial({
                 type: "error",
+                // The ban screen shows this code; the text is for anything that shows the screen as a plain error.
                 code: "USER_BANNED",
-                title: "BANNED",
-                subtitle: "You were banned from WorkAdventure",
-                details: "If you want more information, you may contact us at: hello@workadventu.re",
+                title: "Banned",
+                subtitle: "An admin of this world banned you.",
             })
         );
 
@@ -4023,8 +4319,40 @@ ${escapedMessage}
         this.whiteMask = undefined;
     }
 
-    private disableCameraResistance(): void {
-        this.cameraManager.disableResistanceZone();
+    /**
+     * Zooming far out enters "Look around the map"; while looking around, zooming back in near your avatar leaves it.
+     * Both go through the camera's resistance zone (white fade, then the callback).
+     * The zone is off while another map editor tool is in use, so zooming out to edit never switches tools.
+     */
+    private updateExploreZoomResistance(): void {
+        if (!this.mapEditorModeManager || !this.cameraManager || !this.CurrentPlayer) {
+            return;
+        }
+        if (get(mapExplorationModeStore)) {
+            this.cameraManager.setResistanceZone(
+                EXPLORE_ZOOM_OUT_END,
+                EXPLORE_ZOOM_OUT_START,
+                1,
+                leaveExploreTheRoom,
+                false,
+                EXPLORE_ZOOM_IN_RADIUS_AROUND_WOKA,
+                this.CurrentPlayer
+            );
+            return;
+        }
+        if (get(mapEditorModeStore)) {
+            this.cameraManager.disableResistanceZone();
+            return;
+        }
+        this.cameraManager.setResistanceZone(
+            EXPLORE_ZOOM_OUT_START,
+            EXPLORE_ZOOM_OUT_END,
+            1,
+            enterExploreTheRoom,
+            true,
+            undefined,
+            this.CurrentPlayer
+        );
     }
 
     private proximityChatRoomPromise(): Promise<ProximityChatRoom> {

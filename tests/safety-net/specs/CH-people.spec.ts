@@ -345,8 +345,10 @@ test("CH-010 Phone: with the sheet open, Bob's card and the Block or report popu
     test.skip(!isPhone(testInfo), "phone only");
     const player = await alice(page, url);
     const bob = await bobApart(browser, testInfo, player, url);
-    await teleport(player, { x: 160, y: 160 });
-    const bobSpot = { x: 256, y: 160 }; // 96 px apart: no bubble, so no videos over the map
+    // The sheet (60% of the screen) covers the lower part of the map and the map does not move for it, so Bob stands
+    // near the top edge of the map, in the part that stays visible above the sheet.
+    await teleport(player, { x: 160, y: 48 });
+    const bobSpot = { x: 256, y: 48 }; // 96 px apart: no bubble, so no videos over the map
     await teleport(bob, bobSpot);
     await openChat(player);
     await expect(player.locator("section#chat.chat-sheet")).toBeVisible();

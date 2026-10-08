@@ -19,6 +19,9 @@
         lockClick();
     }}
     classList="group/btn-lock"
+    wideLabel={$currentPlayerGroupLockStateStore
+        ? $LL.actionbar.unlockConversation()
+        : $LL.actionbar.lockConversation()}
     tooltipTitle={$LL.actionbar.help.lock.title()}
     tooltipDesc={$LL.actionbar.help.lock.desc()}
     disabledHelp={$openedMenuStore !== undefined}

@@ -214,7 +214,7 @@ test.describe("Status", () => {
         await player.context().grantPermissions(["notifications"]);
         await player.getByTestId("camera-button").click();
         await expect(player.getByTestId("camera-button")).toHaveAttribute("data-state", "forbidden");
-        for (const status of ["Busy", "Back in a moment", "Do not disturb"]) {
+        for (const [turn, status] of ["Busy", "Back in a moment", "Do not disturb"].entries()) {
             await pickStatus(player, status);
             await dismissNotificationAsk(player);
             await expect(player.getByTestId("microphone-button")).toHaveAttribute("data-state", "disabled");
@@ -222,7 +222,10 @@ test.describe("Status", () => {
                 const canvas = await player.locator("#game canvas").first().boundingBox();
                 expect(canvas).not.toBeNull();
                 if (canvas)
-                    await player.touchscreen.tap(canvas.x + canvas.width / 2 + 120, canvas.y + canvas.height / 2);
+                    await player.touchscreen.tap(
+                        canvas.x + canvas.width / 2 + (turn % 2 === 0 ? 120 : -120),
+                        canvas.y + canvas.height / 2
+                    );
             } else {
                 await player
                     .locator("#game canvas")
@@ -240,6 +243,20 @@ test.describe("Status", () => {
             if (!isPhone(testInfo)) await expect(statusDot(player)).toHaveCSS("background-color", "rgb(104, 233, 122)");
             if (!isPhone(testInfo)) {
                 await wa(player, () => WA.player.teleport(96, 128));
+            } else {
+                // The tap walks the WOKA: let it arrive, or the next status is cancelled by the walk still going.
+                let last = "";
+                await expect
+                    .poll(async () => {
+                        const now = JSON.stringify(
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                            await wa(player, () => (globalThis as any).WA.player.getPosition())
+                        );
+                        const same = now === last;
+                        last = now;
+                        return same;
+                    })
+                    .toBe(true);
             }
         }
     });

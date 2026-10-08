@@ -36,32 +36,29 @@ export class BusyStatusStrategy extends BasicStatusStrategy {
         return Notification.permission === permission;
     };
 
-    private lastNotificationPermissionRequestMoreThanTwoWeeks = (d1: Date): boolean => {
-        const diffTime = Math.abs(new Date().getTime() - d1.getTime());
-        const diffDays = diffTime / (1000 * 60 * 60 * 24);
-        const diffWeeks = Math.floor(diffDays / 7);
-        return diffWeeks >= 2;
-    };
+    /**
+     * Going Busy is the moment notifications matter, so that is when we ask. We keep asking, but not every time:
+     * "Not now" (or ignoring the card) holds the question for a while. Someone who goes Busy for every meeting
+     * would otherwise see it at each one, and the way out of that is the browser's own "Block", which is permanent.
+     * Once the browser has blocked us, the card only offers the way to unblock it, so it comes back more rarely.
+     */
+    private static readonly ASK_AGAIN_AFTER_MS = 4 * 60 * 60 * 1000;
+    private static readonly ASK_AGAIN_WHEN_BLOCKED_AFTER_MS = 14 * 24 * 60 * 60 * 1000;
 
     private showNotificationPermissionModal = () => {
-        const localStoragelastNotificationPermissionRequest: string | null =
-            localUserStore.getLastNotificationPermissionRequest();
-        const lastNotificationPermissionRequest = localStoragelastNotificationPermissionRequest
-            ? new Date(localStoragelastNotificationPermissionRequest)
-            : new Date();
-
-        if (this.NotificationPermissionIs("default")) {
-            this.openNotificationPermissionModal();
+        if (!("Notification" in window) || this.NotificationPermissionIs("granted")) {
+            return;
         }
-
-        if (
-            (this.NotificationPermissionIs("denied") &&
-                this.lastNotificationPermissionRequestMoreThanTwoWeeks(lastNotificationPermissionRequest)) ||
-            localStoragelastNotificationPermissionRequest === null
-        ) {
-            this.openNotificationPermissionModal();
-            localUserStore.setLastNotificationPermissionRequest();
+        const lastRequest = localUserStore.getLastNotificationPermissionRequest();
+        const lastRequestTime = lastRequest ? new Date(lastRequest).getTime() : Number.NaN;
+        const holdFor = this.NotificationPermissionIs("denied")
+            ? BusyStatusStrategy.ASK_AGAIN_WHEN_BLOCKED_AFTER_MS
+            : BusyStatusStrategy.ASK_AGAIN_AFTER_MS;
+        if (!Number.isNaN(lastRequestTime) && Date.now() - lastRequestTime < holdFor) {
+            return;
         }
+        this.openNotificationPermissionModal();
+        localUserStore.setLastNotificationPermissionRequest();
     };
 
     private openNotificationPermissionModal = () => {

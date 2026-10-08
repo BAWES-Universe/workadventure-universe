@@ -26,6 +26,7 @@ import type {
     RoomsList,
     SendEventQuery,
     SendUserMessage,
+    BroadcastMeta,
     SetPlayerDetailsMessage,
     SubToPusherRoomMessage,
     UpdateMapToNewestWithKeyMessage,
@@ -56,7 +57,6 @@ import Jwt from "jsonwebtoken";
 import BigbluebuttonJs from "bigbluebutton-js";
 import Debug from "debug";
 import * as Sentry from "@sentry/node";
-import { WAMSettingsUtils } from "@workadventure/map-editor";
 import { z } from "zod";
 import type { ServiceError } from "@grpc/grpc-js";
 import { asError } from "catch-unknown";
@@ -126,6 +126,23 @@ export class SocketManager {
     ): Promise<{ room: GameRoom; user: User }> {
         //join new previous room
         const { room, user } = await this.joinRoom(socket, joinRoomMessage);
+        try {
+            return await this.sendRoomJoinedMessage(socket, joinRoomMessage, room, user);
+        } catch (e) {
+            // The user is already in the room (and possibly in a bubble), but the caller never gets it back when the
+            // join fails, so nothing would ever remove it: it would stay as an invisible "ghost" until back restarts.
+            // This happens when map-storage cannot be reached, for instance while it is being redeployed.
+            this.leaveRoom(room, user);
+            throw e;
+        }
+    }
+
+    private async sendRoomJoinedMessage(
+        socket: UserSocket,
+        joinRoomMessage: JoinRoomMessage,
+        room: GameRoom,
+        user: User
+    ): Promise<{ room: GameRoom; user: User }> {
         const lastCommandId = joinRoomMessage.lastCommandId;
         let commandsToApply: EditMapCommandMessage[] | undefined = undefined;
 
@@ -208,14 +225,7 @@ export class SocketManager {
             activatedInviteUser: user.activatedInviteUser != undefined ? user.activatedInviteUser : true,
             applications: user.applications ?? [],
             playerVariable: playerVariablesMessage,
-            megaphoneSettings: {
-                enabled: WAMSettingsUtils.canUseMegaphone(room.wamSettings, user.tags),
-                url: WAMSettingsUtils.getMegaphoneUrl(
-                    room.wamSettings,
-                    room.roomGroup ?? new URL(room.roomUrl).host,
-                    room.roomUrl
-                ),
-            },
+            megaphoneSettings: room.getMegaphoneSettingsFor(user.tags),
         };
 
         user.write({
@@ -676,6 +686,12 @@ export class SocketManager {
                 case "roomTagsQuery":
                 case "roomsFromSameWorldQuery":
                 case "roomsFromSameUniverseQuery":
+                case "friendsListQuery":
+                case "friendActionQuery":
+                case "friendSearchQuery":
+                case "friendSettingsQuery":
+                case "ringQuery":
+                case "ringReplyQuery":
                 case "searchMemberQuery":
                 case "getMemberQuery":
                 case "searchTagsQuery":
@@ -1083,7 +1099,7 @@ export class SocketManager {
         }
     }
 
-    async sendAdminRoomMessage(roomId: string, message: string, type: string) {
+    async sendAdminRoomMessage(roomId: string, message: string, type: string, broadcast?: BroadcastMeta) {
         const room = await this.roomsPromises.get(roomId);
         if (!room) {
             //todo: this should cause the http call to return a 500
@@ -1106,6 +1122,7 @@ export class SocketManager {
                 sendUserMessage: {
                     message,
                     type,
+                    broadcast,
                 },
             });
         });
@@ -1162,10 +1179,16 @@ export class SocketManager {
     }
 
     handleFollowRequestMessage(room: GameRoom, user: User, message: FollowRequestMessage) {
+        // Everyone else in the bubble is asked at once. Remember who, so that cancelling (or the time running out)
+        // reaches the same people and a late answer is ignored.
+        user.startFollowRequest(user.group?.getUsers().filter((currentUser) => currentUser !== user) ?? []);
         room.sendToOthersInGroupIncludingUser(user, {
             message: {
                 $case: "followRequestMessage",
-                followRequestMessage: message,
+                followRequestMessage: {
+                    ...message,
+                    leader: user.id,
+                },
             },
         });
     }
@@ -1175,6 +1198,21 @@ export class SocketManager {
         if (!leader) {
             const message = `Could not follow user "{message.getLeader()}" in room "{room.roomUrl}".`;
             console.info(message, "Maybe the user just left.");
+            return;
+        }
+
+        // A "yes" after the request was cancelled or timed out starts nothing. The sender's screen may already show
+        // them following: tell them the request is over.
+        if (!leader.takeFollowRequestAnswer(user)) {
+            user.socket.write({
+                message: {
+                    $case: "followAbortMessage",
+                    followAbortMessage: {
+                        leader: leader.id,
+                        follower: 0,
+                    },
+                },
+            });
             return;
         }
 
@@ -1188,11 +1226,15 @@ export class SocketManager {
     }
 
     handleFollowAbortMessage(room: GameRoom, user: User, message: FollowAbortMessage) {
-        const leader = room.getUserById(message.leader);
         if (user.id === message.leader) {
-            leader?.stopLeading();
+            // The leader cancels the request or stops leading: the question leaves the screens of those who have not
+            // answered yet, and the followers stop following.
+            user.cancelFollowRequest();
+            user.stopLeading();
         } else {
-            // Forward message
+            // A follower stops following, or someone asked says no: the leader is told.
+            const leader = room.getUserById(message.leader);
+            leader?.takeFollowRequestAnswer(user);
             leader?.delFollower(user);
         }
     }

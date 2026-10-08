@@ -54,8 +54,9 @@ test.describe('Availability Status', () => {
             await Menu.clickOnStatus(page,statusName); 
             //await Menu.closeNotificationPopUp(page);
 
-            await expect(page.getByTestId('camera-button').locator('.bg-danger')).toBeHidden();
-            await expect(page.getByTestId('microphone-button').locator('.bg-danger')).toBeHidden();
+            // Busy takes both devices away: the buttons read "disabled" until you move again
+            await Menu.expectCameraDisabled(page);
+            await Menu.expectMicrophoneDisabled(page);
 
             await page.context().close();
         })
@@ -96,14 +97,18 @@ test.describe('Availability Status', () => {
 
             await Map.walkTo(page,'ArrowRight',500);
 
+            // The card asks only while the browser has not answered: the test context grants notifications,
+            // so take that grant away first.
+            await page.context().clearPermissions();
+
             await Menu.openMenu(page);
             await Menu.clickOnStatus(page,statusName);
 
-            await expect(page.getByText('Allow notifications?')).toBeVisible();
+            await expect(page.getByText('Turn on notifications?')).toBeVisible();
 
-            await page.getByText('Accept').click();
+            await page.getByRole('button', { name: 'Turn on' }).click();
 
-            await expect(page.getByText('Allow notifications?')).toBeHidden();
+            await expect(page.getByText('Turn on notifications?')).toBeHidden();
 
             await page.context().close();
         })
@@ -130,8 +135,8 @@ test.describe('Availability Status', () => {
                 
                 await Menu.openMenu(page);
                 await Menu.clickOnStatus(page,statusName);
-                // Click on the Close button in the "Accept notifications" popup
-                await page.getByRole('button', { name: 'Close' }).click();
+                // Dismiss the "Turn on notifications?" card if it shows
+                await Menu.dismissNotificationAsk(page);
                // await Menu.closeNotificationPopUp(page);
 
                 const isInBubble = evaluateScript(page, async () => {
@@ -171,8 +176,8 @@ test.describe('Availability Status', () => {
 
                 await Menu.openMenu(page);
                 await Menu.clickOnStatus(page,statusName);
-                // Click on the Close button in the "Accept notifications" popup
-                await page.getByRole('button', { name: 'Close' }).click();
+                // Dismiss the "Turn on notifications?" card if it shows
+                await Menu.dismissNotificationAsk(page);
                 //await Menu.closeNotificationPopUp(page);
 
                 await using userBob = await getPage(browser, 'Bob',
@@ -213,8 +218,8 @@ test.describe('Availability Status', () => {
 
                 await Menu.openMenu(page);
                 await Menu.clickOnStatus(page,statusName);
-                // Click on the Close button in the "Accept notifications" popup
-                await page.getByRole('button', { name: 'Close' }).click();
+                // Dismiss the "Turn on notifications?" card if it shows
+                await Menu.dismissNotificationAsk(page);
                 // await Menu.closeNotificationPopUp(page);
                 await using userBob = await getPage(browser, 'Bob',
                     publicTestMapUrl("tests/E2E/empty.json", "availability-status")

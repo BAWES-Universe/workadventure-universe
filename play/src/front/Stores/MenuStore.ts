@@ -6,7 +6,6 @@ import { connectionManager } from "../Connection/ConnectionManager";
 import { localUserStore } from "../Connection/LocalUserStore";
 import { ABSOLUTE_PUSHER_URL } from "../Enum/ComputedConst";
 import {
-    CONTACT_URL,
     ENABLE_OPENID,
     ENABLE_REPORT_ISSUES_MENU,
     OPID_PROFILE_SCREEN_PROVIDER,
@@ -15,13 +14,16 @@ import {
 import MapSubMenu from "../Components/ActionBar/MenuIcons/MapSubMenu.svelte";
 import LoginMenuItem from "../Components/ActionBar/MenuIcons/LoginMenuItem.svelte";
 import OrbitMenuItem from "../Components/ActionBar/MenuIcons/OrbitMenuItem.svelte";
+import ExploreMenuItem from "../Components/ActionBar/MenuIcons/ExploreMenuItem.svelte";
 import CustomActionBarButton from "../Components/ActionBar/MenuIcons/CustomActionBarButton.svelte";
 import { analyticsClient } from "../Administration/AnalyticsClient";
 import { userIsAdminStore } from "./GameStore";
 import { megaphoneCanBeUsedStore } from "./MegaphoneStore";
 import { chatVisibilityStore, isMatrixChatEnabledStore } from "./ChatStore";
 import { gameSceneStore } from "./GameSceneStore";
-import { modalIframeStore, modalVisibilityStore, showModalGlobalComminucationVisibilityStore } from "./ModalStore";
+import { mobileLayoutStore } from "./MobileLayoutStore";
+import { modalIframeStore, modalVisibilityStore } from "./ModalStore";
+import { broadcastPanelOpenStore, toggleBroadcastPanel } from "./BroadcastStore";
 import { getAdditionalMenuItemStore } from "./AdditionalItemsMenuStore";
 
 export const menuIconVisiblilityStore = writable(false);
@@ -59,8 +61,6 @@ export enum SubMenusInterface {
     profile = "profile",
     invite = "invite",
     aboutRoom = "credit",
-    globalMessages = "globalMessages",
-    contact = "contact",
     report = "report",
     chat = "chat",
     shortcuts = "shortcuts",
@@ -93,7 +93,6 @@ export const screenSharingActivatedStore = writable(true);
 export const mapEditorActivatedForCurrentArea = writable(false);
 export const mapEditorActivatedForThematics = writable(false);
 export const roomListActivated = writable(true);
-export const contactPageStore = writable<string | undefined>(CONTACT_URL);
 
 const alwaysVisible = writable(true);
 
@@ -116,18 +115,8 @@ function createSubMenusStore() {
         },
         {
             type: "translated",
-            key: SubMenusInterface.globalMessages,
-            visible: userIsAdminStore,
-        },
-        {
-            type: "translated",
             key: SubMenusInterface.chat,
             visible: isMatrixChatEnabledStore,
-        },
-        {
-            type: "translated",
-            key: SubMenusInterface.contact,
-            visible: derived(contactPageStore, ($contactPageStore) => $contactPageStore !== undefined),
         },
         {
             type: "translated",
@@ -258,6 +247,11 @@ export function handleMenuUnregisterEvent(key: string) {
 }
 
 export function handleOpenMenuEvent(key: string) {
+    // The "Global Messages" menu page is now the Broadcast card: map scripts asking for it get the card.
+    if (key === "globalMessages") {
+        toggleBroadcastPanel();
+        return;
+    }
     const menu = subMenusStore.findByKey(key);
     activeSubMenuStore.activateByMenuItem(menu);
     menuVisiblilityStore.set(true);
@@ -331,9 +325,18 @@ const orbitMenuItem: RightMenuItem<OrbitMenuItem> = {
     props: {},
 };
 
+// "Explore {Universe}" in its own pill between Tools and Orbit. When the bar runs out of room it moves into the menu
+// like the other items here. Phones show it in the zoom column instead (ExplorerMenu.svelte).
+const exploreMenuItem: RightMenuItem<ExploreMenuItem> = {
+    id: "explore",
+    fallsInBurgerMenuStore: writable(false),
+    component: ExploreMenuItem,
+    props: {},
+};
+
 export const rightActionBarMenuItems: Readable<RightMenuItem<SvelteComponentTyped>[]> = derived(
-    [additionalRightButtonsMenu, userIsConnected, adminDashboardActivatedStore],
-    ([$additionalButtonsMenu, $userIsConnected, $adminDashboardActivated]) => {
+    [additionalRightButtonsMenu, userIsConnected, adminDashboardActivatedStore, roomListActivated, mobileLayoutStore],
+    ([$additionalButtonsMenu, $userIsConnected, $adminDashboardActivated, $roomListActivated, $mobileLayout]) => {
         const menuItems: RightMenuItem<SvelteComponentTyped>[] = [];
 
         // Add additional buttons from "top" location first
@@ -364,21 +367,24 @@ export const rightActionBarMenuItems: Readable<RightMenuItem<SvelteComponentType
         // Build menu (will move to burger menu on mobile if space is limited)
         menuItems.push(mapsMenuItem);
 
+        if ($roomListActivated && !$mobileLayout) {
+            menuItems.push(exploreMenuItem);
+        }
+
         // Add Orbit button LAST (highest priority - stays visible on mobile)
         // Since items are right-aligned, the last item in array stays visible when space is limited
         if ($adminDashboardActivated) {
             // Create a copy to avoid mutating the original
             const orbitItem = { ...orbitMenuItem };
-            // Orbit is the last item, so it should have last prop for proper styling (rounded right edge)
-            // Add rounded left corners, left padding, and left margin via classList
-            // Using !important utilities to override ActionBarButton defaults
+            // Orbit is the last item, so it should have last prop for proper styling (rounded end edge).
+            // Its own pill: round on the start side too (a full pill, not a half one), the edge drawn there, start
+            // padding, and a margin before it. The !important utilities override the ActionBarButton defaults.
             const existingClassList = orbitItem.props.classList || "";
+            const orbitPill = "!rounded-s-xl u-seg-start !ps-2 !ml-1 @md/actions:!ml-2 @xl/actions:!ml-4";
             orbitItem.props = {
                 ...orbitItem.props,
                 last: true,
-                classList: existingClassList
-                    ? `${existingClassList} !rounded-s-lg !ps-2 !ml-1 @md/actions:!ml-2 @xl/actions:!ml-4`
-                    : "!rounded-s-lg !ps-2 !ml-1 @md/actions:!ml-2 @xl/actions:!ml-4",
+                classList: existingClassList ? `${existingClassList} ${orbitPill}` : orbitPill,
             };
             menuItems.push(orbitItem);
         } else {
@@ -419,10 +425,12 @@ export const mapEditorMenuVisibleStore = derived(
         return ($mapEditorActivated || $mapEditorActivatedForThematics) && $mapManagerActivated;
     }
 );
+/** Broadcast is in the menu for whoever may go live here, for admins (who can also send messages and voice notes),
+ * and for whoever may edit the room (to set who can go live here, even while broadcasting is off). */
 export const globalMessageVisibleStore = derived(
-    [megaphoneCanBeUsedStore, userIsAdminStore],
-    ([$megaphoneCanBeUsedStore, $userIsAdminStore]) => {
-        return $megaphoneCanBeUsedStore || $userIsAdminStore;
+    [megaphoneCanBeUsedStore, userIsAdminStore, mapEditorActivated],
+    ([$megaphoneCanBeUsedStore, $userIsAdminStore, $mapEditorActivated]) => {
+        return $megaphoneCanBeUsedStore || $userIsAdminStore || $mapEditorActivated;
     }
 );
 export const mapMenuVisibleStore = derived(
@@ -479,5 +487,5 @@ export function showMenuItem(key: MenuKeys | string) {
     chatVisibilityStore.set(false);
     modalVisibilityStore.set(false);
     modalIframeStore.set(null);
-    showModalGlobalComminucationVisibilityStore.set(false);
+    broadcastPanelOpenStore.set(false);
 }
