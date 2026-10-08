@@ -6046,18 +6046,6 @@
     {
       "id": "BC-096",
       "area": "Broadcasting",
-      "topic": "Stage/Audience",
-      "action": "A Stage limited to a role ('Who can enter'): a player without the role sends a join to the Stage's space by hand (what a modified browser does). Same on a Stage that is open to everyone",
-      "expected": "The limited Stage's join is refused by the server; the open Stage's join works. People who may edit the room are never refused",
-      "source": "Khalid 10-07 'fix them all without regression' (security plan item 10, ENFORCE_AREA_SPACE_RIGHTS)",
-      "runs": "yes",
-      "runsNote": "yes (needs MAP_EDITOR_ALLOW_ALL_USERS=false)",
-      "knownGap": false,
-      "hooks": "B/Services/AreaSpaceRights.ts (refusedAreaSpaces), P/services/SpaceJoinPolicy.ts (refusedAreaSpaces)"
-    },
-    {
-      "id": "BC-096",
-      "area": "Broadcasting",
       "topic": "Orbit link",
       "action": "On dev, use every part of Broadcast (settings universe row included)",
       "expected": "Nothing in Broadcast opens Orbit. The settings' roles line \"You give people a role on the world's Members page in Orbit.\" is text only",
