@@ -1,32 +1,29 @@
-import type { Page, TestInfo } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { expect, isPhone, newPlayer, test, wa } from "../lib/game";
 import {
     camera,
     drag,
     editRoom,
-    entityOnScreen,
     hit,
-    newAreaAt,
-    openEditor,
     openTools,
-    pickObject,
-    pickTool,
-    placeAt,
     playerPosition,
     rail,
     readWam,
     scene,
+    settle,
     steadyZoom,
     toScreen,
-    SPOT_A,
 } from "../lib/me";
-
-const lookAround = (page: Page) => page.getByTestId("look-around");
-
-async function openLookAround(page: Page): Promise<void> {
-    await page.getByTestId("map-overview-button").click();
-    await expect(lookAround(page)).toBeVisible();
-}
+import {
+    freeMapSpot,
+    lookAround,
+    lookAroundClose,
+    openLookAround,
+    panBy,
+    places,
+    roomWithPlaces,
+    youPin,
+} from "../lib/me-panels";
 
 function overlapArea(
     a: { x: number; y: number; width: number; height: number },
@@ -38,43 +35,7 @@ function overlapArea(
     );
 }
 
-/** A room with one named, listed area around the start and one placed object; editor closed again. */
-async function roomWithPlaces(page: Page, testInfo: TestInfo): Promise<{ url: string; area: string; object: string }> {
-    const url = await editRoom(page, testInfo);
-    await openEditor(page, testInfo);
-    await pickTool(page, "EntityEditor");
-    await pickObject(page, "Basic Wood Table");
-    const object = await placeAt(page, testInfo, url, SPOT_A);
-    await page.getByTestId("placing-done").click();
-    await expect(page.getByTestId("placing-bar")).toBeHidden();
-    await hit(page, testInfo, await entityOnScreen(page, url, object));
-    await page.getByTestId("object-settings").click();
-    await page.getByTestId("object-settings-page").getByTestId("searchable").click();
-    await expect
-        .poll(
-            async () =>
-                (await readWam(url)).entities[object].properties?.find((p) => p.type === "entityDescriptionProperties")
-                    ?.searchable
-        )
-        .toBe(true);
-    await page.getByTestId("edit-panel-back").click();
-    await pickTool(page, "AreaEditor");
-    const area = await newAreaAt(page, testInfo, url, await playerPosition(page), "Lounge");
-    await page.locator("#map-editor-right input#searchable").setChecked(true);
-    await page.locator("#map-editor-right #objectDescription").fill("Sofas and coffee");
-    await page.locator("#map-editor-right #objectDescription").press("Enter");
-    await expect
-        .poll(
-            async () =>
-                (await readWam(url)).areas[0].properties.find((p) => p.type === "areaDescriptionProperties")?.searchable
-        )
-        .toBe(true);
-    await page.getByTestId("closeMapEditorButton").click();
-    await expect(page.getByTestId("edit-pill")).toBeHidden();
-    return { url, area, object };
-}
-
-test("ME-072 @local Desktop: the map button opens Look around: pill, hint, You are here box, button pressed", async ({
+test("ME-072 @local Desktop: the map button opens Look around: Places panel with the X, hint, You are here pin, button pressed", async ({
     page,
 }, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
@@ -85,14 +46,13 @@ test("ME-072 @local Desktop: the map button opens Look around: pill, hint, You a
     await button.click();
     const la = lookAround(page);
     await expect(la).toBeVisible();
-    await expect(page.getByTestId("look-around-back")).toHaveText(/Back to me/);
-    expect(await page.getByTestId("look-around-back").evaluate((e) => getComputedStyle(e).backgroundImage)).toContain(
-        "gradient"
-    );
-    await expect(la.locator(".la-eyebrow")).toHaveText(/Looking around/i);
-    await expect(la.locator(".la-room")).toContainText("1 here");
-    await expect(page.getByTestId("look-around-places-button")).toBeVisible();
-    await expect(page.getByTestId("look-around-you-box")).toContainText("You are here");
+    // The panel on the right edge: title, "<room> · Just you here", and the X that goes back to you.
+    await expect(places(page)).toBeVisible();
+    await expect(places(page).locator(".places-ttl")).toHaveText("Look around");
+    await expect(page.getByTestId("look-around-room-line")).toContainText("Just you here");
+    await expect(lookAroundClose(page)).toHaveAttribute("aria-label", "Close and go back to you");
+    await expect(page.getByTestId("look-around-search")).toBeVisible();
+    await expect(youPin(page)).toContainText("You are here");
     const hint = page.getByTestId("look-around-hint");
     await expect(hint).toContainText("Drag to look around");
     await expect(hint).toContainText("Scroll to zoom · Esc to go back");
@@ -107,7 +67,7 @@ test("ME-072 @local Desktop: the map button opens Look around: pill, hint, You a
             .toBeLessThan(zoom0);
 });
 
-test("ME-073 Phone: the map button opens Look around with the pinch hint; no + and − in the column", async ({
+test("ME-073 Phone: the map button opens Look around with the pinch hint and the bottom sheet; no + and − in the column", async ({
     page,
 }, testInfo) => {
     test.skip(!isPhone(testInfo), "phone only");
@@ -117,9 +77,11 @@ test("ME-073 Phone: the map button opens Look around with the pinch hint; no + a
     await expect(column.getByRole("button", { name: "Zoom Out -" })).toHaveCount(0);
     await openLookAround(page);
     await expect(page.getByTestId("look-around-hint")).toContainText("Pinch to zoom in and out");
-    await expect(page.getByTestId("look-around-back")).toBeVisible();
-    const pill = (await lookAround(page).locator(".la-pill").boundingBox())!;
-    expect(pill.width).toBeGreaterThan(428 - 60);
+    await expect(lookAroundClose(page)).toBeVisible();
+    await expect(page.getByTestId("look-around-grip")).toBeVisible();
+    const sheet = (await places(page).boundingBox())!;
+    expect(sheet.width, "the sheet spans the full width").toBeGreaterThan(428 - 4);
+    expect(sheet.y + sheet.height, "the sheet sits on the bottom edge").toBeGreaterThan(926 - 4);
     await expect(page.getByTestId("map-overview-button")).toHaveAttribute("aria-pressed", "true");
 });
 
@@ -137,17 +99,28 @@ test("ME-074 @local Zooming out past normal opens Look around; zooming in near y
     await steadyZoom(page, testInfo, await onScreen(), "out", 20_000, "look-around");
     await expect(lookAround(page), "zooming out past normal opens Look around").toBeVisible();
     await page.waitForTimeout(1000);
+    // Zooming back in only leaves when the camera is near you. A small map cannot be panned up or down (the camera
+    // keeps it centred), so: bring you to the middle sideways as far as the map allows, then pinch / scroll in on you.
     const middle = { x: vp.width / 2, y: vp.height / 2 };
     for (let i = 0; i < 6 && (await lookAround(page).isVisible()); i++) {
-        const at = await onScreen();
-        if (Math.hypot(at.x - middle.x, at.y - middle.y) > 40) await drag(page, testInfo, at, middle, 10);
-        await steadyZoom(page, testInfo, middle, "in", 1500);
+        const at = await toScreen(page, me.x, me.y);
+        if (Math.abs(at.x - middle.x) > 40) await panBy(page, testInfo, middle.x - at.x, 0);
+        const on = await toScreen(page, me.x, me.y);
+        await steadyZoom(
+            page,
+            testInfo,
+            { x: Math.min(Math.max(on.x, 40), vp.width - 40), y: Math.min(Math.max(on.y, 40), vp.height - 40) },
+            "in",
+            1500
+        );
     }
     await expect(lookAround(page), "zooming back in near you leaves Look around").toBeHidden();
     if (!isPhone(testInfo)) {
+        await settle(page);
         const w0 = (await camera(page)).width;
         await page.getByRole("button", { name: "Zoom Out -" }).click();
         await expect.poll(async () => (await camera(page)).width, { message: "− zooms out" }).toBeGreaterThan(w0);
+        await settle(page);
         const w1 = (await camera(page)).width;
         await page.getByRole("button", { name: "Zoom In +" }).click();
         await expect.poll(async () => (await camera(page)).width, { message: "+ zooms in" }).toBeLessThan(w1);
@@ -160,13 +133,19 @@ test("ME-075 @local Look around: drag pans and hides the hint, keys pan, a quick
     await editRoom(page, testInfo);
     await openLookAround(page);
     await page.waitForTimeout(800);
+    await expect(page.getByTestId("look-around-hint")).toBeVisible();
     const c0 = await camera(page);
-    await drag(page, testInfo, { x: 200, y: 500 }, { x: 320, y: 420 });
+    // On the part of the map the sheet or panel does not cover.
+    // Dragging right moves the camera left, so the arrow key below still has room to pan right.
+    const from = await freeMapSpot(page, testInfo, 0.3, 0.4);
+    const to = await freeMapSpot(page, testInfo, 0.7, 0.6);
+    await drag(page, testInfo, from, to);
     await expect.poll(async () => (await camera(page)).x).not.toBe(c0.x);
     await expect(page.getByTestId("look-around-hint")).toBeHidden();
+    await page.waitForTimeout(600);
     const c1 = await camera(page);
-    await page.mouse.click(250, 450).catch(() => undefined);
-    if (isPhone(testInfo)) await page.touchscreen.tap(250, 450);
+    const tap = await freeMapSpot(page, testInfo, 0.5, 0.5);
+    await hit(page, testInfo, tap);
     await page.waitForTimeout(600);
     const c2 = await camera(page);
     expect(Math.abs(c2.x - c1.x) + Math.abs(c2.y - c1.y), "a quick tap leaves the camera where it was").toBeLessThan(
@@ -187,18 +166,15 @@ test("ME-076 @local The You tab points to you when you are off-screen and glides
     await page.waitForTimeout(1000);
     const vp = page.viewportSize()!;
     const tab = page.getByTestId("look-around-you-tab");
-    for (let i = 0; i < 2; i++)
-        await drag(
-            page,
-            testInfo,
-            { x: vp.width * 0.8, y: vp.height * 0.5 },
-            { x: vp.width * 0.1, y: vp.height * 0.3 },
-            15
-        );
-    for (let i = 0; i < 4 && !(await tab.isVisible()); i++) {
-        if (isPhone(testInfo)) await steadyZoom(page, testInfo, { x: vp.width / 2, y: vp.height / 2 }, "in", 800);
-        else await page.getByRole("button", { name: "Zoom In +" }).click();
-        await page.waitForTimeout(800);
+    // The map keeps itself inside the camera, so a small map cannot be pushed far enough to lose you: pan away as
+    // far as it goes, then zoom in on the far side until you are off-screen (the drags stay clear of the sheet or
+    // panel). Zooming in right next to you would leave Look around instead.
+    const me = await playerPosition(page);
+    for (let i = 0; i < 6 && !(await tab.isVisible()); i++) {
+        await panBy(page, testInfo, -400, 0);
+        const spot = await freeMapSpot(page, testInfo, 0.95, 0.5);
+        await steadyZoom(page, testInfo, spot, "in", 700, "look-around-you-tab");
+        await page.waitForTimeout(500);
     }
     await expect(lookAround(page)).toBeVisible();
     await expect(tab).toBeVisible();
@@ -206,7 +182,6 @@ test("ME-076 @local The You tab points to you when you are off-screen and glides
     await expect(tab.locator("img.you-tab-woka")).toBeVisible();
     await tab.click();
     await expect(tab).toBeHidden();
-    const me = await playerPosition(page);
     await expect
         .poll(
             async () => {
@@ -218,17 +193,31 @@ test("ME-076 @local The You tab points to you when you are off-screen and glides
         .toBe(true);
 });
 
-test("ME-077 @local Back to me, Esc and the grey map button leave Look around at the previous zoom", async ({
+test("ME-077 @local The X (back to you), Esc and the grey map button leave Look around at the previous zoom", async ({
     page,
 }, testInfo) => {
     await editRoom(page, testInfo);
     await page.waitForTimeout(500);
     const z0 = (await camera(page)).zoom;
-    const exits: (() => Promise<void>)[] = [
-        () => page.getByTestId("look-around-back").click(),
-        () => page.getByTestId("map-overview-button").click(),
-    ];
-    if (!isPhone(testInfo)) exits.push(() => page.keyboard.press("Escape"));
+    // The sheet covers the map button on a phone (it goes over the bar, like the chat), so there the way out is the X
+    // or pulling the sheet down from its lowest height; on a computer the grey map button and Esc.
+    const exits: (() => Promise<void>)[] = [() => lookAroundClose(page).click()];
+    if (isPhone(testInfo)) {
+        exits.push(async () => {
+            // Half height > lowest height > gone: the grip moves each time, so it is measured each time.
+            for (let i = 0; i < 2 && (await lookAround(page).isVisible()); i++) {
+                const grip = (await page.getByTestId("look-around-grip").boundingBox())!;
+                const at = { x: grip.x + grip.width / 2, y: grip.y + grip.height / 2 };
+                await drag(page, testInfo, at, { x: at.x, y: at.y + 120 }, 8);
+                await page.waitForTimeout(500);
+            }
+        });
+    } else {
+        exits.push(
+            () => page.getByTestId("map-overview-button").click(),
+            () => page.keyboard.press("Escape")
+        );
+    }
     for (const leave of exits) {
         await openLookAround(page);
         await expect.poll(async () => (await camera(page)).zoom).toBeLessThan(z0);
@@ -240,54 +229,82 @@ test("ME-077 @local Back to me, Esc and the grey map button leave Look around at
     }
 });
 
-test("ME-078 @local Look around: a place with people has a label with its name and count; tapping it opens its card", async ({
+test("ME-078 @local Look around: a listed place has a framed name tag, with the people inside counted; tapping it opens its card", async ({
     page,
 }, testInfo) => {
     await roomWithPlaces(page, testInfo);
     await openLookAround(page);
-    const label = lookAround(page).locator(".area-label", { hasText: "Lounge" });
-    await expect(label).toBeVisible();
-    await expect(label).toContainText("1 person");
-    await label.click({ force: true });
+    const frame = lookAround(page).getByTestId("look-around-area-frame").filter({ hasText: "Lounge" });
+    await expect(frame).toBeVisible();
+    const tag = frame.locator(".la-tag");
+    await expect(tag).toContainText("Lounge");
+    await expect(tag).toContainText("1 person");
+    // The listed object has its own tag too.
+    await expect(lookAround(page).locator(".la-tag-obj", { hasText: "Basic Wood Table" })).toBeVisible();
+    await tag.click({ force: true });
     await expect(page.getByTestId("look-around-place-card")).toContainText("Lounge");
 });
 
-test("ME-079 @local Places: search, All / Areas / Objects chips, filters, rows, no People list, X closes", async ({
+test("ME-079 @local Places: search, Areas and Objects groups with counts, Filter, rows, no People list, X closes", async ({
     page,
 }, testInfo) => {
-    await roomWithPlaces(page, testInfo);
+    await roomWithPlaces(page, testInfo, { quiet: true });
     await openLookAround(page);
-    await page.getByTestId("look-around-places-button").click();
-    const places = page.getByTestId("look-around-places");
-    await expect(places).toBeVisible();
-    await expect(places.locator(".places-ttl")).toHaveText("Places");
-    await expect(places.locator(".places-sub")).toHaveText("Tap one to fly there");
+    // Places is the sheet / panel itself: it opens with Look around, there is no search circle to press.
+    const panel = places(page);
+    await expect(panel.locator(".places-ttl")).toHaveText("Look around");
     await expect(page.getByTestId("look-around-search")).toHaveAttribute("placeholder", "Places and objects");
-    const chips = places.locator(".places-chips .chip");
-    await expect(chips.nth(0)).toHaveText("All");
-    await expect(chips.nth(1)).toHaveText(/Areas\s*1/);
-    await expect(chips.nth(2)).toHaveText(/Objects\s*1/);
-    await expect(places.locator(".area-items .place-row")).toHaveCount(1);
-    await expect(places.locator(".area-items")).toContainText("Lounge");
-    await expect(places.locator(".entity-items .place-row")).toHaveCount(1);
-    await expect(places).not.toContainText("People");
-    await chips.nth(1).click();
-    await expect(places.locator(".entity-items")).toHaveCount(0);
-    await chips.nth(2).click();
-    await expect(places.locator(".area-items")).toHaveCount(0);
-    await chips.nth(0).click();
+    const areasHead = panel.locator(".group-head.areas");
+    const objectsHead = panel.locator(".group-head.entities");
+    await expect(areasHead).toContainText("Areas");
+    await expect(areasHead.locator("b")).toHaveText("1");
+    await expect(objectsHead).toContainText("Objects");
+    await expect(objectsHead.locator("b")).toHaveText("1");
+    const areaRows = panel.locator(".area-items .place-row");
+    const objectRows = panel.locator(".entity-items .place-row");
+    await expect(areaRows).toHaveCount(1);
+    await expect(areaRows.first().locator(".place-name")).toHaveText("Lounge");
+    // The row says what the place does and who is inside ("property · people"). Soft, so the rest still runs.
+    await expect
+        .soft(areaRows.first().locator(".place-sub"), "the row shows the people inside as soon as the panel opens")
+        .toHaveText("Quiet zone · 1 person", { timeout: 5000 });
+    await expect(objectRows).toHaveCount(1);
+    await expect(objectRows.first().locator(".place-name")).toHaveText("Basic Wood Table");
+    await expect(panel).not.toContainText("People");
+    // Each group folds away on its own (what the old All / Areas / Objects chips did: show one kind only).
+    await objectsHead.click();
+    await expect(objectRows.first()).toBeHidden();
+    await expect(areaRows.first()).toBeVisible();
+    await objectsHead.click();
+    await expect(objectRows.first()).toBeVisible();
+    await areasHead.click();
+    await expect(areaRows.first()).toBeHidden();
+    await expect(objectRows.first()).toBeVisible();
+    await areasHead.click();
+    await expect(areaRows.first()).toBeVisible();
+    // Search narrows both lists.
     await page.getByTestId("look-around-search").fill("loun");
-    await expect(places.locator(".area-items .place-row")).toHaveCount(1);
-    await expect(places.locator(".entity-items .place-row")).toHaveCount(0);
+    await expect(areaRows).toHaveCount(1);
+    await expect(objectRows).toHaveCount(0);
+    await expect(areasHead.locator("b")).toHaveText("1");
+    await expect(objectsHead.locator("b")).toHaveText("0");
     await page.getByTestId("look-around-search").fill("");
-    await places.getByRole("button", { name: "Filters" }).click();
-    const filters = places.locator(".places-filters .chip");
-    await expect(filters.first()).toBeVisible();
-    expect(await filters.count()).toBeGreaterThanOrEqual(13);
+    await expect(objectRows).toHaveCount(1);
+    // Filter lists the settings the places of this room use, and picking one keeps only the places that have it.
+    await page.getByTestId("look-around-filter").click();
+    const filters = panel.locator(".places-filters .chip");
+    await expect(filters).toHaveCount(1);
+    await expect(filters.first()).toHaveText("Quiet zone");
     await filters.first().click();
     await expect(filters.first()).toHaveClass(/on/);
-    await page.getByTestId("closeVisitCardButton").click();
-    await expect(places).toBeHidden();
+    await expect(page.getByTestId("look-around-filter")).toContainText("1");
+    await expect(areaRows).toHaveCount(1);
+    await expect(objectRows).toHaveCount(0);
+    await filters.first().click();
+    await expect(objectRows).toHaveCount(1);
+    // The X closes Look around.
+    await lookAroundClose(page).click();
+    await expect(lookAround(page)).toBeHidden();
 });
 
 test("ME-080 @local Place card: a row flies there and opens its card; Walk there walks you there", async ({
@@ -295,13 +312,12 @@ test("ME-080 @local Place card: a row flies there and opens its card; Walk there
 }, testInfo) => {
     const { url, object } = await roomWithPlaces(page, testInfo);
     await openLookAround(page);
-    await page.getByTestId("look-around-places-button").click();
-    const places = page.getByTestId("look-around-places");
-    await places.locator(".entity-items .place-row").first().click();
+    const panel = places(page);
+    await panel.locator(".entity-items .place-row").first().click();
     const card = page.getByTestId("look-around-place-card");
     await expect(card).toBeVisible();
     await expect(card.locator(".place-card-name")).toHaveText("Basic Wood Table");
-    if (isPhone(testInfo)) await expect(places).toBeHidden();
+    if (isPhone(testInfo)) await expect(panel).toBeHidden();
     await expect(card.locator(".place-card-walk")).toHaveText(/Walk there/);
     await expect(card.getByRole("button", { name: "Close" })).toBeVisible();
     await expect(card.getByRole("button", { name: /back/i })).toHaveCount(0);
@@ -322,8 +338,7 @@ test("ME-080 @local Place card: a row flies there and opens its card; Walk there
     }
     if (!isPhone(testInfo)) {
         await openLookAround(page);
-        await page.getByTestId("look-around-places-button").click();
-        await places.locator(".area-items .place-row").first().click();
+        await panel.locator(".area-items .place-row").first().click();
         await expect(card.locator(".place-card-name")).toHaveText("Lounge");
         await expect(card).toContainText("Sofas and coffee");
         await card.getByRole("button", { name: "Close" }).click();
@@ -334,7 +349,6 @@ test("ME-080 @local Place card: a row flies there and opens its card; Walk there
 test("ME-081 Places: Edit this room leaves Look around and opens the editor on Objects", async ({ page }, testInfo) => {
     await editRoom(page, testInfo);
     await openLookAround(page);
-    await page.getByTestId("look-around-places-button").click();
     await page.getByTestId("look-around-edit").click();
     await expect(lookAround(page)).toBeHidden();
     await expect(page.getByTestId("edit-pill")).toBeVisible();
