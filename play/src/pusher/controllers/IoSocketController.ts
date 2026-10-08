@@ -509,7 +509,6 @@ export class IoSocketController {
                             pusherRoom: undefined,
                             spaces: new Set<SpaceName>(),
                             joinSpacesPromise: new Map<SpaceName, Promise<void>>(),
-                            grantedBubbleSpaces: new Set<SpaceName>(),
                             // A person starts with the chat ID Orbit has on file (only ever saved once checked); the
                             // browser then sends proof of its Matrix login (updateChatIdMessage).
                             chatID: botChatID ?? (userData.status === "ok" ? userData.chatID || undefined : undefined),
@@ -519,7 +518,6 @@ export class IoSocketController {
                             roomName,
                             microphoneState,
                             cameraState,
-                            megaphoneChannels: undefined,
                             queryAbortControllers: new Map<number, AbortController>(),
                             keepAliveInterval: undefined,
                         };

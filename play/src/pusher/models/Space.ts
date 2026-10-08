@@ -13,7 +13,6 @@ import { SpaceToBackForwarder } from "./SpaceToBackForwarder";
 import type { SpaceToFrontDispatcherInterface } from "./SpaceToFrontDispatcher";
 import { SpaceToFrontDispatcher } from "./SpaceToFrontDispatcher";
 import { Query } from "./SpaceQuery";
-import { canGoLiveIn } from "./MegaphoneRights";
 import type { SpaceConnectionInterface } from "./SpaceConnection";
 
 export type SpaceUserExtended = {
@@ -364,19 +363,13 @@ export class Space implements SpaceForSpaceConnectionInterface {
             );
         }
 
-        const changedFields = updateSpaceUserMessage.updateMask.filter(
-            (field) =>
-                CLIENT_UPDATABLE_SPACE_USER_FIELDS.has(field) &&
-                (field !== "megaphoneState" ||
-                    !updateSpaceUserMessage.user?.megaphoneState ||
-                    canGoLiveIn(this.localName, client.getUserData()))
+        const changedFields = updateSpaceUserMessage.updateMask.filter((field) =>
+            CLIENT_UPDATABLE_SPACE_USER_FIELDS.has(field)
         );
         if (changedFields.length !== updateSpaceUserMessage.updateMask.length) {
             const message = `[Space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage] User ${
                 spaceUser.spaceUserId
-            } tried to update fields it may not change in space ${this.name}: ${updateSpaceUserMessage.updateMask.join(
-                ", "
-            )}`;
+            } tried to update read-only fields in space ${this.name}: ${updateSpaceUserMessage.updateMask.join(", ")}`;
             console.warn(message);
             Sentry.captureException(new Error(message));
         }
