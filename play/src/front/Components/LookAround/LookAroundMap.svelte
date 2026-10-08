@@ -46,6 +46,8 @@
 
     let overlay: HTMLElement;
     let pin = { x: 0, y: 0 };
+    // The pin has no place until the first frame has measured the map: showing it before would flash it in the corner.
+    let pinPlaced = false;
     let youTab: { side: "left" | "right" | "top" | "bottom"; x: number; y: number } | undefined;
     let frames: AreaFrame[] = [];
     let tags: ObjectTag[] = [];
@@ -86,6 +88,7 @@
         const player = scene.CurrentPlayer;
         const centre = toScreen(player.x, player.y);
         pin = toScreen(player.x, player.y - 40);
+        pinPlaced = true;
         // On a phone the sheet covers the bottom of the map: "off-screen" is measured above it.
         const cover = $lookAroundBottomCoverStore;
         const visibleHeight =
@@ -209,9 +212,11 @@
         >
     {/each}
 
-    <span class="you-pin u-surface" style="transform:translate({pin.x}px,{pin.y}px) translate(-50%,-100%)"
-        ><b>{$LL.mapEditor.lookAround.youAreHere()}</b></span
-    >
+    {#if pinPlaced}
+        <span class="you-pin u-surface" style="transform:translate({pin.x}px,{pin.y}px) translate(-50%,-100%)"
+            ><b>{$LL.mapEditor.lookAround.youAreHere()}</b></span
+        >
+    {/if}
 
     {#if youTab}
         <button
