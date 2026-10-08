@@ -16,6 +16,7 @@
     import { runFriendAction } from "../../UserList/FriendActions";
     import RingButton from "../../UserList/RingButton.svelte";
     import { localUserStore } from "../../../../Connection/LocalUserStore";
+    import { blackListManager } from "../../../../WebRtc/BlackListManager";
     import {
         IconCheck,
         IconCopy,
@@ -237,7 +238,7 @@
                                 : $LL.chat.friends.addFriend()}
                         </button>
                     {/if}
-                    {#if relationship !== "friends" && $invitesEnabledStore}
+                    {#if relationship !== "friends" && relationship !== "blocked_by_me" && relationship !== "blocked_by_them" && !blackListManager.isBlackListed(person.uuid) && $invitesEnabledStore}
                         <RingButton
                             uuid={person.uuid}
                             name={person.name}

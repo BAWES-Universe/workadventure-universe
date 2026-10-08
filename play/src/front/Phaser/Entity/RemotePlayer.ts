@@ -19,6 +19,7 @@ import { analyticsClient } from "../../Administration/AnalyticsClient";
 import { canOpenOrbit, openOrbitProfile } from "../../external-modules/admin-api/index";
 import { friendsEnabledStore, relationshipsStore } from "../../Chat/Stores/FriendsStore";
 import { invitesEnabledStore, ringStore } from "../../Chat/Stores/RingStore";
+import { isBotUser } from "../../Chat/UserProvider/ChatUserMapper";
 import { friendMenuAction } from "../../Chat/Components/UserList/FriendMenuAction";
 import { IconMessage, IconUserCircle, IconUsersPlus, IconWalk } from "@wa-icons";
 
@@ -209,7 +210,11 @@ export class RemotePlayer extends Character implements ActivatableInterface {
             chatID === localUserStore.getChatId() || this.userUuid === localUserStore.getLocalUser()?.uuid;
         // Invite: anyone on the map you haven't blocked, guests too, between Walk to and Add friend. The server says
         // where it reaches; "can't invite from here" shows if it doesn't.
-        if (get(invitesEnabledStore) && !isMyOtherSession && !blackListManager.isBlackListed(this.userUuid)) {
+        const worldUser = [...(get(this.scene.allUsersInWorldStore)?.values() ?? [])].find(
+            (user) => user.uuid === this.userUuid
+        );
+        const isBot = isBotUser({ uuid: this.userUuid, tags: worldUser?.tags });
+        if (get(invitesEnabledStore) && !isMyOtherSession && !isBot && !blackListManager.isBlackListed(this.userUuid)) {
             actions.push({
                 actionName: get(LL).chat.friends.ring.ring(),
                 protected: false,

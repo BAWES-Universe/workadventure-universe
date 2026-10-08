@@ -278,6 +278,10 @@ export class FriendsRings<S extends RingsSocket> {
         let friends = false;
         let sharedWorld = false;
         let ringFrom = "friends_and_members";
+        // A guest has no account to look up: someone who just left is simply not online.
+        if (targetSockets.length === 0 && !caller.isLogged) {
+            return refusal("offline");
+        }
         if (targetIsGuest) {
             // A guest has no settings and no account: only the same world reaches them.
             if (!sameWorld) {
@@ -297,14 +301,29 @@ export class FriendsRings<S extends RingsSocket> {
                 if (e instanceof FriendsError && e.code === "player_not_found" && targetSockets.length === 0) {
                     return refusal("offline");
                 }
-                throw e;
+                // Same world needs no Orbit to reach: if Orbit is down, carry on as if there is no block and the
+                // default setting.
+                if (!sameWorld) {
+                    throw e;
+                }
+                console.warn(
+                    "FriendsRings => Orbit unreachable, inviting within the world with the default setting",
+                    e
+                );
             }
         } else {
             // A guest invites a signed-in player: the same world only, and the player's own choice decides.
             if (!sameWorld) {
                 return refusal("not_friends");
             }
-            ringFrom = (await this.deps.getSettings(targetUuid)).ringFrom;
+            try {
+                ringFrom = (await this.deps.getSettings(targetUuid)).ringFrom;
+            } catch (e) {
+                console.warn(
+                    "FriendsRings => Orbit unreachable, inviting within the world with the default setting",
+                    e
+                );
+            }
         }
 
         if (!sameWorld && !friends && !sharedWorld) {

@@ -253,6 +253,28 @@ describe("FriendsRings", () => {
             expect((await rings.ring(alice, "bob")).outcome).toBe("not_friends");
         });
 
+        it("still invites within the world when Orbit cannot be reached, and refuses other worlds", async () => {
+            const { rings, connect, getRelationship, getSettings } = setup();
+            const alice = connect("alice", ROOM_A, { world: "acme/office" });
+            connect("bob", ROOM_B, { world: "acme/office" });
+            connect("carol", ROOM_B, { world: "other/world" });
+            getRelationship.mockRejectedValue(new FriendsError("friends_error", 502));
+            expect((await rings.ring(alice, "bob")).outcome).toBe("ringing");
+            const dave = connect("dave", ROOM_A, { world: "acme/office" });
+            await expect(rings.ring(dave, "carol")).rejects.toMatchObject({ code: "friends_error" });
+
+            const guest = connect("gus", ROOM_A, { isLogged: false, world: "acme/office" });
+            connect("erin", ROOM_B, { world: "acme/office" });
+            getSettings.mockRejectedValue(new FriendsError("friends_error", 502));
+            expect((await rings.ring(guest, "erin")).outcome).toBe("ringing");
+        });
+
+        it("says offline to a guest who invites someone who just left", async () => {
+            const { rings, connect } = setup();
+            const alice = connect("alice", ROOM_A, { isLogged: false, world: "acme/office" });
+            expect((await rings.ring(alice, "gone")).outcome).toBe("offline");
+        });
+
         it("tells a guest caller once the person they invited walked into their room", async () => {
             const { rings, connect, updatesTo } = setup();
             const alice = connect("alice", ROOM_A, { isLogged: false, world: "acme/office" });

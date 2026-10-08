@@ -761,7 +761,7 @@ const chat: BaseTranslation = {
                 offline: "{userName} isn't online",
                 not_allowed: "{userName} isn't taking invites",
                 not_friends: "You can't invite {userName} from here",
-                too_soon: "You can ring {userName} again in {minutes} min",
+                too_soon: "You can invite {userName} again in {minutes} min",
                 already_ringing: "You're already inviting someone",
                 ended: "That invite has ended",
                 failed: "Couldn't invite {userName}. Try again.",
