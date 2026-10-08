@@ -28,15 +28,16 @@
 
     // The room's own logos (Universe's, from the admin); an empty value from the server means "none".
     $: logoErrorSrc = errorScreen?.imageLogo || gameManager?.currentStartedRoom?.loginSceneLogo || undefined;
-    // The update screen shows the logo alone.
-    $: imageErrorSrc = isNewVersion
-        ? undefined
-        : errorScreen?.image || gameManager?.currentStartedRoom?.errorSceneLogo || undefined;
     // A logo that fails to load shows the name instead; a failed image is left out.
     let failedLogoSrc: string | undefined;
     let failedImageSrc: string | undefined;
-    // When the image is the same picture as the logo shown above it, show it only once, as the logo.
     $: logoShown = errorScreen?.type !== "reconnecting" && !!logoErrorSrc && logoErrorSrc !== failedLogoSrc;
+    // The update screen shows the logo alone. So does any screen with the logo on top: the room's own picture is not
+    // repeated under it. The Reconnecting screen has no logo on top, so it shows that picture as its logo.
+    $: imageErrorSrc = isNewVersion
+        ? undefined
+        : errorScreen?.image || (logoShown ? undefined : gameManager?.currentStartedRoom?.errorSceneLogo) || undefined;
+    // When the image is the same picture as the logo shown above it, show it only once, as the logo.
     $: imageShown =
         !!imageErrorSrc && imageErrorSrc !== failedImageSrc && !(logoShown && imageErrorSrc === logoErrorSrc);
 
