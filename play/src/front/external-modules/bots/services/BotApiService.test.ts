@@ -63,25 +63,6 @@ describe("BotApiService Orbit session contract", () => {
         );
     });
 
-    it("sends the player's game token so the bot server lets guests open a room", async () => {
-        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-            new Response(JSON.stringify({ botsSpawned: 0 }), {
-                status: 200,
-                headers: { "Content-Type": "application/json" },
-            })
-        );
-        const service = new BotApiService();
-        const token = authToken("oidc-token");
-        service.initialize(token, undefined, "room-1", "http://bot-server.workadventure.localhost");
-
-        await service.notifyRoomEnter();
-
-        expect(fetchMock).toHaveBeenCalledWith(
-            "http://bot-server.workadventure.localhost/api/bots/room-enter",
-            expect.objectContaining({ headers: expect.objectContaining({ "X-WA-Auth": token }) })
-        );
-    });
-
     it("clears a cached Orbit session when the authenticated token changes", () => {
         const service = new BotApiService();
         const firstToken = authToken("first-oidc-token");

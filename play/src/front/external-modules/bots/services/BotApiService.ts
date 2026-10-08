@@ -467,16 +467,8 @@ export class BotApiService {
     }
 
     /**
-     * The player's game token. The bot server checks it on the routes every player uses (room enter/leave, a bot's
-     * feelings), guests included.
-     */
-    getGameToken(): string | null {
-        return this.gameToken?.userAccessToken ?? null;
-    }
-
-    /**
      * Call bot-server API (for spawning/despawning bots)
-     * Note: room-enter/leave only need the game token, so guests can spawn bots too
+     * Note: room-enter/leave endpoints don't require authentication
      * Uses Admin API session tokens (same as Admin API) for authenticated endpoints
      */
     private async fetchBotServer(endpoint: string, options: RequestInit = {}): Promise<Response> {
@@ -493,10 +485,6 @@ export class BotApiService {
             ...(options.headers as Record<string, string>),
         };
         const isPublicRoomLifecycle = endpoint === "/api/bots/room-enter" || endpoint === "/api/bots/room-leave";
-        const gameToken = this.getGameToken();
-        if (gameToken) {
-            headers["X-WA-Auth"] = gameToken;
-        }
 
         if (sessionToken) {
             headers.Authorization = `Bearer ${sessionToken}`;
