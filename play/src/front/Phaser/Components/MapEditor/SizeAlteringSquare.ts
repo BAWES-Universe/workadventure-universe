@@ -90,13 +90,21 @@ export class SizeAlteringSquare extends Phaser.GameObjects.Rectangle {
         }
     }
 
+    /** Listens on the whole scene, so it has to be taken off when the square goes. */
+    private readonly onScenePointerUp = (): void => {
+        if (this.selected) {
+            this.select(false);
+            this.emit(SizeAlteringSquareEvent.Released);
+        }
+    };
+
+    public destroy(fromScene?: boolean): void {
+        this.scene?.input?.off(Phaser.Input.Events.POINTER_UP, this.onScenePointerUp);
+        super.destroy(fromScene);
+    }
+
     private bindEventHandlers(): void {
-        this.scene.input.on(Phaser.Input.Events.POINTER_UP, () => {
-            if (this.selected) {
-                this.select(false);
-                this.emit(SizeAlteringSquareEvent.Released);
-            }
-        });
+        this.scene.input.on(Phaser.Input.Events.POINTER_UP, this.onScenePointerUp);
 
         this.on(Phaser.Input.Events.POINTER_DOWN, () => {
             this.select(true);

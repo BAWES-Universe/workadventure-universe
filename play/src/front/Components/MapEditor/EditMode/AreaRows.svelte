@@ -8,6 +8,7 @@
     import type { AreaEditorTool } from "../../../Phaser/Game/MapEditor/Tools/AreaEditorTool";
     import { mobileLayoutStore } from "../../../Stores/MobileLayoutStore";
     import { editAreaListShownStore, editAreaSheetOpenStore } from "../../../Stores/EditModeStore";
+    import { moduleSettingLabel } from "./moduleLabels";
     import { IconChevronRight, IconTexture } from "@wa-icons";
 
     export let areas: AreaData[] = [];
@@ -60,6 +61,7 @@
         const titles = area.properties
             .filter((p) => p.type !== "areaDescriptionProperties")
             .map((p) => {
+                if (p.type === "extensionModule") return moduleSettingLabel(p.subtype)?.title ?? "";
                 const entry = ($LL.mapEditor.edit.properties as Record<string, { title?: () => string } | undefined>)[
                     p.type
                 ];

@@ -107,6 +107,7 @@
         "playAudio",
         "start",
         "exit",
+        "teleport",
         "focusable",
         "personalAreaPropertyData",
         "restrictedRightsPropertyData",

@@ -3,6 +3,7 @@ import type { AreaDataProperty, EntityDataProperty } from "@workadventure/map-ed
 import type { TranslationFunctions } from "../../../i18n/i18n-types";
 import { Entity } from "../../Phaser/ECS/Entity";
 import { AreaPreview } from "../../Phaser/Components/MapEditor/AreaPreview";
+import { moduleSettingLabel } from "../MapEditor/EditMode/moduleLabels";
 import {
     IconDesk,
     IconDoorIn,
@@ -29,6 +30,8 @@ export type Place = Entity | AreaPreview;
 export interface PlaceMainProperty {
     type: string;
     application?: string;
+    /** For a module's setting (the portal), which one. */
+    subtype?: string;
 }
 
 /** The property a place is known by: its first one that is not the description. */
@@ -38,7 +41,8 @@ export function getPlaceMainProperty(place: Place): PlaceMainProperty | undefine
     const property = properties.find((p) => p.type !== "areaDescriptionProperties");
     if (!property) return undefined;
     const application = "application" in property ? (property as { application?: string }).application : undefined;
-    return { type: property.type, application };
+    const subtype = property.type === "extensionModule" ? property.subtype : undefined;
+    return { type: property.type, application, subtype };
 }
 
 const ICONS: Record<string, ComponentType> = {
@@ -63,6 +67,7 @@ const ICONS: Record<string, ComponentType> = {
 /** The icon of a place: its main property's, else the generic area or object icon. */
 export function getPlaceIcon(place: Place): ComponentType {
     const property = getPlaceMainProperty(place);
+    if (property?.subtype) return moduleSettingLabel(property.subtype)?.icon ?? IconLink;
     if (property && ICONS[property.type]) return ICONS[property.type];
     return place instanceof AreaPreview ? IconTexture : IconLamp;
 }
@@ -86,6 +91,9 @@ export function getPlaceName(place: Place, ll: TranslationFunctions): string {
  * around and the editor say the same. An app of "Open a website" keeps its own name (YouTube...).
  */
 export function getSettingTitle(type: string, ll: TranslationFunctions, application?: string): string | undefined {
+    // A module's setting is filtered and named by its subtype ("teleport"), in the module's own words.
+    const moduleLabel = moduleSettingLabel(type);
+    if (moduleLabel) return moduleLabel.title;
     const labels = ll.mapEditor.properties as unknown as Record<string, { label?: () => string } | undefined>;
     if (type === "openWebsite" && application && application !== "website") {
         const app = labels[application];
@@ -103,7 +111,7 @@ export function getSettingTitle(type: string, ll: TranslationFunctions, applicat
 export function getPlacePropertyLabel(place: Place, ll: TranslationFunctions): string | undefined {
     const property = getPlaceMainProperty(place);
     if (!property) return undefined;
-    return getSettingTitle(property.type, ll, property.application);
+    return getSettingTitle(property.subtype ?? property.type, ll, property.application);
 }
 
 /** True if the place matches a property filter (a property type, or an application name for websites). */
@@ -111,7 +119,10 @@ export function placeHasProperty(place: Place, filter: string): boolean {
     const properties: ReadonlyArray<EntityDataProperty | AreaDataProperty> =
         place instanceof AreaPreview ? place.getAreaData().properties : place.getProperties();
     return properties.some(
-        (p) => p.type === filter || ("application" in p && (p as { application?: string }).application === filter)
+        (p) =>
+            p.type === filter ||
+            (p.type === "extensionModule" && p.subtype === filter) ||
+            ("application" in p && (p as { application?: string }).application === filter)
     );
 }
 
