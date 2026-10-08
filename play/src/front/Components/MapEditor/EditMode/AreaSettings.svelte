@@ -866,6 +866,7 @@
         justify-content: center;
         gap: 8px;
         align-self: flex-start;
+        min-height: 44px;
         margin: 14px 0 4px;
         min-height: 44px;
         padding: 0 16px;

@@ -565,7 +565,8 @@ test("ME-047 @local Open a website on enter opens beside the game; on action ask
     const id = await newAreaAt(page, testInfo, url, ROOM_MIDDLE, "Site");
     await page.getByTestId("openWebsite").click();
     const pg = propertyPage(page);
-    await pg.locator("select#trigger").selectOption({ label: "Show immediately on enter" });
+    await pg.getByRole("button", { name: "Interaction" }).click();
+    await pg.getByRole("option", { name: "Show immediately on enter", exact: true }).click();
     await pg.locator("input#tabLink").fill("http://localhost:8081/tests/E2E/empty.json");
     await pg.locator("input#tabLink").press("Enter");
     for (const sel of ["#newTab", "#closable"]) await expect(pg.locator(sel)).toBeAttached();
@@ -580,7 +581,8 @@ test("ME-047 @local Open a website on enter opens beside the game; on action ask
     await pickAreas(page);
     await openAreaFromList(page, testInfo);
     await settings(page).locator(".em-row.on", { hasText: "Open a website" }).locator(".em-row-main").click();
-    await pg.locator("select#trigger").selectOption({ label: "Show action toast with message" });
+    await pg.getByRole("button", { name: "Interaction" }).click();
+    await pg.getByRole("option", { name: "Show action toast with message", exact: true }).click();
     await pg.locator("#triggerMessage").fill("Press to open the site");
     await pg.locator("#triggerMessage").blur();
     await expect

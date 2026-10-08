@@ -185,9 +185,9 @@ class AreaEditor {
     link: string,
     option = "Show immediately on enter"
   ) {
-    await page
-      .locator(".map-editor .sidebar .properties-container select#trigger")
-      .selectOption({ label: option });
+    const properties = page.locator(".map-editor .sidebar .properties-container");
+    await properties.getByRole("button", { name: "Interaction" }).click();
+    await properties.getByRole("option", { name: option, exact: true }).click();
     await page
       .locator(".map-editor .sidebar .properties-container input#tabLink")
       .fill(link, { timeout: 20_000 });
