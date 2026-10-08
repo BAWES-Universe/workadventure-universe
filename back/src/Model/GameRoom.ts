@@ -53,7 +53,7 @@ import { adminApi } from "../Services/AdminApi";
 import { MapLoadingError } from "../Services/MapLoadingError";
 import { getMapStorageClient } from "../Services/MapStorageClient";
 import { emitError, emitErrorOnRoomSocket } from "../Services/MessageHelpers";
-import { bypassesAreaSpaceRights, listenOnlyAreaSpaces, refusedAreaSpaces } from "../Services/AreaSpaceRights";
+import { refusedAreaSpaces } from "../Services/AreaSpaceRights";
 import { ModeratorTagFinder } from "../Services/ModeratorTagFinder";
 import { VariableError } from "../Services/VariableError";
 import { VariablesManager } from "../Services/VariablesManager";
@@ -172,8 +172,6 @@ export class GameRoom implements BrothersFinder {
             wamUrl,
             wamFile ? wamFile.settings : undefined
         );
-        // The areas read to create the room are the first copy to fall back on (see getAreaSpacePolicyFor)
-        gameRoom.lastGoodWam = wamFile;
 
         return gameRoom;
     }
@@ -804,10 +802,6 @@ export class GameRoom implements BrothersFinder {
     }
 
     private wamPromise: Promise<WAMFileFormat> | undefined;
-    // The last copy of the room's areas that was read successfully, and which read it came from (see getWam)
-    private lastGoodWam: WAMFileFormat | undefined;
-    private wamVersion = 0;
-    private lastGoodWamVersion = 0;
 
     /**
      * Returns a promise to the WAM file.
@@ -817,27 +811,11 @@ export class GameRoom implements BrothersFinder {
     private getWam(): Promise<WAMFileFormat | undefined> {
         if (!this._wamUrl) return Promise.resolve(undefined);
         if (!this.wamPromise) {
-            const version = ++this.wamVersion;
-            const promise: Promise<WAMFileFormat> = mapFetcher
-                .fetchWamFile(this._wamUrl, INTERNAL_MAP_STORAGE_URL, PUBLIC_MAP_STORAGE_PREFIX)
-                .then(
-                    (wam) => {
-                        // An older read that finishes after a newer one must not replace what the newer one found
-                        if (version >= this.lastGoodWamVersion) {
-                            this.lastGoodWam = wam;
-                            this.lastGoodWamVersion = version;
-                        }
-                        return wam;
-                    },
-                    (e) => {
-                        // Do not keep a failed read: the next question reads the map again
-                        if (this.wamPromise === promise) {
-                            this.wamPromise = undefined;
-                        }
-                        throw e;
-                    }
-                );
-            this.wamPromise = promise;
+            this.wamPromise = mapFetcher.fetchWamFile(
+                this._wamUrl,
+                INTERNAL_MAP_STORAGE_URL,
+                PUBLIC_MAP_STORAGE_PREFIX
+            );
         }
         return this.wamPromise;
     }
@@ -1294,67 +1272,24 @@ export class GameRoom implements BrothersFinder {
             enabled: firstStreamable !== undefined,
             url: firstStreamable?.url,
             channels,
-            // Filled in from the room's areas by whoever sends it (see getAreaSpacePolicyFor)
+            // Filled in from the room's areas by whoever sends it (see getRefusedAreaSpacesFor)
             refusedAreaSpaces: [],
-            listenOnlyAreaSpaces: [],
-            areaSpacesUnknown: false,
         };
     }
 
     /**
-     * Who may join which meeting room and speak on which stage, for this user (see refusedAreaSpaces and
-     * listenOnlyAreaSpaces). Asked from the room's saved map, which is read again after every area change.
-     *
-     * When the map cannot be read, the rules from the last time it could be read keep applying, so a hiccup never
-     * turns a closed area into an open one. When it has never been read, nothing is known and the answer says so:
-     * the pusher then refuses the meeting rooms and speaker zones until the back can say (it asks again shortly).
+     * The meeting rooms and speaker zones of this room that this user may not join (see refusedAreaSpaces). Asked from
+     * the room's saved map, which is read again after every area change, so a rule changed while people are inside
+     * applies from their next join. When the map cannot be read nothing is refused: a hiccup must not lock people out.
      */
-    public async getAreaSpacePolicyFor(
-        user: Pick<User, "tags" | "uuid" | "canEdit">
-    ): Promise<{ refusedAreaSpaces: string[]; listenOnlyAreaSpaces: string[]; areaSpacesUnknown: boolean }> {
-        const compute = (wam: WAMFileFormat | undefined) => ({
-            refusedAreaSpaces: refusedAreaSpaces(wam, this._roomUrl, user),
-            listenOnlyAreaSpaces: listenOnlyAreaSpaces(wam, this._roomUrl, user),
-            areaSpacesUnknown: false,
-        });
-        if (bypassesAreaSpaceRights(user)) {
-            // Nothing in the map changes what they may do, so a map that cannot be read changes nothing for them
-            return compute(undefined);
-        }
+    public async getRefusedAreaSpacesFor(user: Pick<User, "tags" | "uuid" | "canEdit">): Promise<string[]> {
         try {
             const wam = await this.getWam();
-            this.areaPolicyRetries = 0;
-            return compute(wam);
+            return refusedAreaSpaces(wam, this._roomUrl, user);
         } catch (e) {
             console.warn(`Could not read the areas of ${this._roomUrl} to check who may join them`, e);
+            return [];
         }
-        if (this.lastGoodWam !== undefined) {
-            try {
-                return compute(this.lastGoodWam);
-            } catch (e) {
-                console.warn(`Could not apply the earlier areas of ${this._roomUrl} either`, e);
-            }
-        }
-        this.scheduleAreaPolicyRetry();
-        return { refusedAreaSpaces: [], listenOnlyAreaSpaces: [], areaSpacesUnknown: true };
-    }
-
-    private areaPolicyRetryTimer: ReturnType<typeof setTimeout> | undefined;
-    private areaPolicyRetries = 0;
-    private areaPolicyVersion = 0;
-
-    /** Asks again, a few times with growing pauses, so people refused for lack of an answer are told once there is one. */
-    private scheduleAreaPolicyRetry(): void {
-        if (this.areaPolicyRetryTimer !== undefined || this.areaPolicyRetries >= 6) {
-            return;
-        }
-        const delay = Math.min(2000 * 2 ** this.areaPolicyRetries, 30000);
-        this.areaPolicyRetries++;
-        this.areaPolicyRetryTimer = setTimeout(() => {
-            this.areaPolicyRetryTimer = undefined;
-            void this.sendMegaphoneSettingsToUsers();
-        }, delay);
-        this.areaPolicyRetryTimer.unref?.();
     }
 
     /**
@@ -1363,15 +1298,9 @@ export class GameRoom implements BrothersFinder {
      * room's group, settings or areas, so the back tells them).
      */
     private async sendMegaphoneSettingsToUsers(): Promise<void> {
-        // Two refreshes can overlap (two area edits in a row). Only the newest one tells the users, so an older read
-        // that finishes late never puts an earlier rule back.
-        const version = ++this.areaPolicyVersion;
         await Promise.all(
             [...this.getUsers().values()].map(async (user) => {
-                const policy = await this.getAreaSpacePolicyFor(user);
-                if (version !== this.areaPolicyVersion) {
-                    return;
-                }
+                const refusedAreaSpaces = await this.getRefusedAreaSpacesFor(user);
                 user.socket.write({
                     message: {
                         $case: "batchMessage",
@@ -1383,7 +1312,7 @@ export class GameRoom implements BrothersFinder {
                                         $case: "megaphoneSettingsMessage",
                                         megaphoneSettingsMessage: {
                                             ...this.getMegaphoneSettingsFor(user.tags),
-                                            ...policy,
+                                            refusedAreaSpaces,
                                         },
                                     },
                                 },

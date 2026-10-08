@@ -227,7 +227,7 @@ export class SocketManager {
             playerVariable: playerVariablesMessage,
             megaphoneSettings: {
                 ...room.getMegaphoneSettingsFor(user.tags),
-                ...(await room.getAreaSpacePolicyFor(user)),
+                refusedAreaSpaces: await room.getRefusedAreaSpacesFor(user),
             },
         };
 

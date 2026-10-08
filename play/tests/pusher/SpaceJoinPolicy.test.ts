@@ -117,26 +117,6 @@ describe("checkSpaceJoin", () => {
         });
     });
 
-    describe("when the back could not read the room's areas yet", () => {
-        const unknown = { ...socketData(), areaSpacePolicyUnknown: true };
-
-        it("refuses meeting rooms and speaker zones, which could be limited", () => {
-            expect(() =>
-                checkSpaceJoin(join(areaSpaceName("Meeting room", ROOM), FilterType.ALL_USERS, MEDIA), unknown)
-            ).toThrow(SpaceJoinRefusedError);
-            expect(() =>
-                checkSpaceJoin(join(areaSpaceName("Stage", ROOM), FilterType.LIVE_STREAMING_USERS, MEDIA), unknown)
-            ).toThrow(SpaceJoinRefusedError);
-        });
-
-        it("keeps everything else open", () => {
-            expect(() => checkSpaceJoin(join("my-script-space", FilterType.ALL_USERS, MEDIA), unknown)).not.toThrow();
-            expect(() =>
-                checkSpaceJoin(join(MEGAPHONE, FilterType.LIVE_STREAMING_USERS, MEDIA), unknown)
-            ).not.toThrow();
-        });
-    });
-
     describe("other spaces stay open", () => {
         it.each([
             ["a meeting area", "1a2b3c-meeting-room", FilterType.ALL_USERS],

@@ -6,8 +6,6 @@ interface MegaphoneSettingsLike {
     url?: string | undefined;
     channels?: { url: string; canStream: boolean }[];
     refusedAreaSpaces?: string[];
-    areaSpacesUnknown?: boolean;
-    listenOnlyAreaSpaces?: string[];
 }
 
 /**
@@ -16,10 +14,7 @@ interface MegaphoneSettingsLike {
  * channel's space under slugify(url).
  */
 export function setMegaphoneSettings(
-    socketData: Pick<
-        SocketData,
-        "megaphoneChannels" | "refusedAreaSpaces" | "areaSpacePolicyUnknown" | "listenOnlyAreaSpaces"
-    >,
+    socketData: Pick<SocketData, "megaphoneChannels" | "refusedAreaSpaces">,
     megaphoneSettings: MegaphoneSettingsLike | undefined
 ): void {
     const channels = new Map<string, boolean>();
@@ -36,20 +31,6 @@ export function setMegaphoneSettings(
     socketData.refusedAreaSpaces = new Set(
         (megaphoneSettings?.refusedAreaSpaces ?? []).flatMap((name) => [name, slugify(name)])
     );
-    socketData.areaSpacePolicyUnknown = megaphoneSettings?.areaSpacesUnknown === true;
-    socketData.listenOnlyAreaSpaces = new Set(
-        (megaphoneSettings?.listenOnlyAreaSpaces ?? []).flatMap((name) => [name, slugify(name)])
-    );
-}
-
-/** A speaker invited this player to speak on the stage (the space name the front joins it with). */
-export function recordSpeakInvitation(socketData: Pick<SocketData, "invitedToSpeak">, spaceLocalName: string): void {
-    socketData.invitedToSpeak?.add(spaceLocalName);
-}
-
-/** The invitation is over: the player declined, or was sent back to the audience. */
-export function forgetSpeakInvitation(socketData: Pick<SocketData, "invitedToSpeak">, spaceLocalName: string): void {
-    socketData.invitedToSpeak?.delete(spaceLocalName);
 }
 
 // The spaces of broadcast channels, as WAMSettingsUtils.getMegaphoneChannels names them and the front slugifies them.
@@ -68,16 +49,9 @@ export function isMegaphoneChannelSpace(
  * right the back sent for it; another room's broadcast channel needs it too, so it is refused. Other live spaces, such
  * as speaker zones and map script spaces, are open to anyone in them. Nobody goes live before the room is joined.
  */
-export function canGoLiveIn(
-    spaceLocalName: string,
-    socketData: Pick<SocketData, "megaphoneChannels" | "listenOnlyAreaSpaces" | "invitedToSpeak">
-): boolean {
+export function canGoLiveIn(spaceLocalName: string, socketData: Pick<SocketData, "megaphoneChannels">): boolean {
     const channels = socketData.megaphoneChannels;
     if (channels === undefined) {
-        return false;
-    }
-    // A stage whose speaker zone is limited to roles this player does not have: they listen, unless a speaker invited them
-    if (socketData.listenOnlyAreaSpaces?.has(spaceLocalName) && !socketData.invitedToSpeak?.has(spaceLocalName)) {
         return false;
     }
     const canStream = channels.get(spaceLocalName);
