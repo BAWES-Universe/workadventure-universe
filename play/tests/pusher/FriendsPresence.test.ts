@@ -472,6 +472,31 @@ describe("FriendsPresence.snapshot", () => {
         expect(presence.snapshot()).toMatchObject({ users: [], rooms: {} });
     });
 
+    it("lets invites reach guests, with their status, without listing them as friends", () => {
+        const { presence } = setup();
+        const guest = new FakeSocket("guest-1", ROOM_A, { isLogged: false });
+        const signedIn = new FakeSocket("alice", ROOM_A);
+        const bot = new FakeSocket("bot-1", ROOM_A, { isLogged: false, tags: ["bot"] });
+        presence.track(guest);
+        presence.track(signedIn);
+        presence.track(bot);
+
+        expect(presence.reachableSocketsOf("guest-1")).toEqual([guest]);
+        expect(presence.reachableSocketsOf("alice")).toEqual([signedIn]);
+        expect(presence.reachableSocketsOf("bot-1")).toEqual([]);
+        // Friends presence still knows nothing of guests.
+        expect(presence.socketsOf("guest-1")).toEqual([]);
+        expect(presence.snapshot().users.map((user) => user.uuid)).toEqual(["alice"]);
+
+        expect(presence.reachableStatusOf("guest-1")).toBe(AvailabilityStatus.ONLINE);
+        presence.setStatus(guest, AvailabilityStatus.DO_NOT_DISTURB);
+        expect(presence.reachableStatusOf("guest-1")).toBe(AvailabilityStatus.DO_NOT_DISTURB);
+
+        presence.untrack(guest);
+        expect(presence.reachableSocketsOf("guest-1")).toEqual([]);
+        expect(presence.reachableStatusOf("guest-1")).toBe(AvailabilityStatus.UNCHANGED);
+    });
+
     it("reads meetings and calls as busy, a short break as away", () => {
         expect(liveStatus(AvailabilityStatus.ONLINE)).toBe("online");
         expect(liveStatus(AvailabilityStatus.LIVEKIT)).toBe("busy");

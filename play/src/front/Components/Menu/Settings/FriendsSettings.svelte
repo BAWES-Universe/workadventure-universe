@@ -9,7 +9,7 @@
     import SettingChoice from "./SettingChoice.svelte";
 
     /**
-     * Friends, in the general settings of a signed-in player: who can ring you, who can send friend requests, being
+     * Friends, in the general settings of a signed-in player: who can invite you, who can send friend requests, being
      * found by name, and whether friends see where you are. Saved in Orbit, so they follow you to every world and device.
      * People you blocked are listed underneath, each with Unblock.
      */
@@ -90,6 +90,11 @@
 
     $: ringOptions = [
         {
+            value: "friends_and_members",
+            label: $LL.chat.friends.settings.ringFromEveryone(),
+            hint: $LL.chat.friends.settings.ringFromEveryoneHint(),
+        },
+        {
             value: "friends",
             label: $LL.chat.friends.settings.ringFromFriends(),
             hint: $LL.chat.friends.settings.ringFromFriendsHint(),
@@ -117,7 +122,9 @@
         <SettingChoice
             id="friend-ring-from"
             label={$LL.chat.friends.settings.ringFrom()}
-            value={settings.ringFrom === "nobody" ? "nobody" : "friends"}
+            value={settings.ringFrom === "nobody" || settings.ringFrom === "friends"
+                ? settings.ringFrom
+                : "friends_and_members"}
             options={ringOptions}
             open={open && which === "ring"}
             onToggle={() => toggle("ring")}

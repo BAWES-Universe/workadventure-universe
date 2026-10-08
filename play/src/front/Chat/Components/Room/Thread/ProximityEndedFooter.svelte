@@ -12,6 +12,7 @@
     import { analyticsClient } from "../../../../Administration/AnalyticsClient";
     import { gameSceneIsLoadedStore } from "../../../../Stores/GameSceneStore";
     import { friendsEnabledStore, relationshipsStore } from "../../../Stores/FriendsStore";
+    import { invitesEnabledStore } from "../../../Stores/RingStore";
     import { runFriendAction } from "../../UserList/FriendActions";
     import RingButton from "../../UserList/RingButton.svelte";
     import { localUserStore } from "../../../../Connection/LocalUserStore";
@@ -235,6 +236,15 @@
                                 ? $LL.chat.friends.accept()
                                 : $LL.chat.friends.addFriend()}
                         </button>
+                    {/if}
+                    {#if relationship !== "friends" && $invitesEnabledStore}
+                        <RingButton
+                            uuid={person.uuid}
+                            name={person.name}
+                            status={undefined}
+                            variant="pill"
+                            testId="proximityInvite"
+                        />
                     {/if}
                 </div>
             {/each}

@@ -12,8 +12,21 @@ type FakeSocketData = ReturnType<RingsSocket["getUserData"]>;
 
 class FakeSocket implements RingsSocket {
     public readonly data: FakeSocketData;
-    constructor(userUuid: string, roomId: string, name = userUuid) {
-        this.data = { userUuid, isLogged: true, name, roomId, roomName: " Lobby room ", disconnecting: false };
+    constructor(
+        userUuid: string,
+        roomId: string,
+        name = userUuid,
+        options: { isLogged?: boolean; world?: string } = {}
+    ) {
+        this.data = {
+            userUuid,
+            isLogged: options.isLogged ?? true,
+            name,
+            roomId,
+            roomName: " Lobby room ",
+            disconnecting: false,
+            world: options.world ?? "",
+        };
     }
     getUserData(): FakeSocketData {
         return this.data;
@@ -35,6 +48,7 @@ function setup() {
     const sockets = new Map<string, FakeSocket[]>();
     const statuses = new Map<string, AvailabilityStatus>();
     const getRelationship = vi.fn((_userUuid: string, _targetUuid: string) => Promise.resolve(friends()));
+    const getSettings = vi.fn((_userUuid: string) => Promise.resolve({ ringFrom: "friends_and_members" }));
     const lookupPlace = vi.fn((playUri: string) => Promise.resolve<FriendPlace | null>(PLACES[playUri] ?? null));
     let nextId = 0;
     const rings = new FriendsRings<FakeSocket>({
@@ -42,11 +56,16 @@ function setup() {
         socketsOf: (userUuid) => sockets.get(userUuid) ?? [],
         statusOf: (userUuid) => statuses.get(userUuid) ?? AvailabilityStatus.ONLINE,
         getRelationship,
+        getSettings,
         lookupPlace,
         newId: () => `ring-${++nextId}`,
     });
-    const connect = (userUuid: string, roomId: string): FakeSocket => {
-        const socket = new FakeSocket(userUuid, roomId, userUuid === "alice" ? "Alice" : userUuid);
+    const connect = (
+        userUuid: string,
+        roomId: string,
+        options: { isLogged?: boolean; world?: string } = {}
+    ): FakeSocket => {
+        const socket = new FakeSocket(userUuid, roomId, userUuid === "alice" ? "Alice" : userUuid, options);
         sockets.set(userUuid, [...(sockets.get(userUuid) ?? []), socket]);
         return socket;
     };
@@ -62,7 +81,7 @@ function setup() {
     };
     const updatesTo = (socket: FakeSocket) =>
         sent.filter((entry) => entry.socket === socket).map((entry) => entry.message.update);
-    return { rings, sent, sockets, statuses, getRelationship, lookupPlace, connect, close, updatesTo };
+    return { rings, sent, sockets, statuses, getRelationship, getSettings, lookupPlace, connect, close, updatesTo };
 }
 
 describe("FriendsRings", () => {
@@ -139,11 +158,129 @@ describe("FriendsRings", () => {
         expect((await rings.ring(alice, "bob")).outcome).toBe("ringing");
     });
 
+    describe("who an invite reaches", () => {
+        const none = (extra: Partial<OrbitFriendRelationship> = {}, ringFrom = "friends_and_members") => ({
+            relationship: "none",
+            target: { ringFrom, friendsSeeLocation: true },
+            ...extra,
+        });
+
+        it("lets a guest invite a guest in the same world, with no call to Orbit", async () => {
+            const { rings, connect, getRelationship, getSettings } = setup();
+            const alice = connect("alice", ROOM_A, { isLogged: false, world: "acme/office" });
+            connect("bob", ROOM_B, { isLogged: false, world: "acme/office" });
+            expect((await rings.ring(alice, "bob")).outcome).toBe("ringing");
+            expect(getRelationship).not.toHaveBeenCalled();
+            expect(getSettings).not.toHaveBeenCalled();
+        });
+
+        it("refuses a guest, or a guest's target, in another world", async () => {
+            const { rings, connect } = setup();
+            const alice = connect("alice", ROOM_A, { isLogged: false, world: "acme/office" });
+            connect("bob", ROOM_B, { world: "other/world" });
+            connect("gus", ROOM_B, { isLogged: false, world: "other/world" });
+            expect((await rings.ring(alice, "bob")).outcome).toBe("not_friends");
+            expect((await rings.ring(alice, "gus")).outcome).toBe("not_friends");
+            const bobCaller = connect("bobby", ROOM_B, { world: "other/world" });
+            expect((await rings.ring(bobCaller, "alice")).outcome).toBe("not_friends");
+        });
+
+        it("lets a guest invite a signed-in player in the same world, as the player allows", async () => {
+            const { rings, connect, getSettings } = setup();
+            const alice = connect("alice", ROOM_A, { isLogged: false, world: "acme/office" });
+            connect("bob", ROOM_B, { world: "acme/office" });
+            expect((await rings.ring(alice, "bob")).outcome).toBe("ringing");
+            expect(getSettings).toHaveBeenCalledWith("bob");
+
+            const { rings: strict, connect: connectStrict, getSettings: strictSettings } = setup();
+            const guest = connectStrict("alice", ROOM_A, { isLogged: false, world: "acme/office" });
+            connectStrict("bob", ROOM_B, { world: "acme/office" });
+            strictSettings.mockResolvedValueOnce({ ringFrom: "friends" });
+            expect((await strict.ring(guest, "bob")).outcome).toBe("not_friends");
+            strictSettings.mockResolvedValueOnce({ ringFrom: "nobody" });
+            expect((await strict.ring(guest, "bob")).outcome).toBe("not_allowed");
+        });
+
+        it("lets signed-in players in the same world invite each other without being friends", async () => {
+            const { rings, connect, getRelationship } = setup();
+            const alice = connect("alice", ROOM_A, { world: "acme/office" });
+            connect("bob", ROOM_B, { world: "acme/office" });
+            getRelationship.mockResolvedValueOnce(none());
+            expect((await rings.ring(alice, "bob")).outcome).toBe("ringing");
+        });
+
+        it("lets members of a world they both belong to invite across worlds, and refuses strangers", async () => {
+            const { rings, connect, getRelationship } = setup();
+            const alice = connect("alice", ROOM_A, { world: "acme/office" });
+            connect("bob", ROOM_B, { world: "other/world" });
+            getRelationship.mockResolvedValueOnce(none({ sharedWorld: true }));
+            expect((await rings.ring(alice, "bob")).outcome).toBe("ringing");
+
+            const second = setup();
+            const caller = second.connect("alice", ROOM_A, { world: "acme/office" });
+            second.connect("bob", ROOM_B, { world: "other/world" });
+            second.getRelationship.mockResolvedValueOnce(none({ sharedWorld: false }));
+            expect((await second.rings.ring(caller, "bob")).outcome).toBe("not_friends");
+        });
+
+        it("keeps Friends only strict, even in the same world", async () => {
+            const { rings, connect, getRelationship } = setup();
+            const alice = connect("alice", ROOM_A, { world: "acme/office" });
+            connect("bob", ROOM_B, { world: "acme/office" });
+            getRelationship.mockResolvedValueOnce(none({}, "friends"));
+            expect((await rings.ring(alice, "bob")).outcome).toBe("not_friends");
+            getRelationship.mockResolvedValueOnce(friends("friends"));
+            expect((await rings.ring(alice, "bob")).outcome).toBe("ringing");
+        });
+
+        it("refuses everyone when the player takes no invites, same world or not", async () => {
+            const { rings, connect, getRelationship } = setup();
+            const alice = connect("alice", ROOM_A, { world: "acme/office" });
+            connect("bob", ROOM_B, { world: "acme/office" });
+            getRelationship.mockResolvedValueOnce(friends("nobody"));
+            expect((await rings.ring(alice, "bob")).outcome).toBe("not_allowed");
+            getRelationship.mockResolvedValueOnce(none({}, "nobody"));
+            expect((await rings.ring(alice, "bob")).outcome).toBe("not_allowed");
+        });
+
+        it("never reaches someone who blocked the caller, nor someone the caller blocked, even in the same world", async () => {
+            const { rings, connect, getRelationship } = setup();
+            const alice = connect("alice", ROOM_A, { world: "acme/office" });
+            connect("bob", ROOM_B, { world: "acme/office" });
+            getRelationship.mockResolvedValueOnce(none({ relationship: "blocked_by_them" }));
+            expect((await rings.ring(alice, "bob")).outcome).toBe("not_friends");
+            getRelationship.mockResolvedValueOnce(none({ relationship: "blocked_by_me" }));
+            expect((await rings.ring(alice, "bob")).outcome).toBe("not_friends");
+        });
+
+        it("tells a guest caller once the person they invited walked into their room", async () => {
+            const { rings, connect, updatesTo } = setup();
+            const alice = connect("alice", ROOM_A, { isLogged: false, world: "acme/office" });
+            const bob = connect("bob", ROOM_B, { isLogged: false, world: "acme/office" });
+            await rings.ring(alice, "bob");
+            rings.reply(bob, "ring-1", "accept");
+            const bobInRoomA = connect("bob", ROOM_A, { isLogged: false, world: "acme/office" });
+            rings.joined(bobInRoomA);
+            expect(updatesTo(alice)).toContainEqual({
+                $case: "ringResult",
+                ringResult: { ringId: "ring-1", targetUuid: "bob", result: "arrived" },
+            });
+        });
+    });
+
     it("lets Orbit's refusals through", async () => {
         const { rings, connect, getRelationship } = setup();
         const alice = connect("alice", ROOM_A);
+        connect("ghost", ROOM_B);
         getRelationship.mockRejectedValueOnce(new FriendsError("player_not_found", 404));
         await expect(rings.ring(alice, "ghost")).rejects.toMatchObject({ code: "player_not_found" });
+    });
+
+    it("says offline for someone who is not an account and not connected", async () => {
+        const { rings, connect, getRelationship } = setup();
+        const alice = connect("alice", ROOM_A);
+        getRelationship.mockRejectedValueOnce(new FriendsError("player_not_found", 404));
+        expect((await rings.ring(alice, "ghost")).outcome).toBe("offline");
     });
 
     it("says offline when the friend has no open tab", async () => {

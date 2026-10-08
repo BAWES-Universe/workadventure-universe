@@ -1,6 +1,7 @@
 import { derived, get, writable } from "svelte/store";
 import type { Observable, Subscription } from "rxjs";
 import type { FriendsUpdateMessage, RingAnswer, RingIncoming, RingReplyAnswer } from "@workadventure/messages";
+import { blackListManager } from "../../WebRtc/BlackListManager";
 
 /** What the ring store needs from the room's connection (a RoomConnection), kept small for tests. */
 export interface RingConnection {
@@ -63,6 +64,8 @@ export function createRingStore(now: () => number = Date.now) {
     const incoming = writable<IncomingRingCard | undefined>(undefined);
     const outgoing = writable<Map<string, OutgoingRing>>(new Map());
     const toasts = writable<RingToast[]>([]);
+    // Whether this room can send invites: it has a connection, and the server did not say it has no friends service.
+    const invitesEnabled = writable(false);
     let connection: RingConnection | undefined;
     let updates: Subscription | undefined;
     let incomingTimer: ReturnType<typeof setTimeout> | undefined;
@@ -121,6 +124,11 @@ export function createRingStore(now: () => number = Date.now) {
         switch (message.update?.$case) {
             case "ringIncoming": {
                 const ring = message.update.ringIncoming;
+                // Blocks live in this browser, so the server cannot check them: no card, and a quiet "Not now".
+                if (blackListManager.isBlackListed(ring.fromUuid)) {
+                    connection?.queryRingReply(ring.ringId, "decline").catch((e) => console.error(e));
+                    break;
+                }
                 if (incomingTimer) clearTimeout(incomingTimer);
                 incoming.set({ ...ring, receivedAt: now() });
                 // The pusher says when it ends; this only cleans up if that message never comes.
@@ -160,7 +168,7 @@ export function createRingStore(now: () => number = Date.now) {
     }
 
     function requireConnection(): RingConnection {
-        if (!connection) throw new Error("Rings are for signed-in players");
+        if (!connection) throw new Error("Invites need a connection to the room");
         return connection;
     }
 
@@ -168,11 +176,14 @@ export function createRingStore(now: () => number = Date.now) {
         incoming: { subscribe: incoming.subscribe },
         outgoing: { subscribe: outgoing.subscribe },
         toasts: { subscribe: toasts.subscribe },
-        attach(newConnection: RingConnection, signedIn: boolean): void {
+        invitesEnabled: { subscribe: invitesEnabled.subscribe },
+        /** Guests invite and get invited too, so every connection counts, signed in or not. */
+        attach(newConnection: RingConnection): void {
             updates?.unsubscribe();
             clearIncoming();
-            connection = signedIn ? newConnection : undefined;
-            updates = signedIn ? newConnection.friendsUpdateMessageStream.subscribe(onUpdate) : undefined;
+            connection = newConnection;
+            updates = newConnection.friendsUpdateMessageStream.subscribe(onUpdate);
+            invitesEnabled.set(true);
             // A new room is a new connection: rings from the last one ended with it.
             for (const [uuid, entry] of get(outgoing)) {
                 if (entry.state === "ringing" || entry.state === "starting") setEntry(uuid, undefined);
@@ -184,6 +195,7 @@ export function createRingStore(now: () => number = Date.now) {
             updates?.unsubscribe();
             updates = undefined;
             connection = undefined;
+            invitesEnabled.set(false);
             clearIncoming();
         },
         /** Rings a friend. A refusal shows a toast; resolves whether it is ringing. */
@@ -206,6 +218,8 @@ export function createRingStore(now: () => number = Date.now) {
             } catch (e) {
                 console.error("Ring: could not ring", e);
                 if (get(outgoing).get(uuid) === starting) setEntry(uuid, undefined);
+                // This server has no friends service, so there is nothing to invite with: hide the buttons.
+                if (e instanceof Error && e.message === "friends_unavailable") invitesEnabled.set(false);
                 // Too many rings in a minute: the limit lifts within a minute.
                 if (e instanceof Error && e.message === "rate_limited") toast("too_soon", name, 1);
                 else toast("failed", name);
@@ -280,6 +294,8 @@ export const ringStore = createRingStore();
 export const incomingRingStore = ringStore.incoming;
 export const outgoingRingsStore = ringStore.outgoing;
 export const ringToastsStore = ringStore.toasts;
+/** Whether Invite is offered at all: a connection to the room, and a server that can carry invites. */
+export const invitesEnabledStore = ringStore.invitesEnabled;
 
 /** Ticks every second while something counts down, so labels like "Ringing · 18 s" stay current. */
 export const ringClockStore = derived(

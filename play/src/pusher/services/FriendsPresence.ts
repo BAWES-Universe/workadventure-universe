@@ -182,6 +182,8 @@ export class FriendsPresence<S extends FriendsSocket> {
     // socket => the userUuids it watches
     private readonly watching = new Map<S, Set<string>>();
     private readonly pendingPushes = new Map<string, ReturnType<typeof setTimeout>>();
+    // userUuid => a guest's open tabs and their status. Only invites look here: guests are never listed as friends.
+    private readonly guests = new Map<string, Map<S, { availabilityStatus: AvailabilityStatus }>>();
     // socket => where a guest or a bot is: counted per room, never named
     private readonly visitors = new Map<S, { playUri: string; bot: boolean }>();
     private readonly places = new Map<string, { place: FriendPlace | null; expiresAt: number }>();
@@ -214,6 +216,14 @@ export class FriendsPresence<S extends FriendsSocket> {
         }
         if (!data.isLogged || !data.userUuid) {
             if (data.roomId) this.visitors.set(socket, { playUri: data.roomId, bot: isBotSocket(data) });
+            if (data.roomId && data.userUuid && !isBotSocket(data)) {
+                let guestSessions = this.guests.get(data.userUuid);
+                if (!guestSessions) {
+                    guestSessions = new Map();
+                    this.guests.set(data.userUuid, guestSessions);
+                }
+                guestSessions.set(socket, { availabilityStatus: data.availabilityStatus });
+            }
             return;
         }
         let userSessions = this.sessions.get(data.userUuid);
@@ -236,6 +246,10 @@ export class FriendsPresence<S extends FriendsSocket> {
         this.unwatchAll(socket);
         this.visitors.delete(socket);
         const userUuid = socket.getUserData().userUuid;
+        const guestSessions = this.guests.get(userUuid);
+        if (guestSessions?.delete(socket) && guestSessions.size === 0) {
+            this.guests.delete(userUuid);
+        }
         const userSessions = this.sessions.get(userUuid);
         if (!userSessions?.delete(socket)) {
             return;
@@ -251,6 +265,10 @@ export class FriendsPresence<S extends FriendsSocket> {
             return;
         }
         const userUuid = socket.getUserData().userUuid;
+        const guest = this.guests.get(userUuid)?.get(socket);
+        if (guest) {
+            guest.availabilityStatus = availabilityStatus;
+        }
         const session = this.sessions.get(userUuid)?.get(socket);
         if (!session || session.availabilityStatus === availabilityStatus) {
             return;
@@ -369,6 +387,21 @@ export class FriendsPresence<S extends FriendsSocket> {
     /** The most available status across a user's open tabs; UNCHANGED when they have none. */
     statusOf(userUuid: string): AvailabilityStatus {
         return mostAvailableStatus(this.sessionsOf(userUuid).map((session) => session.availabilityStatus));
+    }
+
+    /** The open tabs an invite can reach: a signed-in player's, or a guest's. */
+    reachableSocketsOf(userUuid: string): S[] {
+        const guests = Array.from(this.guests.get(userUuid)?.keys() ?? []);
+        return [...this.socketsOf(userUuid), ...guests.filter((socket) => !socket.getUserData().disconnecting)];
+    }
+
+    /** The most available status across the tabs an invite can reach; UNCHANGED when there are none. */
+    reachableStatusOf(userUuid: string): AvailabilityStatus {
+        const guests = Array.from(this.guests.get(userUuid)?.values() ?? []).map((guest) => guest.availabilityStatus);
+        return mostAvailableStatus([
+            ...this.sessionsOf(userUuid).map((session) => session.availabilityStatus),
+            ...guests,
+        ]);
     }
 
     /** Display names of one room, from the cache or Orbit; null when unknown or the lookup failed. */

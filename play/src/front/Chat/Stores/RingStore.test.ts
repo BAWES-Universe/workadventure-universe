@@ -2,6 +2,7 @@ import { get } from "svelte/store";
 import { Subject } from "rxjs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FriendsUpdateMessage, RingAnswer, RingReplyAnswer } from "@workadventure/messages";
+import { blackListManager } from "../../WebRtc/BlackListManager";
 import type { RingConnection } from "./RingStore";
 import { createRingStore, RING_AGAIN_MS } from "./RingStore";
 
@@ -37,7 +38,7 @@ describe("ringStore", () => {
     it("rings, shows Stop, and on no answer waits ten minutes before Ring works again", async () => {
         const store = createRingStore();
         const { connection, updates, queryRing } = fakeConnection(ringing);
-        store.attach(connection, true);
+        store.attach(connection);
 
         expect(await store.ring("sara", "Sara")).toBe(true);
         expect(get(store.outgoing).get("sara")).toMatchObject({ state: "ringing", ringId: "r1" });
@@ -59,7 +60,7 @@ describe("ringStore", () => {
     it("says on the way, then that they came over", async () => {
         const store = createRingStore();
         const { connection, updates, queryRing } = fakeConnection(ringing);
-        store.attach(connection, true);
+        store.attach(connection);
         await store.ring("sara", "Sara");
 
         updates.next(result("accepted"));
@@ -79,12 +80,12 @@ describe("ringStore", () => {
 
     it("tells why a ring was refused, and how long to wait when it was too soon", async () => {
         const store = createRingStore();
-        store.attach(fakeConnection({ outcome: "busy", ringId: "", retryAfterSeconds: 0 }).connection, true);
+        store.attach(fakeConnection({ outcome: "busy", ringId: "", retryAfterSeconds: 0 }).connection);
         expect(await store.ring("sara", "Sara")).toBe(false);
         expect(get(store.outgoing).has("sara")).toBe(false);
 
         const soon = createRingStore();
-        soon.attach(fakeConnection({ outcome: "too_soon", ringId: "", retryAfterSeconds: 130 }).connection, true);
+        soon.attach(fakeConnection({ outcome: "too_soon", ringId: "", retryAfterSeconds: 130 }).connection);
         await soon.ring("sara", "Sara");
         expect(get(soon.outgoing).get("sara")?.state).toBe("too_soon");
         expect(get(soon.toasts)[0]).toMatchObject({ kind: "too_soon", minutes: 3 });
@@ -94,7 +95,7 @@ describe("ringStore", () => {
     it("stops a ring and waits before ringing again", async () => {
         const store = createRingStore();
         const { connection, queryRingReply } = fakeConnection(ringing);
-        store.attach(connection, true);
+        store.attach(connection);
         await store.ring("sara", "Sara");
         await store.stop("sara");
         expect(queryRingReply).toHaveBeenCalledWith("r1", "stop");
@@ -105,7 +106,7 @@ describe("ringStore", () => {
         const store = createRingStore();
         const { connection, updates, queryRingReply } = fakeConnection(ringing);
         queryRingReply.mockRejectedValueOnce(new Error("socket closed"));
-        store.attach(connection, true);
+        store.attach(connection);
         await store.ring("sara", "Sara");
         await store.stop("sara");
         updates.next(result("no_answer"));
@@ -116,7 +117,7 @@ describe("ringStore", () => {
     it("rings one friend at a time", async () => {
         const store = createRingStore();
         const { connection, queryRing } = fakeConnection(ringing);
-        store.attach(connection, true);
+        store.attach(connection);
         const first = store.ring("sara", "Sara");
         expect(await store.ring("noura", "Noura")).toBe(false);
         expect(await first).toBe(true);
@@ -129,7 +130,7 @@ describe("ringStore", () => {
         const store = createRingStore();
         const { connection, queryRing } = fakeConnection(ringing);
         queryRing.mockRejectedValueOnce(new Error("rate_limited"));
-        store.attach(connection, true);
+        store.attach(connection);
         expect(await store.ring("sara", "Sara")).toBe(false);
         expect(get(store.toasts)[0]).toMatchObject({ kind: "too_soon", minutes: 1 });
     });
@@ -141,7 +142,7 @@ describe("ringStore", () => {
             playUri: "https://play/@/u/w/hall",
             callerUuid: "omar",
         });
-        store.attach(connection, true);
+        store.attach(connection);
         const incoming = (ringId: string): FriendsUpdateMessage => ({
             update: {
                 $case: "ringIncoming",
@@ -177,7 +178,7 @@ describe("ringStore", () => {
     it("drops a friend's ring when its connection closes, but not a newer connection's", () => {
         const store = createRingStore();
         const first = fakeConnection(ringing);
-        store.attach(first.connection, true);
+        store.attach(first.connection);
         const second = fakeConnection(ringing);
         store.detach(second.connection);
         first.updates.next({
@@ -200,12 +201,70 @@ describe("ringStore", () => {
         expect(get(store.incoming)).toBeUndefined();
     });
 
-    it("rings nobody for guests", async () => {
+    it("lets anyone invite, guests too, once the room has a connection", async () => {
+        const store = createRingStore();
+        expect(get(store.invitesEnabled)).toBe(false);
+        const { connection, queryRing } = fakeConnection(ringing);
+        store.attach(connection);
+        expect(get(store.invitesEnabled)).toBe(true);
+        expect(await store.ring("sara", "Sara")).toBe(true);
+        expect(queryRing).toHaveBeenCalledWith("sara");
+        store.detach(connection);
+        expect(get(store.invitesEnabled)).toBe(false);
+    });
+
+    it("turns Invite off when the server has no friends service", async () => {
         const store = createRingStore();
         const { connection, queryRing } = fakeConnection(ringing);
-        store.attach(connection, false);
+        queryRing.mockRejectedValueOnce(new Error("friends_unavailable"));
+        store.attach(connection);
         expect(await store.ring("sara", "Sara")).toBe(false);
-        expect(queryRing).not.toHaveBeenCalled();
-        expect(get(store.toasts)[0]?.kind).toBe("failed");
+        expect(get(store.invitesEnabled)).toBe(false);
+    });
+
+    it("shows no card for an invite from someone you blocked, and declines it quietly", () => {
+        const store = createRingStore();
+        const { connection, updates, queryRingReply } = fakeConnection(ringing);
+        store.attach(connection);
+        blackListManager.blackList("blocked-uuid");
+        try {
+            updates.next({
+                update: {
+                    $case: "ringIncoming",
+                    ringIncoming: {
+                        ringId: "in-1",
+                        fromUuid: "blocked-uuid",
+                        fromName: "Pest",
+                        playUri: "https://play.test/room",
+                        roomName: "",
+                        worldName: "",
+                        universeName: "",
+                        expiresInMs: 30000,
+                    },
+                },
+            });
+            expect(get(store.incoming)).toBeUndefined();
+            expect(queryRingReply).toHaveBeenCalledWith("in-1", "decline");
+            expect(get(store.toasts)).toEqual([]);
+
+            updates.next({
+                update: {
+                    $case: "ringIncoming",
+                    ringIncoming: {
+                        ringId: "in-2",
+                        fromUuid: "friendly-uuid",
+                        fromName: "Ali",
+                        playUri: "https://play.test/room",
+                        roomName: "",
+                        worldName: "",
+                        universeName: "",
+                        expiresInMs: 30000,
+                    },
+                },
+            });
+            expect(get(store.incoming)?.ringId).toBe("in-2");
+        } finally {
+            blackListManager.cancelBlackList("blocked-uuid");
+        }
     });
 });

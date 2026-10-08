@@ -41,6 +41,7 @@ export { default as IconUser } from "~icons/tabler/user";
 export { default as IconCheckList } from "~icons/tabler/list-check";
 export { default as IconUsers } from "~icons/tabler/users";
 export { default as IconUserPlus } from "~icons/tabler/userPlus";
+export { default as IconUsersPlus } from "~icons/tabler/users-plus";
 export { default as IconDotsCircle } from "~icons/tabler/dotsCircleHorizontal";
 export { default as IconLogout } from "~icons/tabler/logout";
 export { default as IconMessage } from "~icons/tabler/message";

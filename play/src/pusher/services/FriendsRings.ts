@@ -4,8 +4,12 @@ import { AvailabilityStatus } from "@workadventure/messages";
 import type { SocketData } from "../models/Websocket/SocketData";
 import { cleanRoomName } from "./FriendsPresence";
 import type { FriendPlace, OrbitFriendRelationship } from "./FriendsService";
+import { FriendsError } from "./FriendsService";
 
-type RingsSocketData = Pick<SocketData, "userUuid" | "isLogged" | "name" | "roomId" | "roomName" | "disconnecting">;
+type RingsSocketData = Pick<
+    SocketData,
+    "userUuid" | "isLogged" | "name" | "roomId" | "roomName" | "disconnecting" | "world"
+>;
 
 export interface RingsSocket {
     getUserData(): RingsSocketData;
@@ -13,12 +17,14 @@ export interface RingsSocket {
 
 export interface FriendsRingsDependencies<S extends RingsSocket> {
     send(socket: S, message: FriendsUpdateMessage): void;
-    /** The open, signed-in tabs of a user. */
+    /** The open tabs an invite can reach: a signed-in player's, or a guest's. */
     socketsOf(userUuid: string): S[];
-    /** The most available status across a user's open tabs. */
+    /** The most available status across those tabs. */
     statusOf(userUuid: string): AvailabilityStatus;
     /** How the caller stands with the target, from Orbit. May reject with a FriendsError. */
     getRelationship(userUuid: string, targetUuid: string): Promise<OrbitFriendRelationship>;
+    /** Who a signed-in player lets invite them, from Orbit. May reject with a FriendsError. */
+    getSettings(userUuid: string): Promise<{ ringFrom: string }>;
     /** Display names of a room; null when unknown. Should not reject. */
     lookupPlace(playUri: string): Promise<FriendPlace | null>;
     now?: () => number;
@@ -35,7 +41,7 @@ const DEFAULT_RING_MS = 30 * 1000;
 const DEFAULT_COOLDOWN_MS = 10 * 60 * 1000;
 const DEFAULT_ARRIVAL_WATCH_MS = 3 * 60 * 1000;
 
-// A friend set to one of these is not disturbed by a ring.
+// Someone set to one of these is not disturbed by an invite.
 const BUSY_STATUSES: AvailabilityStatus[] = [
     AvailabilityStatus.BUSY,
     AvailabilityStatus.DO_NOT_DISTURB,
@@ -58,7 +64,8 @@ interface ArrivalWatch<S> {
 }
 
 /**
- * Ring a friend: their tabs show a card for a while asking them to come over to the caller's room.
+ * Invite someone: their tabs show a card for a while asking them to come over to the caller's room. Anyone in the same
+ * world can be invited, guests too; from another world, only a signed-in friend or fellow member of a world they share.
  *
  * In memory, like FriendsPresence: a single pusher sees every connected player. A user rings one friend at a
  * time and is rung by one friend at a time. A ring that ends without being accepted holds the caller back from
@@ -88,7 +95,7 @@ export class FriendsRings<S extends RingsSocket> {
         this.arrivalWatchMs = deps.arrivalWatchMs ?? DEFAULT_ARRIVAL_WATCH_MS;
     }
 
-    /** The caller (a signed-in socket) rings a friend. May reject with what Orbit refused. */
+    /** The caller (a signed-in player or a guest) invites someone. May reject with what Orbit refused. */
     async ring(callerSocket: S, targetUuid: string): Promise<RingAnswer> {
         const callerUuid = callerSocket.getUserData().userUuid;
         if (targetUuid === callerUuid) {
@@ -99,13 +106,9 @@ export class FriendsRings<S extends RingsSocket> {
             return early;
         }
 
-        const { relationship, target } = await this.deps.getRelationship(callerUuid, targetUuid);
-        if (relationship !== "friends") {
-            return refusal("not_friends");
-        }
-        // "friends_and_members" lets more people ring, but only friends can ring for now.
-        if (target.ringFrom === "nobody") {
-            return refusal("not_allowed");
+        const refused = await this.refuseReach(callerSocket, targetUuid);
+        if (refused) {
+            return refused;
         }
         if (this.deps.socketsOf(targetUuid).length === 0) {
             return refusal("offline");
@@ -198,10 +201,10 @@ export class FriendsRings<S extends RingsSocket> {
         return replyRefused();
     }
 
-    /** A socket joined its room: tells a caller their friend walked in after accepting. */
+    /** A socket joined its room: tells a caller the person they invited walked in after accepting. */
     joined(socket: S): void {
         const data = socket.getUserData();
-        if (!data.isLogged || !data.userUuid || data.disconnecting) {
+        if (!data.userUuid || data.disconnecting) {
             return;
         }
         for (const watch of Array.from(this.arrivals.values())) {
@@ -257,6 +260,64 @@ export class FriendsRings<S extends RingsSocket> {
         this.sendToTarget(ring, "expired");
         this.sendResult(ring, "no_answer");
         this.startCooldown(ring);
+    }
+
+    /**
+     * Whether the caller may invite this person at all: same world, anyone (guests too); another world, only signed-in
+     * friends or members of a world they share. Then the target's own choice of who may invite them. Undefined when
+     * allowed, otherwise the refusal.
+     */
+    private async refuseReach(callerSocket: S, targetUuid: string): Promise<RingAnswer | undefined> {
+        const caller = callerSocket.getUserData();
+        const targetSockets = this.deps.socketsOf(targetUuid);
+        const sameWorld =
+            caller.world !== "" && targetSockets.some((socket) => socket.getUserData().world === caller.world);
+        const targetIsGuest =
+            targetSockets.length > 0 && targetSockets.every((socket) => !socket.getUserData().isLogged);
+
+        let friends = false;
+        let sharedWorld = false;
+        let ringFrom = "friends_and_members";
+        if (targetIsGuest) {
+            // A guest has no settings and no account: only the same world reaches them.
+            if (!sameWorld) {
+                return refusal("not_friends");
+            }
+        } else if (caller.isLogged) {
+            try {
+                const relationship = await this.deps.getRelationship(caller.userUuid, targetUuid);
+                if (relationship.relationship === "blocked_by_me" || relationship.relationship === "blocked_by_them") {
+                    return refusal("not_friends");
+                }
+                friends = relationship.relationship === "friends";
+                sharedWorld = relationship.sharedWorld === true;
+                ringFrom = relationship.target.ringFrom;
+            } catch (e) {
+                // Not an account and not connected: nobody to invite.
+                if (e instanceof FriendsError && e.code === "player_not_found" && targetSockets.length === 0) {
+                    return refusal("offline");
+                }
+                throw e;
+            }
+        } else {
+            // A guest invites a signed-in player: the same world only, and the player's own choice decides.
+            if (!sameWorld) {
+                return refusal("not_friends");
+            }
+            ringFrom = (await this.deps.getSettings(targetUuid)).ringFrom;
+        }
+
+        if (!sameWorld && !friends && !sharedWorld) {
+            return refusal("not_friends");
+        }
+        if (ringFrom === "nobody") {
+            return refusal("not_allowed");
+        }
+        // "Friends only" holds even in the same world.
+        if (ringFrom === "friends" && !friends) {
+            return refusal("not_friends");
+        }
+        return undefined;
     }
 
     /** The caller's own checks, which need no call to Orbit; run again once Orbit answered. */

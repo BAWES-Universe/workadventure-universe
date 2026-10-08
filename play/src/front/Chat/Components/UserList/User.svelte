@@ -18,6 +18,7 @@
     import { canOpenOrbit } from "../../../external-modules/admin-api/index";
     import { adminDashboardActivatedStore } from "../../../Stores/MenuStore";
     import { friendsEnabledStore, relationshipsStore } from "../../Stores/FriendsStore";
+    import { invitesEnabledStore } from "../../Stores/RingStore";
     import UserActionButton from "./UserActionButton.svelte";
     import ImageWithFallback from "./ImageWithFallback.svelte";
     import PersonActionButton from "./PersonActionButton.svelte";
@@ -124,8 +125,8 @@
         $friendsEnabledStore && !isMe && !isMine && !user.isBot && user.uuid && user.chatId
             ? friendMenuAction(relationship, user.uuid, displayName, $LL)
             : undefined;
-    // A friend who is here can be rung over; Message then moves to ⋮ so the row keeps three buttons.
-    $: canRing = $friendsEnabledStore && isFriend && !isMe && !!user.uuid && !!$userStatus;
+    // Anyone who is here can be invited over, guests too; Message then moves to ⋮ so the row keeps three buttons.
+    $: canRing = $invitesEnabledStore && !isMe && !isMine && !user.isBot && !!user.uuid && !!$userStatus;
     $: menuMessage =
         canRing && actions.message !== "hidden"
             ? ([
