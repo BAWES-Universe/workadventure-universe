@@ -74,8 +74,8 @@
 
 <style>
     .camera-help {
-        background: linear-gradient(160deg, rgba(38, 52, 82, 0.94), rgba(27, 42, 65, 0.96));
-        box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.7), 0 0 32px -14px rgba(134, 41, 252, 0.5);
+        background: var(--u-surface-bg);
+        box-shadow: var(--u-surface-shadow);
     }
     .camera-help-tile {
         display: inline-flex;

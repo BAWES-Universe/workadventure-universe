@@ -23,6 +23,12 @@ import { SelfImprovementLoop } from '../improvement/SelfImprovementLoop';
 import type { AutoPilotImprovement } from '../services/AutoPilotImprovement';
 import * as Sentry from '@sentry/node';
 import { resolveWsUrl } from '../utils/resolveWsUrl';
+import {
+    buildBehaviorConfig,
+    waypointsOf,
+    type BehaviorModel,
+    type LegacyBehaviorType,
+} from '../behaviors/behaviorModel';
 
 export interface BotInstance {
     botId: string;
@@ -56,6 +62,45 @@ export function idleHomeAfterSwitch(
     }
     const fromUpdate: { x: number; y: number } | undefined = updates.behaviorConfig?.assignedSpace?.center;
     return fromUpdate ?? config.assignedSpace?.center;
+}
+
+/**
+ * Where a route bot goes when the editor asks it to start its route again (Done after editing the route): stop 1,
+ * so it walks the route from the beginning instead of walking back to it from wherever it was. Undefined when the
+ * bot doesn't walk a route or has no stops.
+ */
+export function routeStart(
+    model: BehaviorModel,
+    config: Record<string, unknown> | undefined
+): { x: number; y: number } | undefined {
+    if (model.moves !== 'route') {
+        return undefined;
+    }
+    const stops = waypointsOf(config ?? {});
+    return stops.length > 0 ? { x: stops[0].x, y: stops[0].y } : undefined;
+}
+
+type BehaviorClasses = {
+    IdleBehavior: typeof import('../behaviors').IdleBehavior;
+    PatrolBehavior: typeof import('../behaviors').PatrolBehavior;
+    SocialBehavior: typeof import('../behaviors').SocialBehavior;
+};
+
+/**
+ * Create the behaviour class picked by buildBehaviorConfig. The config comes from Orbit as loose JSON with
+ * every default already filled in, hence the casts.
+ */
+function instantiateBehavior(kind: LegacyBehaviorType, cfg: Record<string, unknown>, classes: BehaviorClasses) {
+    switch (kind) {
+        case 'idle':
+            return new classes.IdleBehavior(cfg as unknown as ConstructorParameters<BehaviorClasses['IdleBehavior']>[0]);
+        case 'patrol':
+            return new classes.PatrolBehavior(cfg as unknown as ConstructorParameters<BehaviorClasses['PatrolBehavior']>[0]);
+        case 'social':
+            return new classes.SocialBehavior(cfg as unknown as ConstructorParameters<BehaviorClasses['SocialBehavior']>[0]);
+        default:
+            throw new Error(`Unknown behavior type: ${String(kind)}`);
+    }
 }
 
 export class BotManager {
@@ -278,6 +323,7 @@ export class BotManager {
             position,
             viewport: { top: 0, bottom: 1000, left: 0, right: 1000 }, // TODO: Get from config
             characterTextureIds: config.characterTextureIds || [], // TODO: Get from config or WAM file
+            companionTextureId: config.companionTextureId || undefined,
             uploaderUrl: process.env.UPLOADER_URL,
         };
         
@@ -289,129 +335,13 @@ export class BotManager {
         // Set behavior based on config
         const { IdleBehavior, PatrolBehavior, SocialBehavior } = await import('../behaviors');
         
-        let behavior;
-        const behaviorConfig = config.behaviorConfig || { type: config.behaviorType };
-        
-        // Transform Admin API config format to behavior format
-        const transformBehaviorConfig = (type: string, cfg: Record<string, any>): Record<string, any> => {
-            const transformed: any = { ...(cfg as any), type };
-
-            // Transform patrol config: patrolWaypoints → waypoints
-            if (type === 'patrol') {
-                // Convert patrolWaypoints to waypoints (Admin API uses patrolWaypoints)
-                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.log(`[BotManager] Transforming patrol config, patrolWaypoints:`, (cfg as any).patrolWaypoints, `waypoints:`, (cfg as any).waypoints);
-                }
-                if ((cfg as any).patrolWaypoints && Array.isArray((cfg as any).patrolWaypoints)) {
-                    transformed.waypoints = (cfg as any).patrolWaypoints;
-                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[BotManager] Set waypoints from patrolWaypoints:`, transformed.waypoints);
-                    }
-                } else if ((cfg as any).waypoints && Array.isArray((cfg as any).waypoints)) {
-                    // Already has waypoints, use it
-                    transformed.waypoints = cfg.waypoints;
-                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[BotManager] Set waypoints from existing waypoints:`, transformed.waypoints);
-                    }
-                } else {
-                    // No waypoints provided, use empty array
-                    transformed.waypoints = [];
-                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[BotManager] No waypoints found, using empty array`);
-                    }
-                }
-                // Ensure waypoints is always an array (safety check)
-                if (!Array.isArray(transformed.waypoints)) {
-                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.warn(`[BotManager] Invalid waypoints for patrol bot, using empty array`);
-                    }
-                    transformed.waypoints = [];
-                }
-                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.log(`[BotManager] Final transformed waypoints:`, transformed.waypoints);
-                }
-                // Ensure required fields have defaults
-                if (typeof transformed.loop === 'undefined') transformed.loop = true;
-                if (typeof transformed.pauseAtWaypoints === 'undefined') transformed.pauseAtWaypoints = 0;
-                    if (typeof transformed.speed === 'undefined') transformed.speed = 50; // Match original bots branch default
-                // Default to true for patrol bots - they should respond to players by default
-                if (typeof transformed.respondToPlayers === 'undefined') transformed.respondToPlayers = true;
-            }
-            
-            // Transform social config: ensure required fields
-            if (type === 'social') {
-                if (typeof transformed.conversationRadius === 'undefined') {
-                    transformed.conversationRadius = cfg.conversationRadius || 200;
-                }
-                if (typeof transformed.minTimeBetweenConversations === 'undefined') {
-                    transformed.minTimeBetweenConversations = cfg.minTimeBetweenConversations || 300000;
-                }
-                if (typeof transformed.maxConversationDuration === 'undefined') {
-                    transformed.maxConversationDuration = 300000; // 5 minutes
-                }
-                if (typeof transformed.conversationHistorySize === 'undefined') {
-                    transformed.conversationHistorySize = 50;
-                }
-                if (typeof transformed.respectPlayerStatus === 'undefined') {
-                    transformed.respectPlayerStatus = true;
-                }
-                if (typeof transformed.maxConcurrentConversations === 'undefined') {
-                    transformed.maxConcurrentConversations = 1;
-                }
-                // Use assignedSpace for wander area
-                if (config.assignedSpace) {
-                    transformed.wanderRadius = config.assignedSpace.radius || 200;
-                    transformed.wanderCenter = config.assignedSpace.center || { x: 0, y: 0 };
-                } else {
-                    transformed.wanderRadius = 200;
-                    transformed.wanderCenter = { x: 0, y: 0 };
-                }
-                if (typeof transformed.wanderSpeed === 'undefined') transformed.wanderSpeed = 50;
-                if (typeof transformed.approachDistance === 'undefined') transformed.approachDistance = 50;
-            }
-            
-            // Ensure assignedSpace exists for all behaviors
-            if (!transformed.assignedSpace && config.assignedSpace) {
-                transformed.assignedSpace = config.assignedSpace;
-            }
-            
-            return transformed;
-        };
-        
-        // Helper to safely cast behavior config (comes from Admin API, may not match exact interface)
-        const createBehavior = (type: string, cfg: Record<string, any>) => {
-            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.log(`[BotManager] createBehavior called for type: ${type}, cfg keys:`, Object.keys(cfg));
-            }
-            const transformedConfig = transformBehaviorConfig(type, cfg);
-            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.log(`[BotManager] After transformation, waypoints:`, transformedConfig.waypoints);
-            }
-            
-            switch (type) {
-                case 'idle':
-                    return new IdleBehavior(transformedConfig as ConstructorParameters<typeof IdleBehavior>[0]);
-                case 'patrol':
-                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[BotManager] Creating PatrolBehavior with config:`, JSON.stringify(transformedConfig, null, 2));
-                    }
-                    // Final safety check - ensure waypoints exists
-                    if (!transformedConfig.waypoints || !Array.isArray(transformedConfig.waypoints)) {
-                        console.error(`[BotManager] ERROR: waypoints is missing or invalid in transformed config!`, transformedConfig);
-                        transformedConfig.waypoints = [];
-                    }
-                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[BotManager] Final waypoints before constructor:`, transformedConfig.waypoints);
-                    }
-                    return new PatrolBehavior(transformedConfig as ConstructorParameters<typeof PatrolBehavior>[0]);
-                case 'social':
-                    return new SocialBehavior(transformedConfig as ConstructorParameters<typeof SocialBehavior>[0]);
-                default:
-                    throw new Error(`Unknown behavior type: ${type}`);
-            }
-        };
-        
-        behavior = createBehavior(config.behaviorType, behaviorConfig);
+        // Pick the behaviour from the bot's model (where it moves, whether it goes to people), filling in
+        // every default. The same helper runs on live edits, so spawn and edit can't disagree.
+        const built = buildBehaviorConfig(config.behaviorType, config.behaviorConfig, config.assignedSpace);
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[BotManager] Bot ${botId} behaviour: ${built.kind} (moves=${built.model.moves}, goesToPeople=${built.model.goesToPeople})`);
+        }
+        const behavior = instantiateBehavior(built.kind, built.config, { IdleBehavior, PatrolBehavior, SocialBehavior });
         
         // Set services for behavior (including response processor and metrics collector for metrics)
         behavior.setServices(this.aiService, this.adminApiService, this.conversationStorage, this.responseProcessor, this.metricsCollector);
@@ -678,7 +608,8 @@ export class BotManager {
      */
     async updateBot(
         botId: string,
-        updates: Partial<BotConfiguration>
+        updates: Partial<BotConfiguration>,
+        options: { restartRoute?: boolean } = {}
     ): Promise<{ updated: boolean; reason?: string; changes?: string[] }> {
         const instance = this.bots.get(botId);
         if (!instance) {
@@ -695,10 +626,16 @@ export class BotManager {
             }
             instance.client.updateConfig({ position: updates.position });
             
-            // Update stored config
+            // Update stored config: the bot's spot is the centre of its assigned space, kept in two places
             if (instance.config.assignedSpace) {
                 instance.config.assignedSpace.center = updates.position;
             }
+            const savedSpace = instance.config.behaviorConfig?.assignedSpace as { center: { x: number; y: number }; radius: number } | undefined;
+            if (savedSpace) {
+                instance.config.behaviorConfig.assignedSpace = { ...savedSpace, center: { ...updates.position } };
+            }
+            // The running behavior walks back to its spot after chats: point it at the new one
+            instance.client.getBehavior()?.setHome(updates.position);
             changes.push('position');
         }
 
@@ -718,8 +655,7 @@ export class BotManager {
             }
             
             const newBehaviorType = updates.behaviorType || instance.config.behaviorType;
-            const newBehaviorConfig = updates.behaviorConfig || instance.config.behaviorConfig || {};
-            
+
             // CRITICAL FIX: Ensure we have a valid behaviorType before proceeding
             if (!newBehaviorType) {
                 console.error(`[BotManager] Cannot update behavior for ${botId}: behaviorType is missing!`, {
@@ -728,16 +664,7 @@ export class BotManager {
                 });
                 throw new Error(`Cannot update behavior: behaviorType is required`);
             }
-            
-            // ADD MORE DEBUG LOGGING
-            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.log(`[BotManager] Resolved behavior for ${botId}:`, {
-                    newBehaviorType,
-                    newBehaviorConfigKeys: Object.keys(newBehaviorConfig),
-                    willCreateBehavior: true,
-                });
-            }
-            
+
             // Update stored config
             if (updates.behaviorType) {
                 instance.config.behaviorType = updates.behaviorType as 'idle' | 'patrol' | 'social';
@@ -745,91 +672,25 @@ export class BotManager {
             if (updates.behaviorConfig) {
                 instance.config.behaviorConfig = { ...instance.config.behaviorConfig, ...updates.behaviorConfig };
             }
-            
-            // Transform config for behavior (similar to spawnBot)
-            const transformBehaviorConfig = (type: string, cfg: Record<string, unknown>): Record<string, unknown> => {
-                const transformed: Record<string, unknown> = { ...cfg };
-                
-                // Transform patrol waypoints
-                if (type === 'patrol') {
-                    if (cfg.patrolWaypoints && !cfg.waypoints) {
-                        transformed.waypoints = cfg.patrolWaypoints;
-                    }
-                    if (typeof transformed.loop === 'undefined') transformed.loop = true;
-                    if (typeof transformed.pauseAtWaypoints === 'undefined') transformed.pauseAtWaypoints = 0;
-                    if (typeof transformed.speed === 'undefined') transformed.speed = 50; // Match original bots branch default
-                    if (typeof transformed.respondToPlayers === 'undefined') transformed.respondToPlayers = false;
-                }
-                
-                // Transform social config
-                if (type === 'social') {
-                    if (typeof transformed.conversationRadius === 'undefined') {
-                        transformed.conversationRadius = (cfg.conversationRadius as number) || 200;
-                    }
-                    if (typeof transformed.minTimeBetweenConversations === 'undefined') {
-                        transformed.minTimeBetweenConversations = 300000;
-                    }
-                    if (typeof transformed.maxConversationDuration === 'undefined') {
-                        transformed.maxConversationDuration = 300000;
-                    }
-                    if (typeof transformed.conversationHistorySize === 'undefined') {
-                        transformed.conversationHistorySize = 50;
-                    }
-                    if (typeof transformed.respectPlayerStatus === 'undefined') {
-                        transformed.respectPlayerStatus = true;
-                    }
-                    if (typeof transformed.maxConcurrentConversations === 'undefined') {
-                        transformed.maxConcurrentConversations = 1;
-                    }
-                    
-                    // Use assignedSpace for wander area
-                    const assignedSpace = (cfg.assignedSpace || instance.config.assignedSpace) as { center: { x: number; y: number }; radius: number } | undefined;
-                    if (assignedSpace) {
-                        transformed.wanderRadius = assignedSpace.radius || 200;
-                        transformed.wanderCenter = assignedSpace.center || { x: 0, y: 0 };
-                    } else {
-                        transformed.wanderRadius = 200;
-                        transformed.wanderCenter = { x: 0, y: 0 };
-                    }
-                    if (typeof transformed.wanderSpeed === 'undefined') transformed.wanderSpeed = 50;
-                    if (typeof transformed.approachDistance === 'undefined') transformed.approachDistance = 50;
-                }
-                
-                // Ensure assignedSpace exists for all behaviors
-                if (!transformed.assignedSpace && instance.config.assignedSpace) {
-                    transformed.assignedSpace = instance.config.assignedSpace;
-                }
-                
-                return transformed;
-            };
-            
-            const createBehavior = (type: string, cfg: any) => {
-                const transformedConfig = transformBehaviorConfig(type, cfg);
-                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.log(`[BotManager] Creating new ${type} behavior with config:`, JSON.stringify(transformedConfig, null, 2));
-                }
-                
-                switch (type) {
-                    case 'idle':
-                        return new IdleBehavior(transformedConfig as ConstructorParameters<typeof IdleBehavior>[0]);
-                    case 'patrol':
-                        // Final safety check for waypoints
-                        if (!(transformedConfig as any).waypoints || !Array.isArray((transformedConfig as any).waypoints)) {
-                            (transformedConfig as any).waypoints = [];
-                        }
-                        return new PatrolBehavior(transformedConfig as ConstructorParameters<typeof PatrolBehavior>[0]);
-                    case 'social':
-                        return new SocialBehavior(transformedConfig as ConstructorParameters<typeof SocialBehavior>[0]);
-                    default:
-                        throw new Error(`Unknown behavior type: ${type}`);
-                }
-            };
-            
-            const behavior = createBehavior(newBehaviorType, newBehaviorConfig as any);
+
+            // Rebuild from the whole merged config, not only the fields this edit sent: the editor sends one
+            // field at a time (a stop, the radius), and rebuilding from that alone dropped everything else.
+            const built = buildBehaviorConfig(newBehaviorType, instance.config.behaviorConfig, instance.config.assignedSpace);
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[BotManager] Live update for ${botId}: ${built.kind} (moves=${built.model.moves}, goesToPeople=${built.model.goesToPeople})`);
+            }
+            const behavior = instantiateBehavior(built.kind, built.config, { IdleBehavior, PatrolBehavior, SocialBehavior });
             // Set services for behavior (required for AI responses)
             behavior.setServices(this.aiService, this.adminApiService, this.conversationStorage, this.responseProcessor, this.metricsCollector);
             if (behavior.setConversationMemory) {
                 behavior.setConversationMemory(this.conversationMemory);
+            }
+            // Done after editing a route: the bot starts it again from stop 1. Only then: each stop added or dragged
+            // while editing is also sent here, and the bot shouldn't jump on every one.
+            const restartAt = options.restartRoute ? routeStart(built.model, instance.config.behaviorConfig) : undefined;
+            if (restartAt) {
+                instance.client.teleportTo(restartAt.x, restartAt.y);
+                changes.push('position');
             }
             instance.client.setBehavior(behavior);
 
@@ -849,10 +710,11 @@ export class BotManager {
             }
         }
 
-        // Handle AI configuration updates (aiProviderRef, chatInstructions)
+        // Handle AI configuration updates (aiProviderRef, chatInstructions, toolTimeoutSeconds)
         // Check if any AI config fields are present in the updates (including empty strings)
         const aiConfigUpdated = 'aiProviderRef' in updates || 
-                               'chatInstructions' in updates;
+                               'chatInstructions' in updates ||
+                               'toolTimeoutSeconds' in updates;
         
         if (aiConfigUpdated) {
             // Update stored config (allow empty strings to clear values)
@@ -861,6 +723,9 @@ export class BotManager {
             }
             if ('chatInstructions' in updates) {
                 instance.config.chatInstructions = updates.chatInstructions;
+            }
+            if ('toolTimeoutSeconds' in updates) {
+                instance.config.toolTimeoutSeconds = updates.toolTimeoutSeconds;
             }
             
             // Update BotClient's fullConfig so behaviors get the new config immediately
@@ -877,10 +742,12 @@ export class BotManager {
         }
 
         // Handle other configuration updates (name, description, enabled, etc.)
-        // Name and characterTextureIds require respawn (part of WebSocket connection)
+        // Name, characterTextureIds and the companion require respawn (part of WebSocket connection)
         const needsRespawn = ('name' in updates && updates.name !== instance.config.name) ||
                             ('characterTextureIds' in updates && 
-                             JSON.stringify(updates.characterTextureIds) !== JSON.stringify(instance.config.characterTextureIds));
+                             JSON.stringify(updates.characterTextureIds) !== JSON.stringify(instance.config.characterTextureIds)) ||
+                            ('companionTextureId' in updates &&
+                             (updates.companionTextureId ?? null) !== (instance.config.companionTextureId ?? null));
         
         if ('name' in updates) {
             instance.config.name = updates.name || instance.config.name;
@@ -899,9 +766,13 @@ export class BotManager {
             instance.config.characterTextureIds = updates.characterTextureIds;
             changes.push('characterTextureIds');
         }
+        if ('companionTextureId' in updates) {
+            instance.config.companionTextureId = updates.companionTextureId ?? null;
+            changes.push('companionTextureId');
+        }
 
         // Update BotClient's fullConfig if any config fields changed
-        if (changes.length > 0 && (aiConfigUpdated || 'name' in updates || 'description' in updates || 'enabled' in updates || 'characterTextureIds' in updates)) {
+        if (changes.length > 0 && (aiConfigUpdated || 'name' in updates || 'description' in updates || 'enabled' in updates || 'characterTextureIds' in updates || 'companionTextureId' in updates)) {
             instance.client.setFullConfig(instance.config);
         }
 
@@ -1090,6 +961,7 @@ export class BotManager {
                             existingInstance.config.name !== bot.name ||
                             existingInstance.config.behaviorType !== bot.behaviorType ||
                             JSON.stringify(existingInstance.config.characterTextureIds) !== JSON.stringify(bot.characterTextureIds) ||
+                            (existingInstance.config.companionTextureId ?? null) !== (bot.companionTextureId ?? null) ||
                             JSON.stringify(existingInstance.config.assignedSpace) !== JSON.stringify(bot.assignedSpace);
                         
                         if (needsRespawn) {
@@ -1131,6 +1003,10 @@ export class BotManager {
                 console.log(`[BotManager] Spawned ${newBotsSpawned} new bots for room ${roomId}`);
             }
             console.log(`[BotManager] Room ${roomId} has ${targetRoom.botIds.size} bots total`);
+            // A room without bots isn't kept, so room ids that have no bots (or don't exist) don't pile up
+            if (targetRoom.botIds.size === 0) {
+                this.roomsWithBots.delete(roomId);
+            }
         } catch (error) {
             console.error(`[BotManager] Error ensuring bots for room ${roomId}:`, error);
             throw error;

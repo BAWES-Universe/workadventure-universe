@@ -7,38 +7,46 @@
     import { connectionManager } from "../../Connection/ConnectionManager";
     import { selectCharacterSceneVisibleStore } from "../../Stores/SelectCharacterStore";
     import { EnableCameraSceneName } from "../../Phaser/Login/EnableCameraScene";
+    import { LL } from "../../../i18n/i18n-svelte";
     import WokaSelectScene from "./WokaSelectScene.svelte";
     import WokaCustomizeScene from "./WokaCustomizeScene.svelte";
 
     let buildOwnWoka = false;
     let error: string | null = null;
+    // Opened from the menu, the room is waiting: the round close leads back into it with the WOKA unchanged
+    const canGoBack = gameManager.canResumeGame;
+
+    function close() {
+        selectCharacterSceneVisibleStore.set(false);
+        gameManager.tryToStopScene(SelectCharacterSceneName);
+        gameManager.tryResumingGame(EnableCameraSceneName);
+    }
 
     async function saveAndContinue(texturesId: string[]) {
         error = null; // Reset error message
         try {
             if (!areCharacterTexturesValid(texturesId)) {
-                error = "Invalid character textures";
+                error = $LL.woka.selectWoka.saveError();
                 return;
             }
 
             analyticsClient.validationWoka("SelectWoka");
             gameManager.setCharacterTextureIds(texturesId);
             await connectionManager.saveTextures(texturesId);
-            selectCharacterSceneVisibleStore.set(false);
-            gameManager.tryToStopScene(SelectCharacterSceneName);
-            gameManager.tryResumingGame(EnableCameraSceneName);
+            close();
         } catch (err) {
             console.error("Error saving textures:", err);
-            error = "Failed to save character customization";
+            error = $LL.woka.selectWoka.saveError();
         }
     }
 
     // Function to handle keyboard navigation
     function useKeyboardNavigation(event: KeyboardEvent) {
-        if (event.key === "Escape") {
-            event.preventDefault();
-            buildOwnWoka = false; // Go back to the selection scene
-        }
+        if (event.key !== "Escape") return;
+        event.preventDefault();
+        // Escape goes from Build your WOKA back to the picker, and from the picker back to the room
+        if (buildOwnWoka) buildOwnWoka = false;
+        else if (canGoBack) close();
     }
 
     let mounted = false;
@@ -65,12 +73,34 @@
 
 {#if mounted}
     {#if buildOwnWoka}
-        <WokaCustomizeScene back={() => (buildOwnWoka = false)} {saveAndContinue} />
+        <WokaCustomizeScene
+            back={() => (buildOwnWoka = false)}
+            {saveAndContinue}
+            close={canGoBack ? close : undefined}
+        />
     {:else}
-        <WokaSelectScene customize={() => (buildOwnWoka = true)} {saveAndContinue} />
+        <WokaSelectScene
+            customize={() => (buildOwnWoka = true)}
+            {saveAndContinue}
+            close={canGoBack ? close : undefined}
+        />
     {/if}
 {/if}
 
 {#if error}
-    <p class="text-center text-danger-800 p-0 m-0">{error}</p>
+    <p class="woka-save-error u-join-error" role="alert">{error}</p>
 {/if}
+
+<style>
+    .woka-save-error {
+        position: fixed;
+        left: 50%;
+        bottom: 6.5rem;
+        z-index: 5;
+        transform: translateX(-50%);
+        padding: 0.5rem 0.875rem;
+        border-radius: 12px;
+        background: rgb(20 18 30 / 0.96);
+        pointer-events: auto;
+    }
+</style>

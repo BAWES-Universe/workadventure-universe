@@ -51,13 +51,13 @@ const actionbar: BaseTranslation = {
     mapEditorLocked: "Editor de mapa está bloqueado 🔐",
     app: "Aplicações de terceiros",
     camera: {
-        disabled: "Sua câmera está desabilitada",
-        activate: "Ativar sua câmera",
+        disabled: "Sua câmera está desligada",
+        activate: "Ligar câmera",
         noDevices: "Nenhum dispositivo de câmera encontrado",
     },
     microphone: {
-        disabled: "Seu microfone está desabilitado",
-        activate: "Ativar seu microfone",
+        disabled: "Seu microfone está desligado",
+        activate: "Ligar microfone",
         noDevices: "Nenhum dispositivo de microfone encontrado",
     },
     speaker: {

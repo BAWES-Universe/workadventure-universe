@@ -4,15 +4,17 @@
     import { bottomActionBarVisibilityStore } from "../../../Stores/BottomActionBarStore";
     import { inLivekitStore } from "../../../Stores/MediaStore";
     import { followStateStore } from "../../../Stores/FollowStore";
-    import { requestedMegaphoneStore } from "../../../Stores/MegaphoneStore";
     import LL from "../../../../i18n/i18n-svelte";
+    import { screenSharingAvailableStore } from "../../../Stores/ScreenSharingStore";
+    import { isInRemoteConversation } from "../../../Stores/StreamableCollectionStore";
+    import { mobileLayoutStore } from "../../../Stores/MobileLayoutStore";
     import AppsMenuItem from "./AppsMenuItem.svelte";
-    import ExploreMenuItem from "./ExploreMenuItem.svelte";
     import FollowMenuItem from "./FollowMenuItem.svelte";
     import LockDiscussionMenuItem from "./LockDiscussionMenuItem.svelte";
     import MusicMenuItem from "./MusicMenuItem.svelte";
     import HeaderMenuItem from "./HeaderMenuItem.svelte";
-    import MegaphoneMenuItem from "./MegaphoneMenuItem.svelte";
+    import ScreenSharingMenuItem from "./ScreenSharingMenuItem.svelte";
+    import PictureInPictureMenuItem from "./PictureInPictureMenuItem.svelte";
 
     const inProfileMenu = getContext("profileMenu");
 
@@ -29,7 +31,6 @@
 {/if}
 
 {#if !inProfileMenu}
-    <ExploreMenuItem />
     <AppsMenuItem />
 {/if}
 
@@ -45,12 +46,17 @@
     <LockDiscussionMenuItem />
 {/if}
 
-{#if $requestedMegaphoneStore}
-    <MegaphoneMenuItem />
+<!-- A phone's bar keeps only the chat, the microphone and camera, Orbit and the menu: sharing the screen and picture in
+     picture are here, beside Follow and Lock. Held sideways, these items sit in the bar instead of the menu, and so do
+     these two. -->
+{#if $mobileLayoutStore && $screenSharingAvailableStore}
+    <ScreenSharingMenuItem />
+    {#if $isInRemoteConversation}
+        <PictureInPictureMenuItem />
+    {/if}
 {/if}
 
 {#if inProfileMenu}
-    <ExploreMenuItem />
     <!-- In the profile menu, the apps submenu is displayed at the end (because it contains a heading) -->
     <AppsMenuItem />
 {/if}

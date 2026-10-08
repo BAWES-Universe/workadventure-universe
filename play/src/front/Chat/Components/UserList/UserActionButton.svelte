@@ -14,6 +14,7 @@
     import PersonActionButton from "./PersonActionButton.svelte";
     import { locatePerson } from "./PersonNavigation";
     import { openPersonMenuStore } from "./PersonMenuStore";
+    import type { FriendMenuAction } from "./FriendMenuAction";
     import { IconForbid, IconDots, IconMapPin, IconUserCircle } from "@wa-icons";
 
     export let user: ChatUser;
@@ -22,6 +23,10 @@
     /** Their profile in Orbit. */
     export let showViewProfile = false;
     export let showBan = false;
+    /** Add friend, or what comes next with them (cancel, accept, remove). */
+    export let friendAction: FriendMenuAction | undefined = undefined;
+    /** Entries moved here from the row to keep it short (Message, when the row shows Ring). */
+    export let extraActions: FriendMenuAction[] = [];
 
     let popoversElement: HTMLDivElement;
 
@@ -166,6 +171,26 @@
             role="menu"
             class="wa-dropdown-menu z-10 mr-1 fixed rounded-xl p-1 shadow-2xl bg-contrast/95 border border-white/10 backdrop-blur"
         >
+            {#each extraActions as action (action.label)}
+                <!-- svelte-ignore a11y-click-events-have-key-events -->
+                <span
+                    role="menuitem"
+                    tabindex="0"
+                    class="wa-dropdown-item text-nowrap flex gap-2 items-center hover:bg-white/10 m-0 px-3 min-h-10 w-full text-sm rounded cursor-pointer"
+                    on:click|stopPropagation={() => {
+                        action.act();
+                        closeChatUserMenu();
+                    }}
+                    on:keydown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            action.act();
+                            closeChatUserMenu();
+                        }
+                    }}><svelte:component this={action.icon} font-size="13" /> {action.label}</span
+                >
+            {/each}
+
             {#if showLocate}
                 <!-- svelte-ignore a11y-click-events-have-key-events -->
                 <span
@@ -201,6 +226,29 @@
                             viewProfile();
                         }
                     }}><IconUserCircle font-size="13" /> {$LL.chat.userList.viewProfile()}</span
+                >
+            {/if}
+
+            {#if friendAction}
+                <!-- svelte-ignore a11y-click-events-have-key-events -->
+                <span
+                    role="menuitem"
+                    tabindex="0"
+                    data-testid={`friend-action-${user.username}`}
+                    class="wa-dropdown-item text-nowrap flex gap-2 items-center hover:bg-white/10 m-0 px-3 min-h-10 w-full text-sm rounded cursor-pointer {friendAction.danger
+                        ? 'text-pop-red'
+                        : ''}"
+                    on:click|stopPropagation={() => {
+                        friendAction?.act();
+                        closeChatUserMenu();
+                    }}
+                    on:keydown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            friendAction?.act();
+                            closeChatUserMenu();
+                        }
+                    }}><svelte:component this={friendAction.icon} font-size="13" /> {friendAction.label}</span
                 >
             {/if}
 

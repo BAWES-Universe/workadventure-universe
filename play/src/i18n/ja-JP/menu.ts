@@ -24,6 +24,46 @@ const menu: DeepPartial<Translation["menu"]> = {
         logout: "ログアウト",
     },
     settings: {
+        tabs: {
+            general: "一般",
+            soundAndVideo: "サウンドとビデオ",
+            keyboard: "キーボード",
+        },
+        sections: {
+            video: "ビデオ",
+            sound: "サウンド",
+            notifications: "通知",
+            away: "アプリを離れたとき",
+            screen: "画面",
+            help: "ヘルプ",
+        },
+        quality: {
+            saveData: "データ節約",
+            saveDataHint: "通信量が少ない",
+            normal: "標準",
+            best: "最高",
+            bestHint: "最も鮮明な画質",
+        },
+        cameraQuality: "カメラの画質",
+        screenShareQuality: "画面共有の画質",
+        voicesNearby: "近くの声",
+        joinSound: "誰かが参加したときの音",
+        joinSoundShort: "参加音",
+        playJoinSound: "音を再生",
+        lowerMusicWhileTalking: "話している間は音楽を小さくする",
+        muteMapSounds: "マップの音楽と効果音をミュート",
+        ignoreFollowRequests: "フォローのリクエストを無視",
+        keepCameraOn: "カメラをオンのままにする",
+        keepMicOn: "マイクをオンのままにする",
+        keptOnWhenAway: "別のタブやアプリに切り替えてもオンのままです",
+        turnedOffWhenAway: "別のタブやアプリに切り替えるとオフになります",
+        askBeforeWebsites: "ウェブサイトを開く前に確認する",
+        calmMap: "落ち着いたマップ（アニメーションなし）",
+        pictureInPicture: "ピクチャー・イン・ピクチャー",
+        mapCredits: "マップのクレジット",
+        report: "問題を報告",
+        back: "戻る",
+        close: "閉じる",
         videoBandwidth: {
             title: "ビデオの品質",
             low: "低品質",
@@ -77,17 +117,6 @@ const menu: DeepPartial<Translation["menu"]> = {
             "ファイルのアップロードエラーです。ファイルを確認して、もう一度やり直してください。問題が解決しない場合は、管理者に連絡してください。",
         dragAndDrop: "ファイルをアップロードするには、ドラッグアンドドロップするか、ここをクリックしてください 🎧",
     },
-    contact: {
-        gettingStarted: {
-            title: "入門",
-            description:
-                "Universe を使用すると、他のユーザと自然にコミュニケーションできるオンラインスペースを作成することができます",
-        },
-        createMap: {
-            title: "マップを作成します",
-            description: "ドキュメントの手順に従って、独自のカスタムマップを作成することもできます",
-        },
-    },
     about: {
         mapInfo: "マップ情報",
         mapLink: "このマップへのリンク",
@@ -112,7 +141,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         invite: "招待",
         credit: "クレジット",
         globalMessages: "グローバルメッセージ",
-        contact: "コンタクト",
         report: "問題の報告",
     },
 };

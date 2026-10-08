@@ -4,6 +4,7 @@
 
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { timingSafeEqual } from 'crypto';
+import jwt from 'jsonwebtoken';
 import { BotManager } from './BotManager';
 import { AdminApiService } from './AdminApiService';
 import { BotRegistry } from './BotRegistry';
@@ -101,6 +102,26 @@ function requireServiceOperator(req: BotAPIRequest, res: Response, next: NextFun
     next();
 }
 
+/**
+ * Middleware for routes every player in the game uses, guests included (bots spawning when a room opens, a bot's
+ * feelings about you). It needs the player's game token in the X-WA-Auth header, signed with the same SECRET_KEY the
+ * bots already use to join the game.
+ */
+function requireGameToken(req: BotAPIRequest, res: Response, next: NextFunction): void {
+    const secretKey = process.env.SECRET_KEY;
+    const token = req.headers['x-wa-auth'];
+    if (!secretKey || typeof token !== 'string' || !token) {
+        res.status(401).json({ error: 'Missing game token' });
+        return;
+    }
+    try {
+        jwt.verify(token, secretKey, { algorithms: ['HS256'] });
+        next();
+    } catch {
+        res.status(401).json({ error: 'Invalid game token' });
+    }
+}
+
 export interface BotAPIOptions {
     /** Each bot's state for direct messages (online, resting, unready, gone); only when Matrix DMs are on. */
     dmStatus?: (botIds: string[]) => Promise<Record<string, string>>;
@@ -150,7 +171,7 @@ export class BotAPI {
         this.app.use((req, res, next) => {
             res.header('Access-Control-Allow-Origin', '*');
             res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-            res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+            res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-WA-Auth');
             if (req.method === 'OPTIONS') {
                 res.sendStatus(200);
             } else {
@@ -181,9 +202,8 @@ export class BotAPI {
             });
         });
 
-        // Room enter/leave endpoints (no auth required - safe public endpoints for bot spawning)
-        // These are safe because they only trigger spawning/despawning based on player count
-        this.app.post('/api/bots/room-enter', async (req: Request, res: Response) => {
+        // Room enter/leave: any player in the game (guests too) with a game token
+        this.app.post('/api/bots/room-enter', requireGameToken, async (req: Request, res: Response) => {
             try {
                 const { roomId } = req.body;
 
@@ -208,7 +228,7 @@ export class BotAPI {
         });
 
         // Room leave - handle player leaving (may despawn bots if room is empty)
-        this.app.post('/api/bots/room-leave', async (req: Request, res: Response) => {
+        this.app.post('/api/bots/room-leave', requireGameToken, async (req: Request, res: Response) => {
             try {
                 const { roomId } = req.body;
 
@@ -266,9 +286,8 @@ export class BotAPI {
             }
         });
 
-        // Get bot emotions for a specific player (no auth required - public endpoint)
-        // This allows players to see how a bot feels about them
-        this.app.get('/api/bots/:botId/emotions/:userUuid', async (req: Request, res: Response) => {
+        // Get bot emotions for a specific player, so players can see how a bot feels about them
+        this.app.get('/api/bots/:botId/emotions/:userUuid', requireGameToken, async (req: Request, res: Response) => {
             try {
                 const { botId, userUuid } = req.params;
 
@@ -464,7 +483,7 @@ export class BotAPI {
         this.app.post('/api/bots/:botId/update', requireSession, requireManager, async (req: Request, res: Response) => {
             try {
                 const { botId } = req.params;
-                const { position, behaviorConfig, behaviorType } = req.body;
+                const { position, behaviorConfig, behaviorType, restartRoute } = req.body;
 
                 console.log(`[BotAPI] Received update request for bot ${botId}:`, {
                     position,
@@ -472,11 +491,15 @@ export class BotAPI {
                     hasConfig: !!behaviorConfig,
                 });
 
-                const result = await this.botManager.updateBot(botId, {
-                    position,
-                    behaviorConfig,
-                    behaviorType,
-                } as Partial<BotConfiguration>);
+                const result = await this.botManager.updateBot(
+                    botId,
+                    {
+                        position,
+                        behaviorConfig,
+                        behaviorType,
+                    } as Partial<BotConfiguration>,
+                    { restartRoute: restartRoute === true }
+                );
 
                 if (!result.updated) {
                     res.status(404).json({
@@ -747,10 +770,13 @@ export class BotAPI {
                 const nameChanged = 'name' in updates && updates.name !== existingConfig.name;
                 const textureChanged = 'characterTextureIds' in updates && 
                     JSON.stringify(updates.characterTextureIds) !== JSON.stringify(existingConfig.characterTextureIds);
+                // The companion joins the bot when it connects, so a new one needs a respawn too
+                const companionChanged = 'companionTextureId' in updatesToApply &&
+                    (updatesToApply.companionTextureId ?? null) !== (existingConfig.companionTextureId ?? null);
 
-                // If name or texture changed and bot is running, despawn and respawn immediately
-                if ((nameChanged || textureChanged) && this.botManager.getBot(botId)) {
-                    console.log(`[BotAPI] Bot ${botId} name or texture changed, respawning with new config`);
+                // If name, texture or companion changed and bot is running, despawn and respawn immediately
+                if ((nameChanged || textureChanged || companionChanged) && this.botManager.getBot(botId)) {
+                    console.log(`[BotAPI] Bot ${botId} name, texture or companion changed, respawning with new config`);
                     // Clear cached MCP tools so fresh tool definitions are fetched on respawn
                     MCPConnector.clearCache(botId);
                     // Despawn first

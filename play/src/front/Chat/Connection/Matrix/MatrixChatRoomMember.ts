@@ -1,10 +1,11 @@
-import type { MatrixEvent, RoomMember } from "matrix-js-sdk";
+import type { MatrixClient, MatrixEvent, RoomMember } from "matrix-js-sdk";
 import { RoomMemberEvent } from "matrix-js-sdk";
 import type { Writable } from "svelte/store";
-import { get, readable, writable } from "svelte/store";
+import { get, writable } from "svelte/store";
 import type { ChatRoomMember, ChatRoomMembership, memberTypingInformation } from "../ChatConnection";
 import { ChatPermissionLevel } from "../ChatConnection";
 import type { PictureStore } from "../../../Stores/PictureStore";
+import { changingMatrixAvatarStore } from "./MatrixMedia";
 
 export class MatrixChatRoomMember implements ChatRoomMember {
     private handleRoomMemberMembership = this.onRoomMemberMembership.bind(this);
@@ -18,13 +19,15 @@ export class MatrixChatRoomMember implements ChatRoomMember {
     readonly isTypingInformation: Writable<{ id: string; name: string | null; pictureStore: PictureStore } | null> =
         writable(null);
     private pictureStore: PictureStore;
+    private readonly pictureMxc: Writable<string | undefined>;
 
-    constructor(private roomMember: RoomMember, baseUrl: string) {
+    constructor(private roomMember: RoomMember, client: MatrixClient) {
         this.id = roomMember.userId;
         this.name = writable(this.roomMember.name);
         this.membership = writable(this.roomMember.membership);
         this.permissionLevel = writable(MatrixChatRoomMember.getPermissionLevel(this.roomMember.powerLevelNorm));
-        this.pictureStore = readable(this.roomMember.getAvatarUrl(baseUrl, 24, 24, "scale", false, false) ?? undefined);
+        this.pictureMxc = writable(this.roomMember.getMxcAvatarUrl());
+        this.pictureStore = changingMatrixAvatarStore(client, this.pictureMxc, 24);
         this.startHandlingChatRoomMemberEvents();
     }
 
@@ -74,6 +77,12 @@ export class MatrixChatRoomMember implements ChatRoomMember {
             default:
                 throw new Error(`${chatPermissionLevel} is not handle`);
         }
+    }
+
+    /** Their member event changed: they may have a new picture. */
+    refreshPicture(): void {
+        const mxc = this.roomMember.getMxcAvatarUrl();
+        if (mxc !== get(this.pictureMxc)) this.pictureMxc.set(mxc);
     }
 
     destroy() {

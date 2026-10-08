@@ -191,6 +191,17 @@ export abstract class BaseBehavior {
     }
 
     /**
+     * Move the bot's spot (its home, and the centre of its area) after it was moved in the editor, so it
+     * walks back to the new spot after a chat instead of the old one.
+     */
+    setHome(position: PositionInterface): void {
+        this.spawnPosition = { x: position.x, y: position.y };
+        if (this.config.assignedSpace) {
+            this.config.assignedSpace = { ...this.config.assignedSpace, center: { x: position.x, y: position.y } };
+        }
+    }
+
+    /**
      * Set AI service, Admin API service, ConversationStorage, ResponseProcessor, and MetricsCollector (called by BotManager)
      */
     setServices(aiService: AIService, adminApiService: AdminApiService, conversationStorage?: ConversationStorage, responseProcessor?: ResponseProcessor | null, metricsCollector?: BotMetricsCollector | null): void {

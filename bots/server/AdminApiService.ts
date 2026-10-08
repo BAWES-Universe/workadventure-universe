@@ -63,6 +63,10 @@ export interface BotConfiguration {
     
     // Chat Instructions (Sensitive - stored in Admin API only)
     chatInstructions?: string; // System prompt/instructions for AI behavior
+
+    // How long the bot waits for a tool (MCP) call to answer, in seconds ("Patience").
+    // Null or missing means the bot server's default (REQUEST_TIMEOUT, 90 s).
+    toolTimeoutSeconds?: number | null;
     
     // Assigned space defines where the bot operates (center + radius)
     // Required: All bots must have an assigned space
@@ -74,6 +78,9 @@ export interface BotConfiguration {
     };
     enabled?: boolean; // Whether bot is active (defaults to true if not specified)
     characterTextureIds?: string[]; // Character texture IDs for bot appearance
+    // The companion (pet) that walks with the bot: a companion texture id from the room's companion list.
+    // Null or missing means none.
+    companionTextureId?: string | null;
     position?: { x: number; y: number }; // Teleport position (runtime-only, not persisted)
     createdAt: Date;
     updatedAt: Date;

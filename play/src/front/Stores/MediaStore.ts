@@ -3,17 +3,23 @@ import { derived, get, readable, writable } from "svelte/store";
 import deepEqual from "fast-deep-equal";
 import { AvailabilityStatus } from "@workadventure/messages";
 import * as Sentry from "@sentry/svelte";
+import { AbortError } from "@workadventure/shared-utils/src/Abort/AbortError";
 import { localUserStore } from "../Connection/LocalUserStore";
 import { isIOS, isSafari } from "../WebRtc/DeviceUtils";
 import type { ObtainedMediaStreamConstraints } from "../WebRtc/P2PMessages/ConstraintMessage";
 import { SoundMeter } from "../Phaser/Components/SoundMeter";
+import { findNewMediaDevices, listLacksNamesFor, rememberMediaDevices } from "../Utils/NewMediaDevices";
 import type { RequestedStatus } from "../Rules/StatusRules/statusRules";
 import { statusChanger } from "../Components/ActionBar/AvailabilityStatus/statusChanger";
 import {
+    BackgroundProcessingUnsupportedError,
     createBackgroundTransformer,
     type BackgroundTransformer,
     type BackgroundConfig,
+    type BackgroundMode,
 } from "../WebRtc/BackgroundProcessor/createBackgroundTransformer";
+import { waitForFirstVideoFrame } from "../WebRtc/BackgroundProcessor/waitForFirstVideoFrame";
+import { NoiseSuppressionTransformer } from "../WebRtc/NoiseSuppression/NoiseSuppressionTransformer";
 import { LL } from "../../i18n/i18n-svelte";
 import { MediaStreamConstraintsError } from "./Errors/MediaStreamConstraintsError";
 import { BrowserTooOldError } from "./Errors/BrowserTooOldError";
@@ -27,7 +33,17 @@ import { userMovingStore } from "./GameStore";
 import { hideHelpCameraSettings } from "./HelpSettingsStore";
 import { isLiveStreamingStore } from "./IsStreamingStore";
 
-import { backgroundConfigStore, backgroundProcessingEnabledStore } from "./BackgroundTransformStore";
+import {
+    backgroundConfigStore,
+    backgroundEffectStartingStore,
+    backgroundProcessingEnabledStore,
+} from "./BackgroundTransformStore";
+import {
+    noiseFilterStore,
+    strongNoiseFilterStateStore,
+    strongNoiseFilterSupported,
+    voiceIsolationSupportedStore,
+} from "./NoiseFilterStore";
 
 /**
  * A store that contains the camera state requested by the user (on or off).
@@ -254,26 +270,33 @@ export const videoConstraintStore = derived(
 /**
  * A store that contains video constraints.
  */
-export const audioConstraintStore = derived(requestedMicrophoneDeviceIdStore, ($microphoneDeviceIdStore) => {
-    let constraints = {
-        //TODO: make these values configurable in the game settings menu and store them in localstorage
-        autoGainControl: true,
-        echoCancellation: true,
-        noiseSuppression: true,
-    } as boolean | MediaTrackConstraints;
+export const audioConstraintStore = derived(
+    [requestedMicrophoneDeviceIdStore, noiseFilterStore, strongNoiseFilterStateStore],
+    ([$microphoneDeviceIdStore, $noiseFilterStore, $strongNoiseFilterStateStore]) => {
+        let constraints = {
+            autoGainControl: true,
+            echoCancellation: true,
+            // The Strong filter replaces the browser's once it runs. Until then the browser's filter stays on.
+            noiseSuppression: !($noiseFilterStore === "strong" && $strongNoiseFilterStateStore === "on"),
+        } as boolean | MediaTrackConstraints;
 
-    if (typeof constraints === "boolean") {
-        constraints = {};
+        if (typeof constraints === "boolean") {
+            constraints = {};
+        }
+        if (
+            $microphoneDeviceIdStore !== undefined &&
+            navigator.mediaDevices &&
+            navigator.mediaDevices.getSupportedConstraints().deviceId === true
+        ) {
+            constraints.deviceId = { exact: $microphoneDeviceIdStore };
+        }
+        if ($noiseFilterStore === "voiceOnly") {
+            // Browsers that don't know this constraint ignore it.
+            constraints.voiceIsolation = true;
+        }
+        return constraints;
     }
-    if (
-        $microphoneDeviceIdStore !== undefined &&
-        navigator.mediaDevices &&
-        navigator.mediaDevices.getSupportedConstraints().deviceId === true
-    ) {
-        constraints.deviceId = { exact: $microphoneDeviceIdStore };
-    }
-    return constraints;
-});
+);
 
 /**
  * A store that contains "true" if the webcam should be stopped for energy efficiency reason - i.e. we are not moving and not in a conversation.
@@ -541,18 +564,15 @@ let lastBackgroundConfig: BackgroundConfig | undefined = undefined;
 export function updateBackgroundProcessor(config: {
     blurAmount?: number;
     backgroundImage?: string;
-    backgroundVideo?: string;
-    mode?: string;
-    segmenterOptions?: unknown;
+    mode?: BackgroundMode;
 }) {
     if (backgroundTransformer && backgroundTransformer.updateConfig) {
         try {
             backgroundTransformer
                 .updateConfig({
-                    mode: config.mode as "none" | "blur" | "image" | "video",
+                    mode: config.mode,
                     blurAmount: config.blurAmount,
                     backgroundImage: config.backgroundImage,
-                    backgroundVideo: config.backgroundVideo,
                 })
                 .catch((error) => {
                     console.warn("[MediaStore] Failed to update background transformer configuration:", error);
@@ -560,16 +580,13 @@ export function updateBackgroundProcessor(config: {
 
             // Update the tracked config
             if (lastBackgroundConfig && config.mode) {
-                lastBackgroundConfig.mode = config.mode as "none" | "blur" | "image" | "video";
+                lastBackgroundConfig.mode = config.mode;
             }
             if (lastBackgroundConfig && config.blurAmount !== undefined) {
                 lastBackgroundConfig.blurAmount = config.blurAmount;
             }
             if (lastBackgroundConfig && config.backgroundImage !== undefined) {
                 lastBackgroundConfig.backgroundImage = config.backgroundImage;
-            }
-            if (lastBackgroundConfig && config.backgroundVideo !== undefined) {
-                lastBackgroundConfig.backgroundVideo = config.backgroundVideo;
             }
         } catch (error) {
             console.warn("[MediaStore] Failed to update background transformer configuration:", error);
@@ -664,7 +681,12 @@ export const rawLocalStreamStore = derived<[typeof mediaStreamConstraintsStore],
                             requestedCameraState.enableWebcam();
                         }
                         if (currentStream.getAudioTracks().length > 0) {
-                            usedMicrophoneDeviceIdStore.set(currentStream.getAudioTracks()[0]?.getSettings().deviceId);
+                            const audioTrackSettings = currentStream.getAudioTracks()[0]?.getSettings();
+                            usedMicrophoneDeviceIdStore.set(audioTrackSettings?.deviceId);
+                            voiceIsolationSupportedStore.set(
+                                navigator.mediaDevices?.getSupportedConstraints().voiceIsolation === true &&
+                                    audioTrackSettings?.voiceIsolation !== undefined
+                            );
                             obtainedMediaConstraintStore.update((c) => {
                                 c.audio = true;
                                 return c;
@@ -826,12 +848,30 @@ export const rawLocalStreamStore = derived<[typeof mediaStreamConstraintsStore],
     }
 );
 
-export const localStreamStore = derived<
+// After this, the effect's stream is used even if it hasn't drawn yet (upstream's behaviour).
+const FIRST_EFFECT_FRAME_TIMEOUT_MS = 20_000;
+
+// Aborts the transform still loading for the previous stream, so a late result never replaces a newer stream.
+let currentTransformAbortController: AbortController | undefined = undefined;
+
+function dropBackgroundTransformer(transformer: BackgroundTransformer): void {
+    transformer.close();
+    if (backgroundTransformer === transformer) {
+        backgroundTransformer = undefined;
+        lastBackgroundConfig = undefined;
+    }
+}
+
+const backgroundProcessedStreamStore = derived<
     [typeof rawLocalStreamStore, typeof backgroundProcessingEnabledStore],
     LocalStreamStoreValue
 >(
     [rawLocalStreamStore, backgroundProcessingEnabledStore],
     ([$rawLocalStreamStore, $backgroundProcessingEnabled], set) => {
+        currentTransformAbortController?.abort(new AbortError("Background transform cancelled: new stream update"));
+        currentTransformAbortController = undefined;
+        backgroundEffectStartingStore.set(false);
+
         if (
             $rawLocalStreamStore.type === "error" ||
             $rawLocalStreamStore.stream === undefined ||
@@ -846,36 +886,142 @@ export const localStreamStore = derived<
             return;
         }
 
-        let finalStream;
-
         if (!backgroundTransformer) {
-            // Get current config from the store
-            const currentConfig = get(backgroundConfigStore);
-
-            backgroundTransformer = createBackgroundTransformer(currentConfig);
+            const transformer = createBackgroundTransformer(get(backgroundConfigStore), (error) => {
+                // The worker died after it started (lost WebGL context, crash...): fall back to the plain camera.
+                if (backgroundTransformer !== transformer) {
+                    return;
+                }
+                console.warn("[MediaStore] Background transformer stopped after a terminal failure:", error);
+                Sentry.captureException(error);
+                warningMessageStore.addWarningMessage(get(LL).warning.backgroundProcessing.failedToApply());
+                dropBackgroundTransformer(transformer);
+                backgroundConfigStore.reset();
+            });
+            backgroundTransformer = transformer;
         }
 
-        (async () => {
-            // Only create if we don't have a transformer yet
-            if ($rawLocalStreamStore.stream && backgroundTransformer) {
-                // Transform the stream using the new approach if available
-                finalStream = await backgroundTransformer.transform($rawLocalStreamStore.stream);
+        const transformer = backgroundTransformer;
+        const abortController = new AbortController();
+        currentTransformAbortController = abortController;
+        // The first effect downloads and starts the model; the device list shows "Starting…" meanwhile.
+        backgroundEffectStartingStore.set(true);
+
+        transformer
+            .transform($rawLocalStreamStore.stream, abortController.signal)
+            .then(async (finalStream) => {
+                // Keep sending the previous camera image until the effect has drawn its first frame.
+                await waitForFirstVideoFrame(finalStream, abortController.signal, FIRST_EFFECT_FRAME_TIMEOUT_MS);
+                if (abortController.signal.aborted) {
+                    return;
+                }
+                backgroundEffectStartingStore.set(false);
                 // Store config for next comparison
                 lastBackgroundConfig = { ...get(backgroundConfigStore) };
-
                 set({
                     type: "success",
                     stream: finalStream,
                 });
-            }
-        })().catch((error) => {
-            console.warn("[MediaStore] Failed to transform stream:", error);
-            Sentry.captureException(error);
-            warningMessageStore.addWarningMessage(get(LL).warning.backgroundProcessing.failedToApply());
-            backgroundConfigStore.reset();
-        });
+            })
+            .catch((error) => {
+                if (abortController.signal.aborted || error instanceof AbortError) {
+                    return;
+                }
+                backgroundEffectStartingStore.set(false);
+                if (error instanceof BackgroundProcessingUnsupportedError) {
+                    console.warn("[MediaStore] Background processing is not supported on this browser:", error.message);
+                    warningMessageStore.addWarningMessage(
+                        get(LL).warning.backgroundProcessing.notSupportedOnThisBrowser()
+                    );
+                } else {
+                    console.warn("[MediaStore] Failed to transform stream:", error);
+                    Sentry.captureException(error);
+                    warningMessageStore.addWarningMessage(get(LL).warning.backgroundProcessing.failedToApply());
+                }
+                dropBackgroundTransformer(transformer);
+                backgroundConfigStore.reset();
+            });
     }
 );
+
+let noiseSuppressionTransformer: NoiseSuppressionTransformer | undefined = undefined;
+// Aborts the noise filter still starting for the previous microphone track.
+let currentNoiseFilterAbortController: AbortController | undefined = undefined;
+
+/** Strong could not start or stopped working: back to the browser's filter, and the device list says why. */
+function failStrongNoiseFilter(error: unknown): void {
+    console.warn("[MediaStore] Strong noise filter failed, back to the browser's filter:", error);
+    Sentry.captureException(error);
+    const transformer = noiseSuppressionTransformer;
+    noiseSuppressionTransformer = undefined;
+    transformer?.closeAndDestroy().catch((closeError) => {
+        console.warn("[MediaStore] Failed to close the noise filter:", closeError);
+    });
+    strongNoiseFilterStateStore.set("failed");
+    noiseFilterStore.set("standard");
+}
+
+/**
+ * The stream everyone else gets: the camera after background effects, and the microphone after the Strong noise
+ * filter when it is picked. The filter comes last so changing it never restarts a background effect.
+ */
+export const localStreamStore = derived<
+    [typeof backgroundProcessedStreamStore, typeof noiseFilterStore],
+    LocalStreamStoreValue
+>([backgroundProcessedStreamStore, noiseFilterStore], ([$backgroundProcessedStream, $noiseFilter], set) => {
+    currentNoiseFilterAbortController?.abort(new AbortError("Noise filter cancelled: new stream update"));
+    currentNoiseFilterAbortController = undefined;
+
+    const inputStream = $backgroundProcessedStream.type === "success" ? $backgroundProcessedStream.stream : undefined;
+    const audioTrack = inputStream?.getAudioTracks()[0];
+    if ($noiseFilter !== "strong" || !strongNoiseFilterSupported || !inputStream || !audioTrack) {
+        noiseSuppressionTransformer?.stop();
+        if ($noiseFilter !== "strong") {
+            // Keep "failed" so the device list can still explain why Standard is back.
+            strongNoiseFilterStateStore.update((state) => (state === "failed" ? state : "off"));
+        }
+        set($backgroundProcessedStream);
+        return;
+    }
+
+    if (!noiseSuppressionTransformer) {
+        const transformer = new NoiseSuppressionTransformer({
+            onStatusChange: (message) => {
+                if (noiseSuppressionTransformer !== transformer) {
+                    return;
+                }
+                if (message.status === "ready") {
+                    strongNoiseFilterStateStore.set("on");
+                } else if (message.status === "error") {
+                    failStrongNoiseFilter(new Error(message.message ?? "The noise filter failed to start"));
+                }
+            },
+        });
+        noiseSuppressionTransformer = transformer;
+        strongNoiseFilterStateStore.set("starting");
+    }
+
+    const transformer = noiseSuppressionTransformer;
+    const abortController = new AbortController();
+    currentNoiseFilterAbortController = abortController;
+    // The worklet passes the microphone through unchanged until the model is ready, so nobody goes silent.
+    transformer
+        .transform(audioTrack, abortController.signal)
+        .then((outputTrack) => {
+            if (abortController.signal.aborted) {
+                return;
+            }
+            set({ type: "success", stream: new MediaStream([...inputStream.getVideoTracks(), outputTrack]) });
+        })
+        .catch((error) => {
+            if (abortController.signal.aborted || error instanceof AbortError) {
+                return;
+            }
+            if (noiseSuppressionTransformer === transformer) {
+                failStrongNoiseFilter(error);
+            }
+        });
+});
 
 /**
  * Firefox does not support the OverconstrainedError class.
@@ -950,11 +1096,16 @@ export const localVoiceIndicatorStore = derived<Readable<number[] | undefined>, 
     false
 );
 
+const DEVICE_CHANGE_SETTLE_DELAY_MS = 1000;
+
 /**
  * Device list
  */
 export const deviceListStore = readable<MediaDeviceInfo[] | undefined>(undefined, function start(set) {
     let deviceListCanBeQueried = false;
+    // The devices seen so far, kept here too: when the browser's storage is full, they would otherwise be offered
+    // again on every change.
+    let knownMediaDeviceKeys: string[] | undefined;
 
     const queryDeviceList = () => {
         // Note: so far, we are ignoring any failures.
@@ -985,18 +1136,24 @@ export const deviceListStore = readable<MediaDeviceInfo[] | undefined>(undefined
                     speakerSelectedStore.set(preferredSpeakerDevice);
                 }
 
-                const actualsMediaDevices = get(deviceListStore);
-                // get all media that not exist in the list
-                if (actualsMediaDevices != undefined) {
-                    // set the last new media devices detected
-                    const newDevices = mediaDeviceInfos.filter(
-                        (device) => actualsMediaDevices.find((d) => d.deviceId === device.deviceId) == undefined
-                    );
-                    lastNewMediaDeviceDetectedStore.set(newDevices);
-                }
+                // Only devices this browser has never seen count as new. Devices present on the first
+                // listing are remembered silently.
+                const knownMediaDevices = Array.from(
+                    new Set([...localUserStore.getKnownMediaDevices(), ...(knownMediaDeviceKeys ?? [])])
+                );
+                const previousDevices = get(deviceListStore);
+                const newDevices =
+                    previousDevices === undefined
+                        ? []
+                        : findNewMediaDevices(mediaDeviceInfos, new Set(knownMediaDevices), previousDevices);
+                knownMediaDeviceKeys = rememberMediaDevices(knownMediaDevices, mediaDeviceInfos);
+                localUserStore.setKnownMediaDevices(knownMediaDeviceKeys);
 
                 set(mediaDeviceInfos);
                 devicesNotLoaded.set(false);
+                if (newDevices.length > 0) {
+                    lastNewMediaDeviceDetectedStore.set(newDevices);
+                }
             })
             .catch((e) => {
                 console.error(e);
@@ -1007,21 +1164,36 @@ export const deviceListStore = readable<MediaDeviceInfo[] | undefined>(undefined
 
     const unsubscribe = localStreamStore.subscribe((streamResult) => {
         if (streamResult.type === "success" && streamResult.stream !== undefined) {
-            if (deviceListCanBeQueried === false) {
+            // Read again when the stream brings a kind of device the list has no names for yet: the camera allowed
+            // after the microphone shows its names without a reload.
+            const tracks = {
+                video: streamResult.stream.getVideoTracks().length > 0,
+                audio: streamResult.stream.getAudioTracks().length > 0,
+            };
+            if (deviceListCanBeQueried === false || listLacksNamesFor(tracks, get(deviceListStore))) {
                 queryDeviceList();
                 deviceListCanBeQueried = true;
             }
         }
     });
 
+    // Devices often change in bursts (a virtual audio app registers several devices one by one),
+    // so wait for the list to settle before querying it.
+    let deviceChangeTimeout: ReturnType<typeof setTimeout> | undefined;
+    const onDeviceChange = () => {
+        clearTimeout(deviceChangeTimeout);
+        deviceChangeTimeout = setTimeout(queryDeviceList, DEVICE_CHANGE_SETTLE_DELAY_MS);
+    };
+
     if (navigator.mediaDevices) {
-        navigator.mediaDevices.addEventListener("devicechange", queryDeviceList);
+        navigator.mediaDevices.addEventListener("devicechange", onDeviceChange);
     }
 
     return function stop() {
         unsubscribe();
+        clearTimeout(deviceChangeTimeout);
         if (navigator.mediaDevices) {
-            navigator.mediaDevices.removeEventListener("devicechange", queryDeviceList);
+            navigator.mediaDevices.removeEventListener("devicechange", onDeviceChange);
         }
     };
 });
@@ -1203,8 +1375,8 @@ export const lastNewMediaDeviceDetectedStore = writable<MediaDeviceInfo[]>([]);
  * This avoids recreating the entire stream when only parameters change
  */
 const backgroundConfigStoreSubscription = backgroundConfigStore.subscribe(($config) => {
-    // Skip if no transformer exists yet
-    if (!backgroundTransformer || !lastBackgroundConfig) {
+    // Skip if no transformer exists yet. A transformer still starting gets the change too: it applies it once ready.
+    if (!backgroundTransformer) {
         return;
     }
 
@@ -1212,7 +1384,6 @@ const backgroundConfigStoreSubscription = backgroundConfigStore.subscribe(($conf
         mode: $config.mode,
         blurAmount: $config.blurAmount,
         backgroundImage: $config.backgroundImage,
-        backgroundVideo: $config.backgroundVideo,
     });
 });
 export const unsubscribeBackgroundConfigStoreSubscription = () => {

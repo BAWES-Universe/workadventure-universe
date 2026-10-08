@@ -5,9 +5,6 @@ import {getPage} from "./utils/auth";
 import {isMobile} from "./utils/isMobile";
 import {expectLivekitConnectionsCountToBe, expectWebRtcConnectionsCountToBe , expectLivekitRoomsCountToBe} from "./utils/webRtc";
 import { resetWamMaps } from './utils/map-editor/uploader';
-import ConfigureMyRoom from "./utils/map-editor/configureMyRoom";
-import Megaphone from "./utils/map-editor/megaphone";
-import MapEditor from "./utils/mapeditor";
 import Menu from "./utils/menu";
 import AreaLivekit from './utils/AreaLivekit';
 
@@ -198,18 +195,7 @@ test.describe('Meeting actions test', () => {
         await Map.teleportToPosition(page2, 4 * 32, 0);
         
 
-        await Menu.openMapEditor(page);
-        await MapEditor.openConfigureMyRoom(page);
-        await ConfigureMyRoom.selectMegaphoneItemInCMR(page);
-        
-        // Enabling megaphone and settings default value
-        await Megaphone.toggleMegaphone(page);
-        await Megaphone.isMegaphoneEnabled(page);
-        await Megaphone.megaphoneSave(page);
-        // Wait for the megaphone settings to be saved
-        await Megaphone.isCorrectlySaved(page);
-        // Close the configuration popup
-        await Menu.closeMapEditorConfigureMyRoomPopUp(page);
+        // A room nobody has set up lets its admins go live: no settings needed.
         
         
         
@@ -229,25 +215,14 @@ test.describe('Meeting actions test', () => {
 
         await Menu.toggleMegaphoneButton(page);
 
-
-        // Click on the button to start live message
-        page
-            .locator(".menu-container #content-liveMessage")
-        await expect(page.getByRole('button', { name: 'Start live message' })).toBeVisible();
-        await page.getByRole('button', { name: 'Start live message' }).click({ timeout: 10_000 });
-
-
+        // Opening the card creates no room yet
         await expectLivekitRoomsCountToBe(page, 0);
         await expectLivekitRoomsCountToBe(page2, 0);
         await expectLivekitRoomsCountToBe(userAlice, 0);
         await expectLivekitRoomsCountToBe(userBob, 0);
         await expectLivekitRoomsCountToBe(userEve, 0);
 
-
-        page
-            .locator(".menu-container #active-liveMessage")
-        await expect(page.getByRole('button', { name: 'Start megaphone' })).toBeVisible();
-        await page.getByRole('button', { name: 'Start megaphone' }).click({ timeout: 10_000 });
+        await Menu.startLiveBroadcast(page);
 
         
         
@@ -263,8 +238,7 @@ test.describe('Meeting actions test', () => {
         await expectLivekitRoomsCountToBe(page2, 1);
         await expectLivekitRoomsCountToBe(page, 1); 
 
-        await page.getByRole('button', { name: 'Stop megaphone' }).click();
-        await expect(page.getByRole('heading', { name: 'Global communication' })).toBeHidden();
+        await Menu.stopLiveBroadcast(page);
 
         await expectLivekitRoomsCountToBe(page, 0);
         await expectLivekitRoomsCountToBe(page2, 0);
@@ -274,14 +248,7 @@ test.describe('Meeting actions test', () => {
 
 
         await Menu.toggleMegaphoneButton(page);
-
-    await expect(page.getByRole('button', { name: 'Start live message' })).toBeVisible();
-    await page.getByRole('button', { name: 'Start live message' }).click({ timeout: 10_000 });
-
-        page
-        .locator(".menu-container #active-liveMessage")
-    await expect(page.getByRole('button', { name: 'Start megaphone' })).toBeVisible();
-    await page.getByRole('button', { name: 'Start megaphone' }).click({ timeout: 10_000 });
+        await Menu.startLiveBroadcast(page);
 
     await expect(page2.getByText('Admin1', { exact: true })).toBeVisible({ timeout: 15_000 });
     await expect(userAlice.getByText('Admin1', { exact: true })).toBeVisible({ timeout: 15_000 });
@@ -295,8 +262,7 @@ test.describe('Meeting actions test', () => {
     await expectLivekitRoomsCountToBe(page2, 1);
     await expectLivekitRoomsCountToBe(page, 1); 
 
-    await page.getByRole('button', { name: 'Stop megaphone' }).click();
-    await expect(page.getByRole('heading', { name: 'Global communication' })).toBeHidden();
+    await Menu.stopLiveBroadcast(page);
 
     await expectLivekitRoomsCountToBe(page, 0);
     await expectLivekitRoomsCountToBe(page2, 0);

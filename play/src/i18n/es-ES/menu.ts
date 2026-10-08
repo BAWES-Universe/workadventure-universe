@@ -24,6 +24,46 @@ const menu: DeepPartial<Translation["menu"]> = {
         logout: "Cerrar sesión",
     },
     settings: {
+        tabs: {
+            general: "General",
+            soundAndVideo: "Sonido y vídeo",
+            keyboard: "Teclado",
+        },
+        sections: {
+            video: "Vídeo",
+            sound: "Sonido",
+            notifications: "Notificaciones",
+            away: "Cuando sales de la app",
+            screen: "Pantalla",
+            help: "Ayuda",
+        },
+        quality: {
+            saveData: "Ahorrar datos",
+            saveDataHint: "Usa menos internet",
+            normal: "Normal",
+            best: "La mejor",
+            bestHint: "Imagen más nítida",
+        },
+        cameraQuality: "Calidad de la cámara",
+        screenShareQuality: "Calidad al compartir pantalla",
+        voicesNearby: "Voces cercanas",
+        joinSound: "Sonido cuando alguien llega",
+        joinSoundShort: "Sonido de llegada",
+        playJoinSound: "Reproducir el sonido",
+        lowerMusicWhileTalking: "Bajar la música cuando hablo",
+        muteMapSounds: "Silenciar la música y los sonidos del mapa",
+        ignoreFollowRequests: "Ignorar solicitudes de seguimiento",
+        keepCameraOn: "Mantener mi cámara encendida",
+        keepMicOn: "Mantener mi micrófono encendido",
+        keptOnWhenAway: "Sigue encendido cuando cambias a otra pestaña o app",
+        turnedOffWhenAway: "Se apaga cuando cambias a otra pestaña o app",
+        askBeforeWebsites: "Preguntar antes de abrir sitios web",
+        calmMap: "Mapa tranquilo (sin animaciones)",
+        pictureInPicture: "Imagen en imagen",
+        mapCredits: "Créditos del mapa",
+        report: "Informar de un problema",
+        back: "Atrás",
+        close: "Cerrar",
         videoBandwidth: {
             title: "Calidad de video",
             low: "Baja",
@@ -72,17 +112,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         errorUpload:
             "Error al cargar el archivo. Por favor revise su archivo y vuelva a intentarlo. Si el problema persiste, póngase en contacto con el administrador.",
     },
-    contact: {
-        gettingStarted: {
-            title: "Empezar",
-            description:
-                "Universe le permite crear un espacio en línea para comunicarse espontáneamente con otros. Y todo empieza creando su propio espacio. Escoja de una gran selección de mapas prefabricados por nuestro equipo.",
-        },
-        createMap: {
-            title: "Crear su mapa",
-            description: "También puede crear su propio mapa personalizado siguiendo los pasos de la documentación.",
-        },
-    },
     about: {
         mapInfo: "Información en el mapa",
         mapLink: "enlace a este mapa",
@@ -107,7 +136,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         invite: "Invitar",
         credit: "Créditos",
         globalMessages: "Mensajes Globales",
-        contact: "Contacto",
         report: "Report Issues",
     },
 };

@@ -70,6 +70,14 @@ export class LoginScene extends ResizableScene {
         loginSceneVisibleStore.set(false);
     }
 
+    /** Back into the room with the name unchanged: for a name screen opened from the game's menu. */
+    public back(): void {
+        this.scene.stop(LoginSceneName);
+        gameManager.tryResumingGame(SelectCharacterSceneName);
+        this.scene.remove(LoginSceneName);
+        loginSceneVisibleStore.set(false);
+    }
+
     update(_time: number, _delta: number): void {}
 
     public onResize(): void {}

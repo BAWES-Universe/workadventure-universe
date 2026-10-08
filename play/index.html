@@ -13,7 +13,7 @@
         />
         <meta
             http-equiv="Content-Security-Policy"
-            content="default-src * 'unsafe-inline' 'unsafe-eval'; script-src * 'unsafe-inline' 'unsafe-eval'; connect-src data: * 'unsafe-inline'; img-src * data: blob: 'unsafe-inline'; font-src * data: ; frame-src *; style-src * 'unsafe-inline'; worker-src 'self' blob:;" />
+            content="default-src * 'unsafe-inline' 'unsafe-eval'; script-src * 'unsafe-inline' 'unsafe-eval'; connect-src data: * 'unsafe-inline'; img-src * data: blob: 'unsafe-inline'; media-src * data: blob:; font-src * data: ; frame-src *; style-src * 'unsafe-inline'; worker-src 'self' blob:;" />
         <meta http-equiv="X-UA-Compatible" content="ie=edge" />
 
         <!-- TRACK CODE -->
@@ -162,11 +162,13 @@
         {{/googleDrivePickerClientId}}
 
     </head>
-    <body id="body" style="margin: 0;background-color:#000000;" class="text-white">
+    <body id="body" style="margin: 0;background-color:hsl(var(--contrast, 0 0% 0%));" class="text-white">
         <input type="hidden" id="authToken" value="{{ authToken }}" name="authToken">
         <input type="hidden" id="matrixLoginToken" value="{{ matrixLoginToken }}" name="matrixLoginToken">
         <div id="app"></div>
         <script type="module" src="/src/svelte.ts"></script>
     </body>
+    <!-- The map's colours (Orbit's backgroundColor). Last, so they win over the design system's defaults; the body's
+         first paint already uses them through var(--contrast). -->
     {{{cssVariablesOverride}}}
 </html>

@@ -15,6 +15,10 @@ const login: BaseTranslation = {
     privacyPolicy: "privacy policy",
     cookiePolicy: "cookie policy",
     continue: "Continue",
+    eyebrow: "Edit your name",
+    heading: "What should people call you?",
+    hint: "Everyone in the room sees this above your WOKA.",
+    close: "Back to your room",
 };
 
 export default login;

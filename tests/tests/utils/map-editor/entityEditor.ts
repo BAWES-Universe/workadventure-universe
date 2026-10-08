@@ -1,6 +1,7 @@
 import * as path from "path";
 import type { Page } from "@playwright/test";
 import { expect } from "@playwright/test";
+import Map from "../map";
 
 class EntityEditor {
   async selectEntity(page: Page, nb: number, search?: string) {
@@ -50,7 +51,9 @@ class EntityEditor {
     return page.getByTestId("entity-item").nth(0);
   }
 
-  async moveAndClick(page: Page, x: number, y: number) {
+  /** Clicks a point of the empty test map, measured from the map's top left corner (see Map.onScreen). */
+  async moveAndClick(page: Page, mapX: number, mapY: number) {
+    const { x, y } = Map.onScreen(page, mapX, mapY);
     await this.wait2Frames(page);
     await page.mouse.move(x, y);
     await page.mouse.move(x, y);
@@ -59,7 +62,9 @@ class EntityEditor {
     await this.wait2Frames(page);
   }
 
-  async moveAndRightClick(page: Page, x: number, y: number) {
+  /** Right-clicks a point of the empty test map, measured from the map's top left corner (see Map.onScreen). */
+  async moveAndRightClick(page: Page, mapX: number, mapY: number) {
+    const { x, y } = Map.onScreen(page, mapX, mapY);
     await this.wait2Frames(page);
     await page.mouse.move(x, y);
     await page.mouse.move(x, y);
@@ -68,23 +73,35 @@ class EntityEditor {
     await this.wait2Frames(page);
   }
 
+  // "Done" in the bar at the bottom stops placing the picked object.
   async clearEntitySelection(page: Page) {
-    await page.getByTestId("clearEntitySelection").click();
-    await expect(page.getByTestId("clearEntitySelection")).toHaveCount(0);
+    await page.getByTestId("placing-done").click();
+    await expect(page.getByTestId("placing-done")).toHaveCount(0);
     await this.wait2Frames(page);
   }
 
+  // The settings of the object you clicked on the map open from its "Settings" action.
+  async openSettings(page: Page) {
+    const settings = page.getByTestId("object-settings-page");
+    if (await settings.isVisible()) return;
+    await page.getByTestId("object-settings").click();
+    await expect(settings).toBeVisible();
+  }
+
   async addProperty(page: Page, property: string) {
+    await this.openSettings(page);
     await page.getByTestId(property).click();
   }
 
   async setEntityName(page: Page, name: string) {
+    await this.openSettings(page);
     await page.getByPlaceholder("MyObject").click();
     await page.getByPlaceholder("MyObject").fill(name);
     await page.getByPlaceholder("MyObject").press("Enter");
   }
 
   async setEntityDescription(page: Page, Description: string) {
+    await this.openSettings(page);
     await page.getByText("+ Add description field").click();
     await page.getByPlaceholder("My object is a...").click();
     await page.getByPlaceholder("My object is a...").fill(Description);
@@ -92,12 +109,22 @@ class EntityEditor {
   }
 
   async setEntitySearcheable(page: Page, value: boolean) {
+    await this.openSettings(page);
     await expect(page.getByTestId('searchable')).toBeVisible();
     await page.getByTestId('searchable').click();
     await page.locator(".map-editor .sidebar input#searchable").setChecked(value);
   }
 
+  // "Add your own" opens the upload guide, which holds the file input.
+  private async openUploadGuide(page: Page) {
+    if ((await page.getByTestId("uploadCustomAsset").count()) === 0) {
+      await page.getByTestId("objects-add-your-own").click();
+    }
+    await expect(page.getByTestId("uploadCustomAsset")).toBeAttached();
+  }
+
   async uploadTestAsset(page: Page) {
+    await this.openUploadGuide(page);
     await page
       .getByTestId("uploadCustomAsset")
       .setInputFiles(path.join(__dirname, `../../assets/${this.getTestAssetFile()}`));
@@ -106,6 +133,7 @@ class EntityEditor {
   }
 
   async uploadTestAssetWithOddSize(page: Page) {
+    await this.openUploadGuide(page);
     await page
       .getByTestId("uploadCustomAsset")
       .setInputFiles(path.join(__dirname, `../../assets/${this.getTestAssetFileWithOddSize()}`));
@@ -141,10 +169,12 @@ class EntityEditor {
   }
 
   async setOpenLinkProperty(page: Page, link: string) {
+    await this.openSettings(page);
     await page.locator(".map-editor .sidebar .properties-container input#tabLink").fill(link);
   }
 
   async setOpenFileProperty(page: Page) {
+    await this.openSettings(page);
     const fileChooserPromise = page.waitForEvent("filechooser");
     await page.locator(".map-editor .sidebar .properties-container span#chooseUpload").click();
     const fileChooser = await fileChooserPromise;
