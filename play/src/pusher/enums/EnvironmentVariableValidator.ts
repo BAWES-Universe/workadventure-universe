@@ -215,11 +215,6 @@ export const EnvironmentVariables = z.object({
     DISABLE_ANONYMOUS: BoolAsString.optional()
         .transform((val) => toBool(val, false))
         .describe("If true, anonymous users cannot access the platform. Defaults to false"),
-    ENFORCE_AREA_SPACE_RIGHTS: BoolAsString.optional()
-        .transform((val) => toBool(val, true))
-        .describe(
-            "If true (the default), the server refuses to let a player join the meeting room or speaker zone of an area limited to roles the player does not have. Set to false to leave that check to the browser only."
-        ),
     PROMETHEUS_AUTHORIZATION_TOKEN: z.string().optional().describe("The token to access the Prometheus metrics."),
     PROMETHEUS_PORT: PositiveIntAsString.optional()
         .transform((val) => toNumber(val, 0))
