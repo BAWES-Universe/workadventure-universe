@@ -70,17 +70,9 @@ export interface SpaceJoinRequest {
  */
 export function checkSpaceJoin(
     request: SpaceJoinRequest,
-    socketData: Pick<
-        SocketData,
-        "grantedBubbleSpaces" | "megaphoneChannels" | "refusedAreaSpaces" | "areaSpacePolicyUnknown"
-    >
+    socketData: Pick<SocketData, "grantedBubbleSpaces" | "megaphoneChannels" | "refusedAreaSpaces">
 ): void {
     const { localSpaceName, filterType, propertiesToSync } = request;
-
-    // The back has never been able to read the room's areas, so nothing says who may join this one yet
-    if (socketData.areaSpacePolicyUnknown && isAreaSpaceName(localSpaceName)) {
-        throw new SpaceJoinRefusedError(localSpaceName, "the room's areas could not be checked yet, try again shortly");
-    }
 
     if (socketData.refusedAreaSpaces?.has(localSpaceName)) {
         throw new SpaceJoinRefusedError(localSpaceName, "this area is limited to other roles");
