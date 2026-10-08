@@ -1,10 +1,8 @@
 import {v4} from "uuid";
-import {S3_CDN_USER_REFS_BUCKET, S3_CDN_BOT_GENS_BUCKET} from "../Enum/EnvironmentVariable";
 import {Location, StorageProvider} from "./StorageProvider";
 import {storageProviderService, tempProviderService, getCdnProvider, isCdnConfigured} from "./StorageProviderService";
 import {TempStorageProvider} from "./TempStorageProvider";
 import {TargetDevice} from "./TargetDevice";
-import {NullStorageProvider} from "./NullStorageProvider";
 
 class UploaderService{
     constructor(
@@ -34,28 +32,8 @@ class UploaderService{
         return this.tempStorageProvider.uploadTempFile(audioMessageId, buffer, expireSecond)
     }
 
-    /**
-     * A file lives in the default storage or, for chat files and bot images, in one of the CDN buckets, and the id
-     * does not say which. Deleting from every place it could be (a delete of a missing file is not an error) means
-     * the file is really gone, and a failure anywhere is reported instead of being answered with "ok".
-     */
     async deleteFileById(fileId: string){
-        const providers: StorageProvider[] = [];
-        const cdnProviders = [S3_CDN_USER_REFS_BUCKET, S3_CDN_BOT_GENS_BUCKET]
-            .filter((bucket, index, buckets): bucket is string => !!bucket && buckets.indexOf(bucket) === index)
-            .map((bucket) => getCdnProvider(bucket))
-            .filter((provider): provider is StorageProvider => !!provider);
-        // Without a default storage there is nothing to delete from there.
-        if (!(this.storageProvider instanceof NullStorageProvider) || cdnProviders.length === 0) {
-            providers.push(this.storageProvider);
-        }
-        providers.push(...cdnProviders);
-
-        const results = await Promise.allSettled(providers.map(async (provider) => provider.deleteFileById(fileId)));
-        const failed = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
-        if (failed) {
-            throw failed.reason;
-        }
+        await this.storageProvider.deleteFileById(fileId)
     }
 
     getTemp(fileId: string){
