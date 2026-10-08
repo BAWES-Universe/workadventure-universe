@@ -174,6 +174,7 @@ export class MapEditorModeManager {
 
     // A simple queue to be sure we run only one undo or redo at once.
     private runningUndoRedoCommand: Promise<void> = Promise.resolve();
+    private lastUndoRedoKeyEvent: KeyboardEvent | undefined;
 
     public async undoCommand(): Promise<void> {
         // A change still being made (a Delete that just showed its "Undo" toast) lands in the history first.
@@ -334,6 +335,10 @@ export class MapEditorModeManager {
                 if (!mapEditorModeActivated) break;
                 // Todo replace with key combo https://photonstorm.github.io/phaser3-docs/Phaser.Input.Keyboard.KeyCombo.html
                 if (event.ctrlKey || event.metaKey) {
+                    // A quick tap of Ctrl+Z reaches us twice (Phaser hands the key press over again when the key comes up
+                    // before the next frame): the press is one step, not two.
+                    if (event === this.lastUndoRedoKeyEvent) break;
+                    this.lastUndoRedoKeyEvent = event;
                     if (event.shiftKey) {
                         this.runningUndoRedoCommand = this.runningUndoRedoCommand
                             .then(() => {

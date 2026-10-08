@@ -154,18 +154,20 @@
         (app) => selectedFilters.includes(app.name) || allPlaces.some((p) => placeHasProperty(p, app.name))
     );
 
-    function peopleText(areaId: string): string {
-        const count = peopleByArea.get(areaId) ?? 0;
+    // The counts come in as an argument: a function that reads peopleByArea itself is not re-run when the counts change.
+    function peopleText(areaId: string, counts: Map<string, number>): string {
+        const count = counts.get(areaId) ?? 0;
         if (count === 0) return "";
         if (count === 1) return $LL.mapEditor.lookAround.onePerson();
         return $LL.mapEditor.lookAround.people({ count });
     }
 
-    function subtitle(place: Place, areaId?: string): string {
+    function subtitle(place: Place, counts: Map<string, number>, areaId?: string): string {
         const parts: string[] = [];
         const label = getPlacePropertyLabel(place, $LL);
         if (label) parts.push(label);
-        if (areaId !== undefined && peopleText(areaId)) parts.push(peopleText(areaId));
+        const people = areaId !== undefined ? peopleText(areaId, counts) : "";
+        if (people) parts.push(people);
         else if (place instanceof Entity && place.description) parts.push(place.description);
         return parts.join(" · ");
     }
@@ -307,7 +309,7 @@
                         <span class="place-tile"><svelte:component this={getPlaceIcon(area)} font-size="18" /></span>
                         <span class="place-text">
                             <span class="place-name">{getPlaceName(area, $LL)}</span>
-                            <span class="place-sub">{subtitle(area, id)}</span>
+                            <span class="place-sub">{subtitle(area, peopleByArea, id)}</span>
                         </span>
                         <span class="place-go"><IconLocation font-size="15" /></span>
                     </button>
@@ -336,7 +338,7 @@
                         </span>
                         <span class="place-text">
                             <span class="place-name">{getPlaceName(entity, $LL)}</span>
-                            <span class="place-sub">{subtitle(entity)}</span>
+                            <span class="place-sub">{subtitle(entity, peopleByArea)}</span>
                         </span>
                         <span class="place-go"><IconLocation font-size="15" /></span>
                     </button>
