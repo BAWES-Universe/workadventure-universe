@@ -5,7 +5,6 @@
     import { LL } from "../../../i18n/i18n-svelte";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { openDirectChatRoom } from "../../Chat/Utils";
-    import { isHttpUrl } from "../../Utils/SafeUrl";
     import chat from "../images/chat.png";
 
     import ButtonClose from "../Input/ButtonClose.svelte";
@@ -20,17 +19,6 @@
     let h = 250;
     let hidden = true;
     let cvIframe: HTMLIFrameElement;
-
-    // A visit card is a web page: anything else (a javascript: link...) would run in the game's page. A relative link
-    // is a page on the game's own server, and loads as before.
-    function isWebPage(url: string): boolean {
-        try {
-            return isHttpUrl(new URL(url, window.location.href).href);
-        } catch {
-            return false;
-        }
-    }
-    $: safeVisitCardUrl = isWebPage(visitCardUrl) ? visitCardUrl : undefined;
 
     const chatConnection = gameManager.chatConnection;
     const selectPlayerChatID = get(selectedChatIDRemotePlayerStore);
@@ -78,10 +66,10 @@
         <div class={isEmbedded ? "" : "px-2 py-4"}>
             <iframe
                 title="visitCard"
-                src={safeVisitCardUrl ? `${safeVisitCardUrl}&embed=${isEmbedded}` : "about:blank"}
+                src="{visitCardUrl}&embed={isEmbedded}"
                 class="max-h-lg"
                 class:block={isEmbedded}
-                allow="clipboard-read; clipboard-write {safeVisitCardUrl ?? ''}"
+                allow="clipboard-read; clipboard-write {visitCardUrl}"
                 style="width: {isEmbedded ? '100%' : w}; height: {Math.max(
                     isEmbedded ? 1 : 0,
                     Math.min(h, maxHeigth)

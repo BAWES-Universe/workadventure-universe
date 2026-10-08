@@ -26,21 +26,6 @@ export type PartialSpaceUser = Partial<Omit<SpaceUser, "spaceUserId">> & Pick<Sp
 const debug = Debug("space");
 
 /**
- * The only fields a client may change about itself in a space. Every other field (tags, uuid, name, playUri,
- * visitCardUrl...) is set by the server, and other players act on it (open the visit card, go to the room, report),
- * so a client must never be able to overwrite it.
- * Same list as upstream WorkAdventure, minus the fields our front does not have yet (attendeesState, cpuLimited).
- */
-export const CLIENT_UPDATABLE_SPACE_USER_FIELDS: ReadonlySet<string> = new Set<keyof SpaceUser>([
-    "microphoneState",
-    "cameraState",
-    "screenSharingState",
-    "megaphoneState",
-    // Raise hand: a player raises and lowers their own hand. The pusher stamps the time itself (see below).
-    "handRaisedAt",
-]);
-
-/**
  * The Space class from the Pusher acts as a proxy and a cache for the users available in the space.
  * When a new user connects from the front, it is forwarded to the back. At the same ytime, we keep a reference to the user "socket".
  * The back is in charge of sending the complete list of users to the pusher and this list will be stored in the _users property.
@@ -349,35 +334,16 @@ export class Space implements SpaceForSpaceConnectionInterface {
             return null;
         }
 
-        // The sending socket is the only identity the pusher can trust. The spaceUserId carried by the message
-        // comes from the front: trusting it would let a client update another user.
-        const spaceUser = this._localConnectedUserWithSpaceUser.get(client);
-        if (!spaceUser) {
-            throw new Error(`spaceUser not found for socket ${client.getUserData().spaceUserId} in space ${this.name}`);
-        }
-
-        const messageSpaceUserId = updateSpaceUserMessage.user.spaceUserId;
-        if (messageSpaceUserId !== spaceUser.spaceUserId) {
-            console.warn(
-                `[Space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage] Message spaceUserId ${messageSpaceUserId} does not match the socket's ${spaceUser.spaceUserId}. Applying the update to the socket's user.`
-            );
-        }
-
-        const changedFields = updateSpaceUserMessage.updateMask.filter((field) =>
-            CLIENT_UPDATABLE_SPACE_USER_FIELDS.has(field)
+        //TODO : see why search directly with client on localConnectedUserWithSpaceUser is not working
+        const userUuid = client.getUserData().userUuid;
+        const spaceUser = Array.from(this._localConnectedUserWithSpaceUser.values()).find(
+            (user) => user.uuid === userUuid
         );
-        if (changedFields.length !== updateSpaceUserMessage.updateMask.length) {
-            const message = `[Space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage] User ${
-                spaceUser.spaceUserId
-            } tried to update read-only fields in space ${this.name}: ${updateSpaceUserMessage.updateMask.join(", ")}`;
-            console.warn(message);
-            Sentry.captureException(new Error(message));
-        }
-        if (changedFields.length === 0) {
-            return null;
+        if (!spaceUser) {
+            throw new Error("spaceUser not found " + userUuid);
         }
 
-        if (changedFields.includes("handRaisedAt")) {
+        if (updateSpaceUserMessage.updateMask.includes("handRaisedAt")) {
             // The server's clock orders the raised hands, not each browser's. A hand already up keeps its place.
             const raised = (updateSpaceUserMessage.user.handRaisedAt ?? 0) > 0;
             const alreadyRaisedAt = spaceUser.handRaisedAt ?? 0;
@@ -388,14 +354,13 @@ export class Space implements SpaceForSpaceConnectionInterface {
             updateSpaceUserMessage.user.handRaisedAt = handRaisedAt;
         }
 
-        const updateValues = applyFieldMask(updateSpaceUserMessage.user, changedFields) as Partial<SpaceUser>;
+        const updateValues = applyFieldMask(updateSpaceUserMessage.user, updateSpaceUserMessage.updateMask);
 
         merge(spaceUser, updateValues);
 
         return {
-            changedFields,
-            // Only the allowed fields travel on, stamped with the sender's own id.
-            partialSpaceUser: { ...updateValues, spaceUserId: spaceUser.spaceUserId },
+            changedFields: updateSpaceUserMessage.updateMask,
+            partialSpaceUser: updateSpaceUserMessage.user,
         };
     }
 
