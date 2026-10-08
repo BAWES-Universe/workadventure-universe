@@ -40,6 +40,44 @@ export function refusedAreaSpaces(
     return [...refused].filter((name) => !allowed.has(name));
 }
 
+/**
+ * Whether the area-space rules do not apply to this user at all: people who may edit the room, and bots (which join
+ * the room's spaces on their own account).
+ */
+export function bypassesAreaSpaceRights(user: { tags: string[]; uuid: string; canEdit: boolean }): boolean {
+    return user.canEdit || isBot(user);
+}
+
+/**
+ * The stages of a room this user may listen to but not speak on: every speaker zone that carries the stage's name is
+ * limited to roles the user does not have. The browser only lets someone speak from inside the speaker zone; this
+ * gives the server the same rule, so a listener cannot start streaming into the stage with a crafted message. A
+ * listener who a speaker invites to speak is let through separately (the pusher remembers the invitation).
+ */
+export function listenOnlyAreaSpaces(
+    wam: WamLike | undefined,
+    roomUrl: string,
+    user: { tags: string[]; uuid: string; canEdit: boolean }
+): string[] {
+    // Admins can always host a stage
+    if (wam === undefined || bypassesAreaSpaceRights(user) || user.tags.includes("admin")) {
+        return [];
+    }
+    const areas = Array.isArray(wam.areas) ? wam.areas : Object.values(wam.areas);
+
+    const closedToSpeak = new Set<string>();
+    const openToSpeak = new Set<string>();
+    for (const area of areas) {
+        const open = canEnter(area, user.tags);
+        for (const property of area.properties) {
+            if (property.type === "speakerMegaphone" && property.name !== undefined) {
+                (open ? openToSpeak : closedToSpeak).add(areaSpaceName(property.name, roomUrl));
+            }
+        }
+    }
+    return [...closedToSpeak].filter((name) => !openToSpeak.has(name));
+}
+
 function isBot(user: { tags: string[]; uuid: string }): boolean {
     return user.tags.includes("bot") || user.uuid.startsWith("bot-");
 }

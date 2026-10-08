@@ -466,6 +466,25 @@ export class GameScene extends DirtyScene {
      * Joins one space per broadcast channel of this room (this room, this world, everywhere in the universe) and
      * leaves the ones that are gone, so a live broadcast on any reach that covers this room arrives here.
      */
+    /** Lets go of the meeting rooms and stages the server says this player may no longer be in. */
+    private leaveRefusedAreaSpaces(refusedAreaSpaces: string[]): void {
+        const registry = this._spaceRegistry;
+        if (!registry) {
+            return;
+        }
+        for (const name of refusedAreaSpaces) {
+            // The front joins a space under its name or under the slugified name
+            for (const candidate of new Set([name, slugify(name)])) {
+                if (!registry.exist(candidate)) {
+                    continue;
+                }
+                registry.leaveSpace(registry.get(candidate)).catch((e) => {
+                    console.warn(`Could not leave the space "${candidate}" this player may no longer be in`, e);
+                });
+            }
+        }
+    }
+
     private syncBroadcastSpaces(channels: { scope: string; url: string }[], broadcastService: BroadcastService): void {
         if (this.broadcastSceneClosing) {
             return;
@@ -2363,6 +2382,9 @@ export class GameScene extends DirtyScene {
                               ]
                             : [];
                     megaphoneChannelsStore.set(channels);
+                    // A meeting room or stage that has just been limited to roles this player does not have: the
+                    // server has already taken them out of it, so this side lets go of it too.
+                    this.leaveRefusedAreaSpaces(megaphoneSettingsMessage.refusedAreaSpaces);
                     // Do not disturb: no broadcast reaches this player.
                     if (get(availabilityStatusStore) === AvailabilityStatus.DO_NOT_DISTURB) {
                         return;
