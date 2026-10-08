@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { MapStore } from "@workadventure/store-utils";
-import type { Participant, LocalParticipant } from "livekit-client";
+import type { Participant, LocalParticipant, ParticipantPermission } from "livekit-client";
 import { VideoPresets, Room, RoomEvent, LocalVideoTrack, LocalAudioTrack, Track } from "livekit-client";
 import type { Readable, Unsubscriber } from "svelte/store";
 import { get } from "svelte/store";
@@ -37,6 +37,9 @@ export class LiveKitRoom implements LiveKitRoomInterface {
     private localCameraTrack: LocalVideoTrack | undefined;
     private localMicrophoneTrack: LocalAudioTrack | undefined;
     private unsubscribers: Unsubscriber[] = [];
+    // The camera and microphone stream the media tracks were last made from: published again if the media server
+    // only lets us send after the track was first offered (see handleParticipantPermissionsChanged).
+    private lastLocalStream: LocalStreamStoreValue | undefined;
 
     constructor(
         private serverUrl: string,
@@ -195,6 +198,12 @@ export class LiveKitRoom implements LiveKitRoomInterface {
                     videoSimulcastLayers: [VideoPresets.h1080, VideoPresets.h360, VideoPresets.h90],
                 })
                 .catch((err) => {
+                    // Not allowed to send yet: the permission arrives a moment after we start streaming, and
+                    // publishing is tried again then. Any other failure is reported.
+                    if (this.mayNotPublishYet()) {
+                        this.localCameraTrack = undefined;
+                        return;
+                    }
                     console.error("An error occurred while publishing camera track", err);
                     Sentry.captureException(err);
                 });
@@ -254,6 +263,10 @@ export class LiveKitRoom implements LiveKitRoomInterface {
                     source: Track.Source.Microphone,
                 })
                 .catch((err) => {
+                    if (this.mayNotPublishYet()) {
+                        this.localMicrophoneTrack = undefined;
+                        return;
+                    }
                     console.error("An error occurred while publishing microphone track", err);
                     Sentry.captureException(err);
                 });
@@ -272,97 +285,14 @@ export class LiveKitRoom implements LiveKitRoomInterface {
     private synchronizeMediaState() {
         this.unsubscribers.push(
             deriveSwitchStore(this._localStreamStore, this.space.isStreamingStore).subscribe((localStream) => {
+                this.lastLocalStream = localStream;
                 this.handleCameraTrack(localStream);
                 this.handleMicrophoneTrack(localStream);
             })
         );
 
         this.unsubscribers.push(
-            this.screenSharingLocalStreamStore.subscribe((stream) => {
-                const streamResult = stream.type === "success" ? stream.stream : undefined;
-
-                if (!this.localParticipant) {
-                    console.error("Local participant not found");
-                    Sentry.captureException(new Error("Local participant not found"));
-                    return;
-                }
-                if (this.localScreenSharingVideoTrack || this.localScreenSharingAudioTrack) {
-                    this.unpublishAllScreenShareTrack().catch((err) => {
-                        console.error("An error occurred while unpublishing all screen share track", err);
-                        Sentry.captureException(err);
-                    });
-                }
-
-                if (streamResult) {
-                    // Create a new video track instance
-                    const screenShareVideoTrack = streamResult.getVideoTracks()[0];
-                    const screenShareAudioTrack = streamResult.getAudioTracks()[0];
-
-                    if (!screenShareVideoTrack) {
-                        return;
-                    }
-
-                    if (!this.localScreenSharingVideoTrack) {
-                        this.localScreenSharingVideoTrack = new LocalVideoTrack(screenShareVideoTrack);
-
-                        // Publish video track
-                        this.localParticipant
-                            .publishTrack(this.localScreenSharingVideoTrack, {
-                                source: Track.Source.ScreenShare,
-                                videoCodec: "vp8",
-                                simulcast: true,
-                                videoSimulcastLayers: [VideoPresets.h1080, VideoPresets.h360, VideoPresets.h90],
-                            })
-                            .catch((err) => {
-                                console.error("An error occurred while publishing screen share video track", err);
-                                Sentry.captureException(err);
-                            });
-                    } else {
-                        // Replace existing video track
-                        this.localScreenSharingVideoTrack
-                            .replaceTrack(screenShareVideoTrack, {
-                                userProvidedTrack: true,
-                            })
-                            .catch((err) => {
-                                console.error("An error occurred while replacing screen share video track", err);
-                                Sentry.captureException(err);
-                            });
-                    }
-
-                    // Publish audio track if available
-                    if (screenShareAudioTrack) {
-                        if (!this.localScreenSharingAudioTrack) {
-                            this.localScreenSharingAudioTrack = new LocalAudioTrack(screenShareAudioTrack);
-
-                            this.localParticipant
-                                .publishTrack(this.localScreenSharingAudioTrack, {
-                                    source: Track.Source.ScreenShareAudio,
-                                })
-                                .catch((err) => {
-                                    console.error("An error occurred while publishing screen share audio track", err);
-                                    Sentry.captureException(err);
-                                });
-                        } else {
-                            this.localScreenSharingAudioTrack
-                                .replaceTrack(screenShareAudioTrack, {
-                                    userProvidedTrack: true,
-                                })
-                                .catch((err) => {
-                                    console.error("An error occurred while replacing screen share audio track", err);
-                                    Sentry.captureException(err);
-                                });
-                        }
-                    } else {
-                        // If there is no audio track in the new stream, unpublish the existing one
-                        if (this.localScreenSharingAudioTrack) {
-                            this.localScreenSharingAudioTrack.pauseUpstream().catch((err) => {
-                                console.error("An error occurred while unpublishing screen share audio track", err);
-                                Sentry.captureException(err);
-                            });
-                        }
-                    }
-                }
-            })
+            this.screenSharingLocalStreamStore.subscribe((stream) => this.handleScreenShareStream(stream))
         );
 
         this.unsubscribers.push(
@@ -375,6 +305,136 @@ export class LiveKitRoom implements LiveKitRoomInterface {
                 });
             })
         );
+    }
+
+    private handleScreenShareStream(stream: LocalStreamStoreValue): void {
+        const streamResult = stream.type === "success" ? stream.stream : undefined;
+
+        if (!this.localParticipant) {
+            console.error("Local participant not found");
+            Sentry.captureException(new Error("Local participant not found"));
+            return;
+        }
+        if (this.localScreenSharingVideoTrack || this.localScreenSharingAudioTrack) {
+            this.unpublishAllScreenShareTrack().catch((err) => {
+                console.error("An error occurred while unpublishing all screen share track", err);
+                Sentry.captureException(err);
+            });
+        }
+
+        if (streamResult) {
+            // Create a new video track instance
+            const screenShareVideoTrack = streamResult.getVideoTracks()[0];
+            const screenShareAudioTrack = streamResult.getAudioTracks()[0];
+
+            if (!screenShareVideoTrack) {
+                return;
+            }
+
+            if (!this.localScreenSharingVideoTrack) {
+                this.localScreenSharingVideoTrack = new LocalVideoTrack(screenShareVideoTrack);
+
+                // Publish video track
+                this.localParticipant
+                    .publishTrack(this.localScreenSharingVideoTrack, {
+                        source: Track.Source.ScreenShare,
+                        videoCodec: "vp8",
+                        simulcast: true,
+                        videoSimulcastLayers: [VideoPresets.h1080, VideoPresets.h360, VideoPresets.h90],
+                    })
+                    .catch((err) => {
+                        if (this.mayNotPublishYet()) {
+                            this.localScreenSharingVideoTrack = undefined;
+                            return;
+                        }
+                        console.error("An error occurred while publishing screen share video track", err);
+                        Sentry.captureException(err);
+                    });
+            } else {
+                // Replace existing video track
+                this.localScreenSharingVideoTrack
+                    .replaceTrack(screenShareVideoTrack, {
+                        userProvidedTrack: true,
+                    })
+                    .catch((err) => {
+                        console.error("An error occurred while replacing screen share video track", err);
+                        Sentry.captureException(err);
+                    });
+            }
+
+            // Publish audio track if available
+            if (screenShareAudioTrack) {
+                if (!this.localScreenSharingAudioTrack) {
+                    this.localScreenSharingAudioTrack = new LocalAudioTrack(screenShareAudioTrack);
+
+                    this.localParticipant
+                        .publishTrack(this.localScreenSharingAudioTrack, {
+                            source: Track.Source.ScreenShareAudio,
+                        })
+                        .catch((err) => {
+                            if (this.mayNotPublishYet()) {
+                                this.localScreenSharingAudioTrack = undefined;
+                                return;
+                            }
+                            console.error("An error occurred while publishing screen share audio track", err);
+                            Sentry.captureException(err);
+                        });
+                } else {
+                    this.localScreenSharingAudioTrack
+                        .replaceTrack(screenShareAudioTrack, {
+                            userProvidedTrack: true,
+                        })
+                        .catch((err) => {
+                            console.error("An error occurred while replacing screen share audio track", err);
+                            Sentry.captureException(err);
+                        });
+                }
+            } else {
+                // If there is no audio track in the new stream, unpublish the existing one
+                if (this.localScreenSharingAudioTrack) {
+                    this.localScreenSharingAudioTrack.pauseUpstream().catch((err) => {
+                        console.error("An error occurred while unpublishing screen share audio track", err);
+                        Sentry.captureException(err);
+                    });
+                }
+            }
+        }
+    }
+
+    /**
+     * True when the media server has not (yet) let us send. A token made while we only listened carries no permission
+     * to send; the server grants it once we start streaming, and publishing is then tried again.
+     */
+    private mayNotPublishYet(): boolean {
+        return this.localParticipant?.permissions?.canPublish !== true;
+    }
+
+    private publishLocalTracksAgain(): void {
+        this.handleCameraTrack(this.lastLocalStream);
+        this.handleMicrophoneTrack(this.lastLocalStream);
+        this.handleScreenShareStream(get(this.screenSharingLocalStreamStore));
+    }
+
+    /**
+     * The media server changes who may send while people are in the room (a listener invited on stage, a speaker
+     * moved back to the audience).
+     * - Us, now allowed: what we could not send before is sent.
+     * - Somebody else, now allowed: they appear like anybody who was allowed when we joined.
+     */
+    private handleParticipantPermissionsChanged(
+        _previous: ParticipantPermission | undefined,
+        participant: Participant
+    ): void {
+        if (this.abortSignal.aborted || participant.permissions?.canPublish !== true) {
+            return;
+        }
+        if (participant === this.localParticipant) {
+            this.publishLocalTracksAgain();
+            return;
+        }
+        if (!this.participants.has(participant.sid)) {
+            this.handleParticipantConnected(participant);
+        }
     }
 
     private async unpublishAllScreenShareTrack() {
@@ -454,6 +514,7 @@ export class LiveKitRoom implements LiveKitRoomInterface {
         this.room.on(RoomEvent.ParticipantConnected, this.handleParticipantConnected.bind(this));
         this.room.on(RoomEvent.ParticipantDisconnected, this.handleParticipantDisconnected.bind(this));
         this.room.on(RoomEvent.ActiveSpeakersChanged, this.handleActiveSpeakersChanged.bind(this));
+        this.room.on(RoomEvent.ParticipantPermissionsChanged, this.handleParticipantPermissionsChanged.bind(this));
     }
 
     private parseParticipantMetadata(participant: Participant): ParticipantMetadata {
