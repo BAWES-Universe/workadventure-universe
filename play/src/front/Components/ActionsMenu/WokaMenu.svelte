@@ -108,9 +108,11 @@
                                 />
                             </div>
                         {/if}
-                        <div class=" w-max mt-[29px]">
+                        <div class="mt-[29px] max-w-full px-2 text-center">
                             <!-- The name as its owner saved it, first letter capitalised; never all capitals. -->
-                            <h3 class="normal-case">{displayName(wokaMenuData.wokaName)}</h3>
+                            <h3 class="normal-case break-words [overflow-wrap:anywhere]">
+                                {displayName(wokaMenuData.wokaName)}
+                            </h3>
                         </div>
                     </div>
                 </div>
