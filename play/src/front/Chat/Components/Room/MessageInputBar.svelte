@@ -276,6 +276,8 @@
                             try {
                                 response = await fetch(`${UPLOADER_URL}/upload-file`, {
                                     method: "POST",
+                                    // The game session, so the uploader knows the file comes from somebody in the game.
+                                    headers: { Authorization: localUserStore.getAuthToken() ?? "" },
                                     body: formData,
                                 });
                             } catch {
