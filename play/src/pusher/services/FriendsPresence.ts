@@ -128,10 +128,6 @@ export function mostAvailableStatus(statuses: AvailabilityStatus[]): Availabilit
     return availabilityRank(best) === AVAILABILITY_ORDER.length ? AvailabilityStatus.ONLINE : best;
 }
 
-function pairKey(userUuidA: string, userUuidB: string): string {
-    return userUuidA < userUuidB ? `${userUuidA}|${userUuidB}` : `${userUuidB}|${userUuidA}`;
-}
-
 export function cleanRoomName(roomName: string): string {
     return roomName.trim().slice(0, ROOM_NAME_MAX_LENGTH);
 }
@@ -186,11 +182,6 @@ export class FriendsPresence<S extends FriendsSocket> {
     private readonly visitors = new Map<S, { playUri: string; bot: boolean }>();
     private readonly places = new Map<string, { place: FriendPlace | null; expiresAt: number }>();
     private readonly placesInFlight = new Map<string, Promise<void>>();
-    // A friends list loaded before a block or a removal still has that person in it. Loads and unlinks are numbered on
-    // one clock, so a load can tell it began before an unlink. Unlinks are only remembered while such a load runs.
-    private clock = 0;
-    private readonly listLoadsRunning = new Set<number>();
-    private readonly unlinkedAt = new Map<string, number>();
 
     private readonly now: () => number;
     private readonly coalesceMs: number;
@@ -278,39 +269,8 @@ export class FriendsPresence<S extends FriendsSocket> {
         this.watching.set(socket, watched);
     }
 
-    /** A friends list is about to be loaded. Pass the number to withoutUnlinked, then to finishListLoad. */
-    startListLoad(): number {
-        const load = ++this.clock;
-        this.listLoadsRunning.add(load);
-        return load;
-    }
-
-    /** The answer built from a friends list is ready (or the load failed). */
-    finishListLoad(load: number): void {
-        this.listLoadsRunning.delete(load);
-        if (this.listLoadsRunning.size === 0) {
-            this.unlinkedAt.clear();
-            return;
-        }
-        const oldestLoad = Math.min(...this.listLoadsRunning);
-        for (const [pair, at] of this.unlinkedAt) {
-            if (at <= oldestLoad) this.unlinkedAt.delete(pair);
-        }
-    }
-
-    /**
-     * Drops from a friends list the people who were blocked or removed after the list began loading: that list still
-     * has them, and must not watch them again or show where they are. The block always wins.
-     */
-    withoutUnlinked<T extends { uuid: string }>(load: number, userUuid: string, friends: T[]): T[] {
-        return friends.filter((friend) => (this.unlinkedAt.get(pairKey(userUuid, friend.uuid)) ?? 0) < load);
-    }
-
     /** Two players stop hearing about each other (a friendship removed, or a block), on every tab. */
     unlink(userUuidA: string, userUuidB: string): void {
-        if (this.listLoadsRunning.size > 0) {
-            this.unlinkedAt.set(pairKey(userUuidA, userUuidB), ++this.clock);
-        }
         for (const socket of this.socketsOf(userUuidA)) {
             this.unwatch(socket, userUuidB);
         }

@@ -85,7 +85,6 @@ import { MatrixAreaMembership } from "./MatrixAreaMembership";
 import { checkSpaceJoin } from "./SpaceJoinPolicy";
 import { BubbleSpaceGrants } from "./BubbleSpaceGrants";
 import { FriendsPresence } from "./FriendsPresence";
-import type { UniverseRoomsData } from "./UniverseRooms";
 import { FriendsRings } from "./FriendsRings";
 import type { OrbitFriendSettings } from "./FriendsService";
 import {
@@ -1106,10 +1105,9 @@ export class SocketManager implements ZoneEventListener {
                 ? "world"
                 : "room";
         let tabUrlRooms: string[];
-        let universe: UniverseRoomsData | undefined;
 
         if (reach === "universe") {
-            universe = await adminService.getRoomsFromSameUniverse(clientRoomUrl, socketData.userUuid, "en");
+            const universe = await adminService.getRoomsFromSameUniverse(clientRoomUrl, socketData.userUuid, "en");
             tabUrlRooms = universe.worlds.flatMap((world) => world.rooms.map((room) => room.roomUrl));
             if (!tabUrlRooms.includes(clientRoomUrl)) {
                 tabUrlRooms.push(clientRoomUrl);
@@ -1122,12 +1120,11 @@ export class SocketManager implements ZoneEventListener {
         }
 
         const broadcast: BroadcastMeta = {
-            // The sender's name, the name of what the message covers and the Woka come from the server, not from what the
-            // client sent: the card shows who really sent it, and where.
-            senderName: socketData.name,
+            senderName: playGlobalMessageEvent.broadcast?.senderName ?? socketData.name,
             reach,
-            reachLabel: await this.broadcastReachLabel(socketData, reach, universe),
+            reachLabel: playGlobalMessageEvent.broadcast?.reachLabel,
             caption: playGlobalMessageEvent.broadcast?.caption,
+            // Taken from the connection, not from what the client sent: the card shows who really sent it.
             senderTextures: socketData.characterTextures,
         };
 
@@ -1144,36 +1141,6 @@ export class SocketManager implements ZoneEventListener {
                 return;
             });
         }
-    }
-
-    /**
-     * The name of what a broadcast covers (the room, the world or the universe the sender is in), asked from the admin
-     * rather than taken from the sender. Without one, the card simply names no place.
-     */
-    private async broadcastReachLabel(
-        socketData: SocketData,
-        reach: "room" | "world" | "universe",
-        universe: UniverseRoomsData | undefined
-    ): Promise<string | undefined> {
-        try {
-            const names =
-                universe ?? (await adminService.getRoomsFromSameUniverse(socketData.roomId, socketData.userUuid, "en"));
-            switch (reach) {
-                case "universe":
-                    return names.universeName || undefined;
-                case "world":
-                    return names.worlds.find((world) => world.isCurrent)?.name || undefined;
-                case "room":
-                    return (
-                        names.worlds.flatMap((world) => world.rooms).find((room) => room.isCurrent)?.name ||
-                        socketData.roomName ||
-                        undefined
-                    );
-            }
-        } catch (e) {
-            console.warn("SocketManager => broadcastReachLabel => could not get the names of the reach", e);
-        }
-        return reach === "room" ? socketData.roomName || undefined : undefined;
     }
 
     forwardMessageToBack(client: Socket, message: PusherToBackMessage["message"]): void {
@@ -1431,22 +1398,15 @@ export class SocketManager implements ZoneEventListener {
         if (refused) {
             return refused;
         }
-        const userUuid = client.getUserData().userUuid;
-        // A block or a removal that happens while the list loads wins over the list: it still has that person in it.
-        const load = this.friendsPresence.startListLoad();
         try {
-            const list = await friendsService.getFriends(userUuid);
-            const watches = this.friendsPresence
-                .withoutUnlinked(load, userUuid, list.friends)
-                .map((friend) => ({ uuid: friend.uuid, shareLocation: friend.shareLocation }));
+            const list = await friendsService.getFriends(client.getUserData().userUuid);
+            const watches = list.friends.map((friend) => ({ uuid: friend.uuid, shareLocation: friend.shareLocation }));
             this.friendsPresence.watch(client, watches);
             const presences = await this.friendsPresence.presencesOf(watches);
-            // Looking up room names takes a moment: someone may have been blocked or removed meanwhile.
-            const friends = this.friendsPresence.withoutUnlinked(load, userUuid, list.friends);
             return {
                 $case: "friendsListAnswer",
                 friendsListAnswer: {
-                    friends: friends.map((friend) => ({
+                    friends: list.friends.map((friend) => ({
                         uuid: friend.uuid,
                         name: friend.name ?? "",
                         chatId: friend.chatId ?? "",
@@ -1470,8 +1430,6 @@ export class SocketManager implements ZoneEventListener {
             };
         } catch (e) {
             return this.friendsErrorAnswer("handleFriendsListQuery", e);
-        } finally {
-            this.friendsPresence.finishListLoad(load);
         }
     }
 

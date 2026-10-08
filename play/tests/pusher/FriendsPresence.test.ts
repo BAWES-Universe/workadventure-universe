@@ -314,61 +314,6 @@ describe("FriendsPresence", () => {
         ).toEqual([["bob", "dave"]]);
     });
 
-    describe("a friends list that was loading when somebody was blocked or removed", () => {
-        const list = [{ uuid: "bob" }, { uuid: "carol" }];
-
-        it("is not used for that person: the block wins", () => {
-            const { presence } = setup();
-            const load = presence.startListLoad();
-            presence.unlink("alice", "bob");
-            expect(presence.withoutUnlinked(load, "alice", list)).toEqual([{ uuid: "carol" }]);
-            // The other side of the pair, too
-            expect(presence.withoutUnlinked(load, "bob", [{ uuid: "alice" }])).toEqual([]);
-            presence.finishListLoad(load);
-        });
-
-        it("keeps everyone in a list that began after the block", () => {
-            const { presence } = setup();
-            const earlier = presence.startListLoad();
-            presence.unlink("alice", "bob");
-            const later = presence.startListLoad();
-            expect(presence.withoutUnlinked(later, "alice", list)).toEqual(list);
-            presence.finishListLoad(earlier);
-            presence.finishListLoad(later);
-        });
-
-        it("forgets the block once no list needs it, so it cannot hide anyone later", () => {
-            const { presence } = setup();
-            const load = presence.startListLoad();
-            presence.unlink("alice", "bob");
-            presence.finishListLoad(load);
-            expect(presence.withoutUnlinked(presence.startListLoad(), "alice", list)).toEqual(list);
-        });
-
-        it("does not tell the blocked person where Bob is, and Bob is not watched again", async () => {
-            const { presence, sent } = setup();
-            const aliceTab = new FakeSocket("alice", ROOM_A);
-            const bobTab = new FakeSocket("bob", ROOM_B);
-            presence.track(aliceTab);
-            presence.track(bobTab);
-            await vi.advanceTimersByTimeAsync(600);
-            sent.length = 0;
-
-            // Alice's list starts loading, Bob blocks her, then the list (which still has Bob) comes back.
-            const load = presence.startListLoad();
-            presence.unlink("alice", "bob");
-            const friends = presence
-                .withoutUnlinked(load, "alice", [{ uuid: "bob", shareLocation: true }])
-                .map((friend) => ({ uuid: friend.uuid, shareLocation: friend.shareLocation }));
-            presence.watch(aliceTab, friends);
-            presence.finishListLoad(load);
-
-            presence.setStatus(bobTab, AvailabilityStatus.BUSY);
-            await vi.advanceTimersByTimeAsync(600);
-            expect(sent).toEqual([]);
-        });
-    });
-
     it("looks room names up once and caches them", async () => {
         const { presence, lookupPlaces } = setup();
         presence.track(new FakeSocket("alice", ROOM_A));
