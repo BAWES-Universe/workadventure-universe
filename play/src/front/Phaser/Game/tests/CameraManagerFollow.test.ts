@@ -48,6 +48,7 @@ function makeCamera() {
         pan: vi.fn(),
         stopFollow: vi.fn(),
         setFollowOffset: vi.fn(),
+        followOffset: { x: 0, y: -74 },
         panEffect: { isRunning: false, reset: vi.fn() },
         centerX: 0,
         centerY: 0,
@@ -61,10 +62,10 @@ function makeCamera() {
     };
 }
 
-async function makeCameraManager() {
+async function makeCameraManager(mapSize = { width: 1000, height: 1000 }) {
     const { CameraManager } = await import("../CameraManager");
     const camera = makeCamera();
-    const currentPlayer = { x: 10, y: 10, once: vi.fn() };
+    const currentPlayer = { x: 10, y: 10, once: vi.fn(), off: vi.fn() };
     const remote = { x: 500, y: 500, userUuid: "stitch", once: vi.fn() };
     const scene = {
         cameras: { main: camera },
@@ -76,6 +77,7 @@ async function makeCameraManager() {
         scale: { zoom: 1 },
         reposition: vi.fn(),
         events: { on: vi.fn(), off: vi.fn() },
+        time: { delayedCall: vi.fn() },
     };
     const scale = {
         zoomModifier: 1,
@@ -85,7 +87,7 @@ async function makeCameraManager() {
         getFocusTarget: vi.fn(),
         getTargetZoomModifierFor: () => 1,
     };
-    const manager = new CameraManager(scene as never, { width: 1000, height: 1000 }, scale as never);
+    const manager = new CameraManager(scene as never, mapSize, scale as never);
     return { manager, camera, currentPlayer, remote, scene };
 }
 
@@ -241,5 +243,66 @@ describe("CameraManager after gliding back to the player", () => {
 
         finishLastGlide(scene);
         expect(camera.startFollow).toHaveBeenCalledWith(currentPlayer, true);
+    });
+});
+
+describe("CameraManager dragging the map while editing", () => {
+    const area = { x: 300, y: 300, width: 100, height: 100 };
+
+    it("pans when the player stands in a focusable area, then goes back to the area", async () => {
+        const { manager, camera, currentPlayer } = await makeCameraManager();
+        const scale = (manager as unknown as { waScaleManager: { getFocusTarget: ReturnType<typeof vi.fn> } })
+            .waScaleManager;
+        manager.enterFocusMode(area, 0.5, 0);
+        scale.getFocusTarget.mockReturnValue(area);
+        camera.startFollow.mockClear();
+
+        manager.dragCamera(40, 0);
+
+        // The camera follows the dragged point, not the area any more.
+        const followed = camera.startFollow.mock.calls[camera.startFollow.mock.calls.length - 1][0] as { x: number };
+        expect(followed).not.toBe(area);
+        expect(currentPlayer.once).toHaveBeenCalledWith("hasMoved", expect.any(Function));
+
+        const enter = vi.spyOn(manager, "enterFocusMode").mockImplementation(() => undefined);
+        manager.endDragFreedom();
+        expect(enter).toHaveBeenCalledWith(area, 0.5, 1000, false);
+        expect(camera.setFollowOffset).toHaveBeenLastCalledWith(0, -74);
+    });
+
+    it("does not go back to an area the player left meanwhile", async () => {
+        const { manager, currentPlayer } = await makeCameraManager();
+        const scale = (manager as unknown as { waScaleManager: { getFocusTarget: ReturnType<typeof vi.fn> } })
+            .waScaleManager;
+        manager.enterFocusMode(area, 0, 0);
+        scale.getFocusTarget.mockReturnValue(area);
+        manager.dragCamera(40, 0);
+        manager.leaveFocusMode(currentPlayer as never);
+
+        const enter = vi.spyOn(manager, "enterFocusMode");
+        manager.endDragFreedom();
+        expect(enter).not.toHaveBeenCalled();
+    });
+});
+
+describe("CameraManager opening the map editor", () => {
+    async function openEditor(mapSize: { width: number; height: number }) {
+        const { mapEditorModeStore } = await import("../../../Stores/MapEditorStore");
+        const { camera } = await makeCameraManager(mapSize);
+        camera.setBounds.mockClear();
+        (mapEditorModeStore as unknown as { set: (open: boolean) => void }).set(true);
+        (mapEditorModeStore as unknown as { set: (open: boolean) => void }).set(false);
+        return camera;
+    }
+
+    it("keeps a map smaller than the screen in the middle, where it sits while playing", async () => {
+        const camera = await openEditor({ width: 400, height: 300 });
+        // The 800x600 screen is centred on the 400x300 map.
+        expect(camera.setBounds).toHaveBeenCalledWith(-200, -150, 800, 600);
+    });
+
+    it("still lets a map wider than the screen scroll out from under the editor's panel", async () => {
+        const camera = await openEditor({ width: 1000, height: 1000 });
+        expect(camera.setBounds).toHaveBeenCalledWith(0, 0, 2000, 1000);
     });
 });

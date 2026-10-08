@@ -421,14 +421,6 @@ class AnalyticsClient {
             .catch((e) => console.error(e));
     }
 
-    menuContact(): void {
-        this.posthogPromise
-            ?.then((posthog) => {
-                posthog.capture("wa_menu_contact");
-            })
-            .catch((e) => console.error(e));
-    }
-
     inviteCopyLink(): void {
         this.posthogPromise
             ?.then((posthog) => {
@@ -987,6 +979,29 @@ class AnalyticsClient {
         this.posthogPromise
             ?.then((posthog) => {
                 posthog.capture("wa_express_tray_opened", { mode });
+            })
+            .catch((e) => console.error(e));
+    }
+    raiseHand(): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_raise_hand");
+            })
+            .catch((e) => console.error(e));
+    }
+    /** Why the hand went down: lowered by its owner, after they spoke, or by a moderator. */
+    lowerHand(reason: "self" | "spoke" | "moderator"): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_lower_hand", { reason });
+            })
+            .catch((e) => console.error(e));
+    }
+    /** "Keep it raised" after speaking with the hand up. */
+    keepHandRaised(): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_keep_hand_raised");
             })
             .catch((e) => console.error(e));
     }

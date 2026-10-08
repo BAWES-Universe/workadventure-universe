@@ -30,6 +30,14 @@ import type {
     ModifyCustomEntityMessage,
     MoveToPositionMessage as MoveToPositionMessageProto,
     LocatePositionMessage as LocatePositionMessageProto,
+    FriendActionAnswer,
+    FriendsListAnswer,
+    FriendSearchResult,
+    FriendSettings,
+    FriendSettingsUpdate,
+    RingAnswer,
+    RingReplyAnswer,
+    FriendsUpdateMessage,
     PlayerDetailsUpdatedMessage as PlayerDetailsUpdatedMessageTsProto,
     PositionMessage as PositionMessageTsProto,
     PositionMessage_Direction,
@@ -101,7 +109,7 @@ import { chatZoneLiveStore } from "../Stores/ChatStore";
 import { errorScreenStore } from "../Stores/ErrorScreenStore";
 import { followRoleStore, followUsersStore } from "../Stores/FollowStore";
 import { isSpeakerStore, requestedMicrophoneState, requestedCameraState } from "../Stores/MediaStore";
-import { currentLiveStreamingSpaceStore } from "../Stores/MegaphoneStore";
+import { currentLiveStreamingSpaceStore, forgetMegaphoneSpace } from "../Stores/MegaphoneStore";
 import {
     inviteUserActivated,
     mapEditorActivated,
@@ -227,6 +235,9 @@ export class RoomConnection implements RoomConnection {
     public readonly moveToPositionMessageStream = this._moveToPositionMessageStream.asObservable();
     private readonly _locatePositionMessageStream = new Subject<LocatePositionMessageProto>();
     public readonly locatePositionMessageStream = this._locatePositionMessageStream.asObservable();
+
+    private readonly _friendsUpdateMessageStream = new Subject<FriendsUpdateMessage>();
+    public readonly friendsUpdateMessageStream = this._friendsUpdateMessageStream.asObservable();
     private readonly _initSpaceUsersMessageStream = new Subject<InitSpaceUsersMessage>();
     public readonly initSpaceUsersMessageStream = this._initSpaceUsersMessageStream.asObservable();
     private readonly _addSpaceUserMessageStream = new Subject<AddSpaceUserMessage>();
@@ -467,6 +478,7 @@ export class RoomConnection implements RoomConnection {
 
                                         isSpeakerStore.set(false);
                                         currentLiveStreamingSpaceStore.set(undefined);
+                                        forgetMegaphoneSpace(subMessage.kickOffMessage.spaceName);
                                         const scene = gameManager.getCurrentGameScene();
                                         scene.broadcastService
                                             .leaveSpace(subMessage.kickOffMessage.spaceName)
@@ -685,6 +697,10 @@ export class RoomConnection implements RoomConnection {
                     }
                     case "locatePositionMessage": {
                         this._locatePositionMessageStream.next(message.locatePositionMessage);
+                        break;
+                    }
+                    case "friendsUpdateMessage": {
+                        this._friendsUpdateMessageStream.next(message.friendsUpdateMessage);
                         break;
                     }
                     case "answerMessage": {
@@ -996,7 +1012,9 @@ export class RoomConnection implements RoomConnection {
 
     public uploadAudio(file: FormData) {
         return axios
-            .post<unknown>(`${UPLOADER_URL}/upload-audio-message`, file)
+            .post<unknown>(`${UPLOADER_URL}/upload-audio-message`, file, {
+                headers: { Authorization: localUserStore.getAuthToken() ?? "" },
+            })
             .then((res: { data: unknown }) => {
                 return res.data;
             })
@@ -1014,6 +1032,7 @@ export class RoomConnection implements RoomConnection {
                     type: message.type,
                     content: message.content,
                     broadcastToWorld: message.broadcastToWorld,
+                    broadcast: message.broadcast,
                 },
             },
         });
@@ -1638,6 +1657,74 @@ export class RoomConnection implements RoomConnection {
         return answer.roomsFromSameUniverseAnswer;
     }
 
+    public async queryFriendsList(): Promise<FriendsListAnswer> {
+        const answer = await this.query({
+            $case: "friendsListQuery",
+            friendsListQuery: {},
+        });
+        if (answer.$case !== "friendsListAnswer") {
+            throw new Error("Unexpected answer");
+        }
+        return answer.friendsListAnswer;
+    }
+
+    /** Refused actions resolve with an `error` code (not_accepting_requests, no_shared_world...), they don't throw. */
+    public async queryFriendAction(targetUuid: string, action: string): Promise<FriendActionAnswer> {
+        const answer = await this.query({
+            $case: "friendActionQuery",
+            friendActionQuery: { targetUuid, action },
+        });
+        if (answer.$case !== "friendActionAnswer") {
+            throw new Error("Unexpected answer");
+        }
+        return answer.friendActionAnswer;
+    }
+
+    public async queryFriendSearch(searchText: string): Promise<FriendSearchResult[]> {
+        const answer = await this.query({
+            $case: "friendSearchQuery",
+            friendSearchQuery: { searchText },
+        });
+        if (answer.$case !== "friendSearchAnswer") {
+            throw new Error("Unexpected answer");
+        }
+        return answer.friendSearchAnswer.results;
+    }
+
+    /** Reads the friends settings, or saves the fields `update` sets and returns them all. */
+    public async queryFriendSettings(update?: FriendSettingsUpdate): Promise<FriendSettings | undefined> {
+        const answer = await this.query({
+            $case: "friendSettingsQuery",
+            friendSettingsQuery: { update },
+        });
+        if (answer.$case !== "friendSettingsAnswer") {
+            throw new Error("Unexpected answer");
+        }
+        return answer.friendSettingsAnswer.settings;
+    }
+
+    public async queryRing(targetUuid: string): Promise<RingAnswer> {
+        const answer = await this.query({
+            $case: "ringQuery",
+            ringQuery: { targetUuid },
+        });
+        if (answer.$case !== "ringAnswer") {
+            throw new Error("Unexpected answer");
+        }
+        return answer.ringAnswer;
+    }
+
+    public async queryRingReply(ringId: string, action: "stop" | "accept" | "decline"): Promise<RingReplyAnswer> {
+        const answer = await this.query({
+            $case: "ringReplyQuery",
+            ringReplyQuery: { ringId, action },
+        });
+        if (answer.$case !== "ringReplyAnswer") {
+            throw new Error("Unexpected answer");
+        }
+        return answer.ringReplyAnswer;
+    }
+
     public async queryEmbeddableWebsite(url: string): Promise<EmbeddableWebsiteAnswer> {
         const answer = await this.query({
             $case: "embeddableWebsiteQuery",
@@ -1735,14 +1822,19 @@ export class RoomConnection implements RoomConnection {
         }
     }
 
-    public emitUpdateChatId(email: string, chatId: string) {
-        if (chatId && email) {
+    /**
+     * Hands the player's Matrix access token to the server, which asks the Matrix server whose token it is and uses
+     * that answer as the player's chat ID. The chat ID is never taken from the browser.
+     */
+    public emitUpdateChatId(matrixAccessToken: string) {
+        if (matrixAccessToken) {
             this.send({
                 message: {
                     $case: "updateChatIdMessage",
                     updateChatIdMessage: {
-                        email,
-                        chatId,
+                        email: "",
+                        chatId: "",
+                        matrixAccessToken,
                     },
                 },
             });
@@ -1962,6 +2054,7 @@ export class RoomConnection implements RoomConnection {
         this._leaveSpaceRequestMessage.complete();
         this._externalModuleMessage.complete();
         this._spaceDestroyedMessage.complete();
+        this._friendsUpdateMessageStream.complete();
     }
 
     private goToSelectYourWokaScene(): void {

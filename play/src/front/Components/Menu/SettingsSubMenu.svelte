@@ -21,10 +21,12 @@
     import { videoBandwidthStore } from "../../Stores/MediaStore";
     import { screenShareBandwidthStore } from "../../Stores/ScreenSharingStore";
     import { volumeProximityDiscussionStore } from "../../Stores/PeerStore";
+    import { friendsEnabledStore } from "../../Chat/Stores/FriendsStore";
     import SettingSection from "./Settings/SettingSection.svelte";
     import SettingSwitch from "./Settings/SettingSwitch.svelte";
     import SettingChoice from "./Settings/SettingChoice.svelte";
     import SettingLink from "./Settings/SettingLink.svelte";
+    import FriendsSettings from "./Settings/FriendsSettings.svelte";
     import { IconMute, IconPlayFilled, IconUnMute } from "@wa-icons";
 
     /**
@@ -33,7 +35,7 @@
      * On a computer each page is two columns.
      */
     export let section: "general" | "sound" = "general";
-    /** The pages a row here opens inside the settings window (Map credits, and Contact or Report when the room has them). */
+    /** The pages a row here opens inside the settings window (Map credits, and Report when the room has it). */
     export let pages: { key: string; label: string }[] = [];
     export let onOpenPage: (key: string) => void = () => {};
 
@@ -289,23 +291,16 @@
                     onToggle={() => toggleChoice("bubble-sound")}
                     onSelect={selectBubbleSound}
                 >
-                    <span
+                    <button
                         slot="extra"
+                        type="button"
                         class="u-set-play"
-                        role="button"
-                        tabindex="0"
                         aria-label={$LL.menu.settings.playJoinSound()}
                         title={$LL.menu.settings.playJoinSound()}
-                        on:click|stopPropagation={playBubbleSound}
-                        on:keydown|stopPropagation={(event) => {
-                            if (event.key === "Enter" || event.key === " ") {
-                                event.preventDefault();
-                                playBubbleSound();
-                            }
-                        }}
+                        on:click={playBubbleSound}
                     >
                         <IconPlayFilled font-size="14" />
-                    </span>
+                    </button>
                 </SettingChoice>
                 <SettingSwitch
                     id="decreaseAudioPlayerVolumeWhileTalking-toggle"
@@ -350,6 +345,13 @@
                     onChange={changeIgnoreFollowRequests}
                 />
             </SettingSection>
+            {#if $friendsEnabledStore}
+                <FriendsSettings
+                    open={openChoice === "friend-requests-from"}
+                    onToggle={() => toggleChoice("friend-requests-from")}
+                    onClose={() => (openChoice = undefined)}
+                />
+            {/if}
             <SettingSection title={$LL.menu.settings.sections.away()}>
                 <SettingSwitch
                     id="cam-toggle"

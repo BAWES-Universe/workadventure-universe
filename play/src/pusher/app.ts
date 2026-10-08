@@ -31,6 +31,7 @@ import { WokaService } from "./services/WokaService";
 import { UserController } from "./controllers/UserController";
 import { MatrixRoomAreaController } from "./controllers/MatrixRoomAreaController";
 import { LocalScriptController } from "./controllers/LocalScriptController";
+import { BanController } from "./controllers/BanController";
 
 class App {
     private readonly app: Application;
@@ -107,6 +108,7 @@ class App {
         }
         new FrontController(this.app);
         new UserController(this.app);
+        new BanController(this.app);
         new MatrixRoomAreaController(this.app);
 
         const staticOptions = {

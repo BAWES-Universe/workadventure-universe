@@ -19,7 +19,6 @@
     import SettingsSubMenu from "./SettingsSubMenu.svelte";
     import ProfileSubMenu from "./ProfileSubMenu.svelte";
     import AboutRoomSubMenu from "./AboutRoomSubMenu.svelte";
-    import ContactSubMenu from "./ContactSubMenu.svelte";
     import CustomSubMenu from "./CustomSubMenu.svelte";
     import GuestSubMenu from "./GuestSubMenu.svelte";
     import ReportSubMenu from "./ReportSubMenu.svelte";
@@ -31,7 +30,6 @@
         IconArrowLeft,
         IconKeyboard,
         IconMessageCircle,
-        IconSpeakerPhone,
         IconUnMute,
         IconUser,
         IconX,
@@ -39,8 +37,8 @@
 
     /**
      * The settings window. Settings are two pages, General and Sound and video, plus Keyboard on computers. Map
-     * credits (and Contact and Report a problem, when the room sets a link for them) open from rows of General, with a
-     * back button. The other pages of the menu (the profile, global messages, chat, a map's own menus) keep their
+     * credits (and Report a problem, when the room sets a link for it) open from rows of General, with a
+     * back button. The other pages of the menu (the profile, chat, a map's own menus) keep their
      * place after the settings pages, so nothing a room or script adds is lost.
      *
      * On a phone the pages are tabs with the gradient pill under the open one, like Chats and People. From 1024px they
@@ -56,15 +54,15 @@
     };
 
     /** Pages opened from a row of General: they show a back button instead of the tabs. */
-    const ROW_PAGES: string[] = [SubMenusInterface.aboutRoom, SubMenusInterface.contact, SubMenusInterface.report];
+    const ROW_PAGES: string[] = [SubMenusInterface.aboutRoom, SubMenusInterface.report];
     /** Pages that are one iframe and take the whole body. */
-    const FRAME_PAGES: string[] = [SubMenusInterface.profile, SubMenusInterface.contact, SubMenusInterface.report];
+    const FRAME_PAGES: string[] = [SubMenusInterface.profile, SubMenusInterface.report];
 
     const finePointer = typeof window !== "undefined" && window.matchMedia?.("(pointer: fine)").matches === true;
 
     /** The open page: "general", "sound", or a menu item's key. */
     let current = "general";
-    /** A page opened from a row of General (Map credits, Contact, Report), shown with a back button. */
+    /** A page opened from a row of General (Map credits, Report), shown with a back button. */
     let rowPage: string | undefined = undefined;
     let activeComponent: ComponentType | undefined = undefined;
     let props: { url: string; allowApi: boolean; allow: string | undefined } | Record<string, never> = {};
@@ -82,8 +80,6 @@
         switch (item.key) {
             case SubMenusInterface.profile:
                 return IconUser;
-            case SubMenusInterface.globalMessages:
-                return IconSpeakerPhone;
             case SubMenusInterface.chat:
                 return IconMessageCircle;
             default:
@@ -145,17 +141,13 @@
     $: pages = [...settingsPages, ...keyboardPages] as Page[];
     $: allPages = [...pages, ...otherPages] as Page[];
 
-    // The rows of General that open a page: Map credits always, Contact and Report when the room has them.
+    // The rows of General that open a page: Map credits always, Report when the room has it.
     $: rowPages = $subMenusStore
         .filter((item) => item.type === "translated" && ROW_PAGES.includes(item.key) && isVisible(item))
         .map((item) => ({
             key: item.key,
             label:
-                item.key === SubMenusInterface.aboutRoom
-                    ? $LL.menu.settings.mapCredits()
-                    : item.key === SubMenusInterface.contact
-                    ? $LL.menu.settings.contact()
-                    : $LL.menu.settings.report(),
+                item.key === SubMenusInterface.aboutRoom ? $LL.menu.settings.mapCredits() : $LL.menu.settings.report(),
         }));
 
     $: currentPage = allPages.find((page) => page.id === current);
@@ -215,13 +207,8 @@
                 analyticsClient.menuInvite();
                 return;
             case SubMenusInterface.aboutRoom:
-            case SubMenusInterface.contact:
             case SubMenusInterface.report:
                 openRowPage(item.key);
-                return;
-            case SubMenusInterface.globalMessages:
-                show(item.key, (await import("./GlobalMessagesSubMenu.svelte")).default);
-                analyticsClient.globalMessage();
                 return;
             case SubMenusInterface.chat:
                 show(item.key, ChatSubMenu);
@@ -263,10 +250,6 @@
             case SubMenusInterface.aboutRoom:
                 activeComponent = AboutRoomSubMenu;
                 analyticsClient.menuCredit();
-                break;
-            case SubMenusInterface.contact:
-                activeComponent = ContactSubMenu;
-                analyticsClient.menuContact();
                 break;
             case SubMenusInterface.report:
                 activeComponent = ReportSubMenu;
@@ -325,9 +308,13 @@
         active.scrollIntoView?.({ block: "nearest", inline: "nearest" });
     }
 
-    $: if (tabsElement && !resizeObserver && typeof ResizeObserver !== "undefined") {
-        resizeObserver = new ResizeObserver(() => placePill());
-        resizeObserver.observe(tabsElement);
+    // The tabs leave the page while a row's page is open and come back as a new element: watch whichever is there.
+    let observedTabs: HTMLElement | undefined;
+    $: if ((tabsElement ?? undefined) !== observedTabs && typeof ResizeObserver !== "undefined") {
+        resizeObserver ??= new ResizeObserver(() => placePill());
+        if (observedTabs) resizeObserver.unobserve(observedTabs);
+        if (tabsElement) resizeObserver.observe(tabsElement);
+        observedTabs = tabsElement ?? undefined;
     }
     /** Re-measures once the tabs have been drawn for this page and this list of pages. */
     function schedulePill(_page: string, _count: number) {

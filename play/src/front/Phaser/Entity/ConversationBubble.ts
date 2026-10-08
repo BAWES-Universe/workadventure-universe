@@ -54,6 +54,10 @@ export class ConversationBubble extends Phaser.GameObjects.Sprite {
         this.drawSpline();
     }
 
+    public getUserIds(): readonly number[] {
+        return this.userIds;
+    }
+
     private getAvatarsList(): Avatar[] {
         const avatars: Avatar[] = [];
 

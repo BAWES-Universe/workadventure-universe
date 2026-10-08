@@ -7,8 +7,12 @@
     import poweredByWorkAdventureImg from "../images/Powered_By_WorkAdventure_Big.png";
     import bgMap from "../images/map-exemple.png";
     import { gameManager } from "../../Phaser/Game/GameManager";
-    import { LL, locale } from "../../../i18n/i18n-svelte";
+    import { joinDesktopStore } from "../../Stores/JoinDesktopStore";
+    import { LL } from "../../../i18n/i18n-svelte";
     import { NameNotValidError, NameTooLongError } from "../../Exception/NameError";
+    import JoinLegal from "../Join/JoinLegal.svelte";
+    import MyWoka from "../Join/MyWoka.svelte";
+    import { IconAlertTriangle, IconX } from "@wa-icons";
 
     export let game: Game;
 
@@ -21,49 +25,12 @@
     let errorName = "";
 
     let logo = gameManager.currentStartedRoom.loginSceneLogo ?? logoImg;
-    let legals = gameManager.currentStartedRoom?.legals ?? {};
 
     const sceneBg = gameManager.currentStartedRoom.backgroundSceneImage ?? bgMap;
 
-    let legalStrings: string[] = [];
-    if (legals?.termsOfUseUrl) {
-        legalStrings.push(
-            '<a href="' +
-                encodeURI(legals.termsOfUseUrl) +
-                '" target="_blank" class="text-white no-underline hover:underline bold hover:text-white">' +
-                $LL.login.termsOfUse() +
-                "</a>"
-        );
-    }
-    if (legals?.privacyPolicyUrl) {
-        legalStrings.push(
-            '<a href="' +
-                encodeURI(legals.privacyPolicyUrl) +
-                '" target="_blank" class="text-white no-underline hover:underline bold hover:text-white">' +
-                $LL.login.privacyPolicy() +
-                "</a>"
-        );
-    }
-    if (legals?.cookiePolicyUrl) {
-        legalStrings.push(
-            '<a href="' +
-                encodeURI(legals.cookiePolicyUrl) +
-                '" target="_blank" class="text-white no-underline hover:underline bold hover:text-white">' +
-                $LL.login.cookiePolicy() +
-                "</a>"
-        );
-    }
-
-    let legalString: string | undefined;
-    if (legalStrings.length > 0) {
-        if (Intl.ListFormat) {
-            const formatter = new Intl.ListFormat($locale, { style: "long", type: "conjunction" });
-            legalString = formatter.format(legalStrings);
-        } else {
-            // For old browsers
-            legalString = legalStrings.join(", ");
-        }
-    }
+    $: isDesktop = $joinDesktopStore;
+    $: wokaSize = isDesktop ? 72 : 64;
+    $: spotSize = isDesktop ? 128 : 112;
 
     async function submit() {
         startValidating = true;
@@ -85,93 +52,142 @@
         }
     }
 
-    function getBackgroundColor() {
-        if (!gameManager.currentStartedRoom) return undefined;
-        return gameManager.currentStartedRoom.backgroundColor;
-    }
-
-    /* eslint-disable svelte/no-at-html-tags */
+    $: showError = (name.trim() === "" && startValidating) || errorName !== "";
 </script>
 
-<section class="self-center absolute z-30 top-0 text-center w-full block">
-    <img
-        draggable="false"
-        src={logo}
-        alt="logo"
-        class="main-logo mt-8 {gameManager.currentStartedRoom.loginSceneLogo ? 'max-h-[200px] object-cover' : ''}"
-        style="width: 333px;"
-    />
-</section>
+<div class="absolute left-0 top-0 w-full h-full bg-cover z-10" style="background-image: url('{sceneBg}');" />
+<div class="absolute left-0 top-0 w-full h-full z-20 login-overlay" />
 
 <form
-    class="loginScene h-dvh flex flex-col items-center justify-center pointer-events-auto relative z-30"
+    autocomplete="off"
+    class="loginScene min-h-dvh flex flex-col items-center justify-start md:justify-center pointer-events-auto relative z-30 px-4 pt-[60px] pb-6 md:p-6"
     on:submit|preventDefault={submit}
 >
-    <div class="w-full sm:w-96 md:w-10/12 lg:w-1/2 xl:w-1/3 rounded mx-auto text-center p-8">
-        <section class="text-center flex h-fit flex-col justify-center items-center mb-0">
-            <span class="text-white text-lg bold">
-                {$LL.login.input.name.placeholder()}
-            </span>
-            <!-- svelte-ignore a11y-autofocus -->
-            <input
-                type="text"
-                name="fname"
-                data-testid="loginSceneNameInput"
-                placeholder={$LL.login.input.name.placeholder()}
-                class="w-52 md:w-96 h-12 text text-center bg-contrast rounded border border-solid border-white/20 mt-4 mb-0"
-                autofocus
-                maxlength={MAX_USERNAME_LENGTH}
-                bind:value={name}
-                on:keypress={() => {
-                    startValidating = true;
-                }}
-                class:border-danger={(name.trim() === "" && startValidating) || errorName !== ""}
-            />
-            {#if (name.trim() === "" && startValidating) || errorName !== ""}
-                <p class="err text-xs text-danger italic pt-2 mb-0">
-                    {#if errorName}{errorName}{:else}{$LL.login.input.name.empty()}{/if}
-                </p>
-            {/if}
-        </section>
-        <section
-            class="action flex h-fit justify-center m-0"
-            class:opacity-50={(name.trim() === "" && startValidating) || errorName !== ""}
-        >
+    <div class="u-join-card w-full md:w-[440px] px-5 py-6 md:p-7">
+        {#if canGoBack}
             <button
-                type="submit"
-                disabled={(name.trim() === "" && startValidating) || errorName !== ""}
-                class="mt-4 w-52 md:w-96 bold text-center block btn btn-secondary btn-lg loginSceneFormSubmit"
+                type="button"
+                class="u-close u-join-x loginSceneBack"
+                data-testid="loginSceneBack"
+                aria-label={$LL.login.close()}
+                title={$LL.login.close()}
+                on:click={() => loginScene.back()}
+            >
+                <IconX font-size="20" />
+            </button>
+        {/if}
+
+        <div class="grid gap-3.5">
+            <img
+                draggable="false"
+                src={logo}
+                alt="logo"
+                class="main-logo block mx-auto {gameManager.currentStartedRoom.loginSceneLogo
+                    ? 'max-h-[120px] object-contain'
+                    : ''}"
+                style="width: {isDesktop ? 170 : 150}px;"
+            />
+
+            <!-- Your WOKA -->
+            <div class="grid justify-items-center mt-1 mb-1.5" aria-hidden="true">
+                <div class="u-join-spot name-spot" style="width: {spotSize}px; height: {spotSize}px;">
+                    <span class="name-woka"><MyWoka size={wokaSize} /></span>
+                </div>
+            </div>
+
+            <div class="grid gap-1 text-center">
+                <span class="u-eyebrow justify-center">{$LL.login.eyebrow()}</span>
+                <h2 class="u-join-title">{$LL.login.heading()}</h2>
+            </div>
+
+            <div class="grid gap-1.5">
+                <div class="u-join-field name-field" class:u-join-field-error={showError}>
+                    <!-- svelte-ignore a11y-autofocus -->
+                    <input
+                        type="text"
+                        name="display-name"
+                        autocomplete="off"
+                        data-1p-ignore
+                        data-lpignore="true"
+                        data-bwignore
+                        data-form-type="other"
+                        data-testid="loginSceneNameInput"
+                        placeholder={$LL.login.input.name.placeholder()}
+                        aria-label={$LL.login.input.name.placeholder()}
+                        aria-invalid={showError}
+                        autofocus
+                        maxlength={MAX_USERNAME_LENGTH}
+                        bind:value={name}
+                        on:keypress={() => {
+                            startValidating = true;
+                        }}
+                        on:input={() => (errorName = "")}
+                    />
+                    <span class="name-count">{name.length}/{MAX_USERNAME_LENGTH}</span>
+                </div>
+                {#if showError}
+                    <p class="err u-join-error">
+                        <IconAlertTriangle font-size="16" class="flex-none" />
+                        {#if errorName}{errorName}{:else}{$LL.login.input.name.empty()}{/if}
+                    </p>
+                {:else}
+                    <p class="u-join-hint">{$LL.login.hint()}</p>
+                {/if}
+            </div>
+
+            <button type="submit" disabled={showError} class="u-join-btn u-cta w-full loginSceneFormSubmit"
                 >{$LL.login.continue()}</button
             >
-        </section>
-        {#if canGoBack}
-            <section class="flex h-fit justify-center m-0">
-                <button
-                    type="button"
-                    class="mt-2 w-52 md:w-96 text-center block btn btn-ghost btn-lg loginSceneBack"
-                    data-testid="loginSceneBack"
-                    on:click={() => loginScene.back()}>{$LL.actionbar.cancel()}</button
-                >
-            </section>
-        {/if}
-        {#if legalString}
-            <section class="terms-and-conditions h-fit text-center w-full">
-                <p class="text-white text-xs italic opacity-50">
-                    {@html $LL.login.terms({
-                        links: legalString,
-                    })}
-                </p>
-            </section>
-        {/if}
+
+            <JoinLegal classList="text-center" />
+        </div>
     </div>
     {#if logo !== logoImg && gameManager.currentStartedRoom.showPoweredBy !== false}
-        <section class="text-right flex powered-by justify-center items-end">
+        <section class="text-right flex powered-by justify-center items-end mt-4">
             <img draggable="false" src={poweredByWorkAdventureImg} alt="Powered by WorkAdventure" class="h-14" />
         </section>
     {/if}
 </form>
-<div
-    class="absolute left-0 top-0 w-full h-full z-20 bg-contrast opacity-80"
-    style={getBackgroundColor() != undefined ? `background-color: ${getBackgroundColor()};` : ""}
-/>
-<div class="absolute left-0 top-0 w-full h-full bg-cover z-10" style="background-image: url('{sceneBg}');" />
+
+<style lang="scss">
+    .login-overlay {
+        background: radial-gradient(ellipse at 50% 30%, rgb(20 18 30 / 0.7), rgb(10 8 20 / 0.88));
+        backdrop-filter: blur(6px);
+        -webkit-backdrop-filter: blur(6px);
+    }
+    .name-spot::after {
+        content: "";
+        position: absolute;
+        left: 24%;
+        right: 24%;
+        bottom: 20%;
+        height: 10px;
+        border-radius: 50%;
+        background: rgba(0, 0, 0, 0.45);
+        filter: blur(3px);
+    }
+    .name-woka {
+        position: relative;
+        z-index: 1;
+        display: block;
+        margin-bottom: 6%;
+        line-height: 0;
+    }
+    .name-field {
+        height: 3.25rem;
+        padding: 0 1rem;
+    }
+    .name-field input {
+        font-size: 1.125rem;
+        font-weight: 500;
+    }
+    .name-field input::placeholder {
+        color: rgba(255, 255, 255, 0.4);
+    }
+    .name-count {
+        flex: none;
+        font-size: 13px;
+        font-weight: 500;
+        color: rgba(255, 255, 255, 0.5);
+    }
+</style>

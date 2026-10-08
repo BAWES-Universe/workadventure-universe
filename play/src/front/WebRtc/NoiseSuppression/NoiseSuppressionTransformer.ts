@@ -1,0 +1,244 @@
+import { AbortError } from "@workadventure/shared-utils/src/Abort/AbortError";
+import {
+    createNoiseSuppressionAudioWorklet,
+    observeNoiseSuppressionAudioWorkletMessages,
+    type NoiseSuppressionAudioWorkletHandle,
+    type NoiseSuppressionAudioWorkletOutboundMessage,
+} from "@workadventure/noise-suppression/audio-worklet";
+
+export interface NoiseSuppressionStatusMessage {
+    status: "initializing" | "ready" | "error";
+    message?: string;
+}
+
+interface NoiseSuppressionTransformerOptions {
+    onStatusChange?: (message: NoiseSuppressionStatusMessage) => void;
+}
+
+interface NoiseSuppressionSupport {
+    supported: boolean;
+    message?: string;
+}
+
+const NOISE_SUPPRESSION_SAMPLE_RATE = 16000;
+export class NoiseSuppressionTransformer {
+    private readonly audioContext: AudioContext;
+    private readonly onStatusChange?: (message: NoiseSuppressionStatusMessage) => void;
+    private lastProcessorStatus: NoiseSuppressionStatusMessage["status"] | undefined;
+    private sourceNode: MediaStreamAudioSourceNode | undefined;
+    private workletHandle: NoiseSuppressionAudioWorkletHandle | undefined;
+    // Shared by overlapping transform() calls, so only one worklet is ever created.
+    private workletHandleCreation: Promise<void> | undefined;
+    private destroyed = false;
+    private stopObservingWorkletMessages: (() => void) | undefined;
+    private destinationNode: MediaStreamAudioDestinationNode | undefined;
+    private outputTrack: MediaStreamTrack | undefined;
+    private inputTrack: MediaStreamTrack | undefined;
+
+    constructor(options?: NoiseSuppressionTransformerOptions) {
+        this.audioContext = new AudioContext({ sampleRate: NOISE_SUPPRESSION_SAMPLE_RATE });
+        this.onStatusChange = options?.onStatusChange;
+    }
+
+    public static getSupport(): NoiseSuppressionSupport {
+        if (typeof AudioContext === "undefined") {
+            return {
+                supported: false,
+                message: "AudioContext is not available in this browser.",
+            };
+        }
+
+        if (typeof AudioWorkletNode === "undefined" || !("audioWorklet" in AudioContext.prototype)) {
+            return {
+                supported: false,
+                message: "AudioWorklet is not available in this browser.",
+            };
+        }
+
+        return { supported: true };
+    }
+
+    public async transform(inputTrack: MediaStreamTrack, signal?: AbortSignal): Promise<MediaStreamTrack> {
+        this.throwIfAborted(signal);
+
+        if (this.inputTrack === inputTrack && this.outputTrack) {
+            return this.outputTrack;
+        }
+
+        // The previous output keeps playing until the new one is wired, so a microphone switch has no silent gap.
+        this.onStatusChange?.({
+            status: this.lastProcessorStatus === "ready" ? "ready" : "initializing",
+        });
+
+        await this.audioContext.resume();
+        this.throwIfAborted(signal);
+        await this.ensureWorkletHandleCreated();
+        this.throwIfAborted(signal);
+
+        if (!this.workletHandle) {
+            throw new Error("Noise suppression worklet node failed to initialize.");
+        }
+
+        const inputStream = new MediaStream([inputTrack]);
+        const sourceNode = this.audioContext.createMediaStreamSource(inputStream);
+        const destinationNode = this.audioContext.createMediaStreamDestination();
+        const outputTrack = destinationNode.stream.getAudioTracks()[0];
+        if (!outputTrack) {
+            throw new Error("Noise suppression worklet did not produce an audio track.");
+        }
+
+        this.disconnectGraph();
+        sourceNode.connect(this.workletHandle.node);
+        this.workletHandle.node.connect(destinationNode);
+
+        this.sourceNode = sourceNode;
+        this.destinationNode = destinationNode;
+        this.outputTrack = outputTrack;
+        this.inputTrack = inputTrack;
+
+        return outputTrack;
+    }
+
+    /** Disconnects the microphone and pauses the audio context, so the model uses no CPU until the next transform. */
+    public stop(): void {
+        this.disconnectGraph();
+        if (this.audioContext.state === "running") {
+            this.audioContext.suspend().catch((error: unknown) => {
+                console.warn("[NoiseSuppressionTransformer] Could not pause the audio context:", error);
+            });
+        }
+    }
+
+    private disconnectGraph(): void {
+        const workletNode = this.workletHandle?.node;
+
+        if (this.sourceNode && workletNode) {
+            try {
+                this.sourceNode.disconnect(workletNode);
+            } catch {
+                // Ignore disconnect errors when tearing down a stale graph.
+            }
+        } else if (this.sourceNode) {
+            try {
+                this.sourceNode.disconnect();
+            } catch {
+                // Ignore disconnect errors when tearing down a stale graph.
+            }
+        }
+
+        if (workletNode && this.destinationNode) {
+            try {
+                workletNode.disconnect(this.destinationNode);
+            } catch {
+                // Ignore disconnect errors when tearing down a stale graph.
+            }
+        } else if (workletNode) {
+            try {
+                workletNode.disconnect();
+            } catch {
+                // Ignore disconnect errors when tearing down a stale graph.
+            }
+        }
+
+        this.outputTrack?.stop();
+
+        this.sourceNode = undefined;
+        this.destinationNode = undefined;
+        this.outputTrack = undefined;
+        this.inputTrack = undefined;
+    }
+
+    private async ensureWorkletHandleCreated(): Promise<void> {
+        if (this.workletHandle) {
+            return;
+        }
+
+        if (!this.workletHandleCreation) {
+            this.workletHandleCreation = this.createWorkletHandle().finally(() => {
+                this.workletHandleCreation = undefined;
+            });
+        }
+        await this.workletHandleCreation;
+    }
+
+    private async createWorkletHandle(): Promise<void> {
+        const workletHandle = await createNoiseSuppressionAudioWorklet(this.audioContext, {
+            bypassUntilReady: true,
+        });
+
+        if (this.destroyed) {
+            workletHandle.dispose();
+            throw new AbortError("Noise suppression transformer was destroyed");
+        }
+
+        this.stopObservingWorkletMessages = observeNoiseSuppressionAudioWorkletMessages(
+            workletHandle,
+            (message: NoiseSuppressionAudioWorkletOutboundMessage) => {
+                this.handleWorkletMessage(message);
+            }
+        );
+        this.workletHandle = workletHandle;
+
+        workletHandle.ready
+            .then(() => {
+                if (this.workletHandle !== workletHandle) {
+                    return;
+                }
+
+                this.lastProcessorStatus = "ready";
+                this.onStatusChange?.({ status: "ready" });
+            })
+            .catch((error: unknown) => {
+                if (this.workletHandle !== workletHandle) {
+                    return;
+                }
+
+                this.lastProcessorStatus = "error";
+                this.onStatusChange?.({
+                    status: "error",
+                    message: error instanceof Error ? error.message : "Custom noise suppression failed to initialize.",
+                });
+            });
+    }
+
+    public async closeAndDestroy(): Promise<void> {
+        this.destroyed = true;
+        this.stop();
+        this.stopObservingWorkletMessages?.();
+        this.stopObservingWorkletMessages = undefined;
+        if (this.workletHandle) {
+            this.workletHandle.dispose();
+            this.workletHandle = undefined;
+        }
+        if (this.audioContext.state !== "closed") {
+            await this.audioContext.close();
+        }
+    }
+
+    private throwIfAborted(signal?: AbortSignal): void {
+        if (!signal?.aborted) {
+            return;
+        }
+
+        throw signal.reason instanceof Error ? signal.reason : new AbortError("Noise suppression transform aborted");
+    }
+
+    private handleWorkletMessage(message: NoiseSuppressionAudioWorkletOutboundMessage): void {
+        if (message.type === "error") {
+            this.lastProcessorStatus = "error";
+            this.onStatusChange?.({
+                status: "error",
+                message: message.message,
+            });
+            return;
+        }
+
+        if (message.type === "processing-started") {
+            return;
+        }
+
+        if (message.type === "benchmark-complete") {
+            return;
+        }
+    }
+}

@@ -19,6 +19,7 @@
     import { adminDashboardActivatedStore } from "../../../Stores/MenuStore";
     import { botIdFromChatId, botStatusColour } from "../../Bots/BotChatStatus";
     import { botStatusCache } from "../../Bots/BotStatusStore";
+    import { friendsEnabledStore, relationshipsStore } from "../../Stores/FriendsStore";
     import UserActionButton from "./UserActionButton.svelte";
     import ImageWithFallback from "./ImageWithFallback.svelte";
     import PersonActionButton from "./PersonActionButton.svelte";
@@ -33,7 +34,18 @@
         showMyself,
         walkToPerson,
     } from "./PersonNavigation";
-    import { IconChevronDown, IconDoorIn, IconLoader, IconMapPin, IconMessage, IconWalk } from "@wa-icons";
+    import { friendMenuAction } from "./FriendMenuAction";
+    import type { FriendMenuAction } from "./FriendMenuAction";
+    import RingButton from "./RingButton.svelte";
+    import {
+        IconChevronDown,
+        IconDoorIn,
+        IconLoader,
+        IconMapPin,
+        IconMessage,
+        IconUserCheck,
+        IconWalk,
+    } from "@wa-icons";
 
     export let user: ChatUser;
     /** All of this person's sessions (tabs, devices), `user` first. One row stands for all of them. */
@@ -112,7 +124,28 @@
     // Someone else with several sessions: Walk to, Go to room and Locate open the list, so you pick which one.
     $: choosesSession = !isMe && listedSessions.length > 0;
     $: showLocateInMenu = actions.locate && !choosesSession;
-    $: hasMenu = showLocateInMenu || actions.viewProfile || actions.ban;
+    // Friends: a badge on friends, and Add friend (or what comes next) in the menu, for signed-in people only.
+    $: relationship = user.uuid ? $relationshipsStore.get(user.uuid) ?? "none" : "none";
+    $: isFriend = relationship === "friends";
+    $: friendAction =
+        $friendsEnabledStore && !isMe && !isMine && !user.isBot && user.uuid && user.chatId
+            ? friendMenuAction(relationship, user.uuid, displayName, $LL)
+            : undefined;
+    // A friend who is here can be rung over; Message then moves to ⋮ so the row keeps three buttons.
+    $: canRing = $friendsEnabledStore && isFriend && !isMe && !!user.uuid && !!$userStatus;
+    $: menuMessage =
+        canRing && actions.message !== "hidden"
+            ? ([
+                  {
+                      label: $LL.chat.userList.message(),
+                      icon: IconMessage,
+                      danger: false,
+                      act: sendMessage,
+                  },
+              ] satisfies FriendMenuAction[])
+            : [];
+    $: hasMenu =
+        showLocateInMenu || actions.viewProfile || actions.ban || friendAction !== undefined || menuMessage.length > 0;
 
     function walkTo() {
         if (choosesSession) {
@@ -227,6 +260,15 @@
                                     ?.replace("]", "")}
                             </div>
                         {/if}
+                        {#if isFriend}
+                            <span
+                                class="ms-1 flex shrink-0 text-[#c4b5fd]"
+                                title={$LL.chat.friends.friendBadge()}
+                                data-testid={`friend-badge-${user.username}`}
+                            >
+                                <IconUserCheck font-size="14" aria-label={$LL.chat.friends.friendBadge()} />
+                            </span>
+                        {/if}
                         {#if isAdmin}
                             <div
                                 class="text-xxs bg-secondary rounded-sm px-1 py-0.5 ms-1"
@@ -329,7 +371,14 @@
                         <IconMapPin font-size="20" />
                     </PersonActionButton>
                 {/if}
-                {#if actions.message !== "hidden"}
+                {#if canRing && user.uuid}
+                    <RingButton
+                        uuid={user.uuid}
+                        name={displayName}
+                        status={$userStatus}
+                        testId={`ring-${user.username}`}
+                    />
+                {:else if actions.message !== "hidden"}
                     <PersonActionButton
                         label={$LL.chat.userList.message()}
                         ariaLabel={$LL.chat.userList.messageUser({ userName: displayName })}
@@ -349,6 +398,8 @@
                         showLocate={showLocateInMenu}
                         showViewProfile={actions.viewProfile}
                         showBan={actions.ban}
+                        {friendAction}
+                        extraActions={menuMessage}
                     />
                 {/if}
             </div>

@@ -61,7 +61,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         calmMap: "Ruhige Karte (keine Animationen)",
         pictureInPicture: "Bild im Bild",
         mapCredits: "Karten-Credits",
-        contact: "Kontakt",
         report: "Problem melden",
         back: "Zurück",
         close: "Schließen",
@@ -118,18 +117,6 @@ const menu: DeepPartial<Translation["menu"]> = {
             "Fehler beim Hochladen der Datei. Bitte überprüfe deine Datei und versuche es erneut. Wenn das Problem weiterhin besteht, wende dich an den Administrator.",
         dragAndDrop: "Datei hierher ziehen oder klicken, um sie hochzuladen 🎧",
     },
-    contact: {
-        gettingStarted: {
-            title: "Erste Schritte",
-            description:
-                "Mit Universe kannst du eine Onlinewelt erschaffen, in der du dich spontan mit anderen treffen und unterhalten kannst. Erstelle als erstes deine eigene Karte. Es steht dir eine große Auswahl an vorgefertigten Karten von unserem Team zur Verfügung.",
-        },
-        createMap: {
-            title: "Eigene Karte erstellen",
-            description:
-                "Du kannst auch deine eigene Karte erstellen. Folge dazu unserer Schritt-für-Schritt-Anleitung.",
-        },
-    },
     about: {
         mapInfo: "Informationen über diese Karte",
         mapLink: "Link zur Karte",
@@ -153,7 +140,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         invite: "Aktie",
         credit: "Über diese Karte",
         globalMessages: "Globale Nachrichten",
-        contact: "Kontakt",
         report: "Einen Fehler melden",
     },
 };

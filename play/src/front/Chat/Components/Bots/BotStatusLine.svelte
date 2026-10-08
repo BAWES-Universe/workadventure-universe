@@ -8,7 +8,7 @@
 </script>
 
 <span
-    class="inline-flex items-center gap-[5px] text-[11px] leading-[14px]"
+    class="inline-flex min-w-0 items-center gap-1.5 text-xs"
     style="color:{botStatusColour(state)}"
     data-testid="botStatusLine"
     data-state={state}

@@ -148,8 +148,11 @@ message BanPlayerMessage {
 }
 
 message UpdateChatIdMessage {
+  // Not trusted by the server anymore: it reads the chat ID from matrixAccessToken instead.
   string email = 1;
   string chatId = 2;
+  // The player's own Matrix access token. The server asks the Matrix server whose token it is.
+  string matrixAccessToken = 3;
 }
 
 message LeaveChatRoomAreaMessage {
@@ -222,6 +225,12 @@ message UpdateMegaphoneSettingMessage {
   optional string title = 2;
   optional string scope = 3;
   repeated string rights = 4;
+  // The reaches people may go live at from this room ("ROOM", "WORLD", "UNIVERSE"). Absent: the single legacy "scope" applies.
+  optional MegaphoneScopes scopes = 5;
+}
+
+message MegaphoneScopes {
+  repeated string scopes = 1;
 }
 
 message EditMapCommandMessage {
@@ -304,6 +313,8 @@ message UploadEntityMessage {
   string color = 7;
   optional google.protobuf.Value collisionGrid = 8;
   optional int32 depthOffset = 9;
+  // Set when this picture is another side or colour of an upload: the id of that upload's first picture.
+  optional string variantOf = 10;
 }
 
 message UploadFileMessage {
@@ -432,6 +443,22 @@ message PlayGlobalMessage {
   string type = 1;
   string content = 2;
   bool broadcastToWorld = 3;
+  // Who sent it and how far it goes. Absent on messages from older clients: the room, or the world when broadcastToWorld.
+  optional BroadcastMeta broadcast = 4;
+}
+
+// A broadcast (written notice, voice note) carries who sent it and the reach it was sent to, so the people who
+// receive it see "Khalid · To everyone in BAWES HQ".
+message BroadcastMeta {
+  optional string senderName = 1;
+  // "room", "world" or "universe".
+  string reach = 2;
+  // The name of what the reach covers: the room's, the world's or the universe's name.
+  optional string reachLabel = 3;
+  // A line of text sent with a voice note.
+  optional string caption = 4;
+  // The sender's Woka, so the card shows who sent it. Set by the pusher from the sender's own connection.
+  repeated CharacterTextureMessage senderTextures = 5;
 }
 
 /************ Queries and answers ****************/
@@ -456,6 +483,12 @@ message QueryMessage {
     LeaveSpaceQuery leaveSpaceQuery = 15;
     MapStorageJwtQuery mapStorageJwtQuery = 16;
     RoomsFromSameUniverseQuery roomsFromSameUniverseQuery = 21;
+    FriendsListQuery friendsListQuery = 22;
+    FriendActionQuery friendActionQuery = 23;
+    FriendSearchQuery friendSearchQuery = 24;
+    FriendSettingsQuery friendSettingsQuery = 25;
+    RingQuery ringQuery = 26;
+    RingReplyQuery ringReplyQuery = 27;
   }
 }
 
@@ -489,6 +522,185 @@ message RoomsFromSameWorldQuery {
 }
 
 message RoomsFromSameUniverseQuery {
+}
+
+/************************** FRIENDS **************************/
+// Friends between signed-in players, across worlds and universes. The pusher answers these itself: the
+// friendships and settings live in the admin (Orbit), where friends are right now comes from the pusher's
+// own list of who is connected.
+
+message FriendsListQuery {
+}
+
+message FriendActionQuery {
+  string targetUuid = 1;
+  string action = 2; // request | accept | ignore | cancel | remove | block | unblock
+}
+
+message FriendSearchQuery {
+  string searchText = 1;
+}
+
+// Without `update`, reads the settings; with it, saves the fields it sets.
+message FriendSettingsQuery {
+  optional FriendSettingsUpdate update = 1;
+}
+
+message FriendSettings {
+  string ringFrom = 1; // friends | friends_and_members | nobody
+  string friendRequestsFrom = 2; // anyone | shared_world | nobody
+  bool findableByName = 3;
+  bool friendsSeeLocation = 4;
+}
+
+message FriendSettingsUpdate {
+  optional string ringFrom = 1;
+  optional string friendRequestsFrom = 2;
+  optional bool findableByName = 3;
+  optional bool friendsSeeLocation = 4;
+}
+
+// One open tab or device of a friend.
+message FriendSession {
+  string playUri = 1;
+  string universeName = 2;
+  string worldName = 3;
+  string roomName = 4;
+  AvailabilityStatus availabilityStatus = 5;
+}
+
+message FriendPresence {
+  bool online = 1;
+  // Online, but they keep where they are to themselves: no sessions are listed.
+  bool locationHidden = 2;
+  // Their most available session's status; UNCHANGED when offline.
+  AvailabilityStatus availabilityStatus = 3;
+  // Most recently joined first.
+  repeated FriendSession sessions = 4;
+}
+
+message Friend {
+  string uuid = 1;
+  string name = 2;
+  string chatId = 3;
+  FriendPresence presence = 4;
+  // ISO date of the last room they entered; empty when unknown or hidden.
+  string lastSeenAt = 5;
+}
+
+message FriendRequest {
+  string uuid = 1;
+  string name = 2;
+  // A world both of you are in or visited lately, for incoming requests; may be empty.
+  string sharedWorld = 3;
+  // ISO date the request was sent.
+  string at = 4;
+}
+
+message BlockedPerson {
+  string uuid = 1;
+  string name = 2;
+}
+
+message FriendsListAnswer {
+  repeated Friend friends = 1;
+  repeated FriendRequest incoming = 2;
+  repeated FriendRequest outgoing = 3;
+  repeated BlockedPerson blocked = 4;
+}
+
+message FriendActionAnswer {
+  // none | friends | request_sent | request_received | blocked_by_me | blocked_by_them
+  string relationship = 1;
+  // Why the action was refused (not_accepting_requests, no_shared_world, too_many_open_requests...); empty when done.
+  string error = 2;
+}
+
+message FriendSearchResult {
+  string uuid = 1;
+  string name = 2;
+  repeated string universes = 3;
+  string relationship = 4;
+}
+
+message FriendSearchAnswer {
+  repeated FriendSearchResult results = 1;
+}
+
+message FriendSettingsAnswer {
+  FriendSettings settings = 1;
+}
+
+// Pushed to a player while they are connected.
+message FriendsUpdateMessage {
+  oneof update {
+    // A friend came online, moved, changed status or left.
+    FriendPresenceUpdate presence = 1;
+    // Their friends or requests changed (a request arrived, was accepted, removed...): ask for the list again.
+    FriendsListChanged listChanged = 2;
+    // A friend is ringing you (on every tab).
+    RingIncoming ringIncoming = 3;
+    // A ring you were shown is over: stopped, timed out, or answered on another tab.
+    RingEnded ringEnded = 4;
+    // What came of a ring you made.
+    RingResult ringResult = 5;
+  }
+}
+
+message FriendPresenceUpdate {
+  string uuid = 1;
+  FriendPresence presence = 2;
+}
+
+message FriendsListChanged {
+}
+
+// Ring a friend: they get a card for 30 seconds asking them to come over to you.
+message RingQuery {
+  string targetUuid = 1;
+}
+
+message RingAnswer {
+  // ringing | not_friends | not_allowed | offline | busy | already_ringing | too_soon
+  string outcome = 1;
+  string ringId = 2;
+  // For too_soon: when they can be rung again.
+  int32 retryAfterSeconds = 3;
+}
+
+message RingReplyQuery {
+  string ringId = 1;
+  string action = 2; // stop (the caller) | accept | decline (the friend being rung)
+}
+
+message RingReplyAnswer {
+  bool ok = 1;
+  // For accept: where the caller is, to go to them.
+  string playUri = 2;
+  string callerUuid = 3;
+}
+
+message RingIncoming {
+  string ringId = 1;
+  string fromUuid = 2;
+  string fromName = 3;
+  string playUri = 4;
+  string roomName = 5;
+  string worldName = 6;
+  string universeName = 7;
+  int32 expiresInMs = 8;
+}
+
+message RingEnded {
+  string ringId = 1;
+  string reason = 2; // stopped | expired | answered
+}
+
+message RingResult {
+  string ringId = 1;
+  string targetUuid = 2;
+  // accepted (they are on their way) | declined | no_answer | arrived (they are in your room)
+  string result = 3;
 }
 
 message SendEventQuery {
@@ -554,6 +766,12 @@ message AnswerMessage {
     LeaveSpaceAnswer leaveSpaceAnswer = 17;
     MapStorageJwtAnswer mapStorageJwtAnswer = 18;
     RoomsFromSameUniverseAnswer roomsFromSameUniverseAnswer = 19;
+    FriendsListAnswer friendsListAnswer = 20;
+    FriendActionAnswer friendActionAnswer = 21;
+    FriendSearchAnswer friendSearchAnswer = 22;
+    FriendSettingsAnswer friendSettingsAnswer = 23;
+    RingAnswer ringAnswer = 24;
+    RingReplyAnswer ringReplyAnswer = 25;
   }
 }
 
@@ -608,6 +826,8 @@ message UniverseRoomDescription {
   int32 visits = 5;
   optional int32 peakHourUtc = 6;
   bool isCurrent = 7;
+  // How many people are in the room right now, when the back servers answered in time.
+  optional int32 peopleNow = 8;
 }
 
 message UniverseWorldDescription {
@@ -659,6 +879,8 @@ message Member {
   optional string email = 3;
   optional string visitCardUrl = 4;
   optional string chatID = 5;
+  // The member's WOKA in this world, so pickers show it like the People list does.
+  repeated CharacterTextureMessage characterTextures = 6;
 }
 
 message IceServer {
@@ -868,8 +1090,21 @@ message RoomJoinedMessage {
 }
 
 message MegaphoneSettings{
+  // True when this user may go live on at least one channel of this room.
   bool enabled = 1;
+  // The first channel this user may go live on (kept for older clients).
   optional string url = 2;
+  // Every broadcast channel this room listens to, and whether this user may go live on each.
+  repeated MegaphoneChannel channels = 3;
+}
+
+message MegaphoneChannel {
+  // "ROOM", "WORLD" or "UNIVERSE".
+  string scope = 1;
+  // The space joined for that channel.
+  string url = 2;
+  // Whether this user may go live on it.
+  bool canStream = 3;
 }
 
 message WebRtcStartMessage {
@@ -888,6 +1123,7 @@ message TeleportMessageMessage{
 message SendUserMessage{
   string type = 1;
   string message = 2;
+  optional BroadcastMeta broadcast = 3;
 }
 
 message WorldFullWarningMessage{
@@ -961,6 +1197,26 @@ message MuteVideoForEverybodyPublicMessage {
 message KickOffUserPrivateMessage {
 }
 
+// A moderator lowers someone's raised hand (only admins, checked by the pusher).
+message LowerHandPrivateMessage {
+}
+
+// A moderator lowers every raised hand in the space (only admins, checked by the pusher).
+message LowerAllHandsPublicMessage {
+}
+
+// On a podium, a speaker (or an admin) invites someone from the audience to speak (checked by the pusher).
+message InviteToSpeakPrivateMessage {
+}
+
+// The person invited to speak answers "Not now".
+message DeclineToSpeakPrivateMessage {
+}
+
+// A speaker (or an admin) sends someone who speaks from the audience back to it (checked by the pusher).
+message MoveToAudiencePrivateMessage {
+}
+
 message PublicEventFrontToPusher {
   string spaceName = 1;
   SpaceEvent spaceEvent = 2;
@@ -979,6 +1235,8 @@ message SpaceEvent {
     MuteAudioForEverybodyPublicMessage muteAudioForEverybody = 3;
     MuteVideoForEverybodyPublicMessage muteVideoForEverybody = 4;
     SpaceStreamMessage spaceStreamMessage = 5;
+    LowerAllHandsPublicMessage lowerAllHands = 6;
+    SpaceMessageReaction spaceMessageReaction = 7;
   }
 }
 
@@ -1001,6 +1259,11 @@ message PrivateSpaceEvent {
     RemoveSpaceUserMessage removeSpaceUserMessage = 18;
     BlockUserMessage blockUserMessage = 20;
     UnblockUserMessage unblockUserMessage = 21;
+    LowerHandPrivateMessage lowerHand = 22;
+    // From 30: upstream WorkAdventure uses the numbers right after ours.
+    InviteToSpeakPrivateMessage inviteToSpeak = 30;
+    DeclineToSpeakPrivateMessage declineToSpeak = 31;
+    MoveToAudiencePrivateMessage moveToAudience = 32;
   }
 }
 
@@ -1040,6 +1303,33 @@ message SpaceMessage {
   repeated string galleryUrls = 7;  // Additional file/image URLs for gallery messages
   optional string fileName = 8;     // Original uploaded filename (not URL-derived)
   repeated string fileNames = 9;    // Original filenames for ALL files (gallery) in order
+  optional string id = 10;          // Chosen by the sender, the same for everyone, so reactions and replies can point at it
+  optional SpaceMessageQuote replyTo = 11; // The message this one replies to
+}
+
+/**
+ * What a reply quotes, so people who never received the original still see what it was.
+ * Receivers that have the original (same id) show their own copy instead.
+ */
+message SpaceMessageQuote {
+  string id = 1;
+  optional string senderUserId = 2; // spaceUserId of the original's sender
+  optional string name = 3;
+  string message = 4;               // Shortened by the sender
+  optional string url = 5;
+  repeated string galleryUrls = 6;
+  optional string fileName = 7;
+  repeated string fileNames = 8;
+}
+
+/**
+ * Adds or removes the sender's reaction on a nearby chat message, found by the id its sender chose.
+ */
+message SpaceMessageReaction {
+  string messageId = 1;
+  string reaction = 2;
+  bool add = 3;                     // false removes it
+  optional string name = 4;         // Filled in by the server from the sender
 }
 
 message SpaceIsTyping {
@@ -1135,6 +1425,7 @@ message ServerToClientMessage {
     LeaveSpaceRequestMessage leaveSpaceRequestMessage = 34;
     ExternalModuleMessage externalModuleMessage = 35;
     LocatePositionMessage locatePositionMessage = 36;
+    FriendsUpdateMessage friendsUpdateMessage = 37;
   }
 }
 
@@ -1346,6 +1637,7 @@ message AdminRoomMessage {
   string message = 1;
   string roomId = 2;
   string type = 3;
+  optional BroadcastMeta broadcast = 4;
 }
 
 // A message sent by an administrator to absolutely everybody
@@ -1455,6 +1747,8 @@ message SpaceUser{
   string uuid = 16; // used
   google.protobuf.StringValue chatID = 17; // used
   bool showVoiceIndicator = 18;
+  // When the user raised their hand, in ms since the epoch, stamped by the pusher; 0 (or unset) when it is down.
+  optional double handRaisedAt = 19;
 }
 
 /*message PartialSpaceUser{

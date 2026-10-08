@@ -7,6 +7,8 @@ import type { RoomConnection } from "../../Connection/RoomConnection";
 import type { PictureStore } from "../../Stores/PictureStore";
 
 export type memberTypingInformation = { id: string; name: string | null; pictureStore: PictureStore };
+export type ChatPresence = "online" | "away" | "offline";
+
 export type ChatUser = {
     chatId: string;
     uuid?: string;
@@ -84,6 +86,8 @@ export interface ChatRoom {
     readonly setTimelineAsRead: () => void;
     readonly hasPreviousMessage: Readable<boolean>;
     readonly loadMorePreviousMessages: () => Promise<void>;
+    /** True while the room is still getting its first messages (so an empty list is not yet "no message"). */
+    readonly isLoadingMessages?: Readable<boolean>;
     readonly isEncrypted: Readable<boolean>;
     readonly typingMembers: Readable<Array<{ id: string; name: string | null; pictureStore: PictureStore }>>;
     readonly startTyping: () => Promise<object>;
@@ -150,6 +154,10 @@ export interface ChatMessage {
     canDelete: Readable<boolean>;
     /** Set when a bot left a status note (resting, gone...) instead of an answer: drawn as a card, not a bubble. */
     botStatus?: BotStatusNote;
+    /** Whether reactions on this message reach the other people in the chat. */
+    canReact: Readable<boolean>;
+    /** Whether a reply to this message is sent as a reply (with its quote) to the other people in the chat. */
+    canReply: Readable<boolean>;
 }
 
 export interface ChatMessageReaction {
@@ -244,6 +252,11 @@ export interface ChatConnectionInterface {
     getRoomByID(roomId: string): ChatRoom;
     retrySendingEvents: () => Promise<void>;
     shouldRetrySendingEvents: Readable<boolean>;
+    /** Whether someone is online on chat, from any app (the game, Element...). */
+    userPresence(userChatId: string): Readable<ChatPresence>;
+    /** People you blocked in chat: their messages are hidden on every device. */
+    ignoredUsers: Readable<string[]>;
+    setUserIgnored(userChatId: string, ignored: boolean): Promise<void>;
 }
 
 export type Connection = Pick<RoomConnection, "queryChatMembers" | "emitPlayerChatID" | "emitBanPlayerMessage">;

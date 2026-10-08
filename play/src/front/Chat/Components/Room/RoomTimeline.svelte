@@ -1,6 +1,7 @@
 <script lang="ts">
-    import { afterUpdate, beforeUpdate, onMount } from "svelte";
-    import { get, readable } from "svelte/store";
+    import { afterUpdate, beforeUpdate, hasContext, onDestroy, onMount, setContext, tick } from "svelte";
+    import { derived, get, readable, writable } from "svelte/store";
+    import type { Readable } from "svelte/store";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import type { ChatMessage, ChatRoom, ChatRoomMembershipManagement } from "../../Connection/ChatConnection";
     import getCloseImg from "../../images/get-close.png";
@@ -24,18 +25,56 @@
     import { formatPeopleNames } from "../TopRow/TopRowSummary";
     import { availabilityFromNote, botIdFromChatId } from "../../Bots/BotChatStatus";
     import { botStatusCache } from "../../Bots/BotStatusStore";
-    import BotStatusLine from "../Bots/BotStatusLine.svelte";
     import BotStatusNoteCard from "../Bots/BotStatusNoteCard.svelte";
-    import TypingUsers from "./TypingUsers.svelte";
-    import MessageSystem from "./MessageSystem.svelte";
-    import MessageInputBar from "./MessageInputBar.svelte";
+    import {
+        PERSON_COLOUR_CONTEXT,
+        WOKA_BY_CHAT_ID_CONTEXT,
+        createColourByChatIdStore,
+        createWokaByChatIdStore,
+        personColour,
+    } from "../../Stores/ChatUserWokaStore";
+    import type { PersonColourOf } from "../../Stores/ChatUserWokaStore";
+    import Avatar from "../Avatar.svelte";
+    import { MatrixChatRoom } from "../../Connection/Matrix/MatrixChatRoom";
+    import { openProfileRoomIdStore } from "../../Stores/PartnerProfileStore";
+    import { chatCarriesItsCloseStore } from "../../ChatSidebarWidthStore";
+    import { installStrayFileDropGuard, isFileDrag } from "../../../Utils/strayFileDropGuard";
+    import { mapEditorToolbarInUseStore } from "../../../Stores/MapEditorStore";
     import Message from "./Message.svelte";
+    import MessageInputBar from "./MessageInputBar.svelte";
+    import MessageSystem from "./MessageSystem.svelte";
+    import TypingUsers from "./TypingUsers.svelte";
+    import CopiedPill from "./MessageActions/CopiedPill.svelte";
     import SessionDivider from "./Thread/SessionDivider.svelte";
     import ProximityThreadTitle from "./Thread/ProximityThreadTitle.svelte";
     import ProximityEndedFooter from "./Thread/ProximityEndedFooter.svelte";
+    import RoomMenu from "./RoomMenu/RoomMenu.svelte";
+    import DirectChatTitle from "./DirectChat/DirectChatTitle.svelte";
+    import PartnerProfilePanel from "./DirectChat/PartnerProfilePanel.svelte";
+    import { directPartnerStore } from "./DirectChat/DirectPartnerStore";
     import { IconChevronLeft, IconChevronRight, IconLoader, IconLock, IconMailBox } from "@wa-icons";
 
     export let room: ChatRoom;
+
+    // Messages show the sender's woka when their chat account has no picture (Matrix users).
+    if (!hasContext(WOKA_BY_CHAT_ID_CONTEXT)) {
+        setContext(
+            WOKA_BY_CHAT_ID_CONTEXT,
+            createWokaByChatIdStore(gameManager.getCurrentGameScene().userProviderMerger)
+        );
+    }
+
+    // In a direct chat, each person's woka sits on their colour from People (header, profile, messages).
+    const isDirectChat = writable(false);
+    const colourByChatId = createColourByChatIdStore(gameManager.getCurrentGameScene().userProviderMerger);
+    setContext<Readable<PersonColourOf>>(
+        PERSON_COLOUR_CONTEXT,
+        derived([isDirectChat, colourByChatId], ([$isDirectChat, $colourByChatId]) =>
+            $isDirectChat
+                ? (chatId: string | undefined, name: string | undefined) => personColour($colourByChatId, chatId, name)
+                : () => undefined
+        )
+    );
 
     const chatConnection = gameManager.chatConnection;
     const shouldRetrySendingEvents = chatConnection.shouldRetrySendingEvents;
@@ -51,6 +90,9 @@
 
     let scrollTimer: ReturnType<typeof setTimeout>;
     let shouldDisplayLoader = false;
+    // False until the chat's first messages are in and it sits at the bottom. Until then the list stays hidden
+    // (it is still measured) behind a spinner, so the chat opens already filled instead of building up on screen.
+    let initialLoadDone = false;
 
     let messageInputBarRef: MessageInputBar;
 
@@ -63,6 +105,13 @@
     $: typingMembers = room.typingMembers;
     $: isEncrypted = room.isEncrypted;
     $: proximityRoom = room instanceof ProximityChatRoom ? room : undefined;
+    $: matrixRoom = room instanceof MatrixChatRoom ? room : undefined;
+    // A direct chat knows who the other person is and where they are right now (header, menu, profile).
+    $: directPartner = matrixRoom?.type === "direct" ? directPartnerStore(matrixRoom) : undefined;
+    $: profileOpen = directPartner !== undefined && $openProfileRoomIdStore === room.id;
+    $: isDirectChat.set(directPartner !== undefined);
+    $: roomMembers = matrixRoom ? matrixRoom.members : readable([]);
+    $: memberCount = $roomMembers.length;
     // The proximity chat is one timeline across every stay. The thread shows one stay at a time: the live one,
     // or an ended one from the list (read-only). With no stay selected, the whole timeline shows with dividers,
     // as it always did. Other rooms have no session markers.
@@ -119,6 +168,10 @@
               })
         : "";
     $: isEmptyProximityView = shownSession !== undefined && shownSession.messages.length === 0;
+    // The proximity chat is in memory: it has nothing to wait for and keeps its own empty states.
+    $: isLoadingMessages = room?.isLoadingMessages ?? readable(false);
+    $: firstFillPending = !proximityRoom && !initialLoadDone;
+    $: showLoading = !proximityRoom && (!initialLoadDone || ($isLoadingMessages && $messages.length === 0));
 
     // A direct chat with a bot shows the bot's state under its name and in the message box. Its account leaving the
     // room means it was deleted: the chat stays readable but closed.
@@ -160,12 +213,29 @@
         : undefined;
 
     onMount(() => {
+        installStrayFileDropGuard();
         initMessages()
             .catch((error) => console.error(error))
             .finally(() => {
-                scrollToMessageListBottom();
+                // The first time, jump to the bottom while the list is still hidden, then show it.
+                scrollToMessageListBottom(proximityRoom !== undefined);
+                // The proximity chat has no first fill, and a state change here would run afterUpdate right after
+                // the smooth scroll above starts: its "keep the reader's place" write to scrollTop cancels that scroll.
+                if (!proximityRoom) initialLoadDone = true;
             });
     });
+
+    // Resolves once the room has its first messages (at once for a room with nothing to wait for).
+    async function waitForRoomToLoad() {
+        if (!get(isLoadingMessages)) return;
+        let unsubscribe = () => {};
+        await new Promise<void>((resolve) => {
+            unsubscribe = isLoadingMessages.subscribe((loading) => {
+                if (!loading) resolve();
+            });
+        });
+        unsubscribe();
+    }
 
     async function initMessages() {
         if (!messageListRef) return;
@@ -176,10 +246,18 @@
                     return;
                 }
 
-                await room.loadMorePreviousMessages();
-
-                if (get(room.hasPreviousMessage) && isViewportNotFilled()) {
-                    await loadMessages();
+                // The room loads its first messages itself: take what it has, and ask for more only if the screen
+                // is not filled yet (a chat that already has enough opens with no request at all).
+                await waitForRoomToLoad();
+                await tick();
+                while (messageListRef && get(room.hasPreviousMessage) && isViewportNotFilled()) {
+                    const messageCount = get(room.messages).length;
+                    // eslint-disable-next-line no-await-in-loop
+                    await room.loadMorePreviousMessages();
+                    // eslint-disable-next-line no-await-in-loop
+                    await tick();
+                    // Nothing came back: stop rather than ask again and again.
+                    if (get(room.messages).length === messageCount) break;
                 }
             } catch (error) {
                 console.error(`Failed to load messages: ${error}`);
@@ -188,7 +266,7 @@
 
         try {
             await loadMessages();
-            scrollToMessageListBottom();
+            scrollToMessageListBottom(proximityRoom !== undefined);
             setFirstListItem();
         } catch (error) {
             console.error(`Failed to load messages: ${error}`);
@@ -206,6 +284,8 @@
 
     afterUpdate(() => {
         room.setTimelineAsRead();
+        // While the list is hidden for its first fill, it is scrolled once, when it is done.
+        if (firstFillPending) return;
         if (autoScroll) {
             scrollToMessageListBottom();
         } else if (onScrollTop) {
@@ -219,14 +299,15 @@
         }
     });
 
-    function scrollToMessageListBottom() {
+    function scrollToMessageListBottom(smooth = true) {
         // Safety check for undefined reference
         // After disposing the component, the reference can be undefined
         if (messageListRef == undefined) return;
-        messageListRef.scroll({ top: messageListRef.scrollHeight, behavior: "smooth" });
+        messageListRef.scroll({ top: messageListRef.scrollHeight, behavior: smooth ? "smooth" : "auto" });
     }
 
     function goBackAndClearSelectedChatMessage() {
+        openProfileRoomIdStore.set(undefined);
         selectedChatMessageToReply.set(null);
         selectedRoomStore.set(undefined);
         shouldRestoreChatStateStore.set(false);
@@ -297,6 +378,7 @@
     }
 
     function onUpdateMessageBody(event: CustomEvent) {
+        if (firstFillPending) return;
         if (
             autoScroll ||
             (event.detail != undefined &&
@@ -309,26 +391,136 @@
     }
 
     function onDropFiles(event: DragEvent) {
+        endFileDrag();
         if (event.dataTransfer?.files && event.dataTransfer.files.length > 0) {
             messageInputBarRef?.handleFiles({
                 detail: event.dataTransfer.files,
             } as CustomEvent<FileList>);
         }
     }
+
+    // While this conversation is open, a file dropped anywhere in the window goes into its message box, and the
+    // conversation lights up while the file is dragged. Whatever takes a drop itself first (the map in edit mode, an
+    // upload box) keeps it. Nothing is sent until Send, as with a drop on the conversation itself.
+    let timelineRef: HTMLDivElement;
+    let fileDragOver = false;
+    let fileDragTimer: ReturnType<typeof setTimeout> | undefined;
+
+    function takesFileDrop(event: DragEvent): boolean {
+        if (!isFileDrag(event) || isEnded || !messageInputBarRef) return false;
+        return !event.defaultPrevented || (event.target instanceof Node && timelineRef?.contains(event.target));
+    }
+
+    function endFileDrag() {
+        fileDragOver = false;
+        clearTimeout(fileDragTimer);
+    }
+
+    function onDocumentDragOver(event: DragEvent) {
+        if (!takesFileDrop(event)) return;
+        acceptFileDrag(event);
+    }
+
+    function acceptFileDrag(event: DragEvent) {
+        event.preventDefault();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+        fileDragOver = true;
+        // Dragover repeats while a file is held over the window. When it stops coming, the file has gone somewhere
+        // that takes it itself, or out of the window.
+        clearTimeout(fileDragTimer);
+        fileDragTimer = setTimeout(() => (fileDragOver = false), 700);
+    }
+
+    // The map takes files only in edit mode. While playing, a file over the map is the chat's: it is caught on the
+    // way down, before the map's own drop listener can show its overlay or take it.
+    function isOverPlayingMap(event: DragEvent): boolean {
+        return (
+            event.target instanceof HTMLCanvasElement &&
+            event.target.closest("#game") !== null &&
+            !get(mapEditorToolbarInUseStore)
+        );
+    }
+
+    function onMapFileDragCapture(event: DragEvent) {
+        if (!isFileDrag(event) || isEnded || !messageInputBarRef || !isOverPlayingMap(event)) return;
+        event.stopPropagation();
+        if (event.type === "drop") {
+            event.preventDefault();
+            onDropFiles(event);
+        } else {
+            acceptFileDrag(event);
+        }
+    }
+
+    onMount(() => {
+        document.addEventListener("dragenter", onMapFileDragCapture, true);
+        document.addEventListener("dragover", onMapFileDragCapture, true);
+        document.addEventListener("drop", onMapFileDragCapture, true);
+    });
+
+    function onDocumentDragLeave(event: DragEvent) {
+        // Leaving the window (relatedTarget can't tell: WebKit leaves it empty on every element).
+        if (
+            event.clientX <= 0 ||
+            event.clientY <= 0 ||
+            event.clientX >= window.innerWidth ||
+            event.clientY >= window.innerHeight
+        ) {
+            endFileDrag();
+        }
+    }
+
+    function onDocumentDrop(event: DragEvent) {
+        if (!takesFileDrop(event) || event.defaultPrevented) {
+            endFileDrag();
+            return;
+        }
+        event.preventDefault();
+        onDropFiles(event);
+    }
+
+    onDestroy(() => {
+        clearTimeout(fileDragTimer);
+        document.removeEventListener("dragenter", onMapFileDragCapture, true);
+        document.removeEventListener("dragover", onMapFileDragCapture, true);
+        document.removeEventListener("drop", onMapFileDragCapture, true);
+    });
 </script>
+
+<svelte:document on:dragover={onDocumentDragOver} on:dragleave={onDocumentDragLeave} on:drop={onDocumentDrop} />
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div
-    class="flex flex-col flex-auto h-full w-full max-w-full"
+    bind:this={timelineRef}
+    class="relative isolate flex flex-col flex-auto h-full w-full max-w-full"
+    class:profile-open={profileOpen && matrixRoom && $directPartner}
     on:dragover|preventDefault
     on:drop|preventDefault|stopPropagation={onDropFiles}
 >
+    {#if fileDragOver}
+        <div class="file-drop-target" data-testid="chatFileDropTarget" aria-hidden="true">
+            {matrixRoom
+                ? $LL.chat.fileAttachment.dropToAdd({ name: $roomName })
+                : $LL.chat.fileAttachment.dropToAddHere()}
+        </div>
+    {/if}
+    {#if profileOpen && matrixRoom && $directPartner}
+        <!-- Over the conversation, which stays as it was (draft, files, scroll) for when you come back. Above the
+             message options (z-50) and menus that live in it; "isolate" keeps all of that inside this panel. -->
+        <PartnerProfilePanel
+            room={matrixRoom}
+            partner={$directPartner}
+            on:close={() => openProfileRoomIdStore.set(undefined)}
+        />
+    {/if}
     {#if room !== undefined}
         <div class="flex flex-col gap-2">
-            <div class="p-2 flex items-center border border-solid border-x-0 border-b border-t-0 border-white/10">
+            <div
+                class="relative p-2 flex items-center gap-1 border border-solid border-x-0 border-b border-t-0 border-white/10"
+            >
                 {#if chatRoomsEnableInAdmin}
                     <button
-                        class="back-roomlist p-3 hover:bg-white/10 rounded-full aspect-square w-12"
+                        class="back-roomlist p-3 text-white hover:bg-white/10 rounded-2xl aspect-square w-12 shrink-0"
                         data-testid="chatBackward"
                         on:click={goBackAndClearSelectedChatMessage}
                     >
@@ -338,16 +530,11 @@
                             <IconChevronLeft font-size="20" />
                         {/if}
                     </button>
-                {:else}
-                    <div class="p-3 rounded-2xl aspect-square w-12" />
                 {/if}
-                <div class="flex min-w-0 grow flex-col items-center gap-0.5">
+                <!-- Every chat's title starts right after the back arrow, so the picture never moves with the name. -->
+                <div class="flex min-w-0 grow items-center">
                     {#if proximityRoom && isEnded}
-                        <div
-                            class="flex min-w-0 max-w-full flex-col items-center"
-                            data-testid="threadNow"
-                            data-state="ended"
-                        >
+                        <div class="flex min-w-0 max-w-full flex-col" data-testid="threadNow" data-state="ended">
                             <div class="max-w-full truncate text-md font-bold leading-5" data-testid="roomName">
                                 {endedTitle}
                             </div>
@@ -357,29 +544,52 @@
                         </div>
                     {:else if proximityRoom}
                         <ProximityThreadTitle room={proximityRoom} />
+                    {:else if matrixRoom && $directPartner}
+                        <DirectChatTitle
+                            room={matrixRoom}
+                            partner={$directPartner}
+                            bot={partnerBotId !== undefined}
+                            botState={shownBotState}
+                            on:openProfile={() => openProfileRoomIdStore.set(room.id)}
+                        />
                     {:else}
-                        <div class="flex max-w-full items-center justify-center gap-1.5">
-                            <div class="text-md font-bold h-5 truncate text-center" data-testid="roomName">
-                                {$roomName}
+                        <div class="flex min-w-0 items-center gap-2.5 px-2">
+                            <Avatar pictureStore={room.pictureStore} fallbackName={$roomName} size="sm" />
+                            <div class="flex min-w-0 flex-col">
+                                <div class="flex min-w-0 items-center gap-1.5">
+                                    <div class="truncate text-md font-bold leading-5" data-testid="roomName">
+                                        {$roomName}
+                                    </div>
+                                    {#if $isEncrypted}
+                                        <span
+                                            class="shrink-0 text-white/50"
+                                            title={$LL.chat.thread.encrypted()}
+                                            data-testid="threadEncryptedLock"
+                                        >
+                                            <IconLock font-size="14" />
+                                            <span class="sr-only">{$LL.chat.thread.encrypted()}</span>
+                                        </span>
+                                    {/if}
+                                </div>
+                                {#if memberCount > 0}
+                                    <div class="truncate text-xs text-white/60" data-testid="roomMemberCount">
+                                        {$LL.chat.directChat.members({ count: memberCount })}
+                                    </div>
+                                {/if}
                             </div>
-                            {#if $isEncrypted}
-                                <span
-                                    class="shrink-0 text-white/50"
-                                    title={$LL.chat.thread.encrypted()}
-                                    data-testid="threadEncryptedLock"
-                                >
-                                    <IconLock font-size="14" />
-                                    <span class="sr-only">{$LL.chat.thread.encrypted()}</span>
-                                </span>
-                            {/if}
                         </div>
-                        {#if shownBotState}
-                            <BotStatusLine state={shownBotState} />
-                        {/if}
                     {/if}
                 </div>
-
-                <div class="p-3 rounded-2xl aspect-square w-12" />
+                {#if matrixRoom}
+                    <div class="flex h-12 w-12 shrink-0 items-center justify-center">
+                        <RoomMenu room={matrixRoom} inHeader />
+                    </div>
+                    <!-- When the chat carries its own close, it sits at this end of the header: keep its place free so
+                         it never covers the menu. -->
+                    {#if $chatCarriesItsCloseStore}
+                        <div class="h-12 w-12 shrink-0" aria-hidden="true" />
+                    {/if}
+                {/if}
             </div>
             {#if shouldDisplayLoader}
                 <div class="flex justify-center items-center w-full pb-1 bg-transparent">
@@ -409,10 +619,20 @@
             class="flex overflow-auto h-full justify-center items-end relative"
             on:scroll={handleScroll}
         >
+            {#if showLoading}
+                <div
+                    class="absolute inset-0 flex items-center justify-center pointer-events-none"
+                    data-testid="chatMessagesLoading"
+                    role="status"
+                >
+                    <IconLoader class="animate-[spin_2s_linear_infinite]" font-size={25} />
+                </div>
+            {/if}
             <ul
                 class="list-none p-0 flex-1 flex flex-col max-h-full pt-10 {$messages.length === 0
                     ? 'items-center justify-center pb-4'
                     : 'max-w-6xl'}"
+                class:invisible={firstFillPending}
             >
                 <!--{#if room.id === "proximity" && $connectedUsers !== undefined}-->
                 <!--    <div class="flex flex-row items-center gap-2">-->
@@ -441,7 +661,7 @@
                                 {$LL.chat.getCloserDesc()}
                             </div>
                         </li>
-                    {:else}
+                    {:else if !showLoading}
                         <li class="text-center px-3 max-w-md relative">
                             <IconMailBox font-size="40" />
                             <div class="text-lg font-bold text-center">{$LL.chat.noMessage()}</div>
@@ -496,6 +716,8 @@
             <TypingUsers typingMembers={$typingMembers} />
         {/if}
 
+        <CopiedPill />
+
         {#if isEnded && shownSession}
             <!-- An ended proximity chat can't receive anything: a way back to the people replaces the composer. -->
             <ProximityEndedFooter session={shownSession} live={liveSession} onContinue={() => proximityRoom?.open()} />
@@ -523,3 +745,27 @@
         {/if}
     {/if}
 </div>
+
+<style>
+    /* Over the whole conversation while a file is dragged anywhere in the window. */
+    .file-drop-target {
+        position: absolute;
+        inset: 6px;
+        z-index: 60;
+        display: grid;
+        place-items: center;
+        padding: 12px;
+        border: 2px dashed #c4b5fd;
+        border-radius: 16px;
+        background: rgb(134 41 252 / 0.22);
+        color: #fff;
+        font-weight: 700;
+        text-align: center;
+        pointer-events: none;
+    }
+    /* The profile has no background of its own: it sits on the chat panel's surface, like the conversation. What it
+       covers is hidden instead, and keeps its draft, files and scroll for when you come back. */
+    .profile-open > :global(:not([data-testid="partnerProfilePanel"])) {
+        visibility: hidden;
+    }
+</style>

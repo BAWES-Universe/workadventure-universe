@@ -70,6 +70,10 @@ export const peopleSectionsOpenStore = writable<{
     bots: true,
 });
 
+/** Which people the People tab lists: everyone (the default), only friends, or friend requests. Per tab, in memory. */
+export type PeopleView = "everyone" | "friends" | "requests";
+export const peopleViewStore = writable<PeopleView>("everyone");
+
 export function initializeChatVisibilitySubscription() {
     const unsubscriber = chatVisibilityStore.subscribe((visible) => {
         const selectedRoom = get(selectedRoomStore);

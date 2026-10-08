@@ -1,11 +1,7 @@
 import { get } from "svelte/store";
 import { openedMenuStore } from "../../Stores/MenuStore";
-import {
-    modalIframeStore,
-    modalVisibilityStore,
-    roomListVisibilityStore,
-    showModalGlobalComminucationVisibilityStore,
-} from "../../Stores/ModalStore";
+import { modalIframeStore, modalVisibilityStore, roomListVisibilityStore } from "../../Stores/ModalStore";
+import { broadcastPanelOpenStore } from "../../Stores/BroadcastStore";
 import { chatVisibilityStore } from "../../Stores/ChatStore";
 import { analyticsClient } from "../../Administration/AnalyticsClient";
 
@@ -20,7 +16,7 @@ export function toggleExploreList(): void {
     chatVisibilityStore.set(false);
     modalVisibilityStore.set(false);
     modalIframeStore.set(null);
-    showModalGlobalComminucationVisibilityStore.set(false);
+    broadcastPanelOpenStore.set(false);
     roomListVisibilityStore.set(true);
     openedMenuStore.closeAll();
 }

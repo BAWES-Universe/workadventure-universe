@@ -62,7 +62,6 @@ const menu: BaseTranslation = {
         calmMap: "Mapa calmo (sem animações)",
         pictureInPicture: "Picture-in-picture",
         mapCredits: "Créditos do mapa",
-        contact: "Contato",
         report: "Relatar um problema",
         back: "Voltar",
         close: "Fechar",
@@ -127,17 +126,6 @@ const menu: BaseTranslation = {
             "Erro no upload do arquivo. Verifique seu arquivo e tente novamente. Se o problema persistir, entre em contato com o administrador.",
         dragAndDrop: "Arraste e solte ou clique aqui para fazer upload do seu arquivo 🎧",
     },
-    contact: {
-        gettingStarted: {
-            title: "Começando",
-            description:
-                "Universe permite que você crie um espaço online para se comunicar espontaneamente com outras pessoas. E tudo começa com a criação do seu próprio espaço. Escolha entre uma grande seleção de mapas pré-fabricados por nossa equipe.",
-        },
-        createMap: {
-            title: "Crie seu mapa",
-            description: "Você também pode criar seu próprio mapa personalizado seguindo a etapa da documentação.",
-        },
-    },
     about: {
         mapInfo: "Informações no mapa",
         mapLink: "link para este mapa",
@@ -175,7 +163,6 @@ const menu: BaseTranslation = {
         invite: "Convidar",
         credit: "Crédito",
         globalMessages: "Mensagens globais",
-        contact: "Contato",
         report: "Relatar problemas",
         chat: "Chat",
         help: "Ajuda e tutoriais",

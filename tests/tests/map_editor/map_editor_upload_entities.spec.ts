@@ -190,7 +190,7 @@ test.describe("Map editor @oidc @nomobile @nowebkit", () => {
         await page.getByTestId("name").fill(newEntityName);
         await EntityEditor.applyEntityModifications(page);
         // Clear entity selection
-        await page.getByTestId("clearEntitySelection").click();
+        await EntityEditor.clearEntitySelection(page);
 
         // Search uploaded entity on both pages
         const uploadedEntityLocator = await EntityEditor.searchEntity(page, newEntityName);
@@ -249,6 +249,57 @@ test.describe("Map editor @oidc @nomobile @nowebkit", () => {
         await page.context().close();
     });
 
+    test("Successfully add a second side to a custom entity", async ({ browser, request }) => {
+        await resetWamMaps(request);
+
+        await using page = await getPage(browser, "Admin1", Map.url("empty"));
+        await Map.teleportToPosition(page, 0, 0);
+
+        // A second browser sees the upload and its new side as one object
+        await using page2 = await getPage(browser, "Admin2", Map.url("empty"));
+
+        await page.bringToFront();
+        await Menu.openMapEditor(page);
+        await Menu.openMapEditor(page2);
+        await MapEditor.openEntityEditor(page);
+        await MapEditor.openEntityEditor(page2);
+
+        await EntityEditor.uploadTestAsset(page);
+        await EntityEditor.selectEntity(page, 0, EntityEditor.getTestAssetName());
+
+        // Open "Sides and colours": the front is there, the other sides are empty
+        await page.getByTestId("uploadVariants").click();
+        await expect(page.getByTestId("upload-variants")).toBeVisible();
+        await expect(page.getByTestId("variant-side-Down")).toHaveCount(1);
+        await expect(page.getByTestId("variant-add-Left")).toBeVisible();
+
+        // Add the left side with the same picture
+        const chooser = page.waitForEvent("filechooser");
+        await page.getByTestId("variant-add-Left").click();
+        await (await chooser).setFiles(path.join(__dirname, `../assets/${EntityEditor.getTestAssetFile()}`));
+        await expect(page.getByTestId("variant-side-Left")).toHaveCount(1, { timeout: 30000 });
+        await expect(page.getByTestId("variant-error")).toHaveCount(0);
+
+        // The other page lists the upload as one object, not two
+        await page2.getByPlaceholder("Search").fill(EntityEditor.getTestAssetName());
+        await expect(page2.getByTestId("entity-item")).toHaveCount(1, { timeout: 30000 });
+
+        // The "Sides and colours" page covers the list: back shows the list with one object, and the upload is
+        // still the picked one, so its sides and colours open again
+        await page.getByTestId("edit-panel-back").click();
+        await expect(page.getByTestId("upload-variants")).toHaveCount(0);
+        await expect(page.getByTestId("entity-item")).toHaveCount(1);
+        await page.getByTestId("uploadVariants").click();
+        await expect(page.getByTestId("variant-side-Left")).toHaveCount(1);
+
+        // Placing it offers Turn now that it has two sides
+        await page.getByTestId("variant-place").click();
+        await expect(page.getByTestId("placing-turn")).toBeVisible();
+
+        await page2.context().close();
+        await page.context().close();
+    });
+
     test('drop PDF file onto canvas inside #game', async ({ browser, request }) => {
         await resetWamMaps(request);
         await using page = await getPage(browser, 'Admin1', Map.url('empty'));
@@ -258,54 +309,69 @@ test.describe("Map editor @oidc @nomobile @nowebkit", () => {
         const buffer = fs.readFileSync(filePath);
         const base64 = buffer.toString('base64');
 
-        // Drop file via drag-and-drop simulation
-        await page.evaluate(
-            async ({ selector, fileName, mimeType, base64Data }) => {
-                function base64ToUint8Array(base64: string): Uint8Array {
-                    const binary = atob(base64);
-                    const len = binary.length;
-                    const bytes = new Uint8Array(len);
-                    for (let i = 0; i < len; i++) {
-                        bytes[i] = binary.charCodeAt(i);
+        // Drag the file over the middle of the map and drop it there (drag-and-drop simulation)
+        const dropOnCanvas = (eventTypes: string[]) =>
+            page.evaluate(
+                ({ selector, fileName, mimeType, base64Data, types }) => {
+                    function base64ToUint8Array(base64: string): Uint8Array {
+                        const binary = atob(base64);
+                        const len = binary.length;
+                        const bytes = new Uint8Array(len);
+                        for (let i = 0; i < len; i++) {
+                            bytes[i] = binary.charCodeAt(i);
+                        }
+                        return bytes;
                     }
-                    return bytes;
+
+                    const target = document.querySelector(selector);
+                    if (!target) throw new Error(`Selector "${selector}" not found`);
+                    const rect = target.getBoundingClientRect();
+
+                    const fileBytes = base64ToUint8Array(base64Data);
+                    const blob = new Blob([fileBytes], { type: mimeType });
+                    const file = new File([blob], fileName, { type: mimeType });
+
+                    const dataTransfer = new DataTransfer();
+                    dataTransfer.items.add(file);
+
+                    const eventInit: DragEventInit = {
+                        bubbles: true,
+                        cancelable: true,
+                        dataTransfer,
+                        clientX: rect.left + rect.width * 0.6,
+                        clientY: rect.top + rect.height * 0.5,
+                    };
+
+                    for (const eventType of types) {
+                        const event = new DragEvent(eventType, eventInit);
+                        target.dispatchEvent(event);
+                    }
+                },
+                {
+                    selector: '#game canvas',
+                    fileName: 'lorem-ipsum.pdf',
+                    mimeType: 'application/pdf',
+                    base64Data: base64,
+                    types: eventTypes,
                 }
+            );
 
-                const target = document.querySelector(selector);
-                if (!target) throw new Error(`Selector "${selector}" not found`);
+        // While playing, the map takes no file: no drop sign, nothing opens, nothing is placed
+        await dropOnCanvas(['dragenter', 'dragover']);
+        await expect(page.getByTestId('drop-file-target')).toHaveCount(0);
+        await dropOnCanvas(['drop']);
+        await expect(page.getByText('Choose an object')).toHaveCount(0);
+        await expect(page.getByTestId('edit-panel')).toHaveCount(0);
 
-                const fileBytes = base64ToUint8Array(base64Data);
-                const blob = new Blob([fileBytes], { type: mimeType });
-                const file = new File([blob], fileName, { type: mimeType });
+        // In edit mode the spot under the cursor lights up, and the file lands there with its settings open
+        await Menu.openMapEditor(page);
+        await dropOnCanvas(['dragenter', 'dragover']);
+        await expect(page.getByTestId('drop-file-target')).toBeVisible();
+        await dropOnCanvas(['drop']);
+        await expect(page.getByTestId('drop-file-target')).toHaveCount(0);
+        await expect(page.getByText('Choose an object')).toHaveCount(0);
 
-                const dataTransfer = new DataTransfer();
-                dataTransfer.items.add(file);
-
-                const eventInit: DragEventInit = {
-                    bubbles: true,
-                    cancelable: true,
-                    dataTransfer,
-                };
-
-                for (const eventType of ['dragenter', 'dragover', 'drop']) {
-                    const event = new DragEvent(eventType, eventInit);
-                    target.dispatchEvent(event);
-                }
-            },
-            {
-                selector: '#game canvas',
-                fileName: 'lorem-ipsum.pdf',
-                mimeType: 'application/pdf',
-                base64Data: base64
-            }
-        );
-
-        await expect(page.getByText('Choose an object')).toBeVisible();
-        await page.getByText('Save').click();
-
-        await EntityEditor.moveAndClick(page, 32, 300);
-
-        await expect(page.getByText('Books (Variant 5)')).toBeVisible();
+        await expect(page.getByTestId('edit-panel').getByText('Books (Variant 5)')).toBeVisible();
         await expect(page.getByText('lorem-ipsum.pdf')).toBeVisible();
     });
 });

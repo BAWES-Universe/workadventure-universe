@@ -97,6 +97,11 @@ export interface SpaceInterface {
     readonly isStreamingStore: Readable<boolean>;
 
     /**
+     * In the audience of a live stream: the people with a raised hand. They are not in usersStore (they don't stream).
+     */
+    readonly audienceHandsStore: Readable<ReadonlyMap<string, SpaceUserExtended>>;
+
+    /**
      * Use this observer to get a description of new users.
      * It can be easier than subscribing to the usersStore and trying to deduce who the new user is.
      */
