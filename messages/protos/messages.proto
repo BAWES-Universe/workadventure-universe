@@ -148,11 +148,8 @@ message BanPlayerMessage {
 }
 
 message UpdateChatIdMessage {
-  // Not trusted by the server anymore: it reads the chat ID from matrixAccessToken instead.
   string email = 1;
   string chatId = 2;
-  // The player's own Matrix access token. The server asks the Matrix server whose token it is.
-  string matrixAccessToken = 3;
 }
 
 message LeaveChatRoomAreaMessage {

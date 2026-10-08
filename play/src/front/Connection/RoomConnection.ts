@@ -1820,19 +1820,14 @@ export class RoomConnection implements RoomConnection {
         }
     }
 
-    /**
-     * Hands the player's Matrix access token to the server, which asks the Matrix server whose token it is and uses
-     * that answer as the player's chat ID. The chat ID is never taken from the browser.
-     */
-    public emitUpdateChatId(matrixAccessToken: string) {
-        if (matrixAccessToken) {
+    public emitUpdateChatId(email: string, chatId: string) {
+        if (chatId && email) {
             this.send({
                 message: {
                     $case: "updateChatIdMessage",
                     updateChatIdMessage: {
-                        email: "",
-                        chatId: "",
-                        matrixAccessToken,
+                        email,
+                        chatId,
                     },
                 },
             });

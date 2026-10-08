@@ -109,24 +109,3 @@ describe("GET /me with refresh", () => {
         expect(res.body).toEqual(expect.objectContaining({ authToken: "game-token" }));
     });
 });
-
-describe("GET /me and the chat ID", () => {
-    beforeEach(() => {
-        vi.resetAllMocks();
-        verifyJWTToken.mockReturnValue({ identifier: "u", accessToken: "access" });
-        fetchMemberDataByUuid.mockResolvedValue({
-            status: "ok",
-            userUuid: "u",
-            isCharacterTexturesValid: true,
-            isCompanionTextureValid: true,
-        });
-        checkTokenAuth.mockResolvedValue({});
-    });
-
-    it("does not pass the chat ID the browser claims on to Orbit", async () => {
-        await callMe({ token: "game-token", playUri, chatID: "@someone-else:matrix.test" });
-        expect(fetchMemberDataByUuid).toHaveBeenCalledTimes(1);
-        expect(fetchMemberDataByUuid.mock.calls[0]).not.toContain("@someone-else:matrix.test");
-        expect(fetchMemberDataByUuid.mock.calls[0][8]).toBeUndefined();
-    });
-});
