@@ -282,7 +282,12 @@
                 {isMatrixChatEnabled}
             />
         {:else if view === "requests"}
-            <FriendRequests incoming={friendsList?.incoming ?? []} outgoing={friendsList?.outgoing ?? []} {query} />
+            <FriendRequests
+                incoming={friendsList?.incoming ?? []}
+                outgoing={friendsList?.outgoing ?? []}
+                {query}
+                {lookOf}
+            />
         {:else}
             {#if !isSearching}
                 <FriendFaces {faces} on:open={(event) => openFriend(event.detail)} />

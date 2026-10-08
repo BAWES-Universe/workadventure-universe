@@ -1,4 +1,5 @@
 <script lang="ts">
+    import type { Readable } from "svelte/store";
     import type { FriendRequest } from "@workadventure/messages";
     import { LL, locale } from "../../../../i18n/i18n-svelte";
     import FriendAvatar from "./FriendAvatar.svelte";
@@ -14,6 +15,8 @@
     export let incoming: FriendRequest[];
     export let outgoing: FriendRequest[];
     export let query = "";
+    /** Their woka and colour, for people who are in this world; everyone else gets the default woka. */
+    export let lookOf: (uuid: string) => { picture?: Readable<string | undefined>; color?: string } = () => ({});
 
     let busy = new Set<string>();
 
@@ -50,7 +53,7 @@
                     data-testid={`incoming-${request.name}`}
                 >
                     <div class="flex min-w-0 items-center gap-2">
-                        <FriendAvatar />
+                        <FriendAvatar {...lookOf(request.uuid)} />
                         <div class="ms-1 flex min-w-0 flex-col">
                             <span class="truncate text-sm font-bold">{request.name}</span>
                             <span class="truncate text-xs text-white/70">{detail(request)}</span>
@@ -105,7 +108,7 @@
         <ul class="m-0 flex list-none flex-col p-0 pb-2">
             {#each outgoingShown as request (request.uuid)}
                 <li class="flex items-center gap-2 px-4 py-2" data-testid={`outgoing-${request.name}`}>
-                    <FriendAvatar />
+                    <FriendAvatar {...lookOf(request.uuid)} />
                     <div class="ms-1 flex min-w-0 flex-auto flex-col">
                         <span class="truncate text-sm font-bold">{request.name}</span>
                         <span class="truncate text-xs text-white/60"
