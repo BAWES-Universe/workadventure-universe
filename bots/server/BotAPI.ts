@@ -3,6 +3,7 @@
  */
 
 import express, { type Request, type Response, type NextFunction } from 'express';
+import { timingSafeEqual } from 'crypto';
 import { BotManager } from './BotManager';
 import { AdminApiService } from './AdminApiService';
 import { BotRegistry } from './BotRegistry';
@@ -13,6 +14,7 @@ import { MCPConnector } from '../mcp/MCPConnector';
 export interface BotAPIRequest extends Request {
     userIdentifier?: string;
     isLogged?: boolean;
+    sessionToken?: string;
 }
 
 /**
@@ -51,6 +53,7 @@ async function authenticateToken(
         }
         req.userIdentifier = userInfo.email || userInfo.uuid;
         req.isLogged = true;
+        req.sessionToken = bearerToken;
         next();
     } catch (error) {
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -58,6 +61,44 @@ async function authenticateToken(
         }
         res.status(401).json({ error: 'Orbit session validation failed' });
     }
+}
+
+/**
+ * Middleware for routes that change a running bot. Runs after authenticateToken and lets the request through only
+ * when the Admin API says the session's person may manage the bot named in the path or body.
+ */
+async function requireBotManager(
+    req: BotAPIRequest,
+    res: Response,
+    next: NextFunction,
+    adminApiService: AdminApiService
+): Promise<void> {
+    const botId = (req.params?.botId as string | undefined) || (req.body?.botId as string | undefined);
+    if (!botId || typeof botId !== 'string') {
+        res.status(400).json({ error: 'Missing botId' });
+        return;
+    }
+    if (!req.sessionToken || !(await adminApiService.canSessionManageBot(req.sessionToken, botId))) {
+        res.status(403).json({ error: 'You cannot manage this bot' });
+        return;
+    }
+    next();
+}
+
+/**
+ * Middleware for operator tools that act across every bot with the Admin API token (create, list, global cleanup,
+ * improvement runs). No person's session is enough: the caller must also present BOT_SERVICE_TOKEN.
+ */
+function requireServiceOperator(req: BotAPIRequest, res: Response, next: NextFunction): void {
+    const expected = process.env.BOT_SERVICE_TOKEN;
+    const presented = req.headers['x-bot-service-token'];
+    const a = Buffer.from(typeof presented === 'string' ? presented : '');
+    const b = Buffer.from(expected || '');
+    if (!expected || a.length !== b.length || !timingSafeEqual(a, b)) {
+        res.status(403).json({ error: 'Operator access only' });
+        return;
+    }
+    next();
 }
 
 export class BotAPI {
@@ -99,6 +140,12 @@ export class BotAPI {
     }
 
     private setupRoutes(): void {
+        const requireSession = (req: BotAPIRequest, res: Response, next: NextFunction) =>
+            authenticateToken(req, res, next, this.adminApiService);
+        const requireManager = (req: BotAPIRequest, res: Response, next: NextFunction) =>
+            requireBotManager(req, res, next, this.adminApiService);
+        const requireOperator = (req: BotAPIRequest, res: Response, next: NextFunction) => requireServiceOperator(req, res, next);
+
         // Health check (no auth required)
         this.app.get('/health', (req, res) => {
             res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -164,9 +211,8 @@ export class BotAPI {
             }
         });
 
-        // Summon bot to player position (no auth required - public endpoint for any player/guest)
-        // This is safe because it only moves a bot to a player's position, doesn't modify configuration
-        this.app.post('/api/bots/:botId/summon', async (req: Request, res: Response) => {
+        // Summon bot to player position. Any signed-in player may summon; it only moves the bot to them.
+        this.app.post('/api/bots/:botId/summon', requireSession, async (req: Request, res: Response) => {
             try {
                 const { botId } = req.params;
                 const { playerUuid, playerX, playerY } = req.body;
@@ -282,7 +328,7 @@ export class BotAPI {
         });
 
         // Spawn a specific bot immediately (called when bot is created in editor)
-        this.app.post('/api/bots/spawn', async (req: Request, res: Response) => {
+        this.app.post('/api/bots/spawn', requireSession, requireManager, async (req: Request, res: Response) => {
             try {
                 const { botId, roomId } = req.body;
 
@@ -352,7 +398,7 @@ export class BotAPI {
         });
 
         // Despawn a specific bot immediately (called when bot is deleted in editor)
-        this.app.post('/api/bots/despawn', async (req: Request, res: Response) => {
+        this.app.post('/api/bots/despawn', requireSession, requireManager, async (req: Request, res: Response) => {
             try {
                 const { botId, roomId } = req.body;
 
@@ -394,7 +440,7 @@ export class BotAPI {
         });
 
         // Update a running bot's config (live update)
-        this.app.post('/api/bots/:botId/update', async (req: Request, res: Response) => {
+        this.app.post('/api/bots/:botId/update', requireSession, requireManager, async (req: Request, res: Response) => {
             try {
                 const { botId } = req.params;
                 const { position, behaviorConfig, behaviorType, restartRoute } = req.body;
@@ -436,8 +482,8 @@ export class BotAPI {
             }
         });
 
-        // Get available AI providers (for bot editor UI) - Public endpoint (only returns metadata, no credentials)
-        this.app.get('/api/bots/ai-providers', async (req: Request, res: Response) => {
+        // Get available AI providers (for bot editor UI). Signed-in only; returns metadata, no credentials
+        this.app.get('/api/bots/ai-providers', requireSession, async (req: Request, res: Response) => {
             try {
                 const enabled = req.query.enabled === 'true' || req.query.enabled === undefined;
                 const providers = await this.adminApiService.getAvailableAIProviders(enabled);
@@ -456,7 +502,7 @@ export class BotAPI {
         });
 
         // List all bots for a room/world
-        this.app.get('/api/bots', async (req: BotAPIRequest, res: Response) => {
+        this.app.get('/api/bots', requireOperator, async (req: BotAPIRequest, res: Response) => {
             try {
                 const roomUrl = req.query.roomUrl as string | undefined;
                 const worldUrl = req.query.worldUrl as string | undefined;
@@ -479,7 +525,7 @@ export class BotAPI {
         });
 
         // Get bot configuration
-        this.app.get('/api/bots/:botId', async (req: BotAPIRequest, res: Response) => {
+        this.app.get('/api/bots/:botId', requireManager, async (req: BotAPIRequest, res: Response) => {
             try {
                 const { botId } = req.params;
 
@@ -497,7 +543,7 @@ export class BotAPI {
         });
 
         // Create new bot
-        this.app.post('/api/bots', async (req: BotAPIRequest, res: Response) => {
+        this.app.post('/api/bots', requireOperator, async (req: BotAPIRequest, res: Response) => {
             try {
                 const config: Partial<BotConfiguration> = req.body;
 
@@ -542,7 +588,7 @@ export class BotAPI {
         });
 
         // Update bot configuration
-        this.app.put('/api/bots/:botId', async (req: BotAPIRequest, res: Response) => {
+        this.app.put('/api/bots/:botId', requireManager, async (req: BotAPIRequest, res: Response) => {
             try {
                 const { botId } = req.params;
                 const updates: Partial<BotConfiguration> = req.body;
@@ -693,7 +739,7 @@ export class BotAPI {
         });
 
         // Delete bot
-        this.app.delete('/api/bots/:botId', async (req: BotAPIRequest, res: Response) => {
+        this.app.delete('/api/bots/:botId', requireManager, async (req: BotAPIRequest, res: Response) => {
             try {
                 const { botId } = req.params;
 
@@ -713,7 +759,7 @@ export class BotAPI {
         });
 
         // Spawn bot instance
-        this.app.post('/api/bots/:botId/spawn', async (req: BotAPIRequest, res: Response) => {
+        this.app.post('/api/bots/:botId/spawn', requireManager, async (req: BotAPIRequest, res: Response) => {
             try {
                 const { botId } = req.params;
 
@@ -744,7 +790,7 @@ export class BotAPI {
         });
 
         // Despawn bot instance
-        this.app.post('/api/bots/:botId/despawn', async (req: BotAPIRequest, res: Response) => {
+        this.app.post('/api/bots/:botId/despawn', requireManager, async (req: BotAPIRequest, res: Response) => {
             try {
                 const { botId } = req.params;
 
@@ -758,7 +804,7 @@ export class BotAPI {
         });
 
         // Get bot status
-        this.app.get('/api/bots/:botId/status', async (req: BotAPIRequest, res: Response) => {
+        this.app.get('/api/bots/:botId/status', requireManager, async (req: BotAPIRequest, res: Response) => {
             try {
                 const { botId } = req.params;
 
@@ -783,7 +829,7 @@ export class BotAPI {
 
         // Metrics endpoints
         // Get current metrics for a bot (from buffer)
-        this.app.get('/api/bots/:botId/metrics/current', async (req: BotAPIRequest, res: Response) => {
+        this.app.get('/api/bots/:botId/metrics/current', requireManager, async (req: BotAPIRequest, res: Response) => {
             try {
                 const { botId } = req.params;
                 const metricsCollector = this.botManager.getMetricsCollector();
@@ -802,7 +848,7 @@ export class BotAPI {
         });
 
         // Get metrics with time range (from Admin API)
-        this.app.get('/api/bots/:botId/metrics', async (req: BotAPIRequest, res: Response) => {
+        this.app.get('/api/bots/:botId/metrics', requireManager, async (req: BotAPIRequest, res: Response) => {
             try {
                 const { botId } = req.params;
                 const metricType = req.query.metricType as string | undefined;
@@ -827,7 +873,7 @@ export class BotAPI {
         });
 
         // Record metrics (internal endpoint, uses BOT_SERVICE_TOKEN)
-        this.app.post('/api/bots/metrics', async (req: Request, res: Response) => {
+        this.app.post('/api/bots/metrics', requireOperator, async (req: Request, res: Response) => {
             try {
                 const { metrics } = req.body;
 
@@ -846,7 +892,7 @@ export class BotAPI {
 
         // Test endpoints
         // Run test suite
-        this.app.post('/api/bots/test/run-suite', async (req: BotAPIRequest, res: Response) => {
+        this.app.post('/api/bots/test/run-suite', requireManager, async (req: BotAPIRequest, res: Response) => {
             try {
                 const { testSuite, botId } = req.body;
 
@@ -870,7 +916,7 @@ export class BotAPI {
         });
 
         // Get test results
-        this.app.get('/api/bots/test/results/:testId', async (req: BotAPIRequest, res: Response) => {
+        this.app.get('/api/bots/test/results/:testId', requireOperator, async (req: BotAPIRequest, res: Response) => {
             try {
                 const { testId } = req.params;
                 
@@ -884,7 +930,7 @@ export class BotAPI {
         });
 
         // Replay conversation
-        this.app.post('/api/bots/test/replay', async (req: BotAPIRequest, res: Response) => {
+        this.app.post('/api/bots/test/replay', requireOperator, async (req: BotAPIRequest, res: Response) => {
             try {
                 const { conversationId, newChatInstructions } = req.body;
 
@@ -908,7 +954,7 @@ export class BotAPI {
         });
 
         // Get problematic conversations
-        this.app.get('/api/bots/:botId/conversations/problematic', async (req: BotAPIRequest, res: Response) => {
+        this.app.get('/api/bots/:botId/conversations/problematic', requireManager, async (req: BotAPIRequest, res: Response) => {
             try {
                 const { botId } = req.params;
                 const criteria = req.query.criteria ? JSON.parse(req.query.criteria as string) : undefined;
@@ -929,7 +975,7 @@ export class BotAPI {
 
         // Conversation storage endpoints (production)
         // Get recent conversations for a bot
-        this.app.get('/api/bots/:botId/conversations', async (req: BotAPIRequest, res: Response) => {
+        this.app.get('/api/bots/:botId/conversations', requireManager, async (req: BotAPIRequest, res: Response) => {
             try {
                 const { botId } = req.params;
                 const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
@@ -961,7 +1007,7 @@ export class BotAPI {
         });
 
         // Get specific conversation
-        this.app.get('/api/bots/:botId/conversations/:conversationId', async (req: BotAPIRequest, res: Response) => {
+        this.app.get('/api/bots/:botId/conversations/:conversationId', requireManager, async (req: BotAPIRequest, res: Response) => {
             try {
                 const { botId, conversationId } = req.params;
                 
@@ -974,7 +1020,7 @@ export class BotAPI {
         });
 
         // Get conversation stats
-        this.app.get('/api/bots/:botId/conversations/stats', async (req: BotAPIRequest, res: Response) => {
+        this.app.get('/api/bots/:botId/conversations/stats', requireManager, async (req: BotAPIRequest, res: Response) => {
             try {
                 const { botId } = req.params;
 
@@ -993,7 +1039,7 @@ export class BotAPI {
         });
 
         // Manual cleanup for specific bot (admin only)
-        this.app.delete('/api/bots/:botId/conversations/cleanup', async (req: BotAPIRequest, res: Response) => {
+        this.app.delete('/api/bots/:botId/conversations/cleanup', requireManager, async (req: BotAPIRequest, res: Response) => {
             try {
                 const { botId } = req.params;
                 const olderThanDays = req.query.olderThanDays ? parseInt(req.query.olderThanDays as string, 10) : undefined;
@@ -1023,7 +1069,7 @@ export class BotAPI {
         });
 
         // Manual cleanup for all bots (admin only)
-        this.app.delete('/api/bots/conversations/cleanup', async (req: BotAPIRequest, res: Response) => {
+        this.app.delete('/api/bots/conversations/cleanup', requireOperator, async (req: BotAPIRequest, res: Response) => {
             try {
                 const olderThanDays = req.query.olderThanDays ? parseInt(req.query.olderThanDays as string, 10) : undefined;
                 const maxPerBot = req.query.maxPerBot ? parseInt(req.query.maxPerBot as string, 10) : undefined;
@@ -1050,7 +1096,7 @@ export class BotAPI {
 
         // Improvement endpoints (DEVELOPMENT ONLY - disabled in production)
         // Get improvement recommendations
-        this.app.get('/api/bots/improve/recommendations', async (req: BotAPIRequest, res: Response) => {
+        this.app.get('/api/bots/improve/recommendations', requireOperator, async (req: BotAPIRequest, res: Response) => {
             // Block in production
             if (process.env.NODE_ENV === 'production') {
                 res.status(403).json({ error: 'Improvement endpoints disabled in production' });
@@ -1079,7 +1125,7 @@ export class BotAPI {
         });
 
         // Get pending improvement tasks (for AI analysis)
-        this.app.get('/api/bots/improve/tasks', async (req: BotAPIRequest, res: Response) => {
+        this.app.get('/api/bots/improve/tasks', requireOperator, async (req: BotAPIRequest, res: Response) => {
             // Block in production
             if (process.env.NODE_ENV === 'production') {
                 res.status(403).json({ error: 'Improvement endpoints disabled in production' });
@@ -1127,7 +1173,7 @@ export class BotAPI {
         });
 
         // Run improvement cycle
-        this.app.post('/api/bots/improve/cycle', async (req: BotAPIRequest, res: Response) => {
+        this.app.post('/api/bots/improve/cycle', requireOperator, async (req: BotAPIRequest, res: Response) => {
             // Block in production
             if (process.env.NODE_ENV === 'production') {
                 res.status(403).json({ error: 'Improvement endpoints disabled in production' });
@@ -1156,7 +1202,7 @@ export class BotAPI {
         });
 
         // Improvement tasks endpoint
-        this.app.get('/api/bots/improve/tasks', async (req: BotAPIRequest, res: Response) => {
+        this.app.get('/api/bots/improve/tasks', requireOperator, async (req: BotAPIRequest, res: Response) => {
             await authenticateToken(req, res, async () => {
                 try {
                     const autoPilot = this.botManager.getAutoPilot();
@@ -1182,7 +1228,7 @@ export class BotAPI {
 
         // Analytics endpoints
         // Get conversation analytics
-        this.app.get('/api/bots/:botId/analytics', async (req: BotAPIRequest, res: Response) => {
+        this.app.get('/api/bots/:botId/analytics', requireManager, async (req: BotAPIRequest, res: Response) => {
             try {
                 const { botId } = req.params;
                 const startTime = req.query.startTime ? parseInt(req.query.startTime as string, 10) : undefined;
@@ -1203,7 +1249,7 @@ export class BotAPI {
         });
 
         // Get purpose distribution
-        this.app.get('/api/bots/:botId/purposes', async (req: BotAPIRequest, res: Response) => {
+        this.app.get('/api/bots/:botId/purposes', requireManager, async (req: BotAPIRequest, res: Response) => {
             try {
                 const { botId } = req.params;
                 const analytics = (this.botManager as any).getConversationAnalytics?.();
