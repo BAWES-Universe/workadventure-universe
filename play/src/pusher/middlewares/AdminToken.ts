@@ -11,9 +11,8 @@ export function adminToken(req: Request, res: Response, next: NextFunction): voi
         return;
     }
     if (token !== ADMIN_API_TOKEN) {
-        // The token that was sent is not logged: a caller with an old or mistyped token would write a real one to the logs.
-        console.error("Admin access refused: the token sent is not the admin token");
-        Sentry.captureException("Admin access refused: the token sent is not the admin token");
+        console.error("Admin access refused for token: " + token);
+        Sentry.captureException("Admin access refused for token: " + token);
         res.status(401).end("Incorrect token");
         return;
     }

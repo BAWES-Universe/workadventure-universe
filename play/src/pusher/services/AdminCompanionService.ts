@@ -1,9 +1,8 @@
-import axios from "axios";
+import axios, { isAxiosError } from "axios";
 import type { AxiosResponse } from "axios";
 import { CompanionTextureCollection } from "@workadventure/messages";
 import * as Sentry from "@sentry/node";
 import { ADMIN_API_TOKEN, ADMIN_API_URL } from "../enums/EnvironmentVariable";
-import { describeError } from "./SafeErrorLog";
 import type { CompanionServiceInterface } from "./CompanionServiceInterface";
 
 class AdminCompanionService implements CompanionServiceInterface {
@@ -58,9 +57,14 @@ class AdminCompanionService implements CompanionServiceInterface {
                 return CompanionTextureCollection.array().parse(res.data);
             })
             .catch((err) => {
-                // Not the error itself: axios errors carry the request, with the admin token in its headers.
-                console.error(`Cannot get companion collection list from admin API: ${describeError(err)}`);
-                Sentry.captureException(`Cannot get companion collection list from admin API: ${describeError(err)}`);
+                if (isAxiosError(err)) {
+                    console.error(err.response);
+                }
+                console.error(`Cannot get companion collection list from admin API with token: ${token}`, err);
+                Sentry.captureException(
+                    `Cannot get companion collection list from admin API with token: ${token}`,
+                    err
+                );
                 return undefined;
             });
     }

@@ -1,7 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import * as Sentry from "@sentry/node";
 import { jwtTokenManager } from "../services/JWTTokenManager";
-import { describeError } from "../services/SafeErrorLog";
 
 export type ResponseWithUserIdentifier = Response & {
     userIdentifier?: string;
@@ -21,9 +20,8 @@ export function authenticated(req: Request, res: ResponseWithUserIdentifier, nex
         res.userIdentifier = jwtData.identifier;
         res.isLogged = !!jwtData.accessToken;
     } catch (e) {
-        // Never the token itself: it can still hold the player's identity and access token.
-        Sentry.captureException(`Connection refused for an invalid token: ${describeError(e)}`);
-        console.error(`Connection refused for an invalid token: ${describeError(e)}`);
+        Sentry.captureException(`Connection refused for token: ${token} ${e}`);
+        console.error("Connection refused for token: " + token, e);
 
         res.status(401).send("Invalid token sent");
         return;

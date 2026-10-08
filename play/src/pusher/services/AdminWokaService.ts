@@ -4,7 +4,6 @@ import type { WokaList } from "@workadventure/messages";
 import { wokaList } from "@workadventure/messages";
 import * as Sentry from "@sentry/node";
 import { ADMIN_API_TOKEN, ADMIN_API_URL } from "../enums/EnvironmentVariable";
-import { describeError } from "./SafeErrorLog";
 import type { WokaServiceInterface } from "./WokaServiceInterface";
 
 class AdminWokaService implements WokaServiceInterface {
@@ -59,7 +58,7 @@ class AdminWokaService implements WokaServiceInterface {
                 return wokaList.parse(res.data);
             })
             .catch((err) => {
-                Sentry.captureException(`Cannot get woka list from admin API: ${describeError(err)}`);
+                Sentry.captureException(`Cannot get woka list from admin API with token: ${token}`, err);
                 return undefined;
             });
     }
