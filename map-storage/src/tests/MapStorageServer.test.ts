@@ -132,6 +132,48 @@ describe("MapStorageServer edit rights", () => {
             expect(await send(moveTo("inside", 95, 95), owner)).toBe("errorCommandMessage");
             expect(executeCommand).not.toHaveBeenCalled();
         });
+
+        it.each([
+            ["zero", 0, 0],
+            ["negative", -10, -10],
+            ["not a number", NaN, NaN],
+            ["infinite", Infinity, Infinity],
+            ["huge", 100000, 100000],
+        ])(
+            "refuses a move that claims a size of %s, since it would pass for any spot",
+            async (_name, width, height) => {
+                const message: EditMessage = {
+                    $case: "modifyEntityMessage",
+                    modifyEntityMessage: {
+                        id: "inside",
+                        x: 95,
+                        y: 95,
+                        width,
+                        height,
+                        properties: [],
+                        modifyProperties: false,
+                    },
+                };
+                expect(await send(message, owner)).toBe("errorCommandMessage");
+                expect(executeCommand).not.toHaveBeenCalled();
+            }
+        );
+
+        it("lets an editor move an object whatever size is sent", async () => {
+            const message: EditMessage = {
+                $case: "modifyEntityMessage",
+                modifyEntityMessage: {
+                    id: "outside",
+                    x: 600,
+                    y: 600,
+                    width: 0,
+                    height: 0,
+                    properties: [],
+                    modifyProperties: false,
+                },
+            };
+            expect(await send(message, editor)).toBe("modifyEntityMessage");
+        });
     });
 
     describe("createEntityMessage", () => {
@@ -156,6 +198,24 @@ describe("MapStorageServer edit rights", () => {
         it("checks a tall object as tall, not as wide", async () => {
             // 20 wide and 80 tall fits in the 100x100 area at (0, 10); 80 wide would stick out to the left
             expect(await send(create(0, 10, 20, 80), owner)).toBe("createEntityMessage");
+        });
+
+        it.each([
+            ["zero", 0, 0],
+            ["negative", -20, -20],
+            ["not a number", NaN, NaN],
+            ["infinite", Infinity, Infinity],
+            ["huge", 100000, 100000],
+        ])(
+            "refuses an object that claims a size of %s at the edge of the owner's area",
+            async (_name, width, height) => {
+                expect(await send(create(95, 95, width, height), owner)).toBe("errorCommandMessage");
+                expect(executeCommand).not.toHaveBeenCalled();
+            }
+        );
+
+        it("lets an editor place an object whatever size is sent", async () => {
+            expect(await send(create(600, 600, 0, 0), editor)).toBe("createEntityMessage");
         });
 
         it("refuses an object whose centre is in the owner's area but whose corner is outside it", async () => {
