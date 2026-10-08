@@ -2,7 +2,7 @@ import { v4 } from "uuid";
 //import {HttpRequest, HttpResponse} from "uWebSockets.js";
 //import {Readable} from 'stream'
 import { AxiosError } from "axios";
-import { Express, NextFunction, Request, Response } from "express";
+import { Express } from "express";
 import multer from "multer";
 import * as Sentry from "@sentry/node";
 import { uploaderService, CdnNotConfiguredError } from "../Service/UploaderService";
@@ -27,30 +27,12 @@ import {
   getAudioExtension,
   validateAudioMessage,
 } from "../Service/AudioMessageValidator";
-import {
-  isValidPlayAuthToken,
-  isValidPlayGameSession,
-} from "../Service/PlayAuthToken";
+import { isValidPlayAuthToken } from "../Service/PlayAuthToken";
 import { HttpResponseDevice } from "./HttpResponseDevice";
-
-// Files a person may drop in chat at once, and the size of each (the front applies the same limits). multer stops
-// reading a body that is over them, so a refused upload is never held in memory or stored.
-const MAX_FILES_PER_UPLOAD = 10;
-const maxFileSize = UPLOAD_MAX_FILESIZE ? parseInt(UPLOAD_MAX_FILESIZE) : NaN;
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: {
-    files: MAX_FILES_PER_UPLOAD,
-    ...(maxFileSize > 0 ? { fileSize: maxFileSize } : {}),
-  },
-}).any();
-
-/** True when the request carries the bot server's service token (our own services). */
-function isFromBotService(request: Request): boolean {
-  const botServiceToken = request.headers["x-bot-service-token"];
-  return !!BOT_SERVICE_TOKEN && botServiceToken === BOT_SERVICE_TOKEN;
-}
+});
 
 const uploadAudio = multer({
   storage: multer.memoryStorage(),
@@ -64,11 +46,6 @@ export class FileController {
   constructor(private App: Express) {
     this.App = App;
 
-    if (!SECRET_KEY) {
-      console.warn(
-        "SECRET_KEY is not set: file uploads are not tied to a game session. Set it to the same value as play's SECRET_KEY."
-      );
-    }
     this.uploadAudioMessage();
     this.downloadAudioMessage();
     this.downloadFile();
@@ -195,52 +172,7 @@ export class FileController {
   }
 
   uploadFile() {
-    // Checked before multer so that a body from somebody who never opened the game is never buffered.
-    const requireGameSession = (
-      request: Request,
-      response: Response,
-      next: NextFunction
-    ) => {
-      if (
-        isFromBotService(request) ||
-        !SECRET_KEY ||
-        isValidPlayGameSession(request.header("authorization"), SECRET_KEY)
-      ) {
-        next();
-        return;
-      }
-      response.status(401).json({ message: "not-logged" });
-    };
-
-    const readFiles = (
-      request: Request,
-      response: Response,
-      next: NextFunction
-    ) => {
-      upload(request, response, (err: unknown) => {
-        if (err instanceof multer.MulterError) {
-          if (err.code === "LIMIT_FILE_SIZE") {
-            response
-              .status(413)
-              .json({ message: "file-too-big", maxFileSize: UPLOAD_MAX_FILESIZE });
-            return;
-          }
-          if (err.code === "LIMIT_FILE_COUNT") {
-            response.status(400).json({ message: "too-many-files" });
-            return;
-          }
-          response.status(400).send("Invalid upload.");
-          return;
-        }
-        if (err) {
-          next(err);
-          return;
-        }
-        next();
-      });
-    };
-
-    this.App.post("/upload-file", requireGameSession, readFiles, async (request, response) => {
+    this.App.post("/upload-file", upload.any(), async (request, response) => {
       if (!request.files) {
         return response.status(400).send("No files were uploaded.");
       }
@@ -361,9 +293,6 @@ export class FileController {
               maxFileSize: err.response?.data.maxFileSize,
             });
           }
-          console.error(err);
-          response.status(500);
-          return response.json({ message: "Internal server error" });
         } else if (err instanceof DisabledChat) {
           response.status(401);
           return response.json({ message: "disabled" });
@@ -385,22 +314,12 @@ export class FileController {
   }
 
   deleteUploadedFile() {
-    // Nothing in the game deletes uploads: only our own services (the bot server) may, with their service token.
     this.App.delete("/upload-file/:fileId", (request, response) => {
-      if (!isFromBotService(request)) {
-        response.status(401).json({ message: "not-allowed" });
-        return;
-      }
       (async () => {
         const fileId = decodeURI(request.params["fileId"]);
         await uploaderService.deleteFileById(fileId);
         return response.json({ message: "ok", id: fileId });
-      })().catch((e) => {
-        console.error(e);
-        if (!response.headersSent) {
-          response.status(500).json({ message: "Internal server error" });
-        }
-      });
+      })().catch((e) => console.error(e));
     });
   }
 
