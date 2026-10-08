@@ -5,6 +5,7 @@
 #
 # Usage: GAME_DIR=/path/to/checkout stack.sh setup|start|stop|restart|status|wait [service]
 #
+# MAP_EDITOR_ALLOW_ALL_USERS=false starts the pusher with ordinary players (nobody may edit), to see refusals.
 # Ports: gateway 8000 (open the game here), front (vite) 8080, maps 8081, back 8090 + 50051 (grpc),
 #        map-storage 3000 + 50053 (grpc), pusher 3002 (http) + 3003 (ws).
 set -u
@@ -77,7 +78,7 @@ cmd_pusher() {
         ALLOWED_CORS_ORIGIN='*' \
         START_ROOM_URL="$START_MAP" \
         ENABLE_MAP_EDITOR=true \
-        MAP_EDITOR_ALLOW_ALL_USERS=true \
+        MAP_EDITOR_ALLOW_ALL_USERS="${MAP_EDITOR_ALLOW_ALL_USERS:-true}" \
         MAP_STORAGE_API_TOKEN="$MS_TOKEN" \
         PUBLIC_MAP_STORAGE_URL=http://localhost:3000 \
         INTERNAL_MAP_STORAGE_URL=http://127.0.0.1:3000 \
@@ -123,7 +124,7 @@ start_one() {
     fi
     echo "=== $(date -Is) start $GAME_DIR" >>"$LOGS/$name.log"
     # setsid: own process group, so stop can kill the whole tree (tsx / vite children)
-    setsid bash -c "$(declare -f "$fn" vite_config); HERE='$HERE'; GAME_DIR='$GAME_DIR'; STATE_DIR='$STATE_DIR'; BIN='$BIN'; SECRET='$SECRET'; MS_TOKEN='$MS_TOKEN'; START_MAP='$START_MAP'; $fn" \
+    setsid bash -c "$(declare -f "$fn" vite_config); HERE='$HERE'; GAME_DIR='$GAME_DIR'; STATE_DIR='$STATE_DIR'; BIN='$BIN'; SECRET='$SECRET'; MS_TOKEN='$MS_TOKEN'; START_MAP='$START_MAP'; MAP_EDITOR_ALLOW_ALL_USERS='${MAP_EDITOR_ALLOW_ALL_USERS:-true}'; $fn" \
         >>"$LOGS/$name.log" 2>&1 </dev/null &
     echo $! >"$RUN/$name.pid"
     echo "started $name (pid $!), log: $LOGS/$name.log"

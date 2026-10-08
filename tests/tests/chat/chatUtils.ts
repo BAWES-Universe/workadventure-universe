@@ -1,3 +1,4 @@
+import fs from "fs";
 import type { BrowserContext, Page } from "@playwright/test";
 import { expect } from "@playwright/test";
 import MatrixApi from "./matrixApi";
@@ -28,6 +29,10 @@ class ChatUtils {
 
   public async resetMatrixDatabase() {
     await MatrixApi.resetMatrixUsers();
+    // Deactivating the Matrix users revoked all their access tokens, including the ones kept in the saved login
+    // states (.auth/*.json, reused for an hour by getPage). The game only shows a player's chat ID once the Matrix
+    // server confirms their token, so drop those states: the next test using them logs in again.
+    forgetSavedMatrixLogins();
   }
 
   public async initEndToEndEncryption(
@@ -146,3 +151,18 @@ class ChatUtils {
 }
 
 export default new ChatUtils();
+
+function forgetSavedMatrixLogins(dir = "./.auth") {
+  if (!fs.existsSync(dir)) {
+    return;
+  }
+  for (const file of fs.readdirSync(dir)) {
+    if (!file.endsWith(".json")) {
+      continue;
+    }
+    const path = `${dir}/${file}`;
+    if (fs.readFileSync(path, "utf-8").includes('"matrixAccessToken"')) {
+      fs.rmSync(path, { force: true });
+    }
+  }
+}

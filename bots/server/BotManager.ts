@@ -801,9 +801,8 @@ export class BotManager {
         botId: string,
         options: {
             playerUuid: string;
-            targetPosition: { x: number; y: number };
         }
-    ): Promise<void> {
+    ): Promise<{ x: number; y: number } | undefined> {
         const instance = this.bots.get(botId);
         if (!instance) {
             throw new Error(`Bot ${botId} not found or not spawned`);
@@ -814,12 +813,20 @@ export class BotManager {
             throw new Error(`Bot ${botId} is not connected`);
         }
 
+        // The bot goes where it sees the player, never to a spot the caller names. A player the bot cannot see in
+        // its own room cannot summon it.
+        const targetPosition = bot.getPlayerPositionByUuid(options.playerUuid);
+        if (!targetPosition) {
+            return undefined;
+        }
+
         // Call summon on the bot client
-        await bot.summonToPlayer(options.playerUuid, options.targetPosition);
+        await bot.summonToPlayer(options.playerUuid, targetPosition);
         
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-            console.log(`[BotManager] Bot ${botId} summoned to player ${options.playerUuid} at (${options.targetPosition.x}, ${options.targetPosition.y})`);
+            console.log(`[BotManager] Bot ${botId} summoned to player ${options.playerUuid} at (${targetPosition.x}, ${targetPosition.y})`);
         }
+        return targetPosition;
     }
 
     /**
@@ -996,6 +1003,10 @@ export class BotManager {
                 console.log(`[BotManager] Spawned ${newBotsSpawned} new bots for room ${roomId}`);
             }
             console.log(`[BotManager] Room ${roomId} has ${targetRoom.botIds.size} bots total`);
+            // A room without bots isn't kept, so room ids that have no bots (or don't exist) don't pile up
+            if (targetRoom.botIds.size === 0) {
+                this.roomsWithBots.delete(roomId);
+            }
         } catch (error) {
             console.error(`[BotManager] Error ensuring bots for room ${roomId}:`, error);
             throw error;

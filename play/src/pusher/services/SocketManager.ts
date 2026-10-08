@@ -48,7 +48,12 @@ import type {
     UserMovesMessage,
     ViewportMessage,
 } from "@workadventure/messages";
-import { FilterType as FilterTypeValue, noUndefined, ServerToClientMessage } from "@workadventure/messages";
+import {
+    FilterType as FilterTypeValue,
+    noUndefined,
+    ServerToClientMessage,
+    SetPlayerDetailsMessage as SetPlayerDetailsMessageTsProto,
+} from "@workadventure/messages";
 import * as Sentry from "@sentry/node";
 import type { AxiosResponse } from "axios";
 import axios, { isAxiosError } from "axios";
@@ -66,16 +71,21 @@ import { Space } from "../models/Space";
 import { SpaceConnection } from "../models/SpaceConnection";
 import type { UpgradeFailedData } from "../controllers/IoSocketController";
 import { eventProcessor } from "../models/eventProcessorInit";
+import { setMegaphoneSettings } from "../models/MegaphoneRights";
 import { emitInBatch } from "./IoSocketHelpers";
 import { clientEventsEmitter } from "./ClientEventsEmitter";
 import { gaugeManager } from "./GaugeManager";
 import { apiClientRepository } from "./ApiClientRepository";
 import { getPeopleInRooms } from "./PeopleInRooms";
 import { adminService } from "./AdminService";
+import { chatIdVerifier, verifyChatId, withoutChatIdUpdate, withoutUncheckedChatId } from "./ChatIdVerifier";
 import type { ShortMapDescription } from "./ShortMapDescription";
 import { matrixProvider } from "./MatrixProvider";
 import { MatrixAreaMembership } from "./MatrixAreaMembership";
+import { checkSpaceJoin } from "./SpaceJoinPolicy";
+import { BubbleSpaceGrants } from "./BubbleSpaceGrants";
 import { FriendsPresence } from "./FriendsPresence";
+import type { UniverseRoomsData } from "./UniverseRooms";
 import { FriendsRings } from "./FriendsRings";
 import type { OrbitFriendSettings } from "./FriendsService";
 import {
@@ -105,6 +115,12 @@ export class SocketManager implements ZoneEventListener {
         leaveSpace: (socket, spaceName) => this.handleLeaveSpace(socket, spaceName),
         getSpace: (spaceName) => this.spaces.get(spaceName),
     });
+    private readonly bubbleSpaceGrants = new BubbleSpaceGrants<Socket>({
+        getSocketData: (socket) => socket.getUserData(),
+        leaveSpace: (socket, spaceName) => this.handleLeaveSpace(socket, spaceName),
+    });
+    // The leaves in progress, per socket and space, so that two leaves of the same space do not both unregister
+    private readonly leavingSpaces = new WeakMap<Socket, Map<string, Promise<void>>>();
     public readonly friendsPresence = new FriendsPresence<Socket>({
         send: (socket, friendsUpdateMessage) => this.sendFriendsUpdate(socket, friendsUpdateMessage),
         lookupPlaces: (playUris) => friendsService.getPlaces(playUris),
@@ -304,6 +320,7 @@ export class SocketManager implements ZoneEventListener {
                             socketData.userId = message.message.roomJoinedMessage.currentUserId;
                             socketData.spaceUserId =
                                 socketData.roomId + "_" + message.message.roomJoinedMessage.currentUserId;
+                            setMegaphoneSettings(socketData, message.message.roomJoinedMessage.megaphoneSettings);
 
                             // If this is the first message sent, send back the viewport.
                             this.handleViewport(client, viewport);
@@ -312,6 +329,25 @@ export class SocketManager implements ZoneEventListener {
                         case "refreshRoomMessage": {
                             const refreshMessage = message.message.refreshRoomMessage;
                             this.refreshRoomData(refreshMessage.roomId, refreshMessage.versionNumber);
+                            break;
+                        }
+                        // Must be recorded before the message is passed on below: the player joins the bubble only
+                        // once it receives the request.
+                        case "joinSpaceRequestMessage": {
+                            this.bubbleSpaceGrants.grant(client, message.message.joinSpaceRequestMessage.spaceName);
+                            break;
+                        }
+                        case "leaveSpaceRequestMessage": {
+                            this.bubbleSpaceGrants.revoke(client, message.message.leaveSpaceRequestMessage.spaceName);
+                            break;
+                        }
+                        case "batchMessage": {
+                            // The back sends each user's broadcast channels again when the room's settings change
+                            for (const subMessage of message.message.batchMessage.payload) {
+                                if (subMessage.message?.$case === "megaphoneSettingsMessage") {
+                                    setMegaphoneSettings(socketData, subMessage.message.megaphoneSettingsMessage);
+                                }
+                            }
                             break;
                         }
                     }
@@ -416,6 +452,8 @@ export class SocketManager implements ZoneEventListener {
     ): Promise<void> {
         const socketData = client.getUserData();
 
+        checkSpaceJoin({ localSpaceName, filterType, propertiesToSync }, socketData);
+
         let space: SpaceInterface | undefined = this.spaces.get(spaceName);
 
         if (!space) {
@@ -483,6 +521,10 @@ export class SocketManager implements ZoneEventListener {
                 Sentry.captureException(
                     new Error("Space is undefined while unregistering user from space after abort")
                 );
+                return;
+            }
+            if (!socketData.spaces.has(spaceName)) {
+                // Already left (for instance, the server made the player leave a bubble)
                 return;
             }
             space.forwarder.unregisterUser(client).catch((error) => {
@@ -1064,9 +1106,10 @@ export class SocketManager implements ZoneEventListener {
                 ? "world"
                 : "room";
         let tabUrlRooms: string[];
+        let universe: UniverseRoomsData | undefined;
 
         if (reach === "universe") {
-            const universe = await adminService.getRoomsFromSameUniverse(clientRoomUrl, socketData.userUuid, "en");
+            universe = await adminService.getRoomsFromSameUniverse(clientRoomUrl, socketData.userUuid, "en");
             tabUrlRooms = universe.worlds.flatMap((world) => world.rooms.map((room) => room.roomUrl));
             if (!tabUrlRooms.includes(clientRoomUrl)) {
                 tabUrlRooms.push(clientRoomUrl);
@@ -1079,11 +1122,12 @@ export class SocketManager implements ZoneEventListener {
         }
 
         const broadcast: BroadcastMeta = {
-            senderName: playGlobalMessageEvent.broadcast?.senderName ?? socketData.name,
+            // The sender's name, the name of what the message covers and the Woka come from the server, not from what the
+            // client sent: the card shows who really sent it, and where.
+            senderName: socketData.name,
             reach,
-            reachLabel: playGlobalMessageEvent.broadcast?.reachLabel,
+            reachLabel: await this.broadcastReachLabel(socketData, reach, universe),
             caption: playGlobalMessageEvent.broadcast?.caption,
-            // Taken from the connection, not from what the client sent: the card shows who really sent it.
             senderTextures: socketData.characterTextures,
         };
 
@@ -1100,6 +1144,36 @@ export class SocketManager implements ZoneEventListener {
                 return;
             });
         }
+    }
+
+    /**
+     * The name of what a broadcast covers (the room, the world or the universe the sender is in), asked from the admin
+     * rather than taken from the sender. Without one, the card simply names no place.
+     */
+    private async broadcastReachLabel(
+        socketData: SocketData,
+        reach: "room" | "world" | "universe",
+        universe: UniverseRoomsData | undefined
+    ): Promise<string | undefined> {
+        try {
+            const names =
+                universe ?? (await adminService.getRoomsFromSameUniverse(socketData.roomId, socketData.userUuid, "en"));
+            switch (reach) {
+                case "universe":
+                    return names.universeName || undefined;
+                case "world":
+                    return names.worlds.find((world) => world.isCurrent)?.name || undefined;
+                case "room":
+                    return (
+                        names.worlds.flatMap((world) => world.rooms).find((room) => room.isCurrent)?.name ||
+                        socketData.roomName ||
+                        undefined
+                    );
+            }
+        } catch (e) {
+            console.warn("SocketManager => broadcastReachLabel => could not get the names of the reach", e);
+        }
+        return reach === "room" ? socketData.roomName || undefined : undefined;
     }
 
     forwardMessageToBack(client: Socket, message: PusherToBackMessage["message"]): void {
@@ -1190,7 +1264,11 @@ export class SocketManager implements ZoneEventListener {
     }
 
     async handleUpdateSpaceUser(client: Socket, updateSpaceUserMessage: UpdateSpaceUserMessage) {
-        const message = noUndefined(updateSpaceUserMessage);
+        // The chat ID is only ever set by the server, once checked (handleUpdateChatId).
+        const message = withoutChatIdUpdate(noUndefined(updateSpaceUserMessage));
+        if (message.updateMask.length === 0) {
+            return;
+        }
 
         await this.checkClientIsPartOfSpace(client, message.spaceName);
         const space = this.spaces.get(message.spaceName);
@@ -1353,15 +1431,22 @@ export class SocketManager implements ZoneEventListener {
         if (refused) {
             return refused;
         }
+        const userUuid = client.getUserData().userUuid;
+        // A block or a removal that happens while the list loads wins over the list: it still has that person in it.
+        const load = this.friendsPresence.startListLoad();
         try {
-            const list = await friendsService.getFriends(client.getUserData().userUuid);
-            const watches = list.friends.map((friend) => ({ uuid: friend.uuid, shareLocation: friend.shareLocation }));
+            const list = await friendsService.getFriends(userUuid);
+            const watches = this.friendsPresence
+                .withoutUnlinked(load, userUuid, list.friends)
+                .map((friend) => ({ uuid: friend.uuid, shareLocation: friend.shareLocation }));
             this.friendsPresence.watch(client, watches);
             const presences = await this.friendsPresence.presencesOf(watches);
+            // Looking up room names takes a moment: someone may have been blocked or removed meanwhile.
+            const friends = this.friendsPresence.withoutUnlinked(load, userUuid, list.friends);
             return {
                 $case: "friendsListAnswer",
                 friendsListAnswer: {
-                    friends: list.friends.map((friend) => ({
+                    friends: friends.map((friend) => ({
                         uuid: friend.uuid,
                         name: friend.name ?? "",
                         chatId: friend.chatId ?? "",
@@ -1385,6 +1470,8 @@ export class SocketManager implements ZoneEventListener {
             };
         } catch (e) {
             return this.friendsErrorAnswer("handleFriendsListQuery", e);
+        } finally {
+            this.friendsPresence.finishListLoad(load);
         }
     }
 
@@ -1548,7 +1635,30 @@ export class SocketManager implements ZoneEventListener {
         }
     }
 
-    async handleLeaveSpace(client: Socket, spaceName: string) {
+    async handleLeaveSpace(client: Socket, spaceName: string): Promise<void> {
+        let leavingSpaces = this.leavingSpaces.get(client);
+        const leaving = leavingSpaces?.get(spaceName);
+        if (leaving) {
+            // The same space is already being left (e.g. the player leaves while the server makes it leave)
+            return leaving;
+        }
+        const socketData = client.getUserData();
+        if (!socketData.spaces.has(spaceName) && !socketData.joinSpacesPromise.has(spaceName)) {
+            // Not in this space (anymore): nothing to do. This happens when the server already made the player leave.
+            return;
+        }
+        if (!leavingSpaces) {
+            leavingSpaces = new Map<string, Promise<void>>();
+            this.leavingSpaces.set(client, leavingSpaces);
+        }
+        const leavePromise = this.leaveSpace(client, spaceName).finally(() => {
+            leavingSpaces?.delete(spaceName);
+        });
+        leavingSpaces.set(spaceName, leavePromise);
+        return leavePromise;
+    }
+
+    private async leaveSpace(client: Socket, spaceName: string): Promise<void> {
         const socketData = client.getUserData();
         const space = this.spaces.get(spaceName);
         if (space) {
@@ -1706,10 +1816,33 @@ export class SocketManager implements ZoneEventListener {
         };
     }
 
-    handleUpdateChatId(client: Socket, email: string, chatId: string): Promise<void> {
+    /**
+     * The browser sends the player's Matrix access token; the Matrix server tells us whose token it is, and that is
+     * the player's chat ID. It is saved for this socket's own user only, and shown to the other players.
+     * Whatever chat ID or email the browser sends along is ignored.
+     */
+    handleUpdateChatId(client: Socket, matrixAccessToken: string): Promise<void> {
         const userData = client.getUserData();
-        userData.chatID = chatId;
-        return adminService.updateChatId(email, chatId, client.getUserData().roomId);
+        return verifyChatId(userData, matrixAccessToken, chatIdVerifier, async (chatId) => {
+            await Promise.all([
+                adminService.updateChatId(userData.userUuid, chatId, userData.roomId).catch((e) => {
+                    console.error("Could not save the checked chat ID", e);
+                    Sentry.captureException(e);
+                }),
+                // Same message the browser used to send itself: shows the chat ID to the other players.
+                this.handleSetPlayerDetails(client, SetPlayerDetailsMessageTsProto.fromPartial({ chatID: chatId })),
+            ]);
+        });
+    }
+
+    /**
+     * A chat ID in a player details message is only accepted when it is the checked one (see handleUpdateChatId).
+     */
+    sanitizePlayerDetailsFromClient(
+        client: Socket,
+        playerDetailsMessage: SetPlayerDetailsMessage
+    ): SetPlayerDetailsMessage {
+        return withoutUncheckedChatId(playerDetailsMessage, client.getUserData().chatID);
     }
 
     async handleOauthRefreshTokenQuery(
@@ -1792,6 +1925,11 @@ export class SocketManager implements ZoneEventListener {
     }
 
     async handleEnterChatRoomAreaQuery(socket: Socket, roomID: string): Promise<void> {
+        const { chatID, chatIdVerification } = socket.getUserData();
+        if (!chatID && chatIdVerification) {
+            // The player walked into the area while their chat ID was being checked: wait for it.
+            await chatIdVerification;
+        }
         return this.matrixAreaMembership.enter(socket, roomID);
     }
 

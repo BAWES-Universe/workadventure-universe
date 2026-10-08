@@ -3,6 +3,7 @@ import { z } from "zod";
 import * as Sentry from "@sentry/node";
 import Debug from "debug";
 import { validateQuery } from "../services/QueryValidator";
+import { describeError } from "../services/SafeErrorLog";
 import type { JWTTokenManager } from "../services/JWTTokenManager";
 import { BaseHttpController } from "./BaseHttpController";
 
@@ -43,8 +44,8 @@ export abstract class AuthenticatedProviderController<T> extends BaseHttpControl
                 // Let's set the "uuid" param
                 uuid = jwtData.identifier;
             } catch (e) {
-                Sentry.captureException(`Connection refused for token: ${token} ${e}`);
-                console.error("Connection refused for token: " + token, e);
+                Sentry.captureException(`Connection refused for an invalid token: ${describeError(e)}`);
+                console.error(`Connection refused for an invalid token: ${describeError(e)}`);
 
                 res.status(401).send("Invalid token sent");
                 return;

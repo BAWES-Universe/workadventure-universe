@@ -11,8 +11,8 @@ export function mapStorageToken(req: Request, res: Response, next: NextFunction)
     }
 
     if (token !== MAP_STORAGE_API_TOKEN) {
-        console.error("Map Storage access refused for token: " + token);
-        Sentry.captureException("Map storage access refused for token: " + token);
+        console.error("Map Storage access refused: the token sent is not the map storage token");
+        Sentry.captureException("Map storage access refused: the token sent is not the map storage token");
         res.status(401).end("Incorrect token");
         return;
     }
