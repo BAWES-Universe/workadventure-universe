@@ -49,3 +49,43 @@ eventProcessor.registerPrivateEventProcessor("muteVideo", (event, sender, receiv
 
     return event;
 });
+
+eventProcessor.registerPrivateEventProcessor("kickOffUser", (event, sender) => {
+    if (!sender || !sender.tags.includes("admin")) {
+        throw new Error("Only admins can kick off a user");
+    }
+    return event;
+});
+
+eventProcessor.registerPrivateEventProcessor("lowerHand", (event, sender) => {
+    if (!sender || !sender.tags.includes("admin")) {
+        throw new Error("Only admins can lower someone else's hand");
+    }
+    return event;
+});
+
+eventProcessor.registerPublicEventProcessor("lowerAllHands", (event, sender) => {
+    if (!sender || !sender.tags.includes("admin")) {
+        throw new Error("Only admins can lower all hands");
+    }
+    return event;
+});
+
+// On a podium, the people streaming (the speakers) and admins can bring someone from the audience on stage, and send
+// them back.
+const canBringOnStage = (sender: { megaphoneState: boolean; tags: string[] }) =>
+    sender.megaphoneState || sender.tags.includes("admin");
+
+eventProcessor.registerPrivateEventProcessor("inviteToSpeak", (event, sender) => {
+    if (!canBringOnStage(sender)) {
+        throw new Error("Only speakers and admins can invite someone to speak");
+    }
+    return event;
+});
+
+eventProcessor.registerPrivateEventProcessor("moveToAudience", (event, sender) => {
+    if (!canBringOnStage(sender)) {
+        throw new Error("Only speakers and admins can move someone to the audience");
+    }
+    return event;
+});

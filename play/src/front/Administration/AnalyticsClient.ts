@@ -421,14 +421,6 @@ class AnalyticsClient {
             .catch((e) => console.error(e));
     }
 
-    menuContact(): void {
-        this.posthogPromise
-            ?.then((posthog) => {
-                posthog.capture("wa_menu_contact");
-            })
-            .catch((e) => console.error(e));
-    }
-
     inviteCopyLink(): void {
         this.posthogPromise
             ?.then((posthog) => {
@@ -990,6 +982,29 @@ class AnalyticsClient {
             })
             .catch((e) => console.error(e));
     }
+    raiseHand(): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_raise_hand");
+            })
+            .catch((e) => console.error(e));
+    }
+    /** Why the hand went down: lowered by its owner, after they spoke, or by a moderator. */
+    lowerHand(reason: "self" | "spoke" | "moderator"): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_lower_hand", { reason });
+            })
+            .catch((e) => console.error(e));
+    }
+    /** "Keep it raised" after speaking with the hand up. */
+    keepHandRaised(): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_keep_hand_raised");
+            })
+            .catch((e) => console.error(e));
+    }
     /** The chat panel went from closed to open. Tab switches inside an open panel don't count. */
     chatPanelOpened(source: ChatOpenSource): void {
         this.posthogPromise
@@ -1003,6 +1018,13 @@ class AnalyticsClient {
         this.posthogPromise
             ?.then((posthog) => {
                 posthog.capture("wa_chat_message_sent", { kind });
+            })
+            .catch((e) => console.error(e));
+    }
+    chatUploadFailed(reason: string, status: number | undefined, count: number): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_chat_upload_failed", { reason, status, count });
             })
             .catch((e) => console.error(e));
     }
@@ -1070,6 +1092,13 @@ class AnalyticsClient {
             })
             .catch((e) => console.error(e));
     }
+    pageShiftReset(properties: { x: number; y: number; reason: string }): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_page_shift_reset", properties);
+            })
+            .catch((e) => console.error(e));
+    }
     showBusinessCard(): void {
         this.posthogPromise
             ?.then((posthog) => {
@@ -1092,7 +1121,11 @@ class AnalyticsClient {
             .catch((e) => console.error(e));
     }
     /** The game connection dropped: why, and whether the page had just been in the background. */
-    connectionLost(properties: { cause: "no_ping" | "socket_closed"; closeCode?: number; hiddenMs: number }): void {
+    connectionLost(properties: {
+        cause: "no_ping" | "socket_closed" | "background_leave";
+        closeCode?: number;
+        hiddenMs: number;
+    }): void {
         this.posthogPromise
             ?.then((posthog) => {
                 posthog.capture("wa_connection_lost", properties);

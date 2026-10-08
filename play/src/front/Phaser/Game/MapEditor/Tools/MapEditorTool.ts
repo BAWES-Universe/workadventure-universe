@@ -8,6 +8,10 @@ export abstract class MapEditorTool {
     public abstract destroy(): void;
     public abstract subscribeToGameMapFrontWrapperEvents(gameMapFrontWrapper: GameMapFrontWrapper): void;
     public abstract handleKeyDownEvent(event: KeyboardEvent): void;
+    /** Whether a pointer that went down on the empty map may drag the camera around (false while the tool needs that drag). */
+    public canDragToLookAround(pointer: Phaser.Input.Pointer): boolean {
+        return true;
+    }
     /**
      * React on commands coming from the outside
      */

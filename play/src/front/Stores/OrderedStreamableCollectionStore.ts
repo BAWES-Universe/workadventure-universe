@@ -1,5 +1,7 @@
 import { derived, writable } from "svelte/store";
 import type { VideoBox } from "../Space/Space";
+import { raisedHandsStore } from "../Space/RaiseHand/RaiseHandStore";
+import { priorityWithRaisedHand } from "../Space/RaiseHand/RaisedHandPriority";
 import { stableNSort } from "./StableNSorter";
 import { oneLineStreamableCollectionStore } from "./OneLineStreamableCollectionStore";
 
@@ -32,13 +34,19 @@ export const triggerReorderStore = writable(0);
 const currentOrderForStore: string[] = [];
 
 export const orderedStreamableCollectionStore = derived(
-    [oneLineStreamableCollectionStore, maxVisibleVideosStore, triggerReorderStore],
-    ([$oneLineStreamableCollectionStore, $maxVisibleVideosStore, $triggerReorderStore], set) => {
-        const itemsMap = new Map($oneLineStreamableCollectionStore.map((item) => [item.uniqueId, item]));
+    [oneLineStreamableCollectionStore, maxVisibleVideosStore, triggerReorderStore, raisedHandsStore],
+    ([$oneLineStreamableCollectionStore, $maxVisibleVideosStore, $triggerReorderStore, $raisedHandsStore], set) => {
+        const handPositions = new Map($raisedHandsStore.map((hand) => [hand.uuid, hand.position]));
+        const itemsMap = new Map(
+            $oneLineStreamableCollectionStore.map((item) => [
+                item.uniqueId,
+                { item, uniqueId: item.uniqueId, priority: priorityWithRaisedHand(item, handPositions) },
+            ])
+        );
         const { items, orderChanged } = stableNSort(itemsMap, $maxVisibleVideosStore, currentOrderForStore);
         if (orderChanged) {
             // Only update the store if the order has changed
-            set(items);
+            set(items.map(({ item }) => item));
         }
 
         return;

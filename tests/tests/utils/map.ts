@@ -47,6 +47,19 @@ class Map {
         });
     }
 
+    /**
+     * A point of the empty test maps (10 x 10 tiles, shown at 1.5x), measured from the map's top left corner, on the
+     * screen. The map is smaller than the screen, so it sits in the middle of it, while playing and while editing.
+     */
+    onScreen(page: Page, x: number, y: number): { x: number; y: number } {
+        const mapSize = 10 * 32 * 1.5;
+        const viewport = page.viewportSize() ?? { width: mapSize, height: mapSize };
+        return {
+            x: x + Math.max(0, (viewport.width - mapSize) / 2),
+            y: y + Math.max(0, (viewport.height - mapSize) / 2),
+        };
+    }
+
     url(end: string){
         return `${play_url}/~/${e2e_wam_directory}/maps/${end}.wam?phaserMode=${RENDERER_MODE}`;
     }

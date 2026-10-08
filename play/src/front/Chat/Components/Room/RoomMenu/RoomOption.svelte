@@ -5,19 +5,23 @@
     export let IconComponent: ComponentType;
     export let title: string;
     export let dataTestId: string | undefined = undefined;
-    export let bg = "hover:bg-white/10";
+    /** Extra classes on the row: "u-danger" for a destructive choice, or a fill of its own. */
+    export let bg = "";
     export let disabled = false;
     const dispatch = createEventDispatcher<{
         click: void;
     }>();
 </script>
 
+<!-- A row of the game's menus (profile menu, map tools): same font, colours and icon slot, so it never takes the
+     browser's own button font or iOS blue. -->
 <button
-    class="flex gap-2 items-center {bg} m-0 p-2 w-full text-sm rounded"
+    type="button"
+    class="u-menu-row {bg}"
     data-testid={dataTestId}
     on:click|stopPropagation|preventDefault={() => dispatch("click")}
     {disabled}
 >
-    <svelte:component this={IconComponent} />
-    <span>{title}</span>
+    <span class="u-menu-tile" aria-hidden="true"><svelte:component this={IconComponent} /></span>
+    <span class="u-menu-label">{title}</span>
 </button>

@@ -8,6 +8,7 @@ export interface FrontConfigurationInterface {
     ADMIN_URL: string | undefined;
     UPLOADER_URL: string;
     ICON_URL: string;
+    BOT_SERVER_URL: string | undefined;
     SKIP_RENDER_OPTIMIZATIONS: boolean;
     DISABLE_NOTIFICATIONS: boolean;
     JITSI_URL: string | undefined;
@@ -67,5 +68,4 @@ export interface FrontConfigurationInterface {
     ENABLE_ISSUE_REPORT: boolean | undefined;
     GRPC_MAX_MESSAGE_SIZE: number;
     TURN_CREDENTIALS_RENEWAL_TIME: number;
-    BACKGROUND_TRANSFORMER_ENGINE: "tasks-vision" | "selfie-segmentation" | undefined;
 }

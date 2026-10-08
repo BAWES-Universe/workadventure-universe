@@ -2,7 +2,10 @@ name: Build Universe Images for Coolify
 
 on:
   push:
-    branches: [universe]
+    # universe-develop builds feed the dev server (images tagged universe-develop and
+    # universe-develop-<sha>). Release and deploy below stay gated on refs/heads/universe, and
+    # `latest` is only tagged on the default branch, so a universe-develop build never reaches prod.
+    branches: [universe, universe-develop]
     paths:
       - 'play/**'
       - 'back/**'
@@ -151,15 +154,15 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             NODE_OPTIONS=--max-old-space-size=16384
-            FAST_BUILD=
+            FAST_BUILD=${{ (github.event_name != 'push' || github.ref != 'refs/heads/universe') && 'true' || '' }}
             RELEASE_VERSION=${{ needs.get-version.outputs.release_version }}
             SENTRY_URL=
             SENTRY_AUTH_TOKEN=
             SENTRY_ORG=
             SENTRY_PROJECT=
             SENTRY_ENVIRONMENT=
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=play
+          cache-to: type=gha,mode=max,scope=play
 
   build-back:
     needs: get-version
@@ -201,8 +204,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             RELEASE_VERSION=${{ needs.get-version.outputs.release_version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=back
+          cache-to: type=gha,mode=max,scope=back
 
   build-map-storage:
     needs: get-version
@@ -244,8 +247,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             RELEASE_VERSION=${{ needs.get-version.outputs.release_version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=map-storage
+          cache-to: type=gha,mode=max,scope=map-storage
 
   build-uploader:
     needs: get-version
@@ -287,8 +290,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             RELEASE_VERSION=${{ needs.get-version.outputs.release_version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=uploader
+          cache-to: type=gha,mode=max,scope=uploader
 
   build-discord-bot:
     needs: get-version
@@ -330,10 +333,14 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             RELEASE_VERSION=${{ needs.get-version.outputs.release_version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=discord-bot
+          cache-to: type=gha,mode=max,scope=discord-bot
 
   build-bot-server:
+    # Waits for play so that if play's build fails, bot-server is skipped too. Bots only connect
+    # to a play with the same API version, so a new bot image must not ship without its play.
+    # (Both images compute that version from the same source, so the order itself isn't what
+    # makes them match.)
     needs: [get-version, build-play]
     if: ${{ github.event.inputs.service == 'all' || github.event.inputs.service == 'bot-server' || github.event_name == 'push' }}
     runs-on: ubuntu-latest
@@ -373,8 +380,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             RELEASE_VERSION=${{ needs.get-version.outputs.release_version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=bot-server
+          cache-to: type=gha,mode=max,scope=bot-server
 
 
   # ─────────────────────────────────────────────────
@@ -437,6 +444,51 @@ jobs:
           npx -y @sentry/cli@3.4.3 releases set-commits "v${NEW_VERSION}" --auto --org bawes-co
 
   # ─────────────────────────────────────────────────
+  # Dev server: a fresh universe-develop build goes on
+  # dev.bawes.net, unless a PR holds dev (`on-dev` label).
+  # See dev-server.yml.
+  # ─────────────────────────────────────────────────
+  dev-server-check:
+    if: github.ref == 'refs/heads/universe-develop' && github.event_name == 'push'
+    needs: [build-play, build-back, build-map-storage, build-uploader, build-bot-server]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      free: ${{ steps.check.outputs.free }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEV_TOKEN_SET: ${{ secrets.DEV_COOLIFY_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          if [ "$DEV_TOKEN_SET" != true ]; then
+            echo "DEV_COOLIFY_TOKEN is not set yet; skipping the dev server."
+            echo "free=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          held=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --label on-dev --json number --jq 'length')
+          if [ "$held" = 0 ]; then free=true; else free=false; echo "A PR holds on-dev; dev stays on it."; fi
+          echo "free=$free" >> "$GITHUB_OUTPUT"
+
+  dev-server:
+    needs: dev-server-check
+    if: needs.dev-server-check.outputs.free == 'true'
+    permissions:
+      contents: read
+      packages: read
+      pull-requests: write
+    uses: ./.github/workflows/dev-server-switch.yml
+    with:
+      tag: universe-develop
+      # Checked again inside the switch lock: a PR may take on-dev while this run waits.
+      mode: free
+    secrets:
+      DEV_COOLIFY_TOKEN: ${{ secrets.DEV_COOLIFY_TOKEN }}
+
+  # ─────────────────────────────────────────────────
   # Deploy: trigger Coolify to pull new images
   # Fires only if release produced a new version
   # ─────────────────────────────────────────────────
@@ -461,6 +513,7 @@ jobs:
           COOLIFY_UPLOADER_UUID: ${{ secrets.COOLIFY_UPLOADER_UUID }}
         run: |
           echo "Deploying v${{ needs.release.outputs.new_version }}..."
+          failed=""
           for UUID in \
             "${COOLIFY_PLAY_UUID}" \
             "${COOLIFY_BACK_UUID}" \
@@ -469,9 +522,17 @@ jobs:
             "${COOLIFY_DISCORD_BOT_UUID}" \
             "${COOLIFY_UPLOADER_UUID}"; do
             echo "Deploying $UUID..."
-            curl -sSf -X POST "${COOLIFY_BASE}/api/v1/deploy?uuid=${UUID}" \
-              -H "Authorization: Bearer ${COOLIFY_TOKEN}" || echo "Failed: $UUID"
+            if ! curl -sSf -X POST "${COOLIFY_BASE}/api/v1/deploy?uuid=${UUID}" \
+              -H "Authorization: Bearer ${COOLIFY_TOKEN}"; then
+              echo "::error::Coolify did not accept the deploy for $UUID"
+              failed="$failed $UUID"
+            fi
           done
+          # Every service is still attempted; the job fails at the end if any deploy was refused.
+          if [ -n "$failed" ]; then
+            echo "::error::Not deployed:$failed"
+            exit 1
+          fi
           echo "All services deployed."
       - name: Record GitHub deployment
         env:

@@ -20,9 +20,10 @@ html.touch-screen body {
     overscroll-behavior: none;
 }
 
-body button:focus,
-body img:focus,
-body input:focus {
+// The ring shows for the keyboard only: a click or a tap focuses a button too, and it must not ring.
+body button:focus-visible,
+body img:focus-visible,
+body input:focus-visible {
     outline: -webkit-focus-ring-color auto 0;
 }
 
@@ -701,8 +702,8 @@ div.emoji-picker {
 
 .say-bubble {
     font-weight: 500;
-    // Comic Sans where it exists (desktop); Apple's look-alike on iOS; a plain face elsewhere, never a script.
-    font-family: "Comic Sans MS", "Comic Sans", "Chalkboard SE", "Comic Neue", sans-serif;
+    // Inter, bundled (index.scss), so bubbles read the same on every device; Orbit uses it too.
+    font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     text-align: center;
 }
 
@@ -829,8 +830,8 @@ div.emoji-picker {
 .thinking-text {
     font-weight: 500;
     width: 100%;
-    // Comic Sans where it exists (desktop); Apple's look-alike on iOS; a plain face elsewhere, never a script.
-    font-family: "Comic Sans MS", "Comic Sans", "Chalkboard SE", "Comic Neue", sans-serif;
+    // Inter, bundled (index.scss), so bubbles read the same on every device; Orbit uses it too.
+    font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     font-size: 12px;
     color: #000000;
     text-align: center;
@@ -875,6 +876,336 @@ div.emoji-picker {
 /* ─── Universe brand, chat panel ───
    The same language as bawes.net: glass surfaces, a purple → blue call to action that warms to gold on hover,
    purple → gold gradient titles, and a soft purple glow on what is special. */
+:root {
+    /* Universe ink, the colour of bawes.net. Orbit sends the same #14121e as the map's backgroundColor, which
+       becomes the design system's `contrast` (action bar, menus, sidebar, device list). */
+    --u-ink: 20 18 30;
+    /* The one raised surface: Express, Explore and the help popups. A lighter ink at the top fading into ink,
+       with a violet edge and a purple glow, so what is special stands out from the plain glass. */
+    --u-surface-bg: linear-gradient(160deg, rgb(31 28 47 / 0.92), rgb(var(--u-ink) / 0.94));
+    --u-surface-shadow: 0 1px 0 rgba(255, 255, 255, 0.08) inset, 0 0 0 1px rgba(167, 139, 250, 0.18),
+        0 18px 48px -12px rgba(0, 0, 0, 0.55), 0 0 32px -12px rgba(134, 41, 252, 0.55);
+    /* The violet edge every surface shares. */
+    --u-surface-edge: rgba(167, 139, 250, 0.18);
+}
+/* The raised surface as a class: the device list, the profile menu and the action bar's dropdowns. */
+.u-surface {
+    background: var(--u-surface-bg);
+    box-shadow: var(--u-surface-shadow);
+    backdrop-filter: blur(18px) saturate(140%);
+    -webkit-backdrop-filter: blur(18px) saturate(140%);
+}
+/* The same ink and violet edge without the purple glow, for what is always on screen: the action bar buttons and
+   the chat panel. Only what pops up glows. */
+.u-surface-flat {
+    background: var(--u-surface-bg);
+    /* No drop shadow: the action bar's right half clips what overflows it (it measures its buttons to decide which
+       fall into the menu), and a shadow cut by that edge read as a smudge between the pills. What is always on
+       screen has an edge and no shadow; only what pops up casts one. */
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.08) inset, 0 0 0 1px var(--u-surface-edge);
+    backdrop-filter: blur(18px) saturate(140%);
+    -webkit-backdrop-filter: blur(18px) saturate(140%);
+}
+/* Buttons that touch (the camera and microphone) read as one piece: the edge is drawn top and bottom on every
+   segment and on the sides only by the outer ones, so no line shows where two meet. It is drawn with inset shadows,
+   which take no space: a segment keeps the same size whether it is first, last or hidden, because the action bar
+   measures its buttons to decide which fall into the menu, and a size that changed with that answer would flip it
+   back and forth. */
+.u-surface-flat.u-segment {
+    --u-seg-start: 0 0 #0000;
+    --u-seg-end: 0 0 #0000;
+    /* Straight down, not diagonal: every segment then shades the same way, so nothing steps where two meet. */
+    background: linear-gradient(180deg, rgb(31 28 47 / 0.92), rgb(var(--u-ink) / 0.94));
+    box-shadow: inset 0 1px 0 var(--u-surface-edge), inset 0 -1px 0 var(--u-surface-edge), var(--u-seg-start),
+        var(--u-seg-end), inset 0 2px 0 rgba(255, 255, 255, 0.06);
+}
+.u-segment.u-seg-start,
+.u-segment.u-seg-auto-start:first-of-type {
+    --u-seg-start: inset 1px 0 0 var(--u-surface-edge);
+}
+.u-segment.u-seg-end,
+.u-segment.u-seg-auto-end:last-of-type {
+    --u-seg-end: inset -1px 0 0 var(--u-surface-edge);
+}
+[dir="rtl"] .u-segment.u-seg-start,
+[dir="rtl"] .u-segment.u-seg-auto-start:first-of-type {
+    --u-seg-start: inset -1px 0 0 var(--u-surface-edge);
+}
+[dir="rtl"] .u-segment.u-seg-end,
+[dir="rtl"] .u-segment.u-seg-auto-end:last-of-type {
+    --u-seg-end: inset 1px 0 0 var(--u-surface-edge);
+}
+/* ─── Controls: one shape, states as colour ───
+   Every control in a pill is a circle (or a pill when it has a label) drawn on a state layer inside a square button,
+   so the whole square still takes the tap. Shape never changes with state; colour does: a soft white on hover (only
+   where hovering exists, so a tap on a phone leaves nothing behind), the brand gradient when on, coral when muted.
+   The e2e tests read the state from data-state on the button. */
+.u-ab-btn {
+    position: relative;
+    isolation: isolate;
+    background: transparent;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.u-ab-btn:hover {
+    filter: none;
+}
+.u-ab-btn:focus-visible {
+    outline: none;
+}
+.u-ab-btn:focus-visible > .u-ab-state {
+    box-shadow: inset 0 0 0 2px #fff;
+}
+.u-ab-state {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: 9999px;
+    pointer-events: none;
+    transition: background-color 150ms ease, box-shadow 150ms ease;
+}
+/* The bar's microphone and camera: no colour fade. Muting or unmuting changes the icon at once, and a fading colour
+   showed an in-between look on phones (the pressed red behind the "on" mic). Only the live ring eases in. */
+.group\/btn-mic .u-ab-state,
+.group\/btn-cam .u-ab-state {
+    transition: box-shadow 150ms ease;
+}
+@media (hover: hover) {
+    .u-ab-btn:hover > .u-ab-state {
+        background-color: rgba(255, 255, 255, 0.08);
+    }
+}
+.u-ab-btn:active > .u-ab-state {
+    background-color: rgba(255, 255, 255, 0.12);
+}
+/* Open: the window or menu this button opened is showing. The pressed grey, held: open is not "on", so it never takes
+   the brand gradient, which reads as a call to action. */
+.u-ab-btn[data-state="open"] > .u-ab-state {
+    background-color: rgba(255, 255, 255, 0.14);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+@media (hover: hover) {
+    .u-ab-btn[data-state="open"]:hover > .u-ab-state {
+        background-color: rgba(255, 255, 255, 0.18);
+    }
+}
+.u-ab-btn[data-state="active"] > .u-ab-state {
+    background: linear-gradient(135deg, #8629fc, #4156f6);
+    box-shadow: 0 6px 18px -6px rgba(134, 41, 252, 0.9);
+}
+@media (hover: hover) {
+    .u-ab-btn[data-state="active"]:hover > .u-ab-state {
+        background: linear-gradient(135deg, #9a4dfd, #5a6cf8);
+    }
+}
+.u-ab-btn[data-state="active"]:active > .u-ab-state {
+    background: linear-gradient(135deg, #7a1fe8, #3a4de0);
+}
+/* The keyboard's focus ring, kept over the open and active looks, whose own shadows would replace it. */
+.u-ab-btn[data-state="open"]:focus-visible > .u-ab-state {
+    box-shadow: inset 0 0 0 2px #fff;
+}
+.u-ab-btn[data-state="active"]:focus-visible > .u-ab-state {
+    box-shadow: inset 0 0 0 2px #fff, 0 6px 18px -6px rgba(134, 41, 252, 0.9);
+}
+/* Live: on, and someone can hear or see you (a bubble, a meeting room, on stage). The ink stays; a violet ring and
+   a glow say so. Each button sits on its own ink segment and the next one paints over anything that spills out, so
+   the glow stays inside the button's 4px of padding (and glows inward too): nothing is ever cut. */
+.u-ab-btn[data-live="true"][data-state="normal"] > .u-ab-state {
+    box-shadow: inset 0 0 0 2px #a78bfa, inset 0 0 12px -2px rgba(134, 41, 252, 0.75), 0 0 4px 0 rgba(134, 41, 252, 0.7);
+}
+.u-ab-btn[data-live="true"][data-state="normal"]:focus-visible > .u-ab-state {
+    box-shadow: inset 0 0 0 2px #fff, inset 0 0 12px -2px rgba(134, 41, 252, 0.75), 0 0 4px 0 rgba(134, 41, 252, 0.7);
+}
+/* Muted: coral, and darker (not lighter) on hover so the white icon keeps 3:1 on it. */
+.u-ab-btn[data-state="forbidden"] > .u-ab-state {
+    background-color: #e96d51;
+}
+@media (hover: hover) {
+    .u-ab-btn[data-state="forbidden"]:hover > .u-ab-state {
+        background-color: #d4553a;
+    }
+}
+.u-ab-btn[data-state="forbidden"]:active > .u-ab-state {
+    background-color: #c44a30;
+}
+.u-ab-btn[data-state="disabled"] {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+/* A script's own colour on a button keeps it, on the state layer. */
+.u-ab-btn.u-ab-custom > .u-ab-state {
+    background-color: var(--bg-color);
+}
+/* Touch: 48px controls on every touch screen, whatever the width. The pill around them grows with them. */
+@media (pointer: coarse) {
+    .u-ab-btn.u-ab-btn {
+        height: 3rem;
+    }
+    .u-ab-btn.u-ab-btn.u-ab-icon {
+        width: 3rem;
+    }
+}
+
+/* The little arrow under a surface's dropdown, in the surface's ink rather than the old see-through contrast. */
+.u-surface-arrow[data-arrow-placement="bottom"]::before {
+    border-top-color: rgb(var(--u-ink) / 0.94);
+}
+.u-surface-arrow[data-arrow-placement="top"]::before {
+    border-bottom-color: rgb(31 28 47 / 0.92);
+}
+.u-surface-arrow[data-arrow-placement="right"]::before {
+    border-left-color: rgb(var(--u-ink) / 0.94);
+}
+.u-surface-arrow[data-arrow-placement="left"]::before {
+    border-right-color: rgb(var(--u-ink) / 0.94);
+}
+/* Rows of the menus on a surface (profile menu, map tools, apps), in the device list's language: a 12px rounded row,
+   the icon bare in a fixed 32px slot (no frame: a menu reads quieter without one, and every label still lines up),
+   a soft hover, and the current choice outlined in violet. The only framed tile left is the device list's gradient
+   one, where it means "in use". */
+.u-menu-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    min-height: 42px;
+    margin: 0 0 2px;
+    padding: 0.25rem 0.375rem;
+    border: 1px solid transparent;
+    border-radius: 0.75rem;
+    font-family: inherit;
+    font-size: 0.875rem;
+    font-weight: 500;
+    line-height: 1.25rem;
+    text-align: start;
+    color: rgba(255, 255, 255, 0.88);
+    cursor: pointer;
+    transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease;
+}
+/* No specificity: a state colour on the row (active, forbidden, a script's own colour) still wins. */
+:where(.u-menu-row) {
+    background: transparent;
+}
+.u-menu-row:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: #fff;
+}
+.u-menu-row:focus-visible {
+    outline: 2px solid rgba(196, 181, 253, 0.9);
+    outline-offset: -2px;
+}
+.u-menu-row.u-selected {
+    background: rgba(134, 41, 252, 0.16);
+    border-color: rgba(167, 139, 250, 0.45);
+    color: #fff;
+    font-weight: 700;
+}
+/* A choice covered by the one picked (a narrower reach of "How far"): a faint violet, under the picked one's. */
+.u-menu-row.u-included {
+    background: rgba(134, 41, 252, 0.07);
+}
+.u-menu-tile {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    margin-inline: -2px;
+    color: rgba(255, 255, 255, 0.85);
+}
+.u-menu-tile svg {
+    width: 20px;
+    height: 20px;
+}
+.u-menu-tile img {
+    max-width: 24px;
+    max-height: 24px;
+    object-fit: contain;
+}
+.u-menu-row:hover .u-menu-tile {
+    color: #fff;
+}
+/* A picture (the woka, the companion): the 32px sprite shown whole and pixel-sharp (1x, 2x and 3x screens alike),
+   in the same slot as the icons so the labels line up. */
+.u-menu-tile-image img {
+    max-width: 32px;
+    max-height: 32px;
+    object-fit: contain;
+    image-rendering: pixelated;
+}
+.u-menu-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.u-menu-go {
+    flex: none;
+    margin-inline-start: auto;
+    color: rgba(255, 255, 255, 0.35);
+}
+.u-menu-row.u-danger {
+    color: #f08a70;
+}
+.u-menu-row.u-danger .u-menu-tile {
+    color: #e96d51;
+}
+.u-menu-row.u-danger:hover {
+    @apply bg-danger-600;
+    color: #fff;
+}
+.u-menu-row.u-danger:hover .u-menu-tile {
+    color: #fff;
+}
+.u-menu-divider {
+    height: 1px;
+    margin: 6px 8px;
+    background: rgba(255, 255, 255, 0.08);
+}
+/* A close button inside a panel (Explore, the chat): a plain circle with a white X and a soft circle on hover and
+   press, as agreed in batch 1 round 2. A floating close (over the map) uses the bar's tile instead: a u-surface
+   capsule holding a u-ab-btn, like Orbit's window. Buttons get no colour of their own without Tailwind's preflight,
+   so iOS paints them blue unless the colour is set here, and a tap leaves the system's blue focus ring behind. */
+.u-close {
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    margin: 0;
+    padding: 0;
+    border-radius: 9999px;
+    color: rgba(255, 255, 255, 0.85);
+    background: transparent;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background-color 150ms ease, color 150ms ease;
+}
+@media (hover: hover) {
+    .u-close:hover {
+        color: #fff;
+        background-color: rgba(255, 255, 255, 0.1);
+    }
+}
+.u-close:active {
+    color: #fff;
+    background-color: rgba(255, 255, 255, 0.12);
+}
+body .u-close:focus {
+    outline: none;
+}
+.u-close:focus-visible {
+    box-shadow: inset 0 0 0 2px #fff;
+}
+@media (pointer: coarse) {
+    .u-close {
+        width: 3rem;
+        height: 3rem;
+    }
+}
 .u-glass {
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.08);
@@ -1019,8 +1350,353 @@ div.emoji-picker {
     }
 }
 
+/* ─── Broadcast: the card, its rows and the live tile ───
+   Reach everyone at once: one card (what to share, who hears it, the room's settings), its big option rows, the
+   radio and switch rows, the Live pill and the ring on a live tile. Same ink, same violet, same coral as the bar. */
+.u-steps {
+    display: flex;
+    gap: 6px;
+}
+.u-step {
+    width: 20px;
+    height: 4px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.14);
+    transition: background 200ms ease;
+}
+.u-step[data-done="true"] {
+    background: linear-gradient(90deg, #8629fc, #4156f6);
+}
+/* A big tappable row: an icon tile, a title, a line under it, and a chevron or a radio at the end. */
+.u-option {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    width: 100%;
+    margin: 0;
+    padding: 14px;
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.04);
+    color: #fff;
+    font: inherit;
+    text-align: start;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+}
+@media (hover: hover) {
+    .u-option:hover:not(:disabled) {
+        background: rgba(255, 255, 255, 0.08);
+        border-color: rgba(255, 255, 255, 0.14);
+    }
+}
+.u-option:focus-visible {
+    outline: 2px solid rgba(196, 181, 253, 0.9);
+    outline-offset: -2px;
+}
+/* A chosen option stays violet under the pointer: the grey hover is only for the others. */
+.u-option.u-selected,
+.u-option.u-selected:hover:not(:disabled) {
+    border-color: rgba(167, 139, 250, 0.7);
+    background: rgba(134, 41, 252, 0.14);
+    box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.35), 0 0 24px -8px rgba(134, 41, 252, 0.6);
+}
+.u-option:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+/* The option's icon: a plain glyph with no box behind it, like the other icons in the game; its colour says the type. */
+.u-option-tile {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    color: #fff;
+}
+.u-option-tile svg {
+    width: 24px;
+    height: 24px;
+}
+.u-option-tile.u-tile-gold {
+    color: #e9c74c;
+}
+.u-option-tile.u-tile-coral {
+    color: #f08a70;
+}
+.u-option-text {
+    flex: 1;
+    min-width: 0;
+}
+.u-option-title {
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.25;
+}
+.u-option.u-selected .u-option-title {
+    font-weight: 700;
+}
+.u-option-desc {
+    margin-top: 2px;
+    font-size: 13px;
+    line-height: 1.3;
+    color: rgba(255, 255, 255, 0.6);
+}
+.u-option-go {
+    flex: none;
+    color: rgba(255, 255, 255, 0.35);
+}
+/* The radio at the end of a "who hears it" row: an empty ring, the gradient with a white dot once chosen. */
+.u-radio {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 999px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    transition: background 150ms ease, border-color 150ms ease;
+}
+.u-radio::after {
+    content: "";
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    background: #fff;
+    opacity: 0;
+    transform: scale(0.5);
+    transition: opacity 150ms ease, transform 150ms ease;
+}
+.u-option.u-selected .u-radio {
+    border-color: transparent;
+    background: linear-gradient(135deg, #8629fc, #4156f6);
+}
+.u-option.u-selected .u-radio::after {
+    opacity: 1;
+    transform: scale(1);
+}
+/* A switch: grey off, the gradient on. */
+.u-switch {
+    position: relative;
+    flex: none;
+    width: 46px;
+    height: 26px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.16);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 150ms ease;
+}
+.u-switch::after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    inset-inline-start: 3px;
+    width: 20px;
+    height: 20px;
+    border-radius: 999px;
+    background: #fff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    transition: transform 150ms ease;
+}
+.u-switch[aria-checked="true"] {
+    background: linear-gradient(135deg, #8629fc, #4156f6);
+}
+.u-switch[aria-checked="true"]::after {
+    transform: translateX(20px);
+}
+[dir="rtl"] .u-switch[aria-checked="true"]::after {
+    transform: translateX(-20px);
+}
+.u-switch:focus-visible {
+    outline: 2px solid #fff;
+    outline-offset: 2px;
+}
+.u-switch:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+/* A tag chip with its remove cross, and the dashed "Add tag" chip. */
+.u-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 32px;
+    padding: 0 6px 0 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.08);
+    font-size: 13px;
+    color: #fff;
+}
+.u-chip-remove {
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.6);
+    cursor: pointer;
+}
+.u-chip-remove:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.1);
+}
+.u-chip-add {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 32px;
+    padding: 0 12px;
+    border-radius: 999px;
+    border: 1px dashed rgba(255, 255, 255, 0.25);
+    background: transparent;
+    font: inherit;
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.75);
+    cursor: pointer;
+}
+.u-chip-add:hover {
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.45);
+}
+/* A text field on the card (specific enough to win over the form styles of the older screens). */
+.u-surface input.u-field,
+.u-surface textarea.u-field,
+.u-field {
+    display: block;
+    width: 100%;
+    margin: 0;
+    padding: 12px 14px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.06);
+    color: #fff;
+    font: inherit;
+    font-size: 15px;
+    line-height: 1.4;
+    resize: none;
+}
+.u-field {
+    appearance: none;
+    -webkit-appearance: none;
+    color-scheme: dark;
+    outline: none;
+    box-shadow: none;
+}
+.u-field::placeholder {
+    color: rgba(255, 255, 255, 0.45);
+}
+.u-surface input.u-field:focus,
+.u-surface textarea.u-field:focus,
+.u-field:focus {
+    outline: none;
+    border-color: rgba(167, 139, 250, 0.7);
+    box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.35);
+}
+/* Coral: End, Stop recording. Darker on hover so the white label keeps its contrast. */
+.u-cta-coral {
+    color: #fff;
+    background: #e96d51;
+    box-shadow: 0 8px 24px -10px rgba(233, 109, 81, 0.8);
+    transition: background-color 150ms ease, transform 150ms ease;
+}
+.u-cta-coral:hover {
+    background: #d4553a;
+}
+.u-cta-coral:active {
+    background: #c44a30;
+    transform: scale(0.98);
+}
+.u-cta-coral:focus-visible {
+    outline: 2px solid #fff;
+    outline-offset: 2px;
+}
+.u-cta:disabled,
+.u-cta-secondary:disabled,
+.u-cta-coral:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+/* One coral line for what went wrong, with its cross. */
+.u-error-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 8px 8px 12px;
+    border-radius: 10px;
+    background: rgba(233, 109, 81, 0.14);
+    border: 1px solid rgba(233, 109, 81, 0.35);
+    color: #f6b3a3;
+    font-size: 13px;
+}
+/* A live tile: the bar's violet ring and glow, and a coral LIVE tag. Yours while you broadcast, theirs while you
+   listen, the same size and place as any other tile in the strip. */
+.u-live-tile {
+    box-shadow: 0 0 18px -2px rgba(134, 41, 252, 0.75);
+}
+/* The ring is drawn over the video (an inset shadow would hide under it). */
+.u-live-tile::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 1000;
+    border-radius: inherit;
+    box-shadow: inset 0 0 0 2px #a78bfa, inset 0 0 12px -2px rgba(134, 41, 252, 0.6);
+    pointer-events: none;
+}
+.u-live-tag {
+    position: absolute;
+    top: 6px;
+    inset-inline-start: 6px;
+    z-index: 1001;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: #e96d51;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    line-height: 1.4;
+    text-transform: uppercase;
+    pointer-events: none;
+}
+.u-live-coral-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: #e96d51;
+    box-shadow: 0 0 6px rgba(233, 109, 81, 0.7);
+    animation: u-pulse-coral 1.6s ease-in-out infinite;
+}
+@keyframes u-pulse-coral {
+    0%,
+    100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.45;
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .u-live-coral-dot {
+        animation: none;
+    }
+}
+
 /* The Login button, and only it: the same purple → blue gradient as the chat panel's primary buttons. */
+// Log in is a gradient pill, like the design system's primary buttons, not a square in the bar's oval.
 button[data-testid="actionBarLogin"] {
+    border-radius: 9999px;
     font-weight: 700;
     background: linear-gradient(90deg, #8629fc, #4156f6);
     box-shadow: 0 6px 18px -8px rgba(134, 41, 252, 0.7);
@@ -1029,4 +1705,348 @@ button[data-testid="actionBarLogin"] {
 button[data-testid="actionBarLogin"]:hover {
     background: linear-gradient(90deg, #9a4dfd, #5a6cf8);
     box-shadow: 0 8px 22px -8px rgba(134, 41, 252, 0.85);
+}
+
+/* A quick double tap never zooms the page (iPhones zoom on a double tap even with user-scalable=no; ViewportGuard
+   blocks the pinch). Taps also respond without the double-tap wait. Lowest specificity: anything that sets its own
+   touch-action (the game canvas, Express's tray, the chat's resize handle) keeps it. */
+:where(html, body, body *) {
+    touch-action: manipulation;
+}
+
+/* ─── The join screens: name, WOKA, companion, camera and microphone ───
+   Each screen is one u-surface card over its own set background (never the live map). Radii are explicit pixels:
+   the design system's rounded-xl is 32px, not Tailwind's 12px. */
+.u-join-card {
+    position: relative;
+    border-radius: 24px;
+    background: var(--u-surface-bg);
+    box-shadow: var(--u-surface-shadow);
+    backdrop-filter: blur(18px) saturate(140%);
+    -webkit-backdrop-filter: blur(18px) saturate(140%);
+    color: #fff;
+}
+.u-join-title {
+    text-transform: none;
+    letter-spacing: normal;
+    font-size: 1.375rem;
+    line-height: 1.15;
+    font-weight: 700;
+    color: #fff;
+    margin: 0;
+}
+@media (min-width: 768px) {
+    .u-join-title {
+        font-size: 1.625rem;
+    }
+}
+.u-join-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    height: 3rem;
+    padding: 0 1.375rem;
+    border-radius: 9999px;
+    font-family: inherit;
+    font-size: 1rem;
+    font-weight: 700;
+    white-space: nowrap;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.u-join-btn.u-join-btn-sm {
+    height: 2.5rem;
+    padding: 0 1rem;
+    font-size: 0.875rem;
+}
+.u-join-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+.u-join-btn:focus-visible {
+    outline: 2px solid #fff;
+    outline-offset: 2px;
+}
+.u-join-label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.625rem;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: rgba(196, 181, 253, 0.9);
+}
+.u-join-field {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    min-width: 0;
+    height: 3rem;
+    padding: 0 0.875rem;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.06);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+    color: #fff;
+}
+.u-join-field:focus-within {
+    box-shadow: inset 0 0 0 2px rgba(196, 181, 253, 0.85);
+}
+.u-join-field select,
+.u-join-field input {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-size: 0.9375rem;
+    outline: none;
+    appearance: none;
+    -webkit-appearance: none;
+    text-overflow: ellipsis;
+}
+/* The field shows focus on its own border, so the input's ring from the forms plugin stays off */
+.u-join-field select:focus,
+.u-join-field input:focus {
+    border: 0;
+    outline: none;
+    box-shadow: none;
+}
+.u-join-field select option {
+    color: #fff;
+    background: rgb(var(--u-ink));
+}
+.u-join-field.u-join-field-error {
+    box-shadow: inset 0 0 0 2px #f59a86;
+}
+.u-join-switch {
+    position: relative;
+    flex: none;
+    width: 2.75rem;
+    height: 1.625rem;
+    margin: 0;
+    padding: 0;
+    border-radius: 9999px;
+    background: rgba(255, 255, 255, 0.12);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+    cursor: pointer;
+    transition: background 150ms ease;
+}
+.u-join-switch::after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 1.25rem;
+    height: 1.25rem;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    transition: transform 150ms ease;
+}
+.u-join-switch[aria-checked="true"] {
+    background: linear-gradient(90deg, #8629fc, #4156f6);
+}
+.u-join-switch[aria-checked="true"]::after {
+    transform: translateX(1.125rem);
+}
+.u-join-switch:focus-visible {
+    outline: 2px solid #fff;
+    outline-offset: 2px;
+}
+.u-join-pill {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    height: 2.25rem;
+    padding: 0 0.875rem;
+    border-radius: 9999px;
+    font-family: inherit;
+    font-size: 0.875rem;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.78);
+    background: rgba(255, 255, 255, 0.06);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+    cursor: pointer;
+    white-space: nowrap;
+}
+@media (hover: hover) {
+    .u-join-pill:hover {
+        color: #fff;
+        background: rgba(255, 255, 255, 0.1);
+    }
+}
+.u-join-pill[aria-selected="true"],
+.u-join-pill[aria-pressed="true"] {
+    color: #fff;
+    background: linear-gradient(135deg, #8629fc, #4156f6);
+    box-shadow: 0 6px 18px -6px rgba(134, 41, 252, 0.9);
+}
+.u-join-pill:focus-visible {
+    outline: 2px solid #fff;
+    outline-offset: 2px;
+}
+.u-join-tile {
+    position: relative;
+    display: grid;
+    place-items: center;
+    aspect-ratio: 1;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border-radius: 14px;
+    color: #fff;
+    background: rgba(255, 255, 255, 0.04);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+    cursor: pointer;
+    transition: background-color 150ms ease;
+}
+@media (hover: hover) {
+    .u-join-tile:hover {
+        background: rgba(255, 255, 255, 0.09);
+    }
+}
+.u-join-tile[aria-checked="true"] {
+    background: linear-gradient(145deg, rgba(134, 41, 252, 0.28), rgba(65, 86, 246, 0.18));
+    box-shadow: inset 0 0 0 2px rgba(196, 181, 253, 0.95), 0 8px 22px -10px rgba(134, 41, 252, 0.9);
+}
+.u-join-tile:focus-visible {
+    outline: 2px solid #fff;
+    outline-offset: 2px;
+}
+.u-join-tile-check {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    display: grid;
+    place-items: center;
+    width: 1.25rem;
+    height: 1.25rem;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #8629fc, #4156f6);
+}
+/* The spotlight behind a WOKA preview */
+.u-join-spot {
+    position: relative;
+    display: grid;
+    place-items: center;
+    border-radius: 9999px;
+    background: radial-gradient(
+        circle at 50% 42%,
+        rgba(134, 41, 252, 0.35),
+        rgba(65, 86, 246, 0.12) 55%,
+        rgba(255, 255, 255, 0.02) 70%
+    );
+    box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.25);
+}
+/* A little room (wall and floor) for a WOKA or a companion to walk in. The floor slides so they walk on the spot. */
+.u-join-room {
+    position: relative;
+    overflow: hidden;
+    border-radius: 18px;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+.u-join-room-wall {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 58%;
+    background: linear-gradient(180deg, #1a1628, #211b33);
+}
+.u-join-room-wall::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 18px;
+    height: 6px;
+    background: rgba(167, 139, 250, 0.12);
+}
+.u-join-room-floor {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 42%;
+    border-top: 2px solid rgba(167, 139, 250, 0.25);
+    background: linear-gradient(180deg, rgba(10, 8, 20, 0), rgba(10, 8, 20, 0.35)),
+        repeating-linear-gradient(90deg, #2a2440 0 48px, #262038 48px 96px);
+    animation: u-join-floor 1.6s linear infinite;
+}
+@keyframes u-join-floor {
+    from {
+        background-position: 0 0, 0 0;
+    }
+    to {
+        background-position: 0 0, -96px 0;
+    }
+}
+.u-join-kbd {
+    display: inline-grid;
+    place-items: center;
+    min-width: 1.25rem;
+    height: 1.25rem;
+    padding: 0 0.3rem;
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.08);
+    box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.12);
+    font-size: 11px;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.75);
+}
+/* The round close at a join card's corner, shown when the screen was opened from the game */
+.u-join-x {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    z-index: 3;
+    background: rgba(255, 255, 255, 0.06);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+.u-join-sub {
+    margin: 0;
+    font-size: 0.9375rem;
+    color: rgba(255, 255, 255, 0.65);
+}
+.u-join-hint {
+    margin: 0;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.5);
+}
+.u-join-error {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: #f59a86;
+}
+.u-join-legal {
+    margin: 0;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.5);
+}
+.u-join-legal a {
+    color: inherit;
+    text-decoration: underline;
+    text-decoration-color: rgba(255, 255, 255, 0.3);
+}
+@media (hover: hover) {
+    .u-join-legal a:hover {
+        color: #fff;
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .u-join-room-floor {
+        animation: none;
+    }
 }

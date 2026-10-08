@@ -4,12 +4,15 @@ import type { ExtensionModule, ExtensionModuleOptions } from "../../ExternalModu
 import { localUserStore } from "../../Connection/LocalUserStore";
 import { mapEditorActivated, userIsConnected } from "../../Stores/MenuStore";
 import { mapEditorModeStore, mapEditorVisibilityStore, mapEditorSelectedToolStore } from "../../Stores/MapEditorStore";
+import { editHintSeenStore, registerEditTool } from "../../Stores/EditModeStore";
+import LL from "../../../i18n/i18n-svelte";
 import { EditorToolName } from "../../Phaser/Game/MapEditor/MapEditorModeManager";
 import { gameManager } from "../../Phaser/Game/GameManager";
 import { wokaMenuStore, type WokaMenuData, type WokaMenuAction } from "../../Stores/WokaMenuStore";
+import { BOT_SERVER_URL } from "../../Enum/EnvironmentVariable";
 import { botApiService } from "./services/BotApiService";
 import { destroyBotEditorTool } from "./phaser/BotEditorTool";
-import { IconMapPin } from "@wa-icons";
+import { IconMapPin, IconRobot } from "@wa-icons";
 
 const BOT_EDITOR_TOOL_NAME = "BotEditor" as EditorToolName;
 let botEditorOpen = false;
@@ -83,6 +86,8 @@ export function openBotEditorFromMenu(): void {
 }
 
 let _extensionOptions: ExtensionModuleOptions | null = null;
+let unregisterEditTool: (() => void) | undefined;
+let unsubscribeSelectedToolBridge: (() => void) | undefined;
 let toolButtonElement: HTMLElement | null = null;
 let sidebarContentElement: HTMLElement | null = null;
 // Svelte component instance. Removing its DOM element does not destroy it: its store subscriptions (and the auto-save
@@ -127,6 +132,9 @@ function openBotEditor() {
 
     botEditorOpen = true;
     lastRoomIdWhenEditorWasOpen = currentRoomId;
+    // Bots is now the picked tool, whichever way it was opened (rail, menu, a bot on the map), so the phone's
+    // "Pick a tool on the right" hint has done its job, as it has after picking Objects or Areas
+    editHintSeenStore.set(true);
 
     mapEditorVisibilityStore.set(true);
 
@@ -175,43 +183,83 @@ function closeBotEditor() {
     }
 }
 
-// Function to inject BotEditor component into the sidebar content area
+// The bot page lives in a container of its own, created and mounted as soon as the editor opens. The Phaser tool is
+// then active and the bots are on the map (to drag, or tap for their page) even while the panel is tucked away, as
+// it is when edit mode opens on a phone (on the whole map) or while a bot is being placed. The container is
+// put into the panel's sidebar whenever the panel is there and parked off the page when it is not, so the page keeps
+// its state (and the tool its previews) across the panel coming and going.
+let botEditorContainer: HTMLElement | null = null;
+
 function injectBotEditorComponent() {
-    // Check if container already exists in DOM and component is actually mounted
-    const existingContainer = document.querySelector("#bot-editor-container");
-    if (existingContainer && botEditorComponentInstance) {
-        // Both container and instance exist - already injected
-        return;
-    }
-
-    // If container exists but instance is null, clean it up first (orphaned container)
-    if (existingContainer && !botEditorComponentInstance) {
-        if (existingContainer.parentElement) {
-            existingContainer.parentElement.removeChild(existingContainer);
-        }
-    }
-
-    // If instance exists but container doesn't (e.g. the map editor sidebar was unmounted), destroy the instance
-    if (botEditorComponentInstance && !existingContainer) {
-        destroyBotEditorComponentInstance();
-    }
-
-    // Check if BotEditor tool is selected
     if (get(mapEditorSelectedToolStore) !== BOT_EDITOR_TOOL_NAME) {
         return;
     }
 
-    // Find the sidebar content area - it's the div with class "sidebar" inside #map-editor-right
-    const mapEditorRight = document.querySelector("#map-editor-right");
-    if (!mapEditorRight) {
-        // Retry after a short delay
-        setTimeout(injectBotEditorComponent, 100);
+    if (!botEditorContainer) {
+        const container = document.createElement("div");
+        container.id = "bot-editor-container";
+        container.className = "bot-editor-wrapper";
+        // Below the panel's absolutely positioned header buttons
+        container.style.pointerEvents = "auto";
+        container.style.position = "relative";
+        container.style.zIndex = "0";
+        container.style.height = "100%";
+        container.style.display = "flex";
+        container.style.flexDirection = "column";
+        container.style.minHeight = "0";
+        botEditorContainer = container;
+
+        void import("./BotEditor.svelte")
+            .then((module) => {
+                // The editor may have closed while the module loaded. Mounting into a dropped container would leave
+                // an instance nothing can reach to destroy.
+                if (botEditorContainer !== container || botEditorComponentInstance) {
+                    return;
+                }
+                botEditorComponentInstance = new module.default({
+                    target: container,
+                    props: {},
+                });
+
+                // If we detected a room change when opening, trigger reload now that component is mounted
+                if (pendingRoomChangeReload) {
+                    console.log("[Bot Extension] Component mounted, triggering reload for pending room change");
+                    pendingRoomChangeReload = false;
+                    setTimeout(() => {
+                        void import("./stores/BotEditorStore").then(({ roomChangeTriggerStore }) => {
+                            console.log(
+                                "[Bot Extension] Triggering bot list reload after room change (component mounted)"
+                            );
+                            roomChangeTriggerStore.update((n) => n + 1);
+                        });
+                    }, 100);
+                }
+            })
+            .catch((error) => {
+                console.error("Failed to load BotEditor component:", error);
+            });
+    }
+
+    attachBotEditorContainer();
+}
+
+// Puts the bot page's container into the panel's sidebar (".sidebar" inside "#map-editor-right") when the panel is
+// showing. The panel renders a moment after its store changes, so this retries briefly; while the panel is tucked
+// away there is nothing to attach to, and the visibility subscription calls again when it comes back.
+function attachBotEditorContainer(attempt = 0) {
+    const container = botEditorContainer;
+    if (!container || get(mapEditorSelectedToolStore) !== BOT_EDITOR_TOOL_NAME || !get(mapEditorVisibilityStore)) {
         return;
     }
 
-    const sidebar = mapEditorRight.querySelector(".sidebar");
-    if (!sidebar || !(sidebar instanceof HTMLElement)) {
-        setTimeout(injectBotEditorComponent, 100);
+    const sidebar = document.querySelector("#map-editor-right .sidebar");
+    if (!(sidebar instanceof HTMLElement)) {
+        if (attempt < 30) {
+            setTimeout(() => attachBotEditorContainer(attempt + 1), 100);
+        }
+        return;
+    }
+    if (container.parentElement === sidebar) {
         return;
     }
 
@@ -221,8 +269,6 @@ function injectBotEditorComponent() {
     // They're already absolutely positioned, so just ensure z-index is high enough
     const headerButtons = sidebar.querySelector(".flex.flex-row.justify-end");
     if (headerButtons instanceof HTMLElement) {
-        // Don't override position (they're already absolutely positioned)
-        // Just ensure z-index is high enough to be above bot editor content
         const currentZIndex = window.getComputedStyle(headerButtons).zIndex;
         if (!currentZIndex || currentZIndex === "auto") {
             headerButtons.style.zIndex = "10"; // Ensure header buttons are above bot editor content
@@ -232,60 +278,18 @@ function injectBotEditorComponent() {
     // Hide existing conditional content (EntityEditor, AreaEditor, etc.)
     const conditionalContent = sidebar.querySelectorAll(":scope > *:not(.flex.flex-row.justify-end)");
     conditionalContent.forEach((el) => {
-        if (el instanceof HTMLElement && el.id !== "bot-editor-container") {
+        // The panel's title row stays: the bot page puts its back circle there
+        if (el instanceof HTMLElement && el.id !== "bot-editor-container" && !el.classList.contains("em-head")) {
             el.style.display = "none";
         }
     });
 
-    // Create container for bot editor
-    const botEditorContainer = document.createElement("div");
-    botEditorContainer.id = "bot-editor-container";
-    botEditorContainer.className = "bot-editor-wrapper";
-    // Ensure it doesn't block pointer events to header buttons
-    // Header buttons are absolutely positioned, so we ensure proper z-index
-    botEditorContainer.style.pointerEvents = "auto";
-    botEditorContainer.style.position = "relative";
-    botEditorContainer.style.zIndex = "0"; // Lower than header buttons
-    botEditorContainer.style.height = "100%";
-    botEditorContainer.style.display = "flex";
-    botEditorContainer.style.flexDirection = "column";
-    botEditorContainer.style.minHeight = "0";
-
-    // Insert after header buttons (headerButtons was already found above)
+    // Insert after header buttons (moving the container out of a previous, since unmounted, sidebar if need be)
     if (headerButtons && headerButtons.nextSibling) {
-        sidebar.insertBefore(botEditorContainer, headerButtons.nextSibling);
+        sidebar.insertBefore(container, headerButtons.nextSibling);
     } else {
-        sidebar.appendChild(botEditorContainer);
+        sidebar.appendChild(container);
     }
-
-    // Mount Svelte component directly using dynamic import
-    void import("./BotEditor.svelte")
-        .then((module) => {
-            // The container may have been removed while the module loaded (editor closed, or a newer injection
-            // replaced it). Mounting into it would leave an instance nothing can reach to destroy.
-            if (!botEditorContainer.isConnected || botEditorComponentInstance) {
-                return;
-            }
-            botEditorComponentInstance = new module.default({
-                target: botEditorContainer,
-                props: {},
-            });
-
-            // If we detected a room change when opening, trigger reload now that component is mounted
-            if (pendingRoomChangeReload) {
-                console.log("[Bot Extension] Component mounted, triggering reload for pending room change");
-                pendingRoomChangeReload = false;
-                setTimeout(() => {
-                    void import("./stores/BotEditorStore").then(({ roomChangeTriggerStore }) => {
-                        console.log("[Bot Extension] Triggering bot list reload after room change (component mounted)");
-                        roomChangeTriggerStore.update((n) => n + 1);
-                    });
-                }, 100);
-            }
-        })
-        .catch((error) => {
-            console.error("Failed to load BotEditor component:", error);
-        });
 }
 
 // Function to remove BotEditor component from sidebar
@@ -297,31 +301,15 @@ function removeBotEditorComponent() {
         console.warn("Error deactivating bot editor tool:", e);
     }
 
-    // Find and remove ALL containers from DOM (in case of duplicates)
-    // Removing the DOM element will trigger Svelte's onDestroy lifecycle
-    const containers = document.querySelectorAll("#bot-editor-container");
-    containers.forEach((container) => {
-        if (container instanceof HTMLElement && container.parentElement) {
-            try {
-                container.parentElement.removeChild(container);
-            } catch (e) {
-                console.warn("Error removing bot editor container:", e);
-            }
+    // Drop the container, wherever it is (in the sidebar, in an unmounted one, or parked)
+    const container = botEditorContainer;
+    botEditorContainer = null;
+    if (container?.parentElement) {
+        try {
+            container.parentElement.removeChild(container);
+        } catch (e) {
+            console.warn("Error removing bot editor container:", e);
         }
-    });
-
-    // Also check in sidebarContentElement if we have a reference
-    if (sidebarContentElement) {
-        const sidebarContainers = sidebarContentElement.querySelectorAll("#bot-editor-container");
-        sidebarContainers.forEach((container) => {
-            if (container instanceof HTMLElement && container.parentElement) {
-                try {
-                    container.parentElement.removeChild(container);
-                } catch (e) {
-                    console.warn("Error removing bot editor container from sidebar:", e);
-                }
-            }
-        });
     }
 
     // Removing the DOM element doesn't run the component's onDestroy, so destroy it explicitly
@@ -668,6 +656,8 @@ function setupBotEditor(options: ExtensionModuleOptions) {
     // Helper function to try injecting the bot editor tool
     const tryInjectBotTool = () => {
         const sidebar = document.querySelector(".side-bar-container") as HTMLElement;
+        // The edit rail lists Bots itself (registerEditTool below): there is no button to add to it
+        if (sidebar?.matches('[data-testid="edit-rail"]')) return true;
         if (sidebar && localUserStore.isLogged()) {
             injectBotEditorTool(sidebar, options);
             return true;
@@ -704,6 +694,29 @@ function setupBotEditor(options: ExtensionModuleOptions) {
             // Map editor is inactive, close bot editor and remove tool button
             closeBotEditor();
             removeBotEditorTool();
+        }
+    });
+
+    // The room editor's rail draws the "Bots" tool itself from the editor's tool registry, so no button has to be
+    // found in the DOM. Opening and closing follow the selected tool: picking "Bots" opens the editor, picking any
+    // other tool closes it. (The DOM injection above stays for the old sidebar, where it finds nothing new to do.)
+    unregisterEditTool?.();
+    unregisterEditTool = registerEditTool({
+        id: BOT_EDITOR_TOOL_NAME,
+        label: get(LL).mapEditor.edit.tools.bots(),
+        subtitle: get(LL).mapEditor.edit.bots.subtitle(),
+        icon: IconRobot,
+        onSelect: () => openBotEditorFromMenu(),
+    });
+    unsubscribeSelectedToolBridge?.();
+    unsubscribeSelectedToolBridge = mapEditorSelectedToolStore.subscribe((selectedTool) => {
+        if (selectedTool === BOT_EDITOR_TOOL_NAME && !botEditorOpen && get(mapEditorActivated)) {
+            openBotEditor();
+            return;
+        }
+        if (selectedTool !== BOT_EDITOR_TOOL_NAME && botEditorOpen) {
+            botEditorOpen = false;
+            removeBotEditorComponent();
         }
     });
 
@@ -755,7 +768,9 @@ function setupBotEditor(options: ExtensionModuleOptions) {
 
 /**
  * Get bot-server URL from current environment
- * Derives from current window location by replacing the first subdomain with 'bot-server'
+ * BOT_SERVER_URL wins when set. Hosts that don't follow the play.<domain> pattern need it:
+ * dev.bawes.net would otherwise derive bot-server.bawes.net, which is production's bot server.
+ * Otherwise derives from current window location by replacing the first subdomain with 'bot-server'
  * Works for:
  * - play.workadventure.localhost -> bot-server.workadventure.localhost
  * - play.workadventu.re -> bot-server.workadventu.re
@@ -763,6 +778,9 @@ function setupBotEditor(options: ExtensionModuleOptions) {
  * - Any custom domain -> bot-server.{rest of domain}
  */
 function getBotServerUrl(): string {
+    if (BOT_SERVER_URL) {
+        return BOT_SERVER_URL.replace(/\/+$/, "");
+    }
     try {
         const { protocol, hostname, port } = window.location;
 
@@ -948,7 +966,10 @@ async function injectEmotionsIntoWokaMenu(menuData: WokaMenuData): Promise<void>
         let emotionsData = null;
 
         try {
-            const response = await fetch(`${botServerUrl}/api/bots/${botId}/emotions/${currentUserUuid}`);
+            const gameToken = botApiService.getGameToken();
+            const response = await fetch(`${botServerUrl}/api/bots/${botId}/emotions/${currentUserUuid}`, {
+                headers: gameToken ? { "X-WA-Auth": gameToken } : {},
+            });
             if (response.ok) {
                 const data = await response.json();
                 emotionsData = data.emotions;
@@ -1401,6 +1422,10 @@ const botExtensionModule: ExtensionModule = {
             unsubscribeMapEditorVisibility();
             unsubscribeMapEditorVisibility = null;
         }
+        unregisterEditTool?.();
+        unregisterEditTool = undefined;
+        unsubscribeSelectedToolBridge?.();
+        unsubscribeSelectedToolBridge = undefined;
         if (unsubscribeSelectedTool) {
             unsubscribeSelectedTool();
             unsubscribeSelectedTool = null;
