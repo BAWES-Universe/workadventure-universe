@@ -22,11 +22,6 @@ export class CustomFileService {
             throw new Error(errorm);
         }
 
-        // The property id becomes part of the storage path, so it must not be able to leave the files folder
-        if (!/^[A-Za-z0-9_-]+$/.test(uploadFileMessage.propertyId)) {
-            throw new Error("Invalid property id");
-        }
-
         const mapPath = mapPathUsingDomainWithPrefix(
             `/private/files/${filename}-${uploadFileMessage.propertyId}${fileExtension}`,
             this.hostname
