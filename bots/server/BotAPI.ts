@@ -13,7 +13,11 @@ import { movementLogger } from '../utils/MovementLogger';
 import { MCPConnector } from '../mcp/MCPConnector';
 
 export interface BotAPIRequest extends Request {
+    /** Who the game token says the caller is (its `identifier`): a guest's uuid, a member's email or id. */
+    gameIdentifier?: string;
     userIdentifier?: string;
+    /** The uuid of the person behind the Orbit session (what the game calls the player's uuid). */
+    sessionUuid?: string;
     isLogged?: boolean;
     sessionToken?: string;
 }
@@ -55,6 +59,7 @@ async function authenticateToken(
         req.userIdentifier = userInfo.email || userInfo.uuid;
         req.isLogged = true;
         req.sessionToken = bearerToken;
+        req.sessionUuid = userInfo.uuid;
         next();
     } catch (error) {
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -115,7 +120,12 @@ function requireGameToken(req: BotAPIRequest, res: Response, next: NextFunction)
         return;
     }
     try {
-        jwt.verify(token, secretKey, { algorithms: ['HS256'] });
+        const payload = jwt.verify(token, secretKey, { algorithms: ['HS256'] });
+        // Keep who the token belongs to, so routes about one person can check it is that person asking.
+        req.gameIdentifier =
+            typeof payload === 'object' && payload !== null && typeof payload.identifier === 'string'
+                ? payload.identifier
+                : undefined;
         next();
     } catch {
         res.status(401).json({ error: 'Invalid game token' });
@@ -139,6 +149,23 @@ export class BotAPI {
         // Keep constructor simple - no route registration here
         this.setupMiddleware();
         this.setupRoutes();
+    }
+
+    private async isAskingAboutThemselves(req: BotAPIRequest, userUuid: string): Promise<boolean> {
+        if (req.gameIdentifier && req.gameIdentifier === userUuid) {
+            return true;
+        }
+        const authHeader = req.headers.authorization;
+        const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice('Bearer '.length).trim() : '';
+        if (!/^orb_sess_v2_[0-9a-f]{64}$/.test(bearerToken)) {
+            return false;
+        }
+        try {
+            const session = await this.adminApiService.validateSessionToken(bearerToken);
+            return !!session && session.uuid === userUuid;
+        } catch {
+            return false;
+        }
     }
 
     private setupMiddleware(): void {
@@ -231,14 +258,21 @@ export class BotAPI {
             }
         });
 
-        // Summon bot to player position. Any signed-in player may summon; it only moves the bot to them.
-        this.app.post('/api/bots/:botId/summon', requireSession, async (req: Request, res: Response) => {
+        // Summon bot to the player who asks. Any signed-in player may summon; it only moves the bot to them. Who is
+        // asking comes from the Orbit session, and where they stand comes from what the bot itself sees, so nobody
+        // can call a bot to another person or to a spot of their choosing.
+        this.app.post('/api/bots/:botId/summon', requireSession, async (req: BotAPIRequest, res: Response) => {
             try {
                 const { botId } = req.params;
-                const { playerUuid, playerX, playerY } = req.body;
+                const { playerUuid } = req.body;
 
-                if (!playerUuid || playerX === undefined || playerY === undefined) {
-                    res.status(400).json({ error: 'Missing required fields: playerUuid, playerX, playerY' });
+                if (!playerUuid || typeof playerUuid !== 'string') {
+                    res.status(400).json({ error: 'Missing required field: playerUuid' });
+                    return;
+                }
+
+                if (!req.sessionUuid || req.sessionUuid !== playerUuid) {
+                    res.status(403).json({ error: 'You can only summon a bot to yourself' });
                     return;
                 }
 
@@ -248,16 +282,17 @@ export class BotAPI {
                     return;
                 }
 
-                // Summon the bot to the player's position
-                await this.botManager.summonBot(botId, {
-                    playerUuid,
-                    targetPosition: { x: playerX, y: playerY },
-                });
+                // Summon the bot to where it sees the player standing
+                const targetPosition = await this.botManager.summonBot(botId, { playerUuid });
+                if (!targetPosition) {
+                    res.status(409).json({ summoned: false, reason: 'The bot cannot see you in its room' });
+                    return;
+                }
 
                 res.json({
                     botId,
                     summoned: true,
-                    targetPosition: { x: playerX, y: playerY },
+                    targetPosition,
                 });
             } catch (error: any) {
                 console.error('[BotAPI] Error summoning bot:', error);
@@ -266,12 +301,19 @@ export class BotAPI {
         });
 
         // Get bot emotions for a specific player, so players can see how a bot feels about them
-        this.app.get('/api/bots/:botId/emotions/:userUuid', requireGameToken, async (req: Request, res: Response) => {
+        this.app.get('/api/bots/:botId/emotions/:userUuid', requireGameToken, async (req: BotAPIRequest, res: Response) => {
             try {
                 const { botId, userUuid } = req.params;
 
                 if (!botId || !userUuid) {
                     res.status(400).json({ error: 'Missing botId or userUuid' });
+                    return;
+                }
+
+                // A bot's feelings about a person are for that person: a guest's game token carries their uuid, and
+                // a member proves theirs with their Orbit session next to the game token.
+                if (!(await this.isAskingAboutThemselves(req, userUuid))) {
+                    res.status(403).json({ error: 'You can only see how a bot feels about you' });
                     return;
                 }
 
