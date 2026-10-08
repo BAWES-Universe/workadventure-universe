@@ -12,16 +12,18 @@ import {uploadMultipleFilesTest, uploadSingleFileTest} from "./UploaderTestCommo
 import {RedisContainer} from "./utils/RedisContainer";
 import isPortReachable from "./utils/isPortReachable";
 import startTestServer from "./startTestServer";
+import {TEST_SECRET_KEY, signedInPlayHeaders} from "./utils/testAuth";
 
 const APP_PORT = 7373
 const AUTH_APP_PORT = 7375
-const AUTH_SECRET_KEY = "test-secret-key"
+const AUTH_SECRET_KEY = TEST_SECRET_KEY
 
 // Minimal files that start like real audio files
 const MP3_CONTENTS = Buffer.concat([Buffer.from("ID3", "latin1"), Buffer.from([4, 0, 0, 0, 0, 0, 0])])
 const WAV_CONTENTS = Buffer.concat([Buffer.from("RIFF", "latin1"), Buffer.from([0x24, 0, 0, 0]), Buffer.from("WAVEfmt ", "latin1")])
 
-function postAudio(url: string, name: string, contents: Buffer | string, headers: Record<string, string> = {}) {
+// Sends a signed-in player's token unless the test gives its own headers
+function postAudio(url: string, name: string, contents: Buffer | string, headers: Record<string, string> = signedInPlayHeaders()) {
     const formData = new FormData();
     formData.append('file', Buffer.isBuffer(contents) ? contents : Buffer.from(contents, "utf-8"), name);
     return axios.post(`${url}/upload-audio-message`, formData.getBuffer(), {
@@ -68,7 +70,8 @@ describe("Redis Uploader tests", () => {
             REDIS_PORT: redisPort.toString(),
             ENABLE_CHAT_UPLOAD: "true",
             UPLOADER_URL: UPLOADER_URL,
-            PLAY_URL: PLAY_URL
+            PLAY_URL: PLAY_URL,
+            SECRET_KEY: TEST_SECRET_KEY,
          })
         authServer = startTestServer({
             SERVER_PORT: AUTH_APP_PORT.toString(),
@@ -170,7 +173,7 @@ describe("Redis Uploader tests", () => {
     })
 
     it("should reject audio message without valid token when SECRET_KEY is set", async ()=> {
-        const noToken = await postAudio(AUTH_UPLOADER_URL, "message.mp3", MP3_CONTENTS);
+        const noToken = await postAudio(AUTH_UPLOADER_URL, "message.mp3", MP3_CONTENTS, {});
         expect(noToken.status).toBe(401)
 
         const wrongKey = Jwt.sign({identifier: "user@example.com", accessToken: "oidc-access-token"}, "another-key");
