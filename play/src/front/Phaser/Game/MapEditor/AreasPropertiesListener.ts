@@ -20,7 +20,6 @@ import { PersonalAreaAccessClaimMode } from "@workadventure/map-editor";
 import * as Sentry from "@sentry/svelte";
 import { getSpeakerMegaphoneAreaName } from "@workadventure/map-editor/src/Utils";
 import { Jitsi } from "@workadventure/shared-utils";
-import { areaSpaceName } from "@workadventure/shared-utils/src/Space/areaSpaceName";
 import type { Unsubscriber } from "svelte/store";
 import { get } from "svelte/store";
 import type { Member } from "@workadventure/messages";
@@ -882,7 +881,6 @@ export class AreasPropertiesListener {
         const roomID = property.roomName.trim().length === 0 ? property.id : property.roomName;
 
         const roomName = Jitsi.slugifyJitsiRoomName(roomID, this.scene.roomUrl).trim();
-        const spaceName = areaSpaceName(roomID, this.scene.roomUrl);
 
         const livekitRoomConfig = property.livekitRoomConfig ?? {
             startWithAudioMuted: false,
@@ -923,7 +921,7 @@ export class AreasPropertiesListener {
             const proximityRoom = this.scene.proximityChatRoom;
             proximityRoom.setDisplayName(displayName);
             await proximityRoom.joinSpace(
-                spaceName,
+                roomName,
                 ["cameraState", "microphoneState", "screenShareState"],
                 true,
                 FilterType.ALL_USERS
@@ -931,7 +929,7 @@ export class AreasPropertiesListener {
         } else {
             const spaceRegistry = this.scene.spaceRegistry;
             const space = await spaceRegistry.joinSpace(
-                spaceName,
+                roomName,
                 FilterType.ALL_USERS,
                 ["cameraState", "microphoneState", "screenShareState"],
                 abortSignal
@@ -1200,7 +1198,7 @@ export class AreasPropertiesListener {
     private async handleLivekitRoomPropertyOnLeave(property: LivekitRoomPropertyData): Promise<void> {
         const proximityRoom = this.scene.proximityChatRoom;
         const roomID = property.roomName.trim().length === 0 ? property.id : property.roomName;
-        const roomName = areaSpaceName(roomID, this.scene.roomUrl);
+        const roomName = Jitsi.slugifyJitsiRoomName(roomID, this.scene.roomUrl, false);
 
         areaPresenceStore.delete(property.id);
         if (!property.livekitRoomConfig?.disableChat) {
@@ -1370,7 +1368,7 @@ export class AreasPropertiesListener {
         abortSignal: AbortSignal
     ): Promise<void> {
         if (property.name !== undefined && property.id !== undefined) {
-            const uniqRoomName = areaSpaceName(property.name, this.scene.roomUrl);
+            const uniqRoomName = Jitsi.slugifyJitsiRoomName(property.name, this.scene.roomUrl).trim();
 
             let space: SpaceInterface | undefined;
             const spaceRegistry = this.scene.spaceRegistry;
@@ -1406,7 +1404,7 @@ export class AreasPropertiesListener {
     private async handleSpeakerMegaphonePropertyOnLeave(property: SpeakerMegaphonePropertyData): Promise<void> {
         if (property.name !== undefined && property.id !== undefined) {
             isSpeakerStore.set(false);
-            const uniqRoomName = areaSpaceName(property.name, this.scene.roomUrl);
+            const uniqRoomName = Jitsi.slugifyJitsiRoomName(property.name, this.scene.roomUrl, false);
             currentLiveStreamingSpaceStore.set(undefined);
 
             const spaceRegistry = this.scene.spaceRegistry;
@@ -1435,7 +1433,7 @@ export class AreasPropertiesListener {
                 property.speakerZoneName
             );
             if (speakerZoneName) {
-                const uniqRoomName = areaSpaceName(speakerZoneName, this.scene.roomUrl);
+                const uniqRoomName = Jitsi.slugifyJitsiRoomName(speakerZoneName.trim(), this.scene.roomUrl).trim();
                 const spaceRegistry = this.scene.spaceRegistry;
                 let space: SpaceInterface | undefined;
                 if (property.chatEnabled) {
@@ -1471,7 +1469,7 @@ export class AreasPropertiesListener {
                 property.speakerZoneName
             );
             if (speakerZoneName) {
-                const uniqRoomName = areaSpaceName(speakerZoneName, this.scene.roomUrl);
+                const uniqRoomName = Jitsi.slugifyJitsiRoomName(speakerZoneName, this.scene.roomUrl);
                 if (property.chatEnabled) {
                     const proximityRoom = this.scene.proximityChatRoom;
                     proximityRoom.setDisplayName(get(LL).chat.proximity());

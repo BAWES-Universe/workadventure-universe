@@ -1,10 +1,8 @@
 import { FilterType } from "@workadventure/messages";
 import { describe, expect, it } from "vitest";
-import { areaSpaceName } from "@workadventure/shared-utils/src/Space/areaSpaceName";
 import {
     checkSpaceJoin,
     SpaceJoinRefusedError,
-    toServerSpaceName,
     toWorldSpaceName,
     WORLD_SPACE_NAME,
 } from "../../src/pusher/services/SpaceJoinPolicy";
@@ -14,8 +12,6 @@ const OTHER_BUBBLE = "http://play.example.com/@/team/world/room#13#1700000000001
 const MEGAPHONE = "playexamplecom--team-world-room-megaphone-room";
 const OTHER_ROOM_MEGAPHONE = "playexamplecom--team-world-other-megaphone-room";
 const MEDIA = ["cameraState", "microphoneState", "screenSharingState"];
-const ROOM = "http://play.example.com/@/team/world/room";
-const PRIVATE_ROOM = "http://play.example.com/@/team/world/private-room";
 
 function socketData(
     granted: string[] = [],
@@ -108,15 +104,6 @@ describe("checkSpaceJoin", () => {
         });
     });
 
-    describe("meeting rooms and speaker zones", () => {
-        it.each([
-            ["a meeting room", areaSpaceName("Meeting room", ROOM), FilterType.ALL_USERS],
-            ["a speaker zone", areaSpaceName("Stage", ROOM), FilterType.LIVE_STREAMING_USERS],
-        ])("lets a player into %s", (_label, name, filterType) => {
-            expect(() => checkSpaceJoin(join(name, filterType, MEDIA), socketData())).not.toThrow();
-        });
-    });
-
     describe("other spaces stay open", () => {
         it.each([
             ["a meeting area", "1a2b3c-meeting-room", FilterType.ALL_USERS],
@@ -136,35 +123,5 @@ describe("checkSpaceJoin", () => {
 describe("toWorldSpaceName", () => {
     it("prefixes the name with the world, as the pusher names spaces", () => {
         expect(toWorldSpaceName("my-world", BUBBLE)).toBe(`my-world.${BUBBLE}`);
-    });
-});
-
-describe("toServerSpaceName", () => {
-    const inRoom = { world: "team~world", roomId: ROOM };
-    const inPrivateRoom = { world: "team~world", roomId: PRIVATE_ROOM };
-
-    it("puts the world in front of the spaces every room of the world shares", () => {
-        expect(toServerSpaceName(inRoom, WORLD_SPACE_NAME)).toBe(toWorldSpaceName("team~world", WORLD_SPACE_NAME));
-        expect(toServerSpaceName(inRoom, "my-script-space")).toBe(toServerSpaceName(inPrivateRoom, "my-script-space"));
-    });
-
-    it("keeps meeting rooms and speaker zones in the player's own room", () => {
-        const privateStage = areaSpaceName("Stage", PRIVATE_ROOM);
-        // A player in ROOM asking for the private room's stage by its exact name still lands in a space of ROOM.
-        expect(toServerSpaceName(inRoom, privateStage)).not.toBe(toServerSpaceName(inPrivateRoom, privateStage));
-    });
-
-    it("gives every player of a room the same meeting room", () => {
-        const stage = areaSpaceName("Stage", ROOM);
-        expect(toServerSpaceName(inRoom, stage)).toBe(toServerSpaceName({ ...inRoom }, stage));
-        expect(toServerSpaceName(inRoom, stage).startsWith("team~world.area__")).toBe(true);
-    });
-
-    it("never gives a meeting room the name of another space", () => {
-        const stage = areaSpaceName("Stage", ROOM);
-        const serverName = toServerSpaceName(inRoom, stage);
-        const localPart = serverName.slice("team~world.".length);
-        // Sending the server name's own local part does not reach the same space: the room is added again.
-        expect(toServerSpaceName(inRoom, localPart)).not.toBe(serverName);
     });
 });
