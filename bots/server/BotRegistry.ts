@@ -162,11 +162,24 @@ export class BotRegistry {
         for (const botId of await this.redis.sMembers('bots:matrix:dm-waiting')) {
             if (await this.redis.exists(`bots:matrix:dm-waiting:${botId}`)) {
                 waiting.push(botId);
-            } else {
-                await this.redis.sRem('bots:matrix:dm-waiting', botId);
+            } else if (!(await this.unlistIfNothingWaits(botId))) {
+                waiting.push(botId);
             }
         }
         return waiting;
+    }
+
+    /**
+     * Drop a bot from the waiting list when it has nothing waiting. The check and the removal run as one script, so a
+     * message stored in between keeps its bot listed. Returns whether the bot was dropped.
+     */
+    private async unlistIfNothingWaits(botId: string): Promise<boolean> {
+        if (!this.redis?.isOpen) return false;
+        const dropped = await this.redis.eval(
+            "if redis.call('HLEN', KEYS[1]) == 0 then return redis.call('SREM', KEYS[2], ARGV[1]) end return 0",
+            { keys: [`bots:matrix:dm-waiting:${botId}`, 'bots:matrix:dm-waiting'], arguments: [botId] }
+        );
+        return Number(dropped) === 1;
     }
 
     async hasWaitingDms(botId: string): Promise<boolean> {
@@ -187,7 +200,7 @@ export class BotRegistry {
             const [message, deleted] = await this.redis.multi().hGet(key, roomId).hDel(key, roomId).exec();
             if (Number(deleted) === 1 && typeof message === 'string') taken.push(message);
         }
-        if ((await this.redis.hLen(key)) === 0) await this.redis.sRem('bots:matrix:dm-waiting', botId);
+        await this.unlistIfNothingWaits(botId);
         return taken;
     }
 
