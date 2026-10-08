@@ -17,6 +17,8 @@ import {
     SPOT_B,
     SPOT_C,
 } from "../lib/me";
+import { backToAreaList, newArea, pickAreas } from "../lib/me-areas";
+import { categoryHead, categoryOptions, pickCategory } from "../lib/me-panels";
 import type { Page, TestInfo } from "@playwright/test";
 
 async function objectsOpen(page: Page, testInfo: TestInfo): Promise<string> {
@@ -56,10 +58,16 @@ test("ME-011 Objects panel: title, line, search, categories, sections, tiles, Ad
         isPhone(testInfo) ? "Pick one, then tap the map" : "Pick one, then click the map"
     );
     await expect(page.getByTestId("objects-search")).toHaveAttribute("placeholder", "Search objects");
-    const select = panel.locator('select[aria-label="All categories"]');
-    await expect(select).toBeAttached();
-    await expect(panel.locator(".em-cat-label")).toHaveText("All categories");
-    await expect(panel.locator(".em-cat-count")).toHaveText(/^\d+$/);
+    // The category dropdown (the game's own, no longer a native select): "All categories" on its head; its options
+    // name each category with its count.
+    await expect(categoryHead(page)).toHaveAttribute("aria-label", "All categories");
+    await expect(categoryHead(page)).toHaveText("All categories");
+    await categoryHead(page).click();
+    await expect(categoryOptions(page).first()).toHaveText("All categories");
+    expect(await categoryOptions(page).count()).toBeGreaterThan(2);
+    await expect(categoryOptions(page).nth(1)).toHaveText(/^\S.* · \d+\s*$/);
+    await page.keyboard.press("Escape");
+    await expect(categoryOptions(page)).toHaveCount(0);
     const basic = panel.locator(".em-sech", { hasText: /basic/i }).first();
     await expect(basic).toBeVisible();
     await expect(basic.locator("b")).toHaveText(/^\d+$/);
@@ -128,19 +136,20 @@ test("ME-013 Category dropdown and a section's All show one category; the back c
             .locator("b")
             .innerText()
     );
-    await panel.locator('select[aria-label="All categories"]').selectOption({ index: 2 });
+    const picked = await pickCategory(page, 2);
     await expect(panel.locator(".em-sech")).toHaveCount(0);
     await expect(page.getByTestId("edit-panel-back")).toBeVisible();
-    const label = await panel.locator(".em-cat-label").innerText();
-    const count = Number(await panel.locator(".em-cat-count").innerText());
+    const [label, countText] = picked.split(" · ");
+    const count = Number(countText);
     expect(label).not.toBe("All categories");
+    await expect(categoryHead(page)).toHaveText(picked);
     await expect(panel.getByTestId("entity-item")).toHaveCount(count);
     await page.getByTestId("edit-panel-back").click();
-    await expect(panel.locator(".em-cat-label")).toHaveText("All categories");
+    await expect(categoryHead(page)).toHaveText("All categories");
     await expect(panel.locator(".em-sech").first()).toBeVisible();
     await expect(page.getByTestId("edit-panel-back")).toBeHidden();
     await panel.locator(".em-sech", { hasText: /basic/i }).first().getByRole("button", { name: "All" }).click();
-    await expect(panel.locator(".em-cat-label")).toHaveText(/basic/i);
+    await expect(categoryHead(page)).toHaveText(/basic/i);
     await expect(panel.getByTestId("entity-item").filter({ hasText: "Armchair" }).first()).toBeVisible();
     expect(sectionCount).toBeGreaterThan(0);
 });
@@ -435,7 +444,7 @@ test("ME-022 @local Delete from the chip or the Delete key, toast with Undo brin
     await page.getByTestId("object-delete").click();
     await expect.poll(async () => Object.keys((await readWam(url)).entities).length).toBe(0);
     const toast = page.getByTestId("edit-undo-toast");
-    await expect(toast).toContainText("Basic Wood Table removed");
+    await expect(toast).toContainText("Basic Wood Table deleted");
     await page.getByTestId("edit-undo-toast-undo").click();
     await expect
         .poll(async () => Object.keys((await readWam(url)).entities).length, {
@@ -447,7 +456,7 @@ test("ME-022 @local Delete from the chip or the Delete key, toast with Undo brin
         await selectPlaced(page, testInfo, url, back);
         await page.keyboard.press("Delete");
         await expect.poll(async () => Object.keys((await readWam(url)).entities).length).toBe(0);
-        await expect(toast).toContainText("removed");
+        await expect(toast).toContainText("deleted");
         await expect(toast).toBeHidden({ timeout: 10_000 });
     }
 });
@@ -485,12 +494,10 @@ test("ME-024 @local Each tool keeps to its own things: Areas ignores objects, Ob
     );
     const url = await objectsOpen(page, testInfo);
     const id = await placedObject(page, testInfo, url);
-    await pickTool(page, "AreaEditor");
-    await page.getByTestId("area-new").click();
-    await page.getByTestId("area-draft-next").click();
+    await pickAreas(page);
+    await newArea(page, testInfo, url);
     await expect.poll(async () => (await readWam(url)).areas.length).toBe(1);
-    await page.getByTestId("edit-panel-back").click();
-    await expect(page.getByTestId("area-new")).toBeVisible();
+    await backToAreaList(page);
     await hit(page, testInfo, await entityOnScreen(page, url, id));
     await page.waitForTimeout(500);
     await expect(rail(page, "AreaEditor")).toHaveAttribute("aria-pressed", "true");

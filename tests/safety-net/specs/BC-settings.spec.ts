@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Page, TestInfo } from "@playwright/test";
 import { test, expect, wamRoom, join, isPhone, newPlayer, wa, inRoom } from "../lib/game";
 import {
     goLive,
@@ -10,6 +10,7 @@ import {
     stageRoom,
     turnOnBroadcast,
 } from "../lib/bc";
+import { drawArea, pickAreas } from "../lib/me-areas";
 
 const settingsCard = (page: Page) => page.getByRole("dialog", { name: "Broadcast settings" });
 
@@ -24,19 +25,11 @@ async function openAreas(page: Page) {
     else await page.getByRole("button", { name: "Open menu" }).click();
     await page.getByRole("button", { name: "Map editor", exact: true }).click();
     await expect(page.getByTestId("edit-pill")).toBeVisible();
-    const areas = page.locator("section.side-bar-container .side-bar .tool-button button#AreaEditor").first();
-    if (
-        !((await areas.getAttribute("aria-pressed")) === "true" && (await page.getByTestId("edit-panel").isVisible()))
-    ) {
-        await areas.click();
-    }
-    await expect(page.getByTestId("edit-panel")).toBeVisible();
+    await pickAreas(page);
 }
 
-async function newAreaSettings(page: Page) {
-    await page.getByTestId("area-new").click();
-    await page.getByTestId("area-draft-next").click();
-    await expect(page.getByTestId("area-rename")).toBeVisible();
+async function newAreaSettings(page: Page, testInfo: TestInfo) {
+    await drawArea(page, testInfo);
 }
 
 async function backToAreaRows(page: Page) {
@@ -212,7 +205,7 @@ test("BC-091 @local Desktop edit mode: key 4 opens Configure my room with Room s
 test("BC-092 A video-call area still offers Stage and Audience (KNOWN GAP)", async ({ page }, testInfo) => {
     await join(page, await wamRoom(testInfo, "empty"), "Alice");
     await openAreas(page);
-    await newAreaSettings(page);
+    await newAreaSettings(page, testInfo);
     await page.getByTestId("livekitRoomProperty").click();
     await expect(page.getByTestId("area-property-page")).toBeVisible();
     await backToAreaRows(page);
@@ -223,7 +216,7 @@ test("BC-092 A video-call area still offers Stage and Audience (KNOWN GAP)", asy
 test("BC-093 A Stage and an Audience linked to it can both be added", async ({ page }, testInfo) => {
     await join(page, await wamRoom(testInfo, "empty"), "Alice");
     await openAreas(page);
-    await newAreaSettings(page);
+    await newAreaSettings(page, testInfo);
     const editPanel = page.getByTestId("edit-panel");
     await expect(editPanel.getByTestId("speakerMegaphone")).toContainText("Stage");
     await expect(editPanel.getByTestId("speakerMegaphone")).toContainText("Speak to the audience");
@@ -233,7 +226,7 @@ test("BC-093 A Stage and an Audience linked to it can both be added", async ({ p
     const name = await stageName.inputValue();
     await backToAreaList(page);
 
-    await newAreaSettings(page);
+    await newAreaSettings(page, testInfo);
     await expect(editPanel.getByTestId("listenerMegaphone")).toContainText("Audience");
     await expect(editPanel.getByTestId("listenerMegaphone")).toContainText("Hear the stage");
     await editPanel.getByTestId("listenerMegaphone").click();

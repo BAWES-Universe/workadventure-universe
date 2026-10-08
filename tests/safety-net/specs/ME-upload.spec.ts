@@ -1,5 +1,6 @@
 import type { Page, TestInfo } from "@playwright/test";
 import { expect, isPhone, test } from "../lib/game";
+import { categoryHead } from "../lib/me-panels";
 import { editRoom, openEditor, pickTool, placeAt, pngFile, rail, readWam, SPOT_A } from "../lib/me";
 
 async function uploadGuide(page: Page, testInfo: TestInfo): Promise<string> {
@@ -102,11 +103,19 @@ test("ME-028 Save to my objects: the upload shows in Your uploads and in search"
     await page.getByTestId("applyEntityModifications").click();
     const panel = page.getByTestId("edit-panel");
     await expect(page.getByTestId("objects-search")).toBeVisible({ timeout: 30_000 });
-    await expect(panel.locator(".em-cat-label"), "the panel returns to the picker, not an empty category").toHaveText(
-        "All categories"
+    // Saving opens the picker on the category of the upload's first tag, with the new picture in it.
+    await expect(categoryHead(page), "the picker shows the upload's category, not an empty one").toHaveText(
+        /^\s*Plants2 · [1-9]\d*\s*$/
     );
-    await expect(panel.locator(".em-sech", { hasText: "Your uploads" })).toBeVisible();
     await expect(panel.getByTestId("entity-item").filter({ hasText: name }).first()).toBeVisible();
+    await page.getByTestId("edit-panel-back").click();
+    await expect(categoryHead(page)).toHaveText("All categories");
+    // "Your uploads" shows its first six pictures; uploads of earlier runs are still there, so "All" opens the lot.
+    const uploads = panel.locator(".em-sech", { hasText: "Your uploads" });
+    await expect(uploads).toBeVisible();
+    await uploads.getByRole("button", { name: "All" }).click();
+    await expect(panel.getByTestId("entity-item").filter({ hasText: name }).first()).toBeVisible();
+    await page.getByTestId("edit-panel-back").click();
     await page.getByTestId("objects-search").fill(name);
     await expect(panel.getByTestId("entity-item").filter({ hasText: name })).toHaveCount(1);
     void url;

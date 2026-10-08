@@ -145,7 +145,7 @@ test("CH-040 Desktop: Reply shows a preview, the sent reply quotes Bob for both,
     await expect(msg).toHaveClass(/quote-flash/);
 });
 
-test("CH-041 Desktop: More > Copy text copies and says Text copied; right-click opens the message menu", async ({
+test("CH-041 Desktop: More > Copy text copies and shows the Copied pill; right-click opens the message menu", async ({
     page,
     browser,
     url,
@@ -160,7 +160,8 @@ test("CH-041 Desktop: More > Copy text copies and says Text copied; right-click 
     await msg.getByText("copy these words").hover();
     await msg.getByTestId("messageMoreButton").click();
     await player.getByTestId("copyMessageTextButton").click();
-    await expect(player.getByText("Text copied")).toBeVisible();
+    // The small "Copied" pill over the bottom of the chat (CopiedPill.svelte); it shows for about 1.5 seconds.
+    await expect(player.getByTestId("copiedPill")).toHaveText("Copied");
     expect(await clipboardText(player)).toBe("copy these words");
 
     await msg.getByText("copy these words").click({ button: "right" });

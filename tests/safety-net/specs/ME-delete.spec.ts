@@ -1,12 +1,12 @@
 import type { Page, TestInfo } from "@playwright/test";
 import { expect, isPhone, test } from "../lib/game";
+import { backToAreaList, newArea, pickAreas } from "../lib/me-areas";
+import { actAsEditor } from "../lib/me-panels";
 import {
     areaCentre,
-    backToAreaList,
     drag,
     editRoom,
     entityOnScreen,
-    newArea,
     openEditor,
     pickObject,
     pickTool,
@@ -31,26 +31,29 @@ async function withObjects(page: Page, testInfo: TestInfo, count: number): Promi
     return { url, ids };
 }
 
-test("ME-059 @local Desktop Delete tool: hint, red hover with 'Click to remove', one click removes, toast Undo restores", async ({
+test("ME-059 @local Desktop Delete tool: hint, red hover with 'Click to delete', one click deletes, toast Undo restores", async ({
     page,
 }, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
     const { url, ids } = await withObjects(page, testInfo, 1);
-    await pickTool(page, "AreaEditor");
-    const area = await newArea(page, url, "Bin");
+    await pickAreas(page);
+    // Away from the table: in this tool an area sits on top of what is under it.
+    const area = await newArea(page, testInfo, url, "Bin", { x: 180, y: 0 });
     await backToAreaList(page);
+    // No Orbit here, so no "editor" tag: the Delete tool shows areas only to editors and admins.
+    await actAsEditor(page);
     await rail(page, "TrashEditor").click();
     await expect(rail(page, "TrashEditor")).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByTestId("edit-panel")).toBeHidden();
-    await expect(page.getByTestId("edit-delete-hint")).toHaveText(/Tap what you want to remove/);
+    await expect(page.getByTestId("edit-delete-hint")).toHaveText(/Tap what you want to delete/);
     const target = await entityOnScreen(page, url, ids[0]);
     await page.mouse.move(target.x - 5, target.y);
     await page.mouse.move(target.x, target.y);
-    await expect(page.getByTestId("delete-hover-hint")).toHaveText(/Click to remove/);
+    await expect(page.getByTestId("delete-hover-hint")).toHaveText(/Click to delete/);
     await page.mouse.click(target.x, target.y);
     await expect.poll(async () => Object.keys((await readWam(url)).entities).length).toBe(0);
     const toast = page.getByTestId("edit-undo-toast");
-    await expect(toast).toContainText("Basic Wood Table removed");
+    await expect(toast).toContainText("Basic Wood Table deleted");
     await expect(page.getByTestId("edit-undo-toast-undo")).toHaveText(/Undo/);
     await page.getByTestId("edit-undo-toast-undo").click();
     await expect
@@ -62,13 +65,13 @@ test("ME-059 @local Desktop Delete tool: hint, red hover with 'Click to remove',
     await page.mouse.move(inArea.x, inArea.y);
     await page.mouse.click(inArea.x, inArea.y);
     await expect
-        .poll(async () => (await readWam(url)).areas.length, { message: "a click on an area removes it" })
+        .poll(async () => (await readWam(url)).areas.length, { message: "a click on an area deletes it" })
         .toBe(0);
     await expect(toast).toBeVisible();
     await expect(toast).toBeHidden({ timeout: 10_000 });
 });
 
-test("ME-060 @local Phone Delete tool: first tap marks, tap elsewhere keeps, second tap or Remove deletes, Undo toast", async ({
+test("ME-060 @local Phone Delete tool: first tap marks, tap elsewhere keeps, second tap or Delete deletes, Undo toast", async ({
     page,
 }, testInfo) => {
     test.skip(!isPhone(testInfo), "phone only");
@@ -78,8 +81,8 @@ test("ME-060 @local Phone Delete tool: first tap marks, tap elsewhere keeps, sec
     const one = await entityOnScreen(page, url, ids[0]);
     await page.touchscreen.tap(one.x, one.y);
     await expect(page.getByTestId("delete-mark")).toBeVisible();
-    await expect(page.getByTestId("delete-mark-remove")).toHaveText(/Remove/);
-    await expect(page.getByTestId("delete-mark-hint")).toHaveText("Tap again to remove · tap elsewhere to keep");
+    await expect(page.getByTestId("delete-mark-remove")).toHaveText(/Delete/);
+    await expect(page.getByTestId("delete-mark-hint")).toHaveText("Tap again to delete · tap elsewhere to keep");
     const elsewhere = await toScreen(page, (await playerPosition(page)).x + 64, (await playerPosition(page)).y - 64);
     await page.touchscreen.tap(elsewhere.x, elsewhere.y);
     await expect(page.getByTestId("delete-mark")).toBeHidden();
@@ -88,13 +91,13 @@ test("ME-060 @local Phone Delete tool: first tap marks, tap elsewhere keeps, sec
     await expect(page.getByTestId("delete-mark")).toBeVisible();
     await page.touchscreen.tap(one.x, one.y);
     await expect.poll(async () => Object.keys((await readWam(url)).entities)).toEqual([ids[1]]);
-    await expect(page.getByTestId("edit-undo-toast")).toContainText("removed");
+    await expect(page.getByTestId("edit-undo-toast")).toContainText("deleted");
     const two = await entityOnScreen(page, url, ids[1]);
     await page.touchscreen.tap(two.x, two.y);
     await page.getByTestId("delete-mark-remove").click();
     await expect.poll(async () => Object.keys((await readWam(url)).entities)).toHaveLength(0);
     // The row asks for the Undo toast; that its Undo brings the object back is ME-022's check.
-    await expect(page.getByTestId("edit-undo-toast")).toContainText("Basic Wood Table removed");
+    await expect(page.getByTestId("edit-undo-toast")).toContainText("Basic Wood Table deleted");
     await expect(page.getByTestId("edit-undo-toast-undo")).toBeVisible();
 });
 
@@ -116,8 +119,9 @@ test("ME-061 @local Undo and Redo: the pill buttons and Ctrl+Z / Ctrl+Shift+Z un
         .poll(async () => Object.keys((await readWam(url)).entities).length, { message: "Redo puts it back" })
         .toBe(1);
     if (isPhone(testInfo)) return;
-    await pickTool(page, "AreaEditor");
-    const id = await newArea(page, url);
+    await pickAreas(page);
+    // Away from the table, so the drag below takes hold of the area and nothing else.
+    const id = await newArea(page, testInfo, url, undefined, { x: 180, y: 0 });
     const before = (await readWam(url)).areas.find((a) => a.id === id)!;
     const areaX = async () => (await readWam(url)).areas.find((a) => a.id === id)?.x ?? "the area is gone";
     const from = await areaCentre(page, url, id);

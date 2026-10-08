@@ -12,6 +12,7 @@ import {
     readWam,
     scene,
 } from "../lib/me";
+import { LOREM_PDF } from "../lib/me-panels";
 
 const SITE = "http://localhost:8081/tests/E2E/empty.json";
 
@@ -121,10 +122,7 @@ test("ME-071 @local Clicking an object with Play a sound plays it; with Open a f
         .toContain("campfire");
     const file = await objectWith(page, testInfo, url, 160, async (s) => {
         await s.getByTestId("openFile").first().click();
-        await s
-            .locator("input#upload, input[type=file]")
-            .first()
-            .setInputFiles("/home/claude/wt-carrier/tests/tests/assets/lorem-ipsum.pdf");
+        await s.locator("input#upload, input[type=file]").first().setInputFiles(LOREM_PDF);
     });
     await expect
         .poll(
