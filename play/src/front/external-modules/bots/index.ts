@@ -966,9 +966,8 @@ async function injectEmotionsIntoWokaMenu(menuData: WokaMenuData): Promise<void>
         let emotionsData = null;
 
         try {
-            const gameToken = botApiService.getGameToken();
             const response = await fetch(`${botServerUrl}/api/bots/${botId}/emotions/${currentUserUuid}`, {
-                headers: gameToken ? { "X-WA-Auth": gameToken } : {},
+                headers: await botApiService.getEmotionsHeaders(),
             });
             if (response.ok) {
                 const data = await response.json();

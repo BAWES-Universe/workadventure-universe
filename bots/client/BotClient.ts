@@ -1981,6 +1981,22 @@ export class BotClient {
     }
 
     /**
+     * Where this bot sees the player with this uuid, or undefined when that player is not in the bot's room (or the
+     * bot has no position for them yet). Bots are never returned.
+     */
+    getPlayerPositionByUuid(uuid: string): PositionInterface | undefined {
+        const userId = this.behavior?.getUserIdForUuid(uuid);
+        if (userId === undefined || BotClient.isBot(userId)) {
+            return undefined;
+        }
+        const player = this.players.get(userId);
+        if (!player || (player.position.x === 0 && player.position.y === 0)) {
+            return undefined;
+        }
+        return { x: player.position.x, y: player.position.y };
+    }
+
+    /**
      * Get all nearby players
      */
     getNearbyPlayers(radius: number): PlayerInfo[] {

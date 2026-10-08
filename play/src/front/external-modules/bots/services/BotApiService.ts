@@ -475,6 +475,27 @@ export class BotApiService {
     }
 
     /**
+     * Headers for reading a bot's feelings about the local player: the game token, plus the Orbit session when the
+     * person is signed in (the bot server asks for it to know the feelings are about them).
+     */
+    async getEmotionsHeaders(): Promise<Record<string, string>> {
+        const headers: Record<string, string> = {};
+        const gameToken = this.getGameToken();
+        if (gameToken) {
+            headers["X-WA-Auth"] = gameToken;
+        }
+        try {
+            const sessionToken = await this.getAdminApiSessionToken();
+            if (sessionToken) {
+                headers.Authorization = `Bearer ${sessionToken}`;
+            }
+        } catch {
+            // No session (a guest): the game token alone is enough for them.
+        }
+        return headers;
+    }
+
+    /**
      * Call bot-server API (for spawning/despawning bots)
      * Note: room-enter/leave only need the game token, so guests can spawn bots too
      * Uses Admin API session tokens (same as Admin API) for authenticated endpoints
