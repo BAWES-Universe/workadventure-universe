@@ -58,7 +58,8 @@
     }
 
     export async function selectCategory(index: number) {
-        if (index < 0 || index >= categories.length || index === category) return;
+        // A swipe that is still sliding picks the page; a tap during it would be undone when the slide lands
+        if (sliding || index < 0 || index >= categories.length || index === category) return;
         // The page you came from stays drawn; the new page beyond is drawn once the switch is on screen
         previousCategory = category;
         neighboursReady = false;
