@@ -1,5 +1,10 @@
+import { inspect } from "node:util";
+import * as Sentry from "@sentry/node";
 import { describe, expect, it, vi } from "vitest";
 import { AxiosError, AxiosHeaders } from "axios";
+import type { InternalAxiosRequestConfig } from "axios";
+
+vi.mock("@sentry/node", () => ({ captureException: vi.fn() }));
 
 vi.mock("../../src/pusher/enums/EnvironmentVariable", () => ({
     MATRIX_API_URI: "http://synapse:8008/",
@@ -298,5 +303,37 @@ describe("chat IDs sent by the browser", () => {
         expect(message.updateMask).toEqual(["cameraState"]);
         expect(message.user?.chatID).toBeUndefined();
         expect(message.user).toEqual(expect.objectContaining({ spaceUserId: "1", cameraState: true }));
+    });
+});
+
+describe("verifyChatId, when the Matrix server does not answer", () => {
+    it("logs and reports the failure without the player's access token", async () => {
+        // What axios throws on a timeout: the whole request travels with the error, access token included.
+        const headers = new AxiosHeaders({ Authorization: "Bearer syt_secret_token" });
+        const config = {
+            headers,
+            url: "http://synapse:8008/_matrix/client/v3/account/whoami",
+        } as InternalAxiosRequestConfig;
+        const timeout = new AxiosError("timeout of 5000ms exceeded", "ECONNABORTED", config, { headers });
+        const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        vi.mocked(Sentry.captureException).mockClear();
+        const data = { isLogged: true, chatID: undefined, chatIdVerification: undefined, disconnecting: false };
+
+        await verifyChatId(
+            data,
+            "syt_secret_token",
+            { getMatrixUserIdForAccessToken: () => Promise.reject(timeout) },
+            () => Promise.resolve()
+        );
+
+        const everythingWritten = inspect([consoleError.mock.calls, vi.mocked(Sentry.captureException).mock.calls], {
+            depth: 10,
+        });
+        expect(everythingWritten).not.toContain("syt_secret_token");
+        // It still says what failed, and the error still reaches the error tracker.
+        expect(everythingWritten).toContain("timeout of 5000ms exceeded");
+        expect(everythingWritten).toContain("ECONNABORTED");
+        expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+        consoleError.mockRestore();
     });
 });
