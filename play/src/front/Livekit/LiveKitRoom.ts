@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { MapStore } from "@workadventure/store-utils";
-import type { Participant, LocalParticipant } from "livekit-client";
+import type { Participant, LocalParticipant, ParticipantPermission } from "livekit-client";
 import { VideoPresets, Room, RoomEvent, LocalVideoTrack, LocalAudioTrack, Track } from "livekit-client";
 import type { Readable, Unsubscriber } from "svelte/store";
 import { get } from "svelte/store";
@@ -421,7 +421,10 @@ export class LiveKitRoom implements LiveKitRoomInterface {
      * - Us, now allowed: what we could not send before is sent.
      * - Somebody else, now allowed: they appear like anybody who was allowed when we joined.
      */
-    private handleParticipantPermissionsChanged(_previous: Participant["permissions"], participant: Participant): void {
+    private handleParticipantPermissionsChanged(
+        _previous: ParticipantPermission | undefined,
+        participant: Participant
+    ): void {
         if (this.abortSignal.aborted || participant.permissions?.canPublish !== true) {
             return;
         }
