@@ -15,6 +15,8 @@
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { AudioPlayback } from "./AudioPlayback";
 
+    let audioContainer: HTMLDivElement;
+
     onMount(() => {
         let sourceUrl: string | undefined;
         let openOnPlay = false;
@@ -51,7 +53,10 @@
                 if (get(activeSecondaryZoneActionBarStore) === "audio-manager") {
                     activeSecondaryZoneActionBarStore.set(undefined);
                 }
-            }
+            },
+            undefined,
+            undefined,
+            audioContainer
         );
         const unsubscribeVolume = audioManagerVolumeStore.subscribe((controls) => player.setControls(controls));
         const unsubscribeSource = audioManagerSourceStore.subscribe((source) => {
@@ -72,3 +77,6 @@
         };
     });
 </script>
+
+<!-- Keep native media attached as before, with only active transition slots in the DOM. -->
+<div hidden bind:this={audioContainer} />

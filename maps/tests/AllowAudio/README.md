@@ -10,6 +10,7 @@ This change keeps the existing music channel and controls. It does not change WA
 - Pause, Stop, unload and destruction silence the relevant media and cancel fades. Stop retains its existing one-shot semantics: a later explicit source can start again. Pause/mute/master remain unchanged.
 - Background playback is preserved: this player does not pause, skip cues or change state on visibility changes. One-shots finish normally and hide their controls when they end. The browser/OS may still impose its own media restrictions.
 - Fades use elapsed performance.now() time on a timer instead of animation frames. A throttled or late tick advances directly to the correct progress and releases an expired outgoing slot.
+- Active audio elements remain attached to their component with the existing audio-manager-audioplayer DOM hook. Retired/unloaded elements are removed and their cleared instances can be reused.
 - Autoplay-blocked incoming media preserves an already-playing outgoing track until the existing native retry gesture starts the latest target. Retired elements are reused to retain per-element browser permission where supported.
 - Resource errors expose the existing native retry control; only media/network-error retry reloads the source. Autoplay retry calls play synchronously without a tick/await/load.
 - Legacy playAudioLoop and ordinary playAudio both respect blockAudio.

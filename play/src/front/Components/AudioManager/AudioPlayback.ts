@@ -51,7 +51,8 @@ export class AudioPlayback {
         private readonly onState: (state: PlayerState) => void,
         private readonly onEnded: () => void,
         private readonly createAudio: () => HTMLAudioElement = () => new Audio(),
-        private readonly duration = 1600
+        private readonly duration = 1600,
+        private readonly audioContainer?: HTMLElement
     ) {}
 
     setSource(source: AudioSource | undefined): void {
@@ -81,6 +82,10 @@ export class AudioPlayback {
         }
         const media = this.idleMedia.pop() ?? this.createAudio();
         this.detectVolumeSupport(media);
+        if (this.audioContainer) {
+            media.classList.add("audio-manager-audioplayer");
+            this.audioContainer.append(media);
+        }
         const slot: Slot = {
             media,
             source: { ...source, volume: clampAudioVolume(source.volume) },
@@ -273,6 +278,7 @@ export class AudioPlayback {
         slot.media.pause();
         slot.media.removeAttribute("src");
         slot.media.load();
+        if (this.audioContainer) slot.media.remove();
         this.idleMedia.push(slot.media);
     }
 }

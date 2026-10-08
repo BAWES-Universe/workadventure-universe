@@ -44,7 +44,7 @@ const flush = async () => {
 const play = (url: string) => audioManagerFileStore.playAudio(url, "https://maps.example/map.json", 0.5, true);
 
 describe("native audio panel integration", () => {
-    let component: AudioPlayer;
+    let component: AudioPlayer | undefined;
     let media: HTMLMediaElement[];
     beforeEach(async () => {
         media = [];
@@ -65,9 +65,11 @@ describe("native audio panel integration", () => {
         await flush();
     });
     afterEach(() => {
-        component.$destroy();
+        component?.$destroy();
+        component = undefined;
         audioManagerFileStore.unloadAudio();
         vi.restoreAllMocks();
+        vi.useRealTimers();
     });
 
     it("opens the existing panel on a new source, but not on gain updates or resume", async () => {
@@ -133,6 +135,27 @@ describe("native audio panel integration", () => {
         await flush();
         expect(media[0].paused).toBe(false);
         expect(get(audioManagerPlayerState)).toBe("playing");
+    });
+
+    it("owns the existing native audio DOM hooks and removes retired or unloaded slots", async () => {
+        vi.useFakeTimers();
+        const elements = () => document.querySelectorAll("audio.audio-manager-audioplayer");
+        play("a.ogg");
+        await flush();
+        expect(elements()).toHaveLength(1);
+        play("b.ogg");
+        await flush();
+        expect(elements()).toHaveLength(2);
+        vi.advanceTimersByTime(1800);
+        expect(elements()).toHaveLength(1);
+        audioManagerFileStore.unloadAudio();
+        expect(elements()).toHaveLength(0);
+        play("c.ogg");
+        await flush();
+        expect(elements()).toHaveLength(1);
+        component?.$destroy();
+        component = undefined;
+        expect(elements()).toHaveLength(0);
     });
 
     it("forgets a pending panel-open request when the map unloads", async () => {
