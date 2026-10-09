@@ -2,43 +2,21 @@
     import { onDestroy } from "svelte";
     import { v4 as uuid } from "uuid";
     import LL from "../../../i18n/i18n-svelte";
-    import { connectionManager } from "../../Connection/ConnectionManager";
     import { coWebsites } from "../../Stores/CoWebsiteStore";
     import { SimpleCoWebsite } from "../../WebRtc/CoWebsite/SimpleCoWebsite";
-    import youtubeSvg from "../../Components/images/applications/icon_youtube.svg";
-    import googleDocsSvg from "../../Components/images/applications/icon_google_docs.svg";
-    import googleSheetsSvg from "../../Components/images/applications/icon_google_sheets.svg";
-    import googleSlidesSvg from "../../Components/images/applications/icon_google_slides.svg";
-    import googleDriveSvg from "../../Components/images/applications/icon_google_drive.svg";
-    import klaxoonSvg from "../../Components/images/applications/icon_klaxoon.svg";
-    import eraserSvg from "../../Components/images/applications/icon_eraser.svg";
-    import excalidrawSvg from "../../Components/images/applications/icon_excalidraw.svg";
-    import cardsSvg from "../../Components/images/applications/icon_cards.svg";
-    import tldrawJpeg from "../../Components/images/applications/icon_tldraw.jpeg";
-    import { extractChatLinks } from "./ChatLinks";
-    import type { AppId, LinkKind } from "./LinkKind";
-    import { classifyLink } from "./LinkKind";
+    import type { LinkKind } from "./LinkKind";
+    import { APP_ICONS, youtubeSvg } from "./appIcons";
+    import { classifyChatLink, previewedLinkOf } from "./ChatLinkKind";
     import type { WebPreview, YoutubePreview } from "./LinkPreviewFetcher";
     import { fetchWebPreview, fetchYoutubePreview, playingChatVideoStore } from "./LinkPreviewFetcher";
-    import { IconExternalLink, IconLayoutSidebarRight, IconPlayerPlayFilled } from "@wa-icons";
+    import { IconExternalLink, IconPlayerPlayFilled } from "@wa-icons";
 
-    /** The message text: its first link gets a preview. */
+    /** The message text: its first link gets a preview, unless it was sent without one (<link>). */
     export let body: string;
     /** On the sender's own (blue) bubble the card is darker. */
     export let mine = false;
-
-    const APP_ICONS: Record<AppId, string | undefined> = {
-        googleDocs: googleDocsSvg,
-        googleSheets: googleSheetsSvg,
-        googleSlides: googleSlidesSvg,
-        googleDrive: googleDriveSvg,
-        klaxoon: klaxoonSvg,
-        eraser: eraserSvg,
-        excalidraw: excalidrawSvg,
-        cards: cardsSvg,
-        tldraw: tldrawJpeg,
-        custom: undefined,
-    };
+    /** The card is the whole message: the link it shows was the message's only text. */
+    export let alone = false;
 
     // Lets a video in a frame autoplay, go fullscreen and keep playing in picture-in-picture.
     const VIDEO_POLICY = "autoplay; encrypted-media; fullscreen; picture-in-picture;";
@@ -51,7 +29,7 @@
     let imageFailed = false;
     let loadedFor: string | undefined;
 
-    $: firstLink = extractChatLinks(body ?? "", 1)[0];
+    $: firstLink = previewedLinkOf(body ?? "");
     $: load(firstLink);
 
     function load(url: string | undefined) {
@@ -63,21 +41,7 @@
         imageFailed = false;
         if (!url) return;
 
-        const kind = classifyLink(url, {
-            youtube: connectionManager.youtubeToolActivated,
-            googleDocs: connectionManager.googleDocsToolActivated,
-            googleSheets: connectionManager.googleSheetsToolActivated,
-            googleSlides: connectionManager.googleSlidesToolActivated,
-            googleDrive: connectionManager.googleDriveToolActivated,
-            klaxoon: connectionManager.klaxoonToolActivated,
-            klaxoonClientId: connectionManager.klaxoonToolClientId,
-            eraser: connectionManager.eraserToolActivated,
-            excalidraw: connectionManager.excalidrawToolActivated,
-            excalidrawDomains: connectionManager.excalidrawToolDomains,
-            cards: connectionManager.cardsToolActivated,
-            tldraw: connectionManager.tldrawToolActivated,
-            custom: connectionManager.applications,
-        });
+        const kind = classifyChatLink(url);
         link = kind;
 
         if (kind.kind === "youtube") {
@@ -133,7 +97,12 @@
 </script>
 
 {#if link?.kind === "youtube"}
-    <div class="link-preview" class:link-preview-mine={mine} data-testid="youtubeLinkPreview">
+    <div
+        class="link-preview"
+        class:link-preview-mine={mine}
+        class:link-preview-alone={alone}
+        data-testid="youtubeLinkPreview"
+    >
         <div class="relative w-full aspect-video bg-black">
             {#if playing}
                 <iframe
@@ -177,22 +146,32 @@
         </div>
         <div class="link-preview-actions">
             <button
-                class="link-preview-button"
+                class="u-cta-secondary link-preview-button"
                 on:click={() =>
                     link?.kind === "youtube" && openHere(youtubeEmbedUrl(link.videoId, link.start), VIDEO_POLICY)}
                 data-testid="linkPreviewOpenHere"
             >
-                <IconLayoutSidebarRight font-size={14} />
                 {$LL.chat.linkPreview.openHere()}
             </button>
-            <a class="link-preview-button" href={link.url} target="_blank" rel="noopener noreferrer">
-                {$LL.chat.linkPreview.openOn({ site: "YouTube" })}
-                <IconExternalLink font-size={14} />
+            <a
+                class="u-cta-secondary link-preview-button"
+                href={link.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={$LL.chat.linkPreview.openOn({ site: "YouTube" })}
+            >
+                YouTube
+                <IconExternalLink font-size={13} />
             </a>
         </div>
     </div>
 {:else if link?.kind === "app"}
-    <div class="link-preview" class:link-preview-mine={mine} data-testid="appLinkPreview">
+    <div
+        class="link-preview"
+        class:link-preview-mine={mine}
+        class:link-preview-alone={alone}
+        data-testid="appLinkPreview"
+    >
         <div class="flex items-center gap-2.5 px-2.5 pt-2.5">
             {#if link.icon ?? APP_ICONS[link.app]}
                 <img
@@ -212,16 +191,15 @@
         </div>
         <div class="link-preview-actions">
             <button
-                class="link-preview-button link-preview-cta"
+                class="u-cta link-preview-button"
                 on:click={() => link?.kind === "app" && openHere(link.embedUrl)}
                 data-testid="linkPreviewOpenHere"
             >
-                <IconLayoutSidebarRight font-size={14} />
                 {$LL.chat.linkPreview.openHere()}
             </button>
-            <a class="link-preview-button" href={link.url} target="_blank" rel="noopener noreferrer">
+            <a class="u-cta-secondary link-preview-button" href={link.url} target="_blank" rel="noopener noreferrer">
                 {$LL.chat.linkPreview.newTab()}
-                <IconExternalLink font-size={14} />
+                <IconExternalLink font-size={13} />
             </a>
         </div>
     </div>
@@ -229,6 +207,7 @@
     <a
         class="link-preview block"
         class:link-preview-mine={mine}
+        class:link-preview-alone={alone}
         href={link.url}
         target="_blank"
         rel="noopener noreferrer"
@@ -248,6 +227,7 @@
     <a
         class="link-preview block !no-underline !opacity-100"
         class:link-preview-mine={mine}
+        class:link-preview-alone={alone}
         href={link.url}
         target="_blank"
         rel="noopener noreferrer"
@@ -286,6 +266,9 @@
         background: rgba(255, 255, 255, 0.05);
         border: 1px solid rgba(255, 255, 255, 0.1);
         color: white;
+    }
+    .link-preview-alone {
+        margin-top: 8px;
     }
     .link-preview-mine {
         background: rgba(0, 0, 0, 0.18);
@@ -331,38 +314,36 @@
         gap: 6px;
         padding: 8px 10px 10px;
     }
+    /* The chat's pill buttons (u-cta for the one main action, u-cta-secondary for the rest), as on the ring and
+       friend request cards. */
+    .link-preview-button {
+        display: inline-flex;
+        flex: none;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        height: 32px;
+        margin: 0;
+        padding: 0 12px;
+        border-radius: 9999px;
+        font-size: 12px;
+        font-weight: 700;
+        line-height: 1;
+        white-space: nowrap;
+        color: white;
+        text-decoration: none;
+        cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+        &:hover {
+            text-decoration: none;
+        }
+    }
     /* On a touch screen each button is a full 44px tap target. */
     @media (pointer: coarse) {
         .link-preview-button {
-            min-height: 44px;
-        }
-    }
-    .link-preview-button {
-        display: inline-flex;
-        align-items: center;
-        gap: 5px;
-        margin: 0;
-        padding: 6px 10px;
-        font-size: 12px;
-        font-weight: 600;
-        line-height: 1;
-        color: white;
-        text-decoration: none;
-        border-radius: 8px;
-        background: rgba(255, 255, 255, 0.08);
-        border: 1px solid rgba(255, 255, 255, 0.14);
-        cursor: pointer;
-        &:hover {
-            background: rgba(255, 255, 255, 0.14);
-        }
-    }
-    .link-preview-cta {
-        border: 0;
-        background: linear-gradient(90deg, #8629fc, #4156f6);
-        box-shadow: 0 4px 14px rgba(134, 41, 252, 0.35);
-        &:hover {
-            background: linear-gradient(90deg, #8629fc, #4156f6);
-            filter: brightness(1.1);
+            height: 44px;
+            padding: 0 16px;
+            font-size: 13px;
         }
     }
 </style>

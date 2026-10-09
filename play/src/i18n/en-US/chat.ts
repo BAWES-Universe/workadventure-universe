@@ -547,6 +547,7 @@ const chat: BaseTranslation = {
         newTab: "New tab",
         openOn: "Open on {site}",
         play: "Play {title}",
+        sendWithoutPreview: "Send without a preview",
     },
     fileAttachment: {
         title: "File attachment",

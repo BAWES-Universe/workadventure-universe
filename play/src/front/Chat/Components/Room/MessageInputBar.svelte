@@ -27,6 +27,8 @@
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import { MatrixChatRoom } from "../../Connection/Matrix/MatrixChatRoom";
     import { UPLOADER_URL } from "../../../Enum/EnvironmentVariable";
+    import ComposerLinkPreview from "../../LinkPreview/ComposerLinkPreview.svelte";
+    import { withoutPreview } from "../../LinkPreview/ChatLinks";
     import MessageInput from "./MessageInput.svelte";
     import ReplyPreview from "./MessageActions/ReplyPreview.svelte";
     import { captureSendDestination, isSendDestinationOpen, spaceGenerationOf } from "./SendDestination";
@@ -60,6 +62,8 @@
     export let disabled = false;
 
     let message = "";
+    // Links whose preview was closed above the message box: they are sent without one.
+    let closedLinkPreviews: string[] = [];
     let messageInput: HTMLDivElement;
     let messageBarRef: HTMLDivElement;
     let fileInputElement: HTMLInputElement | undefined;
@@ -205,9 +209,11 @@
         }
     }
 
-    async function sendMessage(messageToSend: string) {
+    async function sendMessage(typedMessage: string) {
         // Every send path (Enter, the Send button, files) ends the typing status.
         stopTypingNow();
+        let messageToSend =
+            closedLinkPreviews.length > 0 ? withoutPreview(typedMessage, closedLinkPreviews) : typedMessage;
 
         // Where this message is meant to go, captured now: an upload may finish after the bubble has changed.
         const destination = captureSendDestination(room);
@@ -465,6 +471,9 @@
         selectedChatMessageToReply.set(null);
         replyMessageId = null;
     }
+
+    // A cleared or sent message box starts again with every preview on.
+    $: if (isEmptyMessage(message) && closedLinkPreviews.length > 0) closedLinkPreviews = [];
 
     function onInputHandler() {
         if (isEmptyMessage(message)) {
@@ -822,11 +831,13 @@
     class="message-bar flex w-full flex-none items-center border border-solid border-b-0 border-x-0 border-t-1 border-white/10 bg-contrast/50 relative"
     bind:this={messageBarRef}
 >
-    {#if $selectedChatMessageToReply !== null}
-        <div class="flex p-2 items-start absolute top-0 -translate-y-full w-full">
+    <!-- Above the field: what the message replies to, then the preview of the link being typed. -->
+    <div class="above-field flex flex-col gap-2 p-2 absolute top-0 -translate-y-full w-full pointer-events-none">
+        {#if $selectedChatMessageToReply !== null}
             <ReplyPreview message={$selectedChatMessageToReply} onClose={unselectChatMessageToReply} />
-        </div>
-    {/if}
+        {/if}
+        <ComposerLinkPreview {message} bind:closedLinks={closedLinkPreviews} />
+    </div>
     <MessageInput
         onKeyDown={sendMessageOrEscapeLine}
         onInput={onInputHandler}
@@ -924,6 +935,9 @@
     /* Send is the one filled button: the brand gradient, its icon white. */
     .message-bar > .send-button {
         background: linear-gradient(135deg, #8629fc, #4156f6);
+    }
+    .above-field > :global(*) {
+        pointer-events: auto;
     }
     .message-bar :global(.message-input) {
         padding: 14px 4px 14px 16px;
