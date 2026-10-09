@@ -30,6 +30,7 @@ import { validateWebsocketQuery } from "../services/QueryValidator";
 import type { SocketData, SpaceName } from "../models/Websocket/SocketData";
 import { emitInBatch } from "../services/IoSocketHelpers";
 import { toServerSpaceName } from "../services/SpaceJoinPolicy";
+import { describeError } from "../services/SafeErrorLog";
 import { ClientAbortError } from "../models/ClientAbortError";
 
 const debug = Debug("pusher:requests");
@@ -129,7 +130,7 @@ export class IoSocketController {
                     try {
                         data = jwtTokenManager.verifyAdminSocketToken(token);
                     } catch (e) {
-                        console.error("Admin socket access refused for token: " + token, e);
+                        console.error(`Admin socket access refused: ${describeError(e)}`);
                         ws.send(
                             JSON.stringify({
                                 type: "Error",
