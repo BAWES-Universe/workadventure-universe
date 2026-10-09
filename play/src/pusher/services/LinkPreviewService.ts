@@ -185,6 +185,8 @@ export function fetchOnce(
                 },
             },
             (response) => {
+                // Every branch below ends by closing the connection: a late error on the response is expected then.
+                response.on("error", (error) => reject(error));
                 const status = response.statusCode ?? 0;
                 if (status >= 300 && status < 400 && response.headers.location) {
                     resolve({ kind: "redirect", location: response.headers.location });
@@ -215,9 +217,6 @@ export function fetchOnce(
                 });
                 response.on("end", finish);
                 response.on("close", finish);
-                response.on("error", (error) => {
-                    if (!done) reject(error);
-                });
             }
         );
         // Idle sockets and the whole request are both capped.
@@ -297,31 +296,32 @@ type CacheEntry = { promise: Promise<LinkPreview>; expiresAt: number };
 /** Too many previews asked for right now: try again later. Not remembered as a failure of the page. */
 export class LinkPreviewBusyError extends Error {}
 
-/** At most `limit` previews per person in any `windowMs`. */
+/**
+ * At most `limit` previews per person in each `windowMs` window. The counts start over every window, so memory
+ * holds only the people who asked in the current one.
+ */
 export class PerUserRateLimiter {
-    private readonly calls = new Map<string, number[]>();
+    private counts = new Map<string, number>();
+    private windowStart: number;
 
     constructor(
         private readonly limit: number,
         private readonly windowMs: number,
         private readonly now: () => number = Date.now
-    ) {}
+    ) {
+        this.windowStart = now();
+    }
 
     /** Counts a preview; false when the person is over their limit (it is then not counted). */
     take(user: string): boolean {
         const now = this.now();
-        const recent = (this.calls.get(user) ?? []).filter((at) => at > now - this.windowMs);
-        if (recent.length >= this.limit) {
-            this.calls.set(user, recent);
-            return false;
+        if (now - this.windowStart >= this.windowMs) {
+            this.counts = new Map();
+            this.windowStart = now;
         }
-        recent.push(now);
-        this.calls.set(user, recent);
-        if (this.calls.size > MAX_CACHE_ENTRIES) {
-            for (const [key, times] of this.calls) {
-                if (times[times.length - 1] <= now - this.windowMs) this.calls.delete(key);
-            }
-        }
+        const count = this.counts.get(user) ?? 0;
+        if (count >= this.limit) return false;
+        this.counts.set(user, count + 1);
         return true;
     }
 }
