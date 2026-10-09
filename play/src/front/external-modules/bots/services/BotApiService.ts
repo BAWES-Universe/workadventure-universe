@@ -99,6 +99,14 @@ export class BotApiService {
     }
 
     /**
+     * The bot server this service sends credentials to: null when the address was refused as unsafe. Anything that
+     * sends the player's tokens to the bot server must use this, never the raw setting.
+     */
+    getBotServerUrl(): string | null {
+        return this.botServerUrl;
+    }
+
+    /**
      * Get the current roomId
      */
     getRoomId(): string | null {

@@ -414,11 +414,12 @@ export class BotAPI {
                     res.status(404).json({ error: 'Bot not found in Admin API' });
                     return;
                 }
-                if (roomId && !sameRoomAddress(roomId, botConfig.roomUrl)) {
+                if (!botConfig.roomUrl || (roomId && !sameRoomAddress(roomId, botConfig.roomUrl))) {
                     res.status(403).json({ error: 'That bot belongs to another room' });
                     return;
                 }
-                roomId = roomId || botConfig.roomUrl;
+                // The room the bot belongs to, written the way its configuration writes it
+                roomId = botConfig.roomUrl;
 
                 // Check if bot is already spawned
                 if (this.botManager.getBot(botId)) {

@@ -12,14 +12,14 @@ function readSwitch(value: string | undefined, defaultValue: boolean): boolean {
 // setting can never turn the limit off.
 const DEFAULT_UPLOAD_MAX_FILESIZE = 10 * 1024 * 1024;
 function readMaxFileSize(value: string | undefined): string {
-    const parsed = Number(value);
-    if (!value || !Number.isFinite(parsed) || parsed <= 0) {
+    const parsed = Math.floor(Number(value));
+    if (!value || !Number.isFinite(parsed) || parsed < 1) {
         if (value) {
-            console.warn(`UPLOAD_MAX_FILESIZE "${value}" is not a positive number: using ${DEFAULT_UPLOAD_MAX_FILESIZE} bytes.`);
+            console.warn(`UPLOAD_MAX_FILESIZE "${value}" is not a size of at least one byte: using ${DEFAULT_UPLOAD_MAX_FILESIZE} bytes.`);
         }
         return String(DEFAULT_UPLOAD_MAX_FILESIZE);
     }
-    return String(Math.floor(parsed));
+    return String(parsed);
 }
 
 const ENABLE_CHAT_UPLOAD = readSwitch(process.env.ENABLE_CHAT_UPLOAD, true);

@@ -49,4 +49,16 @@ describe('BotClient.getPlayerPositionByUuid', () => {
         const bot = botThatSees([{ userId: 7, uuid: 'uuid-7', x: 0, y: 0 }]);
         expect(bot.getPlayerPositionByUuid('uuid-7')).toBeUndefined();
     });
+
+    it('finds a player the room told the bot about, even when the bot has not met them in a space', () => {
+        const bot = botThatSees([]);
+        (bot as unknown as { players: Map<number, unknown> }).players.set(9, {
+            userId: 9,
+            uuid: 'uuid-9',
+            name: 'Far away',
+            position: { x: 900, y: 700 },
+            availabilityStatus: 0,
+        });
+        expect(bot.getPlayerPositionByUuid('uuid-9')).toEqual({ x: 900, y: 700 });
+    });
 });

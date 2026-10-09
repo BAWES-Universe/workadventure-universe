@@ -1985,7 +1985,9 @@ export class BotClient {
      * bot has no position for them yet). Bots are never returned.
      */
     getPlayerPositionByUuid(uuid: string): PositionInterface | undefined {
-        const userId = this.behavior?.getUserIdForUuid(uuid);
+        // Anybody in the room, whether or not they have come close enough to the bot to be in one of its spaces.
+        const seenInRoom = [...this.players.values()].find((candidate) => candidate.uuid === uuid);
+        const userId = seenInRoom?.userId ?? this.behavior?.getUserIdForUuid(uuid);
         if (userId === undefined || BotClient.isBot(userId)) {
             return undefined;
         }
@@ -2417,6 +2419,7 @@ export class BotClient {
                         }
                         this.players.set(userId, {
                             userId: userId,
+                            uuid: message.userJoinedMessage.userUuid || undefined,
                             name: message.userJoinedMessage.name,
                             position: playerPos,
                             availabilityStatus: message.userJoinedMessage.availabilityStatus ?? 0,
@@ -3250,6 +3253,8 @@ export class BotClient {
 
 interface PlayerInfo {
     userId: number;
+    /** The player's uuid, as the room told the bot when they joined. */
+    uuid?: string;
     name: string;
     position: PositionInterface;
     availabilityStatus: number;

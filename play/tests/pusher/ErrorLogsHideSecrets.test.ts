@@ -1,3 +1,4 @@
+import { inspect } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { NextFunction, Request, Response } from "express";
 import { AxiosError, AxiosHeaders } from "axios";
@@ -40,7 +41,10 @@ function everythingLogged(spies: ReturnType<typeof vi.spyOn>[]): string {
     const calls = [...spies.flatMap((spy) => spy.mock.calls), ...vi.mocked(Sentry.captureException).mock.calls];
     return calls
         .map((args) =>
-            args.map((arg) => (arg instanceof Error ? `${arg.message} ${arg.stack}` : JSON.stringify(arg))).join(" ")
+            args
+                // Whole objects, as the console would print them: a raw HTTP error carries its request headers
+                .map((arg) => (arg instanceof Error ? `${arg.message} ${arg.stack} ${inspect(arg, { depth: 6 })}` : JSON.stringify(arg)))
+                .join(" ")
         )
         .join("\n");
 }
@@ -95,5 +99,13 @@ describe("error logs never carry the credentials", () => {
         expect(described).toContain("Request failed with status code 500");
         expect(described).toContain("ERR_BAD_RESPONSE");
         expect(described).not.toContain(ADMIN_TOKEN);
+    });
+
+    it("the log check sees the request headers of a raw axios error, so a leak could not slip past it", () => {
+        const error = new AxiosError("Request failed with status code 500", "ERR_BAD_RESPONSE", {
+            headers: new AxiosHeaders({ Authorization: ADMIN_TOKEN }),
+        } as never);
+        console.error("raw", error);
+        expect(everythingLogged(spies)).toContain(ADMIN_TOKEN);
     });
 });

@@ -1711,6 +1711,8 @@ export class SocketManager implements ZoneEventListener {
 
             await space.forwarder.unregisterUser(client);
             socketData.joinSpacesPromise.delete(space.name);
+            // An invitation to speak ends with the visit
+            forgetSpeakInvitation(socketData, space.localName);
         } else {
             console.error("Could not find space", spaceName, "to leave");
             Sentry.captureException(new Error("Could not find space " + spaceName + " to leave"));

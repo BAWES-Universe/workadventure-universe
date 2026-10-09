@@ -51,6 +51,7 @@ describe("upload settings", () => {
       ["empty", ""],
       ["zero", "0"],
       ["negative", "-5"],
+      ["under one byte", "0.5"],
       ["not a number", "ten"],
       ["infinite", "Infinity"],
     ])("falls back to 10 MB when it is %s, so there is always a limit", (_name, value) => {

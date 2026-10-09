@@ -960,10 +960,12 @@ async function injectEmotionsIntoWokaMenu(menuData: WokaMenuData): Promise<void>
 
         // Fetch emotions from API FIRST, before mounting component
         // This prevents the visual "jump" from default values to actual values
-        const botServerUrl = getBotServerUrl();
+        // The service's own address: it is null when the configured one was refused, and then the tokens go nowhere.
+        const botServerUrl = botApiService.getBotServerUrl();
         let emotionsData = null;
 
         try {
+            if (!botServerUrl) throw new Error("No safe bot-server address");
             const response = await fetch(`${botServerUrl}/api/bots/${botId}/emotions/${currentUserUuid}`, {
                 headers: await botApiService.getEmotionsHeaders(),
             });
