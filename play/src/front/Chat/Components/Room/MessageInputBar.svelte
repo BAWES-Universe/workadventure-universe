@@ -516,11 +516,23 @@
     function focusOnRequest(requestedAt: number) {
         if (requestedAt === 0 || Date.now() - requestedAt > CHAT_COMPOSER_FOCUS_REQUEST_TTL_MS || !messageInput) return;
         chatComposerFocusRequestStore.set(0);
-        messageInput.focus();
+        focusMessageInputAtEnd();
         // The panel may still be sliding in, so the first focus can miss: try once more on the next frame.
         requestAnimationFrame(() => {
-            if (document.activeElement !== messageInput) messageInput?.focus();
+            if (document.activeElement !== messageInput) focusMessageInputAtEnd();
         });
+    }
+    function focusMessageInputAtEnd() {
+        if (!messageInput) return;
+        messageInput.focus();
+        // A focused box starts the cursor at the beginning: put it after any text already typed.
+        const selection = window.getSelection();
+        if (!selection) return;
+        const range = document.createRange();
+        range.selectNodeContents(messageInput);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
     }
     const unsubscribeComposerFocusRequest = chatComposerFocusRequestStore.subscribe(focusOnRequest);
 
