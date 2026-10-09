@@ -30,8 +30,9 @@ export function fetchWebPreview(url: string): Promise<WebPreview | undefined> {
             headers: { Authorization: localUserStore.getAuthToken() ?? "" },
         })
             .then(async (response) => {
-                // Too many previews right now: try again the next time the link is shown.
-                if (response.status === 429) webPreviews.delete(url);
+                // Only "this page can't be previewed" (422) is remembered as a failure. Anything else (signed out,
+                // too many previews, the server restarting) is tried again the next time the link is shown.
+                if (!response.ok && response.status !== 422) webPreviews.delete(url);
                 return response.ok ? ((await response.json()) as WebPreview) : undefined;
             })
             .catch((error) => {
