@@ -10,6 +10,8 @@
     // A window on the right (Orbit) has its close and expand buttons in a column just left of it. This block sits on top
     // of the window layer, so it stops short of that column instead of covering it. Where the block starts depends on
     // the bar, so the room left is measured: from the block's left edge to the column's.
+    const MAX_WIDTH = 352; // 22rem
+    const MIN_WIDTH = 144; // 9rem
     let block: HTMLElement | undefined;
     let maxWidth: string | undefined;
 
@@ -33,8 +35,8 @@
             return;
         }
         const room = toolsBox.left - blockBox.left - 8;
-        // Never so narrow that the text is unreadable.
-        maxWidth = `${Math.max(144, Math.floor(room))}px`;
+        // Never so narrow that the text is unreadable, and never wider than the 22rem it has without a window.
+        maxWidth = `${Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.floor(room)))}px`;
     }
 
     // The window slides in: measure again once it has settled, as it flies in.
