@@ -297,11 +297,13 @@ type CacheEntry = { promise: Promise<LinkPreview>; expiresAt: number };
 export class LinkPreviewBusyError extends Error {}
 
 /**
- * At most `limit` previews per person in each `windowMs` window. The counts start over every window, so memory
- * holds only the people who asked in the current one.
+ * At most `limit` previews per person in any `windowMs`. It counts per window and weighs the previous window by how
+ * much of it still falls in the last `windowMs`, so a burst across a window boundary is still capped, and memory holds
+ * only the people who asked in the last two windows.
  */
 export class PerUserRateLimiter {
-    private counts = new Map<string, number>();
+    private previous = new Map<string, number>();
+    private current = new Map<string, number>();
     private windowStart: number;
 
     constructor(
@@ -315,13 +317,16 @@ export class PerUserRateLimiter {
     /** Counts a preview; false when the person is over their limit (it is then not counted). */
     take(user: string): boolean {
         const now = this.now();
-        if (now - this.windowStart >= this.windowMs) {
-            this.counts = new Map();
-            this.windowStart = now;
+        const windowsPassed = Math.floor((now - this.windowStart) / this.windowMs);
+        if (windowsPassed > 0) {
+            this.previous = windowsPassed === 1 ? this.current : new Map();
+            this.current = new Map();
+            this.windowStart += windowsPassed * this.windowMs;
         }
-        const count = this.counts.get(user) ?? 0;
-        if (count >= this.limit) return false;
-        this.counts.set(user, count + 1);
+        const previousWeight = 1 - (now - this.windowStart) / this.windowMs;
+        const count = this.current.get(user) ?? 0;
+        if ((this.previous.get(user) ?? 0) * previousWeight + count >= this.limit) return false;
+        this.current.set(user, count + 1);
         return true;
     }
 }

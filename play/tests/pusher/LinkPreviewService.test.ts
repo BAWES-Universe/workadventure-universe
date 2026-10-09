@@ -124,6 +124,22 @@ describe("PerUserRateLimiter", () => {
         now = 60_001;
         expect(limiter.take("a")).toBe(true);
     });
+
+    it("still caps a burst across a window boundary", () => {
+        let now = 0;
+        const limiter = new PerUserRateLimiter(2, 60_000, () => now);
+
+        now = 59_999;
+        expect(limiter.take("a")).toBe(true);
+        expect(limiter.take("a")).toBe(true);
+        now = 60_000;
+        expect(limiter.take("a")).toBe(false);
+        now = 90_000;
+        expect(limiter.take("a")).toBe(true);
+        expect(limiter.take("a")).toBe(false);
+        now = 120_000;
+        expect(limiter.take("a")).toBe(true);
+    });
 });
 
 describe("LinkPreviewService", () => {
