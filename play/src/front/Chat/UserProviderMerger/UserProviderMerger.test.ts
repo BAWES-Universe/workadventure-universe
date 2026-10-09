@@ -1,4 +1,4 @@
-import { get, writable } from "svelte/store";
+import { get, readable, writable } from "svelte/store";
 import { AvailabilityStatus } from "@workadventure/messages";
 import { describe, expect, it } from "vitest";
 import type { UserProviderInterface } from "../UserProvider/UserProviderInterface";
@@ -116,5 +116,54 @@ describe("UserProviderMerger", () => {
         expect(room2[0].chatId).toBe("@me:matrix");
         // Nobody ends up in the "disconnected" group.
         expect(usersByRoom.get(undefined)).toBeUndefined();
+    });
+});
+
+describe("UserProviderMerger pictures", () => {
+    const provider = (users: PartialChatUser[]): UserProviderInterface => ({
+        users: writable(users),
+        setFilter: () => Promise.resolve(),
+    });
+    const stored = readable<string | undefined>("stored-woka");
+    const matrixAvatar = readable<string | undefined>("matrix-avatar");
+    const live = readable<string | undefined>("live-woka");
+    const away = (extra: Partial<PartialChatUser> = {}): PartialChatUser[] => [
+        { chatId: "@ada:chat", username: "Ada", pictureStore: readable(undefined), storedWoka: stored, ...extra },
+    ];
+    const pictureOf = (merger: UserProviderMerger) =>
+        get([...get(merger.usersByRoomStore).values()][0].users[0].pictureStore ?? readable(undefined));
+
+    it("shows an away person's saved Woka before the picture their chat account carries", () => {
+        const merger = new UserProviderMerger([
+            provider(away()),
+            provider([{ chatId: "@ada:chat", username: "Ada", pictureStore: matrixAvatar }]),
+        ]);
+        expect(pictureOf(merger)).toBe("stored-woka");
+    });
+
+    it("keeps the chat account's picture for someone with no saved Woka", () => {
+        const merger = new UserProviderMerger([
+            provider(away({ storedWoka: undefined })),
+            provider([{ chatId: "@ada:chat", username: "Ada", pictureStore: matrixAvatar }]),
+        ]);
+        expect(pictureOf(merger)).toBe("matrix-avatar");
+    });
+
+    it("shows the live avatar when they are in the world", () => {
+        const merger = new UserProviderMerger([
+            provider(away()),
+            provider([{ chatId: "@ada:chat", username: "Ada", pictureStore: matrixAvatar }]),
+            provider([
+                {
+                    chatId: "@ada:chat",
+                    username: "Ada",
+                    pictureStore: live,
+                    spaceUserId: "space-1",
+                    playUri: "playUri1",
+                    roomName: "Room1",
+                },
+            ]),
+        ]);
+        expect(pictureOf(merger)).toBe("live-woka");
     });
 });

@@ -1,6 +1,7 @@
 import { AvailabilityStatus } from "@workadventure/messages";
 import type { Readable } from "svelte/store";
 import { derived, writable } from "svelte/store";
+import type { PictureStore } from "../../Stores/PictureStore";
 import type { UserProviderInterface } from "../UserProvider/UserProviderInterface";
 import type { AnyKindOfUser, ChatId, ChatUser, PartialAnyKindOfUser, UserUuid } from "../Connection/ChatConnection";
 
@@ -140,9 +141,18 @@ function mergeEntries(chatUserList: PartialAnyKindOfUser[]): AnyKindOfUser {
         spaceUserId: undefined,
     };
 
+    // Someone in the world now shows their live avatar. Someone who is away shows their saved Woka, which comes before
+    // the picture their chat account carries, so a person looks the same in every list.
+    const hasLiveAvatar = chatUserList.some((user) => user.spaceUserId !== undefined && user.pictureStore);
+    const storedWoka = chatUserList.reduce<PictureStore | undefined>(
+        (found, user) => user.storedWoka ?? found,
+        undefined
+    );
+
     const fullUser = {
         ...defaultUser,
         ...mergedUser,
+        pictureStore: (hasLiveAvatar ? undefined : storedWoka) ?? mergedUser.pictureStore ?? defaultUser.pictureStore,
         username: mergedUser.username ?? "",
         availabilityStatus: mergedUser.availabilityStatus ?? writable(AvailabilityStatus.UNCHANGED),
     };

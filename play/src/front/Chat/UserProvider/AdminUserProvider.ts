@@ -4,6 +4,7 @@ import type { ChatMember } from "@workadventure/messages";
 import { AvailabilityStatus } from "@workadventure/messages";
 import type { PartialChatUser } from "../Connection/ChatConnection";
 import type { RoomConnection } from "../../Connection/RoomConnection";
+import { storedWokaStore } from "../Stores/StoredWokaStore";
 import type { UserProviderInterface } from "./UserProviderInterface";
 
 export class AdminUserProvider implements UserProviderInterface {
@@ -34,6 +35,7 @@ export class AdminUserProvider implements UserProviderInterface {
                 userAcc.push({
                     availabilityStatus: writable(AvailabilityStatus.UNCHANGED),
                     pictureStore: readable(undefined),
+                    storedWoka: storedWokaStore(currentMember.characterTextures),
                     chatId: currentMember.chatId,
                     roomName: undefined,
                     playUri: undefined,
