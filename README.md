@@ -138,6 +138,7 @@ See our [troubleshooting guide](docs/others/troubleshooting.md).
 
 1. Want to build your own map, check out the **[map building documentation](https://docs.workadventu.re/map-building/)**
 2. Check out resources developed by the WorkAdventure community at **[awesome-workadventure](https://github.com/workadventure/awesome-workadventure)**
+3. Making a map or a Woka with AI? The **[Universe AI Creator Kit](https://github.com/BAWES-Universe/universe-ai-creator-kit)** is a kit for AI map and Woka experiments, with guides and an installable skill for Claude, Codex and Hermes.
 
 ## Built on WorkAdventure
 
