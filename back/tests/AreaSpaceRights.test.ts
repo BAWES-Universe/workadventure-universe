@@ -39,6 +39,12 @@ const wam = (...areas: AreaData[]) => ({ areas: Object.fromEntries(areas.map((a)
 const room = (name: string) => areaSpaceName(name, ROOM);
 
 describe("refusedAreaSpaces", () => {
+    it("does not shut anybody out of an area whose role limit lists no role yet", () => {
+        const noRoles = { id: "r", type: "restrictedRightsPropertyData", readTags: [], writeTags: [] } as Property;
+        const refused = refusedAreaSpaces(wam(area("a1", [meeting("Board"), noRoles])), ROOM, player);
+        expect(refused).toEqual([]);
+    });
+
     it("refuses the meeting room of an area limited to a role the player does not have", () => {
         const refused = refusedAreaSpaces(wam(area("a1", [meeting("Board"), onlyStaff])), ROOM, player);
         expect(refused).toEqual([room("Board")]);

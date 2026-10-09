@@ -88,7 +88,12 @@ function canEnter(area: AreaData, userTags: string[]): boolean {
         return true;
     }
     // Older map files may predate these fields (the wam is read raw, not through the schema defaults).
-    return [...(rights.writeTags ?? []), ...(rights.readTags ?? [])].some((tag) => userTags.includes(tag));
+    const allowedTags = [...(rights.writeTags ?? []), ...(rights.readTags ?? [])];
+    // No role listed: the area is not limited (the game treats it the same way), so nobody is shut out.
+    if (allowedTags.length === 0) {
+        return true;
+    }
+    return allowedTags.some((tag) => userTags.includes(tag));
 }
 
 /** The spaces an area's meeting room or speaker zone is joined under (see AreasPropertiesListener in the front). */

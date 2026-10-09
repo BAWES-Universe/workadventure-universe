@@ -315,6 +315,19 @@ export class LiveKitRoom implements LiveKitRoomInterface {
             Sentry.captureException(new Error("Local participant not found"));
             return;
         }
+        // The same screen share again (the media server just let us send): it only needs to be sent again, not
+        // replaced. Replacing a track by itself does nothing, so pausing it first would leave it paused.
+        if (streamResult && this.isScreenShareAlreadyPublished(streamResult)) {
+            this.localScreenSharingVideoTrack?.resumeUpstream().catch((err) => {
+                console.error("An error occurred while resuming screen share video track", err);
+                Sentry.captureException(err);
+            });
+            this.localScreenSharingAudioTrack?.resumeUpstream().catch((err) => {
+                console.error("An error occurred while resuming screen share audio track", err);
+                Sentry.captureException(err);
+            });
+            return;
+        }
         if (this.localScreenSharingVideoTrack || this.localScreenSharingAudioTrack) {
             this.unpublishAllScreenShareTrack().catch((err) => {
                 console.error("An error occurred while unpublishing all screen share track", err);
@@ -399,6 +412,16 @@ export class LiveKitRoom implements LiveKitRoomInterface {
                 }
             }
         }
+    }
+
+    /** True when this stream carries the very tracks that are already published as our screen share. */
+    private isScreenShareAlreadyPublished(stream: MediaStream): boolean {
+        const videoTrack = stream.getVideoTracks()[0];
+        const audioTrack = stream.getAudioTracks()[0];
+        if (!videoTrack || this.localScreenSharingVideoTrack?.mediaStreamTrack.id !== videoTrack.id) {
+            return false;
+        }
+        return audioTrack?.id === this.localScreenSharingAudioTrack?.mediaStreamTrack.id;
     }
 
     /**
