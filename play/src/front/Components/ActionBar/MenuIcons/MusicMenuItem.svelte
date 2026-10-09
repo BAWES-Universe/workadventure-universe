@@ -80,7 +80,7 @@
             $activeSecondaryZoneActionBarStore !== "audio-manager"
         ) {
             activeSecondaryZoneActionBarStore.set("audio-manager");
-        } else if ($audioManagerVisibilityStore === "visible" && $audioManagerPlayerState === "not_allowed") {
+        } else if ($audioManagerPlayerState === "not_allowed" || $audioManagerPlayerState === "error") {
             audioManagerRetryPlaySubject.next();
         } else {
             activeSecondaryZoneActionBarStore.set(undefined);
