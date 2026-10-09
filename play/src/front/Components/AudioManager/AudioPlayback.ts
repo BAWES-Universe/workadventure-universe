@@ -65,12 +65,22 @@ export class AudioPlayback {
             return;
         }
         this.cancelFade();
+        const returning = this.outgoing;
+        if (source && returning?.source.url === source.url && this.isAudible(returning)) {
+            // Back to the source that is still fading out: fade it up from where it is
+            // instead of restarting it from the beginning.
+            const leaving = this.current;
+            this.outgoing = leaving && this.isAudible(leaving) ? leaving : undefined;
+            if (leaving && this.outgoing !== leaving) this.release(leaving);
+            returning.source = { ...source, volume: clampAudioVolume(source.volume) };
+            this.current = returning;
+            this.startFade();
+            this.onState("playing");
+            return;
+        }
         // An interrupted fade may have a silent incoming slot. Retain the more audible
         // viable track rather than replacing an established bed with that silent target.
-        const candidates = [this.current, this.outgoing].filter(
-            (slot): slot is Slot =>
-                !!slot && this.canPlay() && !slot.media.paused && !slot.pending && !slot.failed && !slot.ended
-        );
+        const candidates = [this.current, this.outgoing].filter((slot): slot is Slot => !!slot && this.isAudible(slot));
         const retained = candidates.sort((a, b) => b.envelope * b.source.volume - a.envelope * a.source.volume)[0];
         if (this.current !== retained) this.release(this.current);
         if (this.outgoing !== retained) this.release(this.outgoing);
@@ -160,6 +170,10 @@ export class AudioPlayback {
 
     private canPlay(): boolean {
         return !this.destroyed && !this.controls.paused && !this.controls.stopped;
+    }
+
+    private isAudible(slot: Slot): boolean {
+        return this.canPlay() && !slot.media.paused && !slot.pending && !slot.failed && !slot.ended;
     }
 
     private suspend(): void {

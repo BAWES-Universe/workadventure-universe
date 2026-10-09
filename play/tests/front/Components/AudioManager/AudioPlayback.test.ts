@@ -132,6 +132,50 @@ describe("native audio playback", () => {
         expect(media[1].volume).toBeCloseTo(0.4);
     });
 
+    it("fades a source back up from where it is when returning to it mid-fade", async () => {
+        player.setSource(source("a"));
+        await flush();
+        player.setSource(source("b"));
+        await flush();
+        vi.advanceTimersByTime(400);
+        const fadedOut = media[0].volume;
+        expect(fadedOut).toBeLessThan(0.8);
+        player.setSource(source("a"));
+        await flush();
+        // Same element, not reloaded or restarted, and no third element.
+        expect(media).toHaveLength(2);
+        expect(media[0].src).toBe("a");
+        expect(media[0].load).toHaveBeenCalledTimes(1);
+        expect(media[0].play).toHaveBeenCalledTimes(1);
+        expect(media[0].paused).toBe(false);
+        expect(state).toHaveBeenLastCalledWith("playing");
+        vi.advanceTimersByTime(800);
+        expect(media[0].volume).toBeGreaterThan(fadedOut);
+        vi.advanceTimersByTime(1000);
+        expect(media[0].volume).toBeCloseTo(0.8);
+        expect(media[1].src).toBe("");
+        expect(media[1].paused).toBe(true);
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("loads a source fresh when returning to it after its fade finished", async () => {
+        player.setSource(source("a"));
+        await flush();
+        player.setSource(source("b"));
+        await flush();
+        vi.advanceTimersByTime(1800);
+        expect(media[0].src).toBe("");
+        player.setSource(source("a"));
+        await flush();
+        expect(media[0].src).toBe("a");
+        expect(media[0].load).toHaveBeenCalledTimes(3);
+        expect(media[0].play).toHaveBeenCalledTimes(2);
+        expect(media[0].volume).toBe(0);
+        vi.advanceTimersByTime(1800);
+        expect(media[0].volume).toBeCloseTo(0.8);
+        expect(media[1].src).toBe("");
+    });
+
     it("bounds rapid changes to two live elements, canceling previous fades", async () => {
         player.setSource(source("a"));
         await flush();
