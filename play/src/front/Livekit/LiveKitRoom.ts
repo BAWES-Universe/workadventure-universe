@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { MapStore } from "@workadventure/store-utils";
-import type { Participant, LocalParticipant } from "livekit-client";
+import type { Participant, LocalParticipant, LocalTrackPublication } from "livekit-client";
 import { VideoPresets, Room, RoomEvent, LocalVideoTrack, LocalAudioTrack, Track } from "livekit-client";
 import type { Readable, Unsubscriber } from "svelte/store";
 import { get } from "svelte/store";
@@ -460,6 +460,30 @@ export class LiveKitRoom implements LiveKitRoomInterface {
         }
     };
 
+    /**
+     * The media server took one of our tracks away (it does so when we may no longer send, for instance after being
+     * moved back to the audience). Such a track cannot be sent again, so it is forgotten here: when we may send
+     * again, the camera, microphone or screen share is published as a new track instead of reusing this one.
+     */
+    private readonly handleLocalTrackUnpublished = (publication: LocalTrackPublication): void => {
+        switch (publication.source) {
+            case Track.Source.Camera:
+                this.localCameraTrack = undefined;
+                break;
+            case Track.Source.Microphone:
+                this.localMicrophoneTrack = undefined;
+                break;
+            case Track.Source.ScreenShare:
+                this.localScreenSharingVideoTrack = undefined;
+                break;
+            case Track.Source.ScreenShareAudio:
+                this.localScreenSharingAudioTrack = undefined;
+                break;
+            default:
+                break;
+        }
+    };
+
     private async unpublishAllScreenShareTrack() {
         if (!this.localParticipant) {
             console.error("Local participant not found");
@@ -538,6 +562,7 @@ export class LiveKitRoom implements LiveKitRoomInterface {
         this.room.on(RoomEvent.ParticipantDisconnected, this.handleParticipantDisconnected.bind(this));
         this.room.on(RoomEvent.ActiveSpeakersChanged, this.handleActiveSpeakersChanged.bind(this));
         this.room.on(RoomEvent.ParticipantPermissionsChanged, this.handleParticipantPermissionsChanged);
+        this.room.on(RoomEvent.LocalTrackUnpublished, this.handleLocalTrackUnpublished);
     }
 
     private parseParticipantMetadata(participant: Participant): ParticipantMetadata {
@@ -716,6 +741,7 @@ export class LiveKitRoom implements LiveKitRoomInterface {
             this.room?.off(RoomEvent.ParticipantDisconnected, this.handleParticipantDisconnected.bind(this));
             this.room?.off(RoomEvent.ActiveSpeakersChanged, this.handleActiveSpeakersChanged.bind(this));
             this.room?.off(RoomEvent.ParticipantPermissionsChanged, this.handleParticipantPermissionsChanged);
+            this.room?.off(RoomEvent.LocalTrackUnpublished, this.handleLocalTrackUnpublished);
 
             this.leaveRoom();
         } finally {
