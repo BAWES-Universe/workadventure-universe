@@ -1,8 +1,8 @@
 <script lang="ts">
     import { fly } from "svelte/transition";
     import { LL } from "../../../i18n/i18n-svelte";
-    import { IconMute } from "@wa-icons";
     import { modalFullScreenStore, modalIframeStore, modalVisibilityStore } from "../../Stores/ModalStore";
+    import { IconMute } from "@wa-icons";
 
     /** Where the bar is: "above" it on phones (bar at the bottom), "below" it elsewhere (bar at the top). */
     export let placement: "above" | "below";
