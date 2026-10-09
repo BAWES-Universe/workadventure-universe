@@ -4,6 +4,14 @@ export const chatZoneLiveStore = writable(false);
 export const chatVisibilityStore = writable(false);
 export const chatInputFocusStore = writable(false);
 
+/** When something last asked the chat message box to take the cursor (0 for never). Only a recent ask is honoured. */
+export const chatComposerFocusRequestStore = writable(0);
+export const CHAT_COMPOSER_FOCUS_REQUEST_TTL_MS = 3000;
+
+export function requestChatComposerFocus(): void {
+    chatComposerFocusRequestStore.set(Date.now());
+}
+
 // Call "forceRefresh" to force the refresh of the chat iframe.
 function createForceRefreshChatStore() {
     const { subscribe, update } = writable({});
