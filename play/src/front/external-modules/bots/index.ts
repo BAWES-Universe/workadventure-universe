@@ -824,8 +824,8 @@ function notifyRoomEnterForAllUsers(options: ExtensionModuleOptions) {
         console.log(`[Bot Extension] Notifying room enter for: ${options.roomId}`);
         botApiService
             .notifyRoomEnter(options.roomId)
-            .then((result) => {
-                console.log(`[Bot Extension] Room enter notified, ${result.botsSpawned} bots spawned`);
+            .then(() => {
+                console.log("[Bot Extension] Room enter notified");
                 // After bots spawn, try to register summon buttons
                 // Give it a moment for bots to appear in the game scene
                 setTimeout(() => {
