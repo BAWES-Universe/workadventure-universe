@@ -327,10 +327,11 @@ export class SocketManager implements ZoneEventListener {
                             socketData.userId = message.message.roomJoinedMessage.currentUserId;
                             socketData.spaceUserId =
                                 socketData.roomId + "_" + message.message.roomJoinedMessage.currentUserId;
-                            setMegaphoneSettings(
-                                socketData,
-                                withAreaSpaceRights(message.message.roomJoinedMessage.megaphoneSettings)
+                            // The browser gets the same settings the pusher keeps, so it never leaves a space the pusher allows
+                            message.message.roomJoinedMessage.megaphoneSettings = withAreaSpaceRights(
+                                message.message.roomJoinedMessage.megaphoneSettings
                             );
+                            setMegaphoneSettings(socketData, message.message.roomJoinedMessage.megaphoneSettings);
 
                             // If this is the first message sent, send back the viewport.
                             this.handleViewport(client, viewport);
@@ -355,10 +356,10 @@ export class SocketManager implements ZoneEventListener {
                             // The back sends each user's broadcast channels again when the room's settings change
                             for (const subMessage of message.message.batchMessage.payload) {
                                 if (subMessage.message?.$case === "megaphoneSettingsMessage") {
-                                    setMegaphoneSettings(
-                                        socketData,
-                                        withAreaSpaceRights(subMessage.message.megaphoneSettingsMessage)
+                                    subMessage.message.megaphoneSettingsMessage = withAreaSpaceRights(
+                                        subMessage.message.megaphoneSettingsMessage
                                     );
+                                    setMegaphoneSettings(socketData, subMessage.message.megaphoneSettingsMessage);
                                     this.leaveAreaSpacesNoLongerAllowed(client);
                                 }
                             }
@@ -2006,7 +2007,7 @@ export class SocketManager implements ZoneEventListener {
 
 // Verify that the domain of the url in parameter is in the white list of embeddable domains defined in the .env file (EMBEDDED_DOMAINS_WHITELIST)
 /** The back's broadcast settings, without the list of refused meeting rooms when ENFORCE_AREA_SPACE_RIGHTS is off. */
-function withAreaSpaceRights<
+export function withAreaSpaceRights<
     T extends { refusedAreaSpaces?: string[]; listenOnlyAreaSpaces?: string[]; areaSpacesUnknown?: boolean } | undefined
 >(settings: T): T {
     if (ENFORCE_AREA_SPACE_RIGHTS || settings === undefined) {
