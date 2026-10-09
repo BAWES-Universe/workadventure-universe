@@ -169,7 +169,7 @@
         <div
             bind:this={popoversElement}
             role="menu"
-            class="wa-dropdown-menu z-10 mr-1 fixed rounded-xl p-1 shadow-2xl bg-contrast/95 border border-white/10 backdrop-blur"
+            class="wa-dropdown-menu z-40 mr-1 fixed rounded-xl p-1 shadow-2xl bg-contrast/95 border border-white/10 backdrop-blur"
         >
             {#each extraActions as action (action.label)}
                 <!-- svelte-ignore a11y-click-events-have-key-events -->

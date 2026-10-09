@@ -12,9 +12,11 @@
     import { analyticsClient } from "../../../../Administration/AnalyticsClient";
     import { gameSceneIsLoadedStore } from "../../../../Stores/GameSceneStore";
     import { friendsEnabledStore, relationshipsStore } from "../../../Stores/FriendsStore";
+    import { invitesEnabledStore } from "../../../Stores/RingStore";
     import { runFriendAction } from "../../UserList/FriendActions";
     import RingButton from "../../UserList/RingButton.svelte";
     import { localUserStore } from "../../../../Connection/LocalUserStore";
+    import { blackListManager } from "../../../../WebRtc/BlackListManager";
     import {
         IconCheck,
         IconCopy,
@@ -235,6 +237,15 @@
                                 ? $LL.chat.friends.accept()
                                 : $LL.chat.friends.addFriend()}
                         </button>
+                    {/if}
+                    {#if relationship !== "friends" && relationship !== "blocked_by_me" && relationship !== "blocked_by_them" && !blackListManager.isBlackListed(person.uuid) && $invitesEnabledStore}
+                        <RingButton
+                            uuid={person.uuid}
+                            name={person.name}
+                            status={undefined}
+                            variant="pill"
+                            testId="proximityInvite"
+                        />
                     {/if}
                 </div>
             {/each}

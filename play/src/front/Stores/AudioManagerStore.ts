@@ -1,6 +1,8 @@
 import type { Writable } from "svelte/store";
-import { get, writable } from "svelte/store";
+import { derived, writable } from "svelte/store";
 import { Subject } from "rxjs";
+import type { AudioSource } from "../Components/AudioManager/AudioPlayback";
+import { clampAudioVolume } from "../Components/AudioManager/AudioPlayback";
 import { localUserStore } from "../Connection/LocalUserStore";
 import { videoStreamElementsStore } from "./PeerStore";
 import { activeSecondaryZoneActionBarStore } from "./MenuStore";
@@ -9,8 +11,6 @@ export interface AudioManagerVolume {
     muted: boolean;
     volume: number;
     decreaseWhileTalking: boolean;
-    volumeReduced: boolean;
-    loop: boolean;
     talking: boolean;
     paused: boolean;
     stopped: boolean;
@@ -18,11 +18,9 @@ export interface AudioManagerVolume {
 
 function createAudioManagerVolumeStore() {
     const { subscribe, update } = writable<AudioManagerVolume>({
-        muted: false,
-        volume: 1,
+        muted: localUserStore.getAudioPlayerMuted(),
+        volume: clampAudioVolume(localUserStore.getAudioPlayerVolume()),
         decreaseWhileTalking: true,
-        volumeReduced: false,
-        loop: false,
         talking: false,
         paused: false,
         stopped: false,
@@ -38,25 +36,13 @@ function createAudioManagerVolumeStore() {
         },
         setVolume: (newVolume: number): void => {
             update((audioPlayerVolume: AudioManagerVolume) => {
-                audioPlayerVolume.volume = newVolume;
+                audioPlayerVolume.volume = clampAudioVolume(newVolume);
                 return audioPlayerVolume;
             });
         },
         setDecreaseWhileTalking: (newDecrease: boolean): void => {
             update((audioManagerVolume: AudioManagerVolume) => {
                 audioManagerVolume.decreaseWhileTalking = newDecrease;
-                return audioManagerVolume;
-            });
-        },
-        setVolumeReduced: (newVolumeReduced: boolean): void => {
-            update((audioManagerVolume: AudioManagerVolume) => {
-                audioManagerVolume.volumeReduced = newVolumeReduced;
-                return audioManagerVolume;
-            });
-        },
-        setLoop: (newLoop: boolean): void => {
-            update((audioManagerVolume: AudioManagerVolume) => {
-                audioManagerVolume.loop = newLoop;
                 return audioManagerVolume;
             });
         },
@@ -84,33 +70,28 @@ function createAudioManagerVolumeStore() {
     };
 }
 
+// Source metadata is atomic and separate from the user's persisted master controls.
+const audioSource = writable<AudioSource | undefined>(undefined);
+export const audioManagerSourceStore = { subscribe: audioSource.subscribe };
+
 function createAudioManagerFileStore() {
-    const { subscribe, update } = writable<string>("");
-
+    const file = derived(audioSource, (source) => source?.url ?? "");
     return {
-        subscribe,
+        subscribe: file.subscribe,
         playAudio: (url: string | number | boolean, mapUrl: string, volume: number | undefined, loop = false): void => {
-            update((file: string) => {
-                const audioPath = String(url);
-
-                file = new URL(audioPath, mapUrl).toString();
-
-                audioManagerVolumeStore.setVolume(
-                    volume ? Math.min(volume, get(audioManagerVolumeStore).volume) : get(audioManagerVolumeStore).volume
-                );
-                audioManagerVolumeStore.setLoop(loop);
-                audioManagerVolumeStore.setMuted(false);
-                audioManagerVolumeStore.stopSound(false);
-                return file;
-            });
+            audioSource.set({ url: new URL(String(url), mapUrl).toString(), volume: clampAudioVolume(volume), loop });
+            // Stop is a one-shot action: a new explicit source may start, as before. Pause and mute persist.
+            audioManagerVolumeStore.stopSound(false);
         },
-        unloadAudio: () => {
-            update(() => {
-                audioManagerVolumeStore.setLoop(false);
-                audioManagerVolumeStore.setMuted(true);
-                activeSecondaryZoneActionBarStore.set(undefined);
-                return "";
-            });
+        setVolume: (volume: number | undefined): void => {
+            audioSource.update((source) => source && { ...source, volume: clampAudioVolume(volume) });
+        },
+        setLoop: (loop: boolean): void => {
+            audioSource.update((source) => source && { ...source, loop });
+        },
+        unloadAudio: (): void => {
+            audioSource.set(undefined);
+            activeSecondaryZoneActionBarStore.set(undefined);
         },
     };
 }

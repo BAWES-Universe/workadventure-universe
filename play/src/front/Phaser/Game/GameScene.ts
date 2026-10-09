@@ -2023,7 +2023,7 @@ export class GameScene extends DirtyScene {
                 this.chatIdProofSent = undefined;
                 exploreStore.load(this.connection);
                 friendsStore.attach(this.connection, localUserStore.isLogged());
-                ringStore.attach(this.connection, localUserStore.isLogged());
+                ringStore.attach(this.connection);
 
                 // Initialize TURN credentials manager
                 iceServersManager.init(this.connection, this.abortController.signal);
