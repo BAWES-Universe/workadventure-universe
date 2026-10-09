@@ -24,6 +24,16 @@ describe('extractChatLinks', () => {
         ]);
     });
 
+    it("knows every country's ending, and takes word-like ones only after www.", () => {
+        expect(extractChatLinks('play at workadventu.re or www.workadventu.re/about', 10)).toEqual([
+            'https://workadventu.re',
+            'https://www.workadventu.re/about',
+        ]);
+        expect(extractChatLinks('see bbc.co.uk', 10)).toEqual(['https://bbc.co.uk']);
+        expect(extractChatLinks('go.it at 10.am, readme.md and main.py, user.id', 10)).toEqual([]);
+        expect(extractChatLinks('www.bawes.me', 10)).toEqual(['https://www.bawes.me']);
+    });
+
     it('does not treat file names, code, e-mails or words as sites', () => {
         expect(extractChatLinks('edit index.ts and node.js, see readme.md', 10)).toEqual([]);
         expect(extractChatLinks('mail me at khalid@bawes.net', 10)).toEqual([]);
