@@ -1,0 +1,21 @@
+{
+  "private": true,
+  "name": "universe-safety-net",
+  "version": "1.0.0",
+  "description": "Checks every action on the master checklist, as a phone and a desktop, against a local build of the game",
+  "type": "module",
+  "scripts": {
+    "stack": "bash stack/stack.sh",
+    "test": "playwright test",
+    "test:phone": "playwright test --project=phone",
+    "test:desktop": "playwright test --project=desktop",
+    "report": "node report.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1",
+    "@types/node": "^22.20.5",
+    "http-proxy": "1.18.1",
+    "http-server": "14.1.1",
+    "typescript": "^5.8.3"
+  }
+}

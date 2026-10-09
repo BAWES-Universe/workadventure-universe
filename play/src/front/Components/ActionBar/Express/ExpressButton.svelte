@@ -3,7 +3,7 @@
     import { clickOutside } from "svelte-outside";
     import { hideActionBarStoreBecauseOfChatBar } from "../../../Chat/ChatSidebarWidthStore";
     import { highlightFullScreen } from "../../../Stores/ActionsCamStore";
-    import { mapEditorModeStore } from "../../../Stores/MapEditorStore";
+    import { mapEditorToolbarInUseStore } from "../../../Stores/MapEditorStore";
     import { emoteDataStore, emotePlayedStore } from "../../../Stores/EmoteStore";
     import { expressTrayStore } from "../../../Stores/ExpressStore";
     import { connectionManager } from "../../../Connection/ConnectionManager";
@@ -19,8 +19,9 @@
     let button: HTMLButtonElement;
 
     // Hidden when the chat covers the game (phones: the action bar hides too), a video is full screen,
-    // or the map editor is in use. With the chat open beside the game on a desktop, it stays.
-    $: visible = !$hideActionBarStoreBecauseOfChatBar && !$highlightFullScreen && !$mapEditorModeStore;
+    // or the map editor's toolbar is in use ("Look around the map" keeps it). With the chat open beside the game on
+    // a desktop, it stays.
+    $: visible = !$hideActionBarStoreBecauseOfChatBar && !$highlightFullScreen && !$mapEditorToolbarInUseStore;
     // The tray only shows while the button does, whatever the store says.
     $: open = visible && $expressTrayStore !== "closed";
     // Close the store once the button hides. Deferred to after this update: setting the store while Svelte is
@@ -174,7 +175,7 @@
         <button
             bind:this={button}
             type="button"
-            class="express-button relative m-0 flex h-16 w-16 sm:h-14 sm:w-14 xl:h-16 xl:w-16 items-center justify-center rounded-lg p-0"
+            class="express-button relative m-0 flex h-16 w-16 sm:h-14 sm:w-14 xl:h-16 xl:w-16 items-center justify-center rounded-full p-0"
             class:is-open={open}
             class:pulse
             aria-label={open ? $LL.say.express.close() : $LL.say.express.button()}
@@ -182,6 +183,7 @@
             aria-haspopup="dialog"
             title={open || finePointer ? undefined : $LL.say.express.button()}
             data-testid="express-button"
+            data-opens-express
             aria-describedby={hintVisible ? "express-shortcuts" : undefined}
             use:longpress={openEditing}
             on:click|stopPropagation={toggle}
@@ -262,23 +264,35 @@
         }
     }
 
+    /* The same ink and edge as the action bar's pills, as a circle, with the aurora around it. */
     .express-button {
         -webkit-touch-callout: none;
         -webkit-user-select: none;
         user-select: none;
-        background: rgba(27, 42, 65, 0.8);
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
+        background: var(--u-surface-bg);
+        backdrop-filter: blur(18px) saturate(140%);
+        -webkit-backdrop-filter: blur(18px) saturate(140%);
         cursor: pointer;
         isolation: isolate;
-        box-shadow: 0 0 14px -2px rgba(134, 41, 252, 0.3);
+        box-shadow: 0 1px 0 rgba(255, 255, 255, 0.08) inset, 0 0 0 1px var(--u-surface-edge),
+            0 0 14px -2px rgba(134, 41, 252, 0.3);
         transition: transform 180ms cubic-bezier(0.34, 1.56, 0.64, 1), background 150ms ease, box-shadow 200ms ease;
         -webkit-tap-highlight-color: transparent;
     }
+    .express-button:hover {
+        filter: none;
+    }
     .express-button:hover,
     .express-button.is-open {
-        background: rgba(27, 42, 65, 0.95);
-        box-shadow: 0 0 18px -2px rgba(134, 41, 252, 0.42);
+        box-shadow: 0 1px 0 rgba(255, 255, 255, 0.08) inset, 0 0 0 1px rgba(167, 139, 250, 0.3),
+            0 0 18px -2px rgba(134, 41, 252, 0.42);
+    }
+    /* Touch: 64px like the other controls, whatever the width. */
+    @media (pointer: coarse) {
+        .express-button.express-button {
+            height: 4rem;
+            width: 4rem;
+        }
     }
     .express-button:active {
         transform: scale(0.9);

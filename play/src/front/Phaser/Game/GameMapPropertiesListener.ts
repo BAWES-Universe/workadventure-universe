@@ -5,6 +5,7 @@ import type { AreaData, AreaDataProperties } from "@workadventure/map-editor";
 import { GameMapProperties } from "@workadventure/map-editor";
 import { Jitsi } from "@workadventure/shared-utils";
 import { getSpeakerMegaphoneAreaName } from "@workadventure/map-editor/src/Utils";
+import { areaSpaceName } from "@workadventure/shared-utils/src/Space/areaSpaceName";
 import { z } from "zod";
 import { scriptUtils } from "../../Api/ScriptUtils";
 import { coWebsites } from "../../Stores/CoWebsiteStore";
@@ -405,8 +406,33 @@ export class GameMapPropertiesListener {
             }
         });
 
+        this.gameMapFrontWrapper.onPropertyChange(GameMapProperties.AUDIO_VOLUME, (newValue, oldValue, allProps) => {
+            const url = allProps.get(GameMapProperties.PLAY_AUDIO);
+            if (
+                !localUserStore.getBlockAudio() &&
+                url !== undefined &&
+                get(audioManagerFileStore) === new URL(String(url), this.scene.getMapUrl()).toString()
+            ) {
+                audioManagerFileStore.setVolume(newValue as number | undefined);
+            }
+        });
+        this.gameMapFrontWrapper.onPropertyChange(GameMapProperties.AUDIO_LOOP, (newValue, oldValue, allProps) => {
+            const url = allProps.get(GameMapProperties.PLAY_AUDIO);
+            if (
+                !localUserStore.getBlockAudio() &&
+                url !== undefined &&
+                get(audioManagerFileStore) === new URL(String(url), this.scene.getMapUrl()).toString()
+            ) {
+                audioManagerFileStore.setLoop(newValue === true);
+            }
+        });
+
         // TODO: This legacy property should be removed at some point
         this.gameMapFrontWrapper.onPropertyChange(GameMapProperties.PLAY_AUDIO_LOOP, (newValue) => {
+            if (localUserStore.getBlockAudio()) {
+                audioManagerVisibilityStore.set(newValue === undefined ? "hidden" : "disabledBySettings");
+                return;
+            }
             if (newValue !== undefined) {
                 audioManagerFileStore.playAudio(newValue, this.scene.getMapUrl(), undefined, true);
                 // FIXME: maybe we can switch to "visible" only when the sound actually starts playing?
@@ -737,7 +763,10 @@ export class GameMapPropertiesListener {
                 "handleSpeakerMegaphonePropertiesOnEnter => joinSpace => speakerZone.value : ",
                 speakerZone.value
             );
-            const space = await this.scene.broadcastService.joinSpace(speakerZone.value, abortSignal);
+            const space = await this.scene.broadcastService.joinSpace(
+                areaSpaceName(speakerZone.value, this.scene.roomUrl),
+                abortSignal
+            );
             currentLiveStreamingSpaceStore.set(space);
         }
     }
@@ -750,7 +779,7 @@ export class GameMapPropertiesListener {
         if (speakerZone && speakerZone.type === "string" && speakerZone.value !== undefined) {
             isSpeakerStore.set(false);
             currentLiveStreamingSpaceStore.set(undefined);
-            this.scene.broadcastService.leaveSpace(speakerZone.value).catch((e) => {
+            this.scene.broadcastService.leaveSpace(areaSpaceName(speakerZone.value, this.scene.roomUrl)).catch((e) => {
                 console.error("Error while leaving space", e);
                 Sentry.captureException(e);
             });
@@ -778,7 +807,10 @@ export class GameMapPropertiesListener {
                     "handleListenerMegaphonePropertiesOnEnter => joinSpace => speakerZoneName : ",
                     speakerZoneName
                 );
-                const space = await this.scene.broadcastService.joinSpace(speakerZoneName, abortSignal);
+                const space = await this.scene.broadcastService.joinSpace(
+                    areaSpaceName(speakerZoneName, this.scene.roomUrl),
+                    abortSignal
+                );
                 currentLiveStreamingSpaceStore.set(space);
             }
         }
@@ -798,10 +830,12 @@ export class GameMapPropertiesListener {
             );
             if (speakerZoneName) {
                 currentLiveStreamingSpaceStore.set(undefined);
-                this.scene.broadcastService.leaveSpace(speakerZoneName).catch((e) => {
-                    console.error("Error while leaving space", e);
-                    Sentry.captureException(e);
-                });
+                this.scene.broadcastService
+                    .leaveSpace(areaSpaceName(speakerZoneName, this.scene.roomUrl))
+                    .catch((e) => {
+                        console.error("Error while leaving space", e);
+                        Sentry.captureException(e);
+                    });
             }
         }
     }

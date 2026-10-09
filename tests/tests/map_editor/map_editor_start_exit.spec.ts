@@ -34,7 +34,8 @@ test.describe("Map editor @oidc @nomobile @nowebkit", () => {
 
         await Menu.openMapEditor(page);
         await MapEditor.openAreaEditor(page);
-        await AreaEditor.drawArea(page, { x: 13 * 32, y: 0 }, { x: 15 * 32, y: 2 * 32 });
+        // Clear of the editing bar, which covers the top of the small map in the middle of the screen
+        await AreaEditor.drawArea(page, { x: 13 * 32, y: 2 * 32 }, { x: 15 * 32, y: 4 * 32 });
         await AreaEditor.setAreaName(page, "MyStartZone");
         await AreaEditor.addProperty(page, "startAreaProperty");
         await Menu.closeMapEditor(page);

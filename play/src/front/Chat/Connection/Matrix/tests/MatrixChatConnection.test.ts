@@ -599,6 +599,10 @@ describe("MatrixChatConnection", () => {
             await matrixChatConnection.createDirectRoom(userId);
 
             expect(mockMatrixClient["createRoom"]).toHaveBeenCalledOnce();
+            // Both people get the same power level.
+            expect(mockMatrixClient["createRoom"]).toHaveBeenCalledWith(
+                expect.objectContaining({ preset: "trusted_private_chat", is_direct: true })
+            );
             expect(matrixChatConnection["addDMRoomInAccountData"]).toHaveBeenCalledOnce();
             //eslint-disable-next-line @typescript-eslint/unbound-method
             expect(mockMatrixClient.getRoom).toHaveBeenCalledOnce();

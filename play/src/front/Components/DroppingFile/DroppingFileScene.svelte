@@ -1,14 +1,31 @@
 <script lang="ts">
     import LL from "../../../i18n/i18n-svelte";
+    import { draggingFilePosition } from "../../Stores/FileUploadStore";
+
+    // The spot the file will land on, under the cursor. Only shown in edit mode (see FileListener).
+    const WIDTH = 168;
+    const HEIGHT = 104;
+
+    $: left = ($draggingFilePosition?.x ?? 0) - WIDTH / 2;
+    $: top = ($draggingFilePosition?.y ?? 0) - HEIGHT / 2;
 </script>
 
-<div
-    class="fixed inset-0 z-50 flex items-center justify-center transition-opacity duration-300 opacity-100 pointer-events-none bg-white/5 backdrop-blur-sm"
-    aria-hidden={true}
->
-    <div class="flex flex-col items-center justify-center text-white/90 space-y-3">
-        <p class="text-xl font-semibold text-white/80 drop-shadow-sm">
-            {$LL.mapEditor.entityEditor.drop()}
+{#if $draggingFilePosition}
+    <div
+        class="drop-target fixed z-50 pointer-events-none flex items-center justify-center text-center rounded-2xl px-3"
+        style="left: {left}px; top: {top}px; width: {WIDTH}px; height: {HEIGHT}px;"
+        aria-hidden={true}
+        data-testid="drop-file-target"
+    >
+        <p class="m-0 text-sm font-bold text-white drop-shadow-sm">
+            {$LL.mapEditor.entityEditor.dropToPlace()}
         </p>
     </div>
-</div>
+{/if}
+
+<style>
+    .drop-target {
+        border: 2px dashed #c4b5fd;
+        background: rgb(134 41 252 / 0.22);
+    }
+</style>

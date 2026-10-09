@@ -24,6 +24,10 @@ export class CloseTool implements MapEditorTool {
     public subscribeToGameMapFrontWrapperEvents(gameMapFrontWrapper: GameMapFrontWrapper): void {
         // Nothing to be done
     }
+    public canDragToLookAround(pointer: Phaser.Input.Pointer): boolean {
+        return false;
+    }
+
     public handleKeyDownEvent(event: KeyboardEvent): void {
         // Nothing to be done
     }

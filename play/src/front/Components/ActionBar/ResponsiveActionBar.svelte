@@ -4,8 +4,22 @@
     import { videoStreamElementsStore } from "../../Stores/PeerStore";
 
     import { highlightFullScreen } from "../../Stores/ActionsCamStore";
+    import { barInViewStore } from "../../Stores/BarInViewStore";
+    import { modalFullScreenStore, modalIframeStore, modalVisibilityStore } from "../../Stores/ModalStore";
+    import { openedMenuStore } from "../../Stores/MenuStore";
 
     const logger = debug("responsive-action-bar");
+
+    // On desktops a side window (Orbit) opens under the bar: the bar, and the menus that open from
+    // it, stay above the window. Maximised, the window takes the whole screen, bar included.
+    // Everywhere else, a menu opened from the bar while a window shows was opened last, so it comes in front of the
+    // window (the window stays open under it).
+    $: aboveSideWindow =
+        ($barInViewStore &&
+            $modalVisibilityStore &&
+            ($modalIframeStore?.position === "right" || $modalIframeStore?.position === "left") &&
+            !$modalFullScreenStore) ||
+        ($modalVisibilityStore && $openedMenuStore !== undefined);
 
     let centerPlusRightDiv: HTMLDivElement;
     export let rightDiv: HTMLDivElement;
@@ -77,13 +91,16 @@
 </script>
 
 <div
-    class="@container/actions w-full z-[301] transition-all pointer-events-none bp-menu {$videoStreamElementsStore.length >
-        0 && $highlightFullScreen
+    class="@container/actions w-full {aboveSideWindow
+        ? 'z-[2001]'
+        : 'z-[301]'} transition-all pointer-events-none bp-menu {$videoStreamElementsStore.length > 0 &&
+    $highlightFullScreen
         ? 'hidden'
         : ''}"
 >
     <div class="gap-1 @md/actions:gap-2 @xl/actions:gap-4 p-1 @md/actions:p-2 @xl/actions:p-4 screen-blocker">
-        <div class="w-full flex justify-between items-center" bind:offsetWidth={actionBarWidth}>
+        <!-- relative: what the overlay slot holds is placed against the whole bar, not one of its parts. -->
+        <div class="relative w-full flex justify-between items-center" bind:offsetWidth={actionBarWidth}>
             <!-- Left bar -->
             <div class="flex-1 flex">
                 <div class="flex-none" bind:offsetWidth={leftDivWidth}>
@@ -104,9 +121,11 @@
                 <div class="flex justify-end" bind:offsetWidth={centerDivWidth}>
                     <slot name="center" />
                 </div>
-                <!-- Right bar -->
+                <!-- Right bar. It clips what doesn't fit (those buttons go to the menu); the 12px of padding above,
+                     taken back by the negative margin, leaves room for a count on a button's top-left corner (Orbit's)
+                     without moving anything. -->
                 <div
-                    class="flex flex-row justify-end overflow-hidden"
+                    class="flex flex-row justify-end overflow-hidden -mt-3 pt-3"
                     class:flex-none={mode === "wide"}
                     class:flex-1={mode === "shrunk"}
                     bind:this={rightDiv}
@@ -116,6 +135,7 @@
                     </div>
                 </div>
             </div>
+            <slot name="overlay" />
         </div>
     </div>
 </div>

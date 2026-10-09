@@ -1,51 +1,61 @@
 <script lang="ts">
     import { getContext, onDestroy, onMount } from "svelte";
     import { openModal } from "svelte-modals";
-    import { get } from "svelte/store";
-    import type { Readable } from "svelte/store";
-    import { AskPositionMessage_AskType } from "@workadventure/messages";
     import type {
         ChatRoomMembershipManagement,
         ChatRoomNotificationControl,
         ChatRoomModeration,
         ChatRoom,
-        ChatUser,
     } from "../../../Connection/ChatConnection";
     import { notificationPlayingStore } from "../../../../Stores/NotificationStore";
     import LL from "../../../../../i18n/i18n-svelte";
     import ManageParticipantsModal from "../ManageParticipantsModal.svelte";
-    import { gameManager } from "../../../../Phaser/Game/GameManager";
-    import { gameSceneIsLoadedStore } from "../../../../Stores/GameSceneStore";
-    import { localUserStore } from "../../../../Connection/LocalUserStore";
-    import { analyticsClient } from "../../../../Administration/AnalyticsClient";
-    import { scriptUtils } from "../../../../Api/ScriptUtils";
-    import type { UserProviderMerger } from "../../../UserProviderMerger/UserProviderMerger";
     import type { OrderFreeze } from "../../OneList/OneListStore";
     import { ONE_LIST_FREEZE_CONTEXT } from "../../OneList/OneListStore";
     import { openChatMenuStore } from "../../../Stores/OpenChatMenuStore";
+    import { selectedRoomStore } from "../../../Stores/SelectRoomStore";
+    import { openProfileRoomIdStore } from "../../../Stores/PartnerProfileStore";
+    import { directPartnerStore } from "../DirectChat/DirectPartnerStore";
+    import { locatePartner, walkToPartner } from "../DirectChat/PartnerActions";
     import RoomOption from "./RoomOption.svelte";
-    import { IconDots, IconLogout, IconUserEdit, IconMute, IconUnMute, IconMapPin, IconWalk } from "@wa-icons";
+    import {
+        IconDots,
+        IconLogout,
+        IconUserEdit,
+        IconMute,
+        IconUnMute,
+        IconMapPin,
+        IconWalk,
+        IconTrash,
+        IconUserCircle,
+    } from "@wa-icons";
 
     export let room: ChatRoom & ChatRoomMembershipManagement & ChatRoomNotificationControl & ChatRoomModeration;
+    /** In the chat header, which is taller than a list row: the menu opens below it, clear of the status line. */
+    export let inHeader = false;
     const areNotificationsMuted = room.areNotificationsMuted;
+    const roomName = room.name;
     let optionButtonRef: HTMLButtonElement | undefined = undefined;
     let hideOptions = true;
-    let usersByRoomStore:
-        | Readable<Map<string | undefined, { roomName: string | undefined; users: ChatUser[] }>>
-        | undefined = undefined;
+    let confirmingDelete = false;
 
     const hasPermissionToInvite = room.hasPermissionTo("invite");
     const hasPermissionToKick = room.hasPermissionTo("kick");
     const hasPermissionToBan = room.hasPermissionTo("ban");
 
-    const { connection } = gameManager.getCurrentGameScene();
+    // A direct chat offers what works with that person right now: Walk to and Locate only when they can work.
+    const isDirect = room.type === "direct";
+    const partner = isDirect ? directPartnerStore(room) : undefined;
 
     // Inside the one chat list, the list holds its order still while this menu is open.
     const orderFreeze = getContext<OrderFreeze | undefined>(ONE_LIST_FREEZE_CONTEXT);
     const freezeHolder = {};
     $: orderFreeze?.setHeld(freezeHolder, !hideOptions);
+    $: if (hideOptions) confirmingDelete = false;
 
-    $: shouldDisplayManageParticipantButton = $hasPermissionToInvite || $hasPermissionToKick || $hasPermissionToBan;
+    // A direct chat always has the same two people: Participants is for groups only.
+    $: shouldDisplayManageParticipantButton =
+        !isDirect && ($hasPermissionToInvite || $hasPermissionToKick || $hasPermissionToBan);
 
     // Opening another chat menu closes this one.
     const unsubscribeOpenMenu = openChatMenuStore.subscribe((openMenu) => {
@@ -54,15 +64,6 @@
 
     onMount(() => {
         document.addEventListener("click", closeRoomOptionsOnClickOutside);
-        // Initialize usersByRoomStore
-        gameManager
-            .getCurrentGameScene()
-            .userProviderMerger.then((merger: UserProviderMerger) => {
-                usersByRoomStore = merger.usersByRoomStore;
-            })
-            .catch((error) => {
-                console.error("Failed to get users by room store : ", error);
-            });
     });
 
     onDestroy(() => {
@@ -91,9 +92,13 @@
 
     function closeMenuAndLeaveRoom() {
         toggleRoomOptions();
+        const notification = isDirect
+            ? $LL.chat.directChat.deleteChat.notification()
+            : $LL.chat.roomMenu.leaveRoom.notification();
         room.leaveRoom()
             .then(() => {
-                notificationPlayingStore.playNotification($LL.chat.roomMenu.leaveRoom.notification());
+                if ($selectedRoomStore?.id === room.id) selectedRoomStore.set(undefined);
+                notificationPlayingStore.playNotification(notification);
             })
             .catch(() => console.error("Failed to leave room"));
     }
@@ -115,79 +120,20 @@
         });
     }
 
-    $: members = get(room.members);
-    $: usersByRoomMap = usersByRoomStore && $usersByRoomStore ? $usersByRoomStore : new Map();
-
-    // Flatten usersByRoomMap into a list of users with playUri from their room
-    $: usersWithRoomPlayUri = (() => {
-        const usersList: (ChatUser & { playUri: string })[] = [];
-        for (const [playUri, roomData] of usersByRoomMap.entries()) {
-            for (const user of roomData.users) {
-                usersList.push({
-                    ...user,
-                    playUri: playUri ?? user.playUri ?? "",
-                });
-            }
-        }
-        return usersList;
-    })();
-
-    // Get the matrix chat user from the room
-    $: matrixChatUser = (() => {
-        if (room.type !== "direct") return undefined;
-        // get the user from the room
-        const users = members;
-
-        // Get user id from local user store
-        const localUserChatId = localUserStore.getChatId();
-        // Find the user that no match with my chat id
-        return users.find((u) => u.id !== localUserChatId);
-    })();
-
-    // During a reconnect there is no map for a moment: not "the same map" then (asking would throw), checked again
-    // once the map is back.
-    $: isInTheSameMap = isOnCurrentMap(chatUser?.playUri, $gameSceneIsLoadedStore);
-    function isOnCurrentMap(playUri: string | undefined, _mapLoaded: boolean): boolean {
-        const currentRoomUrl = gameManager.tryGetCurrentGameScene()?.roomUrl;
-        return currentRoomUrl !== undefined && playUri === currentRoomUrl;
-    }
-    $: chatUser = usersWithRoomPlayUri.find((u) => u.chatId === matrixChatUser?.id);
-
-    function locateUser() {
-        if (chatUser == undefined || chatUser.uuid == undefined) return;
-        // Track the open woka menu action
-        analyticsClient.openWokaMenu();
-
-        const currentScerne = gameManager.getCurrentGameScene();
-
-        // Il user is in view port and represented by remote player, use it to activate the woka menu
-        const remotePlayerData = currentScerne.getRemotePlayersRepository().getPlayerByUuid(chatUser.uuid);
-        if (remotePlayerData != undefined) {
-            // Get the actual RemotePlayer sprite from MapPlayersByKey using userId
-            const remotePlayer = currentScerne.MapPlayersByKey.get(remotePlayerData.userId);
-            if (remotePlayer != undefined) {
-                remotePlayer.showCard();
-                toggleRoomOptions();
-                return;
-            }
-        }
-
-        // If the user isn't in the view port, emit the ask position message to the server
-        connection?.emitAskPosition(chatUser.uuid ?? "", chatUser.playUri ?? "", AskPositionMessage_AskType.LOCATE);
+    function walkTo() {
+        if ($partner) walkToPartner($partner);
         toggleRoomOptions();
     }
 
-    function talkToUser() {
-        if (chatUser == undefined) return;
-        // Track the talk to user action
-        analyticsClient.goToUser();
-
-        if (isInTheSameMap) {
-            connection?.emitAskPosition(chatUser.uuid ?? "", chatUser.playUri ?? "");
-        } else {
-            scriptUtils.goToPage(`${chatUser.playUri}#moveToUser=${chatUser.uuid}`);
-        }
+    function locate() {
+        if ($partner) locatePartner($partner, $roomName);
         toggleRoomOptions();
+    }
+
+    function viewProfile() {
+        toggleRoomOptions();
+        selectedRoomStore.set(room);
+        openProfileRoomIdStore.set(room.id);
     }
 </script>
 
@@ -195,31 +141,30 @@
     data-testid="toggleRoomMenu"
     bind:this={optionButtonRef}
     on:click|preventDefault|stopPropagation={toggleRoomOptions}
-    class="m-0 p-0 flex items-center justify-center h-7 w-7 hover:bg-white/10 rounded"
+    class="m-0 p-0 flex items-center justify-center h-7 w-7 text-white hover:bg-white/10 rounded"
 >
     <IconDots font-size="16" />
 </button>
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div
-    on:mouseleave={toggleRoomOptions}
-    class="bg-contrast/50 backdrop-blur-md rounded-md overflow-hidden z-[99] w-max end-2 top-10 p-1"
+    on:mouseleave={() => (hideOptions = true)}
+    class="u-surface rounded-2xl overflow-hidden z-[99] w-max min-w-48 end-2 p-1 {inHeader ? 'top-14' : 'top-10'}"
     class:absolute={optionButtonRef !== undefined}
     class:hidden={hideOptions}
+    data-testid="roomMenu"
 >
-    {#if room.type === "direct"}
-        <!-- Create Room Option to talk to the user -->
+    {#if isDirect}
+        {#if $partner?.actions.walkTo}
+            <RoomOption IconComponent={IconWalk} title={$LL.chat.userList.walkTo()} on:click={walkTo} />
+        {/if}
+        {#if $partner?.actions.locate}
+            <RoomOption IconComponent={IconMapPin} title={$LL.chat.userList.follow()} on:click={locate} />
+        {/if}
         <RoomOption
-            IconComponent={IconWalk}
-            title={$LL.chat.userList.walkTo()}
-            on:click={talkToUser}
-            disabled={chatUser == undefined || chatUser.uuid == undefined}
-        />
-        <!-- Create Room Option to locate to the user -->
-        <RoomOption
-            IconComponent={IconMapPin}
-            title={$LL.chat.userList.follow()}
-            on:click={locateUser}
-            disabled={chatUser == undefined || isInTheSameMap == false}
+            dataTestId="viewProfileOption"
+            IconComponent={IconUserCircle}
+            title={$LL.chat.userList.viewProfile()}
+            on:click={viewProfile}
         />
     {/if}
     {#if shouldDisplayManageParticipantButton}
@@ -233,14 +178,55 @@
 
     <RoomOption
         IconComponent={$areNotificationsMuted ? IconUnMute : IconMute}
-        title={$areNotificationsMuted ? $LL.chat.roomMenu.unmuteRoom() : $LL.chat.roomMenu.muteRoom()}
+        title={isDirect
+            ? $areNotificationsMuted
+                ? $LL.chat.directChat.unmuteNotifications()
+                : $LL.chat.directChat.muteNotifications()
+            : $areNotificationsMuted
+            ? $LL.chat.roomMenu.unmuteRoom()
+            : $LL.chat.roomMenu.muteRoom()}
         on:click={closeMenuAndSetMuteStatus}
     />
 
-    <RoomOption
-        IconComponent={IconLogout}
-        title={$LL.chat.roomMenu.leaveRoom.label()}
-        bg="bg-danger-900 hover:bg-danger"
-        on:click={closeMenuAndLeaveRoom}
-    />
+    {#if isDirect}
+        <div class="u-menu-divider" />
+        {#if confirmingDelete}
+            <div class="flex flex-col gap-2 p-2 text-sm" data-testid="deleteChatConfirm">
+                <span class="font-bold">{$LL.chat.directChat.deleteChat.confirm()}</span>
+                <span class="max-w-56 text-xs text-white/60"
+                    >{$LL.chat.directChat.deleteChat.hint({ name: $roomName })}</span
+                >
+                <div class="flex gap-2">
+                    <button
+                        type="button"
+                        class="m-0 flex-1 rounded bg-white/10 px-2 py-1.5 text-sm text-white [font-family:inherit] hover:bg-white/20"
+                        on:click|stopPropagation={() => (confirmingDelete = false)}
+                        >{$LL.chat.directChat.deleteChat.cancel()}</button
+                    >
+                    <button
+                        type="button"
+                        class="m-0 flex-1 rounded bg-danger-900 px-2 py-1.5 text-sm font-bold text-white [font-family:inherit] hover:bg-danger"
+                        data-testid="deleteChatConfirmButton"
+                        on:click|stopPropagation={closeMenuAndLeaveRoom}
+                        >{$LL.chat.directChat.deleteChat.confirmButton()}</button
+                    >
+                </div>
+            </div>
+        {:else}
+            <RoomOption
+                dataTestId="deleteChatOption"
+                IconComponent={IconTrash}
+                title={$LL.chat.directChat.deleteChat.label()}
+                bg="u-danger"
+                on:click={() => (confirmingDelete = true)}
+            />
+        {/if}
+    {:else}
+        <RoomOption
+            IconComponent={IconLogout}
+            title={$LL.chat.roomMenu.leaveRoom.label()}
+            bg="bg-danger-900 hover:bg-danger"
+            on:click={closeMenuAndLeaveRoom}
+        />
+    {/if}
 </div>

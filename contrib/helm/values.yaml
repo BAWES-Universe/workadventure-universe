@@ -160,7 +160,7 @@ play:
     ENABLE_REPORT_ISSUES_MENU: "false"
     #GRPC_VERBOSITY: DEBUG
     #GRPC_TRACE: all
-    MAX_USERNAME_LENGTH: 10
+    MAX_USERNAME_LENGTH: 32
     DISABLE_ANONYMOUS: "false"
     DISABLE_NOTIFICATIONS: "false"
     # Use STARTUP_COMMAND to execute a command when the container starts.

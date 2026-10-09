@@ -3,13 +3,13 @@ import type { DeepPartial } from "../DeepPartial";
 
 const actionbar: DeepPartial<Translation["actionbar"]> = {
     camera: {
-        disabled: "Kamera stoppen",
-        activate: "Kamera starten",
+        disabled: "Deine Kamera ist aus",
+        activate: "Kamera einschalten",
         noDevices: "Kein Kameragerät gefunden",
     },
     microphone: {
-        disabled: "Mikrofon einschalten",
-        activate: "Mikrofon stummschalten",
+        disabled: "Dein Mikrofon ist aus",
+        activate: "Mikrofon einschalten",
         noDevices: "Kein Mikrofon gefunden",
     },
     speaker: {

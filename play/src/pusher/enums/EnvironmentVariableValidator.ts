@@ -287,8 +287,8 @@ export const EnvironmentVariables = z.object({
         .transform((val) => toBool(val, false))
         .describe("If true, Jitsi rooms are private and require authentication. Defaults to false"),
     MAX_USERNAME_LENGTH: PositiveIntAsString.optional()
-        .transform((val) => toNumber(val, 10))
-        .describe("Maximum allowed length for usernames. Defaults to 10"),
+        .transform((val) => toNumber(val, 32))
+        .describe("Maximum allowed length for usernames. Defaults to 32 (full names from sign-in fit)"),
     MAX_PER_GROUP: PositiveIntAsString.optional()
         .transform((val) => toNumber(val, 4))
         .describe("Maximum number of users in a bubble/group. Defaults to 4"),
@@ -438,12 +438,6 @@ export const EnvironmentVariables = z.object({
         .or(z.string().max(0))
         .transform((val) => toNumber(val, 20 * 1024 * 1024)) // Default to 20 MB
         .describe("The maximum size of a gRPC message. Defaults to 20 MB."),
-    BACKGROUND_TRANSFORMER_ENGINE: z
-        .enum(["tasks-vision", "selfie-segmentation", ""])
-        .optional()
-        .describe(
-            "Virtual background transformer engine: 'tasks-vision' (GPU-accelerated, experimental) or 'selfie-segmentation' (CPU-based, stable). Currently defaults to 'selfie-segmentation'; 'tasks-vision' is intended as the future default once considered stable."
-        ),
 });
 
 export type EnvironmentVariables = z.infer<typeof EnvironmentVariables>;

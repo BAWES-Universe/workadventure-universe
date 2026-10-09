@@ -12,6 +12,7 @@ import type {
     SubMessage,
 } from "@workadventure/messages";
 import { AvailabilityStatus, SetPlayerVariableMessage_Scope } from "@workadventure/messages";
+import { FOLLOW_REQUEST_TIMEOUT_MS } from "@workadventure/shared-utils";
 import type { Movable } from "../Model/Movable";
 import type { PositionNotifier } from "../Model/PositionNotifier";
 import type { Zone } from "../Model/Zone";
@@ -24,11 +25,22 @@ import type { PointInterface } from "./Websocket/PointInterface";
 
 export type UserSocket = ServerDuplexStream<PusherToBackMessage, ServerToClientMessage>;
 
+/**
+ * A "yes" sent in the last moment is still on its way when the time is up: answers are taken this much longer than
+ * the bar on the screens runs.
+ */
+const FOLLOW_REQUEST_GRACE_MS = 2_000;
+
 export class User implements Movable, CustomJsonReplacerInterface {
     public listenedZones: Set<Zone>;
     public group?: Group;
     private _following: User | undefined;
     private followedBy: Set<User> = new Set<User>();
+    /**
+     * The follow request this user sent and that is still open: who was asked and has not answered yet, and until
+     * when an answer counts.
+     */
+    private followRequest: { asked: Set<User>; deadline: number } | undefined;
     public disconnected = false;
     private isRoomJoinedMessage = false;
     private pendingMessages: NonNullable<ServerToClientMessage["message"]>[] = [];
@@ -148,7 +160,10 @@ export class User implements Movable, CustomJsonReplacerInterface {
 
     public delFollower(follower: User): void {
         this.followedBy.delete(follower);
-        follower._following = undefined;
+        // Someone who says no to this request may be following someone else: only let go of this user.
+        if (follower._following === this) {
+            follower._following = undefined;
+        }
 
         const clientMessage = {
             message: {
@@ -200,6 +215,61 @@ export class User implements Movable, CustomJsonReplacerInterface {
     public stopLeading(): void {
         for (const follower of this.followedBy) {
             this.delFollower(follower);
+        }
+    }
+
+    /**
+     * This user asked the others in their bubble to follow them. Their answers count until the time is up.
+     */
+    public startFollowRequest(asked: User[]): void {
+        this.followRequest = {
+            asked: new Set(asked),
+            deadline: Date.now() + FOLLOW_REQUEST_TIMEOUT_MS + FOLLOW_REQUEST_GRACE_MS,
+        };
+    }
+
+    /**
+     * Takes the answer (yes or no) of someone this user asked to follow them.
+     * Returns false when the answer comes too late: the request was cancelled, its time is up, or they were not
+     * asked. A late "yes" must then be ignored.
+     */
+    public takeFollowRequestAnswer(user: User): boolean {
+        const request = this.followRequest;
+        if (request === undefined || !request.asked.has(user)) {
+            return false;
+        }
+        request.asked.delete(user);
+        if (Date.now() > request.deadline) {
+            this.followRequest = undefined;
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Ends this user's follow request. Whoever was asked and has not answered yet is told, so the question leaves
+     * their screen, and an answer arriving afterwards is ignored.
+     */
+    public cancelFollowRequest(): void {
+        const request = this.followRequest;
+        this.followRequest = undefined;
+        if (request === undefined || Date.now() > request.deadline) {
+            return;
+        }
+        for (const asked of request.asked) {
+            // A follower already hears it from stopLeading().
+            if (asked.disconnected || asked._following === this) {
+                continue;
+            }
+            asked.socket.write({
+                message: {
+                    $case: "followAbortMessage",
+                    followAbortMessage: {
+                        leader: this.id,
+                        follower: 0,
+                    },
+                },
+            });
         }
     }
 

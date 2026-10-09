@@ -1,6 +1,7 @@
 // -------------------- Default Implementations --------------------x
 
 import Debug from "debug";
+import { FilterType } from "@workadventure/messages";
 import type { Subscription } from "rxjs";
 import { Subject } from "rxjs";
 import * as Sentry from "@sentry/svelte";
@@ -12,6 +13,9 @@ import { screenSharingLocalStreamStore } from "../../Stores/ScreenSharingStore";
 import type { Streamable } from "../../Stores/StreamableCollectionStore";
 import { nbSoundPlayedInBubbleStore } from "../../Stores/ApparentMediaContraintStore";
 import { bindMuteEventsToSpace } from "../Utils/BindMuteEvents";
+import { bindRaiseHandEventsToSpace } from "../RaiseHand/BindRaiseHandEvents";
+import { myHandRaisedStore, registerConversationSpace } from "../RaiseHand/RaiseHandStore";
+import { holdAutoLowerHand } from "../RaiseHand/AutoLowerHand";
 import { CommunicationType } from "../../Livekit/LivekitConnection";
 import { audioContextManager } from "../../WebRtc/AudioContextManager";
 import { DefaultCommunicationState } from "./DefaultCommunicationState";
@@ -98,7 +102,9 @@ export class SpacePeerManager {
         private microphoneStateStore: Readable<boolean> = requestedMicrophoneState,
         private cameraStateStore: Readable<boolean> = requestedCameraState,
         private screenSharingStateStore: Readable<LocalStreamStoreValue> = screenSharingLocalStreamStore,
-        _bindMuteEventsToSpace: (space: SpaceInterface) => void = bindMuteEventsToSpace
+        _bindMuteEventsToSpace: (space: SpaceInterface) => void = bindMuteEventsToSpace,
+        private handRaisedStore: Readable<boolean> = myHandRaisedStore,
+        _bindRaiseHandEventsToSpace: (space: SpaceInterface) => void = bindRaiseHandEventsToSpace
     ) {
         this._communicationState = new DefaultCommunicationState();
 
@@ -188,6 +194,7 @@ export class SpacePeerManager {
         );
 
         _bindMuteEventsToSpace(this.space);
+        _bindRaiseHandEventsToSpace(this.space);
     }
     private synchronizeMediaState(): void {
         if (this.isMediaStateSynchronized()) return;
@@ -220,6 +227,20 @@ export class SpacePeerManager {
                 }
             })
         );
+
+        // A hand can be raised in a conversation (bubble or meeting room). Podiums are wired in PodiumStore.
+        if (this.space.filterType === FilterType.ALL_USERS) {
+            this.unsubscribes.push(registerConversationSpace(this.space));
+            this.unsubscribes.push(holdAutoLowerHand());
+            this.unsubscribes.push(
+                this.handRaisedStore.subscribe((raised) => {
+                    // Any positive value: the pusher replaces it with its own time.
+                    this.space.emitUpdateUser({
+                        handRaisedAt: raised ? Date.now() : 0,
+                    });
+                })
+            );
+        }
     }
 
     private desynchronizeMediaState(): void {

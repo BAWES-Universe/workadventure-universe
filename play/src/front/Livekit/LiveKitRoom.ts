@@ -578,6 +578,10 @@ export class LiveKitRoom implements LiveKitRoomInterface {
 
         // Let's reset the priority of the participant
         for (const videoStream of this.space.allVideoStreamStore.values()) {
+            // A live broadcast keeps its place at the front of the strip, speaking or not.
+            if (videoStream.isMegaphoneSpace) {
+                continue;
+            }
             const lastSpeakTimestamp = videoStream.lastSpeakTimestamp;
             let bonusPriority = 0;
             if (lastSpeakTimestamp) {

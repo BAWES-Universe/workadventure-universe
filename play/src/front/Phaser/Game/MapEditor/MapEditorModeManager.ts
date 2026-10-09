@@ -15,7 +15,10 @@ import {
     mapEditorSelectedToolStore,
 } from "../../../Stores/MapEditorStore";
 import { mapEditorActivated, mapEditorActivatedForThematics } from "../../../Stores/MenuStore";
+import { editPillStore, editUndoRedoStore, turnPlacingPreview } from "../../../Stores/EditModeStore";
 import { localUserStore } from "../../../Connection/LocalUserStore";
+import { userIsAdminStore } from "../../../Stores/GameStore";
+import { warningMessageStore } from "../../../Stores/ErrorStore";
 import LL from "../../../../i18n/i18n-svelte";
 import { gameManager } from "../GameManager";
 import { AreaEditorTool } from "./Tools/AreaEditorTool";
@@ -142,6 +145,7 @@ export class MapEditorModeManager {
                     logger("adding command to pendingList : ", command);
                     this.localCommandsHistory.push(command);
                     this.currentCommandIndex += 1;
+                    this.publishUndoRedoAvailability();
                 }
 
                 this.scene.getGameMap().updateLastCommandIdProperty(command.commandId);
@@ -172,8 +176,11 @@ export class MapEditorModeManager {
 
     // A simple queue to be sure we run only one undo or redo at once.
     private runningUndoRedoCommand: Promise<void> = Promise.resolve();
+    private lastUndoRedoKeyEvent: KeyboardEvent | undefined;
 
     public async undoCommand(): Promise<void> {
+        // A change still being made (a Delete that just showed its "Undo" toast) lands in the history first.
+        await this.currentRunningCommand;
         if (this.localCommandsHistory.length === 0 || this.currentCommandIndex === -1) {
             return;
         }
@@ -193,9 +200,33 @@ export class MapEditorModeManager {
             console.error(e);
             Sentry.captureException(e);
         }
+        this.publishUndoRedoAvailability();
+    }
+
+    /** Undo the last change, one at a time, from the Undo button. */
+    public undo(): void {
+        this.runningUndoRedoCommand = this.runningUndoRedoCommand
+            .then(() => this.undoCommand())
+            .catch((e) => console.error(e));
+    }
+
+    /** Redo the last undone change, one at a time, from the Redo button. */
+    public redo(): void {
+        this.runningUndoRedoCommand = this.runningUndoRedoCommand
+            .then(() => this.redoCommand())
+            .catch((e) => console.error(e));
+    }
+
+    /** Tell the Undo and Redo buttons whether they have anything to do. */
+    private publishUndoRedoAvailability(): void {
+        editUndoRedoStore.set({
+            canUndo: this.currentCommandIndex >= 0 && this.localCommandsHistory.length > 0,
+            canRedo: this.currentCommandIndex < this.localCommandsHistory.length - 1,
+        });
     }
 
     public async redoCommand(): Promise<void> {
+        await this.currentRunningCommand;
         if (
             this.localCommandsHistory.length === 0 ||
             this.currentCommandIndex === this.localCommandsHistory.length - 1
@@ -220,6 +251,7 @@ export class MapEditorModeManager {
             console.error(e);
             Sentry.captureException(e);
         }
+        this.publishUndoRedoAvailability();
     }
 
     /**
@@ -246,6 +278,8 @@ export class MapEditorModeManager {
         for (const tool of Object.values(this.editorTools)) {
             tool.destroy();
         }
+        this.activeTool = undefined;
+        this.updateDragToLookAround();
         this.unsubscribeFromStores();
     }
 
@@ -279,7 +313,8 @@ export class MapEditorModeManager {
                 break;
             }
             case "4": {
-                if (!mapEditorModeActivated) break;
+                // Configure my room holds the room's settings, which only admins may change.
+                if (!mapEditorModeActivated || !get(userIsAdminStore)) break;
                 this.equipTool(EditorToolName.WAMSettingsEditor);
                 break;
             }
@@ -293,10 +328,30 @@ export class MapEditorModeManager {
                 this.equipTool(EditorToolName.CloseMapEditor);
                 break;
             }
+            case "r": {
+                // R turns the object being placed. With nothing to turn (looking around, or editing without
+                // placing), the key stays the game's: it turns the player.
+                if (!mapEditorModeActivated || event.ctrlKey || event.metaKey || event.altKey) return false;
+                return turnPlacingPreview();
+            }
             case "z": {
                 if (!mapEditorModeActivated) break;
                 // Todo replace with key combo https://photonstorm.github.io/phaser3-docs/Phaser.Input.Keyboard.KeyCombo.html
+                // A module's job in the pill (a bot's route): the keys undo and redo what its Undo and Redo do
+                const job = get(editPillStore);
+                if (job && (event.ctrlKey || event.metaKey)) {
+                    if (event.shiftKey) {
+                        if (job.canRedo) job.onRedo();
+                    } else if (job.canUndo) {
+                        job.onUndo();
+                    }
+                    break;
+                }
                 if (event.ctrlKey || event.metaKey) {
+                    // A quick tap of Ctrl+Z reaches us twice (Phaser hands the key press over again when the key comes up
+                    // before the next frame): the press is one step, not two.
+                    if (event === this.lastUndoRedoKeyEvent) break;
+                    this.lastUndoRedoKeyEvent = event;
                     if (event.shiftKey) {
                         this.runningUndoRedoCommand = this.runningUndoRedoCommand
                             .then(() => {
@@ -339,6 +394,8 @@ export class MapEditorModeManager {
                         logger("removing command of pendingList : ", editMapCommandMessage.id);
                         this.pendingCommands.splice(this.pendingCommands.indexOf(command), 1);
                     }
+                    // The refusal only reaches the player who made the edit.
+                    warningMessageStore.addWarningMessage(get(LL).mapEditor.editNotSaved());
                     return;
                 }
 
@@ -395,6 +452,7 @@ export class MapEditorModeManager {
                     }
                 }
             }
+            this.publishUndoRedoAvailability();
         })();
         return this.isReverting;
     }
@@ -410,6 +468,84 @@ export class MapEditorModeManager {
             this.activateTool();
         }
         mapEditorSelectedToolStore.set(tool);
+        this.updateDragToLookAround();
+    }
+
+    // Dragging the empty map moves around while editing, as it does while looking around. The area tool keeps the
+    // mouse for drawing on a computer, so there the drag only pans with a finger; the other tools pan with both.
+    private dragPanActive = false;
+    private dragPanPointerId: number | undefined;
+    private dragPanDistance = 0;
+    private readonly dragPanDownHandler = (
+        pointer: Phaser.Input.Pointer,
+        gameObjects: Phaser.GameObjects.GameObject[]
+    ) => {
+        // A second finger during a drag (a pinch) joins that drag: it neither restarts the distance nor takes over.
+        if (this.dragPanActive) return;
+        // Every press starts a fresh distance, so a tool asking after the release learns about this press only.
+        this.dragPanDistance = 0;
+        if (!pointer.leftButtonDown() && !pointer.wasTouch) return;
+        if (gameObjects.length > 0) return;
+        if (this.activeTool === EditorToolName.AreaEditor && !pointer.wasTouch) return;
+        if (!this.currentlyActiveTool?.canDragToLookAround(pointer)) return;
+        this.dragPanActive = true;
+        this.dragPanPointerId = pointer.id;
+        this.scene.getCameraManager().stopSpeed();
+    };
+    private readonly dragPanMoveHandler = (pointer: Phaser.Input.Pointer) => {
+        if (!this.dragPanActive || pointer.id !== this.dragPanPointerId || !pointer.isDown) return;
+        const dx = pointer.prevPosition.x - pointer.x;
+        const dy = pointer.prevPosition.y - pointer.y;
+        this.dragPanDistance += Math.abs(dx) + Math.abs(dy);
+        // The first few pixels are a tap that wobbled, not a drag: placing an object must not shift the map.
+        if (this.dragPanDistance < MapEditorModeManager.DRAG_PAN_THRESHOLD) return;
+        this.scene.getCameraManager().dragCamera(dx, dy);
+    };
+    private readonly dragPanUpHandler = (pointer?: unknown) => {
+        // Only the finger that drags ends the drag; lifting a second finger leaves it going. GAME_OUT passes no pointer.
+        if (
+            pointer instanceof Phaser.Input.Pointer &&
+            this.dragPanPointerId !== undefined &&
+            pointer.id !== this.dragPanPointerId
+        ) {
+            return;
+        }
+        this.dragPanActive = false;
+        this.dragPanPointerId = undefined;
+    };
+    private static readonly DRAG_PAN_THRESHOLD = 10;
+    private dragPanBound = false;
+
+    /**
+     * True when the last press went further than a tap: a tool that places on tap uses it to ignore that release.
+     * The distance outlives the release on purpose, so the answer is the same whether the tool's own release
+     * handler runs before or after the one above (their order depends on which was bound first).
+     */
+    public get isDraggingToLookAround(): boolean {
+        return this.dragPanDistance >= MapEditorModeManager.DRAG_PAN_THRESHOLD;
+    }
+
+    private updateDragToLookAround(): void {
+        const wanted =
+            this.activeTool !== undefined &&
+            this.activeTool !== EditorToolName.ExploreTheRoom &&
+            this.activeTool !== EditorToolName.CloseMapEditor &&
+            this.activeTool !== EditorToolName.WAMSettingsEditor;
+        if (wanted && !this.dragPanBound) {
+            this.scene.input.on(Phaser.Input.Events.POINTER_DOWN, this.dragPanDownHandler);
+            this.scene.input.on(Phaser.Input.Events.POINTER_MOVE, this.dragPanMoveHandler);
+            this.scene.input.on(Phaser.Input.Events.POINTER_UP, this.dragPanUpHandler);
+            this.scene.input.on(Phaser.Input.Events.GAME_OUT, this.dragPanUpHandler);
+            this.dragPanBound = true;
+        } else if (!wanted && this.dragPanBound) {
+            this.scene.input.off(Phaser.Input.Events.POINTER_DOWN, this.dragPanDownHandler);
+            this.scene.input.off(Phaser.Input.Events.POINTER_MOVE, this.dragPanMoveHandler);
+            this.scene.input.off(Phaser.Input.Events.POINTER_UP, this.dragPanUpHandler);
+            this.scene.input.off(Phaser.Input.Events.GAME_OUT, this.dragPanUpHandler);
+            this.dragPanBound = false;
+            this.dragPanActive = false;
+            this.dragPanDistance = 0;
+        }
     }
 
     private emitMapEditorUpdate(command: FrontCommandInterface, delay = 0): void {
@@ -446,6 +582,7 @@ export class MapEditorModeManager {
             if (!this.active) {
                 this.lastlyUsedTool = get(mapEditorSelectedToolStore);
                 this.equipTool(undefined);
+                this.scene.getCameraManager().endDragFreedom();
                 return;
             }
             this.equipTool(

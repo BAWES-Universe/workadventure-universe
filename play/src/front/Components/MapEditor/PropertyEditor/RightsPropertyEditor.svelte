@@ -1,7 +1,7 @@
 <script lang="ts">
     import type { RestrictedRightsPropertyData } from "@workadventure/map-editor";
     import { createEventDispatcher } from "svelte";
-    import InputRoomTags from "../../Input/InputRoomTags.svelte";
+    import RolePicker from "../../Input/RolePicker.svelte";
     import LL from "../../../../i18n/i18n-svelte";
     import type { InputTagOption } from "../../Input/InputTagOption";
     import { toTags } from "../../Input/InputTagOption";
@@ -20,7 +20,6 @@
         label: readTag,
         created: false,
     }));
-    let _tag: InputTagOption[] = [];
 
     function onChangeWriteReadTags() {
         restrictedRightsPropertyData.readTags = readTags ? toTags(readTags) : [];
@@ -43,10 +42,10 @@
         <IconLockCog class="w-6 mr-1" />
         {$LL.mapEditor.properties.restrictedRightsPropertyData.label()}
     </span>
-    <span slot="content">
-        <InputRoomTags
+    <span slot="content" class="flex flex-col gap-5">
+        <RolePicker
             label={$LL.mapEditor.properties.restrictedRightsPropertyData.rightWriteTitle()}
-            options={_tag}
+            emptyText={$LL.mapEditor.properties.rolePicker.everyoneEdit()}
             bind:value={writeTags}
             handleChange={onChangeWriteReadTags}
             testId="writeTags"
@@ -55,11 +54,11 @@
                 <IconInfoCircle font-size="15" />
                 {$LL.mapEditor.properties.restrictedRightsPropertyData.rightWriteDescription()}
             </span>
-        </InputRoomTags>
+        </RolePicker>
 
-        <InputRoomTags
+        <RolePicker
             label={$LL.mapEditor.properties.restrictedRightsPropertyData.rightReadTitle()}
-            options={_tag}
+            emptyText={$LL.mapEditor.properties.rolePicker.everyoneCome()}
             bind:value={readTags}
             handleChange={onChangeWriteReadTags}
             testId="readTags"
@@ -67,15 +66,7 @@
             <span slot="info">
                 <IconInfoCircle font-size="15" />
                 {$LL.mapEditor.properties.restrictedRightsPropertyData.rightReadDescription()}
-            </span></InputRoomTags
+            </span></RolePicker
         >
-
-        {#if writeTags !== undefined && writeTags.length > 0}
-            <div class="flex flex-wrap gap-1">
-                {#each writeTags as tag, index (`${index}-${tag.value}`)}
-                    <span class="py-1 px-2 bg-gray-400 text-black rounded-lg">{tag.label}</span>
-                {/each}
-            </div>
-        {/if}
     </span>
 </PropertyEditorBase>

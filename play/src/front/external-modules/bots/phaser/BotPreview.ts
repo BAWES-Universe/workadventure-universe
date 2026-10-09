@@ -1,8 +1,11 @@
 import Phaser from "phaser";
 import type { BotData } from "../types";
+import { botModel, noticeRange } from "../behaviorModel";
 
 const TILE_SIZE = 32;
-const BOT_DEPTH = 1000;
+// Above every placed object (their depth is their bottom edge on the map), so the bot and its radius handle win the
+// tap over an object underneath while the bot editor is open; below area previews (100000 + 1) and the UI.
+const BOT_DEPTH = 100000;
 // How far the pointer may move between press and release for it to still count as a click
 const CLICK_MAX_DISTANCE = 4;
 
@@ -18,7 +21,6 @@ export enum BotPreviewEvent {
     Selected = "BotPreview:Selected",
     PositionChanged = "BotPreview:PositionChanged",
     RadiusChanged = "BotPreview:RadiusChanged",
-    ConversationRadiusChanged = "BotPreview:ConversationRadiusChanged",
     DragStart = "BotPreview:DragStart",
     DragEnd = "BotPreview:DragEnd",
 }
@@ -33,7 +35,6 @@ export class BotPreview extends Phaser.GameObjects.Container {
     private conversationRadiusCircle: Phaser.GameObjects.Arc | null = null;
     private nameText: Phaser.GameObjects.Text;
     private resizeHandle: Phaser.GameObjects.Arc;
-    private conversationResizeHandle: Phaser.GameObjects.Arc | null = null;
 
     private isSelected = false;
     private isHovered = false;
@@ -49,8 +50,8 @@ export class BotPreview extends Phaser.GameObjects.Container {
         this.botData = botData;
 
         const colors = this.getColors();
-        const radius = botData.behaviorConfig?.assignedSpace?.radius || 0;
-        const conversationRadius = botData.behaviorConfig?.conversationRadius || 0;
+        // The circle only means something for a bot that wanders: it is the area it walks in
+        const radius = botModel(botData).moves === "wander" ? botData.behaviorConfig?.assignedSpace?.radius || 0 : 0;
 
         // Radius circle (behind square)
         this.radiusCircle = scene.add.arc(0, 0, radius, 0, 360, false);
@@ -59,40 +60,15 @@ export class BotPreview extends Phaser.GameObjects.Container {
         this.radiusCircle.setVisible(radius > 0);
         this.add(this.radiusCircle);
 
-        // Conversation radius circle for social bots
-        if (botData.behaviorConfig?.behaviorType === "social") {
-            const convRadius = conversationRadius > 0 ? conversationRadius : Math.min(80, radius);
+        // The soft ring: how far a bot that goes to people notices them
+        if (botModel(botData).goesToPeople) {
+            const convRadius = noticeRange(botData);
             this.conversationRadiusCircle = scene.add.arc(0, 0, convRadius, 0, 360, false);
             this.conversationRadiusCircle.setFillStyle(0xa855f7, 0.15);
             this.conversationRadiusCircle.setStrokeStyle(3, 0xa855f7, 0.9);
             this.add(this.conversationRadiusCircle);
-
-            // Conversation radius resize handle (purple, on y-axis to distinguish)
-            this.conversationResizeHandle = scene.add.arc(0, -convRadius, 8, 0, 360, false, 0xe9d5ff);
-            this.conversationResizeHandle.setStrokeStyle(2, 0xa855f7);
-            this.conversationResizeHandle.setVisible(false);
-            this.conversationResizeHandle.setInteractive({ cursor: "ns-resize", draggable: true });
-            this.add(this.conversationResizeHandle);
-
-            // Setup conversation handle drag
-            this.conversationResizeHandle.on(Phaser.Input.Events.DRAG_START, () => {
-                this.isResizing = true;
-            });
-
-            this.conversationResizeHandle.on(
-                Phaser.Input.Events.DRAG,
-                (_p: Phaser.Input.Pointer, _dragX: number, dragY: number) => {
-                    const movementRadius = this.botData.behaviorConfig?.assignedSpace?.radius || 100;
-                    // Cap conversation radius between 50 and movement area
-                    const newRadius = Math.min(movementRadius, Math.max(50, Math.abs(dragY)));
-                    this.setConversationRadius(newRadius);
-                    this.emit(BotPreviewEvent.ConversationRadiusChanged, this.botData.id, newRadius);
-                }
-            );
-
-            this.conversationResizeHandle.on(Phaser.Input.Events.DRAG_END, () => {
-                this.isResizing = false;
-            });
+            // The ring has no handle on the map: its size is set in the bot's settings. A lone knob above the bot
+            // read as a mystery dot, and it stayed behind when the ring was hidden.
         }
 
         // Main square (32x32 tile)
@@ -124,12 +100,7 @@ export class BotPreview extends Phaser.GameObjects.Container {
         });
 
         this.resizeHandle.on(Phaser.Input.Events.DRAG, (_p: Phaser.Input.Pointer, dragX: number) => {
-            // For social bots, don't allow radius smaller than conversation radius
-            const minRadius =
-                this.botData.behaviorConfig?.behaviorType === "social"
-                    ? Math.max(50, this.botData.behaviorConfig?.conversationRadius || 50)
-                    : 16;
-            const newRadius = Math.max(minRadius, Math.abs(dragX));
+            const newRadius = Math.max(16, Math.abs(dragX));
             this.setRadius(newRadius);
             this.emit(BotPreviewEvent.RadiusChanged, this.botData.id, newRadius);
         });
@@ -209,21 +180,18 @@ export class BotPreview extends Phaser.GameObjects.Container {
     public setSelected(selected: boolean): void {
         this.isSelected = selected;
         const colors = this.getColors();
-        const radius = this.botData.behaviorConfig?.assignedSpace?.radius || 0;
+        const radius = this.areaRadius();
 
         if (selected) {
             this.square.setStrokeStyle(4, 0xffffff);
             this.radiusCircle.setFillStyle(colors.fill, 0.3);
             this.radiusCircle.setStrokeStyle(3, colors.stroke, 0.8);
             this.resizeHandle.setVisible(radius > 0);
-            // Show conversation radius handle for social bots
-            this.conversationResizeHandle?.setVisible(true);
         } else {
             this.square.setStrokeStyle(3, colors.stroke);
             this.radiusCircle.setFillStyle(colors.fill, 0.2);
             this.radiusCircle.setStrokeStyle(2, colors.stroke, 0.6);
             this.resizeHandle.setVisible(false);
-            this.conversationResizeHandle?.setVisible(false);
         }
     }
 
@@ -237,11 +205,10 @@ export class BotPreview extends Phaser.GameObjects.Container {
 
         if (hovered && !this.isSelected) {
             this.square.setStrokeStyle(3, 0xffffff, 0.8);
-            this.radiusCircle.setVisible(true);
+            this.radiusCircle.setVisible(this.areaRadius() > 0);
         } else if (!this.isSelected) {
             this.square.setStrokeStyle(3, colors.stroke);
-            const radius = this.botData.behaviorConfig?.assignedSpace?.radius || 0;
-            this.radiusCircle.setVisible(radius > 0);
+            this.radiusCircle.setVisible(this.areaRadius() > 0);
         }
     }
 
@@ -250,25 +217,17 @@ export class BotPreview extends Phaser.GameObjects.Container {
             this.botData.behaviorConfig.assignedSpace.radius = radius;
         }
 
+        const shown = this.areaRadius();
         this.radiusCircle.setRadius(radius);
-        this.radiusCircle.setVisible(radius > 0);
+        this.radiusCircle.setVisible(shown > 0);
         this.resizeHandle.setPosition(radius, 0);
-        this.resizeHandle.setVisible(this.isSelected && radius > 0);
+        this.resizeHandle.setVisible(this.isSelected && shown > 0);
     }
 
-    public setConversationRadius(radius: number): void {
-        if (this.botData.behaviorConfig) {
-            this.botData.behaviorConfig.conversationRadius = radius;
-        }
-
-        if (this.conversationRadiusCircle) {
-            this.conversationRadiusCircle.setRadius(radius);
-            this.conversationRadiusCircle.setVisible(radius > 0);
-        }
-        if (this.conversationResizeHandle) {
-            this.conversationResizeHandle.setPosition(0, -radius);
-            this.conversationResizeHandle.setVisible(this.isSelected);
-        }
+    /** The circle's radius when the bot wanders, else 0: stay and route bots have no area to show. */
+    private areaRadius(): number {
+        if (botModel(this.botData).moves !== "wander") return 0;
+        return this.botData.behaviorConfig?.assignedSpace?.radius || 0;
     }
 
     public getBotData(): BotData {
@@ -298,9 +257,10 @@ export class BotPreview extends Phaser.GameObjects.Container {
             this.botData = { ...this.botData, ...newData };
         }
 
-        // Update position
+        // Update position, unless the bot is being dragged: it stays under the finger, and its new spot is saved
+        // when it is let go
         const center = this.botData.behaviorConfig?.assignedSpace?.center;
-        if (center) {
+        if (center && !this.isDragging) {
             this.setPosition(center.x, center.y);
         }
 
@@ -309,9 +269,6 @@ export class BotPreview extends Phaser.GameObjects.Container {
         if (radius !== undefined) {
             this.setRadius(radius);
         }
-
-        // Get current behavior type (check both locations)
-        const behaviorType = this.botData.behaviorConfig?.behaviorType || this.botData.behaviorType || "idle";
 
         // Update colors based on behavior type
         const colors = this.getColors();
@@ -328,11 +285,9 @@ export class BotPreview extends Phaser.GameObjects.Container {
             this.nameText.setText(newData.name);
         }
 
-        // Update conversation radius for social bots
-        const conversationRadius = this.botData.behaviorConfig?.conversationRadius || 0;
-
-        if (behaviorType === "social") {
-            const convRadius = conversationRadius > 0 ? conversationRadius : Math.min(80, radius || 100);
+        // The notice ring, for any bot that goes to people
+        if (botModel(this.botData).goesToPeople) {
+            const convRadius = noticeRange(this.botData);
             if (!this.conversationRadiusCircle) {
                 this.conversationRadiusCircle = this.scene.add.arc(0, 0, convRadius, 0, 360, false);
                 this.conversationRadiusCircle.setFillStyle(0xa855f7, 0.15);
@@ -342,38 +297,9 @@ export class BotPreview extends Phaser.GameObjects.Container {
                 this.conversationRadiusCircle.setRadius(convRadius);
             }
             this.conversationRadiusCircle.setVisible(true);
-
-            // Create resize handle if it doesn't exist
-            if (!this.conversationResizeHandle) {
-                this.conversationResizeHandle = this.scene.add.arc(0, -convRadius, 8, 0, 360, false, 0xe9d5ff);
-                this.conversationResizeHandle.setStrokeStyle(2, 0xa855f7);
-                this.conversationResizeHandle.setVisible(this.isSelected);
-                this.conversationResizeHandle.setInteractive({ cursor: "ns-resize", draggable: true });
-                this.add(this.conversationResizeHandle);
-
-                this.conversationResizeHandle.on(Phaser.Input.Events.DRAG_START, () => {
-                    this.isResizing = true;
-                });
-                this.conversationResizeHandle.on(
-                    Phaser.Input.Events.DRAG,
-                    (_p: Phaser.Input.Pointer, _dragX: number, dragY: number) => {
-                        const movementRadius = this.botData.behaviorConfig?.assignedSpace?.radius || 100;
-                        const newRadius = Math.min(movementRadius, Math.max(50, Math.abs(dragY)));
-                        this.setConversationRadius(newRadius);
-                        this.emit(BotPreviewEvent.ConversationRadiusChanged, this.botData.id, newRadius);
-                    }
-                );
-                this.conversationResizeHandle.on(Phaser.Input.Events.DRAG_END, () => {
-                    this.isResizing = false;
-                });
-            } else {
-                this.conversationResizeHandle.setPosition(0, -convRadius);
-                this.conversationResizeHandle.setVisible(this.isSelected);
-            }
         } else {
-            // Hide social elements for non-social bots
+            // No ring for a bot that doesn't go to people
             this.conversationRadiusCircle?.setVisible(false);
-            this.conversationResizeHandle?.setVisible(false);
         }
     }
 
@@ -393,7 +319,6 @@ export class BotPreview extends Phaser.GameObjects.Container {
         this.square.destroy();
         this.radiusCircle.destroy();
         this.conversationRadiusCircle?.destroy();
-        this.conversationResizeHandle?.destroy();
         this.nameText.destroy();
         this.resizeHandle.destroy();
         super.destroy(fromScene);

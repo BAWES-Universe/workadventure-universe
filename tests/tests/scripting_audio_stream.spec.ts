@@ -155,7 +155,7 @@ test.describe("Scripting audio streams @nomobile @nofirefox @nowebkit", () => {
     await eve.context().close();
 
     // Let's wait for eve to be disconnected
-    await expect(alice2.getByText('eve')).toBeHidden();
+    await expect(alice2.getByText(/^eve$/i)).toBeHidden();
 
     // After disconnect, alice2 should still receive the sound through WebRTC
     await hasAudioStream(alice2);

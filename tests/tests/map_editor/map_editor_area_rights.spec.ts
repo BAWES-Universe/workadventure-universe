@@ -96,11 +96,13 @@ test.describe("Map editor area with rights @oidc @nomobile @nowebkit", () => {
     //Need to wait for player move action
     // eslint-disable-next-line
     await page.waitForTimeout(1000);
-    await page.mouse.click(
+    // The small map sits in the middle of the screen.
+    const insideArea = Map.onScreen(
+      page,
       AreaAccessRights.mouseCoordinatesToClickOnEntityInsideArea.x,
-      AreaAccessRights.mouseCoordinatesToClickOnEntityInsideArea.y,
-      { button: "right" }
+      AreaAccessRights.mouseCoordinatesToClickOnEntityInsideArea.y
     );
+    await page.mouse.click(insideArea.x, insideArea.y, { button: "right" });
 // eslint-disable-next-line
 await page.pause();
     //Need to wait for player move action
@@ -249,7 +251,9 @@ await page.pause();
     await expect(page2.getByRole('button', { name: 'Map editor' })).not.toBeAttached();
 
     await page2.keyboard.press("e");
-    await expect(page2.locator("#map-editor-container")).toBeVisible();
+    // Without editing rights, "e" only looks around the map: no editing toolbar, no area or object tool.
+    await expect(page2.getByTestId("look-around")).toBeVisible();
+    await expect(page2.locator("#map-editor-container")).toBeHidden();
     await expect(page2.locator("#AreaEditor")).toBeHidden();
     await expect(page2.locator("#EntityEditor")).toBeHidden();
 
@@ -299,6 +303,7 @@ await page.pause();
       AreaAccessRights.mouseCoordinatesToClickOnEntityInsideArea.x,
       AreaAccessRights.mouseCoordinatesToClickOnEntityInsideArea.y
     );
+    await EntityEditor.openSettings(page2);
     await expect(
       page2.getByTestId("openWebsite")
     ).toBeAttached();
@@ -336,7 +341,9 @@ await page.pause();
 
     await page2.keyboard.press("e");
 
-    await expect(page2.locator("#map-editor-container")).toBeVisible();
+    // Without editing rights, "e" only looks around the map: no editing toolbar, no area or object tool.
+    await expect(page2.getByTestId("look-around")).toBeVisible();
+    await expect(page2.locator("#map-editor-container")).toBeHidden();
     await expect(page2.locator("#AreaEditor")).toBeHidden();
     await expect(page2.locator("#EntityEditor")).toBeHidden();
 
@@ -420,7 +427,9 @@ await page.pause();
 
        await page2.keyboard.press("e");
 
-       await expect(page2.locator("#map-editor-container")).toBeVisible();
+       // Without editing rights, "e" only looks around the map: no editing toolbar, no area or object tool.
+       await expect(page2.getByTestId("look-around")).toBeVisible();
+       await expect(page2.locator("#map-editor-container")).toBeHidden();
        await expect(page2.locator("#AreaEditor")).toBeHidden();
        await expect(page2.locator("#EntityEditor")).toBeHidden();
 

@@ -1,5 +1,5 @@
 import { Subject } from "rxjs";
-import type { BanUserMessage, SendUserMessage } from "@workadventure/messages";
+import type { BanUserMessage, BroadcastMeta, SendUserMessage } from "@workadventure/messages";
 
 export enum AdminMessageEventTypes {
     admin = "message",
@@ -11,7 +11,8 @@ export enum AdminMessageEventTypes {
 interface AdminMessageEvent {
     type: AdminMessageEventTypes;
     text: string;
-    //todo add optional properties for other event types
+    /** Who sent a broadcast and how far it went, when the server said. */
+    broadcast?: BroadcastMeta;
 }
 
 //this class is designed to easily allow communication between the RoomConnection objects (that receive the message)
@@ -24,6 +25,7 @@ class AdminMessagesService {
         this._messageStream.next({
             type: message.type as unknown as AdminMessageEventTypes,
             text: message.message,
+            broadcast: "broadcast" in message ? message.broadcast : undefined,
         });
     }
 }

@@ -4,6 +4,7 @@ import { expect } from 'playwright/test';
 import { oidcAdminTagLogin, oidcMatrixUserLogin, oidcMemberTagLogin, oidcLogin } from './oidc';
 import Menu from "./menu";
 import {play_url} from "./urls";
+import { heartbeatScript, watchForHang } from "./hangStack";
 
 function selectWoka(name: string): number {
     let res = 0;
@@ -94,7 +95,10 @@ export async function getPage(browser: Browser,
       } = {}): Promise<Page> {
     await createUser(name, browser, url);
     const newBrowser: BrowserContext = await browser.newContext({ storageState: './.auth/' + name + '.json' });
+    // A heartbeat in the console shows in the trace when the page last ran, and a frozen page is reported at the end.
+    await newBrowser.addInitScript(heartbeatScript());
     const page: Page = await newBrowser.newPage();
+    await watchForHang(page);
     if(options.pageCreatedHook) {
         options.pageCreatedHook(page);
     }

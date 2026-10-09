@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { get } from "svelte/store";
 import type { Unsubscriber } from "svelte/store";
+import { routeStops, walksRoute } from "../behaviorModel";
 import type { BotData } from "../types";
 import {
     botEditorModeStore,
@@ -13,7 +14,6 @@ import {
     editingWaypointIndexStore,
     updateBotPosition,
     updateBotRadius,
-    updateConversationRadius,
     addWaypoint,
     updateWaypoint,
     removeWaypoint,
@@ -25,6 +25,7 @@ import {
 } from "../stores/BotEditorStore";
 import { gameManager } from "../../../Phaser/Game/GameManager";
 import type { GameScene } from "../../../Phaser/Game/GameScene";
+import { mapEditorVisibilityStore } from "../../../Stores/MapEditorStore";
 import { WaypointPath, WaypointPathEvent } from "./WaypointPath";
 import { BotPreview, BotPreviewEvent } from "./BotPreview";
 
@@ -299,37 +300,36 @@ export class BotEditorTool {
                 return;
             }
 
-            // Click anywhere within the radius to add a waypoint
+            // A press on a bot is for the bot (dragging it moves stop 1 with it), not a new stop under it
+            const hitBotPreview = hitObjects?.some((obj) => {
+                const botId = (obj as BotPreview).getBotId?.();
+                return !!botId && this.botPreviews.has(botId);
+            });
+            if (hitBotPreview) {
+                return;
+            }
+
+            // Click anywhere on the map to add a stop: a route isn't limited to the bot's circle
             const selectedBot = get(selectedBotStore);
             if (selectedBot) {
-                const center = selectedBot.behaviorConfig?.assignedSpace?.center || { x: 0, y: 0 };
-                const radius = selectedBot.behaviorConfig?.assignedSpace?.radius || 100;
+                // Snap to grid if shift is held
+                let x = pointer.worldX;
+                let y = pointer.worldY;
+                if (this.shiftKey?.isDown) {
+                    x = Math.round(x / 32) * 32;
+                    y = Math.round(y / 32) * 32;
+                }
 
-                // Check if click is within the constraint radius
-                const dx = pointer.worldX - center.x;
-                const dy = pointer.worldY - center.y;
-                const distance = Math.sqrt(dx * dx + dy * dy);
+                // Get current waypoints
+                const currentWaypoints = routeStops(selectedBot);
 
-                if (distance <= radius) {
-                    // Snap to grid if shift is held
-                    let x = pointer.worldX;
-                    let y = pointer.worldY;
-                    if (this.shiftKey?.isDown) {
-                        x = Math.round(x / 32) * 32;
-                        y = Math.round(y / 32) * 32;
-                    }
+                // Add waypoint at click location
+                addWaypoint(selectedBot.id, x, y);
 
-                    // Get current waypoints
-                    const currentWaypoints = selectedBot.behaviorConfig?.patrolWaypoints || [];
-
-                    // Add waypoint at click location
-                    addWaypoint(selectedBot.id, x, y);
-
-                    // Update the waypoint path display with new waypoints array
-                    const waypointPath = this.waypointPaths.get(selectedBot.id);
-                    if (waypointPath) {
-                        waypointPath.setWaypoints([...currentWaypoints, { x, y }]);
-                    }
+                // Update the waypoint path display with new waypoints array
+                const waypointPath = this.waypointPaths.get(selectedBot.id);
+                if (waypointPath) {
+                    waypointPath.setWaypoints([...currentWaypoints, { x, y }]);
                 }
             }
             return;
@@ -458,7 +458,7 @@ export class BotEditorTool {
 
                         if (waypointPath) {
                             // Sync waypoints from store (important when first waypoint was auto-created)
-                            const waypoints = selectedBot.behaviorConfig?.patrolWaypoints || [];
+                            const waypoints = routeStops(selectedBot);
                             waypointPath.setWaypoints(waypoints);
                             waypointPath.setEditing(true);
                         }
@@ -496,7 +496,18 @@ export class BotEditorTool {
 
         // Setup event handlers
         preview.on(BotPreviewEvent.Selected, (selectedPreview: BotPreview) => {
+            // Its route is being edited: a tap on the bot keeps the route open, only Done ends it
+            if (
+                get(botEditorModeStore) === "waypoint-edit" &&
+                get(selectedBotStore)?.id === selectedPreview.getBotId()
+            ) {
+                return;
+            }
             selectBot(selectedPreview.getBotData());
+            // Tapped with the panel tucked away (a phone opens on the whole map): the panel comes out on the page
+            if (!get(mapEditorVisibilityStore)) {
+                mapEditorVisibilityStore.set(true);
+            }
         });
 
         preview.on(BotPreviewEvent.PositionChanged, (botId: string, x: number, y: number) => {
@@ -507,14 +518,10 @@ export class BotEditorTool {
             updateBotRadius(botId, radius);
         });
 
-        preview.on(BotPreviewEvent.ConversationRadiusChanged, (botId: string, radius: number) => {
-            updateConversationRadius(botId, radius);
-        });
-
         this.botPreviews.set(bot.id, preview);
 
         // Create waypoint path if patrol bot
-        if (bot.behaviorConfig?.behaviorType === "patrol") {
+        if (walksRoute(bot)) {
             this.createWaypointPath(bot);
         }
     }
@@ -527,13 +534,15 @@ export class BotEditorTool {
             return;
         }
 
-        const waypoints = bot.behaviorConfig?.patrolWaypoints || [];
+        const waypoints = routeStops(bot);
         const waypointPath = new WaypointPath(this.scene, waypoints);
+        waypointPath.setLoop(bot.behaviorConfig?.loop !== false);
 
-        // Set constraint boundary (waypoints must stay within radius)
+        // Stops can go anywhere: the bot server never kept a route bot inside its circle, so the circle
+        // only limited where stops could be drawn. A radius of 0 means no limit; the centre still places
+        // the "+" button for an empty route.
         const center = bot.behaviorConfig?.assignedSpace?.center || { x: 0, y: 0 };
-        const radius = bot.behaviorConfig?.assignedSpace?.radius || 0;
-        waypointPath.setConstraint(center, radius);
+        waypointPath.setConstraint(center, 0);
 
         // Setup event handlers
         waypointPath.on(WaypointPathEvent.WaypointMoved, (index: number, x: number, y: number) => {
@@ -570,18 +579,18 @@ export class BotEditorTool {
                 preview.updateBotData(bot);
 
                 // Update waypoint path if patrol
-                if (bot.behaviorConfig?.behaviorType === "patrol") {
+                if (walksRoute(bot)) {
                     let waypointPath = this.waypointPaths.get(bot.id);
                     if (!waypointPath && this.scene) {
                         this.createWaypointPath(bot);
                         waypointPath = this.waypointPaths.get(bot.id);
                     }
                     if (waypointPath) {
-                        // Update constraint when radius/position changes
+                        // Follow the bot's position for the "+" button; stops are not limited to the circle
                         const center = bot.behaviorConfig?.assignedSpace?.center || { x: 0, y: 0 };
-                        const radius = bot.behaviorConfig?.assignedSpace?.radius || 0;
-                        waypointPath.setConstraint(center, radius);
-                        waypointPath.setWaypoints(bot.behaviorConfig.patrolWaypoints || []);
+                        waypointPath.setConstraint(center, 0);
+                        waypointPath.setLoop(bot.behaviorConfig.loop !== false);
+                        waypointPath.setWaypoints(routeStops(bot));
                     }
                 } else {
                     // Remove waypoint path if behavior changed

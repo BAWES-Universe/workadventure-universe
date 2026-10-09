@@ -8,6 +8,7 @@ import { CreateEntityFrontCommand } from "./CreateEntityFrontCommand";
 
 export class DeleteEntityFrontCommand extends DeleteEntityCommand implements FrontCommandInterface {
     private entityData: WAMEntityData | undefined;
+    private entityDimensions: { width: number; height: number } | undefined;
 
     constructor(
         gameMap: GameMap,
@@ -24,16 +25,17 @@ export class DeleteEntityFrontCommand extends DeleteEntityCommand implements Fro
             throw new Error("Trying to delete a non existing Entity!");
         }
         this.entityData = structuredClone(entityData);
+        // Kept for Undo: once deleted, the object is no longer on the map to measure.
+        const entity = this.entitiesManager.getEntities().get(this.entityId);
+        if (entity) this.entityDimensions = { width: entity.width, height: entity.height };
         this.entitiesManager.deleteEntity(this.entityId);
         return super.execute();
     }
 
     public getUndoCommand(): CreateEntityFrontCommand | VoidFrontCommand {
-        if (!this.entityData) {
-            return new VoidFrontCommand();
-        }
-        const entity = this.entitiesManager.getEntities().get(this.entityData.prefabRef.id);
-        if (!entity) {
+        // Undo puts the object back. It used to look the deleted object up on the map (by its prefab id), never
+        // found it, and so undid nothing.
+        if (!this.entityData || !this.entityDimensions) {
             return new VoidFrontCommand();
         }
         return new CreateEntityFrontCommand(
@@ -42,7 +44,7 @@ export class DeleteEntityFrontCommand extends DeleteEntityCommand implements Fro
             this.entityData,
             undefined,
             this.entitiesManager,
-            { width: entity.width, height: entity.height }
+            this.entityDimensions
         );
     }
 

@@ -9,6 +9,4 @@ export const modalVisibilityStore = writable(false);
 /** Whether the modal fills the window (its full-screen view) rather than its usual place. Reset when it closes. */
 export const modalFullScreenStore = writable(false);
 
-export const showModalGlobalComminucationVisibilityStore = writable(false);
-
 export const roomListVisibilityStore = writable<boolean>(false);

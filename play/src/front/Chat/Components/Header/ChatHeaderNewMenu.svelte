@@ -3,7 +3,7 @@
     import type { ComponentType } from "svelte";
     import { openModal } from "svelte-modals";
     import LL from "../../../../i18n/i18n-svelte";
-    import { findGroupOpenStore, navChat } from "../../Stores/ChatStore";
+    import { findGroupOpenStore, navChat, peopleViewStore } from "../../Stores/ChatStore";
     import CreateRoomModal from "../Room/CreateRoomModal.svelte";
     import CreateFolderModal from "../Room/CreateFolderModal.svelte";
     import type { NewChatOption } from "./ChatHeaderNewMenu";
@@ -110,6 +110,8 @@
         switch (option) {
             case "newMessage":
                 // Pick a person on the People tab; its "Send message" opens the existing direct chat flow.
+                // The search covers everyone, not only the friends a chip was left on.
+                peopleViewStore.set("everyone");
                 focusChatSearchRequest.set(true);
                 navChat.switchToUserList();
                 break;

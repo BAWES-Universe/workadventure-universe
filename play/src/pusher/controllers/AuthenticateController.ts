@@ -196,7 +196,9 @@ export class AuthenticateController extends BaseHttpController {
             if (query === undefined) {
                 return;
             }
-            const { token, playUri, localStorageCompanionTextureId, chatID, refresh } = query;
+            // The chat ID in the query is not passed on: the browser could claim anyone's. Orbit only saves one the
+            // game checked with the Matrix server (SocketManager.handleUpdateChatId).
+            const { token, playUri, localStorageCompanionTextureId, refresh } = query;
             let localStorageCharacterTextureIds = query["localStorageCharacterTextureIds[]"];
             if (typeof localStorageCharacterTextureIds === "string") {
                 localStorageCharacterTextureIds = [localStorageCharacterTextureIds];
@@ -214,8 +216,7 @@ export class AuthenticateController extends BaseHttpController {
                     localStorageCharacterTextureIds ?? [],
                     localStorageCompanionTextureId,
                     req.header("accept-language"),
-                    authTokenData.tags,
-                    chatID
+                    authTokenData.tags
                 );
 
                 if (resUserData.status === "error") {

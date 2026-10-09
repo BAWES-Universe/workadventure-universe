@@ -7,6 +7,7 @@ import { arrayQuickPhrase } from "../Stores/Utils/quickPhraseSchema";
 import type { RequestedStatus } from "../Rules/StatusRules/statusRules";
 import { requestedStatusFactory } from "../Rules/StatusRules/StatusFactory/RequestedStatusFactory";
 import { INITIAL_SIDEBAR_WIDTH } from "../Stores/ChatStore";
+import { isAndroid, isIOS } from "../WebRtc/DeviceUtils";
 import type { LocalUser } from "./LocalUser";
 import { areCharacterTexturesValid, isUserNameValid } from "./LocalUserUtils";
 
@@ -38,6 +39,10 @@ const cacheAPIIndex = "workavdenture-cache";
 const userProperties = "user-properties";
 const cameraPrivacySettings = "cameraPrivacySettings";
 const microphonePrivacySettings = "microphonePrivacySettings";
+// Phones keep their own "Keep microphone active in away mode" setting, off unless the person turns it on. Leaving the
+// browser on a phone usually means using the camera or taking a call, which a live microphone blocks. The shared key
+// above was saved as "on" automatically the first time the game read it, so phones start fresh rather than reuse it.
+const phoneMicrophonePrivacySettings = "phoneMicrophonePrivacySettings";
 const emojiFavorite = "emojiFavorite";
 const quickPhrases = "quickPhrases";
 const speakerDeviceId = "speakerDeviceId";
@@ -54,7 +59,11 @@ const foldersOpened = "foldersOpened";
 const cameraContainerHeightKey = "cameraContainerHeight";
 const chatSideBarWidthKey = "chatSideBarWidth";
 const mapEditorSideBarWidthKey = "mapEditorSideBarWidthKey";
+const lookAroundHintSeenKey = "lookAroundHintSeen";
+const editHintSeenKey = "editHintSeen";
+const recentEditObjectsKey = "recentEditObjects";
 const bubbleSound = "bubbleSound";
+const knownMediaDevices = "knownMediaDevices";
 
 const INITIAL_MAP_EDITOR_SIDEBAR_WIDTH = 448;
 
@@ -67,6 +76,7 @@ const JwtAuthToken = z
 type JwtAuthToken = z.infer<typeof JwtAuthToken>;
 
 const FoldersOpenedSchema = z.union([z.null(), z.array(z.string()).transform((arr) => new Set(arr))]);
+const KnownMediaDevicesSchema = z.array(z.string());
 
 interface PlayerVariable {
     value: undefined;
@@ -383,6 +393,32 @@ class LocalUserStore {
         this.setFoldersOpened(folders);
     }
 
+    /**
+     * Media devices this browser has already seen, as "kind:label" keys (see NewMediaDevices.ts).
+     */
+    getKnownMediaDevices(): string[] {
+        const stored = localStorage.getItem(knownMediaDevices);
+        if (!stored) {
+            return [];
+        }
+        try {
+            return KnownMediaDevicesSchema.parse(JSON.parse(stored));
+        } catch (e) {
+            console.warn("Error parsing known media devices from localStorage:", e);
+            localStorage.removeItem(knownMediaDevices);
+            return [];
+        }
+    }
+
+    setKnownMediaDevices(keys: string[]) {
+        try {
+            localStorage.setItem(knownMediaDevices, JSON.stringify(keys));
+        } catch (e) {
+            // A full or blocked storage must not stop the device list from updating.
+            console.warn("Error saving known media devices to localStorage:", e);
+        }
+    }
+
     setPreferredVideoInputDevice(deviceId?: string) {
         if (deviceId === undefined) {
             localStorage.removeItem(preferredVideoInputDevice);
@@ -421,6 +457,38 @@ class LocalUserStore {
         return deviceId;
     }
 
+    /** The "Drag to look around" hint has been seen: it goes after the first real drag. */
+    setLookAroundHintSeen(value: boolean): void {
+        localStorage.setItem(lookAroundHintSeenKey, value.toString());
+    }
+
+    getLookAroundHintSeen(): boolean {
+        return localStorage.getItem(lookAroundHintSeenKey) === "true";
+    }
+
+    /** The "Pick a tool on the right" hint of the room editor has been seen (a tool was picked once). */
+    setEditHintSeen(value: boolean): void {
+        localStorage.setItem(editHintSeenKey, value.toString());
+    }
+
+    getEditHintSeen(): boolean {
+        return localStorage.getItem(editHintSeenKey) === "true";
+    }
+
+    /** The objects placed most recently in the room editor, newest first, by prefab id. */
+    setRecentEditObjects(ids: string[]): void {
+        localStorage.setItem(recentEditObjectsKey, JSON.stringify(ids));
+    }
+
+    getRecentEditObjects(): string[] {
+        try {
+            const parsed: unknown = JSON.parse(localStorage.getItem(recentEditObjectsKey) ?? "[]");
+            return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
+        } catch {
+            return [];
+        }
+    }
+
     setCameraPrivacySettings(option: boolean) {
         localStorage.setItem(cameraPrivacySettings, option.toString());
     }
@@ -433,16 +501,24 @@ class LocalUserStore {
         return localStorage.getItem(cameraPrivacySettings) === "true";
     }
 
+    private isPhone(): boolean {
+        return isIOS() || isAndroid();
+    }
+
     setMicrophonePrivacySettings(option: boolean) {
-        localStorage.setItem(microphonePrivacySettings, option.toString());
+        localStorage.setItem(
+            this.isPhone() ? phoneMicrophonePrivacySettings : microphonePrivacySettings,
+            option.toString()
+        );
     }
 
     getMicrophonePrivacySettings() {
+        const key = this.isPhone() ? phoneMicrophonePrivacySettings : microphonePrivacySettings;
         //if this setting doesn't exist in LocalUserStore, we set a default value
-        if (localStorage.getItem(microphonePrivacySettings) == null) {
-            localStorage.setItem(microphonePrivacySettings, "true");
+        if (localStorage.getItem(key) == null) {
+            localStorage.setItem(key, this.isPhone() ? "false" : "true");
         }
-        return localStorage.getItem(microphonePrivacySettings) === "true";
+        return localStorage.getItem(key) === "true";
     }
 
     getAllUserProperties(context: string): Map<string, PlayerVariable> {
@@ -616,6 +692,15 @@ class LocalUserStore {
         return parseInt(value);
     }
 
+    // Microphone noise filter: "standard" (browser), "strong" (on-device model) or "voiceOnly" (browser voice isolation)
+    setNoiseFilter(value: string) {
+        localStorage.setItem("noiseFilter", value);
+    }
+
+    getNoiseFilter(): string | null {
+        return localStorage.getItem("noiseFilter");
+    }
+
     // Background transformation settings
     setBackgroundMode(value: string) {
         localStorage.setItem("backgroundMode", value);
@@ -640,14 +725,6 @@ class LocalUserStore {
 
     getBackgroundImage(): string | null {
         return localStorage.getItem("backgroundImage");
-    }
-
-    setBackgroundVideo(value: string) {
-        localStorage.setItem("backgroundVideo", value);
-    }
-
-    getBackgroundVideo(): string | null {
-        return localStorage.getItem("backgroundVideo");
     }
 
     getRequestedStatus(): RequestedStatus | null {

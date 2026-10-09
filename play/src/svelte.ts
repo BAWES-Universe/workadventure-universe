@@ -27,6 +27,7 @@ if (isTouchScreen(window)) {
         document.documentElement.classList.add("touch-screen");
         installViewportGuard(undefined, {
             onZoomReset: (scale, reason) => analyticsClient.pageZoomReset({ scale, reason }),
+            onShiftReset: (properties) => analyticsClient.pageShiftReset(properties),
         });
     }
     // A phone can report a wrong size to a page loaded or restored in the background, with no `resize` once it's

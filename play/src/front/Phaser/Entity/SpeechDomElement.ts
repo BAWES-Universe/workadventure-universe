@@ -63,9 +63,9 @@ export class SpeechDomElement extends Phaser.GameObjects.DOMElement {
             x,
             y,
             span,
-            `z-index:10; background-color: #00000080; color: ${
+            `z-index:10; background-color: #000000cc; color: ${
                 type === "message" ? "#ffffff" : "#f9e81e"
-            }; padding: 5px; border-radius: 5px; font-size: 9px; cursor: pointer; backdrop-filter: blur(8px); max-width: 300px; max-height: 150px; overflow-y: auto; whie-space: pre-wrap;`
+            }; padding: 5px; border-radius: 5px; font-size: 9px; cursor: pointer; max-width: 300px; max-height: 150px; overflow-y: auto; whie-space: pre-wrap;`
         );
 
         this.span = span;

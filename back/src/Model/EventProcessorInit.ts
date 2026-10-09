@@ -26,6 +26,31 @@ eventProcessor.registerPublicEventProcessor("spaceMessage", (event, senderId, us
             galleryUrls: event.spaceMessage.galleryUrls,
             fileName: event.spaceMessage.fileName,
             fileNames: event.spaceMessage.fileNames,
+            id: event.spaceMessage.id,
+            replyTo: event.spaceMessage.replyTo,
+        },
+    };
+});
+
+eventProcessor.registerPublicEventProcessor("spaceMessageReaction", (event, senderId, users) => {
+    if (event.$case !== "spaceMessageReaction") {
+        // FIXME: improve the typing of the method to avoid this
+        throw new Error("Invalid event type");
+    }
+
+    const sender = users.find((user) => user.spaceUserId === senderId);
+
+    if (!sender) {
+        throw new Error("Sender not found");
+    }
+
+    return {
+        $case: "spaceMessageReaction",
+        spaceMessageReaction: {
+            messageId: event.spaceMessageReaction.messageId,
+            reaction: event.spaceMessageReaction.reaction,
+            add: event.spaceMessageReaction.add,
+            name: sender.name,
         },
     };
 });

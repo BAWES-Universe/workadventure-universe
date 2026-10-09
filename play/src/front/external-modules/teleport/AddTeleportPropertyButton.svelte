@@ -9,8 +9,8 @@
 </script>
 
 <AddPropertyButton
-    headerText="Teleport"
-    descriptionText="Teleport people to another universe/world/room"
+    headerText="Portal to any room"
+    descriptionText="Hop to a friend’s room in any universe"
     img={IconRoute}
     style="z-index: 200;"
     testId="teleport"

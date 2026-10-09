@@ -24,6 +24,46 @@ const menu: DeepPartial<Translation["menu"]> = {
         logout: "登出",
     },
     settings: {
+        tabs: {
+            general: "通用",
+            soundAndVideo: "声音和视频",
+            keyboard: "键盘",
+        },
+        sections: {
+            video: "视频",
+            sound: "声音",
+            notifications: "通知",
+            away: "离开应用时",
+            screen: "屏幕",
+            help: "帮助",
+        },
+        quality: {
+            saveData: "节省流量",
+            saveDataHint: "使用更少的网络流量",
+            normal: "普通",
+            best: "最佳",
+            bestHint: "最清晰的画面",
+        },
+        cameraQuality: "摄像头画质",
+        screenShareQuality: "屏幕共享画质",
+        voicesNearby: "附近的声音",
+        joinSound: "有人加入时的提示音",
+        joinSoundShort: "加入提示音",
+        playJoinSound: "播放提示音",
+        lowerMusicWhileTalking: "我说话时降低音乐音量",
+        muteMapSounds: "静音地图音乐和音效",
+        ignoreFollowRequests: "忽略跟随请求",
+        keepCameraOn: "保持摄像头开启",
+        keepMicOn: "保持麦克风开启",
+        keptOnWhenAway: "切换到其他标签页或应用时保持开启",
+        turnedOffWhenAway: "切换到其他标签页或应用时关闭",
+        askBeforeWebsites: "打开网站前先询问",
+        calmMap: "安静地图（无动画）",
+        pictureInPicture: "画中画",
+        mapCredits: "地图版权信息",
+        report: "报告问题",
+        back: "返回",
+        close: "关闭",
         videoBandwidth: {
             title: "视频质量",
             low: "低",
@@ -70,17 +110,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         error: "未选择文件。发送前必须上传一个文件。",
         errorUpload: "上传文件错误。 请检查您的文件，然后重试。 如果问题仍然存在，请联系管理员。",
     },
-    contact: {
-        gettingStarted: {
-            title: "开始",
-            description:
-                "Universe使你能够创建一个在线空间，与他们自然地交流。这都从创建你自己的空间开始。从我们的团队预制的大量选项中选择一个地图。",
-        },
-        createMap: {
-            title: "创建地图",
-            description: "你也可以跟随文档中的步骤创建你自己的地图。",
-        },
-    },
     about: {
         mapInfo: "地图信息",
         mapLink: "地图链接",
@@ -105,7 +134,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         invite: "邀请",
         credit: "信用",
         globalMessages: "全局消息",
-        contact: "联系",
         report: "Report Issues",
     },
 };

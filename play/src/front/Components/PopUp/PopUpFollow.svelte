@@ -1,168 +1,250 @@
 <script lang="ts">
-    import { createEventDispatcher } from "svelte";
-    import { followRoleStore, followStateStore, followUsersStore } from "../../Stores/FollowStore";
+    import { FOLLOW_REQUEST_TIMEOUT_MS } from "@workadventure/shared-utils";
+    import type { FollowAnswer, FollowNote } from "../../Stores/FollowStore";
+    import {
+        acceptFollowRequest,
+        endFollow,
+        followAskedStore,
+        followNameOf,
+        followNoteStore,
+        followRequestStartedAtStore,
+        followRoleStore,
+        followStateStore,
+        followUsersStore,
+    } from "../../Stores/FollowStore";
     import LL from "../../../i18n/i18n-svelte";
     import { gameManager } from "../../Phaser/Game/GameManager";
-    import PopUpContainer from "./PopUpContainer.svelte";
+    import FollowWoka from "./FollowWoka.svelte";
 
-    function name(userId: number): string {
-        const gameScene = gameManager.getCurrentGameScene();
-        const user = gameScene.MapPlayersByKey.get(userId);
-        return user ? user.playerName : "";
-    }
-
-    function acceptFollowRequest() {
-        const gameScene = gameManager.getCurrentGameScene();
-        gameScene.CurrentPlayer.startFollowing();
-        closeBanner();
-    }
-
-    function abortEnding() {
-        followStateStore.set("active");
-        closeBanner();
-    }
-
-    function reset() {
-        const gameScene = gameManager.getCurrentGameScene();
-        gameScene.connection?.emitFollowAbort();
-        followUsersStore.stopFollowing();
-        closeBanner();
+    function name(userId: number | undefined): string {
+        if (userId === undefined) {
+            return "";
+        }
+        return gameManager.getCurrentGameScene().MapPlayersByKey.get(userId)?.playerName || followNameOf(userId);
     }
 
     function onKeyDown(e: KeyboardEvent) {
-        if (e.key === "Escape") {
-            reset();
+        // Escape answers "Not now" or cancels the request; it never stops a follow already going (it closes menus).
+        if (e.key === "Escape" && $followStateStore === "requesting") {
+            endFollow();
         }
     }
 
-    const dispatch = createEventDispatcher<{
-        close: void;
-    }>();
-
-    function closeBanner() {
-        dispatch("close");
+    function noteText(note: FollowNote): string {
+        const person = note.person ? name(note.person.userId) || note.person.name : "";
+        switch (note.kind) {
+            case "saidNo":
+                return $LL.follow.notes.saidNo({ name: person });
+            case "noAnswer":
+                return $LL.follow.notes.noAnswer({ name: person });
+            case "nobodySaidYes":
+                return $LL.follow.notes.nobodySaidYes();
+            case "cancelled":
+                return $LL.follow.notes.cancelled({ leader: person });
+            case "stoppedLeading":
+                return $LL.follow.notes.stoppedLeading({ leader: person });
+            case "timedOut":
+                return $LL.follow.notes.timedOut();
+        }
     }
+
+    function answerText(answer: FollowAnswer): string {
+        switch (answer) {
+            case "waiting":
+                return $LL.follow.request.state.waiting();
+            case "following":
+                return $LL.follow.request.state.following();
+            case "declined":
+                return $LL.follow.request.state.declined();
+        }
+    }
+
+    // The bar empties over the 30 seconds to answer, from wherever it is when the card appears.
+    $: remainingMs =
+        $followRequestStartedAtStore === undefined
+            ? 0
+            : Math.max(0, $followRequestStartedAtStore + FOLLOW_REQUEST_TIMEOUT_MS - Date.now());
+
+    $: isLeader = $followRoleStore === "leader";
+    $: leader = isLeader ? undefined : $followUsersStore[0];
+    $: several = $followAskedStore.length > 1;
+    $: followingText =
+        $followUsersStore.length === 1
+            ? $LL.follow.interactStatus.followed.one({ follower: name($followUsersStore[0]) })
+            : $followUsersStore.length === 2
+            ? $LL.follow.interactStatus.followed.two({
+                  firstFollower: name($followUsersStore[0]),
+                  secondFollower: name($followUsersStore[1]),
+              })
+            : $LL.follow.interactStatus.followed.many({
+                  followers: $followUsersStore.slice(0, -1).map(name).join(", "),
+                  lastFollower: name($followUsersStore[$followUsersStore.length - 1]),
+              });
 </script>
 
 <svelte:window on:keydown={onKeyDown} />
 
-<PopUpContainer reduceOnSmallScreen={true}>
-    {#if $followStateStore === "requesting" && $followRoleStore === "follower"}
+<div class="follow-popup flex w-full justify-center text-white">
+    {#if $followStateStore === "requesting"}
+        <!-- The card: the leader waiting for answers, or the question to the one asked. -->
         <div
-            class="interact-menu text-center text-white sm:w-[500px] pointer-events-auto z-[150] m-auto rounded-lg overflow-hidden margin-bottom responsive-follow-follower mt-6"
+            class="u-surface pointer-events-auto w-full mobile:mx-1 sm:w-[400px] overflow-hidden rounded-2xl text-start"
+            role="dialog"
+            aria-labelledby="follow-card-title"
+            data-testid="follow-card"
         >
-            <div class="text-lg bold responsive-follow-follower flex gap-4 place-content-center">
-                <svg
-                    class="opacity-50 mb-4 responsive-svg"
-                    width="23"
-                    height="23"
-                    viewBox="0 0 23 23"
-                    fill="none"
-                    xmlns="http://www.w3.org/2000/svg"
-                >
-                    <path
-                        d="M5.875 3.625C5.875 4.22174 5.63795 4.79403 5.21599 5.21599C4.79403 5.63795 4.22174 5.875 3.625 5.875C3.02826 5.875 2.45597 5.63795 2.03401 5.21599C1.61205 4.79403 1.375 4.22174 1.375 3.625C1.375 3.02826 1.61205 2.45597 2.03401 2.03401C2.45597 1.61205 3.02826 1.375 3.625 1.375C4.22174 1.375 4.79403 1.61205 5.21599 2.03401C5.63795 2.45597 5.875 3.02826 5.875 3.625ZM5.875 3.625L16.5625 3.625C17.6068 3.625 18.6083 4.03984 19.3467 4.77827C20.0852 5.51669 20.5 6.51821 20.5 7.5625C20.5 8.60679 20.0852 9.60831 19.3467 10.3467C18.6083 11.0852 17.6068 11.5 16.5625 11.5H6.4375C5.39321 11.5 4.39169 11.9148 3.65327 12.6533C2.91484 13.3917 2.5 14.3932 2.5 15.4375C2.5 16.4818 2.91484 17.4833 3.65327 18.2217C4.39169 18.9602 5.39321 19.375 6.4375 19.375H21.625M21.625 19.375L18.25 16M21.625 19.375L18.25 22.75"
-                        stroke="white"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
+            {#if isLeader}
+                <div class="flex items-center gap-3 px-4 pt-3.5 {several ? 'pb-2' : 'pb-3'}">
+                    {#if $followAskedStore.length === 1}
+                        <FollowWoka userId={$followAskedStore[0].userId} />
+                    {/if}
+                    <div class="min-w-0">
+                        <p id="follow-card-title" class="m-0 text-base font-semibold normal-case leading-[22px]">
+                            {#if $followAskedStore.length === 1}
+                                {$LL.follow.request.titleOne({
+                                    name: name($followAskedStore[0].userId) || $followAskedStore[0].name,
+                                })}
+                            {:else if several}
+                                {$LL.follow.request.titleMany({ count: $followAskedStore.length })}
+                            {:else}
+                                {$LL.follow.interactStatus.waitingFollowers()}
+                            {/if}
+                        </p>
+                        <p class="follow-muted m-0 mt-0.5 text-[13px] leading-[18px]">
+                            {several ? $LL.follow.request.anyone() : $LL.follow.request.waiting()}
+                        </p>
+                    </div>
+                </div>
+                {#if several}
+                    <ul class="m-0 list-none px-4 pb-2.5" data-testid="follow-asked-list">
+                        {#each $followAskedStore as person (person.userId)}
+                            <li
+                                class="flex items-center gap-2.5 border-0 border-t border-solid border-white/[0.06] py-2 text-sm"
+                            >
+                                <FollowWoka userId={person.userId} small />
+                                <span class="min-w-0 flex-1 truncate">{name(person.userId) || person.name}</span>
+                                <span
+                                    class="flex-none text-xs follow-answer-{person.answer}"
+                                    data-testid="follow-answer-{person.answer}">{answerText(person.answer)}</span
+                                >
+                            </li>
+                        {/each}
+                    </ul>
+                {/if}
+            {:else}
+                <div class="flex items-center gap-3 px-4 pb-3 pt-3.5">
+                    {#if leader !== undefined}
+                        <FollowWoka userId={leader} />
+                    {/if}
+                    <div class="min-w-0">
+                        <p id="follow-card-title" class="m-0 text-base font-semibold normal-case leading-[22px]">
+                            {$LL.follow.question.title({ leader: name(leader) })}
+                        </p>
+                        <p class="follow-muted m-0 mt-0.5 text-[13px] leading-[18px]">
+                            {$LL.follow.question.desc({ leader: name(leader) })}
+                        </p>
+                    </div>
+                </div>
+            {/if}
+
+            <div class="mx-4 mb-3 h-[3px] overflow-hidden rounded-sm bg-white/[0.08]" aria-hidden="true">
+                {#key $followRequestStartedAtStore}
+                    <i
+                        class="follow-countdown block h-full origin-left rtl:origin-right"
+                        style="--follow-from: {remainingMs / FOLLOW_REQUEST_TIMEOUT_MS}; --follow-ms: {remainingMs}ms;"
                     />
-                </svg>
-                {$LL.follow.interactMenu.title.follow({ leader: name($followUsersStore[0]) })}
+                {/key}
+            </div>
+
+            <div class="flex gap-2 px-3 pb-3">
+                {#if isLeader}
+                    <button
+                        type="button"
+                        class="u-cta-secondary m-0 flex h-11 flex-1 items-center justify-center rounded-full px-4 text-sm font-bold"
+                        data-testid="follow-cancel"
+                        on:click={endFollow}>{$LL.follow.request.cancel()}</button
+                    >
+                {:else}
+                    <button
+                        type="button"
+                        class="u-cta-secondary m-0 flex h-11 flex-1 items-center justify-center rounded-full px-4 text-sm font-bold"
+                        data-testid="follow-decline"
+                        on:click={endFollow}>{$LL.follow.question.notNow()}</button
+                    >
+                    <button
+                        type="button"
+                        class="u-cta m-0 flex h-11 flex-1 items-center justify-center rounded-full px-4 text-sm font-bold"
+                        data-testid="follow-accept"
+                        on:click={acceptFollowRequest}>{$LL.follow.question.follow()}</button
+                    >
+                {/if}
             </div>
         </div>
-    {/if}
-
-    {#if $followStateStore === "ending"}
-        <div class="w-56 min-h-10 bottom-12 text-center z-[150] bg-contrast/80 backdrop-blur rounded-lg text-white">
-            <div>{$LL.follow.interactMenu.title.interact()}</div>
-            {#if $followRoleStore === "follower"}
-                <div class="m-1">{$LL.follow.interactMenu.stop.follower({ leader: name($followUsersStore[0]) })}</div>
-            {:else if $followRoleStore === "leader"}
-                <div class="m-1">{$LL.follow.interactMenu.stop.leader()}</div>
-            {/if}
-        </div>
-    {/if}
-
-    {#if $followStateStore === "active" || $followStateStore === "ending"}
+    {:else if $followStateStore === "active"}
+        <!-- Leading or following: a small pill, so the map stays clear. Stop ends it (for everyone, for a leader). -->
         <div
-            class="blue-dialog-box outline-light w-96 min-h-10 text-center m-auto z-[150] rounded-lg overflow-hidden text-white hover:animate-none transition-all pointer-events-auto responsive-follow-asker"
+            class="u-surface pointer-events-auto flex min-w-0 max-w-full items-center gap-2.5 rounded-full py-1.5 pe-1.5 ps-2 text-sm font-semibold"
+            data-testid="follow-pill"
         >
-            {#if $followRoleStore === "follower"}
-                <div class="m-1 px-8 py-4">
-                    {$LL.follow.interactStatus.following({ leader: name($followUsersStore[0]) })}
-                </div>
-            {:else if $followUsersStore.length === 0}
-                <div class="m-1 px-8 py-4">{$LL.follow.interactStatus.waitingFollowers()}</div>
-            {:else if $followUsersStore.length === 1}
-                <div class="m-1 px-8 py-4">
-                    {$LL.follow.interactStatus.followed.one({ follower: name($followUsersStore[0]) })}
-                </div>
-            {:else if $followUsersStore.length === 2}
-                <div class="m-1 px-8 py-4">
-                    {$LL.follow.interactStatus.followed.two({
-                        firstFollower: name($followUsersStore[0]),
-                        secondFollower: name($followUsersStore[1]),
-                    })}
-                </div>
+            {#if isLeader}
+                {#if $followUsersStore.length > 0}
+                    <FollowWoka userId={$followUsersStore[0]} small />
+                {/if}
+                <span class="min-w-0 truncate">{followingText}</span>
             {:else}
-                <div>
-                    {$LL.follow.interactStatus.followed.many({
-                        followers: $followUsersStore.slice(0, -1).map(name).join(", "),
-                        lastFollower: name($followUsersStore[$followUsersStore.length - 1]),
-                    })}
-                </div>
+                {#if leader !== undefined}
+                    <FollowWoka userId={leader} small />
+                {/if}
+                <span class="min-w-0 truncate">{$LL.follow.interactStatus.following({ leader: name(leader) })}</span>
             {/if}
+            <button
+                type="button"
+                class="u-cta-secondary m-0 flex h-8 flex-none items-center rounded-full px-3.5 text-[13px] font-bold"
+                data-testid="follow-stop"
+                on:click={endFollow}>{$LL.follow.stop()}</button
+            >
+        </div>
+    {:else if $followNoteStore}
+        <!-- How it ended, for three seconds. -->
+        <div
+            class="u-surface flex min-w-0 max-w-full items-center gap-2.5 rounded-full py-2.5 pe-4 {$followNoteStore.person
+                ? 'ps-2.5'
+                : 'ps-4'} text-sm"
+            role="status"
+            data-testid="follow-note"
+        >
+            {#if $followNoteStore.person}
+                <FollowWoka userId={$followNoteStore.person.userId} small />
+            {/if}
+            <span class="min-w-0 truncate">{noteText($followNoteStore)}</span>
         </div>
     {/if}
+</div>
 
-    <svelte:fragment slot="buttons">
-        {#if $followStateStore === "requesting" && $followRoleStore === "follower"}
-            <button type="button" class="btn btn-light btn-ghost w-1/2 justify-center" on:click|preventDefault={reset}
-                >{$LL.follow.interactMenu.no()}
-            </button>
-            <button
-                type="button"
-                class="btn btn-secondary w-1/2 justify-center"
-                on:click|preventDefault={acceptFollowRequest}
-                >{$LL.follow.interactMenu.yes()}
-            </button>
-        {/if}
-
-        {#if $followStateStore === "ending"}
-            <button type="button" class="btn btn-secondary w-1/2 justify-center" on:click|preventDefault={reset}
-                >{$LL.follow.interactMenu.yes()}</button
-            >
-            <button
-                type="button"
-                class="btn btn-light btn-ghost w-1/2 justify-center"
-                on:click|preventDefault={abortEnding}>{$LL.follow.interactMenu.no()}</button
-            >
-        {/if}
-
-        {#if $followStateStore === "active" || $followStateStore === "ending"}
-            {#if $followRoleStore === "follower"}
-                <button
-                    type="button"
-                    class="btn btn-sm btn-danger w-full justify-center"
-                    on:click|preventDefault={reset}
-                    >{$LL.actionbar.help.unfollow.title()}
-                </button>
-            {:else if $followUsersStore.length === 1}
-                <button
-                    type="button"
-                    class="btn btn-sm btn-danger w-full justify-center"
-                    on:click|preventDefault={reset}
-                    >{$LL.actionbar.help.unfollow.title()}
-                </button>
-            {:else if $followUsersStore.length > 2}
-                <button
-                    type="button"
-                    class="btn btn-sm btn-danger w-full justify-center"
-                    on:click|preventDefault={reset}
-                    >{$LL.actionbar.cancel()}
-                </button>
-            {/if}
-        {/if}
-    </svelte:fragment>
-</PopUpContainer>
+<style>
+    .follow-muted {
+        color: #b9b3d1;
+    }
+    .follow-answer-waiting {
+        color: #b9b3d1;
+    }
+    .follow-answer-following {
+        color: #86efac;
+    }
+    .follow-answer-declined {
+        color: #fca5a5;
+    }
+    .follow-countdown {
+        background: linear-gradient(90deg, #8629fc, #4156f6);
+        transform: scaleX(0);
+        animation: follow-countdown var(--follow-ms) linear forwards;
+    }
+    @keyframes follow-countdown {
+        from {
+            transform: scaleX(var(--follow-from));
+        }
+        to {
+            transform: scaleX(0);
+        }
+    }
+</style>

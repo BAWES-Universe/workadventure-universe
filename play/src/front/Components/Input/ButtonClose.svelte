@@ -33,7 +33,7 @@
 <button
     type="button"
     {id}
-    class="{sizeClasses} p-0 flex items-center justify-center rounded backdrop-blur close-window transition-all aspect-square text-2xl {textColor} {bgColor} hover:{hoverColor} close-btn {extraButtonClasses}"
+    class="{sizeClasses} p-0 flex items-center justify-center rounded-full backdrop-blur close-window transition-all aspect-square text-2xl {textColor} {bgColor} hover:{hoverColor} close-btn {extraButtonClasses}"
     data-testid={dataTestId}
     on:click={handleClick}
 >

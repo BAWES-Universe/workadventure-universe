@@ -12,11 +12,21 @@ export const getHslColor = (color: string): string => {
     return `${Math.round(hsl[0])} ${Math.round(hsl[1] * 100) ?? 0}% ${Math.round(hsl[2] * 100)}%`;
 };
 
-export const getPalette = (hex: string | null | undefined) => {
+/**
+ * Builds a 12-step scale from white through `hex` to black.
+ * By default the base step lands a little toward white (#000000 gives #171717). With `exactBase`, the base step is
+ * `hex` itself, so a map's backgroundColor is exactly the colour of the game's panels.
+ */
+export const getPalette = (hex: string | null | undefined, exactBase = false) => {
     if (!hex) {
         return [];
     }
-    const colors = chroma.scale(["white", hex, "black"]).colors(12, "hex");
+    let scale = chroma.scale(["white", hex, "black"]);
+    if (exactBase) {
+        // colors(12) samples at i / 11; the base step is i = 5.
+        scale = scale.domain([0, 5 / 11, 1]);
+    }
+    const colors = scale.colors(12, "hex");
     const palette: PaletteColor[] = [];
     // Create 50
     palette.push({ code: "-50", color: getHslColor(colors[1]) });
@@ -31,8 +41,8 @@ export const getPalette = (hex: string | null | undefined) => {
     return palette;
 };
 
-export const getStringPalette = (hex: string | null | undefined, prefix: string): string => {
-    const palette = getPalette(hex);
+export const getStringPalette = (hex: string | null | undefined, prefix: string, exactBase = false): string => {
+    const palette = getPalette(hex, exactBase);
     let stringPalette = "";
     for (const color of palette) {
         stringPalette += `--${prefix}${color.code}: ${color.color};\n`;

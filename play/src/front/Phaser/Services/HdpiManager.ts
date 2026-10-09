@@ -6,6 +6,7 @@ interface Size {
 export class HdpiManager {
     private _zoomModifier = 1;
     private _maxZoomOut = 1;
+    private _zoomOutPastMapFit: number | undefined;
     private _optimalZoomLevel = 1;
     private _maxZoomInReached = false;
 
@@ -42,7 +43,10 @@ export class HdpiManager {
         // Has the canvas more pixels than the screen? This is forbidden
         if (this.isMaximumZoomReached) {
             // Let's reset the zoom modifier (WARNING this is a SIDE EFFECT in a getter)
-            this._zoomModifier = this._maxZoomOut / this._optimalZoomLevel;
+            this._zoomModifier = Math.min(
+                this._maxZoomOut / this._optimalZoomLevel,
+                this._zoomOutPastMapFit ?? Number.POSITIVE_INFINITY
+            );
 
             const maxGameWidth = Math.ceil(realPixelScreenSize.width / this._optimalZoomLevel / this._zoomModifier);
             const maxGameHeight = Math.ceil(realPixelScreenSize.height / this._optimalZoomLevel / this._zoomModifier);
@@ -120,8 +124,18 @@ export class HdpiManager {
         return this._maxZoomOut;
     }
 
+    /**
+     * How far zooming out may go past the point where the whole map fits (a zoom modifier); undefined stops there.
+     * Scrolling out in play has to get through to "Look around", even on a map small enough to fit the screen first.
+     */
+    public set zoomOutPastMapFit(zoomModifier: number | undefined) {
+        this._zoomOutPastMapFit = zoomModifier;
+    }
+
     public get isMaximumZoomReached(): boolean {
-        return this._optimalZoomLevel * this._zoomModifier <= this._maxZoomOut;
+        const mapFits = this._optimalZoomLevel * this._zoomModifier <= this._maxZoomOut;
+        if (this._zoomOutPastMapFit === undefined) return mapFits;
+        return mapFits && this._zoomModifier <= this._zoomOutPastMapFit;
     }
 
     public get isMaximumZoomInReached(): boolean {

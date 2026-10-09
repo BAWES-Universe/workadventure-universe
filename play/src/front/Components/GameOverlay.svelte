@@ -7,27 +7,27 @@
     import { selectCharacterSceneVisibleStore } from "../Stores/SelectCharacterStore";
     import { selectCompanionSceneVisibleStore } from "../Stores/SelectCompanionStore";
     import { gameSceneIsLoadedStore } from "../Stores/GameSceneStore";
-    import { mapEditorModeStore } from "../Stores/MapEditorStore";
     import { refreshPromptStore } from "../Stores/RefreshPromptStore";
     import { forceRefreshChatStore } from "../Stores/ChatStore";
     import { loaderVisibleStore } from "../Stores/LoaderStore";
-    import { showModalGlobalComminucationVisibilityStore } from "../Stores/ModalStore";
+    import { broadcastPanelOpenStore } from "../Stores/BroadcastStore";
     import { isActivatedStore as calendarIsActivatedStore, isCalendarVisibleStore } from "../Stores/CalendarStore";
     import { isActivatedStore as todoListIsActivatedStore, isTodoListVisibleStore } from "../Stores/TodoListStore";
     import { draggingFile } from "../Stores/FileUploadStore";
     import ChatSidebar from "../Chat/ChatSidebar.svelte";
     import { gameManager } from "../Phaser/Game/GameManager";
+    import { isBanScreen } from "../Connection/BanApi";
     import LoginScene from "./Login/LoginScene.svelte";
     import MainLayout from "./MainLayout.svelte";
     import SelectCompanionScene from "./SelectCompanion/SelectCompanionScene.svelte";
     import ErrorDialog from "./UI/ErrorDialog.svelte";
     import ErrorScreen from "./UI/ErrorScreen.svelte";
-    import MapEditor from "./MapEditor/MapEditor.svelte";
+    import BanScreen from "./UI/BanScreen.svelte";
     import RefreshPrompt from "./RefreshPrompt.svelte";
     import LoaderScene from "./Loader/LoaderScene.svelte";
     import EnableCameraScene from "./EnableCamera/EnableCameraScene.svelte";
     import bgMap from "./images/map-exemple.png";
-    import GlobalCommunicationModal from "./Modal/GlobalCommunicationModal.svelte";
+    import BroadcastPanel from "./Broadcast/BroadcastPanel.svelte";
     import Calendar from "./Calendar/Calendar.svelte";
     import TodoList from "./TodoList/TodoList.svelte";
     import FloatingUiPopupList from "./Util/FloatingUiPopupList.svelte";
@@ -65,7 +65,12 @@
 {/if}
 {#if $errorScreenStore !== undefined}
     <div class="bg-contrast">
-        <ErrorScreen />
+        <!-- A ban gets its own screen: what the admin said, an appeal, and a way out to the rest of Universe. -->
+        {#if isBanScreen($errorScreenStore)}
+            <BanScreen />
+        {:else}
+            <ErrorScreen />
+        {/if}
     </div>
 {:else if $errorStore.length > 0}
     <div class="bg-contrast">
@@ -76,7 +81,7 @@
         <LoginScene {game} />
     </div>
 {:else if $selectCharacterSceneVisibleStore}
-    <div class="absolute h-dvh">
+    <div class="absolute inset-0 h-dvh">
         <WokaScene />
     </div>
 {:else if $selectCompanionSceneVisibleStore}
@@ -93,11 +98,8 @@
     {/if}
     {#key $forceRefreshChatStore}
         <ChatSidebar />
-        {#if $mapEditorModeStore}
-            <MapEditor />
-        {/if}
-        {#if $showModalGlobalComminucationVisibilityStore}
-            <GlobalCommunicationModal />
+        {#if $broadcastPanelOpenStore}
+            <BroadcastPanel />
         {/if}
 
         <MainLayout />

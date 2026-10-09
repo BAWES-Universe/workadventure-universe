@@ -16,6 +16,7 @@ import { scriptingVideoStore } from "./ScriptingVideoStore";
 import { myCameraStore } from "./MyMediaStore";
 import {
     cameraEnergySavingStore,
+    displayedMegaphoneScreenStore,
     isListenerStore,
     localVoiceIndicatorStore,
     localVolumeStore,
@@ -93,6 +94,8 @@ export interface MyLocalStreamable extends Streamable {
 export const SCREEN_SHARE_STARTING_PRIORITY = 1000; // Priority for screen sharing streams
 export const VIDEO_STARTING_PRIORITY = 2000; // Priority for other video streams
 export const LAST_VIDEO_BOX_PRIORITY = 20000; // Priority for the last video boxes
+// A live broadcast (someone on the megaphone): first in the strip after your own camera and screen.
+export const LIVE_BROADCAST_VIDEO_BOX_PRIORITY = 1;
 
 const localstreamStoreValue = derived(localStreamStore, (myLocalStream) => {
     if (myLocalStream.type === "success") {
@@ -160,6 +163,7 @@ function createStreamableCollectionStore(): Readable<Map<string, VideoBox>> {
             windowSize,
             isLiveStreamingStore,
             isListenerStore,
+            displayedMegaphoneScreenStore,
         ],
         (
             [
@@ -175,6 +179,7 @@ function createStreamableCollectionStore(): Readable<Map<string, VideoBox>> {
                 $windowSize,
                 $isLiveStreamingStore,
                 $isListenerStore,
+                $displayedMegaphoneScreenStore,
             ] /*, set*/
         ) => {
             const peers = new Map<string, VideoBox>();
@@ -197,6 +202,11 @@ function createStreamableCollectionStore(): Readable<Map<string, VideoBox>> {
                 }
 
                 if ($isListenerStore) {
+                    shouldAddMyCamera = false;
+                }
+
+                // Broadcast's Go live step shows your camera in its own preview: one picture of you, not two.
+                if ($displayedMegaphoneScreenStore) {
                     shouldAddMyCamera = false;
                 }
 
@@ -275,6 +285,25 @@ export const isInRemoteConversation = derived(
 
         return false;
     }
+);
+
+/**
+ * Whether what your microphone and camera send reaches someone right now: a bubble or a meeting with other people,
+ * or a live stream (a meeting room, on stage in a speaker zone). Not in a silent zone, and not in the audience of a
+ * speaker zone, where you only listen. The microphone and camera buttons show it with a violet ring.
+ */
+export const isBroadcastingMediaStore = derived(
+    [videoStreamElementsStore, screenShareStreamElementsStore, isLiveStreamingStore, silentStore, isListenerStore],
+    ([
+        $videoStreamElementsStore,
+        $screenShareStreamElementsStore,
+        $isLiveStreamingStore,
+        $silentStore,
+        $isListenerStore,
+    ]) =>
+        !$silentStore &&
+        !$isListenerStore &&
+        ($isLiveStreamingStore || $videoStreamElementsStore.length > 0 || $screenShareStreamElementsStore.length > 0)
 );
 
 // No need to unsubscribe, the store is global

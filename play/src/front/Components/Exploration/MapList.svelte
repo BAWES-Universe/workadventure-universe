@@ -107,12 +107,7 @@
                     ? $LL.actionbar.explore.title({ universe: displayName($universeNameStore) })
                     : $LL.actionbar.explore.titleWithoutName()}
             </h2>
-            <button
-                type="button"
-                class="ms-auto flex items-center justify-center w-10 h-10 rounded-md hover:bg-white/10 transition-colors cursor-pointer"
-                aria-label={$LL.actionbar.explore.close()}
-                on:click={close}
-            >
+            <button type="button" class="u-close ms-auto" aria-label={$LL.actionbar.explore.close()} on:click={close}>
                 <IconX font-size="20" />
             </button>
         </header>
@@ -213,10 +208,10 @@
 </div>
 
 <style>
-    /* Orbit's dark theme (admin app/globals.css .dark). */
+    /* The raised surface Express uses (style.scss), with Orbit's dark theme (admin app/globals.css .dark) inside. */
     .explore {
-        background: hsl(218 44% 12% / 0.95);
-        border: 1px solid hsl(216 28% 26%);
+        background: var(--u-surface-bg);
+        box-shadow: var(--u-surface-shadow);
     }
     .explore-search {
         background: rgba(255, 255, 255, 0.06);
@@ -232,7 +227,7 @@
         appearance: none;
     }
     .muted {
-        color: hsl(216 20% 72%);
+        color: hsl(250 15% 74%);
     }
     .accent {
         color: #fbbf24;

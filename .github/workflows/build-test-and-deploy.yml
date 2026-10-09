@@ -367,7 +367,9 @@ jobs:
             echo "has_no_flaky_label=false" >> $GITHUB_OUTPUT
           fi
       - name: Run Playwright tests
-        run: npm run test-prod-like -- ${{ matrix.parameters }} --shard=${{ matrix.shard }}/${{ matrix.nbShards }} --grep-invert "@slow${{ matrix.ignoreTags && matrix.ignoreTags != '' && format('|{0}', matrix.ignoreTags) || '' }}"
+        # bash here means pipefail, so a failing test run still fails the step through the tee.
+        shell: bash
+        run: npm run test-prod-like -- ${{ matrix.parameters }} --shard=${{ matrix.shard }}/${{ matrix.nbShards }} --grep-invert "@slow${{ matrix.ignoreTags && matrix.ignoreTags != '' && format('|{0}', matrix.ignoreTags) || '' }}" 2>&1 | tee playwright-output.txt
         working-directory: tests
         env:
           RENDERER_MODE: ${{ matrix.renderer }}
@@ -381,6 +383,23 @@ jobs:
         if: failure()
       - name: Side-load docker compose logs in the playwright report
         run: docker compose -f docker-compose.yaml -f docker-compose.e2e.yml -f docker-compose.livekit.yaml logs > tests/playwright-report/docker-compose.log
+        if: failure()
+      - name: Show the servers' errors
+        # What the game servers logged while the tests failed, near the end of the job log where it can be read.
+        run: |
+          for service in back play map-storage; do
+            echo "::group::$service errors"
+            docker compose -f docker-compose.yaml -f docker-compose.e2e.yml -f docker-compose.livekit.yaml logs --no-color "$service" 2>/dev/null | grep -iE "error|exception|unhandled|rejected|invalid|crash|exited" | tail -n 120
+            echo "::endgroup::"
+          done
+        if: failure()
+      - name: Show what the browser did in the failed tests
+        # Navigations, console errors, sign-in requests and the failed actions from each test's trace.
+        run: python3 .github/scripts/playwright-trace-summary.py tests/test-results
+        if: failure()
+      - name: Show the Playwright summary last
+        # The docker logs above are long; the end of the job log should name the failing tests.
+        run: tail -n 300 tests/playwright-output.txt
         if: failure()
       - uses: actions/upload-artifact@v4
         if: always()

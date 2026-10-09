@@ -2,7 +2,6 @@ import { isAxiosError } from "axios";
 import type { LegalsData, OpidWokaNamePolicy } from "@workadventure/messages";
 import { isMapDetailsData, isRoomRedirect, ErrorApiData } from "@workadventure/messages";
 import {
-    CONTACT_URL,
     DISABLE_ANONYMOUS,
     ENABLE_CHAT,
     ENABLE_CHAT_DISCONNECTED_LIST,
@@ -34,7 +33,6 @@ export class Room {
     private _mapUrl: string | undefined;
     private _wamUrl: string | undefined;
     private readonly _search: URLSearchParams;
-    private _contactPage: string | undefined;
     private _group: string | null = null;
     private _expireOn: Date | undefined;
     private _canReport = false;
@@ -165,7 +163,6 @@ export class Room {
                     data.authenticationMandatory != null ? data.authenticationMandatory : DISABLE_ANONYMOUS;
                 this._opidLogoutRedirectUrl =
                     data.opidLogoutRedirectUrl || new URL("logout", ABSOLUTE_PUSHER_URL).toString();
-                this._contactPage = data.contactPage || CONTACT_URL;
                 if (data.expireOn) {
                     this._expireOn = new Date(data.expireOn);
                 }
@@ -301,10 +298,6 @@ export class Room {
 
     get opidLogoutRedirectUrl(): string {
         return this._opidLogoutRedirectUrl;
-    }
-
-    get contactPage(): string | undefined {
-        return this._contactPage;
     }
 
     get group(): string | null {

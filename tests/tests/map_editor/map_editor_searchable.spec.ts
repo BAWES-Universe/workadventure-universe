@@ -60,25 +60,25 @@ test.describe("Map editor @oidc @nomobile @nowebkit", () => {
         await EntityEditor.setEntitySearcheable(page, true);
         await EntityEditor.addProperty(page, "playAudio");
 
-        // Open the map exploration mode
+        // Open "Look around the map" and its Places panel
         await MapEditor.openExploration(page);
+        await MapEditor.openPlaces(page);
 
-        // Expected 1 entity and 1 zone in the search result
+        // Expected 1 entity and 1 zone in the list
         // Test if the entity is searchable
-        await expect(page.locator(".map-editor .sidebar .entities")).toContainText("1 objects found");
-        await page.getByTestId("toggleFolderEntity").click();
-        expect(await page.locator(".map-editor .sidebar .entity-items .item").count()).toBe(1);
+        const places = page.getByTestId("look-around-places");
+        await expect(places.locator(".entities")).toBeVisible();
+        expect(await places.locator(".entity-items .item").count()).toBe(1);
 
         // Click on the entity and check that Title and description are correct
-        await page.locator(".map-editor .sidebar .entity-items .item").first().click();
-        await expect(page.locator(".object-menu h1")).toContainText("My Play Audio Entity".toUpperCase());
-        await expect(page.locator(".object-menu p"))
+        await places.locator(".entity-items .item").first().click();
+        await expect(page.locator(".object-menu h1")).toContainText("My Play Audio Entity");
+        await expect(page.locator(".object-menu .place-card-desc"))
             .toContainText("This is a Play Audio entity to test the search feature in the exploration mode. It should be searchable.");
 
         // Test if the area is searchable
-        await expect(page.locator(".map-editor .sidebar .areas")).toContainText("1 areas found");
-        await page.getByTestId("toggleFolderArea").click();
-        expect(await page.locator(".map-editor .sidebar .area-items .item").count()).toBe(1);
+        await expect(places.locator(".areas")).toBeVisible();
+        expect(await places.locator(".area-items .item").count()).toBe(1);
 
         await page.close();
         await page.context().close();

@@ -1,6 +1,7 @@
 import { CardsService, GoogleWorkSpaceService, KlaxoonService } from "@workadventure/shared-utils";
 import { analyticsClient } from "../Administration/AnalyticsClient";
 import { gameManager } from "../Phaser/Game/GameManager";
+import { isNavigableUrl } from "../Utils/SafeUrl";
 
 class ScriptUtils {
     public openTab(url: string) {
@@ -15,6 +16,11 @@ class ScriptUtils {
     }
 
     public goToPage(url: string) {
+        // Room links can come from other players and from map scripts: never let one run code in the game's page.
+        if (!isNavigableUrl(url)) {
+            console.warn("Refusing to go to a link that is not a page", url);
+            return;
+        }
         // Test if the url is a valid URL
         // eslint-disable-next-line
         const urlPattern = /(?:https?):\/\/(\w+:?\w*)?(\S+)(:\d+)?(\/|\/([\w#!:.?+=&%!\-\/]))?/g;

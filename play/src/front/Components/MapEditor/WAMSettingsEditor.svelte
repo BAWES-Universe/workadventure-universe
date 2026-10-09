@@ -11,7 +11,6 @@
     } from "../../Stores/MapEditorStore";
     import { userIsAdminStore } from "../../Stores/GameStore";
     import ButtonClose from "../Input/ButtonClose.svelte";
-    import Megaphone from "./ConfigureMyRoom/Megaphone.svelte";
     import RoomSettings from "./ConfigureMyRoom/RoomSettings.svelte";
 
     import { IconChevronRight } from "@wa-icons";
@@ -20,11 +19,8 @@
 
     onMount(() => {
         isVisible = true;
-        if ($userIsAdminStore) {
-            mapEditorWamSettingsEditorToolCurrentMenuItemStore.set(WAM_SETTINGS_EDITOR_TOOL_MENU_ITEM.RoomSettings);
-        } else {
-            mapEditorWamSettingsEditorToolCurrentMenuItemStore.set(WAM_SETTINGS_EDITOR_TOOL_MENU_ITEM.Megaphone);
-        }
+        // Broadcast's settings live on the Broadcast card: this window has the room's settings, for admins.
+        mapEditorWamSettingsEditorToolCurrentMenuItemStore.set(WAM_SETTINGS_EDITOR_TOOL_MENU_ITEM.RoomSettings);
     });
 
     onDestroy(() => {
@@ -33,9 +29,6 @@
 
     function getCurrentComponent(): ComponentType {
         switch ($mapEditorWamSettingsEditorToolCurrentMenuItemStore) {
-            case WAM_SETTINGS_EDITOR_TOOL_MENU_ITEM.Megaphone: {
-                return Megaphone;
-            }
             case WAM_SETTINGS_EDITOR_TOOL_MENU_ITEM.RoomSettings: {
                 return RoomSettings;
             }
@@ -81,18 +74,6 @@
                                 <IconChevronRight class="-mr-2" />
                             </li>
                         {/if}
-                        <!-- svelte-ignore a11y-click-events-have-key-events -->
-                        <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-                        <li
-                            class:selected={$mapEditorWamSettingsEditorToolCurrentMenuItemStore ===
-                                WAM_SETTINGS_EDITOR_TOOL_MENU_ITEM.Megaphone}
-                            on:click={() =>
-                                mapEditorWamSettingsEditorToolCurrentMenuItemStore.set(
-                                    WAM_SETTINGS_EDITOR_TOOL_MENU_ITEM.Megaphone
-                                )}
-                        >
-                            <span>{$LL.mapEditor.settings.megaphone.title()}</span>
-                        </li>
                     </ul>
                 </div>
             </div>

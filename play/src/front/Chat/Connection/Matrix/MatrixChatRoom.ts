@@ -51,9 +51,15 @@ import { MatrixChatMessageReaction } from "./MatrixChatMessageReaction";
 import { matrixSecurity } from "./MatrixSecurity";
 import { MatrixChatRoomMember } from "./MatrixChatRoomMember";
 import { isInvitationGoneError } from "./isInvitationGoneError";
+import { changingMatrixAvatarStore } from "./MatrixMedia";
 
 /** How long leaving waits for pending invitations to be withdrawn before it leaves anyway. */
 const INVITE_WITHDRAWAL_DEADLINE_MS = 3000;
+
+/** Events asked from the server per request while loading earlier messages. */
+const PREVIOUS_EVENTS_PAGE_SIZE = 30;
+/** One load of earlier messages keeps asking until it has this many messages (reactions and deletions don't count). */
+const PREVIOUS_MESSAGES_PER_LOAD = 20;
 
 type EventId = string;
 
@@ -68,10 +74,13 @@ export class MatrixChatRoom
     readonly hasUnreadMessages: Writable<boolean>;
     readonly unreadNotificationCount: Writable<number>;
     pictureStore: PictureStore;
+    private readonly pictureMxc: Writable<string | undefined>;
     messages: SearchableArrayStore<string, MatrixChatMessage>;
     members: Writable<MatrixChatRoomMember[]>;
     myMembership: Writable<ChatRoomMembership>;
     hasPreviousMessage: Writable<boolean>;
+    /** True from the start until the room's first messages are loaded (also when loading failed). */
+    readonly isLoadingMessages: Writable<boolean> = writable(true);
     timelineWindow: TimelineWindow;
     inMemoryEventsContent: Map<EventId, IContent>;
     isEncrypted!: Writable<boolean>;
@@ -81,6 +90,11 @@ export class MatrixChatRoom
     currentRoomMember: Readable<MatrixChatRoomMember>;
     private notSentEvents: MapStore<string, MatrixEvent> = new MapStore<string, MatrixEvent>();
     shouldRetrySendingEvents = derived(this.notSentEvents, (notSentEvents) => notSentEvents.size > 0);
+
+    /** The first load of the room's messages, which later loads of earlier messages wait for. */
+    private readonly initialLoad: Promise<void>;
+    /** The load of earlier messages under way, shared by everyone who asks meanwhile (one window, one pagination). */
+    private previousMessagesLoad: Promise<void> | undefined;
 
     private handleRoomTimeline = this.onRoomTimeline.bind(this);
     private handleRoomName = this.onRoomName.bind(this);
@@ -109,15 +123,16 @@ export class MatrixChatRoom
         this.type = this.getMatrixRoomType();
         this.hasUnreadMessages = writable(matrixRoom.getUnreadNotificationCount() > 0);
         this.unreadNotificationCount = writable(matrixRoom.getUnreadNotificationCount());
-        this.pictureStore = readable(matrixRoom.getAvatarUrl(matrixRoom.client.baseUrl, 96, 96, "scale") ?? undefined);
+        // The room's own picture, or for a direct chat the other person's (their woka, which Universe saves there).
+        // It follows changes: a new room picture, or the other person saving a new woka.
+        this.pictureMxc = writable(this.currentPictureMxc());
+        this.pictureStore = changingMatrixAvatarStore(matrixRoom.client, this.pictureMxc, 96);
         this.messages = new SearchableArrayStore((item: MatrixChatMessage) => item.id);
         this.sendMessage = this.sendMessage.bind(this);
         this.myMembership = writable(matrixRoom.getMyMembership());
 
         this.members = writable([
-            ...matrixRoom
-                .getMembers()
-                .map((member) => new MatrixChatRoomMember(member, this.matrixRoom.client.baseUrl)),
+            ...matrixRoom.getMembers().map((member) => new MatrixChatRoomMember(member, this.matrixRoom.client)),
         ]);
 
         this.hasPreviousMessage = writable(false);
@@ -153,7 +168,7 @@ export class MatrixChatRoom
                 })
         );
 
-        (async () => {
+        this.initialLoad = (async () => {
             await matrixSecurity.restoreRoomsMessages();
         })()
             .catch((error) => {
@@ -164,6 +179,9 @@ export class MatrixChatRoom
             })
             .catch((error) => {
                 console.error("Failed to init Matrix room messages:", error);
+            })
+            .finally(() => {
+                this.isLoadingMessages.set(false);
             });
 
         //Necessary to keep matrix event content for local event deletions after initialization
@@ -197,6 +215,17 @@ export class MatrixChatRoom
         const messages = result.filter((message) => message !== undefined);
         this.messages.push(...messages);
         this.hasPreviousMessage.set(this.timelineWindow.canPaginate(Direction.Backward));
+
+        // The first events of a room can all be reactions or deletions: older history holds its latest message,
+        // which the chat list shows. Fetch it now rather than when the chat is first opened.
+        if (
+            this.messages.length === 0 &&
+            !this.isRoomFolder &&
+            this.matrixRoom.getMyMembership() === KnownMembership.Join &&
+            get(this.hasPreviousMessage)
+        ) {
+            await this.loadPreviousMessages();
+        }
     }
 
     private async readEventsToAddMessagesAndReactions(
@@ -210,7 +239,7 @@ export class MatrixChatRoom
         }
         if (event.getType() === "m.room.message" && !this.isEventReplacingExistingOne(event)) {
             this.addEventContentInMemory(event);
-            return new MatrixChatMessage(event, this.matrixRoom);
+            return new MatrixChatMessage(event, this.matrixRoom, false, this.type === "direct");
         }
         if (event.getType() === "m.reaction") {
             this.handleNewMessageReaction(event, messages);
@@ -233,12 +262,28 @@ export class MatrixChatRoom
     }
 
     private onRoomNewMember(event: MatrixEvent, state: RoomState, member: RoomMember) {
-        this.members.update((members) => [
-            ...members,
-            new MatrixChatRoomMember(member, this.matrixRoom.client.baseUrl),
-        ]);
+        this.members.update((members) => [...members, new MatrixChatRoomMember(member, this.matrixRoom.client)]);
     }
+    private currentPictureMxc(): string | undefined {
+        return (
+            this.matrixRoom.getMxcAvatarUrl() ??
+            this.matrixRoom.getAvatarFallbackMember()?.getMxcAvatarUrl() ??
+            undefined
+        );
+    }
+
     private onRoomStateEvent(event: MatrixEvent, state: RoomState, lastStateEvent: MatrixEvent | null) {
+        const eventType = event.getType();
+        if (eventType === EventType.RoomAvatar || eventType === EventType.RoomMember) {
+            const mxc = this.currentPictureMxc();
+            if (mxc !== get(this.pictureMxc)) this.pictureMxc.set(mxc);
+            if (eventType === EventType.RoomMember) {
+                const userId = event.getStateKey();
+                get(this.members)
+                    .find((member) => member.id === userId)
+                    ?.refreshPicture();
+            }
+        }
         if (get(this.isEncrypted)) return;
         const isEncrypted = !!state.getStateEvents(EventType.RoomEncryption)[0];
         if (isEncrypted) this.isEncrypted.set(isEncrypted);
@@ -322,7 +367,7 @@ export class MatrixChatRoom
     }
 
     private handleNewMessage(event: MatrixEvent) {
-        const message = new MatrixChatMessage(event, this.matrixRoom);
+        const message = new MatrixChatMessage(event, this.matrixRoom, false, this.type === "direct");
         this.messages.push(message);
         const senderID = event.getSender();
         if (senderID) {
@@ -349,6 +394,7 @@ export class MatrixChatRoom
             const { messageId, reactionKey } = reactionEvent;
             const existingMessageWithReactions = messages.get(messageId);
             if (existingMessageWithReactions) {
+                existingMessageWithReactions.followReactions();
                 const existingMessageReaction = existingMessageWithReactions.reactions.get(reactionKey);
                 if (existingMessageReaction) {
                     existingMessageReaction.addUser(event.getSender(), event.getId());
@@ -356,7 +402,9 @@ export class MatrixChatRoom
                 }
                 existingMessageWithReactions.reactions.set(
                     reactionKey,
-                    new MatrixChatMessageReaction(this.matrixRoom, event)
+                    new MatrixChatMessageReaction(this.matrixRoom, event, () =>
+                        existingMessageWithReactions.toggleReaction(reactionKey)
+                    )
                 );
                 return;
             }
@@ -449,24 +497,57 @@ export class MatrixChatRoom
         return eventRelation?.rel_type === "m.replace";
     }
 
+    /** Loads earlier messages (about a screen of them), after the room's first load. */
     async loadMorePreviousMessages() {
-        if (get(this.hasPreviousMessage)) {
-            const existingEventsBeforePagination = this.timelineWindow.getEvents();
-            await this.timelineWindow.paginate(Direction.Backward, 8);
-            this.timelineWindow.unpaginate(existingEventsBeforePagination.length, false);
-            const tempMatrixChatMessages: Promise<MatrixChatMessage | undefined>[] = [];
-            this.timelineWindow.getEvents().forEach((event) => {
-                tempMatrixChatMessages.push(this.readEventsToAddMessagesAndReactions(event, this.messages));
-            });
+        await this.initialLoad;
+        await this.loadPreviousMessages();
+    }
 
-            const result = await Promise.all(tempMatrixChatMessages);
+    private loadPreviousMessages(): Promise<void> {
+        // Two callers (the first load of the room, a chat being opened) must not paginate the same window at once.
+        if (this.previousMessagesLoad) return this.previousMessagesLoad;
+        if (!get(this.hasPreviousMessage)) return Promise.resolve();
 
-            const messages = result.filter((message) => message !== undefined);
-            this.messages.unshift(...messages);
-            this.hasPreviousMessage.set(this.timelineWindow.canPaginate(Direction.Backward));
-            if (messages.length === 0) {
-                await this.loadMorePreviousMessages();
+        const load = this.paginatePreviousMessages().finally(() => {
+            if (this.previousMessagesLoad === load) this.previousMessagesLoad = undefined;
+        });
+        this.previousMessagesLoad = load;
+        return load;
+    }
+
+    /**
+     * Asks for earlier events, in big pages, until there are enough earlier messages or the history runs out, then
+     * adds them all to the list at once.
+     */
+    private async paginatePreviousMessages(): Promise<void> {
+        // The oldest page comes last, and goes first in the list.
+        const pages: MatrixChatMessage[][] = [];
+        let collected = 0;
+        try {
+            while (collected < PREVIOUS_MESSAGES_PER_LOAD && this.timelineWindow.canPaginate(Direction.Backward)) {
+                const eventCountBefore = this.timelineWindow.getEvents().length;
+                // Each page depends on the one before (what is already read is dropped from the window).
+                // eslint-disable-next-line no-await-in-loop
+                await this.timelineWindow.paginate(Direction.Backward, PREVIOUS_EVENTS_PAGE_SIZE);
+                if (this.timelineWindow.getEvents().length <= eventCountBefore) break;
+                // Drop what was read already (from the newer end): the window now holds only the new page.
+                this.timelineWindow.unpaginate(eventCountBefore, false);
+
+                // eslint-disable-next-line no-await-in-loop
+                const result = await Promise.all(
+                    this.timelineWindow
+                        .getEvents()
+                        .map((event) => this.readEventsToAddMessagesAndReactions(event, this.messages))
+                );
+                const messages = result.filter((message) => message !== undefined);
+                pages.unshift(messages);
+                collected += messages.length;
             }
+        } finally {
+            // What was read stays, even when a later request failed: the window has moved past those events.
+            this.hasPreviousMessage.set(this.timelineWindow.canPaginate(Direction.Backward));
+            const messages = pages.flat();
+            if (messages.length > 0) this.messages.unshift(...messages);
         }
     }
 
@@ -880,7 +961,7 @@ export class MatrixChatRoom
         );
         const event = timeline?.getEvents().find((ev) => ev.getId() === messageId);
         if (event) {
-            return new MatrixChatMessage(event, this.matrixRoom);
+            return new MatrixChatMessage(event, this.matrixRoom, false, this.type === "direct");
         }
         return;
     }

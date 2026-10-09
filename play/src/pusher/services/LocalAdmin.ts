@@ -46,6 +46,7 @@ import {
 } from "../enums/EnvironmentVariable";
 import type { AdminBannedData, FetchMemberDataByUuidResponse } from "./AdminApi";
 import type { AdminInterface } from "./AdminInterface";
+import type { BanAppealResult, BanDetailsData } from "./BanDetails";
 import { localWokaService } from "./LocalWokaService";
 import { MetaTagsDefaultValue } from "./MetaTagsBuilder";
 import { localCompanionService } from "./LocalCompanionSevice";
@@ -66,7 +67,9 @@ class LocalAdmin implements AdminInterface {
         characterTextureIds: string[],
         companionTextureId?: string,
         locale?: string,
-        tags?: string[]
+        tags?: string[],
+        chatID?: string,
+        guestName?: string
     ): Promise<FetchMemberDataByUuidResponse> {
         let canEdit = false;
         const roomUrl = new URL(playUri);
@@ -435,7 +438,7 @@ class LocalAdmin implements AdminInterface {
         return Promise.reject(new Error("No admin backoffice set!"));
     }
 
-    getMember(memberUUID: string): Promise<MemberData> {
+    getMember(memberUUID: string, roomUrl?: string): Promise<MemberData> {
         return Promise.reject(new Error("No admin backoffice set!"));
     }
 
@@ -460,6 +463,15 @@ class LocalAdmin implements AdminInterface {
 
     getIceServers(userId: number, userIdentifier: string, roomUrl: string): Promise<IceServer[]> {
         return Promise.resolve(iceServersService.generateIceServers(userId.toString()));
+    }
+
+    getBanDetails(userIdentifier: string, playUri: string): Promise<BanDetailsData> {
+        // Without an admin, nobody is banned.
+        return Promise.resolve({ banned: false });
+    }
+
+    sendBanAppeal(userIdentifier: string, playUri: string, text: string): Promise<BanAppealResult> {
+        return Promise.resolve("not_banned");
     }
 }
 

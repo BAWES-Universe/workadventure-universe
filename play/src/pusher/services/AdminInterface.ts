@@ -9,6 +9,7 @@ import type {
     Capabilities,
 } from "@workadventure/messages";
 import type { AdminBannedData, FetchMemberDataByUuidResponse } from "./AdminApi";
+import type { BanAppealResult, BanDetailsData } from "./BanDetails";
 import type { ShortMapDescriptionList } from "./ShortMapDescription";
 import type { UniverseRoomsData } from "./UniverseRooms";
 import type { WorldChatMembersData } from "./WorldChatMembersData";
@@ -19,6 +20,7 @@ export interface AdminInterface {
      * @var userIdentifier can to be undefined or email or uuid
      * @var ipAddress
      * @var characterTextures
+     * @var guestName the name a guest (a visitor who is not logged in) typed, so the admin can show them by name
      * @return MapDetailsData|RoomRedirect
      */
     fetchMemberDataByUuid(
@@ -30,7 +32,8 @@ export interface AdminInterface {
         companionTextureId?: string,
         locale?: string,
         tags?: string[],
-        chatID?: string
+        chatID?: string,
+        guestName?: string
     ): Promise<FetchMemberDataByUuidResponse>;
 
     /**
@@ -142,7 +145,8 @@ export interface AdminInterface {
 
     searchTags(world: string, searchText: string): Promise<string[]>;
 
-    getMember(memberUUID: string): Promise<MemberData>;
+    /** With the room, the back office can also send the member's WOKA in that world. */
+    getMember(memberUUID: string, roomUrl?: string): Promise<MemberData>;
 
     getWorldChatMembers(playUri: string, searchText: string): Promise<WorldChatMembersData>;
 
@@ -151,4 +155,14 @@ export interface AdminInterface {
     refreshOauthToken(token: string, provider?: string, userIdentifier?: string): Promise<OauthRefreshToken>;
 
     getIceServers(userId: number, userIdentifier: string, roomUrl: string): Promise<IceServer[]>;
+
+    /**
+     * The player's ban from the world of a room, for the ban screen.
+     */
+    getBanDetails(userIdentifier: string, playUri: string): Promise<BanDetailsData>;
+
+    /**
+     * Sends the player's one appeal against their ban from the world of a room.
+     */
+    sendBanAppeal(userIdentifier: string, playUri: string, text: string): Promise<BanAppealResult>;
 }

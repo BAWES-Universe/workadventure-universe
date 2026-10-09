@@ -13,7 +13,7 @@
 
 {#if hasCloseChat}
     <button
-        class="p-3 hover:bg-white/10 rounded aspect-square w-12 h-12 relative z-50"
+        class="u-close relative z-50"
         data-testid="closeChatButton"
         aria-label={$LL.chat.closeChat()}
         title={$LL.chat.closeChat()}

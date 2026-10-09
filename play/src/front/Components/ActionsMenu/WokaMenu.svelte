@@ -85,10 +85,11 @@
 
 {#if wokaMenuData}
     <div
-        class="m-auto my-0 h-fit min-h-fit max-w-lg min-w-48 max-sm:max-w-[89%] z-50 bg-contrast/80 transition-all backdrop-blur rounded-lg pointer-events-auto overflow-hidden md:mr-0"
+        class="m-auto my-0 min-h-0 max-w-lg min-w-48 max-sm:max-w-[89%] z-50 bg-contrast/80 transition-all backdrop-blur rounded-lg pointer-events-auto overflow-hidden md:mr-0 flex flex-col"
         data-testid="actions-menu"
     >
-        <div>
+        <!-- Never taller than the space it has: what's above the buttons scrolls, the buttons (and the ⋯ list) stay in view. -->
+        <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain">
             <div class="w-full bg-cover relative">
                 <div class="absolute top-2 right-2">
                     <ButtonClose on:click={dismiss} />
@@ -108,9 +109,11 @@
                                 />
                             </div>
                         {/if}
-                        <div class=" w-max mt-[29px]">
+                        <div class="mt-[29px] max-w-full px-2 text-center">
                             <!-- The name as its owner saved it, first letter capitalised; never all capitals. -->
-                            <h3 class="normal-case">{displayName(wokaMenuData.wokaName)}</h3>
+                            <h3 class="normal-case break-words [overflow-wrap:anywhere]">
+                                {displayName(wokaMenuData.wokaName)}
+                            </h3>
                         </div>
                     </div>
                 </div>
@@ -137,11 +140,13 @@
                     </div>
                 {/if}
             </div>
+            <!-- Extra content for this person (a bot's emotional state) goes here, so it scrolls with the rest. -->
+            <div data-woka-menu-extras />
         </div>
 
         {#if sortedActions}
             <div
-                class="flex items-center bg-contrast w-full justify-center"
+                class="flex shrink-0 items-center bg-contrast w-full justify-center"
                 class:margin-close={!wokaMenuData.wokaName}
                 class:flex-row={buttonsLayout === "row"}
                 class:flex-wrap={buttonsLayout === "wrap"}
@@ -198,7 +203,7 @@
             </div>
             {#if moreOpen && overflowActions.length > 0}
                 <!-- Inside the card (which clips what overflows it), on the same solid panel as the buttons. -->
-                <div class="flex flex-col bg-contrast border-t border-white/10 p-1" role="menu">
+                <div class="flex shrink-0 flex-col bg-contrast border-t border-white/10 p-1" role="menu">
                     {#each overflowActions as action (action.uuid)}
                         <button
                             type="button"

@@ -5,6 +5,7 @@ import type {
     EditMapCommandMessage,
     PositionMessage,
     SayMessage,
+    BroadcastMeta,
 } from "@workadventure/messages";
 import type { WokaTextureDescriptionInterface } from "../Phaser/Entity/PlayerTextures";
 import type { CompanionTextureDescriptionInterface } from "../Phaser/Companion/CompanionTextures";
@@ -86,6 +87,8 @@ export interface PlayGlobalMessageInterface {
     type: string;
     content: string;
     broadcastToWorld: boolean;
+    /** How far it goes ("room", "world", "universe") and a line of text with a voice note. */
+    broadcast?: BroadcastMeta;
 }
 
 export interface OnConnectInterface {

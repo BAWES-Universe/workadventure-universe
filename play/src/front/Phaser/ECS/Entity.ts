@@ -352,7 +352,14 @@ export class Entity extends Phaser.GameObjects.Image implements ActivatableInter
         }
     }
 
-    private getDefaultActionsMenuActions(): ActionsMenuAction[] {
+    /** Does what this object does when you use it: opens its link or file, plays its sound. Only the given kinds. */
+    public runAction(propertyTypes: string[]): void {
+        for (const action of this.getDefaultActionsMenuActions(propertyTypes)) {
+            void action.callback();
+        }
+    }
+
+    private getDefaultActionsMenuActions(onlyPropertyTypes?: string[]): ActionsMenuAction[] {
         if (!this.entityData.properties) {
             return [];
         }
@@ -360,6 +367,7 @@ export class Entity extends Phaser.GameObjects.Image implements ActivatableInter
         const properties = this.entityData.properties;
 
         for (const property of properties) {
+            if (onlyPropertyTypes && !onlyPropertyTypes.includes(property.type)) continue;
             switch (property.type) {
                 //TODO: see if we add livekit here
                 case "jitsiRoomProperty": {

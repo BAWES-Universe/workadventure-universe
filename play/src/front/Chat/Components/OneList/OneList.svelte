@@ -1,6 +1,6 @@
 <script lang="ts">
     import { onMount, setContext } from "svelte";
-    import { readable } from "svelte/store";
+    import { derived, readable } from "svelte/store";
     import type { Readable } from "svelte/store";
     import { flip } from "svelte/animate";
     import { fade } from "svelte/transition";
@@ -17,7 +17,14 @@
     import type { ProximitySession } from "../../Connection/Proximity/ProximitySessions";
     import { chatSearchBarValue } from "../../Stores/ChatStore";
     import { areaChatRooms } from "../../Stores/AreaPresenceStore";
-    import { WOKA_BY_CHAT_ID_CONTEXT, createWokaByChatIdStore } from "../../Stores/ChatUserWokaStore";
+    import {
+        PERSON_COLOUR_CONTEXT,
+        WOKA_BY_CHAT_ID_CONTEXT,
+        createColourByChatIdStore,
+        createWokaByChatIdStore,
+        personColour,
+    } from "../../Stores/ChatUserWokaStore";
+    import type { PersonColourOf } from "../../Stores/ChatUserWokaStore";
     import Room from "../Room/Room.svelte";
     import RoomInvitation from "../Room/RoomInvitation.svelte";
     import RoomFolder from "../RoomFolder.svelte";
@@ -56,6 +63,15 @@
     setContext(ONE_LIST_FREEZE_CONTEXT, orderFreeze);
     // One lookup for every row: direct chats show the other person's woka when the room has no picture.
     setContext(WOKA_BY_CHAT_ID_CONTEXT, createWokaByChatIdStore(gameManager.getCurrentGameScene().userProviderMerger));
+    // A direct chat's row shows the other person's woka on their colour from People, as inside the chat.
+    setContext<Readable<PersonColourOf>>(
+        PERSON_COLOUR_CONTEXT,
+        derived(
+            createColourByChatIdStore(gameManager.getCurrentGameScene().userProviderMerger),
+            ($colourByChatId) => (chatId: string | undefined, name: string | undefined) =>
+                personColour($colourByChatId, chatId, name)
+        )
+    );
     const displayed = freezeWhileHeld(entries, orderFreeze.held);
     const pointerHolder = {};
 

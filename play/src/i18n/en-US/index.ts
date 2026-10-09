@@ -25,6 +25,7 @@ import externalModule from "./externalModule";
 import form from "./form";
 import messageScreen from "./messageScreen";
 import locate from "./locate";
+import broadcast from "./broadcast";
 
 const en_US: BaseTranslation = {
     area,
@@ -53,6 +54,7 @@ const en_US: BaseTranslation = {
     form,
     messageScreen,
     locate,
+    broadcast,
 };
 
 export default en_US;

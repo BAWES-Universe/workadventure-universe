@@ -24,6 +24,46 @@ const menu: DeepPartial<Translation["menu"]> = {
         logout: "Ausloggen",
     },
     settings: {
+        tabs: {
+            general: "Allgemein",
+            soundAndVideo: "Ton und Video",
+            keyboard: "Tastatur",
+        },
+        sections: {
+            video: "Video",
+            sound: "Ton",
+            notifications: "Benachrichtigungen",
+            away: "Wenn du die App verlässt",
+            screen: "Bildschirm",
+            help: "Hilfe",
+        },
+        quality: {
+            saveData: "Daten sparen",
+            saveDataHint: "Braucht weniger Internet",
+            normal: "Normal",
+            best: "Beste",
+            bestHint: "Schärfstes Bild",
+        },
+        cameraQuality: "Kameraqualität",
+        screenShareQuality: "Qualität der Bildschirmfreigabe",
+        voicesNearby: "Stimmen in der Nähe",
+        joinSound: "Ton, wenn jemand dazukommt",
+        joinSoundShort: "Beitrittston",
+        playJoinSound: "Ton abspielen",
+        lowerMusicWhileTalking: "Musik leiser, wenn ich spreche",
+        muteMapSounds: "Musik und Töne der Karte stummschalten",
+        ignoreFollowRequests: "Folgeanfragen ignorieren",
+        keepCameraOn: "Meine Kamera anlassen",
+        keepMicOn: "Mein Mikrofon anlassen",
+        keptOnWhenAway: "Bleibt an, wenn du zu einem anderen Tab oder einer anderen App wechselst",
+        turnedOffWhenAway: "Geht aus, wenn du zu einem anderen Tab oder einer anderen App wechselst",
+        askBeforeWebsites: "Vor dem Öffnen von Websites fragen",
+        calmMap: "Ruhige Karte (keine Animationen)",
+        pictureInPicture: "Bild im Bild",
+        mapCredits: "Karten-Credits",
+        report: "Problem melden",
+        back: "Zurück",
+        close: "Schließen",
         videoBandwidth: {
             title: "Videoqualität",
             low: "Niedrig",
@@ -77,18 +117,6 @@ const menu: DeepPartial<Translation["menu"]> = {
             "Fehler beim Hochladen der Datei. Bitte überprüfe deine Datei und versuche es erneut. Wenn das Problem weiterhin besteht, wende dich an den Administrator.",
         dragAndDrop: "Datei hierher ziehen oder klicken, um sie hochzuladen 🎧",
     },
-    contact: {
-        gettingStarted: {
-            title: "Erste Schritte",
-            description:
-                "Mit Universe kannst du eine Onlinewelt erschaffen, in der du dich spontan mit anderen treffen und unterhalten kannst. Erstelle als erstes deine eigene Karte. Es steht dir eine große Auswahl an vorgefertigten Karten von unserem Team zur Verfügung.",
-        },
-        createMap: {
-            title: "Eigene Karte erstellen",
-            description:
-                "Du kannst auch deine eigene Karte erstellen. Folge dazu unserer Schritt-für-Schritt-Anleitung.",
-        },
-    },
     about: {
         mapInfo: "Informationen über diese Karte",
         mapLink: "Link zur Karte",
@@ -112,7 +140,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         invite: "Aktie",
         credit: "Über diese Karte",
         globalMessages: "Globale Nachrichten",
-        contact: "Kontakt",
         report: "Einen Fehler melden",
     },
 };

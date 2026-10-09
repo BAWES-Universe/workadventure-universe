@@ -5,6 +5,9 @@
 @import "style";
 @import "chat.scss";
 @import "@workadventure/tailwind/style/index.scss";
+// Inter for Say bubbles and Think clouds (style.scss). Only the 500 weight, and the browser downloads only the
+// alphabets a bubble actually uses.
+@import "@fontsource/inter/500.css";
 @import "wa-theme/action-menu-bar.scss";
 @import "audio-range";
 @import "map-editor";
@@ -12,3 +15,4 @@
 @import "input";
 @import "warning-toast";
 @import "chat";
+@import "settings";

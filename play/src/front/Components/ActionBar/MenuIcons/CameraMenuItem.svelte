@@ -14,6 +14,7 @@
     } from "../../../Stores/MediaStore";
 
     import { openedMenuStore } from "../../../Stores/MenuStore";
+    import { isBroadcastingMediaStore } from "../../../Stores/StreamableCollectionStore";
 
     const cameraButtonStateStore: Readable<"active" | "disabled" | "normal" | "forbidden"> = derived(
         [availabilityStatusStore, requestedCameraState],
@@ -47,6 +48,7 @@
     classList="group/btn-cam"
     disabledHelp={$openedMenuStore !== undefined}
     state={$cameraButtonStateStore}
+    live={$isBroadcastingMediaStore}
     dataTestId="camera-button"
     on:mouseenter={() => {
         if ($availabilityStatusStore === AvailabilityStatus.ONLINE) mouseIsHoveringCameraButton.set(true);

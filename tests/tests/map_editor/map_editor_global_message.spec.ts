@@ -1,9 +1,7 @@
 import {expect, test} from "@playwright/test";
 import Map from "../utils/map";
-import ConfigureMyRoom from "../utils/map-editor/configureMyRoom";
 import Megaphone from "../utils/map-editor/megaphone";
 import {resetWamMaps} from "../utils/map-editor/uploader";
-import MapEditor from "../utils/mapeditor";
 import Menu from "../utils/menu";
 import {map_storage_url} from "../utils/urls";
 import {getPage} from "../utils/auth";
@@ -38,51 +36,16 @@ test.describe("Map editor @oidc @nomobile @nowebkit", () => {
         // Second browser
         await using page2 = await getPage(browser, "Bob", Map.url("empty"));
 
-        // Open the map editor and configure the megaphone to have access to the global message
-        await Menu.openMapEditor(page);
-        await MapEditor.openConfigureMyRoom(page);
-        await ConfigureMyRoom.selectMegaphoneItemInCMR(page);
-
-        // Enabling megaphone and settings default value
-        await Megaphone.toggleMegaphone(page);
-        await Megaphone.isMegaphoneEnabled(page);
-
-        // Testing if no input is set, megaphone should not be usable but WA should not crash
-        await Megaphone.megaphoneInputNameSpace(page, "");
-        await Megaphone.megaphoneSave(page);
-        await Megaphone.isNotCorrectlySaved(page);
-
-        await Megaphone.megaphoneInputNameSpace(page, `${browser.browserType().name()}MySpace`);
-        await Megaphone.megaphoneSelectScope(page);
-        await Megaphone.megaphoneAddNewRights(page, "example");
-        await Megaphone.megaphoneSave(page);
-        await Megaphone.isCorrectlySaved(page);
-        // Close the configuration popup
-        await Menu.closeMapEditorConfigureMyRoomPopUp(page);
-
-        // Test if tags are working correctly, all current users doesn't have the tag "example" to use megaphone
-        await Menu.isNotThereMegaphoneButton(page);
-        await expect(page2.getByTestId('map-menu')).toBeHidden();
-        
-        // Remove rights
-        await Menu.openMapEditor(page);
-        await MapEditor.openConfigureMyRoom(page);
-        await ConfigureMyRoom.selectMegaphoneItemInCMR(page);
-        await Megaphone.megaphoneRemoveRights(page, "example");
-        await Megaphone.megaphoneSave(page);
-        await Megaphone.isCorrectlySaved(page);
-        // Close the configuration popup
-        await Menu.closeMapEditorConfigureMyRoomPopUp(page);
-        
-        // Megaphone should be displayed and usable by all the current users
+        // A room nobody has set up: the admin has the Broadcast card, Bob has nothing to broadcast with
         await Menu.isThereMegaphoneButton(page);
+        await expect(page2.getByTestId("map-menu")).toBeHidden();
 
-        // Megaphone button is not displayed because it is hidden in the "Admin" menu. BUT! It is available to anyone!
+        // Letting everyone go live gives Bob the Broadcast card too
+        await Megaphone.openBroadcastSettings(page);
+        await Megaphone.saveBroadcastSettings(page, "everyone", "ROOM");
         await Menu.isThereMegaphoneButton(page2);
 
         // TODO : create this test in admin part (global message and text audio message if an admin feature)
-        // TODO : change to use the global message feature for user through megaphon settings rights
-
 
         await page2.context().close();
         await page.close();

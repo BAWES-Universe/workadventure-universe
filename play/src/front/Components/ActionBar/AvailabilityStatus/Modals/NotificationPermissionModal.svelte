@@ -5,11 +5,16 @@
     import { localUserStore } from "../../../../Connection/LocalUserStore";
     import { popupStore } from "../../../../Stores/PopupStore";
     import ConfirmationModal from "./ConfirmationModal.svelte";
+    import { IconBell } from "@wa-icons";
 
     let loading = false;
 
     const confirmationModalProps: ConfirmationModalPropsInterface = {
         handleAccept: () => {
+            if (!("Notification" in window)) {
+                popupStore.removePopup("notification_permission_modal");
+                return;
+            }
             loading = true;
             Notification.requestPermission()
                 .then((response) => {
@@ -32,20 +37,18 @@
         handleClose: () => {
             popupStore.removePopup("notification_permission_modal");
         },
-        acceptLabel: $LL.statusModal.accept(),
-        closeLabel: $LL.statusModal.close(),
+        acceptLabel: $LL.statusModal.turnOn(),
+        closeLabel: $LL.statusModal.notNow(),
     };
 </script>
 
-<ConfirmationModal props={confirmationModalProps}>
-    <div id="notificationPermission" class="grow text-center text-xl">
-        {$LL.statusModal.allowNotification()}
-    </div>
-    <div>
+<ConfirmationModal props={confirmationModalProps} title={$LL.statusModal.allowNotification()}>
+    <IconBell slot="icon" font-size="22" />
+    <div id="notificationPermission" class="text-sm leading-5 text-white/80">
         {$LL.statusModal.allowNotificationExplanation()}
     </div>
     {#if loading}
-        <div class="absolute inset-0 bg-dark-purple/70 flex items-center justify-center">
+        <div class="absolute inset-0 bg-black/50 flex items-center justify-center">
             <div
                 style="border-top-color:transparent"
                 class="w-16 h-16 border-2 border-white border-solid rounded-full animate-spin mb-5"

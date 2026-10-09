@@ -70,17 +70,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         errorUpload:
             "Zmylki při nakładowanju dataje. Prošu přepruwujće Wašu dataju a spytajće to znowa. Jeli problem dale wobsteji, wobroćće so na administratora. ",
     },
-    contact: {
-        gettingStarted: {
-            title: "prěnje kročele",
-            description:
-                "Z Work Adventure móžeš onlinowy swět stworić w kotrymž móžeš so spontanje z druhimi zetkać a rozmołwjeć. Zestajej jako prěnje swójsku kartu. Steji ći wulki wuběr na hotowych kartach wot našeho teama na wuběr. ",
-        },
-        createMap: {
-            title: "swójsku kartu zestajeć",
-            description: "Móžeš tež swoju swójsku kartu zestajeć. Sćěhuj k tomu naš kročel-za kročel nawod. ",
-        },
-    },
     about: {
         mapInfo: "informacije wo tutej karće",
         mapLink: "link ke karće",
@@ -104,7 +93,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         invite: "přeprošenje",
         credit: "wo karće",
         globalMessages: "globalne powěsće",
-        contact: "kontakt",
         report: "zmylki připowědźić",
     },
 };

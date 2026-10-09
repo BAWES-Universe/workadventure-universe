@@ -45,9 +45,11 @@
                 openedMenuStore.toggle("mapMenu");
             }}
         >
-            <div class="group bg-contrast/80 backdrop-blur rounded-lg h-16 @sm/actions:h-14 @xl/actions:h-16 p-2">
+            <div class="group u-surface-flat rounded-xl h-16 @sm/actions:h-14 @xl/actions:h-16 p-2">
+                <!-- Open: the pressed grey, like every button whose menu or window is showing. -->
                 <div
-                    class="flex items-center h-full group-hover:bg-white/10mr group-hover:rounded pl-4 pr-4 gap-2 hover:bg-white/10"
+                    class="tools-pill flex items-center h-full rounded-full pl-4 pr-4 gap-2"
+                    class:open={$openedMenuStore === "mapMenu"}
                 >
                     <IconTools font-size="20" class="text-white" />
                     <div class="pr">
@@ -71,13 +73,13 @@
         </div>
         {#if $openedMenuStore === "mapMenu"}
             <div
-                class="absolute bg-contrast/80 backdrop-blur rounded-md w-auto max-w-full text-white"
+                class="absolute u-surface rounded-2xl w-auto max-w-full text-white"
                 data-testid="map-sub-menu"
                 use:floatingUiContent
                 use:clickOutside={closeMapMenu}
             >
-                <div use:arrowAction />
-                <div class="p-1 m-0">
+                <div class="u-surface-arrow" use:arrowAction />
+                <div class="p-1.5 m-0">
                     <MapSubMenuContent />
                 </div>
             </div>
@@ -87,3 +89,21 @@
         <MapSubMenuContent />
     {/if}
 {/if}
+
+<style>
+    .tools-pill {
+        transition: background-color 150ms ease;
+    }
+    @media (hover: hover) {
+        .tools-pill:hover {
+            background-color: rgba(255, 255, 255, 0.08);
+        }
+    }
+    .tools-pill:active {
+        background-color: rgba(255, 255, 255, 0.12);
+    }
+    .tools-pill.open {
+        background-color: rgba(255, 255, 255, 0.14);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+    }
+</style>

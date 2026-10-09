@@ -3,6 +3,7 @@ import { evaluateScript } from "../utils/scripting";
 import { publicTestMapUrl } from "../utils/urls";
 import { getPage } from "../utils/auth";
 import {isMobile} from "../utils/isMobile";
+import Menu from "../utils/menu";
 
 test.describe("Iframe API @nodesktop", () => {
     test.beforeEach(async ({ page }) => {
@@ -55,10 +56,12 @@ test.describe("Iframe API @nodesktop", () => {
         )
         await pageBob.evaluate(() => localStorage.setItem("debug", "*"));
 
+        // On a phone, sharing the screen lives in the menu, beside Follow and Lock.
+        await Menu.openMenu(page);
+        const shareScreen = page.getByTestId("profile-menu").getByRole("button", { name: "Share your screen" });
+
         // Check if the screen sharing is disabled
-        await expect(
-            page.getByTestId("screenShareButton")
-        ).toBeDisabled();
+        await expect(shareScreen).toBeDisabled();
 
         // Create a script to evaluate function to enable map editor
         await evaluateScript(page, async () => {
@@ -68,9 +71,7 @@ test.describe("Iframe API @nodesktop", () => {
         });
 
         // Check if the screen sharing is enabled
-        await expect(
-            page.getByTestId("screenShareButton")
-        ).toBeEnabled();
+        await expect(shareScreen).toBeEnabled();
 
         await pageBob.context().close();
 

@@ -428,6 +428,45 @@ describe("ViewportGuard", () => {
         expect(ios.viewport.pageTop).toBe(200);
     });
 
+    it("lets go of the field when the app is left, and puts the page back on the way in", () => {
+        const ios = fakeIosWindow();
+        const onShiftReset = vi.fn();
+        let visibility: DocumentVisibilityState = "visible";
+        Object.defineProperty(document, "visibilityState", { configurable: true, get: () => visibility });
+        stop = installViewportGuard(ios.win, { now: ios.now, onShiftReset });
+        input.focus();
+        ios.openKeyboard(300);
+
+        visibility = "hidden";
+        document.dispatchEvent(new Event("visibilitychange"));
+        expect(document.activeElement).not.toBe(input);
+        // In the background iOS closes the keyboard and leaves the page where it was.
+        ios.viewport.height = 800;
+        ios.viewport.pageTop = 300;
+
+        visibility = "visible";
+        document.dispatchEvent(new Event("visibilitychange"));
+        expect(ios.viewport.pageTop).toBe(0);
+        expect(onShiftReset).toHaveBeenCalledWith({ x: 0, y: 300, reason: "resume" });
+        expect(onShiftReset).toHaveBeenCalledTimes(1);
+        // @ts-expect-error back to the document's own property
+        delete document.visibilityState;
+    });
+
+    it("asks for the page back when the keyboard closes, even when it reads as in place", () => {
+        const ios = fakeIosWindow();
+        const onShiftReset = vi.fn();
+        stop = installViewportGuard(ios.win, { now: ios.now, onShiftReset });
+        input.focus();
+        ios.openKeyboard(0);
+        ios.scrollTo.mockClear();
+
+        input.blur();
+        ios.closeKeyboard();
+        expect(ios.scrollTo).toHaveBeenCalledWith(0, 0);
+        expect(onShiftReset).not.toHaveBeenCalled();
+    });
+
     it("also resets the root elements' own scroll", () => {
         const ios = fakeIosWindow();
         document.body.scrollLeft = 30;

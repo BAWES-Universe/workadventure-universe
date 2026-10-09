@@ -1,11 +1,12 @@
 <script lang="ts">
-    export let spectrum = [0, 0, 0, 0, 0, 0, 0];
+    export let spectrum: number[] | undefined = [0, 0, 0, 0, 0, 0, 0];
 
     const NB_BARS = 30;
 
-    function color(i: number, spectrum: number[]) {
+    // Same green → yellow → red ramp and the same level as before; only the bars' shape changed (rounded, apart)
+    function color(i: number, spectrum: number[] | undefined) {
         if (!spectrum || spectrum.length === 0) {
-            spectrum = [0, 0, 0, 0, 0, 0, 0]; // Valeur par défaut si spectrum est undefined ou vide
+            spectrum = [0, 0, 0, 0, 0, 0, 0];
         }
 
         const red = (255 * i) / NB_BARS;
@@ -13,26 +14,14 @@
         const sumSpectrum = spectrum.reduce((a, b) => a + b, 0);
         const avgVolume = (sumSpectrum / spectrum.length) % 20;
 
-        let alpha = 1;
-        if (i >= avgVolume) {
-            alpha = 0.5;
-        }
+        const alpha = i >= avgVolume ? 0.2 : 1;
 
         return "background-color:rgba(" + red + ", " + green + ", 0, " + alpha + ");";
     }
 </script>
 
-<div
-    class="horizontal-sound-meter flex items-center justify-center rounded-full overflow-hidden w-full max-w-[700px] mx-5"
-    class:active={spectrum !== undefined}
->
+<div class="horizontal-sound-meter flex w-full gap-[3px] h-[14px]" aria-hidden="true">
     {#each [...Array(NB_BARS).keys()] as i (i)}
-        <div class="flex-1 h-4" style={color(i, spectrum)} />
+        <div class="flex-1 rounded-[3px]" style={color(i, spectrum)} />
     {/each}
 </div>
-
-<style lang="scss">
-    .horizontal-sound-meter div {
-        flex-grow: 1;
-    }
-</style>

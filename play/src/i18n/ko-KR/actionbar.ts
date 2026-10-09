@@ -47,8 +47,8 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
     mapEditorLocked: "맵 에디터가 잠겨 있습니다 🔐",
     app: "외부 애플리케이션",
     camera: {
-        disabled: "카메라가 비활성화되어 있습니다",
-        activate: "카메라 활성화",
+        disabled: "카메라가 꺼져 있습니다",
+        activate: "카메라 켜기",
         noDevices: "사용 가능한 카메라 장치를 찾을 수 없습니다",
         setBackground: "배경 설정",
         blurEffects: "블러 효과",
@@ -56,8 +56,8 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
         close: "닫기",
     },
     microphone: {
-        disabled: "마이크가 비활성화되어 있습니다",
-        activate: "마이크 활성화",
+        disabled: "마이크가 꺼져 있습니다",
+        activate: "마이크 켜기",
         noDevices: "사용 가능한 마이크 장치를 찾을 수 없습니다",
     },
     speaker: {

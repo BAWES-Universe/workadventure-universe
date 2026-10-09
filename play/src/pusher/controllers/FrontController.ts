@@ -352,7 +352,7 @@ export class FrontController extends BaseHttpController {
             const mapDetails = await builder.getMapDetails();
             let option = {};
             const secondaryPalette = getStringPalette(mapDetails?.primaryColor, "secondary");
-            const contrastPalette = getStringPalette(mapDetails?.backgroundColor, "contrast");
+            const contrastPalette = getStringPalette(mapDetails?.backgroundColor, "contrast", true);
             let cssVariablesOverride = "";
             if (secondaryPalette || contrastPalette) {
                 cssVariablesOverride = wrapWithStyleTag(`${secondaryPalette}\n${contrastPalette}`);

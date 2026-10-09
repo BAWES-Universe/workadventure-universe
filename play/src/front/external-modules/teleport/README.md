@@ -1,4 +1,4 @@
-# Teleport Extension Module
+# Teleport Extension Module (listed as "Portal to any room")
 
 This extension module adds a custom "Teleport" area property to the WorkAdventure map editor, allowing you to teleport people to another universe/world/room.
 
@@ -28,7 +28,7 @@ Or if you're using the Admin API, ensure the room's metadata includes the telepo
 
 1. Open the map editor
 2. Select an area
-3. Click "Add Property" and select "Teleport"
+3. Click "Add Property" and select "Portal to any room"
 4. Fill in the required fields:
    - **Universe**: e.g., `bawes-univ`
    - **World**: e.g., `bawes-world`

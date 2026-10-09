@@ -71,17 +71,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         errorUpload:
             "Zmólka pśi górjejlodowanju dataje. Pśespytuj dataju a wopytaj wótnowotki. Jolic až problem buźo dalej wobstojaś, wobroś se na administratora.",
     },
-    contact: {
-        gettingStarted: {
-            title: "Prědne kšocenje",
-            description:
-                "Z pomocu Universe móžoš stwóriś online-swět, źož móžoš se z drugimi spontanje zmakaś a rozgranjaś. Napóraj nejpjerwjej swóju kórtu. Tebje stoj k dispoziciji wjelika licba južo pśigótowanych kórtow wót našogo teama.",
-        },
-        createMap: {
-            title: "Swóju kórtu stwóriś ",
-            description: "Ty móžoš teke swóju samsku kórtu stwóriś. Cyń za našym wukazanim kšoceń za kšocenju.",
-        },
-    },
     about: {
         mapInfo: "Informacije wót teje kórty",
         mapLink: "Link ku kórśe",
@@ -105,7 +94,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         invite: "Pśepšosenje",
         credit: "Informacije dla teje kórty",
         globalMessages: "Globalne powěsći",
-        contact: "Kontakt",
         report: "Zmólku pśipowěźeś",
     },
 };

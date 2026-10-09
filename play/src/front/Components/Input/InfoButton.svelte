@@ -9,12 +9,26 @@
         8
     );
 
-    let showTooltip = false;
+    // Hover shows it on a computer; a tap or click pins it, so a touch screen can read it too. A tap elsewhere puts it away.
+    let hovered = false;
+    let pinned = false;
+    $: showTooltip = hovered || pinned;
+    let root: HTMLElement;
+
+    function away(event: PointerEvent) {
+        if (!pinned || root?.contains(event.target as Node)) return;
+        pinned = false;
+    }
 </script>
 
-<div>
-    <!-- svelte-ignore a11y-no-static-element-interactions -->
+<svelte:window on:pointerdown={away} />
+
+<div bind:this={root}>
     <svg
+        role="button"
+        tabindex="0"
+        aria-label="Info"
+        aria-expanded={showTooltip}
         use:floatingUiRef
         class="icon icon-tabler icon-tabler-info-square-rounded-filled fill-contrast-200 stroke-contrast-200"
         fill="none"
@@ -25,8 +39,15 @@
         viewBox="0 0 24 24"
         width="24"
         xmlns="http://www.w3.org/2000/svg"
-        on:mouseenter={() => (showTooltip = true)}
-        on:mouseleave={() => (showTooltip = false)}
+        on:mouseenter={() => (hovered = true)}
+        on:mouseleave={() => (hovered = false)}
+        on:click={() => (pinned = !pinned)}
+        on:keydown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                pinned = !pinned;
+            }
+        }}
     >
         <path d="M0 0h24v24H0z" fill="none" stroke="none" />
         <path

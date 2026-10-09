@@ -35,7 +35,7 @@
         context="actionBar"
         tooltipTitle={$LL.actionbar.help.apps.title()}
         disabledHelp={$openedMenuStore === "appMenu"}
-        state={$openedMenuStore === "appMenu" ? "active" : "normal"}
+        state={$openedMenuStore === "appMenu" ? "open" : "normal"}
         dataTestId="apps-button"
         action={floatingUiRef}
         media="./static/images/tooltip-exemple.gif"
@@ -58,11 +58,9 @@
             }}
         >
             <div class="flex justify-center m-[unset]">
-                <div use:arrowAction />
+                <div class="u-surface-arrow" use:arrowAction />
                 <div class="bottom-action-bar">
-                    <div
-                        class="bottom-action-section flex flex-col animate bg-contrast/80 backdrop-blur rounded-md p-1"
-                    >
+                    <div class="bottom-action-section flex flex-col animate u-surface rounded-2xl p-1.5">
                         <AppsMenuContent />
                     </div>
                 </div>

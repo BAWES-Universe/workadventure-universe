@@ -40,4 +40,12 @@ export class EnableCameraScene extends ResizableScene {
         this.scene.sleep(EnableCameraSceneName);
         gameManager.goToStartingMap();
     }
+
+    /** Back into the room with the devices as they are now: for this screen opened from the game. */
+    public back(): void {
+        enableCameraSceneVisibilityStore.hideEnableCameraScene();
+
+        this.scene.sleep(EnableCameraSceneName);
+        gameManager.goToStartingMap();
+    }
 }

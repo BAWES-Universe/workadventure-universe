@@ -97,6 +97,9 @@ export function extractWebContent(html: string, sourceUrl: string): ExtractedWeb
         }
     }
 
+    // Read the page's own preview tags before Readability, which mutates the document.
+    const preview = readPreviewTags(document);
+
     // Try Readability first
     const reader = new Readability(document);
     const article = reader.parse();
@@ -107,9 +110,9 @@ export function extractWebContent(html: string, sourceUrl: string): ExtractedWeb
         const truncated = markdown.length > MAX_WEBPAGE_CHARS;
 
         return {
-            title: article.title || null,
+            title: article.title || preview.title,
             content: truncated ? markdown.slice(0, MAX_WEBPAGE_CHARS) : markdown,
-            excerpt: article.excerpt || null,
+            excerpt: article.excerpt || preview.description,
             byline: article.byline || null,
             length: markdown.length,
             truncated,
@@ -117,7 +120,60 @@ export function extractWebContent(html: string, sourceUrl: string): ExtractedWeb
     }
 
     // Fallback: extract meaningful text from the page body
-    return extractFallback(document, sourceUrl);
+    return withPreviewTags(extractFallback(document, sourceUrl), preview);
+}
+
+interface PreviewTags {
+    title: string | null;
+    description: string | null;
+}
+
+/**
+ * The title and description a page declares for link previews (Open Graph, Twitter, meta
+ * description). Script-rendered sites and video pages (YouTube) often have little body
+ * text, but these tags still say what the page is.
+ */
+function readPreviewTags(document: Document): PreviewTags {
+    const meta = (selector: string): string | null => {
+        try {
+            const value = document.querySelector(selector)?.getAttribute('content')?.trim();
+            return value ? value : null;
+        } catch {
+            return null;
+        }
+    };
+    return {
+        title: meta('meta[property="og:title"]') || meta('meta[name="twitter:title"]'),
+        description:
+            meta('meta[property="og:description"]') ||
+            meta('meta[name="description"]') ||
+            meta('meta[name="twitter:description"]'),
+    };
+}
+
+/** Below this much body text, the page's own description is put first. */
+const THIN_CONTENT_CHARS = 200;
+
+function withPreviewTags(page: ExtractedWebPage, preview: PreviewTags): ExtractedWebPage {
+    const title = page.title || preview.title;
+    if (!preview.description || page.content.includes(preview.description)) {
+        return { ...page, title };
+    }
+    if (page.content.trim().length >= THIN_CONTENT_CHARS) {
+        return { ...page, title, excerpt: page.excerpt || preview.description };
+    }
+    const content = page.content.trim()
+        ? `${preview.description}\n\n${page.content}`
+        : preview.description;
+    const truncated = page.truncated || content.length > MAX_WEBPAGE_CHARS;
+    return {
+        ...page,
+        title,
+        content: content.slice(0, MAX_WEBPAGE_CHARS),
+        excerpt: preview.description,
+        length: content.length,
+        truncated,
+    };
 }
 
 /**

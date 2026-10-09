@@ -1,5 +1,22 @@
+<script lang="ts" context="module">
+    // Every WOKA picture is loaded once and shared by all the tiles that draw it
+    const imageCache = new Map<string, HTMLImageElement>();
+
+    function cachedImage(url: string): HTMLImageElement {
+        let img = imageCache.get(url);
+        if (!img) {
+            img = new window.Image();
+            // Set crossOrigin before src so the image is only fetched once
+            img.crossOrigin = "user-credentials";
+            img.src = url;
+            imageCache.set(url, img);
+        }
+        return img;
+    }
+</script>
+
 <script lang="ts">
-    import { afterUpdate, onMount } from "svelte";
+    import { afterUpdate, onDestroy, onMount } from "svelte";
     import type { WokaData, WokaTexture } from "./WokaTypes";
 
     export let selectedTextures: Record<string, string>;
@@ -8,6 +25,8 @@
     export let direction: number = 0;
     export let getTextureUrl: (url: string) => string = (url) => url;
     export let classList: string = "";
+    /** Walks on the spot (the game's walk cycle) instead of standing still. Stands still for reduced motion. */
+    export let walking = false;
 
     const bodyPartOrder = ["body", "eyes", "hair", "clothes", "hat", "accessory", "woka"];
 
@@ -15,7 +34,11 @@
     let ctx: CanvasRenderingContext2D | undefined;
     let images: Record<string, HTMLImageElement> = {};
     let loadedUrlsKey: string | undefined;
-    const frame = 0;
+    // The game's walk cycle is columns 0, 1, 2, 1 at 10 frames a second (Animation.ts)
+    const walkCycle = [0, 1, 2, 1];
+    let walkStep = 0;
+    let walkTimer: ReturnType<typeof setInterval> | undefined;
+    $: frame = walking ? walkCycle[walkStep] : 0;
 
     function findTextureUrl(
         bodyPart: string,
@@ -37,13 +60,16 @@
         for (const part of bodyPartOrder) {
             const url = urls[part];
             if (!url) continue;
-            const img = new window.Image();
-            // Set crossOrigin before src so the image is only fetched once
-            img.crossOrigin = "user-credentials";
-            img.onload = () => {
-                if (images[part] === img) draw();
-            };
-            img.src = url;
+            const img = cachedImage(url);
+            if (!img.complete) {
+                img.addEventListener(
+                    "load",
+                    () => {
+                        if (images[part] === img) draw();
+                    },
+                    { once: true }
+                );
+            }
             nextImages[part] = img;
         }
         images = nextImages;
@@ -83,11 +109,26 @@
     // Runs after direction or canvasSize changes have reached the DOM (resizing clears the canvas)
     afterUpdate(draw);
 
+    function updateWalkTimer(walk: boolean) {
+        if (walkTimer) clearInterval(walkTimer);
+        walkTimer = undefined;
+        walkStep = 0;
+        if (!walk || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+        walkTimer = setInterval(() => {
+            walkStep = (walkStep + 1) % walkCycle.length;
+        }, 100);
+    }
+    $: updateWalkTimer(walking);
+
     onMount(() => {
         const context = canvas.getContext("2d");
         if (!context) return;
         ctx = context;
         draw();
+    });
+
+    onDestroy(() => {
+        if (walkTimer) clearInterval(walkTimer);
     });
 </script>
 

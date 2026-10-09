@@ -146,9 +146,9 @@
 <style>
     /* Orbit's dark theme (admin app/globals.css .dark) and room card (room-card.module.css). */
     .explore-card {
-        --card: hsl(216 41% 18%);
-        --line: hsl(216 28% 26%);
-        --muted: hsl(216 20% 72%);
+        --card: hsl(250 22% 15%);
+        --line: hsl(250 18% 23%);
+        --muted: hsl(250 15% 74%);
         --accent: #fbbf24;
         position: relative;
         isolation: isolate;

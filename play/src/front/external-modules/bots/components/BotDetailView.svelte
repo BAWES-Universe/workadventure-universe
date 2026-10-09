@@ -1,43 +1,62 @@
+<script context="module" lang="ts">
+    // The group left open, so the next bot opens on the same one
+    let lastOpenGroup: string | undefined;
+</script>
+
 <script lang="ts">
+    // The bot page, like a GPT or Discord bot's settings: the bot itself on top (its WOKA in a circle, its name and
+    // description edited in place, its on/off switch, a Show on map button), then Mind, Personality, Behavior, Skills
+    // and Companion, one open at a time, then who made it and Delete. Changes save on their own.
     import { onMount, onDestroy } from "svelte";
     import { get } from "svelte/store";
     import LL from "../../../../i18n/i18n-svelte";
     import { ABSOLUTE_PUSHER_URL } from "../../../Enum/ComputedConst";
+    import { mobileLayoutStore } from "../../../Stores/MobileLayoutStore";
     import type { BotData } from "../types";
     import WokaImage from "../../../Components/Woka/WokaImage.svelte";
-    import { botPreviewsStore, selectedBotStore, upsertBot } from "../stores/BotEditorStore";
+    import { botPreviewsStore, selectedBotStore, startWaypointEditing, upsertBot } from "../stores/BotEditorStore";
     import { botApiService } from "../services/BotApiService";
+    import { setBotEnabled } from "../services/botEnabled";
     import { botWokaCatalogStore, ensureBotWokaCatalog } from "../stores/BotWokaCatalogStore";
-    import BotTexturePicker from "./BotTexturePicker.svelte";
-    import BotBehaviorEditor from "./BotBehaviorEditor.svelte";
-    import BotProviderEditor from "./BotProviderEditor.svelte";
-    import BotChatInstructionsEditor from "./BotChatInstructionsEditor.svelte";
-    import BotMcpServersEditor from "./BotMcpServersEditor.svelte";
-    import { IconChevronLeft } from "@wa-icons";
+    import {
+        botCompanionCatalogStore,
+        ensureBotCompanionCatalog,
+        findCompanion,
+    } from "../stores/BotCompanionCatalogStore";
+    import BotWokaPicker from "./BotWokaPicker.svelte";
+    import BotCompanionPicker from "./BotCompanionPicker.svelte";
+    import PageSwitch from "./page/PageSwitch.svelte";
+    import PageGroup from "./page/PageGroup.svelte";
+    import BehaviorGroup from "./page/BehaviorGroup.svelte";
+    import MindGroup from "./page/MindGroup.svelte";
+    import SayGroup from "./page/SayGroup.svelte";
+    import ToolsGroup from "./page/ToolsGroup.svelte";
+    import BotFooter from "./page/BotFooter.svelte";
+    import { IconCurrentLocation, IconPaw, IconPencil } from "@wa-icons";
 
     export let bot: BotData | null = null;
-    export let onBack: () => void;
     export let onSave: () => void;
     export let onDelete: () => void;
     export let onLocate: (() => void) | undefined = undefined;
 
     let currentBot: BotData | null = null;
-    let isSaving = false;
-    let saveError: string | null = null;
-    let assetsDirection: number = 0;
-    let availableProviders: Array<{ providerId: string; name: string; enabled: boolean }> = [];
+    /** The WOKA picker fills the panel in place of the page, as the companion picker does */
+    export let editingTexture = false;
+    /** The companion picker fills the panel in place of the page (BotEditor puts its title and back circle up) */
+    export let editingCompanion = false;
+    let switching = false;
+    let switchError: string | null = null;
+    let openGroup: string | undefined = lastOpenGroup;
 
-    // Editing states
-    let editingName = false;
-    let editingDescription = false;
-    let editingTexture = false;
-    let editingBehavior = false;
-    let editingProvider = false;
-    let editingChatInstructions = false;
+    function toggleGroup(id: string) {
+        openGroup = openGroup === id ? undefined : id;
+        lastOpenGroup = openGroup;
+    }
 
     function handleTextureKeydown(e: KeyboardEvent) {
         if (e.key === "Escape") {
             editingTexture = false;
+            editingCompanion = false;
         }
     }
 
@@ -79,15 +98,12 @@
         }
     }
 
-    function handleBack() {
-        // Flush while the bot is still selected: BotEditor only saves changes to the selected bot
-        flushPendingSaves();
-        onBack();
-    }
-
     // Initialize from prop - handle both bot changes and bot becoming null
     $: if (bot) {
         if (bot.id !== currentBot?.id) {
+            // Another bot: its page opens, not the last one's pickers
+            editingCompanion = false;
+            editingTexture = false;
             // Ensure behaviorType is never undefined - check both top-level and behaviorConfig
             const behaviorType = bot.behaviorType || bot.behaviorConfig?.behaviorType || "idle";
 
@@ -109,8 +125,6 @@
             }
             // Reset last saved name when bot changes
             lastSavedName = bot.name || null;
-            // Reload providers when bot changes to ensure we have the latest list
-            void loadProviders();
         }
     } else {
         // Bot prop became null - clear currentBot to prevent errors
@@ -235,45 +249,16 @@
         return `${ABSOLUTE_PUSHER_URL}${relativeUrl}`;
     }
 
-    function handleDelete() {
-        if (!currentBot || !currentBot.botId) {
-            onBack();
-            return;
+    // The bot's WOKA sheet, for the companion picker's room
+    $: botSheetUrl = (() => {
+        const id = currentBot?.characterTexture;
+        if (!id || !$botWokaCatalogStore) return undefined;
+        for (const collection of $botWokaCatalogStore.woka?.collections ?? []) {
+            const texture = collection.textures.find((t) => t.id === id);
+            if (texture) return getTextureUrl(texture.url);
         }
-
-        // Call parent's delete handler (which has the confirm dialog)
-        onDelete();
-    }
-
-    function getBehaviorLabel(type?: string): string {
-        switch (type) {
-            case "idle":
-                return "Idle (Stand in place)";
-            case "patrol":
-                return "Patrol (Follow waypoints)";
-            case "social":
-                return "Social (Seek conversations)";
-            default:
-                return "Unknown";
-        }
-    }
-
-    function formatDate(dateString?: string): string {
-        if (!dateString) return "Unknown";
-        try {
-            const date = new Date(dateString);
-            return date.toLocaleString("en-US", {
-                month: "short",
-                day: "numeric",
-                year: "numeric",
-                hour: "numeric",
-                minute: "2-digit",
-                hour12: true,
-            });
-        } catch {
-            return dateString;
-        }
-    }
+        return undefined;
+    })();
 
     async function handleTextureSelect(textureId: string) {
         if (!currentBot) {
@@ -322,378 +307,403 @@
         onSave();
     }
 
-    onMount(() => {
-        void ensureBotWokaCatalog();
-        void loadProviders();
-    });
+    /**
+     * The companion that walks with the bot: picked (or cleared) on the page and saved right away. A companion
+     * joins the bot when it connects, and the bot server respawns a running bot itself when the companion
+     * changes, so nothing more is needed here.
+     */
+    async function handleCompanionSelect(companionTextureId: string | null) {
+        if (!currentBot) return;
+        editingCompanion = false;
+        if ((currentBot.companionTextureId ?? null) === companionTextureId) return;
 
-    async function loadProviders() {
-        if (botApiService.isInitialized()) {
+        currentBot = { ...currentBot, companionTextureId };
+        upsertBot(currentBot);
+
+        if (currentBot.id && botApiService.isInitialized()) {
             try {
-                const providers = await botApiService.getAvailableAIProviders(true);
-                availableProviders = providers.map((p) => ({
-                    providerId: p.providerId,
-                    name: p.name,
-                    enabled: p.enabled,
-                }));
+                await botApiService.updateBot(currentBot.id, { companionTextureId });
             } catch (e) {
-                console.error("[BotDetailView] Failed to load AI providers:", e);
+                console.error("[BotDetailView] Failed to save companion change:", e);
             }
         }
+        onSave();
     }
 
-    // Reactive computed value for provider display name
-    // Updates automatically when availableProviders or currentBot.aiProviderRef changes
-    $: providerDisplayName = (() => {
-        const providerId = currentBot?.aiProviderRef;
-        if (!providerId) return "Not set";
-        // Try to find provider (case-insensitive match)
-        const provider = availableProviders.find((p) => p.providerId.toLowerCase() === providerId.toLowerCase());
-        if (!provider) {
-            // If provider not found and we have providers loaded, it might not exist
-            // If providers aren't loaded yet, show ID temporarily
-            if (availableProviders.length === 0) {
-                return providerId; // Show ID while loading
-            }
-            // Provider not found in list - return ID
-            return providerId;
+    /**
+     * What the Companion row says: the companion's name, None yet, or that this room's list lacks it. An ellipsis
+     * holds the line while the room's list is still loading, so the row is never blank.
+     */
+    function companionBrief(
+        id: string | null | undefined,
+        catalog: typeof $botCompanionCatalogStore,
+        text: typeof page.companion
+    ): string {
+        if (!id) return text.none();
+        if (!catalog) return "…";
+        return findCompanion(catalog, id)?.name ?? text.notHere();
+    }
+    $: companionLine = currentBot
+        ? companionBrief(currentBot.companionTextureId, $botCompanionCatalogStore, page.companion)
+        : "";
+
+    onMount(() => {
+        void ensureBotWokaCatalog();
+        void ensureBotCompanionCatalog();
+    });
+
+    /** A change from a group: switches and choices save right away, typing once it stops. */
+    function apply(next: BotData, typing = false) {
+        currentBot = next;
+        if (typing) {
+            autoSave();
+            return;
         }
-        // Match the same format as the dropdown: "Name (Disabled)" if disabled
-        return provider.enabled ? provider.name : `${provider.name} (Disabled)`;
-    })();
+        if (autoSaveTimeout) {
+            clearTimeout(autoSaveTimeout);
+            autoSaveTimeout = null;
+        }
+        flushAutoSave();
+    }
+
+    function rename(name: string) {
+        if (!currentBot) return;
+        currentBot = { ...currentBot, name };
+        handleNameChange();
+    }
+
+    function editRoute() {
+        flushPendingSaves();
+        onLocate?.();
+        startWaypointEditing();
+    }
+
+    function switchOnOff(enabled: boolean) {
+        const target = currentBot ? get(botPreviewsStore).get(currentBot.id) : undefined;
+        if (!currentBot || !target || switching) return;
+        // Save edits first: the switch saves the bot as the store has it
+        flushPendingSaves();
+        switching = true;
+        switchError = null;
+        currentBot = { ...currentBot, enabled };
+        setBotEnabled(get(botPreviewsStore).get(target.id) ?? target, enabled)
+            .catch((e) => {
+                console.error("[BotDetailView] Failed to turn the bot on or off:", e);
+                if (currentBot?.id === target.id) {
+                    currentBot = { ...currentBot, enabled: target.enabled };
+                }
+                switchError = e instanceof Error ? e.message : String(e);
+            })
+            .finally(() => {
+                switching = false;
+            });
+    }
+
+    $: page = $LL.mapEditor.edit.bots.page;
+    /** The description grows with what it holds, so it reads as text rather than a box. */
+    function autoHeight(node: HTMLTextAreaElement) {
+        const fit = () => {
+            node.style.height = "auto";
+            node.style.height = `${node.scrollHeight}px`;
+        };
+        fit();
+        node.addEventListener("input", fit);
+        // The page can open while the panel is tucked away (the box is then off the page and measures 0), and the
+        // panel can be resized: measure again whenever the box's width changes
+        let width = node.clientWidth;
+        const resizeObserver = new ResizeObserver(() => {
+            if (node.clientWidth === width) return;
+            width = node.clientWidth;
+            fit();
+        });
+        resizeObserver.observe(node);
+        return {
+            update: fit,
+            destroy: () => {
+                node.removeEventListener("input", fit);
+                resizeObserver.disconnect();
+            },
+        };
+    }
 </script>
 
 <svelte:window on:keydown={handleTextureKeydown} />
 
-<div class="bot-detail-view flex flex-col h-full min-h-0">
-    <!-- Header -->
-    <div class="flex items-center gap-3 mb-4 pb-4 border-b border-white/20 flex-shrink-0">
-        <button class="p-2 hover:bg-white/10 rounded transition-colors" on:click={handleBack} title="Back to list">
-            <IconChevronLeft font-size="20" />
-        </button>
-        <div class="flex-1">
-            <h2 class="text-base text-white">Bot details</h2>
+{#if currentBot && editingTexture}
+    <BotWokaPicker
+        selectedId={currentBot.characterTexture || ""}
+        onSave={(textureId) => {
+            if (textureId && textureId !== currentBot?.characterTexture) {
+                void handleTextureSelect(textureId);
+            } else {
+                editingTexture = false;
+            }
+        }}
+        onCancel={() => (editingTexture = false)}
+    />
+{:else if currentBot && editingCompanion}
+    <BotCompanionPicker
+        selectedId={currentBot.companionTextureId ?? null}
+        botUrl={botSheetUrl}
+        onSave={handleCompanionSelect}
+        onCancel={() => (editingCompanion = false)}
+    />
+{:else if currentBot}
+    <div class="bot-page" data-testid="bot-page">
+        <div class="bp-hd">
+            <button
+                type="button"
+                class="bp-woka"
+                aria-label={page.changeLooks()}
+                title={page.changeLooks()}
+                data-testid="bot-change-looks"
+                on:click={() => (editingTexture = true)}
+            >
+                {#if currentBot.characterTexture && $botWokaCatalogStore}
+                    <WokaImage
+                        selectedTextures={{ woka: currentBot.characterTexture }}
+                        wokaData={$botWokaCatalogStore}
+                        {getTextureUrl}
+                        canvasSize={44}
+                        direction={0}
+                    />
+                {/if}
+            </button>
+            <div class="bp-hd-tx">
+                <label class="bp-name-wrap">
+                    <input
+                        class="bp-name"
+                        type="text"
+                        value={currentBot.name ?? ""}
+                        maxlength="64"
+                        placeholder="Bot"
+                        aria-label={page.about.name()}
+                        data-testid="bot-name"
+                        on:input={(e) => rename(e.currentTarget.value)}
+                    />
+                    <span class="bp-pen" aria-hidden="true"><IconPencil font-size="14" /></span>
+                </label>
+                <textarea
+                    class="bp-desc"
+                    rows="1"
+                    value={currentBot.description ?? ""}
+                    placeholder={page.about.descriptionPlaceholder()}
+                    aria-label={page.about.description()}
+                    data-testid="bot-description"
+                    use:autoHeight
+                    on:input={(e) => currentBot && apply({ ...currentBot, description: e.currentTarget.value }, true)}
+                />
+            </div>
+            <PageSwitch
+                checked={currentBot.enabled !== false}
+                label={page.switchOn()}
+                disabled={switching}
+                testId="bot-switch"
+                onChange={switchOnOff}
+            />
         </div>
         {#if onLocate}
-            <button
-                class="p-2 hover:bg-white/10 rounded transition-colors text-white/60 hover:text-white"
-                on:click={onLocate}
-                title="Locate on map"
-            >
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
-                    />
-                    <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
-                    />
-                </svg>
-            </button>
-        {/if}
-        <button
-            class="px-4 py-2 text-red-400 hover:bg-red-500/20 rounded transition-colors"
-            on:click={handleDelete}
-            disabled={isSaving}
-        >
-            Delete Bot
-        </button>
-    </div>
-
-    <!-- Content -->
-    {#if currentBot}
-        <div class="scrollable-content">
-            <div class="space-y-4 pb-4">
-                <!-- Woka and Name Section -->
-                <div class="flex items-start gap-6 pb-4 border-b border-white/10">
-                    <div class="flex-shrink-0">
-                        <div
-                            class="w-32 h-32 bg-white/5 rounded-lg border border-white/20 flex items-center justify-center overflow-hidden"
-                        >
-                            {#if currentBot.characterTexture && $botWokaCatalogStore}
-                                <WokaImage
-                                    selectedTextures={{ woka: currentBot.characterTexture }}
-                                    wokaData={$botWokaCatalogStore}
-                                    {getTextureUrl}
-                                    canvasSize={96}
-                                    direction={assetsDirection}
-                                />
-                            {:else}
-                                <div class="text-white/40 text-xs">No texture</div>
-                            {/if}
-                        </div>
-                        <button
-                            class="w-32 mt-2 px-3 py-2 text-sm bg-white/10 text-white rounded hover:bg-white/20 transition-colors"
-                            on:click={() => (editingTexture = true)}
-                        >
-                            Change Woka
-                        </button>
-                    </div>
-                    <div class="flex-1">
-                        {#if editingName}
-                            <div class="space-y-2">
-                                <input
-                                    type="text"
-                                    class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-2xl font-semibold"
-                                    bind:value={currentBot.name}
-                                    placeholder="Enter bot name"
-                                    autofocus
-                                    on:input={() => handleNameChange()}
-                                    on:keydown={(e) => {
-                                        if (e.key === "Enter") {
-                                            e.preventDefault();
-                                            editingName = false;
-                                        }
-                                    }}
-                                />
-                                <button
-                                    class="px-4 py-2 bg-white/10 text-white rounded hover:bg-white/20 transition-colors text-sm"
-                                    on:click={() => (editingName = false)}
-                                >
-                                    Close
-                                </button>
-                            </div>
-                        {:else}
-                            <div class="flex items-center gap-2 mb-3">
-                                <h1 class="text-2xl font-semibold text-white">{currentBot.name || "Unnamed Bot"}</h1>
-                                <button
-                                    class="text-sm text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-blue-500/10 rounded transition-colors"
-                                    on:click={() => (editingName = true)}
-                                >
-                                    Edit
-                                </button>
-                            </div>
-                        {/if}
-
-                        <!-- Description -->
-                        <div class="mb-4">
-                            {#if editingDescription}
-                                <div class="space-y-2">
-                                    <textarea
-                                        class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                        bind:value={currentBot.description}
-                                        placeholder="Enter bot description"
-                                        rows="3"
-                                        on:input={() => autoSave()}
-                                    />
-                                    <button
-                                        class="px-4 py-2 bg-white/10 text-white rounded hover:bg-white/20 transition-colors text-sm"
-                                        on:click={() => (editingDescription = false)}
-                                    >
-                                        Close
-                                    </button>
-                                </div>
-                            {:else}
-                                <div class="flex items-center gap-2">
-                                    <p class="text-sm text-white/70 flex-1">
-                                        {currentBot.description || "No description"}
-                                    </p>
-                                    <button
-                                        class="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-blue-500/10 rounded transition-colors"
-                                        on:click={() => (editingDescription = true)}
-                                    >
-                                        Edit
-                                    </button>
-                                </div>
-                            {/if}
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Behavior -->
-                <div class="border-b border-white/10">
-                    <div class="flex items-center gap-2 mb-3">
-                        <h3 class="text-base text-white/80 normal-case">Behavior</h3>
-                        <button
-                            class="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-blue-500/10 rounded transition-colors"
-                            on:click={() => (editingBehavior = !editingBehavior)}
-                        >
-                            {editingBehavior ? "Close" : "Edit"}
-                        </button>
-                    </div>
-                    {#if editingBehavior}
-                        <div class="p-4 bg-white/5 rounded-lg border border-white/20">
-                            <BotBehaviorEditor
-                                bind:bot={currentBot}
-                                on:locate={() => {
-                                    if (onLocate) onLocate();
-                                }}
-                                on:editWaypoints={() => {
-                                    if (onLocate) onLocate();
-                                }}
-                                on:change={() => {
-                                    autoSave();
-                                }}
-                            />
-                        </div>
-                    {:else}
-                        <div class="space-y-2">
-                            <p class="text-sm text-white/70">{getBehaviorLabel(currentBot.behaviorType)}</p>
-                            {#if currentBot.behaviorConfig?.assignedSpace}
-                                <p class="text-xs text-white/50">
-                                    Location: ({currentBot.behaviorConfig.assignedSpace.center?.x || 0}, {currentBot
-                                        .behaviorConfig.assignedSpace.center?.y || 0})
-                                    {#if currentBot.behaviorType === "idle" && currentBot.behaviorConfig.assignedSpace.radius === 0}
-                                        (stationary)
-                                    {:else}
-                                        radius {currentBot.behaviorConfig.assignedSpace.radius || 0}
-                                    {/if}
-                                </p>
-                            {/if}
-                            {#if currentBot.behaviorType === "patrol" && currentBot.behaviorConfig?.patrolWaypoints && Array.isArray(currentBot.behaviorConfig.patrolWaypoints)}
-                                <p class="text-xs text-white/50">
-                                    {currentBot.behaviorConfig.patrolWaypoints.length} waypoint{currentBot
-                                        .behaviorConfig.patrolWaypoints.length !== 1
-                                        ? "s"
-                                        : ""}
-                                </p>
-                            {/if}
-                        </div>
-                    {/if}
-                </div>
-
-                <!-- AI Provider & Vision -->
-                <div>
-                    <div class="flex items-center gap-2 mb-3">
-                        <h3 class="text-base text-white/80 normal-case">
-                            {$LL.actionbar.botEditorModule.providerVisionHeading()}
-                        </h3>
-                        <button
-                            class="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-blue-500/10 rounded transition-colors"
-                            on:click={() => (editingProvider = !editingProvider)}
-                        >
-                            {editingProvider ? $LL.actionbar.close() : $LL.actionbar.edit()}
-                        </button>
-                    </div>
-                    {#if editingProvider}
-                        <div class="p-4 bg-white/5 rounded-lg border border-white/20">
-                            <BotProviderEditor bind:bot={currentBot} on:change={() => autoSave()} />
-                        </div>
-                    {:else}
-                        <div class="space-y-2">
-                            <p class="text-sm text-white/70">{providerDisplayName}</p>
-                        </div>
-                    {/if}
-                </div>
-
-                <!-- Chat instructions -->
-                <div>
-                    <div class="flex items-center gap-2 mb-3">
-                        <h3 class="text-base text-white/80 normal-case">
-                            {$LL.actionbar.botEditorModule.chatInstructions()}
-                        </h3>
-                        <button
-                            class="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-blue-500/10 rounded transition-colors"
-                            on:click={() => (editingChatInstructions = !editingChatInstructions)}
-                        >
-                            {editingChatInstructions ? $LL.actionbar.close() : $LL.actionbar.edit()}
-                        </button>
-                    </div>
-                    {#if editingChatInstructions}
-                        <div class="p-4 bg-white/5 rounded-lg border border-white/20">
-                            <BotChatInstructionsEditor bind:bot={currentBot} on:change={() => autoSave()} />
-                        </div>
-                    {:else}
-                        <p class="text-sm text-white/70 whitespace-pre-wrap">
-                            {currentBot.chatInstructions || $LL.actionbar.botEditorModule.noChatInstructions()}
-                        </p>
-                    {/if}
-                </div>
-
-                <!-- MCP Servers -->
-                <div class="border-b border-white/10 pb-4">
-                    <BotMcpServersEditor botId={currentBot.id} />
-                </div>
-
-                <!-- Metadata (Audit Trail) -->
-                {#if currentBot.createdAt || currentBot.updatedAt}
-                    <div class="mt-6 pt-6 border-t border-white/10">
-                        <h3 class="text-base text-white/80 normal-case mb-3">Metadata</h3>
-                        <div class="space-y-2 text-sm text-white/60">
-                            {#if currentBot.createdAt}
-                                <div class="flex items-center gap-2">
-                                    <span class="text-white/40">Created:</span>
-                                    <span>{formatDate(currentBot.createdAt)}</span>
-                                    {#if currentBot.createdBy?.name}
-                                        <span class="text-white/40">by</span>
-                                        <span class="text-white/70">{currentBot.createdBy.name}</span>
-                                    {/if}
-                                </div>
-                            {/if}
-                            {#if currentBot.updatedAt}
-                                <div class="flex items-center gap-2">
-                                    <span class="text-white/40">Last updated:</span>
-                                    <span>{formatDate(currentBot.updatedAt)}</span>
-                                    {#if currentBot.updatedBy?.name && currentBot.updatedBy.id !== currentBot.createdBy?.id}
-                                        <span class="text-white/40">by</span>
-                                        <span class="text-white/70">{currentBot.updatedBy.name}</span>
-                                    {/if}
-                                </div>
-                            {/if}
-                        </div>
-                    </div>
-                {/if}
-            </div>
-        </div>
-    {/if}
-
-    {#if saveError}
-        <div class="mt-4 text-sm text-red-400 bg-red-500/10 border border-red-500/30 rounded p-2">
-            {saveError}
-        </div>
-    {/if}
-</div>
-
-<!-- Texture Picker Modal -->
-{#if editingTexture && $botWokaCatalogStore && currentBot}
-    <!-- svelte-ignore a11y-click-events-have-key-events -->
-    <div
-        role="presentation"
-        class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
-        tabindex="-1"
-        on:click={() => (editingTexture = false)}
-    >
-        <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-        <div
-            role="dialog"
-            aria-modal="true"
-            class="bg-gray-800 rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6 border border-white/20"
-            on:click|stopPropagation
-        >
-            <h3 class="text-xl font-semibold text-white mb-4">Select Character Texture</h3>
-            <BotTexturePicker
-                selectedTextureId={currentBot.characterTexture || ""}
-                botId={currentBot.id}
-                onSelect={handleTextureSelect}
-            />
-            <div class="flex justify-end mt-4">
-                <button
-                    class="px-4 py-2 bg-white/10 text-white rounded hover:bg-white/20 transition-colors"
-                    on:click={() => (editingTexture = false)}
-                >
-                    Cancel
+            <div class="bp-actions">
+                <button type="button" class="bp-pill" data-testid="bot-locate" on:click={onLocate}>
+                    <IconCurrentLocation font-size="16" />
+                    {page.locate()}
                 </button>
             </div>
+        {/if}
+        {#if switchError}
+            <p class="bp-error" role="alert">{switchError}</p>
+        {/if}
+
+        <div class="bp-groups">
+            <MindGroup
+                bot={currentBot}
+                open={openGroup === "mind"}
+                onToggle={toggleGroup}
+                onChange={(next) => apply(next)}
+            />
+            <SayGroup bot={currentBot} open={openGroup === "say"} onToggle={toggleGroup} onChange={apply} />
+            <BehaviorGroup
+                bot={currentBot}
+                open={openGroup === "behavior"}
+                onToggle={toggleGroup}
+                onChange={(next) => apply(next)}
+                onEditRoute={editRoute}
+            />
+            <ToolsGroup
+                bot={currentBot}
+                open={openGroup === "tools"}
+                onToggle={toggleGroup}
+                onChange={(next) => apply(next)}
+                wide={!$mobileLayoutStore}
+            />
+            <!-- An extra, after the bot's own parts: the pet that walks with it -->
+            <PageGroup
+                id="companion"
+                icon={IconPaw}
+                title={page.companion.title()}
+                brief={companionLine}
+                link
+                onToggle={() => (editingCompanion = true)}
+            />
         </div>
+        <BotFooter bot={currentBot} {onDelete} />
     </div>
 {/if}
 
 <style>
-    .bot-detail-view {
-        color: white;
-        height: 100%;
-        min-height: 0;
+    .bot-page {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        color: #fff;
     }
-
-    .bot-detail-view .scrollable-content {
-        flex: 1 1 0;
-        min-height: 0;
-        overflow-y: auto;
-        overflow-x: hidden;
+    .bp-hd {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+    }
+    /* The WOKA in a circle, as in the people list and the join screens: tap it to change how the bot looks */
+    .bp-woka {
+        display: grid;
+        place-items: center;
+        flex: none;
+        width: 56px;
+        height: 56px;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        position: relative;
+        border-radius: 50%;
+        background: radial-gradient(
+            circle at 50% 42%,
+            rgba(134, 41, 252, 0.35),
+            rgba(65, 86, 246, 0.12) 58%,
+            rgba(255, 255, 255, 0.03) 72%
+        );
+        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.28);
+        cursor: pointer;
+    }
+    @media (hover: hover) {
+        .bp-woka:hover {
+            box-shadow: inset 0 0 0 2px rgba(196, 181, 253, 0.7);
+        }
+    }
+    .bp-woka:focus-visible {
+        outline: 2px solid #a78bfa;
+        outline-offset: 2px;
+    }
+    .bp-hd-tx {
+        flex: 1;
+        min-width: 0;
+    }
+    /* The name is the title, and typing on it renames the bot: no box until it has focus */
+    .bp-name-wrap {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        min-height: 44px;
+        margin: 0 0 1px -6px;
+        padding: 1px 6px;
+        border-radius: 8px;
+        cursor: text;
+    }
+    .bp-name-wrap:focus-within {
+        background: rgba(0, 0, 0, 0.25);
+        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.6);
+    }
+    .bp-name {
+        flex: 1;
+        min-width: 0;
+        width: 100%;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        font: inherit;
+        font-size: 18px;
+        font-weight: 650;
+        letter-spacing: -0.01em;
+        line-height: 1.25;
+        color: #fff;
+        outline: none;
+        text-overflow: ellipsis;
+    }
+    /* The box around the name is the purple one above: no second (blue) focus ring from the page's form styles */
+    .bp-name:focus {
+        box-shadow: none;
+    }
+    .bp-pen {
+        flex: none;
+        color: rgba(255, 255, 255, 0.5);
+    }
+    .bp-name-wrap:focus-within .bp-pen {
+        display: none;
+    }
+    /* What the bot is for, under its name, edited in place */
+    .bp-desc {
+        display: block;
+        /* One line at least, so it never shows clipped, even when it was measured off the page */
+        min-height: calc(13.5px * 1.45 + 12px);
+        width: calc(100% + 8px);
+        margin: -6px 0 0 -8px;
+        padding: 6px 8px;
+        border: 0;
+        border-radius: 10px;
+        background: transparent;
+        font: inherit;
+        font-size: 13.5px;
+        line-height: 1.45;
+        color: rgba(244, 242, 250, 0.82);
+        resize: none;
+        overflow: hidden;
+        outline: none;
+    }
+    .bp-desc::placeholder {
+        color: rgba(244, 242, 250, 0.42);
+    }
+    @media (hover: hover) {
+        .bp-desc:hover {
+            background: rgba(255, 255, 255, 0.04);
+        }
+    }
+    .bp-desc:focus {
+        background: rgba(0, 0, 0, 0.25);
+        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.6);
+    }
+    /* Under the name, lined up with it */
+    .bp-actions {
+        display: flex;
+        gap: 8px;
+        padding-left: 66px;
+    }
+    .bp-error {
+        margin: 0;
+        font-size: 12.5px;
+        color: #ff8a7a;
+    }
+    .bp-groups {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+    .bp-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        height: 40px;
+        padding: 0 18px;
+        border: 0;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+        font: inherit;
+        font-size: 14px;
+        font-weight: 600;
+        color: #fff;
+        cursor: pointer;
+    }
+    @media (hover: hover) {
+        .bp-pill:hover {
+            background: rgba(255, 255, 255, 0.14);
+        }
     }
 </style>

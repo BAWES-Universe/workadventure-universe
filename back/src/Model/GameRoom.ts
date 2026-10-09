@@ -1,7 +1,7 @@
 import path from "path";
 import * as Sentry from "@sentry/node";
 import type { WAMFileFormat } from "@workadventure/map-editor";
-import { GameMapProperties } from "@workadventure/map-editor";
+import { GameMapProperties, WAMSettingsUtils } from "@workadventure/map-editor";
 import { LocalUrlError } from "@workadventure/map-editor/src/LocalUrlError";
 import { mapFetcher } from "@workadventure/map-editor/src/MapFetcher";
 import type {
@@ -15,6 +15,7 @@ import type {
     ServerToClientMessage,
     SetPlayerDetailsMessage,
     SubToPusherRoomMessage,
+    MegaphoneSettings,
 } from "@workadventure/messages";
 import { isMapDetailsData, RefreshRoomMessage, VariableWithTagMessage } from "@workadventure/messages";
 import { Jitsi } from "@workadventure/shared-utils";
@@ -281,6 +282,7 @@ export class GameRoom implements BrothersFinder {
         }
 
         // If a user leaves the group, it cannot lead or follow anymore.
+        user.cancelFollowRequest();
         if (user.hasFollowers()) {
             user.stopLeading();
         }
@@ -1099,6 +1101,8 @@ export class GameRoom implements BrothersFinder {
             new Promise<void>((resolve, reject) => {
                 if (!this._wamUrl) {
                     emitError(user.socket, "WAM file url is undefined. Cannot edit map without WAM file.");
+                    // A refused edit must not keep the lock: the edits that follow it still have to be saved.
+                    resolve();
                     return;
                 }
 
@@ -1133,6 +1137,8 @@ export class GameRoom implements BrothersFinder {
                                     },
                                 },
                             });
+                            // Same here: release the lock even though nothing is dispatched to the room.
+                            resolve();
                             return;
                         }
                         if (editMapCommandMessage.editMapMessage?.message?.$case === "updateWAMSettingsMessage") {
@@ -1143,8 +1149,17 @@ export class GameRoom implements BrothersFinder {
                                 editMapCommandMessage.editMapMessage.message.updateWAMSettingsMessage.message?.$case ===
                                 "updateMegaphoneSettingMessage"
                             ) {
-                                this._wamSettings.megaphone =
-                                    editMapCommandMessage.editMapMessage.message.updateWAMSettingsMessage.message.updateMegaphoneSettingMessage;
+                                const update =
+                                    editMapCommandMessage.editMapMessage.message.updateWAMSettingsMessage.message
+                                        .updateMegaphoneSettingMessage;
+                                this._wamSettings.megaphone = {
+                                    enabled: update.enabled,
+                                    title: update.title,
+                                    scope: update.scope,
+                                    rights: update.rights,
+                                    scopes: update.scopes?.scopes,
+                                };
+                                this.sendMegaphoneSettingsToUsers();
                             }
                         }
                         if (editMapCommandMessage.editMapMessage?.message?.$case === "modifyAreaMessage") {
@@ -1234,6 +1249,44 @@ export class GameRoom implements BrothersFinder {
 
     get roomGroup(): string | null {
         return this._roomGroup;
+    }
+
+    /**
+     * The broadcast channels this room listens to, and which of them a user carrying these tags may go live on.
+     */
+    public getMegaphoneSettingsFor(tags: string[]): MegaphoneSettings {
+        const channels = WAMSettingsUtils.getMegaphoneChannels(this._wamSettings, this._roomGroup, this._roomUrl, tags);
+        const firstStreamable = channels.find((channel) => channel.canStream);
+        return {
+            enabled: firstStreamable !== undefined,
+            url: firstStreamable?.url,
+            channels,
+        };
+    }
+
+    /**
+     * After the room's broadcast settings change, every user learns which channels the room now listens to and
+     * which they may go live on (the pusher does not know the room's group or settings, so the back tells them).
+     */
+    private sendMegaphoneSettingsToUsers(): void {
+        for (const user of this.getUsers().values()) {
+            user.socket.write({
+                message: {
+                    $case: "batchMessage",
+                    batchMessage: {
+                        event: "",
+                        payload: [
+                            {
+                                message: {
+                                    $case: "megaphoneSettingsMessage",
+                                    megaphoneSettingsMessage: this.getMegaphoneSettingsFor(user.tags),
+                                },
+                            },
+                        ],
+                    },
+                },
+            });
+        }
     }
 
     get wamSettings(): WAMFileFormat["settings"] {

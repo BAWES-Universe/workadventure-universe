@@ -1,10 +1,9 @@
 <script lang="ts">
     import { get } from "svelte/store";
-    import { fly } from "svelte/transition";
     import type { ComponentType } from "svelte";
-    import { onDestroy, onMount } from "svelte";
-    import type { Unsubscriber } from "svelte/store";
-    import chevronImg from "../images/chevron.svg";
+    import { onDestroy, onMount, tick } from "svelte";
+    import type { TransitionConfig } from "svelte/transition";
+    import { cubicOut } from "svelte/easing";
     import type { MenuItem } from "../../Stores/MenuStore";
     import {
         activeSubMenuStore,
@@ -17,104 +16,270 @@
     import { sendMenuClickedEvent } from "../../Api/Iframe/Ui/MenuItem";
     import { LL } from "../../../i18n/i18n-svelte";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
-    import ButtonClose from "../Input/ButtonClose.svelte";
     import SettingsSubMenu from "./SettingsSubMenu.svelte";
     import ProfileSubMenu from "./ProfileSubMenu.svelte";
     import AboutRoomSubMenu from "./AboutRoomSubMenu.svelte";
-    import ContactSubMenu from "./ContactSubMenu.svelte";
     import CustomSubMenu from "./CustomSubMenu.svelte";
     import GuestSubMenu from "./GuestSubMenu.svelte";
     import ReportSubMenu from "./ReportSubMenu.svelte";
     import ChatSubMenu from "./ChatSubMenu.svelte";
     import ShortcutSubMenu from "./ShortcutSubMenu.svelte";
+    import {
+        IconAdjustmentsHorizontal,
+        IconApps,
+        IconArrowLeft,
+        IconKeyboard,
+        IconMessageCircle,
+        IconUnMute,
+        IconUser,
+        IconX,
+    } from "@wa-icons";
 
-    let activeSubMenu: MenuItem = $subMenusStore[$activeSubMenuStore];
-    let activeComponent: ComponentType = ProfileSubMenu;
-    let props: { url: string; allowApi: boolean; allow: string | undefined };
-    let unsubscriberSubMenuStore: Unsubscriber;
-    let unsubscriberActiveSubMenuStore: Unsubscriber;
+    /**
+     * The settings window. Settings are two pages, General and Sound and video, plus Keyboard on computers. Map
+     * credits (and Report a problem, when the room sets a link for it) open from rows of General, with a
+     * back button. The other pages of the menu (the profile, chat, a map's own menus) keep their
+     * place after the settings pages, so nothing a room or script adds is lost.
+     *
+     * On a phone the pages are tabs with the gradient pill under the open one, like Chats and People. From 1024px they
+     * are a side list on the left, with the same gradient for the open page.
+     */
 
-    onMount(async () => {
-        unsubscriberActiveSubMenuStore = activeSubMenuStore.subscribe((value) => {
-            if ($subMenusStore.length >= value - 1) {
-                void switchMenu($subMenusStore[value]);
+    type Page = {
+        id: string;
+        label: string;
+        icon: ComponentType | undefined;
+        /** The menu item behind the page: Settings for General and Sound and video. */
+        item: MenuItem;
+    };
+
+    /** Pages opened from a row of General: they show a back button instead of the tabs. */
+    const ROW_PAGES: string[] = [SubMenusInterface.aboutRoom, SubMenusInterface.report];
+    /** Pages that are one iframe and take the whole body. */
+    const FRAME_PAGES: string[] = [SubMenusInterface.profile, SubMenusInterface.report];
+
+    const finePointer = typeof window !== "undefined" && window.matchMedia?.("(pointer: fine)").matches === true;
+
+    /** The open page: "general", "sound", or a menu item's key. */
+    let current = "general";
+    /** A page opened from a row of General (Map credits, Report), shown with a back button. */
+    let rowPage: string | undefined = undefined;
+    let activeComponent: ComponentType | undefined = undefined;
+    let props: { url: string; allowApi: boolean; allow: string | undefined } | Record<string, never> = {};
+    let isFrame = false;
+
+    let unsubscriberSubMenuStore: (() => void) | undefined;
+    let unsubscriberActiveSubMenuStore: (() => void) | undefined;
+
+    function labelOf(item: MenuItem): string {
+        return item.type === "scripting" ? item.label : $LL.menu.sub[item.key]();
+    }
+
+    function iconOf(item: MenuItem): ComponentType | undefined {
+        if (item.type === "scripting") return IconApps;
+        switch (item.key) {
+            case SubMenusInterface.profile:
+                return IconUser;
+            case SubMenusInterface.chat:
+                return IconMessageCircle;
+            default:
+                return IconApps;
+        }
+    }
+
+    function isVisible(item: MenuItem): boolean {
+        return get(item.visible);
+    }
+
+    $: settingsItem = $subMenusStore.find(
+        (item) => item.type === "translated" && item.key === SubMenusInterface.settings
+    );
+    $: shortcutsItem = $subMenusStore.find(
+        (item) => item.type === "translated" && item.key === SubMenusInterface.shortcuts
+    );
+
+    // The settings pages first, then every other page of the menu that is visible here.
+    $: settingsPages = settingsItem
+        ? [
+              {
+                  id: "general",
+                  label: $LL.menu.settings.tabs.general(),
+                  icon: IconAdjustmentsHorizontal,
+                  item: settingsItem,
+              },
+              {
+                  id: "sound",
+                  label: $LL.menu.settings.tabs.soundAndVideo(),
+                  icon: IconUnMute,
+                  item: settingsItem,
+              },
+          ]
+        : [];
+    // Keyboard is for computers; on a touch screen it only shows when a script opens it.
+    $: keyboardPages =
+        shortcutsItem && (finePointer || current === SubMenusInterface.shortcuts)
+            ? [
+                  {
+                      id: SubMenusInterface.shortcuts,
+                      label: $LL.menu.settings.tabs.keyboard(),
+                      icon: IconKeyboard,
+                      item: shortcutsItem,
+                  },
+              ]
+            : [];
+    $: otherPages = $subMenusStore
+        .filter(
+            (item) =>
+                !(
+                    item.type === "translated" &&
+                    (item.key === SubMenusInterface.settings ||
+                        item.key === SubMenusInterface.shortcuts ||
+                        ROW_PAGES.includes(item.key))
+                ) && isVisible(item)
+        )
+        .map((item) => ({ id: item.key, label: labelOf(item), icon: iconOf(item), item }));
+    $: pages = [...settingsPages, ...keyboardPages] as Page[];
+    $: allPages = [...pages, ...otherPages] as Page[];
+
+    // The rows of General that open a page: Map credits always, Report when the room has it.
+    $: rowPages = $subMenusStore
+        .filter((item) => item.type === "translated" && ROW_PAGES.includes(item.key) && isVisible(item))
+        .map((item) => ({
+            key: item.key,
+            label:
+                item.key === SubMenusInterface.aboutRoom ? $LL.menu.settings.mapCredits() : $LL.menu.settings.report(),
+        }));
+
+    $: currentPage = allPages.find((page) => page.id === current);
+    $: rowPageLabel = rowPages.find((page) => page.key === rowPage)?.label;
+
+    onMount(() => {
+        unsubscriberActiveSubMenuStore = activeSubMenuStore.subscribe((index) => {
+            const item = get(subMenusStore)[index];
+            if (item) void open(item);
+        });
+        // A script can remove the page that is open: fall back to General.
+        unsubscriberSubMenuStore = subMenusStore.subscribe((items) => {
+            if (current !== "general" && current !== "sound" && !items.some((item) => item.key === current)) {
+                void openSettings("general");
             }
         });
-        unsubscriberSubMenuStore = subMenusStore.subscribe(() => {
-            if (!$subMenusStore.includes(activeSubMenu)) {
-                void switchMenu($subMenusStore[$activeSubMenuStore]);
-            }
-        });
-
-        await switchMenu($subMenusStore[$activeSubMenuStore]);
     });
 
     onDestroy(() => {
         menuInputFocusStore.set(false);
-        if (unsubscriberSubMenuStore) {
-            unsubscriberSubMenuStore();
-        }
-        if (unsubscriberActiveSubMenuStore) {
-            unsubscriberActiveSubMenuStore();
-        }
+        unsubscriberSubMenuStore?.();
+        unsubscriberActiveSubMenuStore?.();
+        resizeObserver?.disconnect();
     });
 
-    async function switchMenu(menu: MenuItem) {
-        if (menu.type === "translated") {
-            activeSubMenu = menu;
-            activeSubMenuStore.activateByMenuItem(menu);
-            switch (menu.key) {
-                case SubMenusInterface.profile:
-                    activeComponent = ProfileSubMenu;
-                    analyticsClient.menuProfile();
-                    break;
-                case SubMenusInterface.settings:
-                    activeComponent = SettingsSubMenu;
-                    analyticsClient.menuSetting();
-                    break;
-                case SubMenusInterface.invite:
-                    activeComponent = GuestSubMenu;
-                    analyticsClient.menuInvite();
-                    break;
-                case SubMenusInterface.aboutRoom:
-                    activeComponent = AboutRoomSubMenu;
-                    analyticsClient.menuCredit();
-                    break;
-                case SubMenusInterface.contact:
-                    activeComponent = ContactSubMenu;
-                    analyticsClient.menuContact();
-                    break;
-                case SubMenusInterface.globalMessages:
-                    activeComponent = (await import("./GlobalMessagesSubMenu.svelte")).default;
-                    analyticsClient.globalMessage();
-                    break;
-                case SubMenusInterface.report:
-                    activeComponent = ReportSubMenu;
-                    analyticsClient.reportIssue();
-                    break;
-                case SubMenusInterface.chat:
-                    activeComponent = ChatSubMenu;
-                    analyticsClient.menuChat();
-                    break;
-                case SubMenusInterface.shortcuts:
-                    activeComponent = ShortcutSubMenu;
-                    analyticsClient.menuShortcuts();
-                    break;
-            }
-        } else {
-            // Save custom menu click for analytics
-            analyticsClient.menuCustom(menu.key);
-
-            const customMenu = customMenuIframe.get(menu.key);
-            if (customMenu !== undefined) {
-                activeSubMenu = menu;
-                props = { url: customMenu.url, allowApi: customMenu.allowApi, allow: customMenu.allow };
-                activeComponent = CustomSubMenu;
-            } else {
-                sendMenuClickedEvent(menu.key);
+    /** Opens a menu item: from the store (the profile menu, a script) or from a tab. */
+    async function open(item: MenuItem) {
+        if (item.type === "scripting") {
+            analyticsClient.menuCustom(item.key);
+            const customMenu = customMenuIframe.get(item.key);
+            if (customMenu === undefined) {
+                // A script's menu without a page is a command: run it and close.
+                sendMenuClickedEvent(item.key);
                 menuVisiblilityStore.set(false);
+                return;
             }
+            show(item.key, CustomSubMenu, true, {
+                url: customMenu.url,
+                allowApi: customMenu.allowApi,
+                allow: customMenu.allow,
+            });
+            return;
         }
+
+        switch (item.key) {
+            case SubMenusInterface.settings:
+                // Coming back to Settings from another page keeps the settings page you were on.
+                if (current !== "general" && current !== "sound") current = "general";
+                await openSettings(current as "general" | "sound");
+                return;
+            case SubMenusInterface.profile:
+                show(item.key, ProfileSubMenu, true);
+                analyticsClient.menuProfile();
+                return;
+            case SubMenusInterface.invite:
+                show(item.key, GuestSubMenu);
+                analyticsClient.menuInvite();
+                return;
+            case SubMenusInterface.aboutRoom:
+            case SubMenusInterface.report:
+                openRowPage(item.key);
+                return;
+            case SubMenusInterface.chat:
+                show(item.key, ChatSubMenu);
+                analyticsClient.menuChat();
+                return;
+            case SubMenusInterface.shortcuts:
+                show(item.key, ShortcutSubMenu);
+                analyticsClient.menuShortcuts();
+                return;
+        }
+    }
+
+    function show(
+        id: string,
+        component: ComponentType,
+        frame = false,
+        componentProps: { url: string; allowApi: boolean; allow: string | undefined } | Record<string, never> = {}
+    ) {
+        current = id;
+        rowPage = undefined;
+        activeComponent = component;
+        props = componentProps;
+        isFrame = frame;
+    }
+
+    async function openSettings(section: "general" | "sound") {
+        const wasSettings = activeComponent === SettingsSubMenu;
+        show(section, SettingsSubMenu);
+        if (!wasSettings) analyticsClient.menuSetting();
+        await tick();
+    }
+
+    function openRowPage(key: string) {
+        current = "general";
+        rowPage = key;
+        isFrame = FRAME_PAGES.includes(key);
+        props = {};
+        switch (key) {
+            case SubMenusInterface.aboutRoom:
+                activeComponent = AboutRoomSubMenu;
+                analyticsClient.menuCredit();
+                break;
+            case SubMenusInterface.report:
+                activeComponent = ReportSubMenu;
+                analyticsClient.reportIssue();
+                break;
+        }
+    }
+
+    /** Opens a menu item through the store, as the profile menu and scripts do; the store only tells us when it changes. */
+    function activate(item: MenuItem) {
+        const before = get(activeSubMenuStore);
+        activeSubMenuStore.activateByMenuItem(item);
+        if (get(activeSubMenuStore) === before) void open(item);
+    }
+
+    function selectPage(page: Page) {
+        if (page.id === current && rowPage === undefined) return;
+        // Settings is one menu item for two pages: say which one before opening it.
+        if (page.id === "general" || page.id === "sound") current = page.id;
+        activate(page.item);
+    }
+
+    function openRow(key: string) {
+        const item = $subMenusStore.find((menu) => menu.key === key);
+        if (item) activate(item);
+    }
+
+    function back() {
+        current = "general";
+        if (settingsItem) activate(settingsItem);
     }
 
     function closeMenu() {
@@ -128,98 +293,153 @@
         }
     }
 
-    $: subMenuTranslations = $subMenusStore.map((subMenu) =>
-        subMenu.type === "scripting" ? subMenu.label : $LL.menu.sub[subMenu.key]()
-    );
+    // ─── The phone tabs' pill: it slides under the open tab, measured from the tab itself. ───
+    let tabsElement: HTMLElement | undefined;
+    let pillStyle = "";
+    let resizeObserver: ResizeObserver | undefined;
+
+    function placePill() {
+        const active = tabsElement?.querySelector<HTMLElement>(".u-settings-tab.is-active");
+        if (!active) {
+            pillStyle = "opacity: 0;";
+            return;
+        }
+        pillStyle = `width: ${active.offsetWidth}px; transform: translateX(${active.offsetLeft}px);`;
+        active.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    }
+
+    // The tabs leave the page while a row's page is open and come back as a new element: watch whichever is there.
+    let observedTabs: HTMLElement | undefined;
+    $: if ((tabsElement ?? undefined) !== observedTabs && typeof ResizeObserver !== "undefined") {
+        resizeObserver ??= new ResizeObserver(() => placePill());
+        if (observedTabs) resizeObserver.unobserve(observedTabs);
+        if (tabsElement) resizeObserver.observe(tabsElement);
+        observedTabs = tabsElement ?? undefined;
+    }
+    /** Re-measures once the tabs have been drawn for this page and this list of pages. */
+    function schedulePill(_page: string, _count: number) {
+        tick()
+            .then(placePill)
+            .catch((e) => console.error(e));
+    }
+
+    $: if (tabsElement) schedulePill(current, allPages.length);
+
+    // Motion as in Express and Explore: quick, eased out, and none for players who ask for less.
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+
+    function unfold(_node: Element): TransitionConfig {
+        return {
+            duration: reducedMotion ? 0 : 260,
+            easing: cubicOut,
+            css: (t) => `opacity: ${t}; transform: translateY(${(1 - t) * 12}px) scale(${0.96 + 0.04 * t});`,
+        };
+    }
 </script>
 
 <svelte:window on:keydown={onKeyDown} />
 
-<!-- TODO HUGO : REMOVE !important -->
-<div
-    class="h-3/4 top-0 flex-col gap-3 @md/main-layout:flex-row [@media(min-height:953px)]/main-layout:h-3/4 w-11/12 @2xl:max-w-screen-2xl close-window pointer-events-auto absolute flex right-0 left-0 bottom-0 z-[900] m-auto overflow-hidden font-main"
-    transition:fly={{ y: 1000, duration: 150 }}
-    on:blur={closeMenu}
->
-    <div class="flex flex-row items-center gap-2">
-        <div
-            class="menu-nav-sidebar rounded-lg @md/main-layout:w-[200px] @md/main-layout:rounded-xl overflow-hidden bg-contrast/80 backdrop-blur w-md relative h-full"
-        >
-            <!--<h2 class="p-8 text-white/10 h-5 tracking-[1rem] mb-8">{$LL.menu.title()}</h2>-->
-            <nav
-                class="mt-0 mr-16 @md/main-layout:mr-0 flex flex-row @md/main-layout:flex-col w-full @md/main-layout:w-full items-stretch @md/main-layout:items-start overflow-auto h-full @md/main-layout:overflow-auto p-2.5 @md/main-layout:p-3 gap-1"
-            >
-                {#each $subMenusStore as submenu, i (`${submenu.key}_${submenu.type}`)}
-                    {@const visibleStore = submenu.visible}
-                    {#if get(visibleStore)}
-                        <div class="flex flex-row items-center justify-center gap-1 w-full group/menu-item relative">
-                            <div
-                                class=" w-full @md/main-layout:h-full h-1 @md/main-layout:w-1 @md/main-layout:top-0 px-1 @md/main-layout:px-0 @md/main-layout:py-1 flex items-center justify-center absolute -bottom-2 @md/main-layout:-left-2"
-                            >
-                                <div
-                                    class="h-1 @md/main-layout:w-1 bg-secondary rounded-full group-hover/menu-item:h-full transition-all duration-300 z-10 {activeSubMenu ===
-                                    submenu
-                                        ? 'w-full @md/main-layout:h-full'
-                                        : 'w-0 @md/main-layout:h-0'} "
-                                />
-                            </div>
-
-                            <!-- svelte-ignore a11y-click-events-have-key-events -->
-                            <!-- svelte-ignore a11y-no-static-element-interactions -->
-                            <div
-                                class="menu-item-container group flex items-center @md/main-layout:justify-start justify-center h-full py-3.5 px-2 relative transition-all w-auto @md/main-layout:w-full @md/main-layout:hover:pl-4 hover:opacity-100 cursor-pointer rounded-md @md/main-layout:rounded-lg overflow-hidden {activeSubMenu ===
-                                submenu
-                                    ? 'active opacity-100 bg-contrast/50 text-white'
-                                    : 'opacity-60 hover:bg-white/10'}"
-                                on:click|preventDefault|stopPropagation={() => switchMenu(submenu)}
-                                transition:fly={{ delay: i * 75, x: 200, duration: 150 }}
-                            >
-                                <button
-                                    type="button"
-                                    class="menu-item m-0 relative z-10 bold block @md/main-layout:flex text-nowrap text-white"
-                                >
-                                    {subMenuTranslations[i]}
-                                </button>
-                                <img
-                                    src={chevronImg}
-                                    class="hidden @md/main-layout:block absolute transition-all right-4 group-hover:right-6 top-0 bottom-0 m-auto w-4 z-10 {activeSubMenu ===
-                                    submenu
-                                        ? 'opacity-100 group-hover:right-4'
-                                        : 'opacity-30'}"
-                                    alt="open submenu"
-                                    draggable="false"
-                                />
-                            </div>
-                        </div>
-                    {/if}
-                {/each}
-            </nav>
-        </div>
-        <div
-            class="p-2 rounded-lg bg-contrast/80 backdrop-blur-md flex items-center justify-center w-fit @md/main-layout:hidden"
-        >
-            <ButtonClose on:click={closeMenu} dataTestId="closeMenuBtn" />
-        </div>
-    </div>
-    <div
-        class="menu-submenu-container w-full rounded-xl overflow-y relative h-full bg-contrast/80 backdrop-blur overflow-hidden"
+<div class="u-settings-layer font-main">
+    <section
+        class="u-settings u-surface"
+        aria-labelledby="settings-title"
+        data-testid="settings-window"
+        transition:unfold
     >
-        <div
-            class="h-full mt-0 text-white rounded-none @md/main-layout:rounded-tl-lg overflow-y-scroll @md/main-layout:overflow-none"
-            id="submenu"
-        >
-            <svelte:component this={activeComponent} {...props} />
-        </div>
-    </div>
-    <div class="right-menu-side-bar w-fit h-full @md/main-layout:flex flex-col items-start justify-start hidden">
-        <div class="p-2 rounded-lg bg-contrast/80 backdrop-blur-md flex items-center justify-center w-fit">
-            <ButtonClose on:click={closeMenu} id="closeMenu" dataTestId="closeMenuBtn" />
-        </div>
-    </div>
-</div>
+        <nav class="u-settings-nav" aria-label={$LL.menu.sub.settings()}>
+            <h2 class="u-settings-title">{$LL.menu.sub.settings()}</h2>
+            {#each pages as page (page.id)}
+                <button
+                    type="button"
+                    class="u-settings-navrow"
+                    class:is-active={current === page.id}
+                    aria-current={current === page.id ? "page" : undefined}
+                    data-testid="settings-nav-{page.id}"
+                    on:click={() => selectPage(page)}
+                >
+                    <svelte:component this={page.icon} />
+                    <span>{page.label}</span>
+                </button>
+            {/each}
+            {#if otherPages.length > 0}
+                <div class="u-settings-navdivider" role="separator" />
+                {#each otherPages as page (page.id)}
+                    <button
+                        type="button"
+                        class="u-settings-navrow"
+                        class:is-active={current === page.id}
+                        aria-current={current === page.id ? "page" : undefined}
+                        data-testid="settings-nav-{page.id}"
+                        on:click={() => selectPage(page)}
+                    >
+                        <svelte:component this={page.icon} />
+                        <span>{page.label}</span>
+                    </button>
+                {/each}
+            {/if}
+        </nav>
 
-<style lang="scss">
-    .menu-nav-sidebar nav::-webkit-scrollbar {
-        display: none;
-    }
-</style>
+        <div class="u-settings-main">
+            <header class="u-settings-head">
+                {#if rowPage !== undefined}
+                    <button
+                        type="button"
+                        class="u-close u-settings-round"
+                        aria-label={$LL.menu.settings.back()}
+                        data-testid="settings-back"
+                        on:click={back}
+                    >
+                        <IconArrowLeft font-size="20" />
+                    </button>
+                    <h2 id="settings-title" class="u-settings-title">{rowPageLabel ?? ""}</h2>
+                {:else}
+                    <h2 id="settings-title" class="u-settings-title">
+                        <span class="u-settings-title-phone">{$LL.menu.sub.settings()}</span>
+                        <span class="u-settings-title-wide">{currentPage?.label ?? $LL.menu.sub.settings()}</span>
+                    </h2>
+                {/if}
+                <button
+                    type="button"
+                    class="u-close u-settings-round"
+                    id="closeMenu"
+                    data-testid="closeMenuBtn"
+                    aria-label={$LL.menu.settings.close()}
+                    on:click={closeMenu}
+                >
+                    <IconX font-size="20" />
+                </button>
+            </header>
+
+            {#if rowPage === undefined && allPages.length > 1}
+                <div class="u-settings-tabs u-glass" role="tablist" bind:this={tabsElement}>
+                    <span class="u-settings-pill" style={pillStyle} aria-hidden="true" />
+                    {#each allPages as page (page.id)}
+                        <button
+                            type="button"
+                            role="tab"
+                            class="u-settings-tab"
+                            class:is-active={current === page.id}
+                            aria-selected={current === page.id}
+                            data-testid="settings-tab-{page.id}"
+                            on:click={() => selectPage(page)}
+                        >
+                            {page.label}
+                        </button>
+                    {/each}
+                </div>
+            {/if}
+
+            <div class="u-settings-body" class:is-frame={isFrame} id="submenu">
+                {#if activeComponent === SettingsSubMenu}
+                    <SettingsSubMenu
+                        section={current === "sound" ? "sound" : "general"}
+                        pages={rowPages}
+                        onOpenPage={openRow}
+                    />
+                {:else if activeComponent}
+                    <svelte:component this={activeComponent} {...props} />
+                {/if}
+            </div>
+        </div>
+    </section>
+</div>

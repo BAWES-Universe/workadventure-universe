@@ -36,6 +36,7 @@ const warning: BaseTranslation = {
     },
     backgroundProcessing: {
         failedToApply: "Failed to apply background effects",
+        notSupportedOnThisBrowser: "Background effects can't run on this device",
     },
     browserNotSupported: {
         title: "😢 Browser Not Supported",

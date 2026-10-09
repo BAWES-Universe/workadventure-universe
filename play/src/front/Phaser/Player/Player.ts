@@ -8,7 +8,8 @@ import { UserInputEvent } from "../UserInput/UserInputManager";
 import { Character } from "../Entity/Character";
 
 import { userMovingStore } from "../../Stores/GameStore";
-import { followStateStore, followRoleStore, followUsersStore } from "../../Stores/FollowStore";
+import { askToFollow, endFollow, followStateStore, followRoleStore, followUsersStore } from "../../Stores/FollowStore";
+import { bubbleMatesStore } from "../../Stores/CurrentPlayerGroupStore";
 import { WOKA_SPEED } from "../../Enum/EnvironmentVariable";
 import { visibilityStore } from "../../Stores/VisibilityStore";
 import { passStatusToOnline } from "../../Rules/StatusRules/statusChangerFunctions";
@@ -23,6 +24,8 @@ export class Player extends Character {
     private followingPathPromiseResolve?: (result: { x: number; y: number; cancelled: boolean }) => void;
     private pathWalkingSpeed?: number;
     private readonly unsubscribeVisibilityStore: Unsubscriber;
+    // Whether F was down on the last frame: holding it acts once.
+    private followKeyDown = false;
     //private readonly unsubscribeLayoutManagerActionStore: Unsubscriber;
 
     constructor(
@@ -55,15 +58,31 @@ export class Player extends Character {
     }
 
     public moveUser(delta: number, activeUserInputEvents: ActiveEventList): void {
-        const state = get(followStateStore);
-        const role = get(followRoleStore);
-
-        if (activeUserInputEvents.get(UserInputEvent.Follow)) {
-            if (state === "off" && this.scene.groups.size > 0) {
-                this.sendFollowRequest();
-            } else if (state === "active") {
-                followStateStore.set("ending");
+        // F asks the bubble to follow; pressed again, it cancels the request or stops leading or following.
+        const followKeyDown = activeUserInputEvents.get(UserInputEvent.Follow);
+        if (followKeyDown && !this.followKeyDown) {
+            const state = get(followStateStore);
+            if (state === "off") {
+                if (get(bubbleMatesStore).length > 0) {
+                    askToFollow();
+                }
+            } else if (state === "active" || get(followRoleStore) === "leader") {
+                endFollow();
             }
+        }
+        this.followKeyDown = followKeyDown;
+
+        // A follower who moves (keys or joystick) takes back their Woka: the follow ends.
+        if (
+            get(followStateStore) === "active" &&
+            get(followRoleStore) === "follower" &&
+            (activeUserInputEvents.get(UserInputEvent.MoveUp) ||
+                activeUserInputEvents.get(UserInputEvent.MoveDown) ||
+                activeUserInputEvents.get(UserInputEvent.MoveLeft) ||
+                activeUserInputEvents.get(UserInputEvent.MoveRight) ||
+                activeUserInputEvents.get(UserInputEvent.JoystickMove))
+        ) {
+            endFollow();
         }
 
         if (this.pathToFollow && activeUserInputEvents.anyExcept(UserInputEvent.SpeedUp)) {
@@ -72,7 +91,7 @@ export class Player extends Character {
 
         let x = 0;
         let y = 0;
-        if ((state === "active" || state === "ending") && role === "follower") {
+        if (get(followStateStore) === "active" && get(followRoleStore) === "follower") {
             [x, y] = this.computeFollowMovement();
         }
         if (this.pathToFollow) {
@@ -93,17 +112,6 @@ export class Player extends Character {
         this._lastDirection = direction;
         this.companion?.setTarget(this.x, this.y, this._lastDirection);
         this.playAnimation(this._lastDirection, false);
-    }
-
-    public sendFollowRequest() {
-        this.scene.connection?.emitFollowRequest();
-        followRoleStore.set("leader");
-        followStateStore.set("active");
-    }
-
-    public startFollowing() {
-        followStateStore.set("active");
-        this.scene.connection?.emitFollowConfirmation(get(followUsersStore)[0]);
     }
 
     public async setPathToFollow(
@@ -209,8 +217,7 @@ export class Player extends Character {
         // Find followed WOKA and abort following if we lost it
         const player = this.scene.MapPlayersByKey.get(get(followUsersStore)[0]);
         if (!player) {
-            this.scene.connection?.emitFollowAbort();
-            followStateStore.set("off");
+            endFollow();
             return [0, 0];
         }
 

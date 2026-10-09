@@ -7,6 +7,9 @@
     import { connectionManager } from "../../Connection/ConnectionManager";
 
     import reload from "../images/reload.png";
+    // Orbit's butterfly (2.7 KB): the build puts files under 4 KB inside the script itself, so the reconnecting
+    // screen shows it without the network.
+    import butterfly from "../images/butterfly.webp";
     import LL from "../../../i18n/i18n-svelte";
 
     import LoaderIcon from "../Icons/LoaderIcon.svelte";
@@ -25,15 +28,16 @@
 
     // The room's own logos (Universe's, from the admin); an empty value from the server means "none".
     $: logoErrorSrc = errorScreen?.imageLogo || gameManager?.currentStartedRoom?.loginSceneLogo || undefined;
-    // The update screen shows the logo alone.
-    $: imageErrorSrc = isNewVersion
-        ? undefined
-        : errorScreen?.image || gameManager?.currentStartedRoom?.errorSceneLogo || undefined;
     // A logo that fails to load shows the name instead; a failed image is left out.
     let failedLogoSrc: string | undefined;
     let failedImageSrc: string | undefined;
-    // When the image is the same picture as the logo shown above it, show it only once, as the logo.
     $: logoShown = errorScreen?.type !== "reconnecting" && !!logoErrorSrc && logoErrorSrc !== failedLogoSrc;
+    // The update screen shows the logo alone. So does any screen with the logo on top: the room's own picture is not
+    // repeated under it. The Reconnecting screen has no logo on top, so it shows that picture as its logo.
+    $: imageErrorSrc = isNewVersion
+        ? undefined
+        : errorScreen?.image || (logoShown ? undefined : gameManager?.currentStartedRoom?.errorSceneLogo) || undefined;
+    // When the image is the same picture as the logo shown above it, show it only once, as the logo.
     $: imageShown =
         !!imageErrorSrc && imageErrorSrc !== failedImageSrc && !(logoShown && imageErrorSrc === logoErrorSrc);
 
@@ -132,11 +136,11 @@
             </div>
 
             {#if imageShown}
-                <div class="icon">
+                <div class="icon" class:reconnecting={$errorScreenStore.type === "reconnecting"}>
                     <img
                         src={imageErrorSrc}
                         alt="Error"
-                        style="height:125px; max-width:100%;"
+                        style="max-width:100%;"
                         draggable="false"
                         on:error={() => (failedImageSrc = imageErrorSrc)}
                     />
@@ -191,7 +195,11 @@
                         {:else if detailsStylized}
                             <span>{detailsStylized}</span>
                         {/if}
-                        <LoaderIcon />
+                        <!-- Orbit's butterfly over the rings, so they pulse out from it. -->
+                        <span class="pulse" aria-hidden="true">
+                            <LoaderIcon size="128" />
+                            <img class="butterfly" src={butterfly} alt="" width="32" height="32" draggable="false" />
+                        </span>
                     </div>
                 {:else}
                     <p class="details flex flex-row items-center justify-center content-center gap-2">
@@ -234,6 +242,33 @@
         }
         .icon {
             margin: 0 auto 25px auto;
+            img {
+                height: 125px;
+            }
+            // The reconnecting screen shows the logo alone: a little bigger, as close to the title as before.
+            &.reconnecting {
+                margin-bottom: -24px;
+                img {
+                    height: 160px;
+                }
+            }
+        }
+        .pulse {
+            position: relative;
+            display: grid;
+            place-items: center;
+            width: 128px;
+            height: 128px;
+            :global(svg) {
+                position: absolute;
+                inset: 0;
+            }
+        }
+        .butterfly {
+            position: relative;
+            width: 32px;
+            height: 32px;
+            image-rendering: pixelated;
         }
         .newVersion {
             h2 {
@@ -340,7 +375,7 @@
                 width: 90%;
                 max-width: 90vw;
             }
-            .icon {
+            .icon:not(.reconnecting) {
                 height: 60px;
             }
         }
