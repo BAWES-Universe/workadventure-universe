@@ -34,6 +34,26 @@ describe("extractChatLinks", () => {
         ]);
     });
 
+    it("knows every country's ending", () => {
+        expect(extractChatLinks("play at workadventu.re or www.workadventu.re/about", 5)).toEqual([
+            "https://workadventu.re",
+            "https://www.workadventu.re/about",
+        ]);
+        expect(extractChatLinks("see bbc.co.uk, google.com.kw and bawes.kw", 5)).toEqual([
+            "https://bbc.co.uk",
+            "https://google.com.kw",
+            "https://bawes.kw",
+        ]);
+    });
+
+    it("takes endings that are also words or file types only after www.", () => {
+        expect(extractChatLinks("ok.so go.it at 10.am, tell.me, see readme.md and main.py, user.id", 5)).toEqual([]);
+        expect(extractChatLinks("www.bawes.me and www.example.it", 5)).toEqual([
+            "https://www.bawes.me",
+            "https://www.example.it",
+        ]);
+    });
+
     it("leaves file names, code and e-mails alone", () => {
         expect(extractChatLinks("edit index.ts, run `curl https://x.com` or mail me@bawes.net", 5)).toEqual([]);
     });
