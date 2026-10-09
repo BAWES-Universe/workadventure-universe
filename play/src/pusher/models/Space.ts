@@ -13,7 +13,7 @@ import { SpaceToBackForwarder } from "./SpaceToBackForwarder";
 import type { SpaceToFrontDispatcherInterface } from "./SpaceToFrontDispatcher";
 import { SpaceToFrontDispatcher } from "./SpaceToFrontDispatcher";
 import { Query } from "./SpaceQuery";
-import { canGoLiveIn } from "./MegaphoneRights";
+import { canGoLiveIn, forgetSpeakInvitation } from "./MegaphoneRights";
 import type { SpaceConnectionInterface } from "./SpaceConnection";
 
 export type SpaceUserExtended = {
@@ -52,6 +52,8 @@ export const CLIENT_UPDATABLE_SPACE_USER_FIELDS: ReadonlySet<string> = new Set<k
  */
 
 export interface SpaceInterface {
+    /** The name the front gives the space (without the world prefix). */
+    readonly localName: string;
     forwarder: SpaceToBackForwarderInterface;
     dispatcher: SpaceToFrontDispatcherInterface;
     // This pusher's copy of the users of the space (sent by the back, across all pushers)
@@ -396,6 +398,12 @@ export class Space implements SpaceForSpaceConnectionInterface {
         }
 
         const updateValues = applyFieldMask(updateSpaceUserMessage.user, changedFields) as Partial<SpaceUser>;
+
+        // An invitation to speak is good for one turn on stage: a guest who stops needs a new one to go live again
+        // (the back does the same).
+        if (spaceUser.megaphoneState && changedFields.includes("megaphoneState") && !updateValues.megaphoneState) {
+            forgetSpeakInvitation(client.getUserData(), this.localName);
+        }
 
         merge(spaceUser, updateValues);
 

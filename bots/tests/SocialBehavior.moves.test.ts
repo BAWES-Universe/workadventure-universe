@@ -235,6 +235,48 @@ describe('SocialBehavior moves', () => {
             expect((behavior as any).routeIndex).toBe(2);
         });
 
+        it('moves on to the next reachable stop when it is off the route and the nearest stop cannot be reached', async () => {
+            // Off the route, closest to stop 3 (320,320), which sits inside a wall: no path there
+            const bot = createBot({ x: 420, y: 330 });
+            bot.moveToWithPathfinding.mockImplementation(async (x: number, y: number) => {
+                if (x === 320 && y === 320) return false;
+                bot.setFollowingPath(true);
+                return true;
+            });
+            const behavior = new SocialBehavior(createConfig({ moves: 'route', waypoints: route }));
+            behavior.setBot(bot as any);
+            const tryOnce = async () => {
+                vi.setSystemTime(Date.now() + 1_001); // past the retry delay
+                await move(behavior);
+            };
+
+            await tryOnce();
+            await tryOnce();
+            await tryOnce(); // third failure in a row: the stop is skipped
+            await tryOnce();
+            // Not back to stop 3: the closest stop it can reach (stop 2)
+            expect(bot.moveToWithPathfinding).toHaveBeenLastCalledWith(320, 0);
+        });
+
+        it('counts a skipped stop again after the bot reaches a stop, or the route changes', async () => {
+            const bot = createBot({ x: 420, y: 330 });
+            const behavior = new SocialBehavior(createConfig({ moves: 'route', waypoints: route }));
+            behavior.setBot(bot as any);
+            (behavior as any).skippedStops = new Set([2]);
+            (behavior as any).skippedStopsRoute = JSON.stringify(route);
+
+            (behavior as any).routeIndex = 1;
+            bot.setPosition({ x: 320, y: 0 }); // on stop 2
+            await move(behavior);
+            expect((behavior as any).skippedStops.size).toBe(0);
+
+            (behavior as any).skippedStops = new Set([2]);
+            (behavior as any).config.waypoints = [...route, { x: 600, y: 600 }]; // the route was edited
+            bot.setPosition({ x: 420, y: 330 });
+            await move(behavior);
+            expect((behavior as any).skippedStops.size).toBe(0);
+        });
+
         it("walks the route at the route's own speed", async () => {
             const bot = createBot({ x: 0, y: 0 });
             bot.hasPathfinding.mockReturnValue(false);

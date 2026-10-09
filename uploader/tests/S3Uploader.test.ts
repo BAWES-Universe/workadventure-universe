@@ -7,6 +7,7 @@ import {LocalStackContainer} from "./utils/LocalStackContainer";
 import {uploadMultipleFilesTest, uploadSingleFileTest} from "./UploaderTestCommon";
 import startTestServer from "./startTestServer";
 import isPortReachable from "./utils/isPortReachable";
+import {TEST_SECRET_KEY} from "./utils/testAuth";
 
 
 jest.mock('../src/Enum/EnvironmentVariable', () => ({
@@ -47,7 +48,8 @@ describe("S3 Uploader tests", () => {
             UPLOADER_AWS_SIGNED_URL_EXPIRATION: "60",
             ENABLE_CHAT_UPLOAD: "true",
             UPLOADER_URL: UPLOADER_URL,
-            PLAY_URL: PLAY_URL
+            PLAY_URL: PLAY_URL,
+            SECRET_KEY: TEST_SECRET_KEY,
          })
         await isPortReachable(APP_PORT, {host: "localhost"});
     })

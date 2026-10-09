@@ -16,7 +16,10 @@ import { toGlobalSpaceName } from "./SpaceNames";
  *   checked in Space);
  * - meeting rooms and speaker zones (names starting with AREA_SPACE_PREFIX): only from the room they are in, because
  *   toServerSpaceName puts the player's own room in their server name.
- * Map script spaces are unchanged. Members-only areas inside a room are still only enforced by the browser.
+ * - meeting rooms and speaker zones of an area limited to roles ("Who can enter"): only the players with one of those
+ *   roles, as the back works out for each player (refusedAreaSpaces). ENFORCE_AREA_SPACE_RIGHTS=false turns this off
+ *   (the pusher then keeps the list empty, see SocketManager).
+ * Map script spaces are unchanged.
  */
 
 export const WORLD_SPACE_NAME = "allWorldUser";
@@ -67,9 +70,21 @@ export interface SpaceJoinRequest {
  */
 export function checkSpaceJoin(
     request: SpaceJoinRequest,
-    socketData: Pick<SocketData, "grantedBubbleSpaces" | "megaphoneChannels">
+    socketData: Pick<
+        SocketData,
+        "grantedBubbleSpaces" | "megaphoneChannels" | "refusedAreaSpaces" | "areaSpacePolicyUnknown"
+    >
 ): void {
     const { localSpaceName, filterType, propertiesToSync } = request;
+
+    // The back has never been able to read the room's areas, so nothing says who may join this one yet
+    if (socketData.areaSpacePolicyUnknown && isAreaSpaceName(localSpaceName)) {
+        throw new SpaceJoinRefusedError(localSpaceName, "the room's areas could not be checked yet, try again shortly");
+    }
+
+    if (socketData.refusedAreaSpaces?.has(localSpaceName)) {
+        throw new SpaceJoinRefusedError(localSpaceName, "this area is limited to other roles");
+    }
 
     if (isBubbleSpaceName(localSpaceName)) {
         if (!socketData.grantedBubbleSpaces.has(localSpaceName)) {
