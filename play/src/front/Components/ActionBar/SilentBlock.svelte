@@ -8,13 +8,43 @@
     export let placement: "above" | "below";
 
     // A window on the right (Orbit) has its close and expand buttons in a column just left of it. This block sits on top
-    // of the window layer, so it stops short of that column instead of covering it.
+    // of the window layer, so it stops short of that column instead of covering it. Where the block starts depends on
+    // the bar, so the room left is measured: from the block's left edge to the column's.
+    let block: HTMLElement | undefined;
+    let maxWidth: string | undefined;
+
     $: besideRightWindow =
         placement === "below" &&
         $modalVisibilityStore &&
         $modalIframeStore?.position === "right" &&
         !$modalFullScreenStore;
+
+    function measure() {
+        const tools = document.querySelector(".modal-tools");
+        if (!besideRightWindow || !block || !tools) {
+            maxWidth = undefined;
+            return;
+        }
+        const toolsBox = tools.getBoundingClientRect();
+        const blockBox = block.getBoundingClientRect();
+        // Below 1024px the column sits at the very top of the screen, above this block: nothing to avoid.
+        if (toolsBox.bottom <= blockBox.top) {
+            maxWidth = undefined;
+            return;
+        }
+        const room = toolsBox.left - blockBox.left - 8;
+        // Never so narrow that the text is unreadable.
+        maxWidth = `${Math.max(144, Math.floor(room))}px`;
+    }
+
+    // The window slides in: measure again once it has settled, as it flies in.
+    $: if (besideRightWindow !== undefined) {
+        measure();
+        setTimeout(measure, 450);
+    }
 </script>
+
+<svelte:window on:resize={measure} />
 
 <!-- The same dark surface as the other panels, so the text reads on any floor, with an amber tile so it is noticed.
      The explanation shows everywhere: nothing to tap.
@@ -22,7 +52,8 @@
      screen, above the device tab.
      "below": everywhere else, where the bar is at the top. Under the microphone and camera, as before. -->
 <div
-    class:beside-right-window={besideRightWindow}
+    bind:this={block}
+    style:max-width={maxWidth}
     class="silent-block {placement === 'above'
         ? 'bottom-full left-0 right-[72px] mx-auto mb-10 max-w-[22rem]'
         : 'top-20 start-0 w-max max-w-[min(22rem,calc(100vw-1rem))]'} flex absolute z-0 u-surface rounded-2xl text-white text-start transition-all pointer-events-auto items-start gap-3 px-3 py-2.5"
@@ -44,16 +75,6 @@
         color: #e9c74c;
         background: rgba(233, 199, 76, 0.16);
         box-shadow: inset 0 0 0 1px rgba(233, 199, 76, 0.25);
-    }
-    /* The window is 80% of the screen (400px at most) below 992px and a third of it above. The buttons column is 80px
-       wide and sits 8px left of the window; 16px is the bar's padding. It never gets narrower than 9rem. */
-    .silent-block.beside-right-window {
-        max-width: min(22rem, max(9rem, calc(100vw - min(80vw, 400px) - 7rem)));
-    }
-    @media (min-width: 992px) {
-        .silent-block.beside-right-window {
-            max-width: min(22rem, max(9rem, calc(67vw - 7rem)));
-        }
     }
     @media (prefers-reduced-motion: reduce) {
         .silent-block {
