@@ -901,6 +901,8 @@ message ChatMember {
   optional string email = 3;
   optional string chatId = 4;
   repeated string tags = 5;
+  // The member's saved WOKA (bottom layer first), so the chat can draw people who are away.
+  repeated CharacterTextureMessage characterTextures = 6;
 }
 
 message SearchTagsAnswer{

@@ -18,7 +18,7 @@
         screenSharingClick: void;
     }>();
 
-    function toggleChat() {
+    function focusMainWindow() {
         window.focus();
     }
 
@@ -32,7 +32,7 @@
         <div class="justify-items-center flex-1 w-32">
             <div class="flex relative transition-all duration-150 z-[2]">
                 <div class="mr-3">
-                    <ChatMenuItem on:click={toggleChat} last={true} />
+                    <ChatMenuItem on:click={focusMainWindow} last={true} alwaysOpen={true} />
                 </div>
                 <div>
                     <!-- ACTION WRAPPER : CAM & MIC -->

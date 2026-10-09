@@ -3612,7 +3612,7 @@
       "area": "Chat",
       "topic": "DM menu",
       "action": "In a DM, open ⋮. Try Walk to, Locate, View profile, Mute notifications, Delete chat (Cancel, then Delete).",
-      "expected": "Walk to and Locate show only when usable: Locate is hidden in another room, and both are hidden when away, offline or talking with you. Mute toggles \"Unmute notifications\". Delete chat asks \"Delete this chat?\" with Cancel/Delete, then shows \"Chat deleted\".",
+      "expected": "Walk to and Locate show only when usable: Locate is hidden in another room, and both are hidden when away, offline or talking with you. View profile opens their profile in Orbit, whether they are in Universe or away (the chat's own profile page only for a bot). Mute toggles \"Unmute notifications\". Delete chat asks \"Delete this chat?\" with Cancel/Delete, then shows \"Chat deleted\".",
       "source": "approved DM v2 10-04",
       "runs": "needs-chat",
       "runsNote": "needs-chat",

@@ -4,7 +4,7 @@
     import { v4 as uuid } from "uuid";
     import * as Sentry from "@sentry/svelte";
     import type { EmojiClickEvent } from "emoji-picker-element/shared";
-    import { readable } from "svelte/store";
+    import { get, readable } from "svelte/store";
     import type { Readable } from "svelte/store";
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
     import type { ChatMessage, ChatRoom } from "../../Connection/ChatConnection";
@@ -13,7 +13,11 @@
     import LL from "../../../../i18n/i18n-svelte";
     import { ProximityChatRoom } from "../../Connection/Proximity/ProximityChatRoom";
     import { gameManager } from "../../../Phaser/Game/GameManager";
-    import { chatInputFocusStore } from "../../../Stores/ChatStore";
+    import {
+        CHAT_COMPOSER_FOCUS_REQUEST_TTL_MS,
+        chatComposerFocusRequestStore,
+        chatInputFocusStore,
+    } from "../../../Stores/ChatStore";
 
     import { showHideableFloatingUi, type HideableFloatingUi } from "../../../Utils/svelte-floatingui-show";
     import { emoteMenuStore } from "../../../Stores/EmoteStore";
@@ -478,7 +482,34 @@
         }
     }
 
+    // Something (the Picture in Picture chat button) asked for the cursor to go in the message box.
+    // Only a fresh ask counts, so an old one never grabs the focus when the box mounts later.
+    function focusOnRequest(requestedAt: number) {
+        if (requestedAt === 0 || Date.now() - requestedAt > CHAT_COMPOSER_FOCUS_REQUEST_TTL_MS || !messageInput) return;
+        chatComposerFocusRequestStore.set(0);
+        focusMessageInputAtEnd();
+        // The panel may still be sliding in, so the first focus can miss: try once more on the next frame.
+        requestAnimationFrame(() => {
+            if (document.activeElement !== messageInput) focusMessageInputAtEnd();
+        });
+    }
+    function focusMessageInputAtEnd() {
+        if (!messageInput) return;
+        messageInput.focus();
+        // A focused box starts the cursor at the beginning: put it after any text already typed.
+        const selection = window.getSelection();
+        if (!selection) return;
+        const range = document.createRange();
+        range.selectNodeContents(messageInput);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
+    }
+    const unsubscribeComposerFocusRequest = chatComposerFocusRequestStore.subscribe(focusOnRequest);
+
     onMount(async () => {
+        // A request made before this box existed: the subscription ran before the input did.
+        focusOnRequest(get(chatComposerFocusRequestStore));
         const isUploadEnabled = gameManager.getCurrentGameScene().room.isChatUploadEnabled;
         // Check CDN config for proximity chat before enabling the button
         if (room instanceof ProximityChatRoom && isUploadEnabled) {
@@ -512,6 +543,7 @@
     });
 
     onDestroy(() => {
+        unsubscribeComposerFocusRequest();
         if (
             room instanceof ProximityChatRoom &&
             mountSessionId !== undefined &&

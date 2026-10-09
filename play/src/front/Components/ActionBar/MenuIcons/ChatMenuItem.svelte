@@ -6,7 +6,7 @@
     import MessageCircleIcon from "../../Icons/MessageCircleIcon.svelte";
     import ActionBarButton from "../ActionBarButton.svelte";
     import { activeSubMenuStore, menuVisiblilityStore } from "../../../Stores/MenuStore";
-    import { chatVisibilityStore, chatZoneLiveStore } from "../../../Stores/ChatStore";
+    import { chatVisibilityStore, chatZoneLiveStore, requestChatComposerFocus } from "../../../Stores/ChatStore";
     import { openChat } from "../../../Chat/openChat";
     import LL from "../../../../i18n/i18n-svelte";
     import { gameManager } from "../../../Phaser/Game/GameManager";
@@ -15,6 +15,8 @@
 
     export let last: boolean | undefined = undefined;
     export let chatEnabledInAdmin = false;
+    /** The Picture in Picture button: it always ends with the chat open and the cursor in the message box. */
+    export let alwaysOpen = false;
 
     const proximityChatRoom = gameManager.getCurrentGameScene().proximityChatRoom;
 
@@ -28,9 +30,9 @@
             activeSubMenuStore.activateByIndex(0);
         }
 
-        if ($chatVisibilityStore) {
+        if ($chatVisibilityStore && !alwaysOpen) {
             chatVisibilityStore.set(false);
-        } else {
+        } else if (!$chatVisibilityStore) {
             openChat("button");
         }
         dispatch("click");
@@ -133,6 +135,7 @@
             proximityChatRoom.hasUnreadMessages.set(false);
             proximityChatRoom.unreadNotificationCount.set(0);
         }
+        if (alwaysOpen) requestChatComposerFocus();
         analyticsClient.openedChat();
     }}
     classList="group/btn-message-circle rounded-e-xl pe-2 {last ? '' : '@sm/actions:rounded-e-none @sm/actions:pe-0'}"
