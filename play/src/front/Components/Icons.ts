@@ -175,3 +175,5 @@ export { default as IconScissors } from "~icons/tabler/scissors";
 export { default as IconShirt } from "~icons/tabler/shirt";
 export { default as IconEyeglass } from "~icons/tabler/eyeglass";
 export { default as IconHeadphonesOutline } from "~icons/tabler/headphones";
+export { default as IconLayoutSidebarRight } from "~icons/tabler/layout-sidebar-right";
+export { default as IconPlayerPlayFilled } from "~icons/tabler/player-play-filled";

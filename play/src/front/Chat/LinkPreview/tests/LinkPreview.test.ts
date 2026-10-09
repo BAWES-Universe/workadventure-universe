@@ -1,0 +1,205 @@
+import { describe, expect, it } from "vitest";
+import { Marked } from "marked";
+import { extractChatLinks, linkifyBareDomains, withoutPreview, withoutTrailingLink } from "../ChatLinks";
+import type { LinkApps } from "../LinkKind";
+import { classifyLink, youtubeVideoOf } from "../LinkKind";
+
+const allApps: LinkApps = {
+    youtube: true,
+    googleDocs: true,
+    googleSheets: true,
+    googleSlides: true,
+    googleDrive: true,
+    klaxoon: true,
+    eraser: true,
+    excalidraw: true,
+    excalidrawDomains: ["excalidraw.com"],
+    cards: true,
+    tldraw: true,
+    custom: [],
+};
+
+describe("extractChatLinks", () => {
+    it("finds full links and bare site names, in order", () => {
+        expect(extractChatLinks("check out bawes.net and https://example.com/a?b=1.", 5)).toEqual([
+            "https://bawes.net",
+            "https://example.com/a?b=1",
+        ]);
+    });
+
+    it("knows the newer site endings", () => {
+        expect(extractChatLinks("try areyou.online or bawes.live", 5)).toEqual([
+            "https://areyou.online",
+            "https://bawes.live",
+        ]);
+    });
+
+    it("leaves file names, code and e-mails alone", () => {
+        expect(extractChatLinks("edit index.ts, run `curl https://x.com` or mail me@bawes.net", 5)).toEqual([]);
+    });
+
+    it("keeps the message's first link only when asked for one", () => {
+        expect(extractChatLinks("www.a.com then www.b.com", 1)).toEqual(["https://www.a.com"]);
+    });
+});
+
+describe("sending a link without a preview", () => {
+    it("sends the closed link as <link> and previews nothing for it", () => {
+        const text = withoutPreview("look https://example.com/a?b=1, then bawes.net", ["https://example.com/a?b=1"]);
+        expect(text).toBe("look <https://example.com/a?b=1>, then bawes.net");
+        expect(extractChatLinks(text, 1)).toEqual(["https://bawes.net"]);
+    });
+
+    it("gives a bare name https:// so it stays a link", () => {
+        const text = withoutPreview("check out bawes.net!", ["https://bawes.net"]);
+        expect(text).toBe("check out <https://bawes.net>!");
+        expect(extractChatLinks(text, 5)).toEqual([]);
+        const html = new Marked().parse(text) as string;
+        expect(html).toContain('<a href="https://bawes.net">https://bawes.net</a>');
+    });
+
+    it("matches a link the message box wrote with &amp;", () => {
+        expect(withoutPreview("https://x.com/?a=1&amp;b=2", ["https://x.com/?a=1&b=2"])).toBe(
+            "<https://x.com/?a=1&amp;b=2>"
+        );
+    });
+
+    it("ends a link at a space the message box wrote as &nbsp;", () => {
+        expect(withoutPreview("see https://x.com/a&nbsp;", ["https://x.com/a"])).toBe("see <https://x.com/a>&nbsp;");
+        expect(withoutPreview("see bawes.net/a&nbsp;now", ["https://bawes.net/a"])).toBe(
+            "see <https://bawes.net/a>&nbsp;now"
+        );
+        expect(extractChatLinks("https://x.com&nbsp;", 3)).toEqual(["https://x.com"]);
+    });
+
+    it("reads a typed <link> the message box wrote as &lt;link&gt; as one without a preview", () => {
+        expect(extractChatLinks("&lt;https://x.com/a&gt; and &lt;bawes.net&gt;", 3)).toEqual([]);
+        expect(extractChatLinks("a&lt;b https://x.com/a&gt;", 3)).toEqual(["https://x.com/a"]);
+    });
+
+    it("leaves other links and code alone", () => {
+        const text = "`https://a.com` https://b.com";
+        expect(withoutPreview(text, ["https://a.com"])).toBe(text);
+    });
+});
+
+describe("withoutTrailingLink", () => {
+    const video = "https://www.youtube.com/watch?v=kkJ7wWidnp8";
+
+    it("drops the link that ends the message", () => {
+        expect(withoutTrailingLink(`this is the one I meant ${video}`, video)).toBe("this is the one I meant");
+        expect(withoutTrailingLink(`this one:\n${video} !`, video)).toBe("this one:");
+        expect(withoutTrailingLink(video, video)).toBe("");
+        expect(withoutTrailingLink(`watch ${video}&nbsp;`, video)).toBe("watch");
+    });
+
+    it("keeps a link in the middle of the message, or sent without a preview", () => {
+        expect(withoutTrailingLink(`${video} is the one`, video)).toBeUndefined();
+        expect(withoutTrailingLink(`see <${video}>`, video)).toBeUndefined();
+        expect(withoutTrailingLink(`see &lt;${video}&gt;`, video)).toBeUndefined();
+        expect(withoutTrailingLink(`${video} or https://b.com`, video)).toBeUndefined();
+    });
+});
+
+describe("linkifyBareDomains", () => {
+    it("makes bare site names clickable", () => {
+        const html = linkifyBareDomains("<p>check out bawes.net, or example.com/pricing!</p>");
+        const links = [...new DOMParser().parseFromString(html, "text/html").querySelectorAll("a")];
+        expect(links.map((link) => [link.getAttribute("href"), link.textContent, link.target])).toEqual([
+            ["https://bawes.net", "bawes.net", "_blank"],
+            ["https://example.com/pricing", "example.com/pricing", "_blank"],
+        ]);
+        expect(html).toContain("</a>, or ");
+        expect(html).toContain("</a>!</p>");
+    });
+
+    it("leaves links, code, e-mails and file names alone", () => {
+        const html =
+            '<p><a href="https://www.bawes.net">www.bawes.net</a> <code>node.js bawes.net</code> me@bawes.net index.ts</p>';
+        expect(linkifyBareDomains(html)).toBe(html);
+    });
+});
+
+describe("youtubeVideoOf", () => {
+    it.each([
+        ["https://www.youtube.com/watch?v=kkJ7wWidnp8", "kkJ7wWidnp8"],
+        ["https://youtu.be/kkJ7wWidnp8?si=abc", "kkJ7wWidnp8"],
+        ["https://www.youtube.com/embed/kkJ7wWidnp8?feature=oembed", "kkJ7wWidnp8"],
+        ["https://www.youtube.com/shorts/kkJ7wWidnp8", "kkJ7wWidnp8"],
+        ["https://m.youtube.com/watch?v=kkJ7wWidnp8", "kkJ7wWidnp8"],
+    ])("reads the video of %s", (url, videoId) => {
+        expect(youtubeVideoOf(new URL(url))?.videoId).toBe(videoId);
+    });
+
+    it("reads the start time", () => {
+        expect(youtubeVideoOf(new URL("https://youtu.be/kkJ7wWidnp8?t=1m30s"))?.start).toBe(90);
+        expect(youtubeVideoOf(new URL("https://www.youtube.com/watch?v=kkJ7wWidnp8&t=42"))?.start).toBe(42);
+    });
+
+    it("ignores YouTube pages that aren't a video", () => {
+        expect(youtubeVideoOf(new URL("https://www.youtube.com/@bawes"))).toBeUndefined();
+        expect(youtubeVideoOf(new URL("https://notyoutube.com/watch?v=kkJ7wWidnp8"))).toBeUndefined();
+    });
+});
+
+describe("classifyLink", () => {
+    it("plays YouTube links in place when YouTube is allowed", () => {
+        expect(classifyLink("https://youtu.be/kkJ7wWidnp8", allApps)).toMatchObject({
+            kind: "youtube",
+            videoId: "kkJ7wWidnp8",
+        });
+        expect(classifyLink("https://youtu.be/kkJ7wWidnp8", { ...allApps, youtube: false }).kind).toBe("web");
+    });
+
+    it("opens Google files here with their embed URL", () => {
+        expect(classifyLink("https://docs.google.com/document/d/abc/edit", allApps)).toMatchObject({
+            kind: "app",
+            app: "googleDocs",
+            name: "Google Docs",
+            embedUrl: "https://docs.google.com/document/d/abc/edit?embedded=true",
+        });
+        expect(classifyLink("https://drive.google.com/file/d/abc/view?usp=sharing", allApps)).toMatchObject({
+            kind: "app",
+            app: "googleDrive",
+            embedUrl: "https://drive.google.com/file/d/abc/preview?usp=sharing",
+        });
+    });
+
+    it("treats an app the room turned off as a plain web link", () => {
+        expect(
+            classifyLink("https://docs.google.com/document/d/abc/edit", { ...allApps, googleDocs: false }).kind
+        ).toBe("web");
+    });
+
+    it("recognises whiteboards", () => {
+        expect(classifyLink("https://excalidraw.com/#room=1,2", allApps)).toMatchObject({ app: "excalidraw" });
+        expect(classifyLink("https://www.tldraw.com/r/abc", allApps)).toMatchObject({ app: "tldraw" });
+        expect(classifyLink("https://app.eraser.io/workspace/abc", allApps)).toMatchObject({ app: "eraser" });
+    });
+
+    it("opens a room's own app with its target URL", () => {
+        const apps: LinkApps = {
+            ...allApps,
+            custom: [
+                {
+                    name: "Miro",
+                    image: "https://example.com/miro.png",
+                    regexUrl: "https://miro.com/app/board/(.*)",
+                    targetUrl: "https://miro.com/app/live-embed/$1",
+                },
+            ] as LinkApps["custom"],
+        };
+        expect(classifyLink("https://miro.com/app/board/xyz=/", apps)).toMatchObject({
+            kind: "app",
+            app: "custom",
+            name: "Miro",
+            embedUrl: "https://miro.com/app/live-embed/xyz=/",
+            icon: "https://example.com/miro.png",
+        });
+    });
+
+    it("shows image links as images, and anything else as a web card", () => {
+        expect(classifyLink("https://example.com/cat.PNG", allApps).kind).toBe("image");
+        expect(classifyLink("https://bawes.net", allApps).kind).toBe("web");
+    });
+});

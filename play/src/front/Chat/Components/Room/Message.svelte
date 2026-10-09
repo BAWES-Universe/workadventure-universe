@@ -11,6 +11,8 @@
     import TopRowAvatar from "../TopRow/TopRowAvatar.svelte";
     import { selectedChatMessageToEdit } from "../../Stores/ChatStore";
     import { ProximityChatMessage } from "../../Connection/Proximity/ProximityChatRoom";
+    import LinkPreview from "../../LinkPreview/LinkPreview.svelte";
+    import { bodyShownWithCard } from "../../LinkPreview/ChatLinkKind";
     import MessageOptions from "./MessageOptions.svelte";
     import MessageImage from "./Message/MessageImage.svelte";
     import MessageText from "./Message/MessageText.svelte";
@@ -130,6 +132,12 @@
     // An encrypted Matrix message only learns whether it is an image, a file… once decrypted, which updates its content.
     $: contentType = $content ? message.type : type;
 
+    // A text message with a link gets a card under it.
+    $: hasLinkCard = replyDepth === 0 && !isQuotedMessage && (contentType === "text" || contentType === "proximity");
+    // A video or app link that ends the message is shown by its card, not as a long address. Only what is shown
+    // changes: the message keeps its link for copying, replies and bots.
+    const shownContent = derived(content, (value) => ({ ...value, body: bodyShownWithCard(value.body) }));
+
     const reactionsWithUsers = derived(
         [reactions, ...Array.from(reactions.values()).map((reaction) => reaction.users)],
         ([$reactions, ...$users]) => {
@@ -220,11 +228,22 @@
                 {/if}
 
                 {#if !notSent}
-                    <svelte:component
-                        this={messageType[contentType]}
-                        on:updateMessageBody={updateMessageBody}
-                        {content}
-                    />
+                    {#if !hasLinkCard}
+                        <svelte:component
+                            this={messageType[contentType]}
+                            on:updateMessageBody={updateMessageBody}
+                            {content}
+                        />
+                    {:else}
+                        {#if $shownContent.body.trim() !== ""}
+                            <svelte:component
+                                this={messageType[contentType]}
+                                on:updateMessageBody={updateMessageBody}
+                                content={shownContent}
+                            />
+                        {/if}
+                        <LinkPreview body={$content.body} mine={isMyMessage} alone={$shownContent.body.trim() === ""} />
+                    {/if}
                 {:else if $content.body.trim() !== ""}
                     <div class="opacity-70">
                         <svelte:component this={messageType[contentType]} {content} />
