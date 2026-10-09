@@ -30,11 +30,11 @@ export function locatePartner(partner: DirectPartner, name: string): void {
 
 /** Their profile in Orbit: only for a signed-in person you can reach, never a bot. */
 export function canOpenPartnerProfile(partner: DirectPartner): boolean {
-    return !partner.isBot && partner.user?.uuid !== undefined && canOpenOrbit();
+    return !partner.isBot && partner.profileUuid !== undefined && canOpenOrbit();
 }
 
 export function openPartnerProfile(partner: DirectPartner): void {
-    const uuid = partner.user?.uuid;
+    const uuid = partner.profileUuid;
     if (uuid && !partner.isBot) openOrbitProfile(uuid);
 }
 

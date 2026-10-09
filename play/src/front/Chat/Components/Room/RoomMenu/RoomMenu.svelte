@@ -16,7 +16,12 @@
     import { selectedRoomStore } from "../../../Stores/SelectRoomStore";
     import { openProfileRoomIdStore } from "../../../Stores/PartnerProfileStore";
     import { directPartnerStore } from "../DirectChat/DirectPartnerStore";
-    import { locatePartner, walkToPartner } from "../DirectChat/PartnerActions";
+    import {
+        canOpenPartnerProfile,
+        locatePartner,
+        openPartnerProfile,
+        walkToPartner,
+    } from "../DirectChat/PartnerActions";
     import RoomOption from "./RoomOption.svelte";
     import {
         IconDots,
@@ -130,8 +135,14 @@
         toggleRoomOptions();
     }
 
+    // Their profile in Orbit when we can reach it (the same page as Full profile); the chat's own profile page for
+    // people Orbit can't show (not in Universe right now, or a bot).
     function viewProfile() {
         toggleRoomOptions();
+        if ($partner && canOpenPartnerProfile($partner)) {
+            openPartnerProfile($partner);
+            return;
+        }
         selectedRoomStore.set(room);
         openProfileRoomIdStore.set(room.id);
     }
