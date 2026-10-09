@@ -23,7 +23,8 @@ export function classifyChatLink(url: string): LinkKind {
 }
 
 /** The link a message previews: its first link not sent without a preview. */
-export function previewedLinkOf(body: string): string | undefined {
+export function previewedLinkOf(body: string | undefined): string | undefined {
+    if (typeof body !== "string") return undefined;
     return extractChatLinks(body, 1)[0];
 }
 
@@ -31,10 +32,17 @@ export function previewedLinkOf(body: string): string | undefined {
  * The message text as shown above its card. A video or app link that ends the message is shown by its card alone,
  * as in the approved mock. Web pages and images keep their link: their card can fail to load.
  */
-export function bodyShownWithCard(body: string): string {
-    const url = previewedLinkOf(body);
-    if (!url) return body;
-    const kind = classifyChatLink(url).kind;
-    if (kind !== "youtube" && kind !== "app") return body;
-    return withoutTrailingLink(body, url) ?? body;
+export function bodyShownWithCard<Body extends string | undefined>(body: Body): Body | string {
+    if (typeof body !== "string") return body;
+    try {
+        const url = previewedLinkOf(body);
+        if (!url) return body;
+        const kind = classifyChatLink(url).kind;
+        if (kind !== "youtube" && kind !== "app") return body;
+        return withoutTrailingLink(body, url) ?? body;
+    } catch (error) {
+        // A link the card can't read never hides the message.
+        console.error("Could not read a chat message's link", error);
+        return body;
+    }
 }

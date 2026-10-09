@@ -12,7 +12,7 @@
     import { IconExternalLink, IconPlayerPlayFilled } from "@wa-icons";
 
     /** The message text: its first link gets a preview, unless it was sent without one (<link>). */
-    export let body: string;
+    export let body: string | undefined;
     /** On the sender's own (blue) bubble the card is darker. */
     export let mine = false;
     /** The card is the whole message: the link it shows was the message's only text. */

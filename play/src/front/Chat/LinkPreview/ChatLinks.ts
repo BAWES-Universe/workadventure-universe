@@ -101,7 +101,9 @@ interface FoundLink {
 }
 
 /** Every link in the text, in order (code left out). */
-function findLinks(text: string): FoundLink[] {
+function findLinks(text: string | undefined): FoundLink[] {
+    // Images, files and deleted messages can come without a text body.
+    if (typeof text !== "string") return [];
     const withoutCode = text.replace(CODE, (code) => " ".repeat(code.length));
     const found: FoundLink[] = [];
     const fullRanges: Array<[number, number]> = [];
