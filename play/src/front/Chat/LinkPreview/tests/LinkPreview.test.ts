@@ -72,6 +72,11 @@ describe("sending a link without a preview", () => {
         expect(extractChatLinks("https://x.com&nbsp;", 3)).toEqual(["https://x.com"]);
     });
 
+    it("reads a typed <link> the message box wrote as &lt;link&gt; as one without a preview", () => {
+        expect(extractChatLinks("&lt;https://x.com/a&gt; and &lt;bawes.net&gt;", 3)).toEqual([]);
+        expect(extractChatLinks("a&lt;b https://x.com/a&gt;", 3)).toEqual(["https://x.com/a"]);
+    });
+
     it("leaves other links and code alone", () => {
         const text = "`https://a.com` https://b.com";
         expect(withoutPreview(text, ["https://a.com"])).toBe(text);
@@ -85,11 +90,13 @@ describe("withoutTrailingLink", () => {
         expect(withoutTrailingLink(`this is the one I meant ${video}`, video)).toBe("this is the one I meant");
         expect(withoutTrailingLink(`this one:\n${video} !`, video)).toBe("this one:");
         expect(withoutTrailingLink(video, video)).toBe("");
+        expect(withoutTrailingLink(`watch ${video}&nbsp;`, video)).toBe("watch");
     });
 
     it("keeps a link in the middle of the message, or sent without a preview", () => {
         expect(withoutTrailingLink(`${video} is the one`, video)).toBeUndefined();
         expect(withoutTrailingLink(`see <${video}>`, video)).toBeUndefined();
+        expect(withoutTrailingLink(`see &lt;${video}&gt;`, video)).toBeUndefined();
         expect(withoutTrailingLink(`${video} or https://b.com`, video)).toBeUndefined();
     });
 });

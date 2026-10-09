@@ -6,8 +6,11 @@
  * addresses are never taken for links. Same rules as the bots' link reading (bots/utils/chatLinks.ts).
  */
 
-// The message box keeps a space typed at the end as &nbsp;: it ends a link like any space.
-const FULL_URL = /https?:\/\/(?:(?!&nbsp;)[^\s)<>"'`])+/gi;
+// The message box sends its text as HTML: a space typed at the end comes as &nbsp;, and < and > as &lt; and &gt;.
+// Each ends a link, like the character it stands for.
+const ESCAPED_END = "&(?:nbsp|lt|gt);";
+
+const FULL_URL = new RegExp(String.raw`https?:\/\/(?:(?!${ESCAPED_END})[^\s)<>"'\x60])+`, "gi");
 
 // Common web suffixes, plus the Gulf country codes our users mostly use. Suffixes that are also English words
 // (.me, .so, .to, .in, .us) are left out: "ok.so" isn't a website.
@@ -77,7 +80,7 @@ const BARE_DOMAIN = new RegExp(
     String.raw`(?<![\w@/.:-])` +
         String.raw`((?:www\.)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:${BARE_SUFFIXES.join("|")})` +
         // Optional path, stopping before trailing punctuation or brackets.
-        String.raw`(?:\/(?:(?!&nbsp;)[^\s)<>"'\x60])*)?)` +
+        String.raw`(?:\/(?:(?!${ESCAPED_END})[^\s)<>"'\x60])*)?)` +
         String.raw`(?![\w@-])`,
     "gi"
 );
@@ -102,8 +105,12 @@ function findLinks(text: string): FoundLink[] {
     const withoutCode = text.replace(CODE, (code) => " ".repeat(code.length));
     const found: FoundLink[] = [];
     const fullRanges: Array<[number, number]> = [];
-    const wrapped = (index: number, raw: string) =>
-        withoutCode[index - 1] === "<" && withoutCode[index + raw.length] === ">";
+    // <link>, typed or sent: the message box writes a typed one as &lt;link&gt;.
+    const wrapped = (index: number, raw: string) => {
+        const before = withoutCode.slice(0, index);
+        const after = withoutCode.slice(index + raw.length);
+        return (before.endsWith("<") || before.endsWith("&lt;")) && (after.startsWith(">") || after.startsWith("&gt;"));
+    };
 
     for (const match of withoutCode.matchAll(FULL_URL)) {
         const index = match.index ?? 0;
@@ -161,7 +168,7 @@ export function withoutTrailingLink(text: string, url: string): string | undefin
     const last = links[links.length - 1];
     if (!last || last.noPreview || !sameLink(last.url, url)) return undefined;
     const after = text.slice(last.index + last.raw.length);
-    if (!/^[\s.,!?;:]*$/.test(after)) return undefined;
+    if (!/^(?:[\s.,!?;:]|&nbsp;)*$/.test(after)) return undefined;
     return text.slice(0, last.index).trimEnd();
 }
 
