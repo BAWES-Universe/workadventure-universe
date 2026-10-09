@@ -15,7 +15,6 @@ import type {
 import { gameManager } from "../../../../Phaser/Game/GameManager";
 import { gameSceneStore } from "../../../../Stores/GameSceneStore";
 import { localUserStore } from "../../../../Connection/LocalUserStore";
-import { friendsStore } from "../../../Stores/FriendsStore";
 import type { PartnerPlace } from "./PartnerPlace";
 import { findInUniverse, partnerActions, resolvePartnerPlace } from "./PartnerPlace";
 
@@ -26,8 +25,6 @@ export interface DirectPartner {
     chatId: string | undefined;
     /** Their avatar in Universe, when they have one right now. */
     user: ChatUser | undefined;
-    /** Their account id, to open their profile in Orbit: from their avatar, or from your friends when they're away. */
-    profileUuid: string | undefined;
     place: PartnerPlace;
     actions: { walkTo: boolean; locate: boolean };
     isBot: boolean;
@@ -130,10 +127,8 @@ export function directPartnerStore(room: ChatRoomMembershipManagement): Readable
         undefined
     );
 
-    return derived([seen, availability, friendsStore], ([state, status, friends]) => {
+    return derived([seen, availability], ([state, status]) => {
         const user = state.found?.user;
-        const friendList = friends.status === "signedOut" ? undefined : friends.list?.friends;
-        const friendUuid = friendList?.find((friend) => friend.chatId === state.chatId)?.uuid;
         const place = resolvePartnerPlace({
             inGame: user !== undefined,
             sameMap: state.sameMap,
@@ -145,7 +140,6 @@ export function directPartnerStore(room: ChatRoomMembershipManagement): Readable
         return {
             chatId: state.chatId,
             user,
-            profileUuid: user?.uuid ?? friendUuid,
             place,
             actions: partnerActions(place, user?.uuid !== undefined),
             isBot: user?.isBot === true,

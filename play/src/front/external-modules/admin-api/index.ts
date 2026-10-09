@@ -266,6 +266,14 @@ export function openOrbitProfile(userUuid: string): boolean {
     return requestOrbitPage("user-profile", { userUuid });
 }
 
+/**
+ * The same page for someone the game only knows from a chat (a direct chat with a person who is away), by their exact
+ * Matrix id. Orbit looks the account up itself and sends a Matrix id it has no account for to its home.
+ */
+export function openOrbitProfileByChatId(chatId: string): boolean {
+    return requestOrbitPage("user-profile", { chatId });
+}
+
 /** Tells an open Orbit that something it shows changed (a hint to fetch again; it trusts nothing in it). */
 export function notifyOrbitChanged(topic: OrbitEventTopic) {
     if (!adminModalOpen || !bridge) return;

@@ -135,8 +135,8 @@
         toggleRoomOptions();
     }
 
-    // Their profile in Orbit when we can reach it (the same page as Full profile); the chat's own profile page for
-    // people Orbit can't show (not in Universe right now, or a bot).
+    // Their profile in Orbit, online or not (the same page as Full profile); the chat's own profile page only for
+    // a bot, or when Orbit isn't available.
     function viewProfile() {
         toggleRoomOptions();
         if ($partner && canOpenPartnerProfile($partner)) {
