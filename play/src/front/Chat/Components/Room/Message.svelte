@@ -136,7 +136,11 @@
     $: hasLinkCard = replyDepth === 0 && !isQuotedMessage && (contentType === "text" || contentType === "proximity");
     // A video or app link that ends the message is shown by its card, not as a long address. Only what is shown
     // changes: the message keeps its link for copying, replies and bots.
-    const shownContent = derived(content, (value) => ({ ...value, body: bodyShownWithCard(value.body) }));
+    // Some messages (images, files, deleted ones, some bots') come without a text body: they are shown as they are.
+    const shownContent = derived(content, (value) =>
+        value && typeof value.body === "string" ? { ...value, body: bodyShownWithCard(value.body) } : value
+    );
+    $: shownBody = typeof $shownContent?.body === "string" ? $shownContent.body.trim() : "";
 
     const reactionsWithUsers = derived(
         [reactions, ...Array.from(reactions.values()).map((reaction) => reaction.users)],
@@ -235,14 +239,14 @@
                             {content}
                         />
                     {:else}
-                        {#if $shownContent.body.trim() !== ""}
+                        {#if shownBody !== ""}
                             <svelte:component
                                 this={messageType[contentType]}
                                 on:updateMessageBody={updateMessageBody}
                                 content={shownContent}
                             />
                         {/if}
-                        <LinkPreview body={$content.body} mine={isMyMessage} alone={$shownContent.body.trim() === ""} />
+                        <LinkPreview body={$content?.body} mine={isMyMessage} alone={shownBody === ""} />
                     {/if}
                 {:else if $content.body.trim() !== ""}
                     <div class="opacity-70">
