@@ -4,6 +4,10 @@ import type { ICommunicationSpace } from "../Interfaces/ICommunicationSpace";
 import type { ICommunicationStrategy } from "../Interfaces/ICommunicationStrategy";
 import type { LiveKitService } from "../Services/LivekitService";
 
+// A person whose invitation was just sent may take a moment to appear in the media room.
+const PERMISSION_SYNC_ATTEMPTS = 10;
+const PERMISSION_SYNC_DELAY_MS = 1000;
+
 export class LivekitCommunicationStrategy implements ICommunicationStrategy {
     private usersReady: string[] = [];
     private createRoomPromise: Promise<void> | null = null;
@@ -28,8 +32,13 @@ export class LivekitCommunicationStrategy implements ICommunicationStrategy {
 
         await this.createRoomPromise;
 
+        const isFirstStreamer = this.streamingUsers.size === 0;
+        // Register the user as streaming. This comes before the invitations below, so that a listener who starts
+        // streaming gets a token that already lets them send.
+        this.streamingUsers.set(user.spaceUserId, user);
+
         // Send invitation to all receiving users if this is the first room creation
-        if (this.receivingUsers.size > 0 && this.streamingUsers.size === 0) {
+        if (this.receivingUsers.size > 0 && isFirstStreamer) {
             for (const receivingUser of this.receivingUsers.values()) {
                 this.sendLivekitInvitationMessage(receivingUser).catch((error) => {
                     console.error(`Error generating token for user ${receivingUser.spaceUserId} in Livekit:`, error);
@@ -37,8 +46,6 @@ export class LivekitCommunicationStrategy implements ICommunicationStrategy {
                 });
             }
         }
-        // Register the user as streaming
-        this.streamingUsers.set(user.spaceUserId, user);
 
         // Send invitation to the new user if not already receiving
         if (!this.receivingUsers.has(user.spaceUserId)) {
@@ -46,14 +53,40 @@ export class LivekitCommunicationStrategy implements ICommunicationStrategy {
                 console.error(`Error generating token for user ${user.spaceUserId} in Livekit:`, error);
                 Sentry.captureException(error);
             });
+        } else {
+            // They joined the media room to listen: now they may send.
+            this.syncPublishPermission(user);
         }
+    }
+
+    /**
+     * Makes the media server's permission to send match whether the person streams right now. The person may not be
+     * in the media room yet (their invitation was just sent), so it is tried again for a few seconds. The state is
+     * read again each time: it may have changed meanwhile. A token made later already carries the right permission.
+     */
+    private syncPublishPermission(user: SpaceUser, attempt = 1): void {
+        const canPublish = this.streamingUsers.has(user.spaceUserId);
+        if (!canPublish && !this.receivingUsers.has(user.spaceUserId)) {
+            return;
+        }
+        this.livekitService
+            .setParticipantCanPublish(this.space.getSpaceName(), user.spaceUserId, canPublish)
+            .then((updated) => {
+                if (!updated && attempt < PERMISSION_SYNC_ATTEMPTS) {
+                    setTimeout(() => this.syncPublishPermission(user, attempt + 1), PERMISSION_SYNC_DELAY_MS);
+                }
+            })
+            .catch((error) => {
+                console.error(`Error updating the permission of user ${user.spaceUserId} in Livekit:`, error);
+                Sentry.captureException(error);
+            });
     }
 
     private async deleteUserFromLivekit(user: SpaceUser): Promise<void> {
         try {
-            await this.livekitService.removeParticipant(this.space.getSpaceName(), user.name);
+            await this.livekitService.removeParticipant(this.space.getSpaceName(), user.spaceUserId);
         } catch (error) {
-            console.error(`Error removing participant ${user.name} from Livekit:`, error);
+            console.error(`Error removing participant ${user.spaceUserId} from Livekit:`, error);
             Sentry.captureException(error);
         }
 
@@ -88,6 +121,9 @@ export class LivekitCommunicationStrategy implements ICommunicationStrategy {
                 console.error(`Error deleting user ${user.name} from Livekit:`, error);
                 Sentry.captureException(error);
             });
+        } else if (deleted) {
+            // They keep listening but stop sending: the media server ends what they were sending.
+            this.syncPublishPermission(user);
         }
 
         if (this.streamingUsers.size === 0) {
@@ -186,7 +222,12 @@ export class LivekitCommunicationStrategy implements ICommunicationStrategy {
     }
 
     private async sendLivekitInvitationMessage(user: SpaceUser): Promise<void> {
-        const token = await this.livekitService.generateToken(this.space.getSpaceName(), user);
+        // Only the people streaming in this space may send; everybody else gets a listen-only token.
+        const token = await this.livekitService.generateToken(
+            this.space.getSpaceName(),
+            user,
+            this.streamingUsers.has(user.spaceUserId)
+        );
 
         this.space.dispatchPrivateEvent({
             spaceName: this.space.getSpaceName(),

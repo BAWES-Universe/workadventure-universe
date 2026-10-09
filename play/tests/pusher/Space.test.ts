@@ -770,6 +770,38 @@ describe("Space megaphone right", () => {
         expect(alice.megaphoneState).toBe(false);
     });
 
+    it("uses up a speaker's invitation when the guest stops, so going live again needs a new one", () => {
+        const invitedToSpeak = new Set(["abc123-stage"]);
+        const { space, alice, aliceSocket } = makeLiveSpace("abc123-stage", {
+            megaphoneChannels: new Map(),
+            listenOnlyAreaSpaces: new Set(["abc123-stage"]),
+            invitedToSpeak,
+        });
+
+        space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(aliceSocket, goLive(true));
+        expect(alice.megaphoneState).toBe(true);
+        expect(invitedToSpeak.has("abc123-stage")).toBe(true);
+
+        space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(aliceSocket, goLive(false));
+        expect(invitedToSpeak.has("abc123-stage")).toBe(false);
+
+        space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(aliceSocket, goLive(true));
+        expect(alice.megaphoneState).toBe(false);
+    });
+
+    it("keeps an invitation that has not been used when the player only says they are not live", () => {
+        const invitedToSpeak = new Set(["abc123-stage"]);
+        const { space, aliceSocket } = makeLiveSpace("abc123-stage", {
+            megaphoneChannels: new Map(),
+            listenOnlyAreaSpaces: new Set(["abc123-stage"]),
+            invitedToSpeak,
+        });
+
+        space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(aliceSocket, goLive(false));
+
+        expect(invitedToSpeak.has("abc123-stage")).toBe(true);
+    });
+
     it("refuses going live before the room is joined", () => {
         const { space, alice, aliceSocket } = makeLiveSpace("abc123-stage", { megaphoneChannels: undefined });
 

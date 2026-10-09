@@ -14,6 +14,8 @@ export type ChatUser = {
     availabilityStatus: Readable<AvailabilityStatus>;
     username: string | undefined;
     pictureStore: PictureStore | undefined;
+    /** Their saved Woka, drawn only when shown: what a person who is away looks like, until they have a live one. */
+    storedWoka?: PictureStore;
     roomName: string | undefined;
     playUri: string | undefined;
     isAdmin?: boolean;
@@ -31,6 +33,8 @@ export type AdminUser = {
     availabilityStatus: Readable<AvailabilityStatus>;
     username: string | undefined;
     pictureStore: PictureStore | undefined;
+    /** Their saved Woka, drawn only when shown: what a person who is away looks like, until they have a live one. */
+    storedWoka?: PictureStore;
     roomName: string | undefined;
     playUri: string | undefined;
     isAdmin?: boolean;

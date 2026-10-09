@@ -99,6 +99,14 @@ export class BotApiService {
     }
 
     /**
+     * The bot server this service sends credentials to: null when the address was refused as unsafe. Anything that
+     * sends the player's tokens to the bot server must use this, never the raw setting.
+     */
+    getBotServerUrl(): string | null {
+        return this.botServerUrl;
+    }
+
+    /**
      * Get the current roomId
      */
     getRoomId(): string | null {
@@ -472,6 +480,27 @@ export class BotApiService {
      */
     getGameToken(): string | null {
         return this.gameToken?.userAccessToken ?? null;
+    }
+
+    /**
+     * Headers for reading a bot's feelings about the local player: the game token, plus the Orbit session when the
+     * person is signed in (the bot server asks for it to know the feelings are about them).
+     */
+    async getEmotionsHeaders(): Promise<Record<string, string>> {
+        const headers: Record<string, string> = {};
+        const gameToken = this.getGameToken();
+        if (gameToken) {
+            headers["X-WA-Auth"] = gameToken;
+        }
+        try {
+            const sessionToken = await this.getAdminApiSessionToken();
+            if (sessionToken) {
+                headers.Authorization = `Bearer ${sessionToken}`;
+            }
+        } catch {
+            // No session (a guest): the game token alone is enough for them.
+        }
+        return headers;
     }
 
     /**

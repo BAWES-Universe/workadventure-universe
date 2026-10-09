@@ -23,4 +23,28 @@ describe("eventProcessorInit", () => {
             ).toThrow("Only admins can kick off a user");
         });
     });
+
+    describe("individual mute", () => {
+        const receiver = spaceUser("receiver", []);
+
+        it.each([
+            ["muteAudio", { $case: "muteAudio" as const, muteAudio: { force: true } }],
+            ["muteVideo", { $case: "muteVideo" as const, muteVideo: { force: true } }],
+        ])("%s from a player who is not an admin stays a request, whatever the browser sent", (_name, event) => {
+            const processed = eventProcessor.processPrivateEvent(event, spaceUser("player", ["member"]), receiver);
+            const force = processed.$case === "muteAudio" ? processed.muteAudio.force : undefined;
+            const forceVideo = processed.$case === "muteVideo" ? processed.muteVideo.force : undefined;
+            expect(force ?? forceVideo).toBe(false);
+        });
+
+        it.each([
+            ["muteAudio", { $case: "muteAudio" as const, muteAudio: { force: false } }],
+            ["muteVideo", { $case: "muteVideo" as const, muteVideo: { force: false } }],
+        ])("%s from an admin is imposed", (_name, event) => {
+            const processed = eventProcessor.processPrivateEvent(event, spaceUser("admin", ["admin"]), receiver);
+            const force = processed.$case === "muteAudio" ? processed.muteAudio.force : undefined;
+            const forceVideo = processed.$case === "muteVideo" ? processed.muteVideo.force : undefined;
+            expect(force ?? forceVideo).toBe(true);
+        });
+    });
 });

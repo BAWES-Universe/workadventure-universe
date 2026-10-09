@@ -50,18 +50,26 @@ export function distanceToRoute(pos: Point, stops: Point[], loop: boolean): numb
     return best;
 }
 
-/** Index of the stop closest to `pos`, or -1 for a route with no stops. */
-export function nearestStopIndex(pos: Point, stops: Point[]): number {
-    let bestIndex = -1;
-    let best = Infinity;
-    stops.forEach((stop, index) => {
-        const d = distance(pos, stop);
-        if (d < best) {
-            best = d;
-            bestIndex = index;
-        }
-    });
-    return bestIndex;
+/**
+ * Index of the stop closest to `pos`, or -1 for a route with no stops. Stops in `skip` (ones the bot could not find a
+ * way to) are passed over, unless that would leave nothing to choose from.
+ */
+export function nearestStopIndex(pos: Point, stops: Point[], skip?: ReadonlySet<number>): number {
+    const pick = (leaveOut?: ReadonlySet<number>): number => {
+        let bestIndex = -1;
+        let best = Infinity;
+        stops.forEach((stop, index) => {
+            if (leaveOut?.has(index)) return;
+            const d = distance(pos, stop);
+            if (d < best) {
+                best = d;
+                bestIndex = index;
+            }
+        });
+        return bestIndex;
+    };
+    const chosen = pick(skip);
+    return chosen >= 0 ? chosen : pick();
 }
 
 /**
