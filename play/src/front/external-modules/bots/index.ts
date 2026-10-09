@@ -950,12 +950,10 @@ async function injectEmotionsIntoWokaMenu(menuData: WokaMenuData): Promise<void>
             return;
         }
 
-        // Find insertion point - before the action buttons section
-        // Structure: <div class="m-auto..."> -> first child is content, we want to inject before actions
-        const contentDiv = menuElement.querySelector("div > div:first-child");
-        const actionsDiv = menuElement.querySelector(".flex.items-center.bg-contrast");
+        // Insertion point: the card's slot for extra content, inside the part that scrolls above the action buttons.
+        const extrasSlot = menuElement.querySelector("[data-woka-menu-extras]");
 
-        if (!contentDiv || !actionsDiv) {
+        if (!extrasSlot) {
             release(); // Release guard
             return;
         }
@@ -986,8 +984,7 @@ async function injectEmotionsIntoWokaMenu(menuData: WokaMenuData): Promise<void>
         container.setAttribute("data-bot-emotions", botId);
         emotionsContainerElement = container;
 
-        // Insert before actions section
-        actionsDiv.parentElement?.insertBefore(container, actionsDiv);
+        extrasSlot.appendChild(container);
 
         try {
             // Dynamically import the component (Svelte 4 style)
