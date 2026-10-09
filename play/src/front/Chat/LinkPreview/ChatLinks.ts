@@ -6,7 +6,8 @@
  * addresses are never taken for links. Same rules as the bots' link reading (bots/utils/chatLinks.ts).
  */
 
-const FULL_URL = /https?:\/\/[^\s)<>"'`]+/gi;
+// The message box keeps a space typed at the end as &nbsp;: it ends a link like any space.
+const FULL_URL = /https?:\/\/(?:(?!&nbsp;)[^\s)<>"'`])+/gi;
 
 // Common web suffixes, plus the Gulf country codes our users mostly use. Suffixes that are also English words
 // (.me, .so, .to, .in, .us) are left out: "ok.so" isn't a website.
@@ -76,7 +77,7 @@ const BARE_DOMAIN = new RegExp(
     String.raw`(?<![\w@/.:-])` +
         String.raw`((?:www\.)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:${BARE_SUFFIXES.join("|")})` +
         // Optional path, stopping before trailing punctuation or brackets.
-        String.raw`(?:\/[^\s)<>"'\x60]*)?)` +
+        String.raw`(?:\/(?:(?!&nbsp;)[^\s)<>"'\x60])*)?)` +
         String.raw`(?![\w@-])`,
     "gi"
 );

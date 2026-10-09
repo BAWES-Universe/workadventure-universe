@@ -64,6 +64,14 @@ describe("sending a link without a preview", () => {
         );
     });
 
+    it("ends a link at a space the message box wrote as &nbsp;", () => {
+        expect(withoutPreview("see https://x.com/a&nbsp;", ["https://x.com/a"])).toBe("see <https://x.com/a>&nbsp;");
+        expect(withoutPreview("see bawes.net/a&nbsp;now", ["https://bawes.net/a"])).toBe(
+            "see <https://bawes.net/a>&nbsp;now"
+        );
+        expect(extractChatLinks("https://x.com&nbsp;", 3)).toEqual(["https://x.com"]);
+    });
+
     it("leaves other links and code alone", () => {
         const text = "`https://a.com` https://b.com";
         expect(withoutPreview(text, ["https://a.com"])).toBe(text);
