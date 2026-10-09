@@ -175,8 +175,8 @@ export function wavBuffer(seconds = 2, sampleRate = 8000): Buffer {
  * A fresh map-storage room (empty 10x10 map) with a Stage area in the top-left corner (0,0 to 96,96) and an
  * Audience area linked to it in the bottom-right corner (224,224 to 320,320).
  */
-export async function stageRoom(testInfo: TestInfo): Promise<string> {
-    const url = await otherWamRoom(testInfo, "stage");
+export async function stageRoom(testInfo: TestInfo, suffix = "stage"): Promise<string> {
+    const url = await otherWamRoom(testInfo, suffix);
     const path = url.replace(/^\/~/, "");
     const res = await fetch(MAP_STORAGE + path, { headers: { Authorization: MAP_STORAGE_AUTH } });
     if (!res.ok) throw new Error(`map-storage read failed: ${res.status}`);
@@ -213,4 +213,29 @@ export async function stageRoom(testInfo: TestInfo): Promise<string> {
     });
     if (!put.ok) throw new Error(`map-storage write failed: ${put.status} ${await put.text()}`);
     return url;
+}
+
+/**
+ * Limits the Stage and the Audience of a stageRoom to one role ("Who can enter"), as the area editor saves it. Both:
+ * they share the Stage's space, and the server refuses a space only when every area that carries it is closed.
+ */
+export async function limitStageToRole(url: string, tag: string): Promise<void> {
+    const path = url.replace(/^\/~/, "");
+    const res = await fetch(MAP_STORAGE + path, { headers: { Authorization: MAP_STORAGE_AUTH } });
+    if (!res.ok) throw new Error(`map-storage read failed: ${res.status}`);
+    const wam = await res.json();
+    for (const area of wam.areas) {
+        area.properties.push({
+            id: crypto.randomUUID(),
+            type: "restrictedRightsPropertyData",
+            readTags: [tag],
+            writeTags: [tag],
+        });
+    }
+    const put = await fetch(MAP_STORAGE + path, {
+        method: "PUT",
+        headers: { Authorization: MAP_STORAGE_AUTH, "Content-Type": "application/json" },
+        body: JSON.stringify(wam),
+    });
+    if (!put.ok) throw new Error(`map-storage write failed: ${put.status} ${await put.text()}`);
 }

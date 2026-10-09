@@ -52,6 +52,8 @@ export const CLIENT_UPDATABLE_SPACE_USER_FIELDS: ReadonlySet<string> = new Set<k
  */
 
 export interface SpaceInterface {
+    /** The name the front gives the space (without the world prefix). */
+    readonly localName: string;
     forwarder: SpaceToBackForwarderInterface;
     dispatcher: SpaceToFrontDispatcherInterface;
     // This pusher's copy of the users of the space (sent by the back, across all pushers)
