@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { extractChatLinks, linkifyBareDomains } from "../ChatLinks";
+import { Marked } from "marked";
+import { extractChatLinks, linkifyBareDomains, withoutPreview, withoutTrailingLink } from "../ChatLinks";
 import type { LinkApps } from "../LinkKind";
 import { classifyLink, youtubeVideoOf } from "../LinkKind";
 
@@ -39,6 +40,49 @@ describe("extractChatLinks", () => {
 
     it("keeps the message's first link only when asked for one", () => {
         expect(extractChatLinks("www.a.com then www.b.com", 1)).toEqual(["https://www.a.com"]);
+    });
+});
+
+describe("sending a link without a preview", () => {
+    it("sends the closed link as <link> and previews nothing for it", () => {
+        const text = withoutPreview("look https://example.com/a?b=1, then bawes.net", ["https://example.com/a?b=1"]);
+        expect(text).toBe("look <https://example.com/a?b=1>, then bawes.net");
+        expect(extractChatLinks(text, 1)).toEqual(["https://bawes.net"]);
+    });
+
+    it("gives a bare name https:// so it stays a link", () => {
+        const text = withoutPreview("check out bawes.net!", ["https://bawes.net"]);
+        expect(text).toBe("check out <https://bawes.net>!");
+        expect(extractChatLinks(text, 5)).toEqual([]);
+        const html = new Marked().parse(text) as string;
+        expect(html).toContain('<a href="https://bawes.net">https://bawes.net</a>');
+    });
+
+    it("matches a link the message box wrote with &amp;", () => {
+        expect(withoutPreview("https://x.com/?a=1&amp;b=2", ["https://x.com/?a=1&b=2"])).toBe(
+            "<https://x.com/?a=1&amp;b=2>"
+        );
+    });
+
+    it("leaves other links and code alone", () => {
+        const text = "`https://a.com` https://b.com";
+        expect(withoutPreview(text, ["https://a.com"])).toBe(text);
+    });
+});
+
+describe("withoutTrailingLink", () => {
+    const video = "https://www.youtube.com/watch?v=kkJ7wWidnp8";
+
+    it("drops the link that ends the message", () => {
+        expect(withoutTrailingLink(`this is the one I meant ${video}`, video)).toBe("this is the one I meant");
+        expect(withoutTrailingLink(`this one:\n${video} !`, video)).toBe("this one:");
+        expect(withoutTrailingLink(video, video)).toBe("");
+    });
+
+    it("keeps a link in the middle of the message, or sent without a preview", () => {
+        expect(withoutTrailingLink(`${video} is the one`, video)).toBeUndefined();
+        expect(withoutTrailingLink(`see <${video}>`, video)).toBeUndefined();
+        expect(withoutTrailingLink(`${video} or https://b.com`, video)).toBeUndefined();
     });
 });
 

@@ -103,14 +103,26 @@ test.describe("Matrix chat tests @oidc @matrix @nowebkit", () => {
     const chatMessageContent = "watch this https://www.youtube.com/watch?v=6ZfuNTqbHE8";
     await page.getByTestId("messageInput").click();
     await page.getByTestId("messageInput").fill(chatMessageContent);
+    // While typing, the preview shows above the message box.
+    await expect(page.getByTestId("composerLinkPreview")).toBeVisible();
     await page.getByTestId("sendMessageButton").click();
+    await expect(page.getByTestId("composerLinkPreview")).not.toBeAttached();
 
-    // The link is sent exactly as typed, and previews under the message.
-    await expect(page.getByText("https://www.youtube.com/watch?v=6ZfuNTqbHE8")).toBeAttached();
+    // The message previews under its text; the card stands for the link that ended it.
+    await expect(page.getByText("watch this")).toBeVisible();
     await expect(page.getByTestId("youtubeLinkPreview")).toBeVisible();
+    await expect(page.getByText("https://www.youtube.com/watch?v=6ZfuNTqbHE8")).not.toBeAttached();
 
     await page.getByTestId("youtubeLinkPreviewPlay").click();
     await expect(page.getByTestId("youtubeLinkPreviewPlayer")).toBeAttached();
+
+    // × above the message box sends the link without a preview: it stays a link in the text.
+    await page.getByTestId("messageInput").fill("no card https://www.youtube.com/watch?v=kkJ7wWidnp8");
+    await page.getByTestId("composerLinkPreviewClose").click();
+    await expect(page.getByTestId("composerLinkPreview")).not.toBeAttached();
+    await page.getByTestId("sendMessageButton").click();
+    await expect(page.getByRole("link", { name: "https://www.youtube.com/watch?v=kkJ7wWidnp8" })).toBeVisible();
+    await expect(page.getByTestId("youtubeLinkPreview")).toHaveCount(1);
 
     await page.context().close();
   });

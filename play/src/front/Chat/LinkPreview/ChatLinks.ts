@@ -86,27 +86,82 @@ const TRAILING_PUNCTUATION = /[.,!?;:*_~]+$/;
 // Code is shown as code, not previewed.
 const CODE = /```[\s\S]*?```|`[^`\n]*`/g;
 
-/** Every link in the text, in order, without duplicates, at most `max`. */
-export function extractChatLinks(text: string, max: number): string[] {
+interface FoundLink {
+    /** Where the link starts in the text, and its text as typed (without trailing punctuation). */
+    index: number;
+    raw: string;
+    /** The link to open: bare names get https://. */
+    url: string;
+    /** Sent as <link>, the Discord way, to go without a preview. */
+    noPreview: boolean;
+}
+
+/** Every link in the text, in order (code left out). */
+function findLinks(text: string): FoundLink[] {
     const withoutCode = text.replace(CODE, (code) => " ".repeat(code.length));
-    const found: { index: number; url: string }[] = [];
+    const found: FoundLink[] = [];
     const fullRanges: Array<[number, number]> = [];
+    const wrapped = (index: number, raw: string) =>
+        withoutCode[index - 1] === "<" && withoutCode[index + raw.length] === ">";
 
     for (const match of withoutCode.matchAll(FULL_URL)) {
         const index = match.index ?? 0;
+        const raw = match[0].replace(TRAILING_PUNCTUATION, "");
         fullRanges.push([index, index + match[0].length]);
-        found.push({ index, url: match[0].replace(TRAILING_PUNCTUATION, "") });
+        found.push({ index, raw, url: raw, noPreview: wrapped(index, raw) });
     }
 
     for (const match of withoutCode.matchAll(BARE_DOMAIN)) {
         const index = match.index ?? 0;
         // Already part of a full URL.
         if (fullRanges.some(([start, end]) => index >= start && index < end)) continue;
-        found.push({ index, url: `https://${match[1].replace(TRAILING_PUNCTUATION, "")}` });
+        const raw = match[1].replace(TRAILING_PUNCTUATION, "");
+        found.push({ index, raw, url: `https://${raw}`, noPreview: wrapped(index, raw) });
     }
 
-    const urls = found.sort((a, b) => a.index - b.index).map(({ url }) => url);
+    return found.sort((a, b) => a.index - b.index);
+}
+
+// The composer keeps & as &amp;: the same link either way.
+function sameLink(a: string, b: string): boolean {
+    return a.replace(/&amp;/g, "&") === b.replace(/&amp;/g, "&");
+}
+
+/** Every link in the text that can get a preview, in order, without duplicates, at most `max`. */
+export function extractChatLinks(text: string, max: number): string[] {
+    const urls = findLinks(text)
+        .filter((link) => !link.noPreview)
+        .map(({ url }) => url);
     return urls.filter((url, index) => urls.indexOf(url) === index).slice(0, max);
+}
+
+/**
+ * The text to send when the sender closed a link's preview in the message box: the link goes as <link>, the way
+ * Discord marks a link without a preview. It stays a link (Markdown shows <https://…> as one) and bots still read it.
+ * A bare name gets https:// so Markdown sees a link rather than a tag.
+ */
+export function withoutPreview(text: string, urls: string[]): string {
+    let result = text;
+    // From the end, so earlier positions stay right.
+    for (const link of findLinks(text).reverse()) {
+        if (link.noPreview || !urls.some((url) => sameLink(url, link.url))) continue;
+        const shown = link.raw === link.url ? link.raw : link.url;
+        result = `${result.slice(0, link.index)}<${shown}>${result.slice(link.index + link.raw.length)}`;
+    }
+    return result;
+}
+
+/**
+ * The text without its last link when that link ends the message (only spaces or end punctuation after it) and is
+ * `url`: its card shows it instead, like the approved mock. Undefined when the link doesn't end the message.
+ */
+export function withoutTrailingLink(text: string, url: string): string | undefined {
+    const links = findLinks(text);
+    const last = links[links.length - 1];
+    if (!last || last.noPreview || !sameLink(last.url, url)) return undefined;
+    const after = text.slice(last.index + last.raw.length);
+    if (!/^[\s.,!?;:]*$/.test(after)) return undefined;
+    return text.slice(0, last.index).trimEnd();
 }
 
 // Inside these, a site name stays as typed.
