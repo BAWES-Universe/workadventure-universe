@@ -32,7 +32,7 @@ npm test --workspace=workadventure-play -- --run --maxWorkers=2
 PUSHER_URL=//localhost:3000 ADMIN_URL=//localhost:80 npm run build --workspace=workadventure-play
 ```
 
-Unit tests use deterministic media doubles and animation timers. They prove state/lifecycle behavior, not decoding, hearing, device autoplay grants or in-game integration.
+Unit tests use deterministic media doubles and Vitest fake timers (the fades run on `setTimeout`). They prove state/lifecycle behavior, not decoding, hearing, device autoplay grants or in-game integration.
 
 ## Manual regression checklist
 
