@@ -4,7 +4,7 @@ import Debug from "debug";
 import { validateQuery } from "../services/QueryValidator";
 import type { ResponseWithUserIdentifier } from "../middlewares/Authenticated";
 import { authenticated } from "../middlewares/Authenticated";
-import { linkPreviewService } from "../services/LinkPreviewService";
+import { LinkPreviewBusyError, linkPreviewRateLimiter, linkPreviewService } from "../services/LinkPreviewService";
 import { BaseHttpController } from "./BaseHttpController";
 
 const debug = Debug("pusher:requests");
@@ -30,6 +30,8 @@ export class LinkPreviewController extends BaseHttpController {
          *         description: The preview (siteName always, title, description and image when the page has them)
          *       422:
          *         description: The link can't be previewed (not public, not reachable, or not a page)
+         *       429:
+         *         description: Too many previews asked for; try again in a minute
          */
         this.app.options("/link-preview", (req: Request, res: Response) => {
             res.status(200).send("");
@@ -49,11 +51,20 @@ export class LinkPreviewController extends BaseHttpController {
                 return;
             }
 
+            if (!linkPreviewRateLimiter.take(res.userIdentifier ?? req.ip ?? "")) {
+                res.status(429).send("Too many link previews, try again in a minute");
+                return;
+            }
+
             try {
                 const preview = await linkPreviewService.getPreview(query.url);
                 res.setHeader("Cache-Control", "private, max-age=3600");
                 res.status(200).json(preview);
             } catch (error) {
+                if (error instanceof LinkPreviewBusyError) {
+                    res.status(429).send("Too many link previews, try again in a minute");
+                    return;
+                }
                 debug(`No preview for ${query.url}: ${error}`);
                 res.setHeader("Cache-Control", "private, max-age=600");
                 res.status(422).send("This link can't be previewed");

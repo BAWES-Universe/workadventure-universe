@@ -29,7 +29,11 @@ export function fetchWebPreview(url: string): Promise<WebPreview | undefined> {
         preview = fetch(`${ABSOLUTE_PUSHER_URL}link-preview?url=${encodeURIComponent(url)}`, {
             headers: { Authorization: localUserStore.getAuthToken() ?? "" },
         })
-            .then(async (response) => (response.ok ? ((await response.json()) as WebPreview) : undefined))
+            .then(async (response) => {
+                // Too many previews right now: try again the next time the link is shown.
+                if (response.status === 429) webPreviews.delete(url);
+                return response.ok ? ((await response.json()) as WebPreview) : undefined;
+            })
             .catch((error) => {
                 console.warn("Could not load a link preview", error);
                 // Offline for a moment: try again the next time the link is shown.

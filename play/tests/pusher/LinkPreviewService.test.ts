@@ -5,10 +5,12 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
     fetchOnce,
     isBlockedAddress,
+    LinkPreviewBusyError,
     LinkPreviewService,
     linkPreviewService,
     parsePreviewableUrl,
     parsePreviewTags,
+    PerUserRateLimiter,
 } from "../../src/pusher/services/LinkPreviewService";
 
 describe("isBlockedAddress", () => {
@@ -28,6 +30,11 @@ describe("isBlockedAddress", () => {
         "::ffff:127.0.0.1",
         "::ffff:7f00:1",
         "::ffff:a9fe:a9fe",
+        "::7f00:1",
+        "::ffff:0:7f00:1",
+        "2002:7f00:1::",
+        "2001:0:4136:e378:8000:63bf:3fff:fdd2",
+        "fec0::1",
     ])("blocks %s", (address) => {
         expect(isBlockedAddress(address)).toBe(true);
     });
@@ -105,6 +112,20 @@ describe("parsePreviewTags", () => {
     });
 });
 
+describe("PerUserRateLimiter", () => {
+    it("allows a person their limit per window, then again once it has passed", () => {
+        let now = 0;
+        const limiter = new PerUserRateLimiter(2, 60_000, () => now);
+
+        expect(limiter.take("a")).toBe(true);
+        expect(limiter.take("a")).toBe(true);
+        expect(limiter.take("a")).toBe(false);
+        expect(limiter.take("b")).toBe(true);
+        now = 60_001;
+        expect(limiter.take("a")).toBe(true);
+    });
+});
+
 describe("LinkPreviewService", () => {
     it("loads each page once and refuses internal addresses without fetching", async () => {
         const load = vi.fn((url: URL) => Promise.resolve({ url: url.toString(), siteName: "bawes.net", title: "B" }));
@@ -115,6 +136,26 @@ describe("LinkPreviewService", () => {
         await expect(service.getPreview("http://127.0.0.1:8080/")).rejects.toThrow();
 
         expect(load).toHaveBeenCalledTimes(1);
+    });
+
+    it("refuses new pages while too many are loading, without remembering that as a failure", async () => {
+        let finish: () => void = () => {};
+        const load = vi.fn((url: URL) =>
+            url.pathname === "/a"
+                ? new Promise<{ url: string; siteName: string }>((resolve) => {
+                      finish = () => resolve({ url: url.toString(), siteName: "bawes.net" });
+                  })
+                : Promise.resolve({ url: url.toString(), siteName: "bawes.net" })
+        );
+        const service = new LinkPreviewService(load, 1);
+
+        const first = service.getPreview("https://bawes.net/a");
+        await expect(service.getPreview("https://bawes.net/b")).rejects.toBeInstanceOf(LinkPreviewBusyError);
+        finish();
+        await first;
+        await service.getPreview("https://bawes.net/b");
+
+        expect(load).toHaveBeenCalledTimes(2);
     });
 
     describe("fetching", () => {

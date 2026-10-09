@@ -24,11 +24,14 @@ const MAX_URL_LENGTH = 2048;
 const CACHE_TTL_MS = 60 * 60 * 1000;
 const FAILURE_CACHE_TTL_MS = 10 * 60 * 1000;
 const MAX_CACHE_ENTRIES = 1000;
+// One person can't turn the server into a page fetcher, and a crowd can't hold more than this many fetches open.
+const MAX_PREVIEWS_PER_USER_PER_MINUTE = 120;
+const MAX_LOADS_IN_FLIGHT = 50;
 const USER_AGENT = "Mozilla/5.0 (compatible; UniverseLinkPreview/1.0; +https://bawes.net)";
 
 /**
  * Addresses the server must never be made to call (SSRF): loopback, private networks, link-local (cloud metadata),
- * carrier-grade NAT, multicast and reserved ranges.
+ * carrier-grade NAT, multicast and reserved ranges, and the IPv6 forms that carry an IPv4 address inside them.
  */
 const blockedAddresses = new net.BlockList();
 for (const [prefix, length] of [
@@ -50,13 +53,20 @@ for (const [prefix, length] of [
     blockedAddresses.addSubnet(prefix, length, "ipv4");
 }
 for (const [prefix, length] of [
-    ["::", 128],
-    ["::1", 128],
+    // Unspecified, loopback and IPv4-compatible (::a.b.c.d).
+    ["::", 96],
+    // IPv4-translated (::ffff:0:a.b.c.d).
+    ["::ffff:0:0:0", 96],
     ["64:ff9b::", 96],
+    ["64:ff9b:1::", 48],
     ["100::", 64],
+    // Teredo and 6to4 tunnel an IPv4 address inside.
+    ["2001::", 32],
     ["2001:db8::", 32],
+    ["2002::", 16],
     ["fc00::", 7],
     ["fe80::", 10],
+    ["fec0::", 10],
     ["ff00::", 8],
 ] as const) {
     blockedAddresses.addSubnet(prefix, length, "ipv6");
@@ -284,10 +294,46 @@ async function loadPreview(url: URL): Promise<LinkPreview> {
 
 type CacheEntry = { promise: Promise<LinkPreview>; expiresAt: number };
 
+/** Too many previews asked for right now: try again later. Not remembered as a failure of the page. */
+export class LinkPreviewBusyError extends Error {}
+
+/** At most `limit` previews per person in any `windowMs`. */
+export class PerUserRateLimiter {
+    private readonly calls = new Map<string, number[]>();
+
+    constructor(
+        private readonly limit: number,
+        private readonly windowMs: number,
+        private readonly now: () => number = Date.now
+    ) {}
+
+    /** Counts a preview; false when the person is over their limit (it is then not counted). */
+    take(user: string): boolean {
+        const now = this.now();
+        const recent = (this.calls.get(user) ?? []).filter((at) => at > now - this.windowMs);
+        if (recent.length >= this.limit) {
+            this.calls.set(user, recent);
+            return false;
+        }
+        recent.push(now);
+        this.calls.set(user, recent);
+        if (this.calls.size > MAX_CACHE_ENTRIES) {
+            for (const [key, times] of this.calls) {
+                if (times[times.length - 1] <= now - this.windowMs) this.calls.delete(key);
+            }
+        }
+        return true;
+    }
+}
+
 export class LinkPreviewService {
     private cache = new Map<string, CacheEntry>();
+    private loadsInFlight = 0;
 
-    constructor(private load: (url: URL) => Promise<LinkPreview> = loadPreview) {}
+    constructor(
+        private load: (url: URL) => Promise<LinkPreview> = loadPreview,
+        private readonly maxLoadsInFlight = MAX_LOADS_IN_FLIGHT
+    ) {}
 
     /** Resolves the preview of a public web page; rejects for URLs that can't or mustn't be fetched. */
     getPreview(rawUrl: string): Promise<LinkPreview> {
@@ -300,7 +346,16 @@ export class LinkPreviewService {
         if (cached && cached.expiresAt > Date.now()) {
             return cached.promise;
         }
+        if (this.loadsInFlight >= this.maxLoadsInFlight) {
+            return Promise.reject(new LinkPreviewBusyError("Too many link previews loading"));
+        }
+        this.loadsInFlight++;
         const promise = this.load(url);
+        promise
+            .finally(() => {
+                this.loadsInFlight--;
+            })
+            .catch(() => {});
         this.remember(key, { promise, expiresAt: Date.now() + CACHE_TTL_MS });
         promise.catch(() => {
             // Failures are remembered for less time: the page may come back.
@@ -323,3 +378,4 @@ export class LinkPreviewService {
 }
 
 export const linkPreviewService = new LinkPreviewService();
+export const linkPreviewRateLimiter = new PerUserRateLimiter(MAX_PREVIEWS_PER_USER_PER_MINUTE, 60_000);

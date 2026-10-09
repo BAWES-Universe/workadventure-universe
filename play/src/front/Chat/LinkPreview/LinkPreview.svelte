@@ -204,7 +204,10 @@
             {/if}
             <div class="min-w-0">
                 <div class="link-preview-title !mt-0 truncate">{web?.title ?? link.name}</div>
-                <div class="link-preview-site">{link.name}</div>
+                <!-- Without the page's own title, the app's name above says it once. -->
+                {#if web?.title}
+                    <div class="link-preview-site">{link.name}</div>
+                {/if}
             </div>
         </div>
         <div class="link-preview-actions">
@@ -327,6 +330,12 @@
         flex-wrap: wrap;
         gap: 6px;
         padding: 8px 10px 10px;
+    }
+    /* On a touch screen each button is a full 44px tap target. */
+    @media (pointer: coarse) {
+        .link-preview-button {
+            min-height: 44px;
+        }
     }
     .link-preview-button {
         display: inline-flex;

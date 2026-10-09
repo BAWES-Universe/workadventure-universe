@@ -691,7 +691,6 @@
         event.preventDefault();
         chatInputFocusStore.set(false);
     }
-
 </script>
 
 {#if files.length > 0 || uploadError}
