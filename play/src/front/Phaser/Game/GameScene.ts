@@ -134,7 +134,7 @@ import { privacyShutdownStore } from "../../Stores/PrivacyShutdownStore";
 import { isLiveStreamingStore } from "../../Stores/IsStreamingStore";
 import { isAndroid, isIOS } from "../../WebRtc/DeviceUtils";
 import { StringUtils } from "../../Utils/StringUtils";
-import { groupMediaDevicesByLabel } from "../../Utils/NewMediaDevices";
+import { buildNewDeviceOffer, isIgnoredMediaDevice } from "../../Utils/NewMediaDevices";
 import { visibilityStore } from "../../Stores/VisibilityStore";
 
 import { SuperLoaderPlugin } from "../Services/SuperLoaderPlugin";
@@ -197,6 +197,8 @@ import type { UserProviderInterface } from "../../Chat/UserProvider/UserProvider
 import { registerAdditionalMenuItem, unregisterAdditionalMenuItem } from "../../Stores/AdditionalItemsMenuStore";
 import { popupStore } from "../../Stores/PopupStore";
 import PopUpRoomAccessDenied from "../../Components/PopUp/PopUpRoomAccessDenied.svelte";
+import PopUpNewDevice from "../../Components/PopUp/PopUpNewDevice.svelte";
+import { NEW_DEVICE_POPUP_ID } from "../../Stores/NewDeviceStore";
 import PopUpTriggerActionMessage from "../../Components/PopUp/PopUpTriggerActionMessage.svelte";
 import PopUpMapEditorNotEnabled from "../../Components/PopUp/PopUpMapEditorNotEnabled.svelte";
 import PopUpMapEditorShortcut from "../../Components/PopUp/PopUpMapEditorShortcut.svelte";
@@ -2747,9 +2749,9 @@ export class GameScene extends DirtyScene {
     }
 
     /**
-     * Shows a single "New device detected" bubble for the devices waiting to be offered. With
-     * several new devices (a virtual audio app registers a handful at once), the bubble names the
-     * best one and says how many others there are; they stay available in the device settings.
+     * Shows the "New device detected" card for the devices waiting to be offered: Switch for one device (a headset
+     * is one device, as a microphone and a speaker), Choose device for several at once (a virtual audio app
+     * registers a handful), which opens the device list with the new ones tagged.
      */
     private offerPendingNewMediaDevices(): void {
         if (this.pendingNewMediaDevices.size === 0 || document.visibilityState !== "visible") return;
@@ -2760,51 +2762,18 @@ export class GameScene extends DirtyScene {
             get(requestedMicrophoneDeviceIdStore),
             get(speakerSelectedStore),
         ];
+        const ignoredDevices = localUserStore.getIgnoredNewMediaDevices();
         const devices = Array.from(this.pendingNewMediaDevices.values()).filter(
             (device) =>
                 presentDevices.some((present) => present.deviceId === device.deviceId) &&
-                !selectedDeviceIds.includes(device.deviceId)
+                !selectedDeviceIds.includes(device.deviceId) &&
+                !isIgnoredMediaDevice(device, ignoredDevices)
         );
         this.pendingNewMediaDevices.clear();
 
-        const groups = groupMediaDevicesByLabel(devices);
-        const firstGroup = groups.entries().next();
-        if (firstGroup.done) return;
-        const [label, devicesToUse] = firstGroup.value;
-        const otherCount = groups.size - 1;
-
-        const id = "playtext-mediadevice";
-        this.CurrentPlayer.playText(
-            id,
-            otherCount === 0
-                ? get(LL).camera.webrtc.newDeviceDetected({ device: label })
-                : get(LL).camera.webrtc.newDevicesDetected({ device: label, count: otherCount }),
-            5000,
-            () => {
-                this.CurrentPlayer.destroyText(id);
-
-                for (const deviceToUse of devicesToUse) {
-                    switch (deviceToUse.kind) {
-                        case "videoinput":
-                            requestedCameraDeviceIdStore.set(deviceToUse.deviceId);
-                            localUserStore.setPreferredVideoInputDevice(deviceToUse.deviceId);
-                            break;
-                        case "audioinput":
-                            requestedMicrophoneDeviceIdStore.set(deviceToUse.deviceId);
-                            localUserStore.setPreferredAudioInputDevice(deviceToUse.deviceId);
-                            break;
-                        case "audiooutput":
-                            localUserStore.setSpeakerDeviceId(deviceToUse.deviceId);
-                            speakerSelectedStore.set(deviceToUse.deviceId);
-                            break;
-                        default:
-                            console.warn("Unknown device kind: ", deviceToUse.kind);
-                    }
-                }
-            },
-            true,
-            "message"
-        );
+        const offer = buildNewDeviceOffer(devices);
+        if (offer === undefined) return;
+        popupStore.addPopup(PopUpNewDevice, { offer }, NEW_DEVICE_POPUP_ID);
     }
 
     private listenToIframeEvents(): void {
