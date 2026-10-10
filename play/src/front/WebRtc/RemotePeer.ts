@@ -27,6 +27,11 @@ export type PeerStatus = "connecting" | "connected" | "error" | "closed";
 
 // Firefox needs more time for ICE negotiation
 const CONNECTION_TIMEOUT = isFirefox() ? 10000 : 5000; // 10s for Firefox, 5s for others
+// Browsers often recover from ICE "disconnected" on their own within a couple of seconds: give them that
+// chance before restarting ICE, then give the ICE restart its own chance before showing an error.
+// Without this, a call whose network changed (Wi-Fi to 4G, a blip) keeps a frozen picture and no sound.
+const ICE_RESTART_DELAY_MS = 3_000;
+const ICE_RECOVERY_TIMEOUT_MS = 15_000;
 
 const debug = Debug("webrtc:RemotePeer");
 
@@ -122,9 +127,59 @@ export class RemotePeer extends Peer implements Streamable {
         }
     };
 
-    private readonly iceTimeoutHandler = () => {
-        this._statusStore.set("error");
+    private readonly iceStateChangeHandler = (iceConnectionState: RTCIceConnectionState) => {
+        // Before the first "connect", the connection timeout covers a stalled negotiation.
+        if (this.closing || !this._connected) {
+            return;
+        }
+        if (iceConnectionState === "connected" || iceConnectionState === "completed") {
+            if (this.iceRecoveryTimeout) {
+                debug("ICE recovered", this._spaceUserId);
+            }
+            this.clearIceRecoveryTimeouts();
+            // The candidates of an ICE restart armed the connection timeout: the connection is back, disarm it.
+            if (this.connectTimeout) {
+                clearTimeout(this.connectTimeout);
+                this.connectTimeout = undefined;
+            }
+            this._statusStore.set("connected");
+            return;
+        }
+        if (iceConnectionState !== "disconnected" || this.iceRecoveryTimeout) {
+            return;
+        }
+        debug("ICE disconnected, attempting to recover", this._spaceUserId);
+        // Displayed as "reconnecting" by the VideoMediaBox
+        this._statusStore.set("connecting");
+        this.iceRestartTimeout = setTimeout(() => {
+            this.iceRestartTimeout = undefined;
+            const pc = this._pc;
+            // The offer must come from the initiator: simple-peer only sends offers from that side.
+            if (this.initiator && pc && typeof pc.restartIce === "function") {
+                debug("Restarting ICE", this._spaceUserId);
+                pc.restartIce();
+                this.negotiate();
+            }
+        }, ICE_RESTART_DELAY_MS);
+        this.iceRecoveryTimeout = setTimeout(() => {
+            this.iceRecoveryTimeout = undefined;
+            // Still down: say so on the tile instead of a frozen picture. It goes back to "connected" if ICE
+            // recovers later; if it fails for good, simple-peer closes the connection.
+            debug("ICE did not recover", this._spaceUserId);
+            this._statusStore.set("error");
+        }, ICE_RECOVERY_TIMEOUT_MS);
     };
+
+    private clearIceRecoveryTimeouts(): void {
+        if (this.iceRestartTimeout) {
+            clearTimeout(this.iceRestartTimeout);
+            this.iceRestartTimeout = undefined;
+        }
+        if (this.iceRecoveryTimeout) {
+            clearTimeout(this.iceRecoveryTimeout);
+            this.iceRecoveryTimeout = undefined;
+        }
+    }
 
     private readonly connectHandler = () => {
         if (this.connectTimeout) {
@@ -215,6 +270,8 @@ export class RemotePeer extends Peer implements Streamable {
     };
 
     private connectTimeout: ReturnType<typeof setTimeout> | undefined;
+    private iceRestartTimeout: ReturnType<typeof setTimeout> | undefined;
+    private iceRecoveryTimeout: ReturnType<typeof setTimeout> | undefined;
     private localStream: MediaStream | undefined;
     private localAudioTrack: MediaStreamAudioTrack | undefined;
     private localVideoTrack: MediaStreamVideoTrack | undefined;
@@ -379,7 +436,9 @@ export class RemotePeer extends Peer implements Streamable {
 
         this.on("error", this.errorHandler);
 
-        this.on("iceTimeout", this.iceTimeoutHandler);
+        // Note: simple-peer's "iceTimeout" only means gathering the candidates took long, not that the connection
+        // failed, so it is not listened to: it used to show an error on calls that worked.
+        this.on("iceStateChange", this.iceStateChangeHandler);
 
         this.on("connect", this.connectHandler);
 
@@ -538,7 +597,7 @@ export class RemotePeer extends Peer implements Streamable {
             this.off("stream", this.streamHandler);
             this.off("close", this.closeHandler);
             this.off("error", this.errorHandler);
-            this.off("iceTimeout", this.iceTimeoutHandler);
+            this.off("iceStateChange", this.iceStateChangeHandler);
             this.off("connect", this.connectHandler);
             this.off("data", this.dataHandler);
             this.off("finish", this.finishHandler);
@@ -546,6 +605,7 @@ export class RemotePeer extends Peer implements Streamable {
             if (this.connectTimeout) {
                 clearTimeout(this.connectTimeout);
             }
+            this.clearIceRecoveryTimeouts();
             if (this.closeStreamableTimeout) {
                 clearTimeout(this.closeStreamableTimeout);
             }
