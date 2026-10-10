@@ -1,6 +1,6 @@
 import { get } from "svelte/store";
 import type { UserInputManager } from "../Phaser/UserInput/UserInputManager";
-import { localStreamStore } from "../Stores/MediaStore";
+import { localStreamStore, rawLocalStreamStore } from "../Stores/MediaStore";
 import { screenSharingLocalStreamStore } from "../Stores/ScreenSharingStore";
 import { showHelpCameraSettings } from "../Stores/HelpSettingsStore";
 import {
@@ -15,6 +15,7 @@ import { localeDetector } from "../Utils/locales";
 import { notificationPlayingStore } from "../Stores/NotificationStore";
 import { LL } from "../../i18n/i18n-svelte";
 import infoIcon from "../Components/images/info.svg";
+import { watchCameraForStalls } from "./CameraStallDetector";
 
 export type StartScreenSharingCallback = (media: MediaStream) => void;
 export type StopScreenSharingCallback = (media: MediaStream) => void;
@@ -23,6 +24,8 @@ export class MediaManager {
     private userInputManager?: UserInputManager;
 
     constructor() {
+        // A singleton: never stopped
+        watchCameraForStalls(rawLocalStreamStore);
         localeDetector()
             .catch((e) => {
                 console.error("Cannot load locale on media manager", e);
