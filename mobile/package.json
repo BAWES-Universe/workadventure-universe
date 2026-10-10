@@ -12,13 +12,14 @@
     "doctor": "cap doctor"
   },
   "dependencies": {
-    "@capacitor/core": "^8.3.4",
-    "@capacitor/push-notifications": "^8.3.4",
-    "@capacitor/splash-screen": "^8.3.4"
+    "@capacitor/core": "8.3.4",
+    "@capacitor/push-notifications": "8.1.1",
+    "@capacitor/splash-screen": "8.0.1"
   },
   "devDependencies": {
-    "@capacitor/android": "^8.3.4",
-    "@capacitor/cli": "^8.3.4",
-    "@capacitor/ios": "^8.3.4"
+    "@capacitor/android": "8.3.4",
+    "@capacitor/cli": "8.3.4",
+    "@capacitor/ios": "8.3.4",
+    "typescript": "6.0.3"
   }
 }
