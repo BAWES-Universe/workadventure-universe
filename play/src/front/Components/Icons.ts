@@ -14,6 +14,7 @@ export { default as IconChevronRight } from "~icons/tabler/chevron-right";
 export { default as IconFileDownload } from "~icons/tabler/file-download";
 export { default as IconSquarePlus } from "~icons/tabler/square-plus";
 export { default as IconArrowLeft } from "~icons/tabler/arrow-left";
+export { default as IconLogin } from "~icons/tabler/login";
 export { default as IconArrowBackUp } from "~icons/tabler/arrow-back-up";
 export { default as IconArrowDown } from "~icons/tabler/arrow-down";
 export { default as IconArrowUp } from "~icons/tabler/arrow-up";
