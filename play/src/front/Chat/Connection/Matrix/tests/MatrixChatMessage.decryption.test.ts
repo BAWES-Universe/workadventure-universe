@@ -53,6 +53,53 @@ function fakeRoom(): Room {
 }
 
 describe("MatrixChatMessage decrypted after it is shown", () => {
+    it.each([
+        ["m.image", "photo.png", "image/png", "image"],
+        ["m.audio", "recording.wav", "audio/wav", "audio"],
+        ["m.video", "clip.mp4", "video/mp4", "video"],
+    ])("preserves the card for %s with and without MIME metadata", (msgtype, body, mimetype, type) => {
+        for (const info of [{ mimetype }, undefined]) {
+            const { event, decrypt } = fakeEncryptedEvent();
+            decrypt({ msgtype, body, info, url: "mxc://matrix.test/media" });
+            expect(new MatrixChatMessage(event, fakeRoom()).type).toBe(type);
+        }
+    });
+
+    it("shows an SVG without MIME metadata as a download instead of a broken image", () => {
+        const { event, decrypt } = fakeEncryptedEvent();
+        decrypt({ msgtype: "m.image", body: "logo.svg", url: "mxc://matrix.test/svg" });
+        const message = new MatrixChatMessage(event, fakeRoom());
+        expect(message.type).toBe("file");
+        expect(get(message.content).filename).toBe("logo.svg");
+    });
+
+    it.each(["m.image", "m.audio", "m.video"])(
+        "shows active documents sent as %s as named downloads",
+        async (msgtype) => {
+            const { event, decrypt } = fakeEncryptedEvent();
+            const message = new MatrixChatMessage(event, fakeRoom());
+            const unsubscribe = message.content.subscribe(() => {});
+            const file = { url: "mxc://matrix.test/document", key: { k: "AQID" }, iv: "AA" };
+
+            decrypt({
+                msgtype,
+                body: "A caption",
+                filename: "document.svg",
+                info: { mimetype: "image/svg+xml" },
+                file,
+            });
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(message.type).toBe("file");
+            expect(get(message.content).filename).toBe("document.svg");
+            expect(get(message.content).body).toBe("A caption");
+            expect(get(message.content).url).toBe("blob:https://play.test/image");
+            expect(holdMatrixMedia).toHaveBeenCalledWith(expect.anything(), file, "image/svg+xml");
+            unsubscribe();
+        }
+    );
+
     it("becomes an image and loads it once decrypted", async () => {
         const { event, decrypt } = fakeEncryptedEvent();
         const message = new MatrixChatMessage(event, fakeRoom());
