@@ -361,6 +361,11 @@ export class GameScene extends DirtyScene {
     private mapEditorModeManager!: MapEditorModeManager;
     private entitiesCollectionsManager!: EntitiesCollectionsManager;
     private pathfindingManager!: PathfindingManager;
+    private pendingMoveTo?: {
+        position: { x: number; y: number };
+        speed: number | undefined;
+        tryFindingNearestAvailable: boolean;
+    };
     private activatablesManager!: ActivatablesManager;
     private preloading = true;
     private startPositionCalculator!: StartPositionCalculator;
@@ -1383,6 +1388,7 @@ export class GameScene extends DirtyScene {
         this.emoteManager?.destroy();
         this.cameraManager?.destroy();
         this.mapEditorModeManager?.destroy();
+        this.pendingMoveTo = undefined;
         this.pathfindingManager?.cleanup();
         // A broadcast you were giving ends with the scene: pill, ring and megaphone state all go.
         endLiveBroadcast();
@@ -3723,23 +3729,34 @@ ${escapedMessage}
     }
 
     /**
-     * Walk the player to position x,y expressed in Game pixels.
+     * Walk the player to a floor/click position in game pixels (before the Player's collider offset).
      */
     public async moveTo(
         position: { x: number; y: number },
         tryFindingNearestAvailable = false,
         speed: number | undefined = undefined
     ): Promise<{ x: number; y: number; cancelled: boolean }> {
-        const path = await this.getPathfindingManager().findPathFromGameCoordinates(
-            {
-                x: this.CurrentPlayer.x,
-                y: this.CurrentPlayer.y,
-            },
-            position,
-            tryFindingNearestAvailable
-        );
-        if (path.length === 0) throw new Error("No path found");
-        return this.CurrentPlayer.setPathToFollow(path, speed ?? this.CurrentPlayer.walkingSpeed);
+        const request = { position: { ...position }, speed, tryFindingNearestAvailable };
+        this.pendingMoveTo = request;
+        try {
+            const path = await this.getPathfindingManager().findPathFromGameCoordinates(
+                {
+                    x: this.CurrentPlayer.x,
+                    y: this.CurrentPlayer.y,
+                },
+                request.position,
+                tryFindingNearestAvailable
+            );
+            if (this.pendingMoveTo !== request) {
+                return { x: this.CurrentPlayer.x, y: this.CurrentPlayer.y, cancelled: true };
+            }
+            if (path.length === 0) throw new Error("No path found");
+            return this.CurrentPlayer.setPathToFollow(path, speed ?? this.CurrentPlayer.walkingSpeed);
+        } finally {
+            if (this.pendingMoveTo === request) {
+                this.pendingMoveTo = undefined;
+            }
+        }
     }
 
     /**
@@ -4067,7 +4084,15 @@ ${escapedMessage}
             .subscribe((collisionGrid) => {
                 this.pathfindingManager.setCollisionGrid(collisionGrid);
                 this.markDirty();
-                const playerDestination = this.CurrentPlayer.getCurrentPathDestinationPoint();
+                // A newer click may still be calculating while the previous path is being followed.
+                const pendingMove = this.pendingMoveTo;
+                if (pendingMove) {
+                    this.moveTo(pendingMove.position, pendingMove.tryFindingNearestAvailable, pendingMove.speed).catch(
+                        (reason) => console.warn(reason)
+                    );
+                    return;
+                }
+                const playerDestination = this.CurrentPlayer.getCurrentPathDestinationPoint("floor");
                 if (playerDestination) {
                     this.moveTo(playerDestination, true).catch((reason) => console.warn(reason));
                 }
