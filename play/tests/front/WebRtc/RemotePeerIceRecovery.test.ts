@@ -140,6 +140,20 @@ describe("RemotePeer ICE recovery", () => {
         expect(get(peer.statusStore)).toBe("connected");
     });
 
+    it("keeps saying reconnecting while the ICE restart runs, not an error after 5 seconds", () => {
+        const { peer, pc } = createPeer(true);
+
+        iceState(peer, pc, "disconnected");
+        vi.advanceTimersByTime(3_000);
+        // The ICE restart gathers and sends new candidates, and the network takes a while to come back
+        peer.emit("signal", { type: "candidate", candidate: {} });
+        vi.advanceTimersByTime(6_000);
+        expect(get(peer.statusStore)).toBe("connecting");
+
+        vi.advanceTimersByTime(6_000);
+        expect(get(peer.statusStore)).toBe("error");
+    });
+
     it("shows an error when the connection does not come back", () => {
         const { peer, pc } = createPeer(true);
 

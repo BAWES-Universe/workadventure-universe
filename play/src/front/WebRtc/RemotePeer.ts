@@ -88,7 +88,8 @@ export class RemotePeer extends Peer implements Streamable {
         const ZodCandidate = z.object({
             type: z.literal("candidate"),
         });
-        if (ZodCandidate.safeParse(data).success && get(this._statusStore) === "connecting") {
+        // Once connected, an ICE restart sends candidates too: its own recovery timer covers it (iceStateChangeHandler)
+        if (ZodCandidate.safeParse(data).success && get(this._statusStore) === "connecting" && !this._connected) {
             // If the signal is a candidate, we set a connection timer
             if (this.connectTimeout) {
                 clearTimeout(this.connectTimeout);
