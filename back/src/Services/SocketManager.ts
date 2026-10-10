@@ -79,6 +79,7 @@ import { clientEventsEmitter } from "./ClientEventsEmitter";
 import { getMapStorageClient } from "./MapStorageClient";
 import { emitError } from "./MessageHelpers";
 import { cpuTracker } from "./CpuTracker";
+import { isValidEmote } from "./EmoteValidator";
 
 const debug = Debug("socketmanager");
 
@@ -1175,6 +1176,10 @@ export class SocketManager {
     }
 
     handleEmoteEventMessage(room: GameRoom, user: User, emotePromptMessage: EmotePromptMessage) {
+        if (!isValidEmote(emotePromptMessage.emote)) {
+            debug("Invalid emote received. Dropping message.");
+            return;
+        }
         room.emitEmoteEvent(user, {
             emote: emotePromptMessage.emote,
             actorUserId: user.id,

@@ -1,6 +1,7 @@
 import { get } from "svelte/store";
 import { marked } from "marked";
 import LL from "../../../i18n/i18n-svelte";
+import { sanitizeHtml } from "../../Utils/HtmlSanitizer";
 
 export class SpeechDomElement extends Phaser.GameObjects.DOMElement {
     private timeoutDestroyText: NodeJS.Timeout | null = null;
@@ -42,18 +43,27 @@ export class SpeechDomElement extends Phaser.GameObjects.DOMElement {
         svg.appendChild(textElement);
 
         // Create span element
-        const textTransformed = text.replace(get(LL).trigger.spaceKeyboard(), svg.outerHTML);
-        const textMarked = marked.parse(textTransformed);
+        // Map-authored raw HTML is displayed literally; Markdown formatting still works.
+        // Use a local renderer so other Markdown consumers are not affected.
+        const renderer = new marked.Renderer();
+        renderer.html = (html) => {
+            const escaped = document.createElement("span");
+            escaped.textContent = html;
+            return escaped.innerHTML;
+        };
+        const textMarked = marked.parse(text, { renderer });
+        const renderText = (html: string) =>
+            sanitizeHtml(html.replace(get(LL).trigger.spaceKeyboard(), () => svg.outerHTML));
         const span = document.createElement("span");
 
         if (textMarked instanceof Promise) {
             textMarked
                 .then((resolvedText) => {
-                    span.innerHTML = resolvedText;
+                    span.innerHTML = renderText(resolvedText);
                 })
                 .catch((e) => console.error(e));
         } else {
-            span.innerHTML = textMarked;
+            span.innerHTML = renderText(textMarked);
         }
         span.id = `spanText-${id}`;
         span.classList.add("characterTriggerAction");
