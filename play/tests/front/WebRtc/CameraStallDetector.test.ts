@@ -165,6 +165,28 @@ describe("watchCameraForStalls", () => {
         stop();
     });
 
+    it("does not take a phone app in the background for a frozen camera", () => {
+        const camera = fakeCameraTrack();
+        const stop = watchCameraForStalls(writable(streamWith(camera)));
+        for (let i = 0; i < 5; i++) {
+            camera.stats.totalFrames += 30;
+            vi.advanceTimersByTime(1000);
+        }
+
+        // The phone stops the camera while the app is in the background
+        const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+        vi.advanceTimersByTime(20_000);
+        visibility.mockRestore();
+        // Back in the foreground, the camera starts delivering again
+        for (let i = 0; i < 10; i++) {
+            camera.stats.totalFrames += 30;
+            vi.advanceTimersByTime(1000);
+        }
+
+        expect(requestedCameraState.disableWebcam).not.toHaveBeenCalled();
+        stop();
+    });
+
     it("does nothing while the camera is off", () => {
         const stop = watchCameraForStalls(writable(streamWith(undefined)));
 

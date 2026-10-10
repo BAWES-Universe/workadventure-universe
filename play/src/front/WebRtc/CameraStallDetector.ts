@@ -131,6 +131,11 @@ export function watchCameraForStalls(rawLocalStreamStore: Readable<LocalStreamSt
     let restarting = false;
 
     const tick = () => {
+        if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+            // A phone stops the camera while the app is in the background: not a frozen camera. Start afresh on return.
+            detector.sample(undefined);
+            return;
+        }
         const action = detector.sample(readCameraFrames(get(rawLocalStreamStore)));
         if (action === "restart") {
             console.warn("The camera has delivered no frame for 3 seconds: asking for it again");
