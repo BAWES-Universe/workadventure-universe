@@ -1,8 +1,16 @@
-name: Push @workadventure/iframe-api-typings to NPM
+name: Push @BAWES-Universe/iframe-api-typings to NPM
 on:
   release:
     types: [created]
   push:
+    branches:
+      - universe
+      - master
+    paths:
+      - 'play/src/iframe_api.ts'
+      - 'play/packages/iframe-api-typings/**'
+      - 'play/tsconfig-for-iframe-api-typings.json'
+      - '.github/workflows/iframe-api-push-to-npm.yml'
 
 permissions:
   id-token: write
@@ -16,7 +24,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
       # Setup .npmrc file to publish to npm
       - uses: actions/setup-node@v6
@@ -39,7 +47,7 @@ jobs:
           version: '3.x'
 
       - name: "Install dependencies"
-        run: npm ci #--workspace=workadventure-play
+        run: npm ci
 
       - name: "Install messages dependencies"
         run: npm ci
@@ -60,12 +68,14 @@ jobs:
           ADMIN_URL: "//localhost:80"
         working-directory: "play"
 
-#      - name: Install dependencies in package
-#        run: npm ci
-#        working-directory: "play/packages/iframe-api-typings"
-#        if: ${{ github.event_name == 'release' }}
+      - name: "Verify API surface"
+        run: |
+          grep -q "WorkAdventureApi" play/packages/iframe-api-typings/play/src/iframe_api.d.ts || \
+            (echo "ERROR: WorkAdventureApi missing from generated types" && exit 1)
 
       - name: Publish package
         run: npm publish
         working-directory: "play/packages/iframe-api-typings"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         if: ${{ github.event_name == 'release' }}
