@@ -16,6 +16,12 @@
     const KIND_ORDER: MediaDeviceKind[] = ["videoinput", "audioinput", "audiooutput"];
     $: kinds = KIND_ORDER.filter((kind) => offer.devices.some((device) => device.kind === kind));
     let unticked = new Set<MediaDeviceKind>();
+    // A newer offer replaces this card in place: it starts again with every kind ticked.
+    let tickedFor: NewDeviceOffer | undefined;
+    $: if (offer !== tickedFor) {
+        tickedFor = offer;
+        unticked = new Set();
+    }
     $: ticked = kinds.filter((kind) => !unticked.has(kind));
 
     function toggle(kind: MediaDeviceKind) {
