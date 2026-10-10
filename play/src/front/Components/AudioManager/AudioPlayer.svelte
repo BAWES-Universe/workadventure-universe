@@ -98,7 +98,7 @@
                 // Never overlap legacy and graph output; source metadata chooses one backend atomically.
                 player.destroy();
                 lastState = undefined;
-                player = spatial ? new NativeSoundscape({ audioContainer, onPlayerState: onState }) : legacy();
+                player = spatial ? new NativeSoundscape({ audioContainer, onPlayerState: onState, onEnded }) : legacy();
                 player.setControls(get(audioManagerVolumeStore));
             }
             if (player instanceof NativeSoundscape) {

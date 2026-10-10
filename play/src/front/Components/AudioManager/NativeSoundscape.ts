@@ -12,6 +12,8 @@ export type State = "loading" | "playing" | "not_allowed" | "error" | undefined;
 export interface Dependencies {
     audioContainer: HTMLElement;
     onPlayerState?: (state: State) => void;
+    /** Called once when a non-looping track has ended and no ambience is left, as the legacy player does. */
+    onEnded?: () => void;
     createContext?: () => AudioContext;
     createAudio?: () => HTMLAudioElement;
     onState?: (channel: Channel, state: State) => void;
@@ -71,6 +73,9 @@ export class NativeSoundscape {
     private readonly actualElements = new WeakMap<HTMLAudioElement, HTMLAudioElement>();
     private hasMusic = false;
     private hasEmitter = false;
+    private musicUrl?: string;
+    private musicEnded = false;
+    private endedNotified = false;
     private controls: AudioControls = {
         volume: 1,
         muted: false,
@@ -80,12 +85,14 @@ export class NativeSoundscape {
         decreaseWhileTalking: true,
     };
     private readonly onPlayerState: (state: State) => void;
+    private readonly onEnded: () => void;
 
     /** Compose existing music/ambience players; the component retains ownership of real DOM media. */
     constructor(dependencies: Dependencies) {
         this.createContext = dependencies.createContext ?? (() => new AudioContext());
         this.createAudio = dependencies.createAudio ?? (() => new Audio());
         this.onPlayerState = dependencies.onPlayerState ?? (() => {});
+        this.onEnded = dependencies.onEnded ?? (() => {});
         this.onState = (channel, state) => {
             this.channelStates[channel] = state;
             dependencies.onState?.(channel, state);
@@ -111,6 +118,8 @@ export class NativeSoundscape {
             (state) => this.onState("music", state),
             () => {
                 this.hasMusic = false;
+                this.musicEnded = true;
+                this.endIfSilent();
                 this.publishState();
             },
             () => this.createGraphMedia(),
@@ -138,7 +147,13 @@ export class NativeSoundscape {
     /** Select music through AudioPlayback; report invalid input as native error, never subscriber exceptions. */
     setMusic(source: AudioSource | undefined): void {
         if (this.destroyed) return;
-        this.hasMusic = !!source;
+        // A same-track update after a non-looping track ended keeps it ended, as AudioPlayback does.
+        if (source?.url !== this.musicUrl) {
+            this.musicEnded = false;
+            this.endedNotified = false;
+        }
+        this.musicUrl = source?.url;
+        this.hasMusic = !!source && !this.musicEnded;
         try {
             if (source) validateSource(source);
             this.music.setSource(source);
@@ -165,6 +180,7 @@ export class NativeSoundscape {
             this.water.setSource(undefined);
             this.onState("water", "error");
         }
+        this.endIfSilent();
         this.publishState();
     }
 
@@ -227,6 +243,13 @@ export class NativeSoundscape {
         }
         this.context = undefined;
         this.onState("context", undefined);
+    }
+
+    /** Hide the native controls once the music has ended and no ambience keeps playing. */
+    private endIfSilent(): void {
+        if (!this.musicEnded || this.hasEmitter || this.endedNotified) return;
+        this.endedNotified = true;
+        this.onEnded();
     }
 
     /** Aggregate active-channel failures and autoplay state for the one existing native audio UI. */

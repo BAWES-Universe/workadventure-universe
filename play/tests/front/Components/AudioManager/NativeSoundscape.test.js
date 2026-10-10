@@ -127,6 +127,7 @@ function harness(options = {}) {
     const player = new NativeSoundscape({
         audioContainer: container,
         onPlayerState: (state) => aggregate.push(state),
+        onEnded: options.onEnded,
         createContext: () => {
             contexts.push(context);
             return context;
@@ -424,6 +425,44 @@ test("music completion leaves looping water represented as playing", async () =>
     await settle();
     h.media[0].onended();
     assert.equal(h.aggregate.at(-1), "playing");
+    h.player.destroy();
+});
+test("a non-looping track that ends hides the controls only once no ambience is left", async () => {
+    let ended = 0;
+    const h = harness({ running: true, onEnded: () => ended++ });
+    h.player.setListenerPosition(0, 0);
+    h.player.setMusic({ ...music, loop: false });
+    h.player.setEmitter(emitter);
+    await settle();
+    h.media[0].onended();
+    // The ambience still loops, so its controls stay.
+    assert.equal(ended, 0);
+    assert.equal(h.aggregate.at(-1), "playing");
+    h.player.setMusic({ ...music, loop: false });
+    h.player.setEmitter(undefined);
+    assert.equal(ended, 1);
+    assert.equal(h.aggregate.at(-1), undefined);
+    // A same-track update afterwards neither restarts it nor ends it twice.
+    h.player.setMusic({ ...music, loop: false });
+    await settle();
+    assert.equal(ended, 1);
+    assert.equal(h.media[0].playCalls, 1);
+    assert.equal(h.aggregate.at(-1), undefined);
+    // A new track starts normally.
+    h.player.setMusic({ ...music, url: "https://assets.example/second.mp3" });
+    await settle();
+    assert.equal(h.aggregate.at(-1), "playing");
+    h.player.destroy();
+});
+test("a non-looping track without ambience hides the controls when it ends", async () => {
+    let ended = 0;
+    const h = harness({ running: true, onEnded: () => ended++ });
+    h.player.setListenerPosition(0, 0);
+    h.player.setMusic({ ...music, loop: false });
+    await settle();
+    h.media[0].onended();
+    assert.equal(ended, 1);
+    assert.equal(h.aggregate.at(-1), undefined);
     h.player.destroy();
 });
 test("interrupted music fade returning to the outgoing track preserves its timestamp and max three nodes", async () => {
