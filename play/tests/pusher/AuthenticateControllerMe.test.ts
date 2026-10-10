@@ -130,3 +130,34 @@ describe("GET /me and the chat ID", () => {
         expect(fetchMemberDataByUuid.mock.calls[0][8]).toBeUndefined();
     });
 });
+
+describe("GET /me and a guest's saved name", () => {
+    beforeEach(() => {
+        vi.resetAllMocks();
+        fetchMemberDataByUuid.mockResolvedValue({
+            status: "ok",
+            userUuid: "u",
+            isCharacterTexturesValid: true,
+            isCompanionTextureValid: true,
+        });
+        checkTokenAuth.mockResolvedValue({});
+    });
+
+    it("passes the name a guest saved on to Orbit", async () => {
+        verifyJWTToken.mockReturnValue({ identifier: "u" });
+        await callMe({ token: "game-token", playUri, name: "  Nova  " });
+        expect(fetchMemberDataByUuid.mock.calls[0][9]).toBe("Nova");
+    });
+
+    it("sends no name when the browser has none saved", async () => {
+        verifyJWTToken.mockReturnValue({ identifier: "u" });
+        await callMe({ token: "game-token", playUri });
+        expect(fetchMemberDataByUuid.mock.calls[0][9]).toBeUndefined();
+    });
+
+    it("does not pass a name for someone signed in", async () => {
+        verifyJWTToken.mockReturnValue({ identifier: "u", accessToken: "access" });
+        await callMe({ token: "game-token", playUri, name: "Nova" });
+        expect(fetchMemberDataByUuid.mock.calls[0][9]).toBeUndefined();
+    });
+});
