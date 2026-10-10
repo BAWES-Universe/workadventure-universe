@@ -23,6 +23,7 @@
     import { proximityMeetingStore } from "../Stores/MyMediaStore";
     import { notificationPlayingStore } from "../Stores/NotificationStore";
     import { popupStore } from "../Stores/PopupStore";
+    import { NEW_DEVICE_POPUP_ID } from "../Stores/NewDeviceStore";
     import {
         mapEditorAskToClaimPersonalAreaStore,
         mapEditorToolbarInUseStore,
@@ -130,7 +131,7 @@
     // Otherwise the chat and the window take turns where they overlap: the one opened or clicked last is in front.
     $: windowOverChat = $modalVisibilityStore && $chatVisibilityStore && $windowInFrontStore === "window";
     // On a phone the chat is a sheet over the game: a card that asks something of you (a person's card, Block or
-    // report, a follow request, a ring) comes in front of it, as it showed beside the chat before the sheet.
+    // report, a follow request, a new device, a ring) comes in front of it, as it showed beside the chat before the sheet.
     $: cardOverChatSheet =
         $chatVisibilityStore &&
         $chatSheetLayoutStore &&
@@ -138,7 +139,7 @@
             $wokaMenuStore !== undefined ||
             $actionsMenuStore !== undefined ||
             $showReportScreenStore !== userReportEmpty ||
-            $popupStore.some((popup) => popup.uuid === "popupFollow") ||
+            $popupStore.some((popup) => popup.uuid === "popupFollow" || popup.uuid === NEW_DEVICE_POPUP_ID) ||
             $incomingRingStore !== undefined);
     $: inFrontOfChat = windowMaximised || windowOverChat || cardOverChatSheet;
 </script>

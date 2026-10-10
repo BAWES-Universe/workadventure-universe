@@ -20,6 +20,7 @@
     import { isInRemoteConversation } from "../../Stores/StreamableCollectionStore";
     import { mobileLayoutStore } from "../../Stores/MobileLayoutStore";
     import { chatSheetLayoutStore } from "../../Chat/ChatSheetStore";
+    import { deviceListOpenRequestStore } from "../../Stores/NewDeviceStore";
     import MediaSettingsList from "./MediaSettingsList.svelte";
     import CameraMenuItem from "./MenuIcons/CameraMenuItem.svelte";
     import MicrophoneMenuItem from "./MenuIcons/MicrophoneMenuItem.svelte";
@@ -47,6 +48,12 @@
     // On a phone held upright the chat rises from the bottom, so its button can sit under the right thumb, below
     // Express; the menu takes the bottom left corner. (While the chat is open the bar is hidden.)
     $: swapped = $chatSheetLayoutStore;
+
+    // "Choose device" on the new device card opens the list.
+    $: if ($deviceListOpenRequestStore) {
+        mediaSettingsDisplayed = true;
+        deviceListOpenRequestStore.set(false);
+    }
 
     let firstVisibleItemIndex = 0;
 
