@@ -166,11 +166,23 @@ export class MatrixDmBridge implements MatrixEventHandler {
         return false;
     }
 
-    private async sendNote(botId: string, roomId: string, state: BotNoteState, language: NoteLanguage, config?: BotConfiguration | null): Promise<void> {
+    /** Returns whether the note reached the chat. */
+    private async sendNote(botId: string, roomId: string, state: BotNoteState, language: NoteLanguage, config?: BotConfiguration | null): Promise<boolean> {
         const content = statusNoteContent(state, language, await this.botName(botId, config));
-        await this.client.sendMessage(this.botUserId(botId), roomId, content).catch((error) =>
-            console.warn(`[MatrixDmBridge] Could not send a ${state} note in ${roomId}:`, error?.message ?? error)
+        return this.client.sendMessage(this.botUserId(botId), roomId, content).then(
+            () => true,
+            (error) => {
+                console.warn(`[MatrixDmBridge] Could not send a ${state} note in ${roomId}:`, error?.message ?? error);
+                return false;
+            }
         );
+    }
+
+    /** A note that repeats at most every few minutes per chat. Only a note that reached the chat starts the wait. */
+    private async sendNoteNowAndThen(botId: string, roomId: string, state: BotNoteState, language: NoteLanguage, config: BotConfiguration): Promise<void> {
+        const key = `${roomId}|${state}`;
+        if (this.recentlySent(this.lastNote, key, NOTE_REPEAT_MS)) return;
+        if (!(await this.sendNote(botId, roomId, state, language, config))) this.lastNote.delete(key);
     }
 
     private async rememberRoom(roomId: string, botId: string): Promise<void> {
@@ -272,10 +284,11 @@ export class MatrixDmBridge implements MatrixEventHandler {
         // People often type before the bot has joined. Synapse does not push those messages to a bot that was only
         // invited, so read them back and answer the ones that arrived since the invite.
         const missed = await this.client.getRecentMessages(botUserId, event.room_id, 20).catch(() => []);
-        const inviteTs = event.origin_server_ts ?? 0;
-        const earlier = missed.filter(
-            (message) => message.type === 'm.room.message' && message.sender === event.sender && (message.origin_server_ts ?? 0) >= inviteTs
-        );
+        const fromThem = missed.filter((message) => message.type === 'm.room.message' && message.sender === event.sender);
+        // Without the invite's time there is no telling which came after it, so only the latest gets an answer.
+        const inviteTs = event.origin_server_ts;
+        const earlier =
+            inviteTs === undefined ? fromThem.slice(-1) : fromThem.filter((message) => (message.origin_server_ts ?? 0) >= inviteTs);
 
         // Check after joining, so a ban that lands while the join is retried still applies.
         // When Orbit can't be asked right now the bot stays: each message checks again and gets "couldn't answer" until
@@ -355,7 +368,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
             }
             if (batch?.troubleSent) return;
             if (batch) batch.troubleSent = true;
-            await this.sendNote(botId, event.room_id, 'trouble', language, config);
+            const sent = await this.sendNote(botId, event.room_id, 'trouble', language, config);
+            // A note that didn't get through leaves the next message in the batch to try again.
+            if (!sent && batch) batch.troubleSent = false;
         };
 
         // Someone added a third person: the room is no longer a one-to-one chat, so the bot stays quiet.
@@ -397,9 +412,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
             return;
         }
         if (!access.allowed || !access.user) {
-            if (!catchUp && !this.recentlySent(this.lastNote, `${event.room_id}|no_access`, NOTE_REPEAT_MS)) {
-                await this.sendNote(botId, event.room_id, 'no_access', language, config);
-            }
+            if (!catchUp) await this.sendNoteNowAndThen(botId, event.room_id, 'no_access', language, config);
             return;
         }
         if (config.enabled === false) {
@@ -409,9 +422,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
             return;
         }
         if (!config.aiProviderRef) {
-            if (!catchUp && !this.recentlySent(this.lastNote, `${event.room_id}|unready`, NOTE_REPEAT_MS)) {
-                await this.sendNote(botId, event.room_id, 'unready', language, config);
-            }
+            if (!catchUp) await this.sendNoteNowAndThen(botId, event.room_id, 'unready', language, config);
             return;
         }
 
@@ -503,9 +514,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
             // Only a line that reached the chat starts the quiet spell, so an empty or failed one is tried on the next message.
             if (!sent) this.lastRestingLine.delete(roomId);
         }
-        if (!this.recentlySent(this.lastNote, `${roomId}|resting`, NOTE_REPEAT_MS)) {
-            await this.sendNote(botId, roomId, 'resting', language, config);
-        }
+        await this.sendNoteNowAndThen(botId, roomId, 'resting', language, config);
     }
 
     /** Keep the latest message in this chat for the bot to answer once it is back on. `attempts` counts failed answers. */

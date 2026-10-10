@@ -144,6 +144,16 @@ describe('MatrixDmBridge', () => {
         expect(deps.reply.mock.calls[0][2]).toBe('are you there?');
     });
 
+    it('answers only the latest early message when the invite has no time to compare against', async () => {
+        client.getRecentMessages.mockResolvedValueOnce([
+            { ...message('old question'), origin_server_ts: 1000 },
+            { ...message('are you there?'), origin_server_ts: 2000 },
+        ]);
+        await bridge.onEvent(invite());
+        expect(deps.reply).toHaveBeenCalledTimes(1);
+        expect(deps.reply.mock.calls[0][2]).toBe('are you there?');
+    });
+
     it('sends what the bot says before a tool call as its own message', async () => {
         deps.reply.mockImplementationOnce(async (_b: string, _p: unknown, _t: string, _a: unknown, hooks: any) => {
             await hooks.onInterimMessage('Let me look.');
@@ -321,6 +331,19 @@ describe('MatrixDmBridge', () => {
         await bridge.onEvent(message('Still there?'));
         expect(deps.restingLine).toHaveBeenCalledTimes(3);
         expect(noteStates()).toEqual(['resting']);
+    });
+
+    it('sends the resting note again on the next message when it did not get through', async () => {
+        await bridge.onEvent(invite());
+        deps.getBotConfig.mockResolvedValue(resting as never);
+        client.sendMessage.mockRejectedValueOnce(new Error('Synapse is busy'));
+        await bridge.onEvent(message('Are you around?'));
+        await bridge.onEvent(message('Hello?'));
+        expect(noteStates()).toEqual(['resting', 'resting']);
+
+        // Once it got through, it waits before saying it again.
+        await bridge.onEvent(message('Hello??'));
+        expect(noteStates()).toEqual(['resting', 'resting']);
     });
 
     it('drops waiting messages older than a day, and checks with a fresh config', async () => {
