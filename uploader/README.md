@@ -5,6 +5,30 @@ It is currently used by administrators of maps to send sounds/recordings to ever
 
 To support chat uploads, you need to configure one of the storage providers. There are two supported providers, S3 and Redis.
 
+## Browser safety of uploaded files
+
+Images (including SVG), audio and video keep their chat previews. SVG is served with its image type so `<img>` previews
+still work, but with `Content-Disposition: attachment` so opening the link downloads it rather than running a standalone
+SVG document. Browsers disable script in SVG loaded as an image; the uploader's sandboxed CSP also blocks script.
+Other files remain shareable, but are served as `application/octet-stream` with `Content-Disposition: attachment`.
+The type comes from a sanitized filename extension, never the multipart content type supplied by the client.
+Uploader responses also send `X-Content-Type-Options: nosniff` and a sandboxed Content Security Policy.
+
+S3 uploads store the same safe type and disposition, including in the user-reference and bot-generation CDN buckets.
+Presigned downloads override both headers so that old objects downloaded through a newly generated signed link are safe too.
+S3's response-override API cannot set CSP or `nosniff`: configure those headers on your CDN if public URLs are enabled.
+
+**Existing public objects:** this code does not rewrite old S3 metadata or cached public CDN responses. Before release,
+audit existing HTML/SVG and other non-media objects, give SVG an image type with attachment disposition and other
+non-media files the binary download type with attachment disposition, and purge cached responses (or disable public access).
+Old direct public links and already-issued
+signed URLs cannot be repaired by an uploader deployment alone. Normal inline media needs no migration.
+
+To check SVG previews and HTML/SVG downloads in a browser without a game stack, install the uploader and e2e-test
+dependencies, install Playwright's browser, then run `node uploader/tests/browser/verify-file-serving.cjs` from the
+repository root. `BROWSER=firefox` or `BROWSER=webkit` selects another installed engine. This uses synthetic files and
+an isolated local server, checks both uploader headers and public-CDN metadata, and does not contact a live bucket.
+
 ## S3 Storage
 
 When using S3 Storage, attachments will be links to uploader that will in turn generate S3 pre signed URLS

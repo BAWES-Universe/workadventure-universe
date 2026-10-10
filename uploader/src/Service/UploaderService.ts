@@ -5,6 +5,7 @@ import {storageProviderService, tempProviderService, getCdnProvider, isCdnConfig
 import {TempStorageProvider} from "./TempStorageProvider";
 import {TargetDevice} from "./TargetDevice";
 import {NullStorageProvider} from "./NullStorageProvider";
+import {mimeTypeManager} from "./MimeType";
 
 class UploaderService{
     constructor(
@@ -15,7 +16,8 @@ class UploaderService{
     }
 
     async uploadFile(fileName: string, chunks: Buffer, mimeType?: string, bucket?: string): Promise<string>{
-        const fileUuid = `${v4()}.${fileName.split('.').pop()}`;
+        const extension = mimeTypeManager.getExtensionByFileName(fileName);
+        const fileUuid = extension ? `${v4()}.${extension}` : v4();
 
         if (bucket) {
             // Route to CDN provider for specific bucket
