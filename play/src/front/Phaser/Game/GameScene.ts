@@ -59,6 +59,7 @@ import {
     WOKA_SPEED,
 } from "../../Enum/EnvironmentVariable";
 import { Room } from "../../Connection/Room";
+import { rememberRoomLeft } from "../../Connection/MembersOnlyExit";
 import { CharacterTextureError } from "../../Exception/CharacterTextureError";
 import { localUserStore } from "../../Connection/LocalUserStore";
 import { myHandRaisedStore, raisedHandsStore } from "../../Space/RaiseHand/RaiseHandStore";
@@ -1288,6 +1289,8 @@ export class GameScene extends DirtyScene {
         urlManager.pushStartLayerNameToUrl(roomUrl.hash);
 
         if (!targetRoom.isEqual(this._room)) {
+            // If the new room turns this player away (members only), the screen can send them back here.
+            rememberRoomLeft(this._room, targetRoom);
             if (this.scene.get(targetRoom.key) === null) {
                 console.error("next room not loaded", targetRoom.key);
                 // Try to load next game room from exit URL

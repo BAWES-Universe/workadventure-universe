@@ -3,6 +3,7 @@ import { tick } from "svelte";
 
 vi.mock("../../../Phaser/Game/GameManager", () => ({ gameManager: { currentStartedRoom: undefined } }));
 vi.mock("../../../Connection/ConnectionManager", () => ({ connectionManager: { logout: vi.fn() } }));
+vi.mock("../../../Connection/LocalUserStore", () => ({ localUserStore: { setLastRoomUrl: vi.fn() } }));
 vi.mock("../../../Stores/MenuStore", async () => {
     const { writable } = await import("svelte/store");
     return { userIsConnected: writable(false) };

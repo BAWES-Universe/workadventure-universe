@@ -24,6 +24,11 @@ const warning: BaseTranslation = {
         manual: "Refresh to load the latest version",
         refreshNow: "Refresh now",
     },
+    membersOnly: {
+        back: "Back to {room}",
+        backToLastRoom: "Back to the last room",
+        startRoom: "Go to the start room",
+    },
     waitingConnectionTitle: "Waiting for connection",
     waitingConnectionSubtitle: "Connecting",
     megaphoneNeeds: "To use the megaphone, you must activate your camera or your microphone or share your screen.",

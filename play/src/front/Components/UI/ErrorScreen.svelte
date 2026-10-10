@@ -13,6 +13,7 @@
     import LL from "../../../i18n/i18n-svelte";
 
     import LoaderIcon from "../Icons/LoaderIcon.svelte";
+    import { MEMBERS_ONLY_CODE, forgetDeniedRoom, membersOnlyExit } from "../../Connection/MembersOnlyExit";
     import { reconnectingCopy } from "../../Connection/ReconnectScreen";
     import {
         NEW_VERSION_CODE,
@@ -20,6 +21,7 @@
         canAutoReload,
         recordAutoReload,
     } from "../../Connection/NewVersionReload";
+    import { IconArrowLeft, IconLogin } from "@wa-icons";
 
     // Everything below follows the screen currently in the store: it can change while this screen is up (the
     // "Reconnecting" screen becomes "New version" when the server that answers the reconnect is newer).
@@ -40,6 +42,18 @@
     // When the image is the same picture as the logo shown above it, show it only once, as the logo.
     $: imageShown =
         !!imageErrorSrc && imageErrorSrc !== failedImageSrc && !(logoShown && imageErrorSrc === logoErrorSrc);
+
+    // Members only: a way out, back to the room the player came from or to the start room. The room that turned
+    // them away is not kept as their last room.
+    $: exit =
+        errorScreen?.type === "error" && errorScreen.code === MEMBERS_ONLY_CODE
+            ? membersOnlyExit(gameManager?.tryGetCurrentGameScene?.()?.room.key, window.location.href)
+            : undefined;
+    $: if (exit) forgetDeniedRoom(exit).catch((e) => console.error(e));
+
+    function leaveMembersOnly() {
+        if (exit) window.location.assign(exit.href);
+    }
 
     function click() {
         if (errorScreen?.type === "unauthorized") void connectionManager.logout();
@@ -219,6 +233,24 @@
                                     draggable="false"
                                 />{/if}
                             {$errorScreenStore.buttonTitle}
+                        </button>
+                    {/if}
+                    {#if exit}
+                        <button
+                            type="button"
+                            class="u-cta m-0 inline-flex h-11 min-w-[220px] items-center justify-center gap-2 rounded-full px-5 text-sm font-bold"
+                            data-testid="membersOnlyExitButton"
+                            on:click={leaveMembersOnly}
+                        >
+                            {#if exit.kind === "back"}
+                                <IconArrowLeft font-size="18" />
+                                {exit.name
+                                    ? $LL.warning.membersOnly.back({ room: exit.name })
+                                    : $LL.warning.membersOnly.backToLastRoom()}
+                            {:else}
+                                <IconLogin font-size="18" />
+                                {$LL.warning.membersOnly.startRoom()}
+                            {/if}
                         </button>
                     {/if}
                 </div>
