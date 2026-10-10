@@ -16,7 +16,7 @@ class UploaderService{
     }
 
     async uploadFile(fileName: string, chunks: Buffer, mimeType?: string, bucket?: string): Promise<string>{
-        const extension = mimeTypeManager.getExtensionByFileName(fileName);
+        const extension = mimeTypeManager.getStorageExtension(fileName, mimeType);
         const fileUuid = extension ? `${v4()}.${extension}` : v4();
 
         if (bucket) {

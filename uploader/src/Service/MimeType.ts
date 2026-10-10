@@ -12,6 +12,23 @@ class MimeTypeManager {
         return extension && EXTENSION_REGEXP.test(extension) ? extension : undefined;
     }
 
+    /**
+     * The extension to store a file under. A name without one (e.g. a bot's media fetched from "…/image?id=1") keeps its
+     * picture, audio or video type from the upload, so it is still served as that media rather than as a download.
+     */
+    getStorageExtension(name: string, uploadedMimeType: string | undefined): string | undefined {
+        const extension = this.getExtensionByFileName(name);
+        if (extension || !uploadedMimeType) {
+            return extension;
+        }
+        const type = uploadedMimeType.split(";")[0].trim().toLowerCase();
+        if (!/^(image|audio|video)\//.test(type)) {
+            return undefined;
+        }
+        const fromType = mime.extension(type);
+        return fromType && EXTENSION_REGEXP.test(fromType) ? fromType : undefined;
+    }
+
     getMimeTypeByFileName(name: string): string | false {
         const extension = this.getExtensionByFileName(name);
         if (!extension) {

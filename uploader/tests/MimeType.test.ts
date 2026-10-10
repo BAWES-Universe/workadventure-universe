@@ -27,4 +27,17 @@ describe("uploaded filename policy", () => {
         expect(mimeTypeManager.getSafeMimeTypeByFileName(`file.${extension}`)).toBe("image/svg+xml");
         expect(mimeTypeManager.getContentDispositionByFileName(`file.${extension}`)).toBe("attachment");
     });
+
+    it("gives a media upload without an extension the extension of its uploaded type", () => {
+        expect(mimeTypeManager.getStorageExtension("image", "image/png")).toBe("png");
+        expect(mimeTypeManager.getStorageExtension("clip", "video/mp4; codecs=avc1")).toBe("mp4");
+        expect(mimeTypeManager.getStorageExtension("photo.jpg", "image/png")).toBe("jpg");
+    });
+
+    it.each(["text/html", "application/xhtml+xml", "application/octet-stream", "image/x-unknown", undefined])(
+        "never takes a non-media extension from the uploaded type %s",
+        (type) => {
+            expect(mimeTypeManager.getStorageExtension("page", type)).toBeUndefined();
+        }
+    );
 });
