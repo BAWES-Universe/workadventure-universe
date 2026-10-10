@@ -99,6 +99,8 @@ const OrbitFriendPlaces = z.object({ places: z.record(z.string(), FriendPlace.nu
 export const OrbitFriendRelationship = z.object({
     // none | friends | request_sent | request_received | blocked_by_me | blocked_by_them
     relationship: z.string(),
+    // Both are members of one world. Missing from an Orbit that does not say yet.
+    sharedWorld: z.boolean().optional(),
     target: z.object({
         ringFrom: z.string(),
         friendsSeeLocation: z.boolean(),

@@ -18,6 +18,8 @@
     import { canOpenOrbit } from "../../../external-modules/admin-api/index";
     import { adminDashboardActivatedStore } from "../../../Stores/MenuStore";
     import { friendsEnabledStore, relationshipsStore } from "../../Stores/FriendsStore";
+    import { invitesEnabledStore, ringStore } from "../../Stores/RingStore";
+    import { blackListManager } from "../../../WebRtc/BlackListManager";
     import UserActionButton from "./UserActionButton.svelte";
     import ImageWithFallback from "./ImageWithFallback.svelte";
     import PersonActionButton from "./PersonActionButton.svelte";
@@ -41,6 +43,7 @@
         IconLoader,
         IconMapPin,
         IconMessage,
+        IconUsersPlus,
         IconUserCheck,
         IconWalk,
     } from "@wa-icons";
@@ -124,8 +127,29 @@
         $friendsEnabledStore && !isMe && !isMine && !user.isBot && user.uuid && user.chatId
             ? friendMenuAction(relationship, user.uuid, displayName, $LL)
             : undefined;
-    // A friend who is here can be rung over; Message then moves to ⋮ so the row keeps three buttons.
-    $: canRing = $friendsEnabledStore && isFriend && !isMe && !!user.uuid && !!$userStatus;
+    // A friend who is here can be invited over from the row; Message then moves to ⋮ so the row keeps three buttons.
+    $: canRing = $friendsEnabledStore && $invitesEnabledStore && isFriend && !isMe && !!user.uuid && !!$userStatus;
+    // Anyone else who is here, guests too, can be invited from ⋮, so Message stays in the row as it was.
+    $: menuInvite =
+        $invitesEnabledStore &&
+        !canRing &&
+        !isMe &&
+        !isMine &&
+        !user.isBot &&
+        !!user.uuid &&
+        !!$userStatus &&
+        !blackListManager.isBlackListed(user.uuid)
+            ? ([
+                  {
+                      label: $LL.chat.friends.ring.ring(),
+                      icon: IconUsersPlus,
+                      danger: false,
+                      act: () => {
+                          if (user.uuid) ringStore.ring(user.uuid, displayName).catch((e) => console.error(e));
+                      },
+                  },
+              ] satisfies FriendMenuAction[])
+            : [];
     $: menuMessage =
         canRing && actions.message !== "hidden"
             ? ([
@@ -138,7 +162,12 @@
               ] satisfies FriendMenuAction[])
             : [];
     $: hasMenu =
-        showLocateInMenu || actions.viewProfile || actions.ban || friendAction !== undefined || menuMessage.length > 0;
+        showLocateInMenu ||
+        actions.viewProfile ||
+        actions.ban ||
+        friendAction !== undefined ||
+        menuMessage.length > 0 ||
+        menuInvite.length > 0;
 
     function walkTo() {
         if (choosesSession) {
@@ -374,7 +403,7 @@
                         showViewProfile={actions.viewProfile}
                         showBan={actions.ban}
                         {friendAction}
-                        extraActions={menuMessage}
+                        extraActions={[...menuMessage, ...menuInvite]}
                     />
                 {/if}
             </div>

@@ -103,7 +103,7 @@ import {
     screenSharingActivatedStore,
 } from "../../Stores/MenuStore";
 import type { WasCameraUpdatedEvent } from "../../Api/Events/WasCameraUpdatedEvent";
-import { audioManagerFileStore, bubbleSoundStore } from "../../Stores/AudioManagerStore";
+import { audioManagerFileStore, bubbleSoundStore, nativeSoundscapeListenerStore } from "../../Stores/AudioManagerStore";
 import { bubbleMatesStore, currentPlayerGroupLockStateStore } from "../../Stores/CurrentPlayerGroupStore";
 import { errorScreenStore } from "../../Stores/ErrorScreenStore";
 import {
@@ -134,7 +134,7 @@ import { privacyShutdownStore } from "../../Stores/PrivacyShutdownStore";
 import { isLiveStreamingStore } from "../../Stores/IsStreamingStore";
 import { isAndroid, isIOS } from "../../WebRtc/DeviceUtils";
 import { StringUtils } from "../../Utils/StringUtils";
-import { groupMediaDevicesByLabel } from "../../Utils/NewMediaDevices";
+import { buildNewDeviceOffer, isIgnoredMediaDevice } from "../../Utils/NewMediaDevices";
 import { visibilityStore } from "../../Stores/VisibilityStore";
 
 import { SuperLoaderPlugin } from "../Services/SuperLoaderPlugin";
@@ -197,6 +197,8 @@ import type { UserProviderInterface } from "../../Chat/UserProvider/UserProvider
 import { registerAdditionalMenuItem, unregisterAdditionalMenuItem } from "../../Stores/AdditionalItemsMenuStore";
 import { popupStore } from "../../Stores/PopupStore";
 import PopUpRoomAccessDenied from "../../Components/PopUp/PopUpRoomAccessDenied.svelte";
+import PopUpNewDevice from "../../Components/PopUp/PopUpNewDevice.svelte";
+import { NEW_DEVICE_POPUP_ID } from "../../Stores/NewDeviceStore";
 import PopUpTriggerActionMessage from "../../Components/PopUp/PopUpTriggerActionMessage.svelte";
 import PopUpMapEditorNotEnabled from "../../Components/PopUp/PopUpMapEditorNotEnabled.svelte";
 import PopUpMapEditorShortcut from "../../Components/PopUp/PopUpMapEditorShortcut.svelte";
@@ -466,6 +468,25 @@ export class GameScene extends DirtyScene {
      * Joins one space per broadcast channel of this room (this room, this world, everywhere in the universe) and
      * leaves the ones that are gone, so a live broadcast on any reach that covers this room arrives here.
      */
+    /** Lets go of the meeting rooms and stages the server says this player may no longer be in. */
+    private leaveRefusedAreaSpaces(refusedAreaSpaces: string[]): void {
+        const registry = this._spaceRegistry;
+        if (!registry) {
+            return;
+        }
+        for (const name of refusedAreaSpaces) {
+            // The front joins a space under its name or under the slugified name
+            for (const candidate of new Set([name, slugify(name)])) {
+                if (!registry.exist(candidate)) {
+                    continue;
+                }
+                registry.leaveSpace(registry.get(candidate)).catch((e) => {
+                    console.warn(`Could not leave the space "${candidate}" this player may no longer be in`, e);
+                });
+            }
+        }
+    }
+
     private syncBroadcastSpaces(channels: { scope: string; url: string }[], broadcastService: BroadcastService): void {
         if (this.broadcastSceneClosing) {
             return;
@@ -1339,6 +1360,7 @@ export class GameScene extends DirtyScene {
         bubbleMatesStore.set([]);
 
         audioManagerFileStore.unloadAudio();
+        nativeSoundscapeListenerStore.set(undefined);
         // Area-leave handlers do not run when the scene closes: forget the areas the chat top row names.
         clearAreaPresence();
         // Nor does leaving a camera-locking area: end the lock and put the zoom back to what it was before it, or the
@@ -2023,7 +2045,7 @@ export class GameScene extends DirtyScene {
                 this.chatIdProofSent = undefined;
                 exploreStore.load(this.connection);
                 friendsStore.attach(this.connection, localUserStore.isLogged());
-                ringStore.attach(this.connection, localUserStore.isLogged());
+                ringStore.attach(this.connection);
 
                 // Initialize TURN credentials manager
                 iceServersManager.init(this.connection, this.abortController.signal);
@@ -2277,6 +2299,7 @@ export class GameScene extends DirtyScene {
 
                 userMessageManager.setReceiveBanListener(this.bannedUser.bind(this));
 
+                nativeSoundscapeListenerStore.set({ x: this.CurrentPlayer.x, y: this.CurrentPlayer.y });
                 this.CurrentPlayer.on(hasMovedEventName, (event: HasPlayerMovedInterface) => {
                     this.handleCurrentPlayerHasMovedEvent(event);
                 });
@@ -2363,6 +2386,9 @@ export class GameScene extends DirtyScene {
                               ]
                             : [];
                     megaphoneChannelsStore.set(channels);
+                    // A meeting room or stage that has just been limited to roles this player does not have: the
+                    // server has already taken them out of it, so this side lets go of it too.
+                    this.leaveRefusedAreaSpaces(megaphoneSettingsMessage.refusedAreaSpaces);
                     // Do not disturb: no broadcast reaches this player.
                     if (get(availabilityStatusStore) === AvailabilityStatus.DO_NOT_DISTURB) {
                         return;
@@ -2725,9 +2751,9 @@ export class GameScene extends DirtyScene {
     }
 
     /**
-     * Shows a single "New device detected" bubble for the devices waiting to be offered. With
-     * several new devices (a virtual audio app registers a handful at once), the bubble names the
-     * best one and says how many others there are; they stay available in the device settings.
+     * Shows the "New device detected" card for the devices waiting to be offered: Switch for one device (a headset
+     * is one device, as a microphone and a speaker), Choose device for several at once (a virtual audio app
+     * registers a handful), which opens the device list with the new ones tagged.
      */
     private offerPendingNewMediaDevices(): void {
         if (this.pendingNewMediaDevices.size === 0 || document.visibilityState !== "visible") return;
@@ -2738,51 +2764,18 @@ export class GameScene extends DirtyScene {
             get(requestedMicrophoneDeviceIdStore),
             get(speakerSelectedStore),
         ];
+        const ignoredDevices = localUserStore.getIgnoredNewMediaDevices();
         const devices = Array.from(this.pendingNewMediaDevices.values()).filter(
             (device) =>
                 presentDevices.some((present) => present.deviceId === device.deviceId) &&
-                !selectedDeviceIds.includes(device.deviceId)
+                !selectedDeviceIds.includes(device.deviceId) &&
+                !isIgnoredMediaDevice(device, ignoredDevices)
         );
         this.pendingNewMediaDevices.clear();
 
-        const groups = groupMediaDevicesByLabel(devices);
-        const firstGroup = groups.entries().next();
-        if (firstGroup.done) return;
-        const [label, devicesToUse] = firstGroup.value;
-        const otherCount = groups.size - 1;
-
-        const id = "playtext-mediadevice";
-        this.CurrentPlayer.playText(
-            id,
-            otherCount === 0
-                ? get(LL).camera.webrtc.newDeviceDetected({ device: label })
-                : get(LL).camera.webrtc.newDevicesDetected({ device: label, count: otherCount }),
-            5000,
-            () => {
-                this.CurrentPlayer.destroyText(id);
-
-                for (const deviceToUse of devicesToUse) {
-                    switch (deviceToUse.kind) {
-                        case "videoinput":
-                            requestedCameraDeviceIdStore.set(deviceToUse.deviceId);
-                            localUserStore.setPreferredVideoInputDevice(deviceToUse.deviceId);
-                            break;
-                        case "audioinput":
-                            requestedMicrophoneDeviceIdStore.set(deviceToUse.deviceId);
-                            localUserStore.setPreferredAudioInputDevice(deviceToUse.deviceId);
-                            break;
-                        case "audiooutput":
-                            localUserStore.setSpeakerDeviceId(deviceToUse.deviceId);
-                            speakerSelectedStore.set(deviceToUse.deviceId);
-                            break;
-                        default:
-                            console.warn("Unknown device kind: ", deviceToUse.kind);
-                    }
-                }
-            },
-            true,
-            "message"
-        );
+        const offer = buildNewDeviceOffer(devices);
+        if (offer === undefined) return;
+        popupStore.addPopup(PopUpNewDevice, { offer }, NEW_DEVICE_POPUP_ID);
     }
 
     private listenToIframeEvents(): void {
@@ -3843,7 +3836,9 @@ ${escapedMessage}
         }
     }
 
+    /** Update listener, map properties and nearby interactions for both walking and direct same-map teleports. */
     private handleCurrentPlayerHasMovedEvent(event: HasPlayerMovedInterface): void {
+        nativeSoundscapeListenerStore.set({ x: event.x, y: event.y });
         //listen event to share position of user
         this.pushPlayerPosition(event);
         this.gameMapFrontWrapper.setPosition(event.x, event.y);

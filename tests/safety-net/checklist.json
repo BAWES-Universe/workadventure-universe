@@ -1542,12 +1542,12 @@
       "area": "Bar, camera, calls and moving",
       "topic": "New device",
       "action": "Plug in a headset never used in this browser while in the room.",
-      "expected": "One bubble above your woka \"New device detected {device} 🎉 Switch? [SPACE]\" (or \"(+N more)\"); Space switches. A device used before is not offered again. Waits while the tab is hidden.",
+      "expected": "One \"New device detected\" card at the bottom: a headset shows Microphone and Speaker ticks and Switch (Enter); several at once (Sonar) show Choose device, which opens the device list with NEW tags. Not now (Esc), X and \"Don't ask\" close it; Space does nothing. A device used before is not offered again. Waits while the tab is hidden.",
       "source": "approved batch 1 #585 (merged in batch 1, approved 10-04 13:57)",
       "runs": "needs-device",
       "runsNote": "needs-device",
       "knownGap": false,
-      "hooks": "`Phaser/Game/GameScene.ts:2760-2761`, `Utils/NewMediaDevices.ts` (localStorage `knownMediaDevices`)"
+      "hooks": "`Phaser/Game/GameScene.ts` offerPendingNewMediaDevices, `Components/PopUp/PopUpNewDevice.svelte`, `Utils/NewMediaDevices.ts` (localStorage `knownMediaDevices`, `ignoredNewMediaDevices`)"
     },
     {
       "id": "AV-032",
@@ -3612,7 +3612,7 @@
       "area": "Chat",
       "topic": "DM menu",
       "action": "In a DM, open ⋮. Try Walk to, Locate, View profile, Mute notifications, Delete chat (Cancel, then Delete).",
-      "expected": "Walk to and Locate show only when usable: Locate is hidden in another room, and both are hidden when away, offline or talking with you. Mute toggles \"Unmute notifications\". Delete chat asks \"Delete this chat?\" with Cancel/Delete, then shows \"Chat deleted\".",
+      "expected": "Walk to and Locate show only when usable: Locate is hidden in another room, and both are hidden when away, offline or talking with you. View profile opens their profile in Orbit, whether they are in Universe or away (the chat's own profile page only for a bot). Mute toggles \"Unmute notifications\". Delete chat asks \"Delete this chat?\" with Cancel/Delete, then shows \"Chat deleted\".",
       "source": "approved DM v2 10-04",
       "runs": "needs-chat",
       "runsNote": "needs-chat",
@@ -6042,6 +6042,18 @@
       "runsNote": "yes",
       "knownGap": false,
       "hooks": "`broadcast-live-pill` stays visible"
+    },
+    {
+      "id": "BC-096",
+      "area": "Broadcasting",
+      "topic": "Stage/Audience",
+      "action": "A Stage limited to a role ('Who can enter'): a player without the role sends a join to the Stage's space by hand (what a modified browser does). Same on a Stage that is open to everyone",
+      "expected": "The limited Stage's join is refused by the server; the open Stage's join works. People who may edit the room are never refused",
+      "source": "Khalid 10-07 'fix them all without regression' (security plan item 10, ENFORCE_AREA_SPACE_RIGHTS)",
+      "runs": "yes",
+      "runsNote": "yes (needs MAP_EDITOR_ALLOW_ALL_USERS=false)",
+      "knownGap": false,
+      "hooks": "B/Services/AreaSpaceRights.ts (refusedAreaSpaces), P/services/SpaceJoinPolicy.ts (refusedAreaSpaces)"
     },
     {
       "id": "BC-096",

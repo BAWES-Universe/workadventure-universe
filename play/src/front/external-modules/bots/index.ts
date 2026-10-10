@@ -824,8 +824,8 @@ function notifyRoomEnterForAllUsers(options: ExtensionModuleOptions) {
         console.log(`[Bot Extension] Notifying room enter for: ${options.roomId}`);
         botApiService
             .notifyRoomEnter(options.roomId)
-            .then((result) => {
-                console.log(`[Bot Extension] Room enter notified, ${result.botsSpawned} bots spawned`);
+            .then(() => {
+                console.log("[Bot Extension] Room enter notified");
                 // After bots spawn, try to register summon buttons
                 // Give it a moment for bots to appear in the game scene
                 setTimeout(() => {
@@ -950,25 +950,24 @@ async function injectEmotionsIntoWokaMenu(menuData: WokaMenuData): Promise<void>
             return;
         }
 
-        // Find insertion point - before the action buttons section
-        // Structure: <div class="m-auto..."> -> first child is content, we want to inject before actions
-        const contentDiv = menuElement.querySelector("div > div:first-child");
-        const actionsDiv = menuElement.querySelector(".flex.items-center.bg-contrast");
+        // Insertion point: the card's slot for extra content, inside the part that scrolls above the action buttons.
+        const extrasSlot = menuElement.querySelector("[data-woka-menu-extras]");
 
-        if (!contentDiv || !actionsDiv) {
+        if (!extrasSlot) {
             release(); // Release guard
             return;
         }
 
         // Fetch emotions from API FIRST, before mounting component
         // This prevents the visual "jump" from default values to actual values
-        const botServerUrl = getBotServerUrl();
+        // The service's own address: it is null when the configured one was refused, and then the tokens go nowhere.
+        const botServerUrl = botApiService.getBotServerUrl();
         let emotionsData = null;
 
         try {
-            const gameToken = botApiService.getGameToken();
+            if (!botServerUrl) throw new Error("No safe bot-server address");
             const response = await fetch(`${botServerUrl}/api/bots/${botId}/emotions/${currentUserUuid}`, {
-                headers: gameToken ? { "X-WA-Auth": gameToken } : {},
+                headers: await botApiService.getEmotionsHeaders(),
             });
             if (response.ok) {
                 const data = await response.json();
@@ -986,8 +985,7 @@ async function injectEmotionsIntoWokaMenu(menuData: WokaMenuData): Promise<void>
         container.setAttribute("data-bot-emotions", botId);
         emotionsContainerElement = container;
 
-        // Insert before actions section
-        actionsDiv.parentElement?.insertBefore(container, actionsDiv);
+        extrasSlot.appendChild(container);
 
         try {
             // Dynamically import the component (Svelte 4 style)

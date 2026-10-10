@@ -125,6 +125,16 @@ export abstract class BaseBehavior {
     
     // UUID tracking - map userId (number) to UUID (string) for conversation storage
     protected userIdToUuid: Map<number, string> = new Map();
+
+    /** The in-room user id of the player with this uuid, if the bot has seen them join. */
+    getUserIdForUuid(uuid: string): number | undefined {
+        for (const [userId, userUuid] of this.userIdToUuid) {
+            if (userUuid === uuid) {
+                return userId;
+            }
+        }
+        return undefined;
+    }
     // Authentication tracking - map userId (number) to isLogged (boolean)
     protected userIdToIsLogged: Map<number, boolean> = new Map();
     // Pending UUID tracking - map spaceUserId (string) to userId (number) for users we've seen but don't have UUID yet

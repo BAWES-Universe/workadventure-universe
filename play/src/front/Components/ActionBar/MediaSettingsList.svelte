@@ -1,7 +1,7 @@
 <script lang="ts">
     import { fly } from "svelte/transition";
     import { clickOutside } from "svelte-outside";
-    import { createEventDispatcher } from "svelte";
+    import { createEventDispatcher, onDestroy, onMount, tick } from "svelte";
     import { EnableCameraScene, EnableCameraSceneName } from "../../Phaser/Login/EnableCameraScene";
     import {
         cameraListStore,
@@ -24,11 +24,26 @@
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { LL } from "../../../i18n/i18n-svelte";
     import { backgroundProcessingEnabledStore } from "../../Stores/BackgroundTransformStore";
+    import { newDeviceTagsStore } from "../../Stores/NewDeviceStore";
     import BackgroundPanel from "./BackgroundPanel.svelte";
     import NoiseFilterChoice from "./NoiseFilterChoice.svelte";
     import { IconCamera, IconMicrophoneOn, IconHeadphones, IconCheck } from "@wa-icons";
 
     export let mediaSettingsDisplayed = false;
+
+    let deviceList: HTMLDivElement;
+
+    // Opened by "Choose device" on the new device card: scroll to the first new device, with the row above it still
+    // showing, so the new ones fill the list. The NEW tags last until the list closes.
+    onMount(async () => {
+        if ($newDeviceTagsStore.size === 0) return;
+        await tick();
+        const row = deviceList?.querySelector<HTMLElement>("[data-new-device]")?.closest<HTMLElement>(".device-row");
+        const panel = row?.closest<HTMLElement>('[role="tabpanel"]');
+        if (!row || !panel) return;
+        panel.scrollTop += row.getBoundingClientRect().top - panel.getBoundingClientRect().top - row.offsetHeight;
+    });
+    onDestroy(() => newDeviceTagsStore.set(new Set()));
 
     let tab: "devices" | "background" = "devices";
 
@@ -93,6 +108,7 @@
     style="max-height: calc(100vh - 160px);"
     in:fly={{ y: 40, duration: 150 }}
     use:clickOutside={() => dispatch("close")}
+    bind:this={deviceList}
 >
     <!-- Devices | Background: pill tabs in the same violet as the selected device. The dot means an effect is on. -->
     <div class="tabs relative z-10 mx-1.5 mt-1.5" role="tablist">
@@ -142,7 +158,12 @@
                         }}
                     >
                         <span class="device-tile"><IconCamera font-size="16" /></span>
-                        <span class="device-name">{StringUtils.normalizeDeviceName(camera.label)}</span>
+                        <span class="device-name" class:wrap={$newDeviceTagsStore.has(camera.deviceId)}
+                            >{StringUtils.normalizeDeviceName(camera.label)}</span
+                        >
+                        {#if $newDeviceTagsStore.has(camera.deviceId)}
+                            <span class="new-tag u-count u-badge" data-new-device>{$LL.camera.newDevice.newTag()}</span>
+                        {/if}
                         {#if $usedCameraDeviceIdStore === camera.deviceId}
                             <IconCheck font-size="16" class="shrink-0 text-[#c4b5fd]" />
                         {/if}
@@ -184,7 +205,12 @@
                         on:click|stopPropagation|preventDefault={() => selectMicrophone(microphone.deviceId)}
                     >
                         <span class="device-tile"><IconMicrophoneOn font-size="16" /></span>
-                        <span class="device-name">{StringUtils.normalizeDeviceName(microphone.label)}</span>
+                        <span class="device-name" class:wrap={$newDeviceTagsStore.has(microphone.deviceId)}
+                            >{StringUtils.normalizeDeviceName(microphone.label)}</span
+                        >
+                        {#if $newDeviceTagsStore.has(microphone.deviceId)}
+                            <span class="new-tag u-count u-badge" data-new-device>{$LL.camera.newDevice.newTag()}</span>
+                        {/if}
                         {#if $usedMicrophoneDeviceIdStore === microphone.deviceId}
                             <IconCheck font-size="16" class="shrink-0 text-[#c4b5fd]" />
                         {/if}
@@ -229,7 +255,12 @@
                         on:click|stopPropagation|preventDefault={() => selectSpeaker(speaker.deviceId)}
                     >
                         <span class="device-tile"><IconHeadphones font-size="16" /></span>
-                        <span class="device-name">{StringUtils.normalizeDeviceName(speaker.label)}</span>
+                        <span class="device-name" class:wrap={$newDeviceTagsStore.has(speaker.deviceId)}
+                            >{StringUtils.normalizeDeviceName(speaker.label)}</span
+                        >
+                        {#if $newDeviceTagsStore.has(speaker.deviceId)}
+                            <span class="new-tag u-count u-badge" data-new-device>{$LL.camera.newDevice.newTag()}</span>
+                        {/if}
                         {#if $speakerSelectedStore === speaker.deviceId}
                             <IconCheck font-size="16" class="shrink-0 text-[#c4b5fd]" />
                         {/if}
@@ -364,6 +395,27 @@
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+    }
+    /* A new device's name may take two lines: virtual devices differ only at the end ("SteelSeries Sonar - Chat",
+       "- Game"), which the tag would otherwise cut off. */
+    .device-name.wrap {
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+        line-clamp: 2;
+        white-space: normal;
+        line-height: 1.25;
+        margin: 0.375rem 0;
+    }
+    /* NEW on a device "Choose device" opened the list for: only a tag on the right, the row keeps its look. */
+    .new-tag {
+        flex: none;
+        height: 1.125rem;
+        padding: 0 0.4rem;
+        font-size: 10px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #fff;
     }
     .device-off {
         display: flex;

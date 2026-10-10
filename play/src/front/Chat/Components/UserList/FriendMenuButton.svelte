@@ -82,7 +82,7 @@
         <div
             bind:this={menuElement}
             role="menu"
-            class="wa-dropdown-menu fixed z-10 mr-1 rounded-xl border border-white/10 bg-contrast/95 p-1 shadow-2xl backdrop-blur"
+            class="wa-dropdown-menu fixed z-40 mr-1 rounded-xl border border-white/10 bg-contrast/95 p-1 shadow-2xl backdrop-blur"
         >
             {#each items as item (item.key)}
                 <button

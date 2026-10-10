@@ -53,6 +53,7 @@ import { adminApi } from "../Services/AdminApi";
 import { MapLoadingError } from "../Services/MapLoadingError";
 import { getMapStorageClient } from "../Services/MapStorageClient";
 import { emitError, emitErrorOnRoomSocket } from "../Services/MessageHelpers";
+import { bypassesAreaSpaceRights, listenOnlyAreaSpaces, refusedAreaSpaces } from "../Services/AreaSpaceRights";
 import { ModeratorTagFinder } from "../Services/ModeratorTagFinder";
 import { VariableError } from "../Services/VariableError";
 import { VariablesManager } from "../Services/VariablesManager";
@@ -171,6 +172,8 @@ export class GameRoom implements BrothersFinder {
             wamUrl,
             wamFile ? wamFile.settings : undefined
         );
+        // The areas read to create the room are the first copy to fall back on (see getAreaSpacePolicyFor)
+        gameRoom.lastGoodWam = wamFile;
 
         return gameRoom;
     }
@@ -801,6 +804,10 @@ export class GameRoom implements BrothersFinder {
     }
 
     private wamPromise: Promise<WAMFileFormat> | undefined;
+    // The last copy of the room's areas that was read successfully, and which read it came from (see getWam)
+    private lastGoodWam: WAMFileFormat | undefined;
+    private wamVersion = 0;
+    private lastGoodWamVersion = 0;
 
     /**
      * Returns a promise to the WAM file.
@@ -810,11 +817,27 @@ export class GameRoom implements BrothersFinder {
     private getWam(): Promise<WAMFileFormat | undefined> {
         if (!this._wamUrl) return Promise.resolve(undefined);
         if (!this.wamPromise) {
-            this.wamPromise = mapFetcher.fetchWamFile(
-                this._wamUrl,
-                INTERNAL_MAP_STORAGE_URL,
-                PUBLIC_MAP_STORAGE_PREFIX
-            );
+            const version = ++this.wamVersion;
+            const promise: Promise<WAMFileFormat> = mapFetcher
+                .fetchWamFile(this._wamUrl, INTERNAL_MAP_STORAGE_URL, PUBLIC_MAP_STORAGE_PREFIX)
+                .then(
+                    (wam) => {
+                        // An older read that finishes after a newer one must not replace what the newer one found
+                        if (version >= this.lastGoodWamVersion) {
+                            this.lastGoodWam = wam;
+                            this.lastGoodWamVersion = version;
+                        }
+                        return wam;
+                    },
+                    (e) => {
+                        // Do not keep a failed read: the next question reads the map again
+                        if (this.wamPromise === promise) {
+                            this.wamPromise = undefined;
+                        }
+                        throw e;
+                    }
+                );
+            this.wamPromise = promise;
         }
         return this.wamPromise;
     }
@@ -1159,7 +1182,7 @@ export class GameRoom implements BrothersFinder {
                                     rights: update.rights,
                                     scopes: update.scopes?.scopes,
                                 };
-                                this.sendMegaphoneSettingsToUsers();
+                                void this.sendMegaphoneSettingsToUsers();
                             }
                         }
                         if (editMapCommandMessage.editMapMessage?.message?.$case === "modifyAreaMessage") {
@@ -1169,6 +1192,16 @@ export class GameRoom implements BrothersFinder {
                             // IMPROVE ME: We could imagine directly updating the jitsi admin tag in the finder moderator tag and don't have useless reloads or calls to get the WAM file.
                             this.wamPromise = undefined;
                             this.jitsiModeratorTagFinderPromise = undefined;
+                        }
+                        const editedCase = editMapCommandMessage.editMapMessage?.message?.$case;
+                        if (
+                            editedCase === "modifyAreaMessage" ||
+                            editedCase === "createAreaMessage" ||
+                            editedCase === "deleteAreaMessage"
+                        ) {
+                            // Who may join which meeting room depends on the areas: read them again and tell the users.
+                            this.wamPromise = undefined;
+                            void this.sendMegaphoneSettingsToUsers();
                         }
                         if (editMapCommandMessage.editMapMessage?.message?.$case === "modifyEntityMessage") {
                             // If the area is modified, we need to reset the WAM and the moderator tag finder.
@@ -1261,32 +1294,105 @@ export class GameRoom implements BrothersFinder {
             enabled: firstStreamable !== undefined,
             url: firstStreamable?.url,
             channels,
+            // Filled in from the room's areas by whoever sends it (see getAreaSpacePolicyFor)
+            refusedAreaSpaces: [],
+            listenOnlyAreaSpaces: [],
+            areaSpacesUnknown: false,
         };
     }
 
     /**
-     * After the room's broadcast settings change, every user learns which channels the room now listens to and
-     * which they may go live on (the pusher does not know the room's group or settings, so the back tells them).
+     * Who may join which meeting room and speak on which stage, for this user (see refusedAreaSpaces and
+     * listenOnlyAreaSpaces). Asked from the room's saved map, which is read again after every area change.
+     *
+     * When the map cannot be read, the rules from the last time it could be read keep applying, so a hiccup never
+     * turns a closed area into an open one. When it has never been read, nothing is known and the answer says so:
+     * the pusher then refuses the meeting rooms and speaker zones until the back can say (it asks again shortly).
      */
-    private sendMegaphoneSettingsToUsers(): void {
-        for (const user of this.getUsers().values()) {
-            user.socket.write({
-                message: {
-                    $case: "batchMessage",
-                    batchMessage: {
-                        event: "",
-                        payload: [
-                            {
-                                message: {
-                                    $case: "megaphoneSettingsMessage",
-                                    megaphoneSettingsMessage: this.getMegaphoneSettingsFor(user.tags),
-                                },
-                            },
-                        ],
-                    },
-                },
-            });
+    public async getAreaSpacePolicyFor(
+        user: Pick<User, "tags" | "uuid" | "canEdit">
+    ): Promise<{ refusedAreaSpaces: string[]; listenOnlyAreaSpaces: string[]; areaSpacesUnknown: boolean }> {
+        const compute = (wam: WAMFileFormat | undefined) => ({
+            refusedAreaSpaces: refusedAreaSpaces(wam, this._roomUrl, user),
+            listenOnlyAreaSpaces: listenOnlyAreaSpaces(wam, this._roomUrl, user),
+            areaSpacesUnknown: false,
+        });
+        if (bypassesAreaSpaceRights(user)) {
+            // Nothing in the map changes what they may do, so a map that cannot be read changes nothing for them
+            return compute(undefined);
         }
+        try {
+            const wam = await this.getWam();
+            this.areaPolicyRetries = 0;
+            return compute(wam);
+        } catch (e) {
+            console.warn(`Could not read the areas of ${this._roomUrl} to check who may join them`, e);
+        }
+        if (this.lastGoodWam !== undefined) {
+            try {
+                return compute(this.lastGoodWam);
+            } catch (e) {
+                console.warn(`Could not apply the earlier areas of ${this._roomUrl} either`, e);
+            }
+        }
+        this.scheduleAreaPolicyRetry();
+        return { refusedAreaSpaces: [], listenOnlyAreaSpaces: [], areaSpacesUnknown: true };
+    }
+
+    private areaPolicyRetryTimer: ReturnType<typeof setTimeout> | undefined;
+    private areaPolicyRetries = 0;
+    private areaPolicyVersion = 0;
+
+    /** Asks again, a few times with growing pauses, so people refused for lack of an answer are told once there is one. */
+    private scheduleAreaPolicyRetry(): void {
+        if (this.areaPolicyRetryTimer !== undefined || this.areaPolicyRetries >= 6) {
+            return;
+        }
+        const delay = Math.min(2000 * 2 ** this.areaPolicyRetries, 30000);
+        this.areaPolicyRetries++;
+        this.areaPolicyRetryTimer = setTimeout(() => {
+            this.areaPolicyRetryTimer = undefined;
+            void this.sendMegaphoneSettingsToUsers();
+        }, delay);
+        this.areaPolicyRetryTimer.unref?.();
+    }
+
+    /**
+     * After the room's broadcast settings or its areas change, every user learns which channels the room now listens
+     * to and which they may go live on, and which meeting rooms they may not join (the pusher does not know the
+     * room's group, settings or areas, so the back tells them).
+     */
+    private async sendMegaphoneSettingsToUsers(): Promise<void> {
+        // Two refreshes can overlap (two area edits in a row). Only the newest one tells the users, so an older read
+        // that finishes late never puts an earlier rule back.
+        const version = ++this.areaPolicyVersion;
+        await Promise.all(
+            [...this.getUsers().values()].map(async (user) => {
+                const policy = await this.getAreaSpacePolicyFor(user);
+                if (version !== this.areaPolicyVersion) {
+                    return;
+                }
+                user.socket.write({
+                    message: {
+                        $case: "batchMessage",
+                        batchMessage: {
+                            event: "",
+                            payload: [
+                                {
+                                    message: {
+                                        $case: "megaphoneSettingsMessage",
+                                        megaphoneSettingsMessage: {
+                                            ...this.getMegaphoneSettingsFor(user.tags),
+                                            ...policy,
+                                        },
+                                    },
+                                },
+                            ],
+                        },
+                    },
+                });
+            })
+        );
     }
 
     get wamSettings(): WAMFileFormat["settings"] {

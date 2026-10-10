@@ -4,11 +4,11 @@
     import { outgoingRingsStore, ringClockStore, ringStore } from "../../Stores/RingStore";
     import PersonActionButton from "./PersonActionButton.svelte";
     import { ringButton } from "./Ring";
-    import { IconBell, IconBellOff, IconBellRinging, IconX } from "@wa-icons";
+    import { IconUsersPlus, IconX } from "@wa-icons";
 
     /**
-     * Ring a friend: they get a card asking them to come over. While it rings this is Stop; when they are busy, on
-     * their way, or were just rung without coming, it is greyed out and says why.
+     * Invite someone: they get a card asking them to come over. While it rings this is Stop; when they are busy, on
+     * their way, or were just invited without coming, it is greyed out and says why.
      */
     export let uuid: string;
     export let name: string;
@@ -58,12 +58,10 @@
     >
         {#if state.kind === "stop"}
             <IconX font-size="20" />
-        {:else if state.kind === "starting"}
-            <IconBellRinging font-size="20" class="ring-wiggle" />
         {:else if disabled}
-            <IconBellOff font-size="20" />
+            <IconUsersPlus font-size="20" class="opacity-50" />
         {:else}
-            <IconBell font-size="20" />
+            <IconUsersPlus font-size="20" />
         {/if}
     </PersonActionButton>
 {:else}
@@ -77,12 +75,10 @@
     >
         {#if state.kind === "stop"}
             <IconX font-size="14" />
-        {:else if state.kind === "starting"}
-            <IconBellRinging font-size="14" class="ring-wiggle" />
         {:else if disabled}
-            <IconBellOff font-size="14" />
+            <IconUsersPlus font-size="14" class="opacity-50" />
         {:else}
-            <IconBell font-size="14" />
+            <IconUsersPlus font-size="14" />
         {/if}
         {label}
     </button>
@@ -95,29 +91,5 @@
     }
     :global(.ring-stop:hover) {
         background: rgba(233, 109, 81, 0.36) !important;
-    }
-    :global(.ring-wiggle) {
-        animation: ring-wiggle 0.9s ease-in-out infinite;
-        transform-origin: 50% 10%;
-    }
-    @keyframes ring-wiggle {
-        0%,
-        100% {
-            transform: rotate(0);
-        }
-        20% {
-            transform: rotate(14deg);
-        }
-        40% {
-            transform: rotate(-12deg);
-        }
-        60% {
-            transform: rotate(8deg);
-        }
-    }
-    @media (prefers-reduced-motion: reduce) {
-        :global(.ring-wiggle) {
-            animation: none;
-        }
     }
 </style>

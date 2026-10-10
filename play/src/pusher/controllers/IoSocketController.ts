@@ -30,6 +30,7 @@ import { validateWebsocketQuery } from "../services/QueryValidator";
 import type { SocketData, SpaceName } from "../models/Websocket/SocketData";
 import { emitInBatch } from "../services/IoSocketHelpers";
 import { toServerSpaceName } from "../services/SpaceJoinPolicy";
+import { describeError } from "../services/SafeErrorLog";
 import { ClientAbortError } from "../models/ClientAbortError";
 
 const debug = Debug("pusher:requests");
@@ -129,7 +130,7 @@ export class IoSocketController {
                     try {
                         data = jwtTokenManager.verifyAdminSocketToken(token);
                     } catch (e) {
-                        console.error("Admin socket access refused for token: " + token, e);
+                        console.error(`Admin socket access refused: ${describeError(e)}`);
                         ws.send(
                             JSON.stringify({
                                 type: "Error",
@@ -511,6 +512,7 @@ export class IoSocketController {
                             spaces: new Set<SpaceName>(),
                             joinSpacesPromise: new Map<SpaceName, Promise<void>>(),
                             grantedBubbleSpaces: new Set<SpaceName>(),
+                            invitedToSpeak: new Set<string>(),
                             // A person starts with the chat ID Orbit has on file (only ever saved once checked); the
                             // browser then sends proof of its Matrix login (updateChatIdMessage).
                             chatID: botChatID ?? (userData.status === "ok" ? userData.chatID || undefined : undefined),
