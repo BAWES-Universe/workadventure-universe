@@ -34,6 +34,8 @@ const warning: BaseTranslation = {
         content: "Please allow popups for this website in your browser settings.",
         done: "Ok",
     },
+    cameraStalled:
+        "Your camera stopped sending images, so it was turned off. Another application may be using it. Turn it on again to retry.",
     backgroundProcessing: {
         failedToApply: "Failed to apply background effects",
         notSupportedOnThisBrowser: "Background effects can't run on this device",
