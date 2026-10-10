@@ -2,6 +2,7 @@ import type { Readable, Writable } from "svelte/store";
 import type { AvailabilityStatus } from "@workadventure/messages";
 import type { MapStore } from "@workadventure/store-utils";
 import type { StateEvents } from "matrix-js-sdk";
+import type { BotStatusNote } from "../Bots/BotChatStatus";
 import type { RoomConnection } from "../../Connection/RoomConnection";
 import type { PictureStore } from "../../Stores/PictureStore";
 
@@ -155,6 +156,8 @@ export interface ChatMessage {
     isModified: Readable<boolean>;
     addReaction: (reaction: string) => Promise<void>;
     canDelete: Readable<boolean>;
+    /** Set when a bot left a status note (resting, gone...) instead of an answer: drawn as a card, not a bubble. */
+    botStatus?: BotStatusNote;
     /** Whether reactions on this message reach the other people in the chat. */
     canReact: Readable<boolean>;
     /** Whether a reply to this message is sent as a reply (with its quote) to the other people in the chat. */

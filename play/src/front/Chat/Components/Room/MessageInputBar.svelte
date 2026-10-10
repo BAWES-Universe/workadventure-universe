@@ -60,6 +60,8 @@
 
     export let room: ChatRoom;
     export let disabled = false;
+    /** Replaces "Enter your message..." when the other side can't answer now (a resting bot). */
+    export let inputHint: string | undefined = undefined;
 
     let message = "";
     // Links whose preview was closed above the message box: they are sent without one.
@@ -848,7 +850,7 @@
         bind:messageInput
         disabled={room instanceof ProximityChatRoom ? false : disabled}
         inputClass="message-input flex-grow !m-0 px-5 py-2.5 max-h-36 overflow-auto  h-full rounded-xl wa-searchbar block text-white placeholder:text-base border-light-purple border !bg-transparent resize-none border-none outline-none shadow-none focus:ring-0"
-        dataText={$LL.chat.enter()}
+        dataText={inputHint ?? $LL.chat.enter()}
         dataTestid="messageInput"
     />
     {#if room instanceof ProximityChatRoom}
