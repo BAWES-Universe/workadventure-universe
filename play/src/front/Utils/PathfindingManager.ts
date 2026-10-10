@@ -51,7 +51,8 @@ export class PathfindingManager {
         const path = result.path;
         if (path.length > 1) {
             // Replace the first element of the path with the actual start position
-            path[0] = { x: start.x, y: start.y + this.tileDimensions.height * 0.5 }; // We need to add half of the tile height to get the bottom center of the tile as long as the player origin is centered
+            // Player subtracts its fixed collider offset from every path coordinate.
+            path[0] = { x: start.x, y: start.y + CHARACTER_BODY_HEIGHT / 2 + CHARACTER_BODY_OFFSET_Y };
             if (result.isExactTarget) {
                 // Let's put back the exact position.
                 // Actually, we are not targeting always the absolutely exact pixel-perfect position.
@@ -134,7 +135,15 @@ export class PathfindingManager {
     }
 
     private mapTileUnitsToPixels(path: { x: number; y: number }[]): { x: number; y: number }[] {
-        return path.map(this.mapTileUnitToPixels.bind(this));
+        return path.map((tilePosition) => {
+            const position = this.mapTileUnitToPixels(tilePosition);
+            return this.fitBodyWithinTile(
+                position.x,
+                position.y,
+                this.tileDimensions.width,
+                this.tileDimensions.height
+            );
+        });
     }
 
     public mapTileUnitToPixels(tilePosition: { x: number; y: number }): { x: number; y: number } {
