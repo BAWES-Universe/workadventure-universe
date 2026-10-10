@@ -211,7 +211,7 @@
         <div class="flex gap-2 px-4 mobile:flex-col-reverse">
             <button
                 type="button"
-                class="u-cta-secondary m-0 flex h-11 flex-1 items-center justify-center gap-2 rounded-full px-4 text-sm font-bold"
+                class="u-cta-secondary m-0 flex h-11 flex-1 mobile:flex-none items-center justify-center gap-2 rounded-full px-4 text-sm font-bold"
                 data-testid="new-device-not-now"
                 on:click={close}
             >
@@ -220,7 +220,7 @@
             </button>
             <button
                 type="button"
-                class="u-cta m-0 flex h-11 flex-1 items-center justify-center gap-2 rounded-full px-4 text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+                class="u-cta m-0 flex h-11 flex-1 mobile:flex-none items-center justify-center gap-2 rounded-full px-4 text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed"
                 data-testid={offer.type === "one" ? "new-device-switch" : "new-device-choose"}
                 disabled={offer.type === "one" && ticked.length === 0}
                 on:click|stopPropagation={primary}
