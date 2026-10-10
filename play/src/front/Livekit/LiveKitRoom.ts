@@ -1,7 +1,16 @@
 import { z } from "zod";
 import { MapStore } from "@workadventure/store-utils";
 import type { Participant, LocalParticipant, LocalTrackPublication } from "livekit-client";
-import { VideoPresets, Room, RoomEvent, LocalVideoTrack, LocalAudioTrack, Track } from "livekit-client";
+import {
+    VideoPresets,
+    Room,
+    RoomEvent,
+    LocalVideoTrack,
+    LocalAudioTrack,
+    Track,
+    ConnectionState,
+    DisconnectReason,
+} from "livekit-client";
 import type { Readable, Unsubscriber } from "svelte/store";
 import { get } from "svelte/store";
 import * as Sentry from "@sentry/svelte";
@@ -40,6 +49,17 @@ export class LiveKitRoom implements LiveKitRoomInterface {
     // The camera and microphone stream the media tracks were last made from: published again if the media server
     // only lets us send after the track was first offered (see handleParticipantPermissionsChanged).
     private lastLocalStream: LocalStreamStoreValue | undefined;
+    private destroyed = false;
+    /**
+     * Called when the media server connection is lost for good (livekit-client gave up reconnecting): this room is
+     * already torn down, and a new one is needed.
+     */
+    public onConnectionLost: (() => void) | undefined;
+
+    // Bound once, so that destroy() removes the very listeners that were added
+    private readonly boundHandleParticipantConnected = this.handleParticipantConnected.bind(this);
+    private readonly boundHandleParticipantDisconnected = this.handleParticipantDisconnected.bind(this);
+    private readonly boundHandleActiveSpeakersChanged = this.handleActiveSpeakersChanged.bind(this);
 
     constructor(
         private serverUrl: string,
@@ -189,19 +209,28 @@ export class LiveKitRoom implements LiveKitRoomInterface {
         }
 
         if (!this.localCameraTrack) {
-            this.localCameraTrack = new LocalVideoTrack(videoTrack);
+            if (!this.isRoomConnected()) {
+                // Skipped on purpose: see isRoomConnected(). handleReconnected() publishes it.
+                return;
+            }
+            const cameraTrack = new LocalVideoTrack(videoTrack);
+            this.localCameraTrack = cameraTrack;
             this.localParticipant
-                .publishTrack(this.localCameraTrack, {
+                .publishTrack(cameraTrack, {
                     source: Track.Source.Camera,
                     videoCodec: "vp8",
                     simulcast: true,
                     videoSimulcastLayers: [VideoPresets.h1080, VideoPresets.h360, VideoPresets.h90],
                 })
                 .catch((err) => {
+                    // Not published: the next camera update must publish again, not replace a track that was
+                    // never published ("unable to replace an unpublished track").
+                    if (this.localCameraTrack === cameraTrack) {
+                        this.localCameraTrack = undefined;
+                    }
                     // Not allowed to send yet: the permission arrives a moment after we start streaming, and
                     // publishing is tried again then. Any other failure is reported.
                     if (this.mayNotPublishYet()) {
-                        this.localCameraTrack = undefined;
                         return;
                     }
                     console.error("An error occurred while publishing camera track", err);
@@ -256,15 +285,23 @@ export class LiveKitRoom implements LiveKitRoomInterface {
         }
 
         if (!this.localMicrophoneTrack) {
-            this.localMicrophoneTrack = new LocalAudioTrack(audioTrack);
+            if (!this.isRoomConnected()) {
+                // Skipped on purpose: see isRoomConnected(). handleReconnected() publishes it.
+                return;
+            }
+            const microphoneTrack = new LocalAudioTrack(audioTrack);
+            this.localMicrophoneTrack = microphoneTrack;
 
             this.localParticipant
-                .publishTrack(this.localMicrophoneTrack, {
+                .publishTrack(microphoneTrack, {
                     source: Track.Source.Microphone,
                 })
                 .catch((err) => {
-                    if (this.mayNotPublishYet()) {
+                    // Not published: the next update must publish again (see handleCameraTrack)
+                    if (this.localMicrophoneTrack === microphoneTrack) {
                         this.localMicrophoneTrack = undefined;
+                    }
+                    if (this.mayNotPublishYet()) {
                         return;
                     }
                     console.error("An error occurred while publishing microphone track", err);
@@ -345,19 +382,27 @@ export class LiveKitRoom implements LiveKitRoomInterface {
             }
 
             if (!this.localScreenSharingVideoTrack) {
-                this.localScreenSharingVideoTrack = new LocalVideoTrack(screenShareVideoTrack);
+                if (!this.isRoomConnected()) {
+                    // Skipped on purpose: see isRoomConnected(). handleReconnected() publishes it.
+                    return;
+                }
+                const screenShareVideoLocalTrack = new LocalVideoTrack(screenShareVideoTrack);
+                this.localScreenSharingVideoTrack = screenShareVideoLocalTrack;
 
                 // Publish video track
                 this.localParticipant
-                    .publishTrack(this.localScreenSharingVideoTrack, {
+                    .publishTrack(screenShareVideoLocalTrack, {
                         source: Track.Source.ScreenShare,
                         videoCodec: "vp8",
                         simulcast: true,
                         videoSimulcastLayers: [VideoPresets.h1080, VideoPresets.h360, VideoPresets.h90],
                     })
                     .catch((err) => {
-                        if (this.mayNotPublishYet()) {
+                        // Not published: the next update must publish again (see handleCameraTrack)
+                        if (this.localScreenSharingVideoTrack === screenShareVideoLocalTrack) {
                             this.localScreenSharingVideoTrack = undefined;
+                        }
+                        if (this.mayNotPublishYet()) {
                             return;
                         }
                         console.error("An error occurred while publishing screen share video track", err);
@@ -378,15 +423,19 @@ export class LiveKitRoom implements LiveKitRoomInterface {
             // Publish audio track if available
             if (screenShareAudioTrack) {
                 if (!this.localScreenSharingAudioTrack) {
-                    this.localScreenSharingAudioTrack = new LocalAudioTrack(screenShareAudioTrack);
+                    const screenShareAudioLocalTrack = new LocalAudioTrack(screenShareAudioTrack);
+                    this.localScreenSharingAudioTrack = screenShareAudioLocalTrack;
 
                     this.localParticipant
-                        .publishTrack(this.localScreenSharingAudioTrack, {
+                        .publishTrack(screenShareAudioLocalTrack, {
                             source: Track.Source.ScreenShareAudio,
                         })
                         .catch((err) => {
-                            if (this.mayNotPublishYet()) {
+                            // Not published: the next update must publish again (see handleCameraTrack)
+                            if (this.localScreenSharingAudioTrack === screenShareAudioLocalTrack) {
                                 this.localScreenSharingAudioTrack = undefined;
+                            }
+                            if (this.mayNotPublishYet()) {
                                 return;
                             }
                             console.error("An error occurred while publishing screen share audio track", err);
@@ -431,6 +480,57 @@ export class LiveKitRoom implements LiveKitRoomInterface {
     private mayNotPublishYet(): boolean {
         return this.localParticipant?.permissions?.canPublish !== true;
     }
+
+    /**
+     * publishTrack() on a room whose signal connection is down waits 15 seconds for it to come back, then fails,
+     * and the camera / microphone stays unpublished. New publications are therefore skipped while the room is not
+     * connected, and made by handleReconnected() once it is back.
+     */
+    private isRoomConnected(): boolean {
+        return this.room?.state === ConnectionState.Connected;
+    }
+
+    private readonly handleReconnected = (): void => {
+        if (this.destroyed) {
+            return;
+        }
+        // Tracks already published are left as they are: only what was skipped meanwhile is published.
+        this.publishLocalTracksAgain();
+    };
+
+    /**
+     * After a network outage, livekit-client tries to resume the connection for about 50 seconds, then emits
+     * Disconnected (with no reason) and never reconnects that room. Left alone, the room stays subscribed to the
+     * camera / microphone / screen share with a dead engine: nobody hears or sees us again until we leave the space.
+     */
+    private readonly handleDisconnected = (reason?: DisconnectReason): void => {
+        if (
+            this.destroyed ||
+            this.abortSignal.aborted ||
+            reason === DisconnectReason.CLIENT_INITIATED ||
+            reason === DisconnectReason.ROOM_CLOSED ||
+            reason === DisconnectReason.ROOM_DELETED
+        ) {
+            // We left, or the back closed the room: the disconnect / switch messages handle the cleanup.
+            return;
+        }
+
+        const reasonLabel = reason === undefined ? "none" : DisconnectReason[reason] ?? String(reason);
+        Sentry.captureMessage(`Livekit room disconnected without a valid reason: ${reasonLabel}`, {
+            level: "warning",
+            tags: { reason: reasonLabel },
+        });
+
+        // Tear it down right away so the media stores stop feeding a dead engine.
+        this.destroy();
+
+        if (reason === DisconnectReason.DUPLICATE_IDENTITY || reason === DisconnectReason.PARTICIPANT_REMOVED) {
+            // Another connection took our place, or the back removed us on purpose: a new room would fight it.
+            return;
+        }
+
+        this.onConnectionLost?.();
+    };
 
     private publishLocalTracksAgain(): void {
         this.handleCameraTrack(this.lastLocalStream);
@@ -558,11 +658,13 @@ export class LiveKitRoom implements LiveKitRoomInterface {
             return;
         }
 
-        this.room.on(RoomEvent.ParticipantConnected, this.handleParticipantConnected.bind(this));
-        this.room.on(RoomEvent.ParticipantDisconnected, this.handleParticipantDisconnected.bind(this));
-        this.room.on(RoomEvent.ActiveSpeakersChanged, this.handleActiveSpeakersChanged.bind(this));
+        this.room.on(RoomEvent.ParticipantConnected, this.boundHandleParticipantConnected);
+        this.room.on(RoomEvent.ParticipantDisconnected, this.boundHandleParticipantDisconnected);
+        this.room.on(RoomEvent.ActiveSpeakersChanged, this.boundHandleActiveSpeakersChanged);
         this.room.on(RoomEvent.ParticipantPermissionsChanged, this.handleParticipantPermissionsChanged);
         this.room.on(RoomEvent.LocalTrackUnpublished, this.handleLocalTrackUnpublished);
+        this.room.on(RoomEvent.Reconnected, this.handleReconnected);
+        this.room.on(RoomEvent.Disconnected, this.handleDisconnected);
     }
 
     private parseParticipantMetadata(participant: Participant): ParticipantMetadata {
@@ -734,14 +836,21 @@ export class LiveKitRoom implements LiveKitRoomInterface {
     }
 
     public destroy() {
+        if (this.destroyed) {
+            // Called both from handleDisconnected() and from LivekitConnection
+            return;
+        }
+        this.destroyed = true;
         try {
             this.unsubscribers.forEach((unsubscriber) => unsubscriber());
             this.participants.forEach((participant) => participant.destroy());
-            this.room?.off(RoomEvent.ParticipantConnected, this.handleParticipantConnected.bind(this));
-            this.room?.off(RoomEvent.ParticipantDisconnected, this.handleParticipantDisconnected.bind(this));
-            this.room?.off(RoomEvent.ActiveSpeakersChanged, this.handleActiveSpeakersChanged.bind(this));
+            this.room?.off(RoomEvent.ParticipantConnected, this.boundHandleParticipantConnected);
+            this.room?.off(RoomEvent.ParticipantDisconnected, this.boundHandleParticipantDisconnected);
+            this.room?.off(RoomEvent.ActiveSpeakersChanged, this.boundHandleActiveSpeakersChanged);
             this.room?.off(RoomEvent.ParticipantPermissionsChanged, this.handleParticipantPermissionsChanged);
             this.room?.off(RoomEvent.LocalTrackUnpublished, this.handleLocalTrackUnpublished);
+            this.room?.off(RoomEvent.Reconnected, this.handleReconnected);
+            this.room?.off(RoomEvent.Disconnected, this.handleDisconnected);
 
             this.leaveRoom();
         } finally {
