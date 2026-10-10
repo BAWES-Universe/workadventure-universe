@@ -1420,6 +1420,8 @@ export abstract class BaseBehavior {
         debugLabel: string;
         /** Image URLs to carry into the regenerated attempt (vision context must survive repetition retries). */
         images?: string[];
+        /** 'dm' when regenerating a direct message reply, so the retry keeps the direct message prompt. */
+        channel?: 'world' | 'dm';
     }): Promise<{ processed: ProcessedResponse; processedMessage: string; responseId: string }> {
         const {
             botId,
@@ -1487,7 +1489,8 @@ export abstract class BaseBehavior {
                     this.bot,
                     this.adminApiService,
                     abortSignal,
-                    images
+                    images,
+                    params.channel ?? 'world'
                 )) {
                     if (chunk.reset) {
                         // Tool calls overrode the streamed ack — finalize the current

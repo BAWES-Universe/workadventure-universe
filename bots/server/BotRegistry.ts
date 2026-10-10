@@ -113,6 +113,95 @@ export class BotRegistry {
     }
 
     /**
+     * Remember which bot a Matrix direct message room belongs to, so replies survive a restart.
+     * Without Redis this is a no-op and the caller keeps its own in-process copy.
+     */
+    async rememberDmRoom(roomId: string, botId: string): Promise<void> {
+        if (!this.redis?.isOpen) return;
+        await this.redis.hSet('bots:matrix:dm-rooms', roomId, botId);
+    }
+
+    /** The bot a Matrix direct message room belongs to, or null when unknown. */
+    async getDmRoomBot(roomId: string): Promise<string | null> {
+        if (!this.redis?.isOpen) return null;
+        return (await this.redis.hGet('bots:matrix:dm-rooms', roomId)) ?? null;
+    }
+
+    /** Forget a Matrix direct message room once its bot has left it. */
+    async forgetDmRoom(roomId: string): Promise<void> {
+        if (!this.redis?.isOpen) return;
+        await this.redis.hDel('bots:matrix:dm-rooms', roomId);
+    }
+
+    /** Whether Redis is up, so messages waiting for a resting bot survive a restart and reach every bot server. */
+    hasSharedStore(): boolean {
+        return !!this.redis?.isOpen;
+    }
+
+    /**
+     * Keep the last message someone left a resting bot in one room, for it to answer once it is back. One per room;
+     * a newer message replaces the older one. Gone after a day.
+     */
+    async rememberWaitingDm(botId: string, roomId: string, message: string): Promise<void> {
+        // Throws rather than drop the message, so the caller can keep it somewhere else.
+        if (!this.redis?.isOpen) throw new Error('Shared store is not connected');
+        const key = `bots:matrix:dm-waiting:${botId}`;
+        // One transaction, so a message is never stored without its bot being listed as waiting.
+        await this.redis
+            .multi()
+            .hSet(key, roomId, message)
+            .expire(key, 24 * 60 * 60)
+            .sAdd('bots:matrix:dm-waiting', botId)
+            .exec();
+    }
+
+    /** Bots that have messages waiting for them. A bot whose messages all expired is dropped from the list. */
+    async waitingDmBots(): Promise<string[]> {
+        if (!this.redis?.isOpen) return [];
+        const waiting: string[] = [];
+        for (const botId of await this.redis.sMembers('bots:matrix:dm-waiting')) {
+            if (await this.redis.exists(`bots:matrix:dm-waiting:${botId}`)) {
+                waiting.push(botId);
+            } else if (!(await this.unlistIfNothingWaits(botId))) {
+                waiting.push(botId);
+            }
+        }
+        return waiting;
+    }
+
+    /**
+     * Drop a bot from the waiting list when it has nothing waiting. The check and the removal run as one script, so a
+     * message stored in between keeps its bot listed. Returns whether the bot was dropped.
+     */
+    private async unlistIfNothingWaits(botId: string): Promise<boolean> {
+        if (!this.redis?.isOpen) return false;
+        const dropped = await this.redis.eval(
+            "if redis.call('HLEN', KEYS[1]) == 0 then return redis.call('SREM', KEYS[2], ARGV[1]) end return 0",
+            { keys: [`bots:matrix:dm-waiting:${botId}`, 'bots:matrix:dm-waiting'], arguments: [botId] }
+        );
+        return Number(dropped) === 1;
+    }
+
+    async hasWaitingDms(botId: string): Promise<boolean> {
+        if (!this.redis?.isOpen) return false;
+        return this.redis.sIsMember('bots:matrix:dm-waiting', botId);
+    }
+
+    /**
+     * Take all of a bot's waiting messages. Reading, deleting and unlisting run as one script, so when several bot
+     * servers drain at once every message is answered by one of them only, a message written meanwhile is never lost,
+     * and a dropped connection can't leave some messages deleted but never handed back.
+     */
+    async takeWaitingDms(botId: string): Promise<string[]> {
+        if (!this.redis?.isOpen) return [];
+        const taken = await this.redis.eval(
+            "local all = redis.call('HVALS', KEYS[1]) redis.call('DEL', KEYS[1]) redis.call('SREM', KEYS[2], ARGV[1]) return all",
+            { keys: [`bots:matrix:dm-waiting:${botId}`, 'bots:matrix:dm-waiting'], arguments: [botId] }
+        );
+        return Array.isArray(taken) ? taken.filter((message): message is string => typeof message === 'string') : [];
+    }
+
+    /**
      * Register this bot server with its capacity
      */
     async registerServer(capacity: number): Promise<void> {
