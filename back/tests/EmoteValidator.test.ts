@@ -16,6 +16,9 @@ describe("EmoteValidator", () => {
         "*⃣",
         "🏴\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}",
         "👍❤️",
+        // The emoji menu's search offers skin tones on their own.
+        "🏽",
+        "🏻🏿",
     ])("accepts composed emoji %s", (emoji) => {
         expect(isValidEmote(emoji)).toBe(true);
     });
@@ -34,7 +37,6 @@ describe("EmoteValidator", () => {
         "#",
         "\u200D",
         "\uFE0F",
-        "🏽",
         "🇰",
         "👨‍",
     ])("refuses non-emoji input %j", (emote) => {

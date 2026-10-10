@@ -49,6 +49,7 @@ describe.each([false, true])("SpeechDomElement (async Markdown: %s)", (asyncMark
         expect(node.querySelector("strong")?.textContent).toBe("Welcome");
         expect(node.querySelector("a")?.href).toBe("https://example.com/");
         expect(node.querySelector("svg text")?.textContent).toBe("SPACE");
+        expect(node.querySelector("svg text")?.getAttribute("dominant-baseline")).toBe("middle");
     });
 
     it("removes executable URLs produced by Markdown", async () => {

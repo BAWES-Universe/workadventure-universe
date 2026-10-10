@@ -29,5 +29,7 @@ describe("HtmlSanitizer", () => {
         expect(sanitized).toContain("<svg");
         expect(sanitized).toContain('viewBox="0 0 20 10"');
         expect(sanitized).toContain("SPACE</text>");
+        // Without it the label sits above the middle of the key.
+        expect(sanitized).toContain('dominant-baseline="middle"');
     });
 });

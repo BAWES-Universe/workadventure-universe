@@ -2,10 +2,11 @@
 export const MAX_EMOTE_LENGTH = 32;
 
 // Accept emoji bases with optional presentation/skin-tone modifiers and ZWJ sequences,
-// country flags, keycaps and subdivision flags. Components alone (e.g. digits or ZWJ) are not emotes.
+// country flags, keycaps and subdivision flags. Components alone (e.g. digits or ZWJ) are not emotes, except a skin
+// tone on its own: the emoji menu's search offers those (e.g. "skin tone"), so players can send them.
 const EMOJI_BASE = String.raw`\p{Extended_Pictographic}\uFE0F?\p{Emoji_Modifier}?`;
 const EMOJI_ONLY_REGEXP = new RegExp(
-    String.raw`^(?:${EMOJI_BASE}(?:\u200D${EMOJI_BASE})*|\p{Regional_Indicator}{2}|[#*0-9]\uFE0F?\u20E3|\u{1F3F4}[\u{E0061}-\u{E007A}]+\u{E007F})+$`,
+    String.raw`^(?:${EMOJI_BASE}(?:\u200D${EMOJI_BASE})*|\p{Emoji_Modifier}|\p{Regional_Indicator}{2}|[#*0-9]\uFE0F?\u20E3|\u{1F3F4}[\u{E0061}-\u{E007A}]+\u{E007F})+$`,
     "u"
 );
 
