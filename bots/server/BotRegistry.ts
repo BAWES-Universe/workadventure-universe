@@ -188,20 +188,17 @@ export class BotRegistry {
     }
 
     /**
-     * Take a bot's waiting messages. Each is removed as it is taken, so when several bot servers drain at once every
-     * message is answered by one of them only.
+     * Take all of a bot's waiting messages. Reading, deleting and unlisting run as one script, so when several bot
+     * servers drain at once every message is answered by one of them only, a message written meanwhile is never lost,
+     * and a dropped connection can't leave some messages deleted but never handed back.
      */
     async takeWaitingDms(botId: string): Promise<string[]> {
         if (!this.redis?.isOpen) return [];
-        const key = `bots:matrix:dm-waiting:${botId}`;
-        const taken: string[] = [];
-        for (const roomId of await this.redis.hKeys(key)) {
-            // Read and delete in one transaction, so a newer message written meanwhile is the one taken, never lost.
-            const [message, deleted] = await this.redis.multi().hGet(key, roomId).hDel(key, roomId).exec();
-            if (Number(deleted) === 1 && typeof message === 'string') taken.push(message);
-        }
-        await this.unlistIfNothingWaits(botId);
-        return taken;
+        const taken = await this.redis.eval(
+            "local all = redis.call('HVALS', KEYS[1]) redis.call('DEL', KEYS[1]) redis.call('SREM', KEYS[2], ARGV[1]) return all",
+            { keys: [`bots:matrix:dm-waiting:${botId}`, 'bots:matrix:dm-waiting'], arguments: [botId] }
+        );
+        return Array.isArray(taken) ? taken.filter((message): message is string => typeof message === 'string') : [];
     }
 
     /**

@@ -302,6 +302,27 @@ describe('MatrixDmBridge', () => {
         expect(deps.reply).toHaveBeenCalledTimes(1);
     });
 
+    it('a resting line that comes back empty or fails to send is tried again on the next message', async () => {
+        await bridge.onEvent(invite());
+        deps.getBotConfig.mockResolvedValue(resting as never);
+        deps.restingLine.mockResolvedValueOnce('');
+        await bridge.onEvent(message('Are you around?'));
+        expect(client.sendText).not.toHaveBeenCalled();
+
+        client.sendText.mockRejectedValueOnce(new Error('Synapse is busy'));
+        await bridge.onEvent(message('Hello?'));
+        expect(deps.restingLine).toHaveBeenCalledTimes(2);
+
+        await bridge.onEvent(message('Hello??'));
+        expect(deps.restingLine).toHaveBeenCalledTimes(3);
+        expect(client.sendText).toHaveBeenLastCalledWith(BOT_USER, ROOM, 'The ship is in the harbour, come back later!');
+
+        // Once a line got through, the bot stays quiet for a while.
+        await bridge.onEvent(message('Still there?'));
+        expect(deps.restingLine).toHaveBeenCalledTimes(3);
+        expect(noteStates()).toEqual(['resting']);
+    });
+
     it('drops waiting messages older than a day, and checks with a fresh config', async () => {
         await bridge.onEvent(invite());
         deps.getBotConfig.mockResolvedValue(resting as never);

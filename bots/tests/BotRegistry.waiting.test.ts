@@ -19,6 +19,8 @@ function fakeRedis(arrive: () => Promise<void>) {
     const set = (key: string) => sets.get(key) ?? sets.set(key, new Set()).get(key)!;
     const redis = {
         isOpen: true,
+        /** When set, this many more transactions go through and the next one fails as if the connection dropped. */
+        failExecAfter: undefined as number | undefined,
         hashes,
         sets,
         multi() {
@@ -29,7 +31,10 @@ function fakeRedis(arrive: () => Promise<void>) {
                 sAdd: (k: string, m: string) => (ops.push(() => (set(k).add(m), 1)), chain),
                 hGet: (k: string, f: string) => (ops.push(() => hash(k).get(f) ?? null), chain),
                 hDel: (k: string, f: string) => (ops.push(() => (hash(k).delete(f) ? 1 : 0)), chain),
-                exec: async () => ops.map((op) => op()),
+                exec: async () => {
+                    if (redis.failExecAfter !== undefined && redis.failExecAfter-- <= 0) throw new Error('Connection lost');
+                    return ops.map((op) => op());
+                },
             };
             return chain;
         },
@@ -42,8 +47,15 @@ function fakeRedis(arrive: () => Promise<void>) {
             await once();
             return set(k).delete(m) ? 1 : 0;
         },
-        eval: async (_script: string, opts: { keys: string[]; arguments: string[] }) => {
+        eval: async (script: string, opts: { keys: string[]; arguments: string[] }) => {
             const [hashKey, setKey] = opts.keys;
+            if (script.includes('HVALS')) {
+                const all = [...hash(hashKey).values()];
+                hashes.delete(hashKey);
+                set(setKey).delete(opts.arguments[0]);
+                await once();
+                return all;
+            }
             const dropped = hash(hashKey).size === 0 && set(setKey).delete(opts.arguments[0]) ? 1 : 0;
             await once();
             return dropped;
@@ -92,5 +104,18 @@ describe('BotRegistry waiting messages', () => {
 
         expect(await registry.hasWaitingDms('b1')).toBe(false);
         expect(await registry.waitingDmBots()).toEqual([]);
+    });
+
+    it('hands back every message it removes, even when the connection drops while taking them', async () => {
+        const redis = fakeRedis(async () => {});
+        const registry = registryWith(redis);
+        await registry.rememberWaitingDm('b1', '!room1', 'first');
+        await registry.rememberWaitingDm('b1', '!room2', 'second');
+        redis.failExecAfter = 1;
+
+        const taken = await registry.takeWaitingDms('b1').catch(() => [] as string[]);
+
+        const stillWaiting = [...(redis.hashes.get('bots:matrix:dm-waiting:b1')?.values() ?? [])];
+        expect([...taken, ...stillWaiting].sort()).toEqual(['first', 'second']);
     });
 });

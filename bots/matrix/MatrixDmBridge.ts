@@ -491,11 +491,17 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const roomId = event.room_id;
         if (this.deps.restingLine && !this.recentlySent(this.lastRestingLine, roomId, RESTING_LINE_REPEAT_MS)) {
             const line = await this.deps.restingLine(config, String(event.content?.body ?? '')).catch(() => '');
-            if (line) {
-                await this.client.sendText(this.botUserId(botId), roomId, line).catch((error) =>
-                    console.warn(`[MatrixDmBridge] Could not send a resting line in ${roomId}:`, error?.message ?? error)
-                );
-            }
+            const sent = line
+                ? await this.client.sendText(this.botUserId(botId), roomId, line).then(
+                      () => true,
+                      (error) => {
+                          console.warn(`[MatrixDmBridge] Could not send a resting line in ${roomId}:`, error?.message ?? error);
+                          return false;
+                      }
+                  )
+                : false;
+            // Only a line that reached the chat starts the quiet spell, so an empty or failed one is tried on the next message.
+            if (!sent) this.lastRestingLine.delete(roomId);
         }
         if (!this.recentlySent(this.lastNote, `${roomId}|resting`, NOTE_REPEAT_MS)) {
             await this.sendNote(botId, roomId, 'resting', language, config);
