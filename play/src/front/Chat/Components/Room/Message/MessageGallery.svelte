@@ -2,6 +2,7 @@
     import type { Readable } from "svelte/store";
     import type { ChatMessageContent } from "../../../Connection/ChatConnection";
     import LL from "../../../../../i18n/i18n-svelte";
+    import { saveMessageFiles } from "../MessageActions/availableActions";
     import Lightbox from "./Lightbox.svelte";
 
     export let content: Readable<ChatMessageContent>;
@@ -141,6 +142,11 @@
     // Thumbnail URLs for the lightbox strip (images + videos)
     $: lightboxThumbnails = lightboxItems.map((item) => item.url);
     $: currentLightboxItem = lightboxItems[lightboxIndex];
+
+    /** Saves the file under its real name instead of opening it in a tab (the link stays for a long press). */
+    function saveItem(item: GalleryItem) {
+        saveMessageFiles([{ url: item.url, name: item.filename }]).catch((error) => console.error(error));
+    }
 
     function openLightbox(index: number) {
         lightboxIndex = index;
@@ -362,6 +368,8 @@
                     href={item.url}
                     target="_blank"
                     rel="noopener noreferrer"
+                    download={item.filename}
+                    on:click|preventDefault={() => saveItem(item)}
                     class="flex items-center gap-3 p-2 rounded-lg bg-white/5 hover:bg-white/10 transition-colors group"
                 >
                     <!-- File type icon -->
@@ -440,6 +448,8 @@
                             href={item.url}
                             target="_blank"
                             rel="noopener noreferrer"
+                            download={item.filename}
+                            on:click|preventDefault={() => saveItem(item)}
                             class="flex-shrink-0 opacity-40 hover:opacity-80 transition-opacity"
                             aria-label="Download audio"
                         >
