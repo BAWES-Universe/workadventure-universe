@@ -16,6 +16,7 @@ const { fakeRooms, failingJoins } = vi.hoisted(() => ({
         onConnectionLost: (() => void) | undefined;
         destroy: ReturnType<typeof vi.fn>;
         joinRoom: ReturnType<typeof vi.fn>;
+        dispatchStream: ReturnType<typeof vi.fn>;
     }[],
 }));
 
@@ -49,7 +50,11 @@ vi.mock("../../../src/front/Stores/MediaStore", async () => {
 
 import { LivekitConnection } from "../../../src/front/Livekit/LivekitConnection";
 
-function createConnection() {
+function audioStream(readyState: MediaStreamTrackState): MediaStream {
+    return { getAudioTracks: () => [{ readyState }] } as unknown as MediaStream;
+}
+
+function createConnection(currentMediaStream?: MediaStream) {
     const invitations = new Subject<unknown>();
     const disconnections = new Subject<unknown>();
     const space = {
@@ -57,7 +62,13 @@ function createConnection() {
             type === CommunicationMessageType.LIVEKIT_INVITATION_MESSAGE ? invitations : disconnections,
     } as unknown as SpaceInterface;
     const subjects = {} as StreamableSubjects;
-    const connection = new LivekitConnection(space, subjects, writable(new Set<string>()), writable(false));
+    const connection = new LivekitConnection(
+        space,
+        subjects,
+        writable(new Set<string>()),
+        writable(false),
+        () => currentMediaStream
+    );
     const invite = (token: string) =>
         invitations.next({ livekitInvitationMessage: { serverUrl: "wss://livekit.example.com", token } });
     const disconnect = () => disconnections.next({ livekitDisconnectMessage: {} });
@@ -103,6 +114,29 @@ describe("LivekitConnection", () => {
         await vi.advanceTimersByTimeAsync(60_000);
 
         expect(fakeRooms.length).toBeGreaterThanOrEqual(3);
+    });
+
+    it("publishes the stream of the scripting API again in the rebuilt room", async () => {
+        const scriptingStream = audioStream("live");
+        const { invite } = createConnection(scriptingStream);
+        invite("token-1");
+        await vi.advanceTimersByTimeAsync(0);
+
+        fakeRooms[0].onConnectionLost?.();
+        await vi.advanceTimersByTimeAsync(10_000);
+
+        expect(fakeRooms[1].dispatchStream).toHaveBeenCalledWith(scriptingStream);
+    });
+
+    it("does not publish a stream of the scripting API that has ended", async () => {
+        const { invite } = createConnection(audioStream("ended"));
+        invite("token-1");
+        await vi.advanceTimersByTimeAsync(0);
+
+        fakeRooms[0].onConnectionLost?.();
+        await vi.advanceTimersByTimeAsync(10_000);
+
+        expect(fakeRooms[1].dispatchStream).not.toHaveBeenCalled();
     });
 
     it("tries again when the new room cannot connect yet", async () => {

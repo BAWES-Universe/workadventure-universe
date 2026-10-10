@@ -15,6 +15,10 @@ const debug = Debug("LivekitConnection");
 // tried to resume the old one for about 50 seconds). After the last one, we give up until the back invites us again.
 const REBUILD_DELAYS_MS = [1_000, 5_000, 10_000, 20_000, 30_000, 30_000, 30_000, 30_000, 30_000, 30_000];
 
+function isLive(mediaStream: MediaStream): boolean {
+    return mediaStream.getAudioTracks().some((track) => track.readyState === "live");
+}
+
 export enum CommunicationType {
     NONE = "NONE",
     WEBRTC = "WEBRTC",
@@ -35,7 +39,9 @@ export class LivekitConnection {
         private space: SpaceInterface,
         private _streamableSubjects: StreamableSubjects,
         private _blockedUsersStore: Readable<Set<string>>,
-        private _streamingMegaphoneStore = streamingMegaphoneStore
+        private _streamingMegaphoneStore = streamingMegaphoneStore,
+        // The stream of the scripting API (SpacePeerManager.dispatchStream), published again in a rebuilt room
+        private getCurrentMediaStream: () => MediaStream | undefined = () => undefined
     ) {
         this.initialize();
     }
@@ -75,10 +81,12 @@ export class LivekitConnection {
                 // Connected: a later loss starts its attempts from the shortest delay again
                 this.rebuildAttempts = 0;
             }
-            if (this.streamToDispatch) {
-                await this.dispatchStream(this.streamToDispatch);
-            }
+            // A room replacing another one (rebuilt, or a new invitation) gets the stream the old one had too
+            const streamToDispatch = this.streamToDispatch ?? this.getCurrentMediaStream();
             this.streamToDispatch = undefined;
+            if (streamToDispatch && this.livekitRoom === room && isLive(streamToDispatch)) {
+                await this.dispatchStream(streamToDispatch);
+            }
         })().catch((err) => {
             if (err instanceof ConnectionError && err.message === "Client initiated disconnect") {
                 // This error is triggered when the "destroy" method is called before Livekit connection completes.
