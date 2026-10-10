@@ -453,8 +453,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
                     if (typing) startTyping();
                 },
             });
-            // No reply at all means the bot couldn't be set up to answer (no AI service here): say so, as for a failure.
-            if (!reply || reply.failed) {
+            // No reply at all means the bot couldn't be set up to answer (no AI service here), and an empty one leaves the
+            // person with nothing: say so, as for a failure.
+            if (!reply || reply.failed || (!reply.text && !reply.media?.length)) {
                 await couldNotAnswer(config);
                 return;
             }

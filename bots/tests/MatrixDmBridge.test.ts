@@ -558,6 +558,22 @@ describe('MatrixDmBridge', () => {
         expect(noteStates()).toEqual(['trouble', 'trouble']);
     });
 
+    it('says it could not answer when the reply comes back empty, and tries a waiting message again', async () => {
+        await bridge.onEvent(invite());
+        deps.reply.mockResolvedValue({ text: '', media: [] });
+        await bridge.onEvent(message('hello?'));
+        expect(noteStates()).toEqual(['trouble']);
+        expect(client.sendText).not.toHaveBeenCalled();
+
+        deps.getBotConfig.mockResolvedValue(resting as never);
+        await bridge.onEvent(message('left while resting'));
+        deps.getBotConfig.mockResolvedValue({ ...resting, enabled: true } as never);
+        await bridge.checkWaiting();
+        // The first empty answer to a waiting message is tried again later, not reported.
+        expect(noteStates()).toEqual(['trouble', 'resting']);
+        expect((bridge as any).localWaiting.get(BOT)?.size).toBe(1);
+    });
+
     it('a bot with no AI provider leaves one "not ready" note instead of silence', async () => {
         await bridge.onEvent(invite());
         deps.getBotConfig.mockResolvedValue({ botId: BOT, name: 'Guide', enabled: true } as never);
