@@ -40,6 +40,7 @@ import {
 } from "./BackgroundTransformStore";
 import {
     noiseFilterStore,
+    strongNoiseEngineStore,
     strongNoiseFilterStateStore,
     strongNoiseFilterSupported,
     voiceIsolationSupportedStore,
@@ -948,80 +949,122 @@ let noiseSuppressionTransformer: NoiseSuppressionTransformer | undefined = undef
 // Aborts the noise filter still starting for the previous microphone track.
 let currentNoiseFilterAbortController: AbortController | undefined = undefined;
 
-/** Strong could not start or stopped working: back to the browser's filter, and the device list says why. */
-function failStrongNoiseFilter(error: unknown): void {
-    console.warn("[MediaStore] Strong noise filter failed, back to the browser's filter:", error);
-    Sentry.captureException(error);
+/**
+ * Strong could not start or stopped working. DeepFilterNet3 gets one more chance as the lighter DTLN, unless the
+ * device is simply too slow for it. Otherwise back to the browser's filter, and the device list says why.
+ */
+function failStrongNoiseFilter(error: unknown, options: { overloaded?: boolean } = {}): void {
+    console.warn("[MediaStore] Strong noise filter failed:", error);
+    if (!options.overloaded) {
+        // A device that is too slow is expected, not a bug.
+        Sentry.captureException(error);
+    }
     const transformer = noiseSuppressionTransformer;
     noiseSuppressionTransformer = undefined;
     transformer?.closeAndDestroy().catch((closeError) => {
         console.warn("[MediaStore] Failed to close the noise filter:", closeError);
     });
+    if (transformer?.engine === "deepfilternet" && !options.overloaded) {
+        // Switching engine makes localStreamStore build a new transformer. "starting" puts the browser's filter back
+        // on the microphone until the new one is ready.
+        strongNoiseFilterStateStore.set("starting");
+        // The output of the failed engine is dead: hand out the browser-filtered microphone again right away.
+        rawStreamPublished = undefined;
+        strongNoiseEngineStore.set("dtln");
+        return;
+    }
     strongNoiseFilterStateStore.set("failed");
     noiseFilterStore.set("standard");
+    // After the choice is back to Standard, so no new transformer starts. Picking Strong again tries the full model.
+    strongNoiseEngineStore.set("deepfilternet");
 }
+
+/** The stream last handed out without the Strong filter, so the same one is not handed out again while it loads. */
+let rawStreamPublished: MediaStream | undefined = undefined;
 
 /**
  * The stream everyone else gets: the camera after background effects, and the microphone after the Strong noise
  * filter when it is picked. The filter comes last so changing it never restarts a background effect.
  */
 export const localStreamStore = derived<
-    [typeof backgroundProcessedStreamStore, typeof noiseFilterStore],
+    [typeof backgroundProcessedStreamStore, typeof noiseFilterStore, typeof strongNoiseEngineStore],
     LocalStreamStoreValue
->([backgroundProcessedStreamStore, noiseFilterStore], ([$backgroundProcessedStream, $noiseFilter], set) => {
-    currentNoiseFilterAbortController?.abort(new AbortError("Noise filter cancelled: new stream update"));
-    currentNoiseFilterAbortController = undefined;
+>(
+    [backgroundProcessedStreamStore, noiseFilterStore, strongNoiseEngineStore],
+    ([$backgroundProcessedStream, $noiseFilter, $strongNoiseEngine], set) => {
+        currentNoiseFilterAbortController?.abort(new AbortError("Noise filter cancelled: new stream update"));
+        currentNoiseFilterAbortController = undefined;
 
-    const inputStream = $backgroundProcessedStream.type === "success" ? $backgroundProcessedStream.stream : undefined;
-    const audioTrack = inputStream?.getAudioTracks()[0];
-    if ($noiseFilter !== "strong" || !strongNoiseFilterSupported || !inputStream || !audioTrack) {
-        noiseSuppressionTransformer?.stop();
-        if ($noiseFilter !== "strong") {
-            // Keep "failed" so the device list can still explain why Standard is back.
-            strongNoiseFilterStateStore.update((state) => (state === "failed" ? state : "off"));
+        const inputStream =
+            $backgroundProcessedStream.type === "success" ? $backgroundProcessedStream.stream : undefined;
+        const audioTrack = inputStream?.getAudioTracks()[0];
+        if ($noiseFilter !== "strong" || !strongNoiseFilterSupported || !inputStream || !audioTrack) {
+            noiseSuppressionTransformer?.stop();
+            if ($noiseFilter !== "strong") {
+                // Keep "failed" so the device list can still explain why Standard is back.
+                strongNoiseFilterStateStore.update((state) => (state === "failed" ? state : "off"));
+            }
+            rawStreamPublished = inputStream;
+            set($backgroundProcessedStream);
+            return;
         }
-        set($backgroundProcessedStream);
-        return;
-    }
 
-    if (!noiseSuppressionTransformer) {
-        const transformer = new NoiseSuppressionTransformer({
-            onStatusChange: (message) => {
-                if (noiseSuppressionTransformer !== transformer) {
+        // Each engine owns its AudioContext (48 kHz for DeepFilterNet3, 16 kHz for DTLN).
+        if (noiseSuppressionTransformer && noiseSuppressionTransformer.engine !== $strongNoiseEngine) {
+            const previous = noiseSuppressionTransformer;
+            noiseSuppressionTransformer = undefined;
+            previous.closeAndDestroy().catch((closeError) => {
+                console.warn("[MediaStore] Failed to close the noise filter:", closeError);
+            });
+        }
+
+        if (!noiseSuppressionTransformer) {
+            const transformer = new NoiseSuppressionTransformer({
+                engine: $strongNoiseEngine,
+                onStatusChange: (message) => {
+                    if (noiseSuppressionTransformer !== transformer) {
+                        return;
+                    }
+                    if (message.status === "ready") {
+                        strongNoiseFilterStateStore.set("on");
+                    } else if (message.status === "error") {
+                        failStrongNoiseFilter(new Error(message.message ?? "The noise filter failed to start"), {
+                            overloaded: message.overloaded,
+                        });
+                    }
+                },
+            });
+            noiseSuppressionTransformer = transformer;
+            strongNoiseFilterStateStore.set("starting");
+        }
+
+        const transformer = noiseSuppressionTransformer;
+        const abortController = new AbortController();
+        currentNoiseFilterAbortController = abortController;
+        // The microphone is wired only once the model is loaded, which takes a download the first time. Until
+        // then everyone keeps getting the browser-filtered microphone rather than nothing.
+        if (get(strongNoiseFilterStateStore) !== "on" && rawStreamPublished !== inputStream) {
+            rawStreamPublished = inputStream;
+            set($backgroundProcessedStream);
+        }
+        transformer
+            .transform(audioTrack, abortController.signal)
+            .then((outputTrack) => {
+                if (abortController.signal.aborted) {
                     return;
                 }
-                if (message.status === "ready") {
-                    strongNoiseFilterStateStore.set("on");
-                } else if (message.status === "error") {
-                    failStrongNoiseFilter(new Error(message.message ?? "The noise filter failed to start"));
+                set({ type: "success", stream: new MediaStream([...inputStream.getVideoTracks(), outputTrack]) });
+            })
+            .catch((error) => {
+                if (abortController.signal.aborted || error instanceof AbortError) {
+                    return;
                 }
-            },
-        });
-        noiseSuppressionTransformer = transformer;
-        strongNoiseFilterStateStore.set("starting");
+                if (noiseSuppressionTransformer === transformer) {
+                    failStrongNoiseFilter(error);
+                }
+            });
     }
-
-    const transformer = noiseSuppressionTransformer;
-    const abortController = new AbortController();
-    currentNoiseFilterAbortController = abortController;
-    // The worklet passes the microphone through unchanged until the model is ready, so nobody goes silent.
-    transformer
-        .transform(audioTrack, abortController.signal)
-        .then((outputTrack) => {
-            if (abortController.signal.aborted) {
-                return;
-            }
-            set({ type: "success", stream: new MediaStream([...inputStream.getVideoTracks(), outputTrack]) });
-        })
-        .catch((error) => {
-            if (abortController.signal.aborted || error instanceof AbortError) {
-                return;
-            }
-            if (noiseSuppressionTransformer === transformer) {
-                failStrongNoiseFilter(error);
-            }
-        });
-});
+);
 
 /**
  * Firefox does not support the OverconstrainedError class.

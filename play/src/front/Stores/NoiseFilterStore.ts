@@ -1,10 +1,11 @@
 import { derived, writable } from "svelte/store";
 import { localUserStore } from "../Connection/LocalUserStore";
 import { isFirefox } from "../WebRtc/DeviceUtils";
+import type { NoiseSuppressionEngine } from "../WebRtc/NoiseSuppression/NoiseSuppressionTransformer";
 
 /**
  * "standard": the browser's own noise filter (what everyone had before).
- * "strong": WorkAdventure's on-device DTLN model, downloaded the first time it is picked.
+ * "strong": WorkAdventure's on-device DeepFilterNet3 model, downloaded the first time it is picked.
  * "voiceOnly": the browser's and operating system's voice isolation, only where the browser offers it.
  */
 export const NOISE_FILTERS = ["standard", "strong", "voiceOnly"] as const;
@@ -21,8 +22,8 @@ function isNoiseFilter(value: unknown): value is NoiseFilter {
 export type StrongNoiseFilterState = "off" | "starting" | "on" | "failed";
 
 /**
- * Strong runs in an AudioWorklet in a 16 kHz AudioContext. Firefox cannot connect a 48 kHz microphone to a
- * context with another sample rate, so it is not offered there.
+ * Strong runs in an AudioWorklet in its own AudioContext (48 kHz for DeepFilterNet3, 16 kHz for DTLN). Firefox
+ * cannot connect a microphone to a context with another sample rate, so it is not offered there.
  */
 export const strongNoiseFilterSupported =
     typeof AudioContext !== "undefined" &&
@@ -34,6 +35,12 @@ export const strongNoiseFilterSupported =
 export const voiceIsolationSupportedStore = writable(false);
 
 export const strongNoiseFilterStateStore = writable<StrongNoiseFilterState>("off");
+
+/**
+ * The model behind Strong for this visit. DeepFilterNet3 keeps the whole voice; the lighter DTLN (16 kHz, muffled)
+ * only takes over when DeepFilterNet3 cannot start, and is not remembered between visits.
+ */
+export const strongNoiseEngineStore = writable<NoiseSuppressionEngine>("deepfilternet");
 
 function createNoiseFilterStore() {
     const stored = localUserStore.getNoiseFilter();
