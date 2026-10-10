@@ -1,3 +1,4 @@
+import { sanitizeInlineMimeType } from "../../../../Utils/InlineMimeType";
 import type { SaveableFile } from "./messageActions";
 import { isImageUrl } from "./messageActions";
 
@@ -46,7 +47,7 @@ function isTouchDevice(): boolean {
 }
 
 function downloadFile(file: File): void {
-    const objectUrl = URL.createObjectURL(file);
+    const objectUrl = URL.createObjectURL(file.slice(0, file.size, sanitizeInlineMimeType(file.type)));
     const link = document.createElement("a");
     link.href = objectUrl;
     link.download = file.name;

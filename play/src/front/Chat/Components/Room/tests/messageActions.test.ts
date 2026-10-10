@@ -7,6 +7,19 @@ function content(partial: Partial<ChatMessageContent>): ChatMessageContent {
 }
 
 describe("message actions", () => {
+    it("keeps an SVG data image as a photo for replies, saving and mobile preparation", () => {
+        const svg = "data:image/svg+xml;base64,PHN2Zy8+";
+        const image = content({ body: "Our logo", url: svg, filename: "logo.svg" });
+        expect(getSaveableFiles("image", image)).toEqual([{ url: svg, name: "logo.svg" }]);
+        expect(areAllPhotos(getSaveableFiles("image", image))).toBe(true);
+        expect(summarizeForReply("image", image)).toEqual({
+            kind: "photos",
+            count: 1,
+            thumbnail: svg,
+            caption: "Our logo",
+        });
+    });
+
     it("saves every photo of a gallery under its uploaded name, not only the first", () => {
         const gallery = content({
             url: "https://cdn.example/a1b2.png",
@@ -46,6 +59,11 @@ describe("message actions", () => {
         expect(getSaveableFiles("file", content({ url: "https://cdn.example/files/report%201.pdf?x=1" }))[0].name).toBe(
             "report 1.pdf"
         );
+    });
+
+    it("names an SVG picture with no known name image.svg, not part of its data", () => {
+        const svg = "data:image/svg+xml;base64,PHN2Zy8+";
+        expect(getSaveableFiles("image", content({ url: svg }))).toEqual([{ url: svg, name: "image.svg" }]);
     });
 
     it("offers nothing to save on a text message", () => {

@@ -1,7 +1,9 @@
 <script lang="ts">
     import type { Readable } from "svelte/store";
+    import { getAttachmentOpenUrl, isSvgAttachmentUrl } from "../../../../Utils/AttachmentUrls";
     import type { ChatMessageContent } from "../../../Connection/ChatConnection";
     import LL from "../../../../../i18n/i18n-svelte";
+    import { saveMessageFiles } from "../MessageActions/availableActions";
     import Lightbox from "./Lightbox.svelte";
 
     export let content: Readable<ChatMessageContent>;
@@ -13,6 +15,7 @@
     type MediaType = "image" | "video" | "audio" | "file";
 
     function inferMediaType(url: string): MediaType {
+        if (isSvgAttachmentUrl(url)) return "image";
         const pathPart = url.split("?")[0];
         const ext = pathPart.split(".").pop()?.toLowerCase();
         if (!ext) return "file";
@@ -142,6 +145,11 @@
     $: lightboxThumbnails = lightboxItems.map((item) => item.url);
     $: currentLightboxItem = lightboxItems[lightboxIndex];
 
+    /** Saves the file under its real name instead of opening it in a tab (the link stays for a long press). */
+    function saveItem(item: GalleryItem) {
+        saveMessageFiles([{ url: item.url, name: item.filename }]).catch((error) => console.error(error));
+    }
+
     function openLightbox(index: number) {
         lightboxIndex = index;
         showLightbox = true;
@@ -153,8 +161,9 @@
     {#if lightboxItems.length === 1}
         <!-- Single image/video: render like MessageImage -->
         <a
-            href={lightboxItems[0].url}
+            href={getAttachmentOpenUrl(lightboxItems[0].url)}
             target="_blank"
+            rel="noopener noreferrer"
             class="cursor-pointer relative group block p-1 pb-0"
             on:click|preventDefault={() => openLightbox(0)}
         >
@@ -362,6 +371,8 @@
                     href={item.url}
                     target="_blank"
                     rel="noopener noreferrer"
+                    download={item.filename}
+                    on:click|preventDefault={() => saveItem(item)}
                     class="flex items-center gap-3 p-2 rounded-lg bg-white/5 hover:bg-white/10 transition-colors group"
                 >
                     <!-- File type icon -->
@@ -440,6 +451,8 @@
                             href={item.url}
                             target="_blank"
                             rel="noopener noreferrer"
+                            download={item.filename}
+                            on:click|preventDefault={() => saveItem(item)}
                             class="flex-shrink-0 opacity-40 hover:opacity-80 transition-opacity"
                             aria-label="Download audio"
                         >

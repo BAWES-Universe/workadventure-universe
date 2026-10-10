@@ -737,6 +737,7 @@ class ConnectionManager {
                     localStorageCharacterTextureIds: localUserStore.getCharacterTextures() ?? undefined,
                     localStorageCompanionTextureId: localUserStore.getCompanionTextureId() ?? undefined,
                     chatID: localUserStore.getChatId() ?? undefined,
+                    name: localUserStore.getName() ?? undefined,
                 },
             })
             .then((res) => {

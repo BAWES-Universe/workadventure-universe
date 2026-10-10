@@ -1542,12 +1542,12 @@
       "area": "Bar, camera, calls and moving",
       "topic": "New device",
       "action": "Plug in a headset never used in this browser while in the room.",
-      "expected": "One bubble above your woka \"New device detected {device} 🎉 Switch? [SPACE]\" (or \"(+N more)\"); Space switches. A device used before is not offered again. Waits while the tab is hidden.",
+      "expected": "One \"New device detected\" card at the bottom: a headset shows Microphone and Speaker ticks and Switch (Enter); several at once (Sonar) show Choose device, which opens the device list with NEW tags. Not now (Esc), X and \"Don't ask\" close it; Space does nothing. A device used before is not offered again. Waits while the tab is hidden.",
       "source": "approved batch 1 #585 (merged in batch 1, approved 10-04 13:57)",
       "runs": "needs-device",
       "runsNote": "needs-device",
       "knownGap": false,
-      "hooks": "`Phaser/Game/GameScene.ts:2760-2761`, `Utils/NewMediaDevices.ts` (localStorage `knownMediaDevices`)"
+      "hooks": "`Phaser/Game/GameScene.ts` offerPendingNewMediaDevices, `Components/PopUp/PopUpNewDevice.svelte`, `Utils/NewMediaDevices.ts` (localStorage `knownMediaDevices`, `ignoredNewMediaDevices`)"
     },
     {
       "id": "AV-032",

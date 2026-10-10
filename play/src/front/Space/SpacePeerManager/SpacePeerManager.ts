@@ -128,7 +128,8 @@ export class SpacePeerManager {
                     this._communicationState = new LivekitState(
                         this.space,
                         this._streamableSubjects,
-                        blockedUsersStore
+                        blockedUsersStore,
+                        () => this.currentMediaStream
                     );
                 } else {
                     console.error("Unknown communication strategy: " + message.switchMessage.strategy);

@@ -34,6 +34,7 @@ import {
     audioManagerRetryPlaySubject,
     audioManagerVisibilityStore,
     audioManagerVolumeStore,
+    nativeSoundscapeListenerStore,
 } from "../../../../src/front/Stores/AudioManagerStore";
 
 const flush = async () => {
@@ -69,6 +70,8 @@ describe("native audio panel integration", () => {
         component = undefined;
         audioManagerFileStore.unloadAudio();
         vi.restoreAllMocks();
+        vi.unstubAllGlobals();
+        nativeSoundscapeListenerStore.set(undefined);
         vi.useRealTimers();
     });
 
@@ -165,5 +168,164 @@ describe("native audio panel integration", () => {
         audioManagerVolumeStore.togglePause();
         await flush();
         expect(get(activeSecondaryZoneActionBarStore)).toBeUndefined();
+    });
+    it("contains invalid native music metadata without poisoning unrelated Svelte store dispatch", async () => {
+        const unrelated = writable(0);
+        let observed = 0;
+        const unsubscribe = unrelated.subscribe((value) => {
+            observed = value;
+        });
+        const emitter = {
+            url: "https://maps.example/water.mp3",
+            volume: 0.3,
+            loop: true,
+            x: 0,
+            y: 0,
+            innerRadius: 10,
+            outerRadius: 100,
+        };
+        expect(() =>
+            audioManagerFileStore.playAudio(
+                "data:audio/mp3;base64,AA==",
+                "https://maps.example/map.json",
+                0.5,
+                true,
+                emitter
+            )
+        ).not.toThrow();
+        unrelated.set(1);
+        expect(observed).toBe(1);
+        expect(get(audioManagerPlayerState)).toBe("error");
+        audioManagerFileStore.unloadAudio();
+        play("recovered.mp3");
+        await flush();
+        unrelated.set(2);
+        expect(observed).toBe(2);
+        expect(get(audioManagerPlayerState)).toBe("playing");
+        unsubscribe();
+    });
+
+    it.each([false, true])(
+        "rejects late first opt-in without restarting music (suspended controls=%s)",
+        async (suspended) => {
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+            play("music.mp3");
+            await flush();
+            const music = media[0];
+            music.currentTime = 37;
+            const originalSource = music.src;
+            const playSpy = vi.spyOn(HTMLMediaElement.prototype, "play");
+            const calls = playSpy.mock.calls.length;
+            audioManagerVolumeStore.setMuted(suspended);
+            if (suspended) audioManagerVolumeStore.togglePause();
+            audioManagerVolumeStore.stopSound(suspended);
+            const controls = { ...get(audioManagerVolumeStore) };
+            audioManagerFileStore.setSoundscape({
+                url: "https://maps.example/water.mp3",
+                volume: 0.3,
+                loop: true,
+                x: 0,
+                y: 0,
+                innerRadius: 10,
+                outerRadius: 100,
+            });
+            await flush();
+            expect(document.querySelectorAll("audio")).toHaveLength(1);
+            expect(document.querySelector("audio")).toBe(music);
+            expect(music.src).toBe(originalSource);
+            expect(music.currentTime).toBe(37);
+            expect(playSpy.mock.calls).toHaveLength(calls);
+            expect(get(audioManagerVolumeStore)).toEqual(controls);
+            expect(warn).toHaveBeenCalledWith(expect.stringContaining("late same-track opt-in was ignored"));
+            audioManagerFileStore.setSoundscape(undefined);
+            await flush();
+            expect(music.currentTime).toBe(37);
+        }
+    );
+
+    it("keeps real media attached, retries a suspended native context, and removes same-URL area emitters without restarting music", async () => {
+        const contexts: FakeAudioContext[] = [];
+        class FakeAudioContext {
+            state = "suspended";
+            currentTime = 0;
+            destination = {};
+            onstatechange: (() => void) | null = null;
+            gains: Array<{ value: number }> = [];
+            resume = vi.fn(() => {
+                this.state = "running";
+                return Promise.resolve();
+            });
+            close = vi.fn(() => {
+                this.state = "closed";
+                return Promise.resolve();
+            });
+            constructor() {
+                contexts.push(this);
+            }
+            createMediaElementSource() {
+                return { connect: vi.fn(), disconnect: vi.fn() };
+            }
+            createGain() {
+                const parameter = {
+                    value: 0,
+                    cancelScheduledValues: vi.fn(),
+                    setValueAtTime(value: number) {
+                        this.value = value;
+                    },
+                    setTargetAtTime(value: number) {
+                        this.value = value;
+                    },
+                };
+                this.gains.push(parameter);
+                return { gain: parameter, connect: vi.fn(), disconnect: vi.fn() };
+            }
+        }
+        vi.stubGlobal("AudioContext", FakeAudioContext);
+        nativeSoundscapeListenerStore.set({ x: 0, y: 0 });
+        const emitter = {
+            url: "https://maps.example/water.mp3",
+            volume: 0.3,
+            loop: true,
+            x: 0,
+            y: 0,
+            innerRadius: 10,
+            outerRadius: 110,
+        };
+        audioManagerFileStore.playAudio("music.mp3", "https://maps.example/map.json", 0.5, true, emitter);
+        await flush();
+        expect(document.querySelectorAll("audio")).toHaveLength(2);
+        expect(get(audioManagerPlayerState)).toBe("not_allowed");
+        audioManagerRetryPlaySubject.next();
+        await flush();
+        expect(contexts[0].resume).toHaveBeenCalledTimes(1);
+        expect(get(audioManagerPlayerState)).toBe("playing");
+        const musicMedia = media[0];
+        musicMedia.currentTime = 7;
+        const playSpy = vi.spyOn(HTMLMediaElement.prototype, "play");
+        const musicCalls = () => playSpy.mock.contexts.filter((entry) => entry === musicMedia).length;
+        const before = musicCalls();
+        audioManagerFileStore.setSoundscape({ ...emitter, url: "https://maps.example/water2.mp3" });
+        await flush();
+        expect(document.querySelectorAll("audio")).toHaveLength(2);
+        expect(musicMedia.currentTime).toBe(7);
+        expect(musicCalls()).toBe(before);
+        nativeSoundscapeListenerStore.set(undefined);
+        expect(contexts[0].gains[1].value).toBe(0);
+        audioManagerFileStore.setSoundscape(undefined);
+        await flush();
+        expect(document.querySelectorAll("audio")).toHaveLength(1);
+        expect(musicMedia.currentTime).toBe(7);
+        expect(musicCalls()).toBe(before);
+        expect(contexts[0].close).not.toHaveBeenCalled();
+        audioManagerFileStore.setSoundscape(emitter);
+        await flush();
+        expect(document.querySelectorAll("audio")).toHaveLength(2);
+        expect(musicMedia.currentTime).toBe(7);
+        expect(musicCalls()).toBe(before);
+        expect(contexts).toHaveLength(1);
+        audioManagerFileStore.unloadAudio();
+        await flush();
+        expect(document.querySelectorAll("audio")).toHaveLength(0);
+        expect(contexts[0].close).toHaveBeenCalledTimes(1);
     });
 });

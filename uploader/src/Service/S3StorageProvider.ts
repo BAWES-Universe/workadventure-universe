@@ -10,6 +10,7 @@ import {
 } from "../Enum/EnvironmentVariable";
 import {StorageProvider} from "./StorageProvider";
 import {TargetDevice} from "./TargetDevice";
+import {mimeTypeManager} from "./MimeType";
 
 export class S3StorageProvider implements StorageProvider {
     private s3: AWS.S3 | undefined;
@@ -32,18 +33,14 @@ export class S3StorageProvider implements StorageProvider {
         if (!targetBucket) {
             throw new Error("No bucket configured for upload");
         }
-        let uploadParams: S3.Types.PutObjectRequest = {
+        // Public CDN URLs bypass the uploader, so store safe response metadata too. Never trust the multipart type.
+        const uploadParams: S3.Types.PutObjectRequest = {
             Bucket: targetBucket,
             Key: fileUuid,
-            Body: chunks
+            Body: chunks,
+            ContentType: mimeTypeManager.getSafeMimeTypeByFileName(fileUuid),
+            ContentDisposition: mimeTypeManager.getContentDispositionByFileName(fileUuid),
         };
-
-        if(mimeType !== undefined){
-            uploadParams = {
-                ...uploadParams,
-                ContentType: mimeType,
-            };
-        }
 
         //upload file in data
         await this.S3().upload(uploadParams,  (err, data)  => {
@@ -56,7 +53,14 @@ export class S3StorageProvider implements StorageProvider {
     }
 
     async getSignedUrl(key: string): Promise<string> {
-        const params = {Bucket: this.bucketName, Key: key, Expires: UPLOADER_AWS_SIGNED_URL_EXPIRATION};
+        // Overrides also protect old objects whose stored metadata predates this policy.
+        const params = {
+            Bucket: this.bucketName,
+            Key: key,
+            Expires: UPLOADER_AWS_SIGNED_URL_EXPIRATION,
+            ResponseContentType: mimeTypeManager.getSafeMimeTypeByFileName(key),
+            ResponseContentDisposition: mimeTypeManager.getContentDispositionByFileName(key),
+        };
         return await this.S3().getSignedUrlPromise('getObject', params);
     }
 

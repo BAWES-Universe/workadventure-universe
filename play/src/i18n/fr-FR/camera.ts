@@ -41,8 +41,6 @@ const camera: DeepPartial<Translation["camera"]> = {
         preparingYouNetworkGuide: '"guide de préparation du réseau"',
         refresh: "Rafraîchir",
         continue: "Continuer",
-        newDeviceDetected: "Nouveau périphérique détecté {device} 🎉 Changer ? [ESPACE]",
-        newDevicesDetected: "Nouveau périphérique détecté {device} (+{count} autres) 🎉 Changer ? [ESPACE]",
     },
     my: {
         silentZone: "Zone silencieuse",

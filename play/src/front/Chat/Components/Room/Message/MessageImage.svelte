@@ -1,5 +1,6 @@
 <script lang="ts">
     import type { Readable } from "svelte/store";
+    import { getAttachmentOpenUrl } from "../../../../Utils/AttachmentUrls";
     import { getSaveableFiles } from "../MessageActions/messageActions";
     import type { ChatMessageContent } from "../../../Connection/ChatConnection";
     import Lightbox from "./Lightbox.svelte";
@@ -18,7 +19,13 @@
     $: hasCaption = $content.body && $content.body.trim();
 </script>
 
-<a href={$content.url} target="_blank" class="cursor-pointer relative group block p-1 pb-0" on:click={openLightbox}>
+<a
+    href={getAttachmentOpenUrl($content.url)}
+    target="_blank"
+    rel="noopener noreferrer"
+    class="cursor-pointer relative group block p-1 pb-0"
+    on:click={openLightbox}
+>
     <div
         class="bg-contrast/50 p-1 rounded absolute top-2 right-2 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all h-fit w-fit"
     >

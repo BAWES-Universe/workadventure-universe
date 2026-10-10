@@ -7,6 +7,7 @@ import { Jitsi } from "@workadventure/shared-utils";
 import { getSpeakerMegaphoneAreaName } from "@workadventure/map-editor/src/Utils";
 import { areaSpaceName } from "@workadventure/shared-utils/src/Space/areaSpaceName";
 import { z } from "zod";
+import { registerNativeSoundscapeProperties } from "../../Components/AudioManager/NativeSoundscapeProperties";
 import { scriptUtils } from "../../Api/ScriptUtils";
 import { coWebsites } from "../../Stores/CoWebsiteStore";
 import { localUserStore } from "../../Connection/LocalUserStore";
@@ -16,11 +17,7 @@ import { SimpleCoWebsite } from "../../WebRtc/CoWebsite/SimpleCoWebsite";
 import { bbbFactory } from "../../WebRtc/BBBFactory";
 import { JITSI_PRIVATE_MODE, JITSI_URL } from "../../Enum/EnvironmentVariable";
 import { JitsiCoWebsite } from "../../WebRtc/CoWebsite/JitsiCoWebsite";
-import {
-    audioManagerFileStore,
-    audioManagerVisibilityStore,
-    audioManagerVolumeStore,
-} from "../../Stores/AudioManagerStore";
+import { audioManagerFileStore, audioManagerVisibilityStore } from "../../Stores/AudioManagerStore";
 import { iframeListener } from "../../Api/IframeListener";
 import { Room } from "../../Connection/Room";
 import { LL } from "../../../i18n/i18n-svelte";
@@ -382,29 +379,7 @@ export class GameMapPropertiesListener {
             }
         });
 
-        this.gameMapFrontWrapper.onPropertyChange(GameMapProperties.PLAY_AUDIO, (newValue, oldValue, allProps) => {
-            if (localUserStore.getBlockAudio()) {
-                if (newValue !== undefined) {
-                    audioManagerVisibilityStore.set("disabledBySettings");
-                } else {
-                    audioManagerVisibilityStore.set("hidden");
-                }
-                return;
-            }
-            const volume = allProps.get(GameMapProperties.AUDIO_VOLUME) as number | undefined;
-            const loop = allProps.get(GameMapProperties.AUDIO_LOOP) as boolean | undefined;
-
-            if (newValue !== undefined) {
-                audioManagerFileStore.playAudio(newValue, this.scene.getMapUrl(), volume, loop);
-                // FIXME: maybe we can switch to "visible" only when the sound actually starts playing?
-                audioManagerVisibilityStore.set("visible");
-            } else {
-                // Stop the audio if it is playing
-                if (get(audioManagerFileStore) != "") audioManagerVolumeStore.stopSound(true);
-                if (get(audioManagerFileStore) != "") audioManagerFileStore.unloadAudio();
-                audioManagerVisibilityStore.set("hidden");
-            }
-        });
+        registerNativeSoundscapeProperties(this.gameMapFrontWrapper, this.scene.getMapUrl());
 
         this.gameMapFrontWrapper.onPropertyChange(GameMapProperties.AUDIO_VOLUME, (newValue, oldValue, allProps) => {
             const url = allProps.get(GameMapProperties.PLAY_AUDIO);

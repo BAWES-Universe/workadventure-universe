@@ -42,8 +42,8 @@ export class GameMapAreas {
         oldPosition: { x: number; y: number } | undefined,
         position: { x: number; y: number } | undefined
     ): boolean {
-        const areasByOldPosition = oldPosition ? this.getAreasOnPosition(oldPosition, this.areasPositionOffsetY) : [];
-        const areasByNewPosition = position ? this.getAreasOnPosition(position, this.areasPositionOffsetY) : [];
+        const areasByOldPosition = oldPosition ? this.getAreasOnPlayerPosition(oldPosition) : [];
+        const areasByNewPosition = position ? this.getAreasOnPlayerPosition(position) : [];
 
         const enterAreas = new Set(areasByNewPosition);
         const leaveAreas = new Set(areasByOldPosition);
@@ -313,6 +313,14 @@ export class GameMapAreas {
         for (const callback of this.leaveAreaCallbacks) {
             callback([area], []);
         }
+    }
+
+    /**
+     * Areas a player standing at this position is considered to be in (the position is the player's sprite centre, so
+     * the offset moves it down to the feet).
+     */
+    public getAreasOnPlayerPosition(position: { x: number; y: number }): AreaData[] {
+        return this.getAreasOnPosition(position, this.areasPositionOffsetY);
     }
 
     public getAreasOnPosition(position: { x: number; y: number }, offsetY = 0): AreaData[] {

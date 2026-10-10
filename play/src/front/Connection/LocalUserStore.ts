@@ -64,6 +64,7 @@ const editHintSeenKey = "editHintSeen";
 const recentEditObjectsKey = "recentEditObjects";
 const bubbleSound = "bubbleSound";
 const knownMediaDevices = "knownMediaDevices";
+const ignoredNewMediaDevices = "ignoredNewMediaDevices";
 
 const INITIAL_MAP_EDITOR_SIDEBAR_WIDTH = 448;
 
@@ -416,6 +417,33 @@ class LocalUserStore {
         } catch (e) {
             // A full or blocked storage must not stop the device list from updating.
             console.warn("Error saving known media devices to localStorage:", e);
+        }
+    }
+
+    /**
+     * Device names the player asked never to be offered again ("Don't ask for this device"), see NewMediaDevices.ts.
+     */
+    getIgnoredNewMediaDevices(): string[] {
+        const stored = localStorage.getItem(ignoredNewMediaDevices);
+        if (!stored) {
+            return [];
+        }
+        try {
+            return KnownMediaDevicesSchema.parse(JSON.parse(stored));
+        } catch (e) {
+            console.warn("Error parsing ignored media devices from localStorage:", e);
+            localStorage.removeItem(ignoredNewMediaDevices);
+            return [];
+        }
+    }
+
+    addIgnoredNewMediaDevices(keys: string[]) {
+        // Most recent last, and bounded like the known devices.
+        const kept = this.getIgnoredNewMediaDevices().filter((key) => !keys.includes(key));
+        try {
+            localStorage.setItem(ignoredNewMediaDevices, JSON.stringify([...kept, ...keys].slice(-100)));
+        } catch (e) {
+            console.warn("Error saving ignored media devices to localStorage:", e);
         }
     }
 

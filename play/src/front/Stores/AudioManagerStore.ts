@@ -74,14 +74,39 @@ function createAudioManagerVolumeStore() {
 const audioSource = writable<AudioSource | undefined>(undefined);
 export const audioManagerSourceStore = { subscribe: audioSource.subscribe };
 
+/** Publish atomic map source metadata while keeping persisted user controls in their separate store. */
 function createAudioManagerFileStore() {
     const file = derived(audioSource, (source) => source?.url ?? "");
     return {
         subscribe: file.subscribe,
-        playAudio: (url: string | number | boolean, mapUrl: string, volume: number | undefined, loop = false): void => {
-            audioSource.set({ url: new URL(String(url), mapUrl).toString(), volume: clampAudioVolume(volume), loop });
+        playAudio: (
+            url: string | number | boolean,
+            mapUrl: string,
+            volume: number | undefined,
+            loop = false,
+            soundscape?: AudioSource["soundscape"]
+        ): void => {
+            audioSource.set({
+                url: new URL(String(url), mapUrl).toString(),
+                volume: clampAudioVolume(volume),
+                loop,
+                ...(soundscape ? { soundscape } : {}),
+            });
             // Stop is a one-shot action: a new explicit source may start, as before. Pause and mute persist.
             audioManagerVolumeStore.stopSound(false);
+        },
+        // Recovery of rejected metadata must retain user Stop, pause, mute and master volume.
+        restoreAudio: (source: AudioSource): void => {
+            audioSource.set(source);
+        },
+        setSoundscape: (soundscape: AudioSource["soundscape"]): void => {
+            audioSource.update((source) => {
+                if (!source) return source;
+                const next = { ...source };
+                delete next.soundscape;
+                if (soundscape) next.soundscape = soundscape;
+                return next;
+            });
         },
         setVolume: (volume: number | undefined): void => {
             audioSource.update((source) => source && { ...source, volume: clampAudioVolume(volume) });
@@ -115,3 +140,6 @@ export const bubbleSoundStore = writable<"ding" | "wobble">(localUserStore.getBu
 videoStreamElementsStore.subscribe((peerElements) => {
     audioManagerVolumeStore.setTalking(peerElements.length > 0);
 });
+
+// Player-space listener only. No camera transform, no third-party iframe control.
+export const nativeSoundscapeListenerStore = writable<{ x: number; y: number } | undefined>(undefined);

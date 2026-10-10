@@ -1,4 +1,5 @@
 import type { ChatMessageContent, ChatMessageType } from "../../../Connection/ChatConnection";
+import { isSvgAttachmentUrl } from "../../../../Utils/AttachmentUrls";
 
 /** The reactions offered in one tap, in the order they are shown (phones show all, the desktop bar the first three). */
 export const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🎉"] as const;
@@ -21,6 +22,8 @@ function extensionOf(url: string): string | undefined {
 }
 
 function fileNameFromUrl(url: string): string {
+    // A data: URL (an SVG picture) has no name in it: its last "/" is inside the MIME type.
+    if (url.startsWith("data:")) return isSvgAttachmentUrl(url) ? "image.svg" : "file";
     const path = url.split("?")[0].split("#")[0];
     const lastSegment = path.split("/").pop();
     if (!lastSegment) return "file";
@@ -32,6 +35,7 @@ function fileNameFromUrl(url: string): string {
 }
 
 export function isImageUrl(url: string): boolean {
+    if (isSvgAttachmentUrl(url)) return true;
     const extension = extensionOf(url);
     return extension !== undefined && IMAGE_EXTENSIONS.has(extension);
 }

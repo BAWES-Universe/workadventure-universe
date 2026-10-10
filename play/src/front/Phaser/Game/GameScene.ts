@@ -103,7 +103,7 @@ import {
     screenSharingActivatedStore,
 } from "../../Stores/MenuStore";
 import type { WasCameraUpdatedEvent } from "../../Api/Events/WasCameraUpdatedEvent";
-import { audioManagerFileStore, bubbleSoundStore } from "../../Stores/AudioManagerStore";
+import { audioManagerFileStore, bubbleSoundStore, nativeSoundscapeListenerStore } from "../../Stores/AudioManagerStore";
 import { bubbleMatesStore, currentPlayerGroupLockStateStore } from "../../Stores/CurrentPlayerGroupStore";
 import { errorScreenStore } from "../../Stores/ErrorScreenStore";
 import {
@@ -134,7 +134,7 @@ import { privacyShutdownStore } from "../../Stores/PrivacyShutdownStore";
 import { isLiveStreamingStore } from "../../Stores/IsStreamingStore";
 import { isAndroid, isIOS } from "../../WebRtc/DeviceUtils";
 import { StringUtils } from "../../Utils/StringUtils";
-import { groupMediaDevicesByLabel } from "../../Utils/NewMediaDevices";
+import { buildNewDeviceOffer, isIgnoredMediaDevice } from "../../Utils/NewMediaDevices";
 import { visibilityStore } from "../../Stores/VisibilityStore";
 
 import { SuperLoaderPlugin } from "../Services/SuperLoaderPlugin";
@@ -197,6 +197,8 @@ import type { UserProviderInterface } from "../../Chat/UserProvider/UserProvider
 import { registerAdditionalMenuItem, unregisterAdditionalMenuItem } from "../../Stores/AdditionalItemsMenuStore";
 import { popupStore } from "../../Stores/PopupStore";
 import PopUpRoomAccessDenied from "../../Components/PopUp/PopUpRoomAccessDenied.svelte";
+import PopUpNewDevice from "../../Components/PopUp/PopUpNewDevice.svelte";
+import { NEW_DEVICE_POPUP_ID } from "../../Stores/NewDeviceStore";
 import PopUpTriggerActionMessage from "../../Components/PopUp/PopUpTriggerActionMessage.svelte";
 import PopUpMapEditorNotEnabled from "../../Components/PopUp/PopUpMapEditorNotEnabled.svelte";
 import PopUpMapEditorShortcut from "../../Components/PopUp/PopUpMapEditorShortcut.svelte";
@@ -213,6 +215,7 @@ import { selectedRoomStore } from "../../Chat/Stores/SelectRoomStore";
 import { raceTimeout } from "../../Utils/PromiseUtils";
 import { ConversationBubble } from "../Entity/ConversationBubble";
 import { DarkenOutsideAreaEffect } from "../Components/DarkenOutsideArea/DarkenOutsideAreaEffect";
+import { releaseSpawnSilence, seedSpawnSilence } from "./SpawnSilence";
 import { GameMapFrontWrapper } from "./GameMap/GameMapFrontWrapper";
 import { gameManager } from "./GameManager";
 import { EmoteManager } from "./EmoteManager";
@@ -359,6 +362,11 @@ export class GameScene extends DirtyScene {
     private mapEditorModeManager!: MapEditorModeManager;
     private entitiesCollectionsManager!: EntitiesCollectionsManager;
     private pathfindingManager!: PathfindingManager;
+    private pendingMoveTo?: {
+        position: { x: number; y: number };
+        speed: number | undefined;
+        tryFindingNearestAvailable: boolean;
+    };
     private activatablesManager!: ActivatablesManager;
     private preloading = true;
     private startPositionCalculator!: StartPositionCalculator;
@@ -1358,6 +1366,7 @@ export class GameScene extends DirtyScene {
         bubbleMatesStore.set([]);
 
         audioManagerFileStore.unloadAudio();
+        nativeSoundscapeListenerStore.set(undefined);
         // Area-leave handlers do not run when the scene closes: forget the areas the chat top row names.
         clearAreaPresence();
         // Nor does leaving a camera-locking area: end the lock and put the zoom back to what it was before it, or the
@@ -1380,6 +1389,7 @@ export class GameScene extends DirtyScene {
         this.emoteManager?.destroy();
         this.cameraManager?.destroy();
         this.mapEditorModeManager?.destroy();
+        this.pendingMoveTo = undefined;
         this.pathfindingManager?.cleanup();
         // A broadcast you were giving ends with the scene: pill, ring and megaphone state all go.
         endLiveBroadcast();
@@ -2010,6 +2020,8 @@ export class GameScene extends DirtyScene {
             .then(() => {
                 // The scene was closed while we waited for the network: its successor makes its own connection.
                 if (this.cleanupDone) return undefined;
+                // The join carries the availability status: a spawn inside a silent zone must already be silent in it.
+                seedSpawnSilence(this.gameMapFrontWrapper, this.startPositionCalculator.startPosition);
                 return connectionManager.connectToRoomSocket(
                     this.roomUrl,
                     this.playerName,
@@ -2296,6 +2308,7 @@ export class GameScene extends DirtyScene {
 
                 userMessageManager.setReceiveBanListener(this.bannedUser.bind(this));
 
+                nativeSoundscapeListenerStore.set({ x: this.CurrentPlayer.x, y: this.CurrentPlayer.y });
                 this.CurrentPlayer.on(hasMovedEventName, (event: HasPlayerMovedInterface) => {
                     this.handleCurrentPlayerHasMovedEvent(event);
                 });
@@ -2415,6 +2428,7 @@ export class GameScene extends DirtyScene {
                     }) || [];
 
                 this.gameMapFrontWrapper.setPosition(this.CurrentPlayer.x, this.CurrentPlayer.y);
+                releaseSpawnSilence();
                 // Init layer change listener
                 this.gameMapFrontWrapper.onEnterLayer((layers) => {
                     layers.forEach((layer) => {
@@ -2747,9 +2761,9 @@ export class GameScene extends DirtyScene {
     }
 
     /**
-     * Shows a single "New device detected" bubble for the devices waiting to be offered. With
-     * several new devices (a virtual audio app registers a handful at once), the bubble names the
-     * best one and says how many others there are; they stay available in the device settings.
+     * Shows the "New device detected" card for the devices waiting to be offered: Switch for one device (a headset
+     * is one device, as a microphone and a speaker), Choose device for several at once (a virtual audio app
+     * registers a handful), which opens the device list with the new ones tagged.
      */
     private offerPendingNewMediaDevices(): void {
         if (this.pendingNewMediaDevices.size === 0 || document.visibilityState !== "visible") return;
@@ -2760,51 +2774,18 @@ export class GameScene extends DirtyScene {
             get(requestedMicrophoneDeviceIdStore),
             get(speakerSelectedStore),
         ];
+        const ignoredDevices = localUserStore.getIgnoredNewMediaDevices();
         const devices = Array.from(this.pendingNewMediaDevices.values()).filter(
             (device) =>
                 presentDevices.some((present) => present.deviceId === device.deviceId) &&
-                !selectedDeviceIds.includes(device.deviceId)
+                !selectedDeviceIds.includes(device.deviceId) &&
+                !isIgnoredMediaDevice(device, ignoredDevices)
         );
         this.pendingNewMediaDevices.clear();
 
-        const groups = groupMediaDevicesByLabel(devices);
-        const firstGroup = groups.entries().next();
-        if (firstGroup.done) return;
-        const [label, devicesToUse] = firstGroup.value;
-        const otherCount = groups.size - 1;
-
-        const id = "playtext-mediadevice";
-        this.CurrentPlayer.playText(
-            id,
-            otherCount === 0
-                ? get(LL).camera.webrtc.newDeviceDetected({ device: label })
-                : get(LL).camera.webrtc.newDevicesDetected({ device: label, count: otherCount }),
-            5000,
-            () => {
-                this.CurrentPlayer.destroyText(id);
-
-                for (const deviceToUse of devicesToUse) {
-                    switch (deviceToUse.kind) {
-                        case "videoinput":
-                            requestedCameraDeviceIdStore.set(deviceToUse.deviceId);
-                            localUserStore.setPreferredVideoInputDevice(deviceToUse.deviceId);
-                            break;
-                        case "audioinput":
-                            requestedMicrophoneDeviceIdStore.set(deviceToUse.deviceId);
-                            localUserStore.setPreferredAudioInputDevice(deviceToUse.deviceId);
-                            break;
-                        case "audiooutput":
-                            localUserStore.setSpeakerDeviceId(deviceToUse.deviceId);
-                            speakerSelectedStore.set(deviceToUse.deviceId);
-                            break;
-                        default:
-                            console.warn("Unknown device kind: ", deviceToUse.kind);
-                    }
-                }
-            },
-            true,
-            "message"
-        );
+        const offer = buildNewDeviceOffer(devices);
+        if (offer === undefined) return;
+        popupStore.addPopup(PopUpNewDevice, { offer }, NEW_DEVICE_POPUP_ID);
     }
 
     private listenToIframeEvents(): void {
@@ -3752,23 +3733,34 @@ ${escapedMessage}
     }
 
     /**
-     * Walk the player to position x,y expressed in Game pixels.
+     * Walk the player to a floor/click position in game pixels (before the Player's collider offset).
      */
     public async moveTo(
         position: { x: number; y: number },
         tryFindingNearestAvailable = false,
         speed: number | undefined = undefined
     ): Promise<{ x: number; y: number; cancelled: boolean }> {
-        const path = await this.getPathfindingManager().findPathFromGameCoordinates(
-            {
-                x: this.CurrentPlayer.x,
-                y: this.CurrentPlayer.y,
-            },
-            position,
-            tryFindingNearestAvailable
-        );
-        if (path.length === 0) throw new Error("No path found");
-        return this.CurrentPlayer.setPathToFollow(path, speed ?? this.CurrentPlayer.walkingSpeed);
+        const request = { position: { ...position }, speed, tryFindingNearestAvailable };
+        this.pendingMoveTo = request;
+        try {
+            const path = await this.getPathfindingManager().findPathFromGameCoordinates(
+                {
+                    x: this.CurrentPlayer.x,
+                    y: this.CurrentPlayer.y,
+                },
+                request.position,
+                tryFindingNearestAvailable
+            );
+            if (this.pendingMoveTo !== request) {
+                return { x: this.CurrentPlayer.x, y: this.CurrentPlayer.y, cancelled: true };
+            }
+            if (path.length === 0) throw new Error("No path found");
+            return this.CurrentPlayer.setPathToFollow(path, speed ?? this.CurrentPlayer.walkingSpeed);
+        } finally {
+            if (this.pendingMoveTo === request) {
+                this.pendingMoveTo = undefined;
+            }
+        }
     }
 
     /**
@@ -3865,7 +3857,9 @@ ${escapedMessage}
         }
     }
 
+    /** Update listener, map properties and nearby interactions for both walking and direct same-map teleports. */
     private handleCurrentPlayerHasMovedEvent(event: HasPlayerMovedInterface): void {
+        nativeSoundscapeListenerStore.set({ x: event.x, y: event.y });
         //listen event to share position of user
         this.pushPlayerPosition(event);
         this.gameMapFrontWrapper.setPosition(event.x, event.y);
@@ -4094,7 +4088,15 @@ ${escapedMessage}
             .subscribe((collisionGrid) => {
                 this.pathfindingManager.setCollisionGrid(collisionGrid);
                 this.markDirty();
-                const playerDestination = this.CurrentPlayer.getCurrentPathDestinationPoint();
+                // A newer click may still be calculating while the previous path is being followed.
+                const pendingMove = this.pendingMoveTo;
+                if (pendingMove) {
+                    this.moveTo(pendingMove.position, pendingMove.tryFindingNearestAvailable, pendingMove.speed).catch(
+                        (reason) => console.warn(reason)
+                    );
+                    return;
+                }
+                const playerDestination = this.CurrentPlayer.getCurrentPathDestinationPoint("floor");
                 if (playerDestination) {
                     this.moveTo(playerDestination, true).catch((reason) => console.warn(reason));
                 }

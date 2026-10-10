@@ -510,7 +510,8 @@ export abstract class Character extends Container implements OutlineableInterfac
         const emoteY =
             stackHeight > 0 ? Math.min(EMOTE_Y, SAY_STACK_BOTTOM_Y - stackHeight - EMOTE_ABOVE_STACK_GAP) : EMOTE_Y;
         const span = document.createElement("span");
-        span.innerHTML = emote;
+        // Remote players control this value. Display it as text even if the server is older or compromised.
+        span.textContent = emote;
         this.emote = new DOMElement(this.scene, -1, emoteY - EMOTE_Y, span, "z-index:10;");
         this.emote.setAlpha(0);
         this.add(this.emote);
