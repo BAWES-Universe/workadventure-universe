@@ -857,6 +857,71 @@ describe("Signing Orbit in when the OIDC access token has run out", () => {
         expect(frame.postMessage).toHaveBeenCalledWith(expect.objectContaining({ accessToken: expired }), ADMIN);
     });
 
+    it("keeps the renewed token a room that refuses the player sends along with its refusal", async () => {
+        const expired = makeOidcToken(nowSeconds() - 10);
+        const renewed = makeOidcToken(nowSeconds() + 3600);
+        const renewedGameToken = makeAccessTokenJwt(renewed);
+        mocks.pusherGet.mockResolvedValue({
+            data: {
+                status: "error",
+                type: "error",
+                title: "Members only",
+                subtitle: "This place is only open to its members",
+                code: "MEMBERS_ONLY",
+                details: "Ask one of its admins to invite you, then come back.",
+                authToken: renewedGameToken,
+            },
+        });
+        await openedWith(makeAccessTokenJwt(expired));
+        await orbitAsks();
+        expect(mocks.setAuthToken).toHaveBeenCalledWith(renewedGameToken);
+        expect(frame.postMessage).toHaveBeenCalledWith(expect.objectContaining({ accessToken: renewed }), ADMIN);
+    });
+
+    describe("when joining a room", () => {
+        async function gameTokenToJoinWith(gameToken: string) {
+            vi.resetModules();
+            const module = await import("./orbitAccessToken");
+            return module.gameTokenToJoinWith(gameToken, "https://play.example.com/@/other-room", () => true);
+        }
+
+        it("renews an expired token first and joins with the renewed one", async () => {
+            const expired = makeAccessTokenJwt(makeOidcToken(nowSeconds() - 10));
+            const renewed = makeAccessTokenJwt(makeOidcToken(nowSeconds() + 3600));
+            mocks.getAuthToken.mockReturnValue(expired);
+            mocks.setAuthToken.mockImplementation((token: string) => mocks.getAuthToken.mockReturnValue(token));
+            mocks.pusherGet.mockResolvedValue(meAnswer(renewed));
+            expect(await gameTokenToJoinWith(expired)).toBe(renewed);
+            expect(mocks.pusherGet).toHaveBeenCalledWith("me", {
+                params: { token: expired, playUri: "https://play.example.com/@/other-room" },
+            });
+        });
+
+        it("joins with the token Orbit's frame renewed meanwhile, with no trip to /me", async () => {
+            const old = makeAccessTokenJwt(makeOidcToken(nowSeconds() - 10));
+            const newer = makeAccessTokenJwt(makeOidcToken(nowSeconds() + 3600));
+            mocks.getAuthToken.mockReturnValue(newer);
+            expect(await gameTokenToJoinWith(old)).toBe(newer);
+            expect(mocks.pusherGet).not.toHaveBeenCalled();
+        });
+
+        it("leaves a token that is still good, and a guest's token, as they are", async () => {
+            const good = makeAccessTokenJwt(makeOidcToken(nowSeconds() + 3600));
+            mocks.getAuthToken.mockReturnValue(good);
+            expect(await gameTokenToJoinWith(good)).toBe(good);
+            mocks.getAuthToken.mockReturnValue("guest-token");
+            expect(await gameTokenToJoinWith("guest-token")).toBe("guest-token");
+            expect(mocks.pusherGet).not.toHaveBeenCalled();
+        });
+
+        it("joins with the token it has when /me can't renew", async () => {
+            const expired = makeAccessTokenJwt(makeOidcToken(nowSeconds() - 10));
+            mocks.getAuthToken.mockReturnValue(expired);
+            mocks.pusherGet.mockRejectedValue(new Error("pusher down"));
+            expect(await gameTokenToJoinWith(expired)).toBe(expired);
+        });
+    });
+
     it("keeps nothing from a /me answer that doesn't match the pusher's schema", async () => {
         const expired = makeOidcToken(nowSeconds() - 10);
         mocks.pusherGet.mockResolvedValue({

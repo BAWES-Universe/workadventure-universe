@@ -28,6 +28,16 @@ function shouldRefreshAccessToken(err: unknown): boolean {
     return err.error === "invalid_token" || err.response?.statusCode === 401;
 }
 
+/** True when the provider no longer accepts this access token, which is when it can be renewed. */
+async function accessTokenHasRunOut(accessToken: string): Promise<boolean> {
+    try {
+        await openIDClient.checkTokenAuth(accessToken);
+        return false;
+    } catch (err) {
+        return shouldRefreshAccessToken(err);
+    }
+}
+
 export class AuthenticateController extends BaseHttpController {
     private readonly redirectToMatrixFile: string;
     private readonly redirectToPlayFile: string;
@@ -208,24 +218,73 @@ export class AuthenticateController extends BaseHttpController {
 
                 //Get user data from Admin Back Office
                 //This is very important to create User Local in LocalStorage in WorkAdventure
-                const resUserData = await adminService.fetchMemberDataByUuid(
-                    authTokenData.identifier,
-                    authTokenData.accessToken,
-                    playUri,
-                    IPAddress,
-                    localStorageCharacterTextureIds ?? [],
-                    localStorageCompanionTextureId,
-                    req.header("accept-language"),
-                    authTokenData.tags,
-                    undefined,
-                    // The visit this call records belongs to a guest by the name they saved, like a join does.
-                    // A member's name comes from their account.
-                    authTokenData.accessToken ? undefined : name?.trim().slice(0, 100) || undefined
-                );
+                const fetchUserData = (accessToken: string | undefined) =>
+                    adminService.fetchMemberDataByUuid(
+                        authTokenData.identifier,
+                        accessToken,
+                        playUri,
+                        IPAddress,
+                        localStorageCharacterTextureIds ?? [],
+                        localStorageCompanionTextureId,
+                        req.header("accept-language"),
+                        authTokenData.tags,
+                        undefined,
+                        // The visit this call records belongs to a guest by the name they saved, like a join does.
+                        // A member's name comes from their account.
+                        authTokenData.accessToken ? undefined : name?.trim().slice(0, 100) || undefined
+                    );
+                const firstUserData = await fetchUserData(authTokenData.accessToken);
 
-                if (resUserData.status === "error") {
-                    res.json(resUserData);
-                    return;
+                const { refreshToken } = authTokenData;
+                // Renews the access token through the refresh token, once per request. Null when there is nothing to
+                // renew with or the provider refuses.
+                const doRenewTokens = async () => {
+                    if (!refreshToken) return null;
+                    try {
+                        const refreshed = await openIDClient.refreshAccessToken(refreshToken);
+                        const checked = await openIDClient.checkTokenAuth(refreshed.access_token);
+                        const authToken = jwtTokenManager.createAuthToken({
+                            identifier: authTokenData.identifier,
+                            accessToken: refreshed.access_token,
+                            refreshToken: refreshed.refresh_token ?? refreshToken,
+                            username: authTokenData.username,
+                            locale: authTokenData.locale,
+                            tags: authTokenData.tags,
+                            matrixUserId: authTokenData.matrixUserId,
+                        });
+                        return { authToken, accessToken: refreshed.access_token, checked };
+                    } catch (refreshErr) {
+                        console.warn("OIDC silent refresh failed, forcing re-login", refreshErr);
+                        return null;
+                    }
+                };
+                let renewalInFlight: ReturnType<typeof doRenewTokens> | undefined;
+                const renewTokens = () => (renewalInFlight ??= doRenewTokens());
+
+                let resUserData: Exclude<typeof firstUserData, { status: "error" }>;
+                if (firstUserData.status !== "error") {
+                    resUserData = firstUserData;
+                } else {
+                    // Orbit can't check an access token that ran out, so it answers a signed-in owner or member as it
+                    // would a stranger (e.g. "Members only"). Renew the token and ask Orbit once more. A token the
+                    // provider still accepts is a real refusal and stays one, unless the caller asked for a renewal.
+                    const renewed =
+                        authTokenData.accessToken &&
+                        refreshToken &&
+                        (refresh === "true" || (await accessTokenHasRunOut(authTokenData.accessToken)))
+                            ? await renewTokens()
+                            : null;
+                    if (!renewed) {
+                        res.json(firstUserData);
+                        return;
+                    }
+                    const askedAgain = await fetchUserData(renewed.accessToken);
+                    if (askedAgain.status === "error") {
+                        // Still refused: send the renewed token along, so the client keeps the one that works.
+                        res.json({ ...askedAgain, authToken: renewed.authToken });
+                        return;
+                    }
+                    resUserData = askedAgain;
                 }
 
                 if (authTokenData.accessToken == undefined) {
@@ -243,38 +302,20 @@ export class AuthenticateController extends BaseHttpController {
                     return;
                 }
 
-                const { refreshToken } = authTokenData;
                 // Answers with a game token carrying a renewed access token; false when the refresh fails.
-                let refreshTried = false;
                 const respondWithRefreshedToken = async (): Promise<boolean> => {
-                    if (!refreshToken || refreshTried) return false;
-                    refreshTried = true;
-                    try {
-                        const refreshed = await openIDClient.refreshAccessToken(refreshToken);
-                        const resCheckTokenAuth = await openIDClient.checkTokenAuth(refreshed.access_token);
-                        const newAuthToken = jwtTokenManager.createAuthToken({
-                            identifier: authTokenData.identifier,
-                            accessToken: refreshed.access_token,
-                            refreshToken: refreshed.refresh_token ?? refreshToken,
-                            username: authTokenData.username,
-                            locale: authTokenData.locale,
-                            tags: authTokenData.tags,
-                            matrixUserId: authTokenData.matrixUserId,
-                        });
-                        res.json({
-                            username: authTokenData?.username,
-                            authToken: newAuthToken,
-                            locale: authTokenData?.locale,
-                            matrixUserId: authTokenData?.matrixUserId,
-                            matrixServerUrl: (resCheckTokenAuth.matrix_url as string | undefined) ?? MATRIX_PUBLIC_URI,
-                            ...resUserData,
-                            ...resCheckTokenAuth,
-                        } satisfies MeResponse);
-                        return true;
-                    } catch (refreshErr) {
-                        console.warn("OIDC silent refresh failed, forcing re-login", refreshErr);
-                        return false;
-                    }
+                    const renewed = await renewTokens();
+                    if (!renewed) return false;
+                    res.json({
+                        username: authTokenData?.username,
+                        authToken: renewed.authToken,
+                        locale: authTokenData?.locale,
+                        matrixUserId: authTokenData?.matrixUserId,
+                        matrixServerUrl: (renewed.checked.matrix_url as string | undefined) ?? MATRIX_PUBLIC_URI,
+                        ...resUserData,
+                        ...renewed.checked,
+                    } satisfies MeResponse);
+                    return true;
                 };
 
                 // The caller says this access token was refused: renew it even if the provider still accepts it.
