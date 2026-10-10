@@ -24,6 +24,15 @@ describe("sanitizeInlineMimeType", () => {
         "audio/x-pn-wav",
         "audio/flac",
         "audio/x-flac",
+        // Passive types phones and other chat apps send.
+        "image/jpg",
+        "image/bmp",
+        "image/heic",
+        "audio/x-m4a",
+        "audio/mp3",
+        "audio/opus",
+        "video/x-m4v",
+        "video/3gpp",
     ])("keeps supported media type %s", (type) => {
         expect(sanitizeInlineMimeType(type)).toBe(type);
     });
@@ -55,9 +64,12 @@ describe("sanitizeInlineMimeType", () => {
 });
 
 describe("canRenderAttachmentInline", () => {
-    it.each(["image/png", "audio/mpeg", "video/mp4"])("keeps %s media cards", (type) => {
-        expect(canRenderAttachmentInline(type, "attachment")).toBe(true);
-    });
+    it.each(["image/png", "audio/mpeg", "video/mp4", "image/bmp", "image/heic", "audio/x-m4a", "video/3gpp"])(
+        "keeps %s media cards",
+        (type) => {
+            expect(canRenderAttachmentInline(type, "attachment")).toBe(true);
+        }
+    );
 
     it("keeps vector SVG previews, including older senders", () => {
         expect(canRenderAttachmentInline("image/svg+xml", "logo.svg")).toBe(true);

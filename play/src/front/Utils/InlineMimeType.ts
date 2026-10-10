@@ -1,4 +1,5 @@
-// Ported from WorkAdventure 6a3595710; matches Element's ALLOWED_BLOB_MIMETYPES.
+// Ported from WorkAdventure 6a3595710; matches Element's ALLOWED_BLOB_MIMETYPES, plus other passive picture, audio and
+// video types phones and other chat apps send (none of them can run script when opened in a tab).
 // Document types such as HTML and SVG must never become same-origin navigable blobs.
 const INLINE_MIME_TYPES = new Set([
     "image/jpeg",
@@ -7,11 +8,24 @@ const INLINE_MIME_TYPES = new Set([
     "image/apng",
     "image/webp",
     "image/avif",
+    "image/jpg",
+    "image/pjpeg",
+    "image/bmp",
+    "image/x-ms-bmp",
+    "image/x-icon",
+    "image/vnd.microsoft.icon",
+    "image/tiff",
+    "image/heic",
+    "image/heif",
 
     "video/mp4",
     "video/webm",
     "video/ogg",
     "video/quicktime",
+    "video/x-m4v",
+    "video/3gpp",
+    "video/mpeg",
+    "video/x-matroska",
 
     "audio/mp4",
     "audio/webm",
@@ -24,6 +38,13 @@ const INLINE_MIME_TYPES = new Set([
     "audio/x-pn-wav",
     "audio/flac",
     "audio/x-flac",
+    "audio/m4a",
+    "audio/x-m4a",
+    "audio/x-aac",
+    "audio/mp3",
+    "audio/x-mp3",
+    "audio/opus",
+    "audio/3gpp",
 ]);
 
 export const DOWNLOAD_MIME_TYPE = "application/octet-stream";
