@@ -22,7 +22,7 @@ import {
     FollowRequestMessage,
     FollowAbortMessage,
 } from '@workadventure/messages';
-import type { PositionInterface, ViewportInterface } from '../../play/src/front/Connection/ConnexionModels';
+import type { PositionInterface, ViewportInterface } from '../types/Position';
 import { BotState } from './BotState';
 import type { BaseBehavior } from '../behaviors/BaseBehavior';
 import { BotPathfindingManager } from '../utils/BotPathfindingManager';
