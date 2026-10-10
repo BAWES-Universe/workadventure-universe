@@ -67,7 +67,7 @@ describe("resolveMatrixMediaUrl", () => {
         expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
-    it.each(["image/svg+xml", "text/html", "application/xhtml+xml"])(
+    it.each(["text/html", "application/xhtml+xml"])(
         "forces unencrypted %s attachments to download",
         async (mimetype) => {
             fetchMock.mockResolvedValue(new Response("attachment", { headers: { "Content-Type": mimetype } }));
@@ -498,7 +498,7 @@ describe("holdMatrixMedia with an encrypted file", () => {
         hold.release();
     });
 
-    it.each(["image/svg+xml", "text/html", "application/xhtml+xml", undefined])(
+    it.each(["text/html", "application/xhtml+xml", undefined])(
         "forces encrypted %s attachments to download without changing their contents",
         async (mimetype) => {
             const payload =

@@ -59,18 +59,23 @@ describe("canRenderAttachmentInline", () => {
         expect(canRenderAttachmentInline(type, "attachment")).toBe(true);
     });
 
+    it("keeps vector SVG previews, including older senders", () => {
+        expect(canRenderAttachmentInline("image/svg+xml", "logo.svg")).toBe(true);
+        expect(canRenderAttachmentInline(undefined, "logo.SVG")).toBe(true);
+    });
+
     it("keeps media cards when older senders omit the MIME type", () => {
         expect(canRenderAttachmentInline(undefined, "photo.png")).toBe(true);
         expect(canRenderAttachmentInline(undefined, "recording.wav")).toBe(true);
         expect(canRenderAttachmentInline(undefined, "clip.mp4")).toBe(true);
     });
 
-    it.each(["image/svg+xml", "text/html", "application/xhtml+xml", "audio/unknown"])(
+    it.each(["text/html", "application/xhtml+xml", "audio/unknown"])(
         "shows a download card for %s even with a misleading filename",
         (type) => expect(canRenderAttachmentInline(type, "photo.png")).toBe(false)
     );
 
-    it.each(["logo.SVG", "page.html", "page.htm", "page.xhtml", "document.xml"])(
+    it.each(["page.html", "page.htm", "page.xhtml", "document.xml"])(
         "shows a download card for %s even without a MIME type",
         (filename) => expect(canRenderAttachmentInline(undefined, filename)).toBe(false)
     );

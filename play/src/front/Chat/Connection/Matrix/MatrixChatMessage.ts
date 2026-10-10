@@ -127,8 +127,12 @@ export class MatrixChatMessage implements ChatMessage {
         const content = this.event.getOriginalContent();
         // In an encrypted chat, files sent by other apps (Element) are encrypted too: they come as `file`, not `url`.
         const info: unknown = content.info;
-        const mimetype =
+        let mimetype =
             typeof info === "object" && info !== null ? (info as Record<string, unknown>).mimetype : undefined;
+        const filename = content.filename ?? content.body;
+        if (mimetype === undefined && typeof filename === "string" && /\.svg$/i.test(filename)) {
+            mimetype = "image/svg+xml";
+        }
         const hold = holdMatrixMedia(
             this.room.client,
             content.url ?? content.file,
@@ -193,7 +197,7 @@ export class MatrixChatMessage implements ChatMessage {
                 url: undefined,
                 urls: undefined,
                 // The body of a Matrix file is its name: the blob: URL it loads from has none.
-                filename: this.type === "file" ? content.filename ?? content.body : undefined,
+                filename: content.filename ?? (this.type === "file" ? content.body : undefined),
                 fileNames: undefined,
             };
         }

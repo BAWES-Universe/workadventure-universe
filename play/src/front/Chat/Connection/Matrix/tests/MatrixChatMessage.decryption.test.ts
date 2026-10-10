@@ -55,6 +55,7 @@ function fakeRoom(): Room {
 describe("MatrixChatMessage decrypted after it is shown", () => {
     it.each([
         ["m.image", "photo.png", "image/png", "image"],
+        ["m.image", "logo.svg", "image/svg+xml", "image"],
         ["m.audio", "recording.wav", "audio/wav", "audio"],
         ["m.video", "clip.mp4", "video/mp4", "video"],
     ])("preserves the card for %s with and without MIME metadata", (msgtype, body, mimetype, type) => {
@@ -65,12 +66,29 @@ describe("MatrixChatMessage decrypted after it is shown", () => {
         }
     });
 
-    it("shows an SVG without MIME metadata as a download instead of a broken image", () => {
+    it("previews an SVG without MIME metadata", () => {
         const { event, decrypt } = fakeEncryptedEvent();
         decrypt({ msgtype: "m.image", body: "logo.svg", url: "mxc://matrix.test/svg" });
         const message = new MatrixChatMessage(event, fakeRoom());
-        expect(message.type).toBe("file");
+        expect(message.type).toBe("image");
+        const stop = message.content.subscribe(() => {});
+        expect(holdMatrixMedia).toHaveBeenCalledWith(expect.anything(), "mxc://matrix.test/svg", "image/svg+xml");
+        stop();
+    });
+
+    it("keeps an SVG's filename when its body is a caption", () => {
+        const { event, decrypt } = fakeEncryptedEvent();
+        decrypt({
+            msgtype: "m.image",
+            body: "Our logo",
+            filename: "logo.svg",
+            info: { mimetype: "image/svg+xml" },
+            url: "mxc://matrix.test/logo",
+        });
+        const message = new MatrixChatMessage(event, fakeRoom());
+        expect(message.type).toBe("image");
         expect(get(message.content).filename).toBe("logo.svg");
+        expect(get(message.content).body).toBe("Our logo");
     });
 
     it.each(["m.image", "m.audio", "m.video"])(
@@ -84,18 +102,18 @@ describe("MatrixChatMessage decrypted after it is shown", () => {
             decrypt({
                 msgtype,
                 body: "A caption",
-                filename: "document.svg",
-                info: { mimetype: "image/svg+xml" },
+                filename: "document.html",
+                info: { mimetype: "text/html" },
                 file,
             });
             await Promise.resolve();
             await Promise.resolve();
 
             expect(message.type).toBe("file");
-            expect(get(message.content).filename).toBe("document.svg");
+            expect(get(message.content).filename).toBe("document.html");
             expect(get(message.content).body).toBe("A caption");
             expect(get(message.content).url).toBe("blob:https://play.test/image");
-            expect(holdMatrixMedia).toHaveBeenCalledWith(expect.anything(), file, "image/svg+xml");
+            expect(holdMatrixMedia).toHaveBeenCalledWith(expect.anything(), file, "text/html");
             unsubscribe();
         }
     );

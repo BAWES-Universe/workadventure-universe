@@ -1,5 +1,6 @@
 <script lang="ts">
     import type { Readable } from "svelte/store";
+    import { getAttachmentOpenUrl, isSvgAttachmentUrl } from "../../../../Utils/AttachmentUrls";
     import type { ChatMessageContent } from "../../../Connection/ChatConnection";
     import LL from "../../../../../i18n/i18n-svelte";
     import Lightbox from "./Lightbox.svelte";
@@ -13,6 +14,7 @@
     type MediaType = "image" | "video" | "audio" | "file";
 
     function inferMediaType(url: string): MediaType {
+        if (isSvgAttachmentUrl(url)) return "image";
         const pathPart = url.split("?")[0];
         const ext = pathPart.split(".").pop()?.toLowerCase();
         if (!ext) return "file";
@@ -153,8 +155,9 @@
     {#if lightboxItems.length === 1}
         <!-- Single image/video: render like MessageImage -->
         <a
-            href={lightboxItems[0].url}
+            href={getAttachmentOpenUrl(lightboxItems[0].url)}
             target="_blank"
+            rel="noopener noreferrer"
             class="cursor-pointer relative group block p-1 pb-0"
             on:click|preventDefault={() => openLightbox(0)}
         >

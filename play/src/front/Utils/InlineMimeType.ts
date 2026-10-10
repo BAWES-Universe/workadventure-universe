@@ -34,8 +34,10 @@ export function sanitizeInlineMimeType(mimeType: string | undefined): string {
     return INLINE_MIME_TYPES.has(type) ? type : DOWNLOAD_MIME_TYPE;
 }
 
-/** Keep media cards for older senders without a MIME type, but give active documents a usable download card. */
+/** SVG has a separate passive image URL; other active documents use a download card. */
 export function canRenderAttachmentInline(mimeType: unknown, filename: unknown): boolean {
-    if (typeof mimeType === "string" && sanitizeInlineMimeType(mimeType) === DOWNLOAD_MIME_TYPE) return false;
-    return typeof filename !== "string" || !/\.(svg|html?|xhtml|xml)$/i.test(filename);
+    const type = typeof mimeType === "string" ? mimeType.split(";")[0].trim().toLowerCase() : undefined;
+    if (type !== undefined && type !== "image/svg+xml" && sanitizeInlineMimeType(type) === DOWNLOAD_MIME_TYPE)
+        return false;
+    return typeof filename !== "string" || !/\.(html?|xhtml|xml)$/i.test(filename);
 }

@@ -1,7 +1,7 @@
 import type { MatrixClient } from "matrix-js-sdk";
 import type { Readable } from "svelte/store";
 import { derived, readable } from "svelte/store";
-import { sanitizeInlineMimeType } from "../../../Utils/InlineMimeType";
+import { createAttachmentUrl, revokeAttachmentUrl } from "../../../Utils/AttachmentUrls";
 
 interface KeptFile {
     url: Promise<string | undefined>;
@@ -22,7 +22,7 @@ const resolvedThumbnails = new Map<string, string | undefined>();
 
 function revoke(url: Promise<string | undefined>): void {
     url.then((resolved) => {
-        if (resolved?.startsWith("blob:")) URL.revokeObjectURL(resolved);
+        if (resolved) revokeAttachmentUrl(resolved);
     }).catch(() => undefined);
 }
 
@@ -290,9 +290,7 @@ async function fetchMatrixMedia(
             forget();
             return undefined;
         }
-        const blob = await response.blob();
-        // The upload's Content-Type is untrusted too: only passive media may open at the play origin.
-        return URL.createObjectURL(blob.slice(0, blob.size, sanitizeInlineMimeType(blob.type)));
+        return createAttachmentUrl(await response.arrayBuffer(), response.headers.get("Content-Type") ?? undefined);
     } catch (error) {
         console.error("Could not load a chat file", error);
         // A network blip: try again the next time the file is shown.
@@ -355,8 +353,7 @@ async function fetchEncryptedMatrixMedia(
             key,
             encrypted
         );
-        // A sender-controlled HTML or SVG type would execute scripts when this URL is opened in a tab.
-        return URL.createObjectURL(new Blob([decrypted], { type: sanitizeInlineMimeType(mimetype) }));
+        return createAttachmentUrl(decrypted, mimetype);
     } catch (error) {
         console.error("Could not load an encrypted chat file", error);
         forget();
