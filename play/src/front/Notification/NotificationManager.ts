@@ -23,6 +23,9 @@ class NotificationManager {
     }
 
     public hasNotification(): boolean {
+        if (typeof Notification === "undefined") {
+            return false;
+        }
         return (
             Notification.permission === "granted" &&
             statusChanger.allowNotificationSound() &&
