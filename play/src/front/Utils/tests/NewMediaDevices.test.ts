@@ -173,6 +173,8 @@ describe("ignored devices", () => {
         if (!offer) throw new Error("no offer");
         const keys = ignoreKeysForOffer(offer);
         expect(isIgnoredMediaDevice(device("audiooutput", "SteelSeries Sonar - Aux"), keys)).toBe(true);
+        expect(isIgnoredMediaDevice(device("audiooutput", "SteelSeries Sonar"), keys)).toBe(true);
+        expect(isIgnoredMediaDevice(device("audiooutput", "SteelSeries Sonaric"), keys)).toBe(false);
         expect(isIgnoredMediaDevice(headsetSpeaker, keys)).toBe(false);
     });
 });

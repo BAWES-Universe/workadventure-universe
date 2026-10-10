@@ -187,9 +187,9 @@ export function ignoreKeysForOffer(offer: NewDeviceOffer): string[] {
 
 export function isIgnoredMediaDevice(device: Pick<MediaDeviceInfo, "label">, ignoredKeys: readonly string[]): boolean {
     const name = cleanDeviceName(device.label);
-    return ignoredKeys.some((key) =>
-        key.endsWith(IGNORE_PREFIX_MARK)
-            ? name.startsWith(`${key.slice(0, -IGNORE_PREFIX_MARK.length)} `)
-            : name === key
-    );
+    return ignoredKeys.some((key) => {
+        if (!key.endsWith(IGNORE_PREFIX_MARK)) return name === key;
+        const shared = key.slice(0, -IGNORE_PREFIX_MARK.length);
+        return name === shared || name.startsWith(`${shared} `);
+    });
 }
