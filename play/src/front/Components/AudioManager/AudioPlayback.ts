@@ -1,8 +1,12 @@
+import type { Emitter } from "./NativeSoundscape";
+
 /** One native music channel, with at most two media elements during a source change. */
 export interface AudioSource {
     url: string;
     volume: number;
     loop: boolean;
+    /** Explicit opt-in only; ignored by the unchanged legacy playback implementation. */
+    soundscape?: Emitter;
 }
 
 export interface AudioControls {

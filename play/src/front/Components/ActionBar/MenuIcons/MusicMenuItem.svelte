@@ -109,5 +109,8 @@
     <PlayerMusicIcon />
 </ActionBarButton>
 {#if $activeSecondaryZoneActionBarStore === "audio-manager"}
-    <AudioManager />
+    <!-- A span, not a div, so the buttons' first/last-of-type rounding ignores the volume popup. -->
+    <span class="contents">
+        <AudioManager />
+    </span>
 {/if}

@@ -103,7 +103,7 @@ import {
     screenSharingActivatedStore,
 } from "../../Stores/MenuStore";
 import type { WasCameraUpdatedEvent } from "../../Api/Events/WasCameraUpdatedEvent";
-import { audioManagerFileStore, bubbleSoundStore } from "../../Stores/AudioManagerStore";
+import { audioManagerFileStore, bubbleSoundStore, nativeSoundscapeListenerStore } from "../../Stores/AudioManagerStore";
 import { bubbleMatesStore, currentPlayerGroupLockStateStore } from "../../Stores/CurrentPlayerGroupStore";
 import { errorScreenStore } from "../../Stores/ErrorScreenStore";
 import {
@@ -1360,6 +1360,7 @@ export class GameScene extends DirtyScene {
         bubbleMatesStore.set([]);
 
         audioManagerFileStore.unloadAudio();
+        nativeSoundscapeListenerStore.set(undefined);
         // Area-leave handlers do not run when the scene closes: forget the areas the chat top row names.
         clearAreaPresence();
         // Nor does leaving a camera-locking area: end the lock and put the zoom back to what it was before it, or the
@@ -2298,6 +2299,7 @@ export class GameScene extends DirtyScene {
 
                 userMessageManager.setReceiveBanListener(this.bannedUser.bind(this));
 
+                nativeSoundscapeListenerStore.set({ x: this.CurrentPlayer.x, y: this.CurrentPlayer.y });
                 this.CurrentPlayer.on(hasMovedEventName, (event: HasPlayerMovedInterface) => {
                     this.handleCurrentPlayerHasMovedEvent(event);
                 });
@@ -3834,7 +3836,9 @@ ${escapedMessage}
         }
     }
 
+    /** Update listener, map properties and nearby interactions for both walking and direct same-map teleports. */
     private handleCurrentPlayerHasMovedEvent(event: HasPlayerMovedInterface): void {
+        nativeSoundscapeListenerStore.set({ x: event.x, y: event.y });
         //listen event to share position of user
         this.pushPlayerPosition(event);
         this.gameMapFrontWrapper.setPosition(event.x, event.y);
