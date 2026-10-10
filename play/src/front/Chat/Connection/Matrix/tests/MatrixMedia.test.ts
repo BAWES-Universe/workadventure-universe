@@ -90,6 +90,29 @@ describe("resolveMatrixMediaUrl", () => {
         expect(createObjectURL).toHaveBeenCalledWith(expect.objectContaining({ type: mimetype }));
     });
 
+    it("shows an SVG as a passive picture when the server only says octet-stream", async () => {
+        fetchMock.mockResolvedValue(
+            new Response("<svg/>", { headers: { "Content-Type": "application/octet-stream" } })
+        );
+
+        const hold = holdMatrixMedia(fakeClient(), "mxc://matrix.test/generic-svg", "image/svg+xml");
+
+        expect(await hold.url).toBe("data:image/svg+xml;base64,PHN2Zy8+");
+        hold.release();
+    });
+
+    it("trusts the server's own type over the sender's", async () => {
+        fetchMock.mockResolvedValue(new Response("<svg/>", { headers: { "Content-Type": "image/png" } }));
+        const createObjectURL = vi.fn(() => "blob:https://play.test/png");
+        URL.createObjectURL = createObjectURL;
+
+        const hold = holdMatrixMedia(fakeClient(), "mxc://matrix.test/served-png", "image/svg+xml");
+
+        expect(await hold.url).toBe("blob:https://play.test/png");
+        expect(createObjectURL).toHaveBeenCalledWith(expect.objectContaining({ type: "image/png" }));
+        hold.release();
+    });
+
     it("keeps the legacy URL on servers without authenticated media", async () => {
         fetchMock.mockResolvedValue(new Response("", { status: 404 }));
 

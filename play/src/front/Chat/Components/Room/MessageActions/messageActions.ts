@@ -22,6 +22,8 @@ function extensionOf(url: string): string | undefined {
 }
 
 function fileNameFromUrl(url: string): string {
+    // A data: URL (an SVG picture) has no name in it: its last "/" is inside the MIME type.
+    if (url.startsWith("data:")) return isSvgAttachmentUrl(url) ? "image.svg" : "file";
     const path = url.split("?")[0].split("#")[0];
     const lastSegment = path.split("/").pop();
     if (!lastSegment) return "file";

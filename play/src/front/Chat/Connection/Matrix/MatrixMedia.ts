@@ -130,7 +130,7 @@ export function holdMatrixMedia(client: MatrixClient, source: unknown, mimetype?
         keptFiles.set(mxcUrl, file);
         file.url = encrypted
             ? fetchEncryptedMatrixMedia(client, encrypted, mimetype, forget)
-            : fetchMatrixMedia(client, mxcUrl, forget);
+            : fetchMatrixMedia(client, mxcUrl, forget, undefined, mimetype);
         kept = file;
     }
     kept.holders++;
@@ -267,7 +267,8 @@ async function fetchMatrixMedia(
     client: MatrixClient,
     mxcUrl: string,
     forget: () => void,
-    thumbnailSize?: number
+    thumbnailSize?: number,
+    mimetype?: string
 ): Promise<string | undefined> {
     const method = thumbnailSize ? "scale" : undefined;
     const legacyUrl = client.mxcUrlToHttp(mxcUrl, thumbnailSize, thumbnailSize, method) ?? undefined;
@@ -290,7 +291,10 @@ async function fetchMatrixMedia(
             forget();
             return undefined;
         }
-        return createAttachmentUrl(await response.arrayBuffer(), response.headers.get("Content-Type") ?? undefined);
+        // A server that doesn't know the type answers with a generic one: the sender's type is still sanitized after.
+        const served = response.headers.get("Content-Type") ?? undefined;
+        const generic = !served || served.split(";")[0].trim().toLowerCase() === "application/octet-stream";
+        return createAttachmentUrl(await response.arrayBuffer(), generic && mimetype ? mimetype : served);
     } catch (error) {
         console.error("Could not load a chat file", error);
         // A network blip: try again the next time the file is shown.

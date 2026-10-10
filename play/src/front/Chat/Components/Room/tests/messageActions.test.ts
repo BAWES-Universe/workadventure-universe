@@ -61,6 +61,11 @@ describe("message actions", () => {
         );
     });
 
+    it("names an SVG picture with no known name image.svg, not part of its data", () => {
+        const svg = "data:image/svg+xml;base64,PHN2Zy8+";
+        expect(getSaveableFiles("image", content({ url: svg }))).toEqual([{ url: svg, name: "image.svg" }]);
+    });
+
     it("offers nothing to save on a text message", () => {
         expect(getSaveableFiles("proximity", content({ body: "hello" }))).toEqual([]);
     });
