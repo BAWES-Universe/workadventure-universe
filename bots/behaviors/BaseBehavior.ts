@@ -12,6 +12,7 @@ import type { ConversationStorage } from '../memory/ConversationStorage';
 import type { ConversationMemory } from '../memory/ConversationMemory';
 import type { ResponseProcessor, ProcessedResponse } from '../ai/ResponseProcessor';
 import { parseEmotionsFromResponse, appendStreamedChunk, detectEmotionPrefixAtEnd } from '../ai/EmotionParser';
+import { createBatchState, batchFlush } from '../ai/StreamBatcher';
 import type { BotMetricsCollector } from '../metrics/BotMetricsCollector';
 
 /**
@@ -103,18 +104,315 @@ export abstract class BaseBehavior {
     protected conversationMemory: ConversationMemory | null = null;
 
     /**
-     * Generate and send an AI response stream for a player. Implemented by each
-     * behavior (Social/Idle/Patrol). The optional abort signal is threaded into
-     * generateBotResponseStream so cancel/update can stop the in-flight stream.
+     * Default chat instructions fallback when botConfig.chatInstructions is empty.
+     * Overridden by SocialBehavior to return 'You are a friendly bot.'
      */
-    protected abstract generateAIResponseStream(
+    protected getDefaultChatInstructions(): string {
+        return 'You are a helpful bot.';
+    }
+
+    /**
+     * Behavior name used for debug and log labeling.
+     */
+    protected getBehaviorName(): string {
+        return this.constructor.name;
+    }
+
+    /**
+     * Generate AI response stream and send to player.
+     * Implements the shared streaming loop (batching, emotion parsing, tool-call resets,
+     * repetition check, completion handling, and error fallback).
+     */
+    protected async generateAIResponseStream(
         spaceName: string,
         playerId: number,
         playerMessage: string,
         botId: string,
         abortSignal?: AbortSignal,
         images?: string[]
-    ): Promise<void>;
+    ): Promise<void> {
+        const behaviorName = this.getBehaviorName();
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[${behaviorName}] generateAIResponseStream called for bot ${botId}`);
+        }
+
+        if (!this.bot || !this.aiService) {
+            console.warn(`[${behaviorName}] Missing required services for AI response`);
+            return;
+        }
+
+        // Get bot configuration from client (stored at spawn, no HTTP request needed)
+        const botConfig = this.bot.getFullConfig();
+        if (!botConfig) {
+            console.error(`[${behaviorName}] Bot configuration not found for ${botId}`);
+            return;
+        }
+
+        if (!botConfig.aiProviderRef) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn(`[${behaviorName}] Bot ${botId} has no AI provider configured (aiProviderRef missing). Bot config:`, {
+                    botId: botConfig.botId,
+                    name: botConfig.name,
+                    hasAiProviderRef: !!botConfig.aiProviderRef,
+                });
+            }
+            return;
+        }
+
+        const chatInstructions = botConfig.chatInstructions || this.getDefaultChatInstructions();
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[${behaviorName}] Generating AI response for bot ${botId}:`, {
+                aiProviderRef: botConfig.aiProviderRef,
+                chatInstructions: chatInstructions.substring(0, 100) + (chatInstructions.length > 100 ? '...' : ''),
+                chatInstructionsLength: chatInstructions.length,
+                playerMessage: playerMessage.substring(0, 50),
+            });
+        }
+
+        // Get conversation context
+        const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
+
+        // Generate streaming response
+        let fullMessage = '';
+        const startTime = Date.now(); // Track response time BEFORE streaming starts
+        let tokensUsed = 0;
+        let latency = 0;
+        // Unique ID for this streamed response — used by frontend to correlate chunks
+        let responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+        // Track the current bubble id so an abort can finalize it (not a phantom)
+        this.trackActiveResponseId(playerId, responseId);
+        // Track whether the model has started generating the emotion block at the end
+        // of the response. Once detected, stop streaming chunks to prevent raw partial
+        // tags like "[EMOTION_UPDATE]" from displaying in the chat bubble.
+        let emotionBlockStarted = false;
+        // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
+        let pendingPrefix = '';
+        const batchState = createBatchState();
+        const sendBatch = (text: string) => {
+            this.bot?.sendStreamMessage(spaceName, responseId, text, false);
+        };
+
+        try {
+            for await (const chunk of this.aiService.generateBotResponseStream(
+                botId,
+                playerId,
+                playerMessage,
+                chatInstructions,
+                botConfig.aiProviderRef,
+                spaceName,
+                context,
+                this.bot,
+                this.adminApiService,
+                abortSignal,
+                images
+            )) {
+                if (chunk.reset) {
+                    batchFlush(batchState, sendBatch);
+                    // Only finalize the pre-tool bubble if there was actual text
+                    if (fullMessage) {
+                        // Strip any deferred '[' that was not streamed to the frontend
+                        const finalContent = pendingPrefix ? fullMessage.slice(0, -pendingPrefix.length) : fullMessage;
+                        this.bot?.sendStreamMessage(spaceName, responseId, '', true, finalContent);
+                    }
+                    responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                    this.trackActiveResponseId(playerId, responseId);
+                    fullMessage = '';
+                    emotionBlockStarted = false;
+                    pendingPrefix = '';
+                    if (chunk.toolNames?.length) {
+                        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                            for (let ti = 0; ti < chunk.toolNames.length; ti++) {
+                                const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
+                                responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                                this.trackActiveResponseId(playerId, responseId);
+                                fullMessage = toolStatus;
+                                this.bot?.sendStreamMessage(spaceName, responseId, toolStatus, false);
+                                // Finalize the tool-name bubble so it doesn't linger in
+                                // the frontend's streamMessages map.
+                                this.bot?.sendStreamMessage(spaceName, responseId, '', true, toolStatus);
+                            }
+                        }
+                        // New responseId for follow-up — separate from the tool-name bubble
+                        responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                        this.trackActiveResponseId(playerId, responseId);
+                        fullMessage = ''; // Clear so follow-up content starts fresh
+                    }
+                    continue;
+                }
+
+                if (chunk.content) {
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
+
+                    // Once the model starts generating the [EMOTION_UPDATE] block
+                    // (always at the end of every response), stop streaming chunks
+                    // to the frontend — partial tags show as raw text.
+                    if (emotionBlockStarted) {
+                        continue;
+                    }
+                    // Check for [EM both within current chunk AND across chunk boundaries.
+                    // With true per-chunk streaming, the provider may split [EMOTION_UPDATE]
+                    // across two tokens (e.g. "[" then "EMOTION_UPDATE]...").
+                    const emInChunk = chunk.content.includes('[EMOTION_UPDATE');
+                    const emInFull = fullMessage.includes('[EMOTION_UPDATE');
+                    if (emInChunk || emInFull) {
+                        emotionBlockStarted = true;
+                        pendingPrefix = ''; // discard — it's part of [EMOTION_UPDATE]
+                        if (emInChunk) {
+                            const emotionIdx = chunk.content.indexOf('[EMOTION_UPDATE');
+                            const beforeEmotion = chunk.content.substring(0, emotionIdx);
+                            if (beforeEmotion.trim()) {
+                                batchFlush(batchState, sendBatch);
+                                this.bot?.sendStreamMessage(spaceName, responseId, beforeEmotion, false);
+                            }
+                        }
+                        // else: [EM spans chunk boundary — the "[" was already sent in a
+                        // prior chunk. Don't send anything extra, just stop forwarding.
+                        continue;
+                    }
+
+                    // Check if this chunk ends with a prefix of [EMOTION_UPDATE — defer it
+                    const combinedContent = pendingPrefix + chunk.content;
+                    const deferredLen = detectEmotionPrefixAtEnd(combinedContent);
+                    if (deferredLen > 0) {
+                        pendingPrefix = combinedContent.slice(-deferredLen);
+                        const contentToStream = combinedContent.slice(0, -deferredLen);
+                        if (contentToStream) {
+                            this.bot?.sendStreamMessage(spaceName, responseId, contentToStream, false);
+                        }
+                        continue;
+                    }
+
+                    // Flush any previously deferred prefix — not the start of [EMOTION_UPDATE]
+                    const contentToStream = pendingPrefix + chunk.content;
+                    pendingPrefix = '';
+
+                    // Stream each content chunk directly to the frontend as it arrives
+                    this.bot?.sendStreamMessage(spaceName, responseId, contentToStream, false);
+                }
+
+                // Extract token usage and latency from chunk metadata
+                if ((chunk as any).tokensUsed) {
+                    tokensUsed = (chunk as any).tokensUsed;
+                }
+                if (chunk.metadata?.tokensUsed) {
+                    tokensUsed = chunk.metadata.tokensUsed;
+                }
+                if (chunk.metadata?.latency) {
+                    latency = chunk.metadata.latency;
+                }
+
+                if (chunk.done) {
+                    batchFlush(batchState, sendBatch);
+                    // Stop typing indicator
+                    this.bot?.stopTyping(spaceName);
+
+                    // Calculate response time (use latency from metadata if available, otherwise calculate)
+                    const responseTime = latency || (Date.now() - startTime);
+
+                    // Parse emotions from AI response (unified emotion system)
+                    const parsedResponse = parseEmotionsFromResponse(fullMessage);
+                    let processedMessage = parsedResponse.cleanedResponse;
+
+                    // Update emotions from AI analysis
+                    if (parsedResponse.emotions && this.conversationMemory) {
+                        this.conversationMemory.updateEmotionsFromAI(botId, playerId, parsedResponse.emotions);
+                    } else if (!parsedResponse.emotions && this.conversationMemory && processedMessage.trim()) {
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[${behaviorName}] AI omitted emotion block, using neutral fallback`);
+                        }
+                        this.conversationMemory.updateEmotionsFromAI(botId, playerId, {
+                            personSentiment: 0,
+                            isInsult: false,
+                            insultSeverity: 0,
+                            context: 'neutral',
+                        });
+                    }
+
+                    if (this.responseProcessor && processedMessage.trim()) {
+                        // Pass responseTime and tokenUsage to ResponseProcessor so it can include them in ONE metric record
+                        const tokenUsage = tokensUsed > 0 ? {
+                            prompt: chunk.metadata?.promptTokens || Math.floor(tokensUsed * 0.7),
+                            completion: chunk.metadata?.completionTokens || Math.floor(tokensUsed * 0.3),
+                            total: tokensUsed
+                        } : undefined;
+
+                        // Note: Emotions already parsed above, use processedMessage (cleaned response)
+                        let processed = this.responseProcessor.processResponse(
+                            botId,
+                            playerId,
+                            processedMessage,
+                            chatInstructions,
+                            responseTime,
+                            tokenUsage
+                        );
+                        processedMessage = processed.cleaned;
+
+                        // If high repetition detected (score >= 0.85), block and regenerate (up to 3 attempts)
+                        // Lower threshold catches near-duplicates like "*snorts* response" vs "*grunts* response"
+                        const regenResult = await this.regenerateOnRepetition({
+                            botId,
+                            playerId,
+                            playerMessage,
+                            chatInstructions,
+                            aiProviderRef: botConfig.aiProviderRef,
+                            spaceName,
+                            context,
+                            abortSignal,
+                            processed,
+                            processedMessage,
+                            fullMessage,
+                            responseTime,
+                            tokenUsage,
+                            responseId,
+                            debugLabel: behaviorName,
+                            images,
+                        });
+                        processed = regenResult.processed;
+                        processedMessage = regenResult.processedMessage;
+                        responseId = regenResult.responseId;
+                    }
+
+                    // Metrics are now recorded in ResponseProcessor (combined into one record)
+                    // No need to record separately here - prevents duplicate metrics
+
+                    // Send processed message via stream final chunk
+                    if (processedMessage.trim()) {
+                        // Send the final chunk with the complete cleaned message
+                        this.bot?.sendStreamMessage(spaceName, responseId, '', true, processedMessage);
+
+                        // Store in memory
+                        if (this.conversationMemory) {
+                            this.conversationMemory.addMessage(botId, playerId, processedMessage, 'bot', spaceName);
+                        }
+                        // Store in conversation storage
+                        if (this.conversationStorage) {
+                            const userUuid = this.userIdToUuid.get(playerId);
+                            if (userUuid) {
+                                this.conversationStorage.addMessage(botId, userUuid, processedMessage, 'bot').catch(error => {
+                                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                        console.error(`[${behaviorName}] Error adding bot message to conversation storage:`, error);
+                                    }
+                                });
+                            }
+                        }
+                    } else {
+                        // Response contained only emotion/control blocks — finalize with empty content to close bubble
+                        this.bot?.sendStreamMessage(spaceName, responseId, '', true, '');
+                    }
+                    break;
+                }
+            }
+        } catch (error) {
+            // User cancelled/updated mid-stream: the interruption handler already
+            // sent its own acknowledgment. Do not surface a confusing error bubble.
+            if (abortSignal?.aborted) return;
+            console.error(`[${behaviorName}] AI error:`, error);
+            // Stop typing indicator on error
+            this.bot?.stopTyping(spaceName);
+            // Finalize the stream as error instead of sending a separate chat message
+            this.bot?.sendStreamMessage(spaceName, responseId, '', false, '', true, "I'm having trouble processing that. Could you rephrase?");
+        }
+    }
     
     // Engagement tracking - when players are in conversation with the bot
     protected isEngaged = false;
