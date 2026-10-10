@@ -215,6 +215,7 @@ import { selectedRoomStore } from "../../Chat/Stores/SelectRoomStore";
 import { raceTimeout } from "../../Utils/PromiseUtils";
 import { ConversationBubble } from "../Entity/ConversationBubble";
 import { DarkenOutsideAreaEffect } from "../Components/DarkenOutsideArea/DarkenOutsideAreaEffect";
+import { releaseSpawnSilence, seedSpawnSilence } from "./SpawnSilence";
 import { GameMapFrontWrapper } from "./GameMap/GameMapFrontWrapper";
 import { gameManager } from "./GameManager";
 import { EmoteManager } from "./EmoteManager";
@@ -2012,6 +2013,8 @@ export class GameScene extends DirtyScene {
             .then(() => {
                 // The scene was closed while we waited for the network: its successor makes its own connection.
                 if (this.cleanupDone) return undefined;
+                // The join carries the availability status: a spawn inside a silent zone must already be silent in it.
+                seedSpawnSilence(this.gameMapFrontWrapper, this.startPositionCalculator.startPosition);
                 return connectionManager.connectToRoomSocket(
                     this.roomUrl,
                     this.playerName,
@@ -2417,6 +2420,7 @@ export class GameScene extends DirtyScene {
                     }) || [];
 
                 this.gameMapFrontWrapper.setPosition(this.CurrentPlayer.x, this.CurrentPlayer.y);
+                releaseSpawnSilence();
                 // Init layer change listener
                 this.gameMapFrontWrapper.onEnterLayer((layers) => {
                     layers.forEach((layer) => {
