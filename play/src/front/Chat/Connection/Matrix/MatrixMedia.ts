@@ -1,6 +1,7 @@
 import type { MatrixClient } from "matrix-js-sdk";
 import type { Readable } from "svelte/store";
 import { derived, readable } from "svelte/store";
+import { createAttachmentUrl, revokeAttachmentUrl } from "../../../Utils/AttachmentUrls";
 
 interface KeptFile {
     url: Promise<string | undefined>;
@@ -21,7 +22,7 @@ const resolvedThumbnails = new Map<string, string | undefined>();
 
 function revoke(url: Promise<string | undefined>): void {
     url.then((resolved) => {
-        if (resolved?.startsWith("blob:")) URL.revokeObjectURL(resolved);
+        if (resolved) revokeAttachmentUrl(resolved);
     }).catch(() => undefined);
 }
 
@@ -129,7 +130,7 @@ export function holdMatrixMedia(client: MatrixClient, source: unknown, mimetype?
         keptFiles.set(mxcUrl, file);
         file.url = encrypted
             ? fetchEncryptedMatrixMedia(client, encrypted, mimetype, forget)
-            : fetchMatrixMedia(client, mxcUrl, forget);
+            : fetchMatrixMedia(client, mxcUrl, forget, undefined, mimetype);
         kept = file;
     }
     kept.holders++;
@@ -266,7 +267,8 @@ async function fetchMatrixMedia(
     client: MatrixClient,
     mxcUrl: string,
     forget: () => void,
-    thumbnailSize?: number
+    thumbnailSize?: number,
+    mimetype?: string
 ): Promise<string | undefined> {
     const method = thumbnailSize ? "scale" : undefined;
     const legacyUrl = client.mxcUrlToHttp(mxcUrl, thumbnailSize, thumbnailSize, method) ?? undefined;
@@ -289,7 +291,10 @@ async function fetchMatrixMedia(
             forget();
             return undefined;
         }
-        return URL.createObjectURL(await response.blob());
+        // A server that doesn't know the type answers with a generic one: the sender's type is still sanitized after.
+        const served = response.headers.get("Content-Type") ?? undefined;
+        const generic = !served || served.split(";")[0].trim().toLowerCase() === "application/octet-stream";
+        return createAttachmentUrl(await response.arrayBuffer(), generic && mimetype ? mimetype : served);
     } catch (error) {
         console.error("Could not load a chat file", error);
         // A network blip: try again the next time the file is shown.
@@ -352,7 +357,7 @@ async function fetchEncryptedMatrixMedia(
             key,
             encrypted
         );
-        return URL.createObjectURL(new Blob([decrypted], mimetype ? { type: mimetype } : undefined));
+        return createAttachmentUrl(decrypted, mimetype);
     } catch (error) {
         console.error("Could not load an encrypted chat file", error);
         forget();

@@ -67,6 +67,52 @@ describe("resolveMatrixMediaUrl", () => {
         expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
+    it.each(["text/html", "application/xhtml+xml"])(
+        "forces unencrypted %s attachments to download",
+        async (mimetype) => {
+            fetchMock.mockResolvedValue(new Response("attachment", { headers: { "Content-Type": mimetype } }));
+            const createObjectURL = vi.fn(() => "blob:https://play.test/unsafe");
+            URL.createObjectURL = createObjectURL;
+
+            await resolveMatrixMediaUrl(fakeClient(), `mxc://matrix.test/unsafe-${mimetype}`);
+
+            expect(createObjectURL).toHaveBeenCalledWith(expect.objectContaining({ type: "application/octet-stream" }));
+        }
+    );
+
+    it.each(["image/png", "audio/mpeg", "video/mp4"])("preserves unencrypted %s media", async (mimetype) => {
+        fetchMock.mockResolvedValue(new Response("media", { headers: { "Content-Type": mimetype } }));
+        const createObjectURL = vi.fn(() => "blob:https://play.test/safe");
+        URL.createObjectURL = createObjectURL;
+
+        await resolveMatrixMediaUrl(fakeClient(), `mxc://matrix.test/safe-${mimetype}`);
+
+        expect(createObjectURL).toHaveBeenCalledWith(expect.objectContaining({ type: mimetype }));
+    });
+
+    it("shows an SVG as a passive picture when the server only says octet-stream", async () => {
+        fetchMock.mockResolvedValue(
+            new Response("<svg/>", { headers: { "Content-Type": "application/octet-stream" } })
+        );
+
+        const hold = holdMatrixMedia(fakeClient(), "mxc://matrix.test/generic-svg", "image/svg+xml");
+
+        expect(await hold.url).toBe("data:image/svg+xml;base64,PHN2Zy8+");
+        hold.release();
+    });
+
+    it("trusts the server's own type over the sender's", async () => {
+        fetchMock.mockResolvedValue(new Response("<svg/>", { headers: { "Content-Type": "image/png" } }));
+        const createObjectURL = vi.fn(() => "blob:https://play.test/png");
+        URL.createObjectURL = createObjectURL;
+
+        const hold = holdMatrixMedia(fakeClient(), "mxc://matrix.test/served-png", "image/svg+xml");
+
+        expect(await hold.url).toBe("blob:https://play.test/png");
+        expect(createObjectURL).toHaveBeenCalledWith(expect.objectContaining({ type: "image/png" }));
+        hold.release();
+    });
+
     it("keeps the legacy URL on servers without authenticated media", async () => {
         fetchMock.mockResolvedValue(new Response("", { status: 404 }));
 
@@ -472,6 +518,48 @@ describe("holdMatrixMedia with an encrypted file", () => {
             reader.readAsText(shown as Blob);
         });
         expect(text).toBe("hello photo");
+        hold.release();
+    });
+
+    it.each(["text/html", "application/xhtml+xml", undefined])(
+        "forces encrypted %s attachments to download without changing their contents",
+        async (mimetype) => {
+            const payload =
+                '<svg xmlns="http://www.w3.org/2000/svg"><script>window.attachmentExecuted = true</script></svg>';
+            const { ciphertext, file } = await encryptLikeElement(
+                payload,
+                `mxc://matrix.test/unsafe-encrypted-${mimetype}`
+            );
+            fetchMock.mockResolvedValue(new Response(ciphertext));
+            let shown: Blob | undefined;
+            URL.createObjectURL = vi.fn((blob: Blob) => {
+                shown = blob;
+                return "blob:https://play.test/unsafe-encrypted";
+            });
+
+            const hold = holdMatrixMedia(fakeClient(), file, mimetype);
+            expect(await hold.url).toBe("blob:https://play.test/unsafe-encrypted");
+            expect(shown?.type).toBe("application/octet-stream");
+            const text = await new Promise<string>((resolve) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+                reader.readAsText(shown as Blob);
+            });
+            expect(text).toBe(payload);
+            hold.release();
+        }
+    );
+
+    it.each(["image/png", "audio/mpeg", "video/mp4"])("preserves encrypted %s media", async (mimetype) => {
+        const { ciphertext, file } = await encryptLikeElement("media", `mxc://matrix.test/safe-encrypted-${mimetype}`);
+        fetchMock.mockResolvedValue(new Response(ciphertext));
+        const createObjectURL = vi.fn(() => "blob:https://play.test/safe-encrypted");
+        URL.createObjectURL = createObjectURL;
+
+        const hold = holdMatrixMedia(fakeClient(), file, mimetype);
+        await hold.url;
+
+        expect(createObjectURL).toHaveBeenCalledWith(expect.objectContaining({ type: mimetype }));
         hold.release();
     });
 
