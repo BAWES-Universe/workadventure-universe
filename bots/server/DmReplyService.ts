@@ -176,9 +176,15 @@ export class DmReplyService extends BaseBehavior {
         if (Date.now() - lastMet > NEW_CONVERSATION_AFTER_MS) {
             memory.startConversation(botId, playerId);
         }
-        memory.addMessage(botId, playerId, original, 'person', DM_SPACE_NAME);
-        memory.extractPersonalInfo(botId, playerId, original);
-        if (this.conversationStorage) {
+        // A message tried again after a failed answer (or sent again by the person) is already the last thing they
+        // said, with no reply after it: keep it once in the history and the log.
+        const lastSaid = memory.getMemory(botId, playerId)?.conversationHistory?.at(-1);
+        const alreadyKept = lastSaid?.sender === 'person' && lastSaid.message === original && lastSaid.spaceName === DM_SPACE_NAME;
+        if (!alreadyKept) {
+            memory.addMessage(botId, playerId, original, 'person', DM_SPACE_NAME);
+            memory.extractPersonalInfo(botId, playerId, original);
+        }
+        if (this.conversationStorage && !alreadyKept) {
             this.conversationStorage.startConversation(botId, person.uuid, {
                 name: person.name ?? undefined,
                 uuid: person.uuid,

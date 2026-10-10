@@ -755,6 +755,37 @@ describe('DmReplyService ids', () => {
     });
 });
 
+describe('DmReplyService history', () => {
+    it('keeps a message tried again after a failed answer once in the history and the log', async () => {
+        const { DmReplyService } = await import('../server/DmReplyService');
+        const { ConversationMemory } = await import('../memory/ConversationMemory');
+        const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
+        const memory = new ConversationMemory();
+        const storage = { startConversation: vi.fn(), addMessage: vi.fn(async () => undefined) };
+        const failing = vi.fn(async function* () {
+            throw new Error('provider down');
+        });
+        Object.assign(service, {
+            playerIds: new Map(),
+            nextPlayerId: -1,
+            loadedBots: new Set([BOT]),
+            getBotConfig: async () => ({ botId: BOT, name: 'Guide', aiProviderRef: 'p' }),
+            aiService: { generateBotResponseStream: failing },
+            conversationMemory: memory,
+            conversationStorage: storage,
+        });
+        const person = { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false };
+        expect(await (service as any).replyNow(BOT, person, 'left while resting', [], {})).toEqual({ text: '', media: [], failed: true });
+        expect(await (service as any).replyNow(BOT, person, 'left while resting', [], {})).toEqual({ text: '', media: [], failed: true });
+        const history = memory.getMemory(BOT, service.playerIdFor(ALICE))!.conversationHistory;
+        expect(history.map((entry) => entry.message)).toEqual(['left while resting']);
+        expect(storage.addMessage).toHaveBeenCalledTimes(1);
+        // Something new is kept as usual.
+        await (service as any).replyNow(BOT, person, 'are you back?', [], {});
+        expect(history.map((entry) => entry.message)).toEqual(['left while resting', 'are you back?']);
+    });
+});
+
 describe('Bot status notes', () => {
     it('guesses the language from the script or common words, English when unsure', () => {
         expect(detectLanguage('مرحبا')).toBe('ar');
