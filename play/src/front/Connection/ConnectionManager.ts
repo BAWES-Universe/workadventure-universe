@@ -42,6 +42,7 @@ import { ABSOLUTE_PUSHER_URL } from "../Enum/ComputedConst";
 import { openChatRoom } from "../Chat/Utils";
 import LL from "../../i18n/i18n-svelte";
 import { errorScreenStore } from "../Stores/ErrorScreenStore";
+import { gameTokenToJoinWith } from "../external-modules/admin-api/orbitAccessToken";
 import { axiosToPusher, axiosWithRetry } from "./AxiosUtils";
 import { Room } from "./Room";
 import { LocalUser } from "./LocalUser";
@@ -461,7 +462,16 @@ class ConnectionManager {
         this.localUser = new LocalUser("");
     }
 
-    public connectToRoomSocket(
+    /**
+     * Joining a room uses the game's token, whose OIDC access token runs out after about an hour: join with the newest
+     * token there is, renewed first when it has run out.
+     */
+    private async useNewestAuthToken(roomUrl: string, isCurrent: () => boolean): Promise<void> {
+        if (!this.authToken) return;
+        this.authToken = await gameTokenToJoinWith(this.authToken, roomUrl, isCurrent);
+    }
+
+    public async connectToRoomSocket(
         roomUrl: string,
         name: string,
         characterTextureIds: string[],
@@ -472,6 +482,7 @@ class ConnectionManager {
         lastCommandId?: string,
         options: ConnectOptions = {}
     ): Promise<OnConnectInterface> {
+        await this.useNewestAuthToken(roomUrl, () => !options.cancelled?.());
         return new Promise<OnConnectInterface>((resolve, reject) => {
             const connection = new RoomConnection(
                 this.authToken,
@@ -750,6 +761,12 @@ class ConnectionManager {
         const response = MeResponse.parse(data);
 
         if (response.status === "error") {
+            // A refusal the pusher sent after renewing the token carries it: keep it, the old one may no longer work.
+            const renewedToken = (data as { authToken?: unknown } | null)?.authToken;
+            if (typeof renewedToken === "string") {
+                localUserStore.setAuthToken(renewedToken);
+                this.authToken = renewedToken;
+            }
             return response;
         }
 
