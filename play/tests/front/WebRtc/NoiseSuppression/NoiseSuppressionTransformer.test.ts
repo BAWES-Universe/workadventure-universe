@@ -246,6 +246,25 @@ describe("NoiseSuppressionTransformer", () => {
             expect(audioContext.resume).toHaveBeenCalledOnce();
         });
 
+        it("resumes a context the browser suspended while the model was loading", async () => {
+            const ready = deferred<void>();
+            createWorklet.mockResolvedValue(fakeHandle(ready.promise));
+            const transformer = new NoiseSuppressionTransformer({ engine: "dtln" });
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const audioContext = (transformer as any).audioContext as FakeAudioContext;
+
+            const pending = transformer.transform({ id: "a" } as unknown as MediaStreamTrack);
+            await new Promise<void>((resolve) => {
+                setTimeout(resolve, 0);
+            });
+            audioContext.state = "suspended";
+            audioContext.resume.mockClear();
+            ready.resolve();
+            await pending;
+
+            expect(audioContext.resume).toHaveBeenCalledOnce();
+        });
+
         it("stays paused after stop(), which suspends it on purpose", async () => {
             const { transformer, audioContext, resumeIfSuspended } = await transformerWithOutput();
             transformer.stop();

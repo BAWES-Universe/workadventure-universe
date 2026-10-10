@@ -131,6 +131,8 @@ export class NoiseSuppressionTransformer {
         this.destinationNode = destinationNode;
         this.outputTrack = outputTrack;
         this.inputTrack = inputTrack;
+        // The browser may have suspended the context while the model was loading, when there was nothing to resume.
+        this.resumeIfSuspended();
 
         return outputTrack;
     }

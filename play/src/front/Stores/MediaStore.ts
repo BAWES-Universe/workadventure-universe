@@ -968,6 +968,8 @@ function failStrongNoiseFilter(error: unknown, options: { overloaded?: boolean }
         // Switching engine makes localStreamStore build a new transformer. "starting" puts the browser's filter back
         // on the microphone until the new one is ready.
         strongNoiseFilterStateStore.set("starting");
+        // The output of the failed engine is dead: hand out the browser-filtered microphone again right away.
+        rawStreamPublished = undefined;
         strongNoiseEngineStore.set("dtln");
         return;
     }
