@@ -71,7 +71,7 @@ proof or subjective audio-quality acceptance.
 - [x] Relevant repository audio suite rerun: 87/87 passed across eight files, including the four fixture tests
 - [x] Documentation/fixture and new-test formatting checked; new-test ESLint, full TypeScript and Svelte (0 errors/0 warnings) passed
 - [x] Exact runtime byte match and new-base feature justification independently reviewed; independent focused rerun passed 88/88 (author suite plus one retained review regression)
-- [ ] Final remote commit has only this feature/docs/tests atop the pinned development base
+- [x] Remote commit `475664161d364322fcf958d3aafdded477aaeff9` has only this feature/docs/tests atop the pinned development base (one commit, 18 files)
 - [ ] Hosted CI for that exact corrected-base commit completed
 
 Update the PR description with concrete command results rather than treating these
@@ -100,6 +100,42 @@ reproduced and fixed, although its discussion remained open.
 The CodeRabbit walkthrough still reported 37.5% docstring coverage against an 80%
 threshold. This revision adds explicit method contracts to the controller and
 changed integration entry points, in addition to these complete feature docs.
-The new bot calculation must confirm coverage; a prior green status is not used
-as evidence that this warning disappeared. No bot-generated instructions or
-autofix toggles were used to change scope.
+At corrected head `475664161d364322fcf958d3aafdded477aaeff9`, CodeRabbit returned
+green with the explicit description **“Review skipped: reviews are disabled for
+this base branch.”** Thus no fresh bot review or docstring recalculation was
+performed for `universe-develop`. The walkthrough's 37.5% warning and risk text
+still name the older review; they are not a new-head measurement. The independent
+88-test exact-source review is the fresh review evidence. Repository review
+settings and bot autofix toggles were not changed.
+
+## Corrected-head hosted results and first E2E failure
+
+At `475664161d364322fcf958d3aafdded477aaeff9`, [CI run 38031698727](https://github.com/BAWES-Universe/workadventure-universe/actions/runs/38031698727)
+passed all 13 jobs, including the normal production Play build. Desktop checks
+and all five Docker image builds also passed. Dev-server build/switch and
+Kubernetes deployment jobs were skipped.
+
+This run was triggered by the head update immediately before the PR base was
+corrected. Its event still records `universe` and synthetic merge
+`fe5bba34aa92c97ba065aa4245eb1c0fa19f3bba`. The merge tree is exactly
+`1b037d6f6404093d37996148d08ba4996ada5aef`, identical to the corrected feature
+head tree. This establishes tested-source equivalence, not a development-base
+event. A later documentation commit's checks must be evaluated separately.
+
+[Chromium shard 3/4](https://github.com/BAWES-Universe/workadventure-universe/actions/runs/38031698951/job/114155035521)
+failed the existing `tests/meeting.spec.ts` “Block users” case: the first attempt
+timed out at line 284 and its retry at line 319 waiting for a button whose text
+matches `/^\s*Block /`. The shard reported 47 passed, one skipped, one failed.
+This failure is retained even if a subsequent run passes; it is not called a
+passing E2E matrix.
+
+In the retry trace, the dialog contained **“Unblock Bob”**, which cannot match
+the requested “Block” locator. Moderation reopened about 272.5ms after the prior
+Unblock click. The unchanged report menu has a 300ms outro, while the unchanged
+block submenu initializes its blocked-state snapshot on mount. Reopening before
+that outro completes is a plausible stale-state cause, not a proven root cause
+or a claim that the failure is merely flaky. The test's existing `empty.json`
+map has no audio descriptor, so the new graph backend is not selected. No
+meeting code, timeout, test expectation, workflow, or deployment label was changed
+to obtain a green result. Actual game-room and physical-device soundscape
+acceptance remain the separate open gates above.
