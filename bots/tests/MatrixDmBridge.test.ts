@@ -618,6 +618,17 @@ describe('MatrixDmBridge', () => {
         expect((bridge as any).localWaiting.get(BOT)?.size).toBe(1);
     });
 
+    it('keeps the answer only after it reached the chat', async () => {
+        const keep = vi.fn();
+        deps.reply.mockResolvedValue({ text: 'Hello Alice!', media: [], keep });
+        await bridge.onEvent(invite());
+        client.sendText.mockRejectedValueOnce(new Error('Synapse is busy'));
+        await bridge.onEvent(message('hi'));
+        expect(keep).not.toHaveBeenCalled();
+        await bridge.onEvent(message('hi again'));
+        expect(keep).toHaveBeenCalledTimes(1);
+    });
+
     it('a bot with no AI provider leaves one "not ready" note instead of silence', async () => {
         await bridge.onEvent(invite());
         deps.getBotConfig.mockResolvedValue({ botId: BOT, name: 'Guide', enabled: true } as never);
@@ -843,6 +854,41 @@ describe('DmReplyService history', () => {
         // Something new is kept as usual.
         await (service as any).replyNow(BOT, person, 'are you back?', [], {});
         expect(history.map((entry) => entry.message)).toEqual(['left while resting', 'are you back?']);
+    });
+
+    it('remembers an answer only once it was sent, so a retry after a failed send is answered afresh', async () => {
+        const { DmReplyService } = await import('../server/DmReplyService');
+        const { ConversationMemory } = await import('../memory/ConversationMemory');
+        const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
+        const memory = new ConversationMemory();
+        const storage = { startConversation: vi.fn(), addMessage: vi.fn(async () => undefined) };
+        const answering = vi.fn(async function* () {
+            yield { content: 'Hello Alice!', done: true };
+        });
+        Object.assign(service, {
+            playerIds: new Map(),
+            nextPlayerId: -1,
+            loadedBots: new Set([BOT]),
+            getBotConfig: async () => ({ botId: BOT, name: 'Guide', aiProviderRef: 'p' }),
+            aiService: { generateBotResponseStream: answering },
+            conversationMemory: memory,
+            conversationStorage: storage,
+        });
+        const person = { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false };
+        const history = () => memory.getMemory(BOT, service.playerIdFor(ALICE))!.conversationHistory.map((entry) => entry.message);
+
+        // The answer is made but sending it fails: nothing of it is remembered.
+        const lost = await (service as any).replyNow(BOT, person, 'hi', [], {});
+        expect(lost.text).toBe('Hello Alice!');
+        expect(history()).toEqual(['hi']);
+
+        // The retry is answered from the person's message alone, and once sent the answer is kept.
+        const sent = await (service as any).replyNow(BOT, person, 'hi', [], {});
+        expect(history()).toEqual(['hi']);
+        sent.keep();
+        sent.keep();
+        expect(history()).toEqual(['hi', 'Hello Alice!']);
+        expect(storage.addMessage.mock.calls.map((call: any[]) => call[3])).toEqual(['person', 'bot']);
     });
 });
 

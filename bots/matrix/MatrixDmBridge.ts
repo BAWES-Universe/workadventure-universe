@@ -471,6 +471,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 return;
             }
             if (reply.text) await this.client.sendText(botUserId, event.room_id, reply.text);
+            reply.keep?.();
             for (const item of reply.media ?? []) {
                 await this.sendMedia(botUserId, event.room_id, item).catch((error) =>
                     console.warn(`[MatrixDmBridge] Could not send media from bot ${botId}:`, error?.message ?? error)

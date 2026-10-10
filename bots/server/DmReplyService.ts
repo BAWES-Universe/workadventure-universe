@@ -46,6 +46,8 @@ export interface DmReply {
     media: PendingMedia[];
     /** The AI provider failed on this message, so there is no answer; the person can send it again. */
     failed?: boolean;
+    /** Remembers the text as said. Call it once the text reached the person, so an answer that never arrived isn't. */
+    keep?: () => void;
 }
 
 /** How a resting bot words "not now", so it still sounds like itself. */
@@ -282,16 +284,21 @@ export class DmReplyService extends BaseBehavior {
         }
 
         replyText = replyText.trim();
-        if (replyText) {
+        // Kept only once it was sent: if sending fails the person's message stays the last thing said, so a retry
+        // answers it afresh instead of seeing a reply they never got.
+        let kept = false;
+        const keep = () => {
+            if (kept || !replyText) return;
+            kept = true;
             memory.addMessage(botId, playerId, replyText, 'bot', DM_SPACE_NAME);
             this.conversationStorage?.addMessage(botId, person.uuid, replyText, 'bot').catch((error) =>
                 console.error('[DmReplyService] Could not log the reply:', error)
             );
-        }
+        };
 
         // Media the tools produced waits in memory; a DM delivers it as attachments right after the text.
         const playerMemory = memory.getMemory(botId, playerId);
         const media = playerMemory?.pendingMedia?.splice(0) ?? [];
-        return { text: replyText, media };
+        return { text: replyText, media, keep };
     }
 }
