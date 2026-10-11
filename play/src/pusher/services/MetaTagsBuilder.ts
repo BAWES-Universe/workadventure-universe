@@ -27,6 +27,11 @@ export const MetaTagsDefaultValue: RequiredMetaTagsData = {
     ],
     manifestIcons: [
         {
+            src: "/static/images/favicons/icon-192x192.png",
+            sizes: "192x192",
+            type: "image/png",
+        },
+        {
             src: "/static/images/favicons/icon-512x512.png",
             sizes: "512x512",
             type: "image/png",
