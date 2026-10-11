@@ -6,6 +6,7 @@ import * as Sentry from "@sentry/node";
 import { z } from "zod";
 import Debug from "debug";
 import { MetaTagsBuilder } from "../services/MetaTagsBuilder";
+import { buildManifest } from "../services/ManifestBuilder";
 import { absoluteUrl, requestProtocol } from "../services/AbsoluteUrl";
 import { adminService } from "../services/AdminService";
 import { getStringPalette, wrapWithStyleTag } from "../services/GenerateCustomColors";
@@ -390,46 +391,7 @@ export class FrontController extends BaseHttpController {
 
         const metaTagsData = await builder.getMeta(req.header("User-Agent"));
 
-        const manifest = {
-            short_name: metaTagsData.title,
-            name: metaTagsData.title,
-            icons: metaTagsData.manifestIcons,
-            start_url: url.replace(`${req.protocol}://${req.hostname}`, ""),
-            background_color: metaTagsData.themeColor,
-            display_override: ["window-control-overlay", "minimal-ui"],
-            display: "standalone",
-            orientation: "portrait-primary",
-            scope: "/",
-            lang: "en",
-            theme_color: metaTagsData.themeColor,
-            shortcuts: [
-                {
-                    name: metaTagsData.title,
-                    short_name: metaTagsData.title,
-                    description: metaTagsData.description,
-                    url: "/",
-                    icons: [
-                        {
-                            src: "/static/images/favicons/android-icon-192x192.png",
-                            sizes: "192x192",
-                            type: "image/png",
-                        },
-                    ],
-                },
-            ],
-            description: metaTagsData.description,
-            screenshots: [],
-            related_applications: [
-                {
-                    platform: "web",
-                    url: "https://workadventu.re",
-                },
-                {
-                    platform: "play",
-                    url: "https://play.workadventu.re",
-                },
-            ],
-        };
+        const manifest = buildManifest(metaTagsData, url.replace(`${req.protocol}://${req.hostname}`, ""));
 
         res.contentType("application/manifest+json").json(manifest);
         return;
