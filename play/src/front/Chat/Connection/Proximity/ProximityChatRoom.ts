@@ -55,6 +55,7 @@ import { BubbleNotification as BasicNotification } from "../../../Notification/B
 import { formatPeopleNames } from "../../Components/TopRow/TopRowSummary";
 import { composerDraftStore } from "../../Stores/ComposerDraftStore";
 import { areaChatRooms } from "../../Stores/AreaPresenceStore";
+import { rememberProximityChat } from "../../Stores/SayHiCardStore";
 import {
     selectedProximitySessionStore,
     stashProximityHistory,
@@ -73,6 +74,7 @@ import {
     ROOM_MESSAGES_SESSION_ID,
     buildProximitySessions,
     findNotSentInsertIndex,
+    listableSessions,
     sessionOfStay,
 } from "./ProximitySessions";
 
@@ -208,6 +210,7 @@ export class ProximityChatRoom implements ChatRoom {
     private spaceWatcherUserJoinedObserver: Subscription | undefined;
     private spaceWatcherUserLeftObserver: Subscription | undefined;
     private newChatMessageWritingStatusStreamUnsubscriber: Subscription;
+    private hadProximityChatUnsubscriber: Unsubscriber;
     private joinSpaceAbortController: AbortController | undefined;
     areNotificationsMuted = writable(false);
     isRoomFolder = false;
@@ -306,6 +309,13 @@ export class ProximityChatRoom implements ChatRoom {
             ([$messages, $spaceJoinedAt, $unsentDrafts]) =>
                 buildProximitySessions(Array.from($messages), $spaceJoinedAt, DEFAULT_CONTINUATION, $unsentDrafts)
         );
+        // The first proximity chat you had is remembered on this device, whether or not the chat panel was open: the
+        // "Say hi in person" card on the Chats tab never comes back after it. The room messages are not a chat you had.
+        this.hadProximityChatUnsubscriber = this.sessions.subscribe(($sessions) => {
+            if (listableSessions($sessions).some((session) => session.id !== ROOM_MESSAGES_SESSION_ID)) {
+                rememberProximityChat();
+            }
+        });
 
         // The chats you had on the previous map, when the scene handed them over.
         const stash = takeProximityHistory();
@@ -1700,6 +1710,7 @@ export class ProximityChatRoom implements ChatRoom {
 
     public destroy(): void {
         this.newChatMessageWritingStatusStreamUnsubscriber.unsubscribe();
+        this.hadProximityChatUnsubscriber();
         this.startListeningToStreamInBubbleStreamUnsubscriber.unsubscribe();
         this.stopListeningToStreamInBubbleStreamUnsubscriber.unsubscribe();
         this.spaceMessageSubscription?.unsubscribe();

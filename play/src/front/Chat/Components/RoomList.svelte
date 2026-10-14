@@ -14,7 +14,7 @@
     import type { ProximitySession } from "../Connection/Proximity/ProximitySessions";
     import { ROOM_MESSAGES_SESSION_ID, listableSessions } from "../Connection/Proximity/ProximitySessions";
     import WokaFromUserId from "../../Components/Woka/WokaFromUserId.svelte";
-    import { readHadProximityChat, rememberProximityChat, shouldShowSayHiCard } from "../Stores/SayHiCardStore";
+    import { readHadProximityChat, shouldShowSayHiCard } from "../Stores/SayHiCardStore";
     import RoomTimeline from "./Room/RoomTimeline.svelte";
     import ChatLoader from "./ChatLoader.svelte";
     import ChatError from "./ChatError.svelte";
@@ -104,15 +104,18 @@
     $: hasProximityHistory = $proximityEntries.length > 0;
 
     // The "Say hi in person" card is the empty state of this list: it shows to a player with no chats, and never again
-    // once they had a proximity chat on this device (proximity history itself is only kept until the page reloads).
-    let hadProximityChatBefore = readHadProximityChat();
-    $: if (hasProximityHistory && !hadProximityChatBefore) {
-        hadProximityChatBefore = true;
-        rememberProximityChat();
-    }
-    // Set by the list below, which only exists once the saved chats are loaded. A guest has none to wait for.
+    // once they had a proximity chat on this device (proximity history itself is only kept until the page reloads; the
+    // proximity chat room remembers the first chat as it ends, and the list's own history covers the rest of this visit).
+    const hadProximityChatBefore = readHadProximityChat();
+    // Set by the list below, which only exists once the saved chats are loaded. While the chat is connecting or in
+    // error the saved chats are not known yet (the loader or the error shows). Offline there are none to list.
     let listEmpty = false;
-    $: savedChatsEmpty = $chatConnectionStatus === "ONLINE" ? listEmpty : !$userIsConnected ? true : undefined;
+    $: savedChatsEmpty =
+        $chatConnectionStatus === "ONLINE"
+            ? listEmpty
+            : $chatConnectionStatus === "OFFLINE" || !$userIsConnected
+            ? true
+            : undefined;
     $: showSayHiCard = shouldShowSayHiCard({
         liveCardVisible,
         hasProximityHistory,

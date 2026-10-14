@@ -336,6 +336,29 @@ describe("ProximityChatRoom sessions", () => {
         expect(listableSessions(all).map((session) => session.label)).toEqual(["Other room"]);
     });
 
+    it("remembers the first proximity chat you had on this device, with the chat panel closed or not", async () => {
+        const kept = new Map<string, string>();
+        vi.stubGlobal("localStorage", {
+            getItem: (key: string) => kept.get(key) ?? null,
+            setItem: (key: string, value: string) => void kept.set(key, value),
+        });
+        try {
+            // A stay where nobody wrote is not a chat you had.
+            room.setDisplayName("Design room");
+            await room.joinSpace("bubble", [], true);
+            await room.leaveSpace("bubble", true);
+            expect(kept.size).toBe(0);
+
+            room.setDisplayName("Other room");
+            await room.joinSpace("bubble", [], true);
+            fake.emit("spaceMessage", { sender: "room_3", spaceMessage: { message: "hello", name: "Sara" } });
+            await room.leaveSpace("bubble", true);
+            expect(Array.from(kept.values())).toEqual(["1"]);
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+
     it("closes the open stay before handing the timeline to the next map", async () => {
         room.setDisplayName("Design room");
         await room.joinSpace("bubble", [], true);
