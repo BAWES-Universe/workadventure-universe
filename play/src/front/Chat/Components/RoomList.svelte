@@ -127,9 +127,9 @@
                     <RefreshChat />
                 {/if}
                 <ChatHeader />
-                <!-- Fills the panel above the invite footer, and grows past it with a long list: the footer then follows
-                     the last row instead of sitting over the rows that overflow (often on a phone's chat sheet). -->
-                <div class="relative pt-1 grow shrink-0">
+                <!-- Only the list scrolls, as on the People tab: the search bar above and the invite footer below stay
+                     put, and the footer sits under the last row instead of over it (often on a phone's chat sheet). -->
+                <div class="relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto pt-1" data-testid="chatsList">
                     {#if $chatConnectionStatus === "CONNECTING" && $userIsConnected}
                         <ChatLoader label={$LL.chat.connecting()} />
                     {/if}
