@@ -585,12 +585,18 @@ describe("audio playback on browsers that ignore element volume (iPhone)", () =>
     let state: ReturnType<typeof vi.fn>;
     let failNextCorsLoad: boolean;
     let failAllLoads: boolean;
+    let hostHasCors: boolean;
+    let noGesture: boolean;
+    const checkCors = vi.fn((): Promise<boolean> => Promise.resolve(hostHasCors));
     beforeEach(() => {
         vi.useFakeTimers();
         media = [];
         context = new FakeContext();
         failNextCorsLoad = false;
         failAllLoads = false;
+        hostHasCors = true;
+        noGesture = false;
+        checkCors.mockClear();
         state = vi.fn();
         player = new AudioPlayback(
             state,
@@ -600,6 +606,7 @@ describe("audio playback on browsers that ignore element volume (iPhone)", () =>
                 // iOS Safari: element volume reads back 1 and cannot be changed.
                 Object.defineProperty(audio, "volume", { get: () => 1, set: () => undefined });
                 audio.play.mockImplementation(() => {
+                    if (noGesture) return Promise.reject(new DOMException("gesture", "NotAllowedError"));
                     if (failAllLoads || (failNextCorsLoad && audio.crossOrigin === "anonymous")) {
                         return Promise.reject(new DOMException("no CORS", "NotSupportedError"));
                     }
@@ -611,7 +618,8 @@ describe("audio playback on browsers that ignore element volume (iPhone)", () =>
             },
             1600,
             undefined,
-            () => context as unknown as AudioContext
+            () => context as unknown as AudioContext,
+            checkCors
         );
         player.setControls(controls);
     });
@@ -748,6 +756,36 @@ describe("audio playback on browsers that ignore element volume (iPhone)", () =>
         await flush();
         expect(plays).toEqual(["a:graph", "a:plain", "b:graph", "a:graph", "a:plain"]);
         fresh.destroy();
+    });
+
+    it("gives a host without CORS its plain element before the tap, so one tap is enough", async () => {
+        hostHasCors = false;
+        failNextCorsLoad = true;
+        noGesture = true;
+        player.setSource(source("https://nocors.example/a.mp3"));
+        await flush();
+        await flush();
+        // The probe came back "no CORS" while play was still blocked: the track already sits on a plain element.
+        expect(checkCors).toHaveBeenCalledTimes(1);
+        expect(media).toHaveLength(2);
+        expect(media[1].crossOrigin).toBeUndefined();
+        expect(media[0].src).toBe("");
+        expect(state).toHaveBeenLastCalledWith("not_allowed");
+        noGesture = false;
+        player.retry();
+        await flush();
+        expect(media[1].paused).toBe(false);
+        expect(state).toHaveBeenLastCalledWith("playing");
+    });
+
+    it("asks a host only once and keeps the gain node when it allows CORS", async () => {
+        player.setSource(source("https://maps.example/a.mp3"));
+        await flush();
+        player.setSource(source("https://maps.example/b.mp3"));
+        await flush();
+        expect(checkCors).toHaveBeenCalledTimes(1);
+        expect(media[0].crossOrigin).toBe("anonymous");
+        expect(state).toHaveBeenLastCalledWith("playing");
     });
 
     it("keeps the gain node for other tracks when a file fails for another reason", async () => {

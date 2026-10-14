@@ -41,6 +41,20 @@ function createBrowserContext(): AudioContext | undefined {
     return Context ? new Context() : undefined;
 }
 
+/** True when the host sends CORS headers (what Web Audio needs). Stops at the headers; the body is not downloaded. */
+async function hostAllowsCors(url: string): Promise<boolean> {
+    if (typeof fetch !== "function") return true;
+    const controller = new AbortController();
+    try {
+        await fetch(url, { mode: "cors", credentials: "omit", signal: controller.signal });
+        return true;
+    } catch {
+        return false;
+    } finally {
+        controller.abort();
+    }
+}
+
 function originOf(url: string): string {
     try {
         return new URL(url, window.location.href).origin;
@@ -66,6 +80,7 @@ export class AudioPlayback {
     private readonly corsBlockedOrigins = new Set<string>();
     // URLs that failed in CORS mode and are being tried plain. If the plain load plays, the cause was CORS.
     private readonly plainRetryUrls = new Set<string>();
+    private readonly probedOrigins = new Set<string>();
     // Reuse media elements: some browsers grant autoplay permission per element.
     private readonly idleMedia: HTMLAudioElement[] = [];
     private destroyed = false;
@@ -84,7 +99,8 @@ export class AudioPlayback {
         private readonly createAudio: () => HTMLAudioElement = () => new Audio(),
         private readonly duration = 1600,
         private readonly audioContainer?: HTMLElement,
-        private readonly createContext: () => AudioContext | undefined = createBrowserContext
+        private readonly createContext: () => AudioContext | undefined = createBrowserContext,
+        private readonly checkCors: (url: string) => Promise<boolean> = hostAllowsCors
     ) {}
 
     setSource(source: AudioSource | undefined): void {
@@ -149,6 +165,7 @@ export class AudioPlayback {
             graph,
         };
         this.current = slot;
+        if (graph) this.probeCors(source.url);
         media.preload = "auto";
         media.onended = () => {
             if (this.current !== slot) return;
@@ -272,14 +289,34 @@ export class AudioPlayback {
         );
     }
 
+    private swapToPlain(slot: Slot): void {
+        this.plainRetryUrls.add(slot.source.url);
+        const source = slot.source;
+        this.current = undefined;
+        this.release(slot);
+        this.setSource(source);
+    }
+
+    /**
+     * Ask a cross-origin host about CORS while the first (gesture-less) play is still blocked, so a host
+     * without it gets its plain element before the tap. Otherwise the plain element would only be created
+     * after the tap's play() failed, and Safari would need a second tap for it.
+     */
+    private probeCors(url: string): void {
+        const origin = originOf(url);
+        if (this.probedOrigins.has(origin) || origin === window.location.origin) return;
+        this.probedOrigins.add(origin);
+        void this.checkCors(url).then((allowed) => {
+            const slot = this.current;
+            if (allowed || this.destroyed || !slot?.graph || slot.confirmed || slot.source.url !== url) return;
+            this.swapToPlain(slot);
+        });
+    }
+
     private fail(slot: Slot, state: "not_allowed" | "error"): void {
         if (state === "error" && slot.graph && !slot.confirmed && this.current === slot) {
             // CORS-mode loading failed before any sound: try this track through a plain element instead.
-            this.plainRetryUrls.add(slot.source.url);
-            const source = slot.source;
-            this.current = undefined;
-            this.release(slot);
-            this.setSource(source);
+            this.swapToPlain(slot);
             return;
         }
         if (state === "error") this.plainRetryUrls.delete(slot.source.url);
