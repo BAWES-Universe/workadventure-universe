@@ -587,7 +587,7 @@ describe("audio playback on browsers that ignore element volume (iPhone)", () =>
     let failAllLoads: boolean;
     let hostHasCors: boolean;
     let noGesture: boolean;
-    const checkCors = vi.fn((): Promise<boolean> => Promise.resolve(hostHasCors));
+    const checkCors = vi.fn((_url: string, _signal: AbortSignal): Promise<boolean> => Promise.resolve(hostHasCors));
     beforeEach(() => {
         vi.useFakeTimers();
         media = [];
@@ -826,6 +826,35 @@ describe("audio playback on browsers that ignore element volume (iPhone)", () =>
         player.setSource(source(`${window.location.origin}/music/b.mp3`));
         await flush();
         expect(media.find((audio) => audio.src.endsWith("/b.mp3"))?.crossOrigin).toBe("anonymous");
+    });
+
+    it("stops waiting for a host that never answers, remembers nothing and asks again on the next track", async () => {
+        let aborted = false;
+        checkCors.mockImplementationOnce((_url: string, signal: AbortSignal) => {
+            const onAbort = (): void => {
+                aborted = true;
+                signal.removeEventListener("abort", onAbort);
+            };
+            signal.addEventListener("abort", onAbort);
+            return new Promise<boolean>(() => {
+                // Never answers.
+            });
+        });
+        player.setSource(source("https://slow.example/a.mp3"));
+        await flush();
+        expect(checkCors).toHaveBeenCalledTimes(1);
+        // Still waiting: the host is not asked a second time for the next track.
+        player.setSource(source("https://slow.example/b.mp3"));
+        await flush();
+        expect(checkCors).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(8000);
+        expect(aborted).toBe(true);
+        // Unknown, not "no CORS": the track keeps its gain node and the next track asks the host again.
+        expect(media.find((audio) => audio.src.endsWith("/b.mp3"))?.crossOrigin).toBe("anonymous");
+        player.setSource(source("https://slow.example/c.mp3"));
+        await flush();
+        expect(checkCors).toHaveBeenCalledTimes(2);
+        expect(media.find((audio) => audio.src.endsWith("/c.mp3"))?.crossOrigin).toBe("anonymous");
     });
 
     it("asks a host only once and keeps the gain node when it allows CORS", async () => {
