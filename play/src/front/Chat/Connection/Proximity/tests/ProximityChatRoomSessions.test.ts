@@ -489,6 +489,18 @@ describe("ProximityChatRoom sessions", () => {
         next.destroy();
     });
 
+    it("opens the next map's proximity chat in place of this one when it was opened while getting back in", () => {
+        selectedRoomStore.set(undefined);
+        room.stashHistoryForNextScene();
+        room.destroy();
+        // Opened from the chat kept on screen, or from a notification, after the hand-over.
+        selectedRoomStore.set(room);
+
+        const next = nextMapRoom();
+        expect(get(selectedRoomStore)).toBe(next);
+        next.destroy();
+    });
+
     it("never carries an area's chat to the next map as the chat to put back", async () => {
         const areaRoom = { id: "!area-room:server" } as unknown as ChatRoom;
         areaChatRooms.setMapRoomIds(["!area-room:server"]);

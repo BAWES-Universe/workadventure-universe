@@ -336,7 +336,8 @@ export class ProximityChatRoom implements ChatRoom {
                 this.keepCarriedChatState = true;
             }
             // The old map's proximity chat was open: this one takes its place, never a chat that no longer exists.
-            if (stash.wasSelected) selectedRoomStore.set(this);
+            // It can also have been opened after the hand-over, while the old map stayed on screen to get back in.
+            if (stash.wasSelected || get(selectedRoomStore) instanceof ProximityChatRoom) selectedRoomStore.set(this);
         }
 
         this.newChatMessageWritingStatusStreamUnsubscriber =
