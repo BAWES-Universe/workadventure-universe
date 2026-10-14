@@ -12,6 +12,7 @@
     import { chatFloatInsetStore, chatSidebarWidthStore, chatCarriesItsCloseStore } from "./ChatSidebarWidthStore";
     import Chat from "./Components/Chat.svelte";
     import { selectedRoomStore } from "./Stores/SelectRoomStore";
+    import { chatSearchOpenStore } from "./Stores/ChatStore";
     import {
         chatSheetHeightStore,
         chatSheetLayoutStore,
@@ -203,7 +204,15 @@
     }
 
     $: sheetSnapHeights = getSnapHeights($windowSize.height, CHAT_SHEET_SIZES);
-    $: sheetHeight = sheetDragHeight ?? bubbleHeight ?? chatSheetRestingHeight($chatSheetSnapStore, $windowSize.height);
+    // Searching: the list's footer holds the search field above the keyboard, so the sheet goes to full height for the
+    // results. It is only borrowed: the snap, the bubble's height and the kept rest are untouched, so closing the search
+    // puts the sheet back where it was. A drag still wins. A chat open in the panel has no list, so no search to give room.
+    $: searchTakesRoom = $chatSearchOpenStore && $selectedRoomStore === undefined;
+    $: sheetHeight =
+        sheetDragHeight ??
+        (searchTakesRoom
+            ? sheetSnapHeights.full
+            : bubbleHeight ?? chatSheetRestingHeight($chatSheetSnapStore, $windowSize.height));
     // The videos above the sheet follow its height, drag included.
     $: chatSheetHeightStore.set(sheet && $chatVisibilityStore ? sheetHeight : 0);
 
@@ -271,6 +280,11 @@
             closeChat();
             return;
         }
+        // Searching holds the sheet at full height: it springs back, and nothing is kept for after the search.
+        if (searchTakesRoom) {
+            sheetDragHeight = undefined;
+            return;
+        }
         // It stays where it is let go (between its lowest height and "full"), and opens there next time.
         const kept = clampHeight(height, $windowSize.height, CHAT_SHEET_SIZES);
         sheetDragHeight = undefined;
@@ -279,6 +293,7 @@
     }
 
     function onSheetTap() {
+        if (searchTakesRoom) return;
         leaveBubbleHeight();
         keepChatSheetRest(nextSnap(nearestSnap(sheetHeight, $windowSize.height, CHAT_SHEET_SIZES)));
     }

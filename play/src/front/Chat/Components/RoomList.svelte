@@ -18,7 +18,6 @@
     import RoomTimeline from "./Room/RoomTimeline.svelte";
     import ChatLoader from "./ChatLoader.svelte";
     import ChatError from "./ChatError.svelte";
-    import ChatHeader from "./ChatHeader.svelte";
     import FindGroup from "./FindGroup.svelte";
     import InviteFooter from "./InviteFooter.svelte";
     import RequireConnection from "./requireConnection.svelte";
@@ -147,8 +146,7 @@
                 {#if $shouldRetrySendingEvents}
                     <RefreshChat />
                 {/if}
-                <ChatHeader />
-                <!-- Only the list scrolls, as on the People tab: the search bar above and the invite footer below stay
+                <!-- Only the list scrolls, as on the People tab: the tabs above and the footer below (Invite, search, "+") stay
                      put, and the footer sits under the last row instead of over it (often on a phone's chat sheet). -->
                 <div class="relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto pt-1" data-testid="chatsList">
                     {#if $chatConnectionStatus === "CONNECTING" && $userIsConnected}
