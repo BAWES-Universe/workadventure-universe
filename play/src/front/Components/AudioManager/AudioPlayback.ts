@@ -493,6 +493,8 @@ export class AudioPlayback {
             this.gains.set(media, gain);
             return gain;
         } catch {
+            // Back to plain playback exactly as before: CORS mode would stop a host without CORS from loading.
+            media.crossOrigin = null;
             return undefined;
         }
     }
