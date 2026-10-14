@@ -584,11 +584,13 @@ describe("audio playback on browsers that ignore element volume (iPhone)", () =>
     let player: AudioPlayback;
     let state: ReturnType<typeof vi.fn>;
     let failNextCorsLoad: boolean;
+    let failAllLoads: boolean;
     beforeEach(() => {
         vi.useFakeTimers();
         media = [];
         context = new FakeContext();
         failNextCorsLoad = false;
+        failAllLoads = false;
         state = vi.fn();
         player = new AudioPlayback(
             state,
@@ -598,7 +600,7 @@ describe("audio playback on browsers that ignore element volume (iPhone)", () =>
                 // iOS Safari: element volume reads back 1 and cannot be changed.
                 Object.defineProperty(audio, "volume", { get: () => 1, set: () => undefined });
                 audio.play.mockImplementation(() => {
-                    if (failNextCorsLoad && audio.crossOrigin === "anonymous") {
+                    if (failAllLoads || (failNextCorsLoad && audio.crossOrigin === "anonymous")) {
                         return Promise.reject(new DOMException("no CORS", "NotSupportedError"));
                     }
                     audio.paused = false;
@@ -703,6 +705,33 @@ describe("audio playback on browsers that ignore element volume (iPhone)", () =>
         player.setSource(source("https://maps.example/c.mp3"));
         await flush();
         expect(context.createMediaElementSource).toHaveBeenCalledTimes(2);
+    });
+
+    it("keeps the gain node for other tracks when a file fails for another reason", async () => {
+        failAllLoads = true;
+        player.setSource(source("https://maps.example/missing.mp3"));
+        await flush();
+        await flush();
+        expect(state).toHaveBeenLastCalledWith("error");
+        failAllLoads = false;
+        player.setSource(source("https://maps.example/b.mp3"));
+        await flush();
+        expect(media.at(-1)?.crossOrigin).toBe("anonymous");
+        expect(state).toHaveBeenLastCalledWith("playing");
+    });
+
+    it("asks for a tap again after the context is interrupted while playing", async () => {
+        player.setSource(source("https://maps.example/a.mp3"));
+        await flush();
+        expect(state).toHaveBeenLastCalledWith("playing");
+        context.resume.mockImplementation(() => Promise.resolve());
+        context.state = "suspended";
+        context.onstatechange?.();
+        expect(state).toHaveBeenLastCalledWith("not_allowed");
+        expect(context.resume).toHaveBeenCalled();
+        context.state = "running";
+        context.onstatechange?.();
+        expect(state).toHaveBeenLastCalledWith("playing");
     });
 
     it("keeps plain playback when Web Audio is not available", async () => {

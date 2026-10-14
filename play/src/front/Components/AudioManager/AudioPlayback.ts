@@ -64,6 +64,8 @@ export class AudioPlayback {
     private readonly gains = new WeakMap<HTMLAudioElement, GainNode>();
     // Web Audio needs CORS. An origin without it plays through a plain element (hardware volume only, as before).
     private readonly corsBlockedOrigins = new Set<string>();
+    // URLs that failed in CORS mode and are being tried plain. If the plain load plays, the cause was CORS.
+    private readonly plainRetryUrls = new Set<string>();
     // Reuse media elements: some browsers grant autoplay permission per element.
     private readonly idleMedia: HTMLAudioElement[] = [];
     private destroyed = false;
@@ -122,7 +124,10 @@ export class AudioPlayback {
         }
         let media = this.idleMedia.pop() ?? this.createAudio();
         this.detectVolumeSupport(media);
-        const useGraph = this.volumeSupported === false && !this.corsBlockedOrigins.has(originOf(source.url));
+        const useGraph =
+            this.volumeSupported === false &&
+            !this.corsBlockedOrigins.has(originOf(source.url)) &&
+            !this.plainRetryUrls.has(source.url);
         if (!useGraph && this.gains.has(media)) {
             // A graph-bound element cannot go back to plain playback; the blocked origin gets a fresh one.
             media = this.createAudio();
@@ -204,6 +209,7 @@ export class AudioPlayback {
         this.idleMedia.length = 0;
         if (this.context) {
             this.context.onstatechange = null;
+            if (typeof document !== "undefined") document.removeEventListener("visibilitychange", this.onVisible);
             void this.context.close().catch(() => undefined);
             this.context = undefined;
         }
@@ -241,6 +247,10 @@ export class AudioPlayback {
                 if (this.current !== slot || slot.attempt !== attempt || !this.canPlay()) return;
                 slot.pending = false;
                 slot.confirmed = true;
+                if (!slot.graph && this.plainRetryUrls.delete(slot.source.url)) {
+                    // It plays without CORS mode, so CORS was the problem (not a 404 or a bad file).
+                    this.corsBlockedOrigins.add(originOf(slot.source.url));
+                }
                 this.startFade();
                 if (slot.graph && this.context && this.context.state !== "running") {
                     // The element plays, but a suspended context outputs silence until a gesture resumes it.
@@ -264,14 +274,15 @@ export class AudioPlayback {
 
     private fail(slot: Slot, state: "not_allowed" | "error"): void {
         if (state === "error" && slot.graph && !slot.confirmed && this.current === slot) {
-            // CORS-mode loading failed before any sound: play this origin through a plain element instead.
-            this.corsBlockedOrigins.add(originOf(slot.source.url));
+            // CORS-mode loading failed before any sound: try this track through a plain element instead.
+            this.plainRetryUrls.add(slot.source.url);
             const source = slot.source;
             this.current = undefined;
             this.release(slot);
             this.setSource(source);
             return;
         }
+        if (state === "error") this.plainRetryUrls.delete(slot.source.url);
         slot.attempt++;
         slot.pending = false;
         slot.failed = state;
@@ -362,16 +373,32 @@ export class AudioPlayback {
             const context = this.createContext();
             if (!context) return undefined;
             context.onstatechange = () => {
-                if (this.destroyed || !this.contextBlocked || context.state !== "running") return;
-                this.contextBlocked = false;
-                if (this.current?.confirmed) this.onState("playing");
+                if (this.destroyed) return;
+                if (context.state === "running") {
+                    if (!this.contextBlocked) return;
+                    this.contextBlocked = false;
+                    if (this.current?.confirmed) this.onState("playing");
+                    return;
+                }
+                // Screen lock, a call or backgrounding silences the graph while the element keeps "playing".
+                const slot = this.current;
+                if (slot?.graph && slot.confirmed && this.canPlay() && !slot.media.paused) {
+                    this.contextBlocked = true;
+                    this.resumeContext();
+                    this.onState("not_allowed");
+                }
             };
             this.context = context;
+            if (typeof document !== "undefined") document.addEventListener("visibilitychange", this.onVisible);
         } catch {
             this.context = undefined;
         }
         return this.context;
     }
+
+    private readonly onVisible = (): void => {
+        if (document.visibilityState === "visible") this.resumeContext();
+    };
 
     private resumeContext(): void {
         if (this.context && this.context.state !== "running") void this.context.resume().catch(() => undefined);
