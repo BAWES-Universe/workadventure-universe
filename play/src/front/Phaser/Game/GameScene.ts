@@ -2323,7 +2323,8 @@ export class GameScene extends DirtyScene {
                         keptAlready || !this.scene.isVisible() ? Promise.resolve(undefined) : this.takeRoomPicture();
                     takingPicture
                         .then((picture) => {
-                            if (keptAlready) return;
+                            // Left the room meanwhile (a map exit, leaving the game): that took over.
+                            if (keptAlready || this.cleanupDone) return;
                             if (picture && !get(errorScreenStore)) {
                                 softReconnect.start(picture, () => showReconnectingScreen(logo));
                                 // The chat stays open: it reaches this scene until the next one is created.
@@ -2334,9 +2335,10 @@ export class GameScene extends DirtyScene {
                         })
                         .catch((e) => {
                             console.error("Could not keep the room on screen", e);
-                            showReconnectingScreen(logo);
+                            if (!this.cleanupDone) showReconnectingScreen(logo);
                         })
                         .finally(() => {
+                            if (this.cleanupDone) return;
                             this.cleanupClosingScene();
                             this.createSuccessorGameScene(true, true);
                         });
