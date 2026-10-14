@@ -336,7 +336,7 @@ describe("ProximityChatRoom sessions", () => {
         expect(listableSessions(all).map((session) => session.label)).toEqual(["Other room"]);
     });
 
-    it("remembers the first proximity chat you had on this device, with the chat panel closed or not", async () => {
+    it("remembers the first proximity chat you had on this device as soon as someone writes, panel open or not", async () => {
         const kept = new Map<string, string>();
         vi.stubGlobal("localStorage", {
             getItem: (key: string) => kept.get(key) ?? null,
@@ -352,6 +352,8 @@ describe("ProximityChatRoom sessions", () => {
             room.setDisplayName("Other room");
             await room.joinSpace("bubble", [], true);
             fake.emit("spaceMessage", { sender: "room_3", spaceMessage: { message: "hello", name: "Sara" } });
+            // Right away, while the stay is still live: closing the tab now must not lose it.
+            expect(Array.from(kept.values())).toEqual(["1"]);
             await room.leaveSpace("bubble", true);
             expect(Array.from(kept.values())).toEqual(["1"]);
         } finally {
