@@ -62,54 +62,45 @@ describe("dismissBootSplash", () => {
 });
 
 describe("watchBootSplash", () => {
-    it("leaves when the loader has shown and hides again, not when it first shows", () => {
-        const loader = writable(false);
-        const other = writable(false);
+    it("leaves as soon as a first screen shows, and only once", () => {
+        const shown = writable(false);
         const dismiss = vi.fn();
         const env = makeEnv();
-        watchBootSplash(loader, other, dismiss, env);
-        loader.set(true);
+        watchBootSplash(shown, dismiss, env);
         expect(dismiss).not.toHaveBeenCalled();
-        loader.set(false);
+        shown.set(true);
+        shown.set(false);
+        shown.set(true);
         expect(dismiss).toHaveBeenCalledTimes(1);
         expect(env.pending()).toBe(0);
-    });
-
-    it("leaves as soon as another first screen shows", () => {
-        const other = writable(false);
-        const dismiss = vi.fn();
-        watchBootSplash(writable(false), other, dismiss, makeEnv());
-        other.set(true);
-        expect(dismiss).toHaveBeenCalledTimes(1);
     });
 
     it("leaves at once when a first screen is already up", () => {
         const dismiss = vi.fn();
         const env = makeEnv();
-        watchBootSplash(writable(false), writable(true), dismiss, env);
+        watchBootSplash(writable(true), dismiss, env);
         expect(dismiss).toHaveBeenCalledTimes(1);
         expect(env.pending()).toBe(0);
     });
 
     it("leaves anyway when nothing shows for a long time, and only once", () => {
-        const loader = writable(false);
+        const shown = writable(false);
         const dismiss = vi.fn();
         const env = makeEnv();
-        watchBootSplash(loader, writable(false), dismiss, env);
+        watchBootSplash(shown, dismiss, env);
         env.run(BOOT_SPLASH_LONGEST_MS);
         expect(dismiss).toHaveBeenCalledTimes(1);
-        loader.set(true);
-        loader.set(false);
+        shown.set(true);
         expect(dismiss).toHaveBeenCalledTimes(1);
     });
 
     it("stops watching when asked", () => {
-        const other = writable(false);
+        const shown = writable(false);
         const dismiss = vi.fn();
         const env = makeEnv();
-        const stop = watchBootSplash(writable(false), other, dismiss, env);
+        const stop = watchBootSplash(shown, dismiss, env);
         stop();
-        other.set(true);
+        shown.set(true);
         expect(dismiss).not.toHaveBeenCalled();
         expect(env.pending()).toBe(0);
     });

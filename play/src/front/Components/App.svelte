@@ -26,7 +26,6 @@
     import { FileListener } from "../Phaser/FileUpload/FileListener";
     import { isStructuredCloneSupported } from "../Utils/BrowserCompatibility";
     import { dismissBootSplash, watchBootSplash } from "../Utils/BootSplash";
-    import { loaderVisibleStore } from "../Stores/LoaderStore";
     import { loginSceneVisibleStore } from "../Stores/LoginSceneStore";
     import { selectCharacterSceneVisibleStore } from "../Stores/SelectCharacterStore";
     import { selectCompanionSceneVisibleStore } from "../Stores/SelectCompanionStore";
@@ -48,8 +47,8 @@
     let handleCanvasClick: () => void;
     let browserNotSupported = false;
 
-    // The launch screen from index.html (#949) stays over the black canvas until a first screen is up: the loader
-    // (which shows over it), or any screen that comes instead of it.
+    // The launch screen from index.html (#949) stays over the black canvas until a first screen is up: the game, once
+    // the room is joined, or any screen that comes instead of it. The loader shows over it meanwhile.
     const firstScreenShownStore = derived(
         [
             gameSceneIsLoadedStore,
@@ -83,9 +82,7 @@
             wokaRefused !== undefined ||
             refresh !== undefined
     );
-    const stopWatchingBootSplash = watchBootSplash(loaderVisibleStore, firstScreenShownStore, () =>
-        dismissBootSplash()
-    );
+    const stopWatchingBootSplash = watchBootSplash(firstScreenShownStore, () => dismissBootSplash());
 
     onMount(() => {
         // Check browser compatibility before initializing the app

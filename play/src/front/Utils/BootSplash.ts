@@ -5,9 +5,10 @@ import type { Readable } from "svelte/store";
  * so the installed app (and a browser tab) never opens on a black screen. It sits above the game's canvas and under the
  * loader, in the loader's own layout, so the loader fades in over it with the wordmark holding still.
  *
- * It steps aside once a first screen is up: the loader has finished (it then fades out over the game), or a screen
- * that is not the loader shows (sign-in, woka picker, camera setup, an error). If none shows for a long time, it
- * leaves anyway, so it can never hide something it doesn't know about.
+ * It steps aside once a first screen is up: the game itself (the room is joined, not just its files loaded: between the
+ * two the canvas is still black), or a screen that comes instead (sign-in, woka picker, camera setup, an error or
+ * "reconnecting"). If none shows for a long time, it leaves anyway, so it can never hide something it doesn't know
+ * about.
  */
 
 export const BOOT_SPLASH_ID = "boot-splash";
@@ -32,21 +33,20 @@ export function dismissBootSplash(doc: Document = document, env: BootSplashEnv =
 }
 
 /**
- * Calls `dismiss` once: when the loader has been shown and hides again, when `otherScreenShown` turns true, or after
- * BOOT_SPLASH_LONGEST_MS. Returns a function that stops watching.
+ * Calls `dismiss` once: when `firstScreenShown` turns true, or after BOOT_SPLASH_LONGEST_MS. Returns a function that
+ * stops watching.
  */
 export function watchBootSplash(
-    loaderVisible: Readable<boolean>,
-    otherScreenShown: Readable<boolean>,
+    firstScreenShown: Readable<boolean>,
     dismiss: () => void,
     env: BootSplashEnv = window
 ): () => void {
     let done = false;
-    let loaderWasVisible = false;
-    const unsubscribers: (() => void)[] = [];
+    let unsubscribe: (() => void) | undefined;
     const stop = () => {
         env.clearTimeout(timer);
-        for (const unsubscribe of unsubscribers.splice(0)) unsubscribe();
+        unsubscribe?.();
+        unsubscribe = undefined;
     };
     const leave = () => {
         if (done) return;
@@ -55,18 +55,10 @@ export function watchBootSplash(
         stop();
     };
     const timer = env.setTimeout(leave, BOOT_SPLASH_LONGEST_MS);
-    unsubscribers.push(
-        loaderVisible.subscribe((visible) => {
-            if (visible) loaderWasVisible = true;
-            else if (loaderWasVisible) leave();
-        })
-    );
-    unsubscribers.push(
-        otherScreenShown.subscribe((shown) => {
-            if (shown) leave();
-        })
-    );
-    // A store that answered at once may already have ended it, before its unsubscriber was kept.
+    unsubscribe = firstScreenShown.subscribe((shown) => {
+        if (shown) leave();
+    });
+    // A store that answered at once has already ended it, before its unsubscriber was kept.
     if (done) stop();
     return stop;
 }
