@@ -778,6 +778,25 @@ describe("audio playback on browsers that ignore element volume (iPhone)", () =>
         expect(state).toHaveBeenLastCalledWith("playing");
     });
 
+    it("does not remember a failed probe, so a dropped connection never costs the gain node for the session", async () => {
+        hostHasCors = false;
+        noGesture = true;
+        player.setSource(source("https://maps.example/a.mp3"));
+        await flush();
+        await flush();
+        expect(media[1].crossOrigin).toBeUndefined();
+        noGesture = false;
+        player.retry();
+        await flush();
+        expect(state).toHaveBeenLastCalledWith("playing");
+        // The connection is back: the next track from the same host asks again and gets the gain node.
+        hostHasCors = true;
+        player.setSource(source("https://maps.example/b.mp3"));
+        await flush();
+        expect(checkCors).toHaveBeenCalledTimes(2);
+        expect(media.at(-1)?.crossOrigin).toBe("anonymous");
+    });
+
     it("asks a host only once and keeps the gain node when it allows CORS", async () => {
         player.setSource(source("https://maps.example/a.mp3"));
         await flush();

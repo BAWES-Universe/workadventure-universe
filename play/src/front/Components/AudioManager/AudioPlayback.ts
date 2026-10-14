@@ -80,7 +80,10 @@ export class AudioPlayback {
     private readonly corsBlockedOrigins = new Set<string>();
     // URLs that failed in CORS mode and are being tried plain. If the plain load plays, the cause was CORS.
     private readonly plainRetryUrls = new Set<string>();
-    private readonly probedOrigins = new Set<string>();
+    // Hosts the probe confirmed. A failed probe is not remembered: it may be a dropped connection.
+    private readonly corsConfirmedOrigins = new Set<string>();
+    // URLs a failed probe sent to a plain element. They never block the origin on their own.
+    private readonly probePlainUrls = new Set<string>();
     // Reuse media elements: some browsers grant autoplay permission per element.
     private readonly idleMedia: HTMLAudioElement[] = [];
     private destroyed = false;
@@ -143,7 +146,8 @@ export class AudioPlayback {
         const useGraph =
             this.volumeSupported === false &&
             !this.corsBlockedOrigins.has(originOf(source.url)) &&
-            !this.plainRetryUrls.has(source.url);
+            !this.plainRetryUrls.has(source.url) &&
+            !this.probePlainUrls.has(source.url);
         if (!useGraph && this.gains.has(media)) {
             // A graph-bound element cannot go back to plain playback; the blocked origin gets a fresh one.
             media = this.createAudio();
@@ -264,6 +268,7 @@ export class AudioPlayback {
                 if (this.current !== slot || slot.attempt !== attempt || !this.canPlay()) return;
                 slot.pending = false;
                 slot.confirmed = true;
+                this.probePlainUrls.delete(slot.source.url);
                 if (!slot.graph && this.plainRetryUrls.delete(slot.source.url)) {
                     // It plays without CORS mode, so CORS was the problem (not a 404 or a bad file).
                     this.corsBlockedOrigins.add(originOf(slot.source.url));
@@ -289,8 +294,8 @@ export class AudioPlayback {
         );
     }
 
-    private swapToPlain(slot: Slot): void {
-        this.plainRetryUrls.add(slot.source.url);
+    private swapToPlain(slot: Slot, viaProbe = false): void {
+        (viaProbe ? this.probePlainUrls : this.plainRetryUrls).add(slot.source.url);
         const source = slot.source;
         this.current = undefined;
         this.release(slot);
@@ -304,12 +309,12 @@ export class AudioPlayback {
      */
     private probeCors(url: string): void {
         const origin = originOf(url);
-        if (this.probedOrigins.has(origin) || origin === window.location.origin) return;
-        this.probedOrigins.add(origin);
+        if (this.corsConfirmedOrigins.has(origin) || origin === window.location.origin) return;
         void this.checkCors(url).then((allowed) => {
+            if (allowed) this.corsConfirmedOrigins.add(origin);
             const slot = this.current;
             if (allowed || this.destroyed || !slot?.graph || slot.confirmed || slot.source.url !== url) return;
-            this.swapToPlain(slot);
+            this.swapToPlain(slot, true);
         });
     }
 
@@ -319,7 +324,10 @@ export class AudioPlayback {
             this.swapToPlain(slot);
             return;
         }
-        if (state === "error") this.plainRetryUrls.delete(slot.source.url);
+        if (state === "error") {
+            this.plainRetryUrls.delete(slot.source.url);
+            this.probePlainUrls.delete(slot.source.url);
+        }
         slot.attempt++;
         slot.pending = false;
         slot.failed = state;
@@ -478,7 +486,10 @@ export class AudioPlayback {
     private release(slot: Slot | undefined): void {
         if (!slot) return;
         // A plain retry dropped before it played proved nothing about CORS.
-        if (!slot.graph && !slot.confirmed) this.plainRetryUrls.delete(slot.source.url);
+        if (!slot.graph && !slot.confirmed) {
+            this.plainRetryUrls.delete(slot.source.url);
+            this.probePlainUrls.delete(slot.source.url);
+        }
         slot.attempt++;
         slot.media.onended = null;
         slot.media.onerror = null;
