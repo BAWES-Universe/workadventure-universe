@@ -181,6 +181,26 @@ describe("watchLoadingScreen", () => {
         expect(calls.at(-1)).toBe("show");
     });
 
+    it("comes back where the load was after a screen that stepped in", () => {
+        const { otherScreenShown, progress, calls } = setup();
+        progress.set(0.8);
+        otherScreenShown.set(true);
+        progress.set(0.84);
+        otherScreenShown.set(false);
+        expect(calls.slice(-2)).toEqual(["show", "progress 0.84"]);
+    });
+
+    it("starts the next room's load from empty, not from where the last one ended", () => {
+        const { gameLoaded, progress, env, calls } = setup();
+        progress.set(0.97);
+        gameLoaded.set(true);
+        env.advance(BOOT_SPLASH_FULL_MS);
+        gameLoaded.set(false);
+        expect(calls.at(-1)).toBe("show");
+        progress.set(0.12);
+        expect(calls.at(-1)).toBe("progress 0.12");
+    });
+
     it("does not fade out the screen that came back right after the game was up", () => {
         const { gameLoaded, env, calls } = setup();
         gameLoaded.set(true);

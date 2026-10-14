@@ -116,6 +116,8 @@ export function watchLoadingScreen(
 ): () => void {
     let gameLoaded = false;
     let otherScreenShown = false;
+    // How far this load is, kept while the screen is away (behind the Woka picker, an error...) so it comes back there.
+    let progress = 0;
     let visible = true;
     // It left because nothing moved for too long: it stays away until the next load.
     let gaveUp = false;
@@ -141,6 +143,7 @@ export function watchLoadingScreen(
             env.clearTimeout(fullTimer);
             visible = true;
             view.show();
+            if (progress > 0) view.progress(progress);
             armStallTimer();
         } else if (!wanted && visible) {
             visible = false;
@@ -158,15 +161,18 @@ export function watchLoadingScreen(
     const unsubscribers = [
         sources.gameLoaded.subscribe((loaded) => {
             gameLoaded = loaded;
+            // That load is over: the next one (a room change) starts from empty, not from where this one ended.
+            if (loaded) progress = 0;
             update();
         }),
         sources.otherScreenShown.subscribe((shown) => {
             otherScreenShown = shown;
             update();
         }),
-        sources.progress.subscribe((progress) => {
+        sources.progress.subscribe((value) => {
+            progress = value;
             if (!visible) return;
-            view.progress(progress);
+            view.progress(value);
             if (started) armStallTimer();
         }),
     ];
