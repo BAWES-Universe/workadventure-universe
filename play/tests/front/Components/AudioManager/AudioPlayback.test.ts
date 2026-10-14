@@ -816,6 +816,18 @@ describe("audio playback on browsers that ignore element volume (iPhone)", () =>
         expect(media).toHaveLength(created);
     });
 
+    it("never blames CORS for a same-origin file that failed once", async () => {
+        failNextCorsLoad = true;
+        player.setSource(source(`${window.location.origin}/music/a.mp3`));
+        await flush();
+        await flush();
+        // The graph load failed once and the plain retry played; the next same-origin track still gets the gain node.
+        failNextCorsLoad = false;
+        player.setSource(source(`${window.location.origin}/music/b.mp3`));
+        await flush();
+        expect(media.find((audio) => audio.src.endsWith("/b.mp3"))?.crossOrigin).toBe("anonymous");
+    });
+
     it("asks a host only once and keeps the gain node when it allows CORS", async () => {
         player.setSource(source("https://maps.example/a.mp3"));
         await flush();

@@ -271,7 +271,8 @@ export class AudioPlayback {
                 slot.confirmed = true;
                 if (!slot.graph && this.plainRetryUrls.delete(slot.source.url)) {
                     // It plays without CORS mode, so CORS was the problem (not a 404 or a bad file).
-                    this.originCors.set(originOf(slot.source.url), false);
+                    const origin = originOf(slot.source.url);
+                    if (origin !== window.location.origin) this.originCors.set(origin, false);
                 }
                 this.startFade();
                 if (slot.graph && this.context && this.context.state !== "running") {
