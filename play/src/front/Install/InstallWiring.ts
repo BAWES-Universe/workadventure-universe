@@ -12,6 +12,7 @@ import { broadcastInboxStore, broadcastPanelOpenStore } from "../Stores/Broadcas
 import { isInRemoteConversation } from "../Stores/StreamableCollectionStore";
 import { InstallApp } from "./InstallApp";
 import { currentInstallEnvironment } from "./InstallPlatform";
+import { installRoomJoinedStore } from "./InstallRoomJoined";
 
 /** In a conversation or a call with someone, or live. */
 const talkingStore = derived(
@@ -80,6 +81,12 @@ export function startInstallApp(): void {
     const lookup = (navigator as Navigator & { getInstalledRelatedApps?: () => Promise<readonly unknown[]> })
         .getInstalledRelatedApps;
     installApp.start(window, lookup ? () => lookup.call(navigator) : undefined);
+
+    // The account's player variables, each time a room is joined.
+    // eslint-disable-next-line svelte/no-ignored-unsubscribe
+    installRoomJoinedStore.subscribe((joined) => {
+        if (joined) installApp.noteRoomJoined(joined.variables, joined.account);
+    });
 
     // "In a room": the game scene is loaded. A conversation that ends is the first good moment.
     // Both subscriptions live as long as the game does.
