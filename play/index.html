@@ -11,6 +11,32 @@
             name="viewport"
             content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0"
         />
+        <script>
+            // The installed app on an iPhone or iPad (opened from the Home Screen: navigator.standalone) runs under the
+            // home bar, and iOS reports that space only with viewport-fit=cover. Held upright, turn it on so the bar and
+            // the sheets at the bottom can keep clear of it (#941). Held sideways, iOS already keeps the page off the
+            // notch without it, so the viewport stays as in the browser. Browsers never change.
+            // The zoom guard (ViewportGuard.ts) rewrites the tag to undo a page zoom, from the content it read when it
+            // started: whatever writes it, the fit is put back to match how the phone is held, the rest kept as is.
+            (function () {
+                if (navigator.standalone !== true || !window.matchMedia) return;
+                var meta = document.querySelector('meta[name="viewport"]');
+                if (!meta) return;
+                var FIT = ", viewport-fit=cover";
+                var upright = window.matchMedia("(orientation: portrait)");
+                function apply() {
+                    var content = (meta.getAttribute("content") || "").split(FIT).join("");
+                    var wanted = upright.matches ? content + FIT : content;
+                    if (meta.getAttribute("content") !== wanted) meta.setAttribute("content", wanted);
+                }
+                apply();
+                if (upright.addEventListener) upright.addEventListener("change", apply);
+                else if (upright.addListener) upright.addListener(apply);
+                if (window.MutationObserver) {
+                    new MutationObserver(apply).observe(meta, { attributes: true, attributeFilter: ["content"] });
+                }
+            })();
+        </script>
         <meta
             http-equiv="Content-Security-Policy"
             content="default-src * 'unsafe-inline' 'unsafe-eval'; script-src * 'unsafe-inline' 'unsafe-eval'; connect-src data: blob: * 'unsafe-inline'; img-src * data: blob: 'unsafe-inline'; media-src * data: blob:; font-src * data: ; frame-src *; style-src * 'unsafe-inline'; worker-src 'self' blob:;" />
