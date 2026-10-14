@@ -14,6 +14,6 @@ export interface TimelineScroll {
 export function stillPinnedToBottom(pinned: boolean, lastScrollTop: number, scroll: TimelineScroll): boolean {
     const distanceFromBottom = scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop;
     if (distanceFromBottom <= PINNED_DISTANCE) return true;
-    if (scroll.scrollTop < lastScrollTop - 1) return false;
+    if (scroll.scrollTop < lastScrollTop) return false;
     return pinned;
 }

@@ -98,6 +98,9 @@
     // Messages can change height long after they are drawn (pictures, GIFs, link cards, reactions), and none of that
     // re-renders this list, so the sizes are watched instead.
     let resizeObserver: ResizeObserver | undefined;
+    // Until when a smooth scroll to the bottom is still sliding (a smooth scroll lasts about this long).
+    const SMOOTH_SCROLL_MS = 500;
+    let smoothScrollUntil = 0;
     let childListObserver: MutationObserver | undefined;
     let onScrollTop = false;
 
@@ -282,13 +285,15 @@
         // Safety check for undefined reference
         // After disposing the component, the reference can be undefined
         if (messageListRef == undefined) return;
+        if (smooth) smoothScrollUntil = performance.now() + SMOOTH_SCROLL_MS;
         messageListRef.scroll({ top: messageListRef.scrollHeight, behavior: smooth ? "smooth" : "auto" });
     }
 
     function watchSizes() {
         if (typeof ResizeObserver === "undefined" || !messageListRef || !messageListContentRef) return;
         resizeObserver = new ResizeObserver(() => {
-            if (pinnedToBottom) scrollToMessageListBottom(false);
+            // A new message slides in: aim that slide at the new bottom instead of cutting it short.
+            if (pinnedToBottom) scrollToMessageListBottom(performance.now() < smoothScrollUntil);
         });
         // The list itself (the sheet changes height) and each message in it.
         resizeObserver.observe(messageListRef);

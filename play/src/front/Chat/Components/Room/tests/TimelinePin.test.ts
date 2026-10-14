@@ -13,6 +13,10 @@ describe("stillPinnedToBottom", () => {
         expect(stillPinnedToBottom(true, 1500, { ...view, scrollTop: 1200 })).toBe(false);
     });
 
+    it("unpins on a very slow scroll up, less than a pixel at a time", () => {
+        expect(stillPinnedToBottom(true, 1200, { ...view, scrollTop: 1199.5 })).toBe(false);
+    });
+
     it("stays pinned while the chat scrolls down on its own and has not reached the bottom yet", () => {
         expect(stillPinnedToBottom(true, 900, { ...view, scrollTop: 1100 })).toBe(true);
     });
