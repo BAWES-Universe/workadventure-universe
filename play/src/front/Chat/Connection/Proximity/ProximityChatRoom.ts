@@ -60,6 +60,7 @@ import {
     stashProximityHistory,
     takeProximityHistory,
 } from "../../Stores/ProximitySessionStore";
+import type { ProximityHistoryStash } from "../../Stores/ProximitySessionStore";
 import type { ProximitySession, ProximitySessionMarker } from "./ProximitySessions";
 import {
     applyReaction,
@@ -230,6 +231,8 @@ export class ProximityChatRoom implements ChatRoom {
     currentChatVisibility = false;
     /** The chat state to put back came from the previous map's proximity chat (see stashHistoryForNextScene). */
     private keepCarriedChatState = false;
+    /** What this room handed to the next map's proximity chat (see stashHistoryForNextScene). */
+    private handedOver: ProximityHistoryStash | undefined;
     private _spaceGeneration = 0;
     // The name of the meeting area joined, for its end marker: the display name is reset before leaving.
     private meetingSessionLabel: string | undefined;
@@ -314,6 +317,7 @@ export class ProximityChatRoom implements ChatRoom {
             for (const message of stash.messages) {
                 if (message instanceof ProximityChatMessage) message.stopReactions();
             }
+            stash.takenBy = this;
             this.messages.push(...stash.messages);
             this._unreadBySession.set(stash.unreadBySession);
             this._unsentDrafts.set(stash.unsentDrafts);
@@ -894,6 +898,13 @@ export class ProximityChatRoom implements ChatRoom {
     /** Keeps what the composer still held when its stay ended, to show it there as unsent. */
     public keepUnsentDraft(sessionId: string | undefined, text: string): void {
         if (sessionId === undefined || text.replace(/<br\s*\/?>/gi, "").trim() === "") return;
+        // The composer closed after this room handed its chats to the next map (the chat stays open while the game
+        // gets back in): the text goes along with them.
+        if (this.handedOver) {
+            if (this.handedOver.takenBy) this.handedOver.takenBy.keepUnsentDraft(sessionId, text);
+            else this.handedOver.unsentDrafts.set(sessionId, text);
+            return;
+        }
         const drafts = new Map(get(this._unsentDrafts));
         drafts.set(sessionId, text);
         this._unsentDrafts.set(drafts);
@@ -941,7 +952,7 @@ export class ProximityChatRoom implements ChatRoom {
             );
             this._currentSessionId = undefined;
         }
-        stashProximityHistory({
+        this.handedOver = {
             messages,
             unreadBySession: new Map(get(this._unreadBySession)),
             unsentDrafts,
@@ -959,7 +970,8 @@ export class ProximityChatRoom implements ChatRoom {
                       proximityChat: this.currentMatrixRoom === this,
                   }
                 : undefined,
-        });
+        };
+        stashProximityHistory(this.handedOver);
     }
 
     loadMorePreviousMessages(): Promise<void> {

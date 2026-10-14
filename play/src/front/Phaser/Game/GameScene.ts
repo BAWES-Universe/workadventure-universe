@@ -2316,8 +2316,14 @@ export class GameScene extends DirtyScene {
                     const logo = this._room.errorSceneLogo;
                     // Nothing failed: the game is getting back in. The room stays on screen as it was, with the bar,
                     // the chat and a small pill (#958); without a picture of it, the "Reconnecting" screen right away.
-                    this.takeRoomPicture()
+                    // Dropped again while still getting back in: the room kept from the first drop stays, its waits
+                    // running on. This scene is not on screen yet, so a picture of it would be blank.
+                    const keptAlready = softReconnect.isWaiting();
+                    const takingPicture =
+                        keptAlready || !this.scene.isVisible() ? Promise.resolve(undefined) : this.takeRoomPicture();
+                    takingPicture
                         .then((picture) => {
+                            if (keptAlready) return;
                             if (picture && !get(errorScreenStore)) {
                                 softReconnect.start(picture, () => showReconnectingScreen(logo));
                             } else {

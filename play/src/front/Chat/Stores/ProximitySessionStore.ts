@@ -25,6 +25,11 @@ export interface ProximityHistoryStash {
         /** The chat to put back was the proximity chat itself: the next map's proximity chat stands in for it. */
         proximityChat?: boolean;
     };
+    /**
+     * The next map's proximity chat, once it took this. Text the old composer still held when it closed (after the
+     * hand-over: a reconnect keeps the chat open while the game gets back in) goes to it, as unsent in its stay.
+     */
+    takenBy?: { keepUnsentDraft(sessionId: string | undefined, text: string): void };
 }
 
 let stash: ProximityHistoryStash | undefined;

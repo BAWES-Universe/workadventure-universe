@@ -406,6 +406,39 @@ describe("ProximityChatRoom sessions", () => {
         next.destroy();
     });
 
+    it("keeps the text the composer held when it closes after the hand-over, before or after the next map is in", async () => {
+        room.setDisplayName("Design room");
+        await room.joinSpace("bubble", [], true);
+        fake.space.usersStore.set(
+            new Map([
+                ["room_1", spaceUser("room_1", "Me", "a")],
+                ["room_3", spaceUser("room_3", "Sara", "b")],
+            ])
+        );
+        fake.emit("spaceMessage", { sender: "room_3", spaceMessage: { message: "hello", name: "Sara" } });
+        const stayId = room.currentSessionId ?? "";
+
+        // The "Reconnecting" screen: the composer closes right after the hand-over, before the next map is in.
+        room.stashHistoryForNextScene();
+        room.keepUnsentDraft(stayId, "was about to say");
+        const next = nextMapRoom();
+        expect(get(next.sessions)[0].unsentDraft).toBe("was about to say");
+
+        // The room kept on screen (#958): the chat stays open, and the composer only closes once the next map is in.
+        next.setDisplayName("Other room");
+        await next.joinSpace("bubble", [], true);
+        fake.emit("spaceMessage", { sender: "room_3", spaceMessage: { message: "again", name: "Sara" } });
+        const secondStayId = next.currentSessionId ?? "";
+        next.stashHistoryForNextScene();
+        const third = nextMapRoom();
+        next.keepUnsentDraft(secondStayId, "typed while it reconnected");
+        expect(get(third.sessions).find((session) => session.id === secondStayId)?.unsentDraft).toBe(
+            "typed while it reconnected"
+        );
+        next.destroy();
+        third.destroy();
+    });
+
     it("opens the next map's proximity chat in place of this one after a reconnect", async () => {
         await room.joinSpace("bubble", [], true);
         room.open();
