@@ -274,6 +274,11 @@
             closeChat();
             return;
         }
+        // Searching holds the sheet at full height: it springs back, and nothing is kept for after the search.
+        if (searchTakesRoom) {
+            sheetDragHeight = undefined;
+            return;
+        }
         // It stays where it is let go (between its lowest height and "full"), and opens there next time.
         const kept = clampHeight(height, $windowSize.height, CHAT_SHEET_SIZES);
         sheetDragHeight = undefined;
@@ -282,6 +287,7 @@
     }
 
     function onSheetTap() {
+        if (searchTakesRoom) return;
         leaveBubbleHeight();
         keepChatSheetRest(nextSnap(nearestSnap(sheetHeight, $windowSize.height, CHAT_SHEET_SIZES)));
     }

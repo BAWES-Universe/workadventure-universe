@@ -111,7 +111,8 @@
     // A map script asked for the invite menu: open the card.
     $: if ($inviteCardRequestStore) {
         inviteCardRequestStore.set(false);
-        if (!open) toggle().catch((e) => console.error(e));
+        // Not while the search field has the footer: the card would be hidden and pop up after Cancel.
+        if (!open && !searchOpen) toggle().catch((e) => console.error(e));
     }
 
     function copy() {

@@ -59,7 +59,22 @@
         }
     }
 
+    // The menu opens upward and the list column clips it: on a low sheet it gets the room there is above the "+" and
+    // scrolls inside it.
+    let maxHeight: number | undefined;
+    function measureRoom() {
+        let bound: HTMLElement | null = triggerRef?.parentElement ?? null;
+        while (bound && !/(auto|scroll|hidden)/.test(getComputedStyle(bound).overflowY)) bound = bound.parentElement;
+        const triggerTop = triggerRef?.getBoundingClientRect().top;
+        // Room above the button, less the gap under the menu (8px) and a little air at the top.
+        maxHeight =
+            bound && triggerTop !== undefined
+                ? Math.max(112, Math.floor(triggerTop - bound.getBoundingClientRect().top - 8 - 8))
+                : undefined;
+    }
+
     async function openMenu(focusIndex: number) {
+        measureRoom();
         open = true;
         await tick();
         itemRefs[focusIndex]?.focus();
@@ -167,7 +182,8 @@
             role="menu"
             tabindex="-1"
             aria-label={$LL.chat.header.newChat()}
-            class="chat-new-popover focus:outline-none absolute bottom-full end-0 mb-2 z-50 p-1.5 rounded-2xl bg-contrast/90 backdrop-blur-xl border border-solid border-white/10 shadow-2xl"
+            style:max-height={maxHeight !== undefined ? `${maxHeight}px` : undefined}
+            class="chat-new-popover overflow-y-auto focus:outline-none absolute bottom-full end-0 mb-2 z-50 p-1.5 rounded-2xl bg-contrast/90 backdrop-blur-xl border border-solid border-white/10 shadow-2xl"
             on:keydown={onMenuKeyDown}
         >
             {#each options as option, index (option)}
