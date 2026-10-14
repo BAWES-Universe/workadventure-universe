@@ -96,6 +96,11 @@ export class UsernameDisplay implements UsernameDomLayerClient {
         return this.talkBubble.isShown();
     }
 
+    /** Faded along with the player (see Character.setFaded). */
+    public setFaded(faded: boolean): void {
+        this.element.style.opacity = faded ? "0.45" : "";
+    }
+
     /**
      * The lighter pill, in front of the other names, with the full name.
      */

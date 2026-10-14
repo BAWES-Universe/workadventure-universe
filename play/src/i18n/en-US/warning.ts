@@ -18,6 +18,7 @@ const warning: BaseTranslation = {
     reconnectingDetails: "Getting you back in",
     offlineTitle: "You're offline",
     offlineDetails: "We'll reconnect as soon as you're back online",
+    backIn: "Back in",
     newVersion: {
         title: "Universe just got an update",
         countdown: "Refreshing in {seconds:number}s to load the latest version",

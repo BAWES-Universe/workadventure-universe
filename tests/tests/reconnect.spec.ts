@@ -57,4 +57,38 @@ test.describe("Connection @nomobile @nowebkit", () => {
 
     await page.context().close();
   });
+
+  test("keeps the room, the bar and the chat on screen while it gets back in (#958)", async ({ browser }) => {
+    // The game's connection, closed from the page side as a phone does to an app in the background.
+    let dropConnection: (() => void) | undefined;
+    await using page = await getPage(browser, "Alice", publicTestMapUrl("tests/mousewheel.json", "reconnect"), {
+      pageCreatedHook: (page) => {
+        void page.routeWebSocket(/\/ws\/room/, (ws) => {
+          const server = ws.connectToServer();
+          dropConnection = () => {
+            void ws.close({ code: 4000, reason: "test drop" });
+            void server.close();
+          };
+        });
+      },
+    });
+
+    await page.getByTestId("chat-btn").click();
+    await expect(page.locator("#chat")).toBeVisible();
+
+    expect(dropConnection).toBeDefined();
+    dropConnection?.();
+
+    // The room as it was, with the chat still open over it: no full screen.
+    await expect(page.getByTestId("reconnect-room-picture")).toBeVisible();
+    await expect(page.locator("#chat")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Reconnecting" })).toBeHidden();
+
+    // Back in: the live game again, the chat still open.
+    await expect(page.getByTestId("reconnect-room-picture")).toBeHidden({ timeout: 30_000 });
+    await expect(page.getByTestId("microphone-button")).toBeVisible();
+    await expect(page.locator("#chat")).toBeVisible();
+
+    await page.context().close();
+  });
 });

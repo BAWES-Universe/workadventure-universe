@@ -53,6 +53,7 @@ import { shouldSaveNameOnServer } from "./LocalUserUtils";
 import type { OnConnectInterface, PositionInterface, ViewportInterface } from "./ConnexionModels";
 import { RoomConnection } from "./RoomConnection";
 import { watchConnectAttempt } from "./ConnectAttemptWatch";
+import { softReconnect } from "./SoftReconnect";
 import { HtmlUtils } from "./../WebRtc/HtmlUtils";
 import { hasCapability } from "./Capabilities";
 
@@ -685,8 +686,9 @@ class ConnectionManager {
         }).catch((err) => {
             console.info("connectToRoomSocket => catch => new Promise[OnConnectInterface] => err", err);
 
-            // Keep any screen already shown: the "Reconnecting" one, or a real error the server sent (e.g. a ban).
-            if (!get(errorScreenStore) && !options.cancelled?.()) {
+            // Keep any screen already shown: the "Reconnecting" one, or a real error the server sent (e.g. a ban). Nor
+            // while the room is kept on screen with its pill (#958): it says so, and brings the full screen if it lasts.
+            if (!get(errorScreenStore) && !softReconnect.isWaiting() && !options.cancelled?.()) {
                 errorScreenStore.setError(
                     ErrorScreenMessage.fromPartial({
                         type: "reconnecting",
