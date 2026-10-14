@@ -187,16 +187,22 @@ export class InstallApp {
         };
     }
 
-    /** The test link (?installCard=show): forget what the card remembers and show it at once, where it can show. */
+    /**
+     * The test link (?installCard=show): forget what the card remembers and show it as soon as the player is in a room
+     * (not over the loading or login screen), where it can show.
+     */
     public showForTestLink(): void {
         this.testLink = true;
         this.options.storage.clearCardRecord();
-        this.firstMomentStore.set(true);
     }
 
     /** The player is in a room. After a few seconds there, the card may show even with no conversation. */
     public noteInRoom(): void {
         if (get(this.firstMomentStore) || this.firstMomentTimer !== undefined) return;
+        if (this.testLink) {
+            this.firstMomentStore.set(true);
+            return;
+        }
         if (get(this.installedStore) || !this.cardIsDue()) return;
         this.firstMomentTimer = setTimeout(() => this.firstMomentStore.set(true), FIRST_MOMENT_MS);
     }

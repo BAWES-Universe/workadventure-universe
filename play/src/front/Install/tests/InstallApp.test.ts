@@ -644,10 +644,13 @@ describe("InstallApp", () => {
         const account = { isLogged: () => true, setVariable: vi.fn() };
         const closed = { lastShownAt: Date.now(), closeStreak: 5, lastClosed: true };
 
-        it("forgets the record and shows without waiting for the first moment", () => {
+        it("forgets the record and shows as soon as the player is in a room, with no wait", () => {
             const storage = memoryStorage(closed);
             const { app, analytics } = setup({ storage });
             app.showForTestLink();
+            // Not over the loading or login screen.
+            expect(get(app.cardVisibleStore)).toBe(false);
+            app.noteInRoom();
             expect(get(app.cardVisibleStore)).toBe(true);
             expect(analytics.cardShown).toHaveBeenCalledTimes(1);
             expect(storage.record).toEqual({ lastShownAt: Date.now(), closeStreak: 0, lastClosed: false });
@@ -657,23 +660,27 @@ describe("InstallApp", () => {
             const { app } = setup();
             app.showForTestLink();
             app.noteRoomJoined(new Map([[APP_INSTALLED_VARIABLE, true]]), account);
+            app.noteInRoom();
             expect(get(app.cardVisibleStore)).toBe(true);
         });
 
         it("still shows only where installing is possible and while quiet", () => {
             const chrome = setup({ env: env(CHROME) });
             chrome.app.showForTestLink();
+            chrome.app.noteInRoom();
             expect(get(chrome.app.cardVisibleStore)).toBe(false);
             chrome.win.fire("beforeinstallprompt", installEvent("accepted").event);
             expect(get(chrome.app.cardVisibleStore)).toBe(true);
 
             const firefox = setup({ env: env(FIREFOX) });
             firefox.app.showForTestLink();
+            firefox.app.noteInRoom();
             expect(get(firefox.app.cardVisibleStore)).toBe(false);
 
             const busy = setup();
             busy.quiet.set(false);
             busy.app.showForTestLink();
+            busy.app.noteInRoom();
             expect(get(busy.app.cardVisibleStore)).toBe(false);
             busy.quiet.set(true);
             expect(get(busy.app.cardVisibleStore)).toBe(true);
