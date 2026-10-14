@@ -406,10 +406,6 @@
         display: flex;
         flex-direction: column;
         border-radius: 24px 24px 0 0;
-        /* The sheet's colour runs under the home bar; the message field stays above it (0 outside the installed app).
-           border-box: the padding stays inside the sheet's height instead of adding to it. */
-        box-sizing: border-box;
-        padding-bottom: env(safe-area-inset-bottom, 0px);
         transition: height 200ms ease-out;
     }
     .chat-sheet.dragging {

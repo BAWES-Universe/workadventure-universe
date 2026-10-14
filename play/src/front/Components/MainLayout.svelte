@@ -173,9 +173,7 @@
     <div class="flex min-h-full flex-col-reverse mobile:flex-col">
         <section id="main-layout-main" class="pb-0 flex-1 pointer-events-none h-full w-full relative">
             <div class="fixed z-[1000] bottom-0 start-0 right-0 m-auto w-max mobile:w-[98vw] md:max-w-[80%]">
-                <div
-                    class="popups flex items-end relative w-full justify-center mobile:mb-[calc(6rem+env(safe-area-inset-bottom,0px))] mb-4 h-[calc(100%-96px)]"
-                >
+                <div class="popups flex items-end relative w-full justify-center mobile:mb-24 mb-4 h-[calc(100%-96px)]">
                     {#each $popupStore.slice().reverse() as popup, index (popup.uuid)}
                         <div class="popupwrapper popupwrapper-{index} w-full flex-1" in:fly={{ y: 150, duration: 550 }}>
                             <svelte:component
@@ -375,6 +373,10 @@
         .person-card-stack {
             bottom: 44px;
             max-height: calc(100dvh - 144px);
+        }
+        /* Popups keep their gap above the bar when it rises clear of the home bar (ResponsiveActionBar.svelte, #941). */
+        .popups {
+            margin-bottom: calc(6rem + max(0px, env(safe-area-inset-bottom, 0px) - 21px));
         }
     }
 

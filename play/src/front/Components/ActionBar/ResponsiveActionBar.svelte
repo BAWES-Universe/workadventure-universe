@@ -141,15 +141,18 @@
 </div>
 
 <style>
-    /* Phones (the bar at the bottom; Tailwind's mobile: variant, written as a list the compiler can read): the bar keeps
-       clear of the home bar and the screen's rounded corners wherever the phone reports them. Only the installed app
-       on an iPhone or iPad reports them (index.html turns on viewport-fit=cover there, #941); everywhere else they
-       are 0 and the bar stays where it is. */
+    /* Phones (the bar at the bottom; Tailwind's mobile: variant, written as a list the compiler can read): where the
+       phone reports a home bar, the bar rises just clear of it, 17px from the bottom edge: the line itself is drawn in
+       the bottom 13px, and 17px is where the chat's Invite button already sits. The 34px an iPhone reports, less 21px,
+       adds 13px to the bar's own 4px. Only the installed app on an iPhone or iPad reports it (index.html turns on
+       viewport-fit=cover there, #941); everywhere else it is 0 and the bar stays where it is. The sides take the
+       full inset, kept off the rounded corners. */
     @media (max-height: 960px) and (max-width: 480px) and (pointer: coarse),
         (max-height: 480px) and (max-width: 960px) and (pointer: coarse) {
         .bar-safe-area {
             box-sizing: border-box;
-            padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+            padding: 0 env(safe-area-inset-right, 0px) max(0px, env(safe-area-inset-bottom, 0px) - 21px)
+                env(safe-area-inset-left, 0px);
         }
     }
 </style>
