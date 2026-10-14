@@ -310,9 +310,14 @@ export class ProximityChatRoom implements ChatRoom {
                 buildProximitySessions(Array.from($messages), $spaceJoinedAt, DEFAULT_CONTINUATION, $unsentDrafts)
         );
         // The first proximity chat you had is remembered on this device, whether or not the chat panel was open: the
-        // "Say hi in person" card on the Chats tab never comes back after it. The room messages are not a chat you had.
+        // "Say hi in person" card on the Chats tab never comes back after it. The room messages are not a chat you had,
+        // and neither is a stay where you only left an unsent draft.
         this.hadProximityChatUnsubscriber = this.sessions.subscribe(($sessions) => {
-            if (listableSessions($sessions).some((session) => session.id !== ROOM_MESSAGES_SESSION_ID)) {
+            if (
+                listableSessions($sessions).some(
+                    (session) => session.id !== ROOM_MESSAGES_SESSION_ID && session.messages.length > 0
+                )
+            ) {
                 rememberProximityChat();
             }
         });
