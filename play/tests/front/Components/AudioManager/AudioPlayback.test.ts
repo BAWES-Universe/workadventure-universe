@@ -778,7 +778,7 @@ describe("audio playback on browsers that ignore element volume (iPhone)", () =>
         expect(state).toHaveBeenLastCalledWith("playing");
     });
 
-    it("does not remember a failed probe, so a dropped connection never costs the gain node for the session", async () => {
+    it("asks a host that failed again, so a dropped connection only costs volume control for a track", async () => {
         hostHasCors = false;
         noGesture = true;
         player.setSource(source("https://maps.example/a.mp3"));
@@ -789,12 +789,31 @@ describe("audio playback on browsers that ignore element volume (iPhone)", () =>
         player.retry();
         await flush();
         expect(state).toHaveBeenLastCalledWith("playing");
-        // The connection is back: the next track from the same host asks again and gets the gain node.
+        // The connection is back: the next track asks again and is told yes, the one after gets the gain node.
         hostHasCors = true;
         player.setSource(source("https://maps.example/b.mp3"));
         await flush();
+        await flush();
         expect(checkCors).toHaveBeenCalledTimes(2);
-        expect(media.at(-1)?.crossOrigin).toBe("anonymous");
+        player.setSource(source("https://maps.example/c.mp3"));
+        await flush();
+        expect(media.find((audio) => audio.src.endsWith("/c.mp3"))?.crossOrigin).toBe("anonymous");
+        expect(checkCors).toHaveBeenCalledTimes(2);
+    });
+
+    it("reuses an idle plain element for a host without CORS instead of creating one", async () => {
+        hostHasCors = false;
+        player.setSource(source("https://nocors.example/a.mp3"));
+        await flush();
+        await flush();
+        player.setSource(source("https://nocors.example/b.mp3"));
+        await flush();
+        vi.advanceTimersByTime(1800);
+        const created = media.length;
+        player.setSource(source("https://nocors.example/c.mp3"));
+        await flush();
+        vi.advanceTimersByTime(1800);
+        expect(media).toHaveLength(created);
     });
 
     it("asks a host only once and keeps the gain node when it allows CORS", async () => {

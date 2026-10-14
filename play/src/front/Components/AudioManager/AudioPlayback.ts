@@ -76,14 +76,13 @@ export class AudioPlayback {
     private context: AudioContext | undefined;
     private contextBlocked = false;
     private readonly gains = new WeakMap<HTMLAudioElement, GainNode>();
-    // Web Audio needs CORS. An origin without it plays through a plain element (hardware volume only, as before).
-    private readonly corsBlockedOrigins = new Set<string>();
+    // Web Audio needs CORS. false = this origin plays through a plain element (hardware volume only, as
+    // before); it is asked again on every track, so a dropped connection only costs volume control briefly.
+    private readonly originCors = new Map<string, boolean>();
+    private readonly probingOrigins = new Set<string>();
+    private swapping = false;
     // URLs that failed in CORS mode and are being tried plain. If the plain load plays, the cause was CORS.
     private readonly plainRetryUrls = new Set<string>();
-    // Hosts the probe confirmed. A failed probe is not remembered: it may be a dropped connection.
-    private readonly corsConfirmedOrigins = new Set<string>();
-    // URLs a failed probe sent to a plain element. They never block the origin on their own.
-    private readonly probePlainUrls = new Set<string>();
     // Reuse media elements: some browsers grant autoplay permission per element.
     private readonly idleMedia: HTMLAudioElement[] = [];
     private destroyed = false;
@@ -145,12 +144,14 @@ export class AudioPlayback {
         this.detectVolumeSupport(media);
         const useGraph =
             this.volumeSupported === false &&
-            !this.corsBlockedOrigins.has(originOf(source.url)) &&
-            !this.plainRetryUrls.has(source.url) &&
-            !this.probePlainUrls.has(source.url);
+            this.originCors.get(originOf(source.url)) !== false &&
+            !this.plainRetryUrls.has(source.url);
         if (!useGraph && this.gains.has(media)) {
-            // A graph-bound element cannot go back to plain playback; the blocked origin gets a fresh one.
-            media = this.createAudio();
+            // A graph-bound element cannot go back to plain playback. Reuse an idle plain element (it may
+            // already be unlocked for playback) and only create a new one when there is none.
+            const plain = this.idleMedia.findIndex((idle) => !this.gains.has(idle));
+            this.idleMedia.push(media);
+            media = plain >= 0 ? this.idleMedia.splice(plain, 1)[0] : this.createAudio();
         }
         const graph = useGraph ? this.attachGraph(media) : undefined;
         if (this.audioContainer) {
@@ -169,7 +170,7 @@ export class AudioPlayback {
             graph,
         };
         this.current = slot;
-        if (graph) this.probeCors(source.url);
+        if (this.volumeSupported === false && !this.swapping) this.probeCors(source.url);
         media.preload = "auto";
         media.onended = () => {
             if (this.current !== slot) return;
@@ -268,10 +269,9 @@ export class AudioPlayback {
                 if (this.current !== slot || slot.attempt !== attempt || !this.canPlay()) return;
                 slot.pending = false;
                 slot.confirmed = true;
-                this.probePlainUrls.delete(slot.source.url);
                 if (!slot.graph && this.plainRetryUrls.delete(slot.source.url)) {
                     // It plays without CORS mode, so CORS was the problem (not a 404 or a bad file).
-                    this.corsBlockedOrigins.add(originOf(slot.source.url));
+                    this.originCors.set(originOf(slot.source.url), false);
                 }
                 this.startFade();
                 if (slot.graph && this.context && this.context.state !== "running") {
@@ -294,12 +294,17 @@ export class AudioPlayback {
         );
     }
 
-    private swapToPlain(slot: Slot, viaProbe = false): void {
-        (viaProbe ? this.probePlainUrls : this.plainRetryUrls).add(slot.source.url);
+    private swapToPlain(slot: Slot): void {
         const source = slot.source;
         this.current = undefined;
         this.release(slot);
-        this.setSource(source);
+        // The host was just asked (or just failed to load): do not ask again for the same track.
+        this.swapping = true;
+        try {
+            this.setSource(source);
+        } finally {
+            this.swapping = false;
+        }
     }
 
     /**
@@ -309,25 +314,27 @@ export class AudioPlayback {
      */
     private probeCors(url: string): void {
         const origin = originOf(url);
-        if (this.corsConfirmedOrigins.has(origin) || origin === window.location.origin) return;
+        if (this.originCors.get(origin) === true || this.probingOrigins.has(origin)) return;
+        if (origin === window.location.origin) return;
+        this.probingOrigins.add(origin);
         void this.checkCors(url).then((allowed) => {
-            if (allowed) this.corsConfirmedOrigins.add(origin);
+            this.probingOrigins.delete(origin);
+            if (this.destroyed) return;
+            this.originCors.set(origin, allowed);
             const slot = this.current;
-            if (allowed || this.destroyed || !slot?.graph || slot.confirmed || slot.source.url !== url) return;
-            this.swapToPlain(slot, true);
+            if (allowed || !slot?.graph || slot.confirmed || originOf(slot.source.url) !== origin) return;
+            this.swapToPlain(slot);
         });
     }
 
     private fail(slot: Slot, state: "not_allowed" | "error"): void {
         if (state === "error" && slot.graph && !slot.confirmed && this.current === slot) {
             // CORS-mode loading failed before any sound: try this track through a plain element instead.
+            this.plainRetryUrls.add(slot.source.url);
             this.swapToPlain(slot);
             return;
         }
-        if (state === "error") {
-            this.plainRetryUrls.delete(slot.source.url);
-            this.probePlainUrls.delete(slot.source.url);
-        }
+        if (state === "error") this.plainRetryUrls.delete(slot.source.url);
         slot.attempt++;
         slot.pending = false;
         slot.failed = state;
@@ -486,10 +493,7 @@ export class AudioPlayback {
     private release(slot: Slot | undefined): void {
         if (!slot) return;
         // A plain retry dropped before it played proved nothing about CORS.
-        if (!slot.graph && !slot.confirmed) {
-            this.plainRetryUrls.delete(slot.source.url);
-            this.probePlainUrls.delete(slot.source.url);
-        }
+        if (!slot.graph && !slot.confirmed) this.plainRetryUrls.delete(slot.source.url);
         slot.attempt++;
         slot.media.onended = null;
         slot.media.onerror = null;
