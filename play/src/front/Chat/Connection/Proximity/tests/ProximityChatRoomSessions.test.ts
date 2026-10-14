@@ -439,6 +439,41 @@ describe("ProximityChatRoom sessions", () => {
         third.destroy();
     });
 
+    it("marks a message sent while it gets back in as not sent, and carries it to its stay on the next map", async () => {
+        room.setDisplayName("Design room");
+        await room.joinSpace("bubble", [], true);
+        fake.space.usersStore.set(
+            new Map([
+                ["room_1", spaceUser("room_1", "Me", "a")],
+                ["room_3", spaceUser("room_3", "Sara", "b")],
+            ])
+        );
+        fake.emit("spaceMessage", { sender: "room_3", spaceMessage: { message: "hello", name: "Sara" } });
+        const kinds = (target: ProximityChatRoom) =>
+            (Array.from(get(target.messages)) as ProximityChatMessage[]).map((message) =>
+                message.notSent ? `notSent:${get(message.content).body}` : message.session?.kind ?? "message"
+            );
+        room.stashHistoryForNextScene();
+
+        // The chat stays open while the game gets back in: nobody would receive a message sent now.
+        expect(room.isJoiningSpace).toBe(true);
+        room.addNotSentMessage("before the next map", [], new Date());
+        const next = nextMapRoom();
+        room.addNotSentMessage("after the next map", [], new Date());
+
+        expect(kinds(next)).toEqual([
+            "start",
+            "message",
+            "notSent:before the next map",
+            "notSent:after the next map",
+            "end",
+        ]);
+        // Still shown in the chat on screen until the game is back in.
+        expect(kinds(room)).toEqual(["start", "message", "notSent:before the next map", "notSent:after the next map"]);
+        expect(fake.space.emitPublicMessage).not.toHaveBeenCalled();
+        next.destroy();
+    });
+
     it("opens the next map's proximity chat in place of this one after a reconnect", async () => {
         await room.joinSpace("bubble", [], true);
         room.open();

@@ -26,10 +26,18 @@ export interface ProximityHistoryStash {
         proximityChat?: boolean;
     };
     /**
-     * The next map's proximity chat, once it took this. Text the old composer still held when it closed (after the
-     * hand-over: a reconnect keeps the chat open while the game gets back in) goes to it, as unsent in its stay.
+     * The next map's proximity chat, once it took this. What the old chat still gets after the hand-over (a reconnect
+     * keeps it open while the game gets back in) goes to it: the composer's text when it closes, and messages sent
+     * meanwhile, marked as not sent.
      */
-    takenBy?: { keepUnsentDraft(sessionId: string | undefined, text: string): void };
+    takenBy?: {
+        keepUnsentDraft(sessionId: string | undefined, text: string): void;
+        carryNotSentMessage(
+            message: ChatMessage,
+            stayEnd: ChatMessage | undefined,
+            after: ChatMessage | undefined
+        ): void;
+    };
 }
 
 let stash: ProximityHistoryStash | undefined;

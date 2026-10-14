@@ -233,6 +233,10 @@ export class ProximityChatRoom implements ChatRoom {
     private keepCarriedChatState = false;
     /** What this room handed to the next map's proximity chat (see stashHistoryForNextScene). */
     private handedOver: ProximityHistoryStash | undefined;
+    /** The end of the stay closed by the hand-over, if one was open: what is written after it goes before it. */
+    private handedOverStayEnd: ChatMessage | undefined;
+    /** With no stay open at the hand-over: the last message carried over, what is written after it goes after it. */
+    private lastHandedOver: ChatMessage | undefined;
     private _spaceGeneration = 0;
     // The name of the meeting area joined, for its end marker: the display name is reset before leaving.
     private meetingSessionLabel: string | undefined;
@@ -260,9 +264,11 @@ export class ProximityChatRoom implements ChatRoom {
     }
 
     /**
-     * True while a space is being joined and is not connected yet: a message sent now would reach nobody.
+     * True while a message sent now would reach nobody: a space is being joined and is not connected yet, or this map
+     * already handed its chats to the next one (the chat stays open while the game gets back in, #958).
      */
     public get isJoiningSpace(): boolean {
+        if (this.handedOver) return true;
         return this._space === undefined && this.joinSpaceAbortController !== undefined;
     }
 
@@ -569,12 +575,34 @@ export class ProximityChatRoom implements ChatRoom {
             "proximity",
             { notSent: true }
         );
+        if (this.handedOver) {
+            // Written after this room handed its chats to the next map: it goes along with them, in the stay it was
+            // written in (and shows here too, while this chat is still on screen).
+            this.carryNotSentMessage(message, this.handedOverStayEnd, this.lastHandedOver);
+            if (!this.handedOverStayEnd) this.lastHandedOver = message;
+        }
         // Insert it at the end of its own group, in one update. SearchableArrayStore implements the inserting form
         // of splice, but only declares the removing one.
         const messages = this.messages as unknown as {
             splice(start: number, deleteCount: number, ...items: ChatMessage[]): ChatMessage[];
         };
         messages.splice(findNotSentInsertIndex(get(this.messages), submittedAt), 0, message);
+    }
+
+    /**
+     * A not-sent message written in the previous map's chat after it handed its chats over: at the end of the stay
+     * closed by the hand-over (before its end), or else after the messages carried over.
+     */
+    public carryNotSentMessage(message: ChatMessage, stayEnd: ChatMessage | undefined, after: ChatMessage | undefined) {
+        if (this.handedOver) {
+            if (this.handedOver.takenBy) this.handedOver.takenBy.carryNotSentMessage(message, stayEnd, after);
+            else this.handedOver.messages.splice(carriedIndex(this.handedOver.messages, stayEnd, after), 0, message);
+            return;
+        }
+        const messages = this.messages as unknown as {
+            splice(start: number, deleteCount: number, ...items: ChatMessage[]): ChatMessage[];
+        };
+        messages.splice(carriedIndex(Array.from(get(this.messages)), stayEnd, after), 0, message);
     }
 
     private addIncomingUser(spaceUser: SpaceUserExtended): void {
@@ -936,22 +964,22 @@ export class ProximityChatRoom implements ChatRoom {
                 ? Array.from(this.users.values()).filter((user) => user.spaceUserId !== this._spaceUserId)
                 : [];
             const isArea = this.meetingSessionLabel !== undefined;
-            messages.push(
-                this.createSessionMarker(
-                    isArea ? get(LL).chat.timeLine.youleftMeetingRoom() : get(LL).chat.timeLine.youLeft(),
-                    "outcoming",
-                    {
-                        kind: "end",
-                        label: isArea ? this.meetingSessionLabel ?? "" : "",
-                        participants: isArea ? [] : others.map((user) => user.name),
-                        participantIds: isArea ? [] : others.map((user) => user.spaceUserId),
-                        isArea,
-                        sessionId: openSessionId,
-                    }
-                )
+            this.handedOverStayEnd = this.createSessionMarker(
+                isArea ? get(LL).chat.timeLine.youleftMeetingRoom() : get(LL).chat.timeLine.youLeft(),
+                "outcoming",
+                {
+                    kind: "end",
+                    label: isArea ? this.meetingSessionLabel ?? "" : "",
+                    participants: isArea ? [] : others.map((user) => user.name),
+                    participantIds: isArea ? [] : others.map((user) => user.spaceUserId),
+                    isArea,
+                    sessionId: openSessionId,
+                }
             );
+            messages.push(this.handedOverStayEnd);
             this._currentSessionId = undefined;
         }
+        this.lastHandedOver = messages[messages.length - 1];
         this.handedOver = {
             messages,
             unreadBySession: new Map(get(this._unreadBySession)),
@@ -1731,4 +1759,17 @@ export class ProximityChatRoom implements ChatRoom {
             this.usersUnsubscriber();
         }
     }
+}
+
+/** Where a message carried from the previous map goes: before the end of its stay, or after the given message. */
+function carriedIndex(
+    messages: readonly ChatMessage[],
+    stayEnd: ChatMessage | undefined,
+    after: ChatMessage | undefined
+) {
+    const end = stayEnd ? messages.indexOf(stayEnd) : -1;
+    if (end >= 0) return end;
+    if (after === undefined) return 0;
+    const index = messages.indexOf(after);
+    return index >= 0 ? index + 1 : messages.length;
 }
