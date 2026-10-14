@@ -7,6 +7,11 @@
  * too large and cut off, and the interface in its desktop layout, until something (switching tabs, rotating) sends
  * `resize`. This checks the size each time the page is shown again, and a little later while the phone settles, and
  * sends `resize` itself when it changed without one. When the size is as the app last saw it, it does nothing.
+ *
+ * The keyboard is the other case: an iPhone can report the height left above the keyboard while it is up, then give
+ * the full height back when it closes without a `resize` (typing in the chat, switching apps, coming back). The game
+ * then stays sized for the keyboard, drawn at the bottom of the screen under an empty band, until a reconnect. So the
+ * size is also checked each time the visual viewport changes size: the keyboard opening, closing or changing height.
  */
 
 /** When to check again after the page is shown (ms): at once, and while the phone settles its viewport. */
@@ -14,9 +19,12 @@ export const RESYNC_DELAYS_MS = [0, 300, 1000];
 /** Differences smaller than this (CSS px) are rounding, not a new size. */
 const SIZE_TOLERANCE = 1;
 
+type ResyncReason = "visible" | "pageshow" | "keyboard";
+
 export interface ViewportResyncWindow {
     readonly innerWidth: number;
     readonly innerHeight: number;
+    readonly visualViewport?: Pick<VisualViewport, "addEventListener" | "removeEventListener"> | null;
     readonly document: Pick<Document, "visibilityState" | "addEventListener" | "removeEventListener">;
     setTimeout(handler: () => void, timeout?: number): number;
     clearTimeout(id: number): void;
@@ -32,7 +40,7 @@ export interface ViewportResyncOptions {
         fromHeight: number;
         toWidth: number;
         toHeight: number;
-        reason: "visible" | "pageshow";
+        reason: ResyncReason;
     }) => void;
 }
 
@@ -51,7 +59,7 @@ export function installViewportResync(
         known = { width: win.innerWidth, height: win.innerHeight };
     };
 
-    const check = (reason: "visible" | "pageshow") => {
+    const check = (reason: ResyncReason) => {
         if (win.document.visibilityState === "hidden") return;
         const width = win.innerWidth;
         const height = win.innerHeight;
@@ -72,7 +80,7 @@ export function installViewportResync(
         });
     };
 
-    const scheduleChecks = (reason: "visible" | "pageshow") => {
+    const scheduleChecks = (reason: ResyncReason) => {
         for (const timer of timers) win.clearTimeout(timer);
         timers = RESYNC_DELAYS_MS.map((delay) => win.setTimeout(() => check(reason), delay));
     };
@@ -81,10 +89,14 @@ export function installViewportResync(
         if (win.document.visibilityState === "visible") scheduleChecks("visible");
     };
     const onPageShow = () => scheduleChecks("pageshow");
+    // Fires a few times while the keyboard slides: each one starts the checks again, so they run once it has settled.
+    const onViewportResize = () => scheduleChecks("keyboard");
+    const viewport = win.visualViewport ?? null;
 
     win.addEventListener("resize", onResize);
     win.addEventListener("pageshow", onPageShow);
     win.document.addEventListener("visibilitychange", onVisibilityChange);
+    viewport?.addEventListener("resize", onViewportResize);
 
     return () => {
         for (const timer of timers) win.clearTimeout(timer);
@@ -92,5 +104,6 @@ export function installViewportResync(
         win.removeEventListener("resize", onResize);
         win.removeEventListener("pageshow", onPageShow);
         win.document.removeEventListener("visibilitychange", onVisibilityChange);
+        viewport?.removeEventListener("resize", onViewportResize);
     };
 }

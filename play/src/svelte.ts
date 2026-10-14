@@ -32,7 +32,7 @@ if (isTouchScreen(window)) {
         });
     }
     // A phone can report a wrong size to a page loaded or restored in the background, with no `resize` once it's
-    // right: check again whenever the page is shown.
+    // right: check again whenever the page is shown, and when the keyboard opens or closes.
     installViewportResync(undefined, {
         onResync: (properties) => analyticsClient.viewportResync(properties),
     });

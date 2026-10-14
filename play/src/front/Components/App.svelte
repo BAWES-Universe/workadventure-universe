@@ -50,7 +50,14 @@
                     dsn: SENTRY_DSN_FRONT,
                     release: RELEASE_VERSION,
                     environment: SENTRY_ENVIRONMENT,
-                    integrations: [Sentry.browserTracingIntegration()],
+                    // Keep Sentry's default integrations except browserApiErrors: it wraps every
+                    // setTimeout, setInterval, requestAnimationFrame, addEventListener and XHR callback,
+                    // which is a steady main-thread cost in a game. Uncaught errors in those callbacks
+                    // are still reported by the globalHandlers integration (window.onerror / unhandledrejection).
+                    integrations: (defaultIntegrations) => [
+                        ...defaultIntegrations.filter((integration) => integration.name !== "BrowserApiErrors"),
+                        Sentry.browserTracingIntegration(),
+                    ],
                     // Set tracesSampleRate to 1.0 to capture 100%
                     // of transactions for performance monitoring.
                     // We recommend adjusting this value in production

@@ -16,6 +16,11 @@ function fakeWindow(size: { width: number; height: number }) {
         for (const listener of [...(map.get(type) ?? [])]) listener(new Event(type));
     };
     const resizes = vi.fn();
+    const viewportListeners = new Map<string, Set<EventListener>>();
+    const visualViewport = {
+        addEventListener: (type: string, listener: EventListener) => on(viewportListeners, type, listener),
+        removeEventListener: (type: string, listener: EventListener) => off(viewportListeners, type, listener),
+    };
     const document = {
         visibilityState: "visible" as DocumentVisibilityState,
         addEventListener: (type: string, listener: EventListener) => on(docListeners, type, listener),
@@ -24,6 +29,7 @@ function fakeWindow(size: { width: number; height: number }) {
     const win = {
         innerWidth: size.width,
         innerHeight: size.height,
+        visualViewport,
         document,
         setTimeout: (handler: () => void, timeout?: number) => setTimeout(handler, timeout) as unknown as number,
         clearTimeout: (id: number) => clearTimeout(id),
@@ -60,6 +66,10 @@ function fakeWindow(size: { width: number; height: number }) {
         },
         pageShow() {
             fire(listeners, "pageshow");
+        },
+        /** The keyboard opens, closes or changes height: the visual viewport resizes. */
+        viewportResize() {
+            fire(viewportListeners, "resize");
         },
     };
 }
@@ -132,6 +142,48 @@ describe("installViewportResync", () => {
         expect(phone.resizes).not.toHaveBeenCalled();
     });
 
+    it("resizes the app when the keyboard closes and the window grows back without a resize", () => {
+        // Typing in the chat: the window reported the height left above the keyboard, with a resize.
+        const phone = fakeWindow({ width: 428, height: 926 });
+        const onResync = vi.fn();
+        installViewportResync(phone.win, { onResync });
+        phone.resize(428, 542);
+
+        // Away to another app and back, with the keyboard still up: nothing to do yet.
+        phone.hide();
+        phone.show();
+        vi.runAllTimers();
+        expect(phone.resizes).not.toHaveBeenCalled();
+
+        // The keyboard closes later: the window is full height again, and only the visual viewport says so.
+        phone.setSizeSilently(428, 926);
+        phone.viewportResize();
+        phone.viewportResize();
+        vi.runAllTimers();
+
+        expect(phone.resizes).toHaveBeenCalledTimes(1);
+        expect(onResync).toHaveBeenCalledWith({
+            fromWidth: 428,
+            fromHeight: 542,
+            toWidth: 428,
+            toHeight: 926,
+            reason: "keyboard",
+        });
+    });
+
+    it("leaves a keyboard the phone did announce alone", () => {
+        const phone = fakeWindow({ width: 428, height: 926 });
+        installViewportResync(phone.win);
+
+        phone.resize(428, 542);
+        phone.viewportResize();
+        phone.resize(428, 926);
+        phone.viewportResize();
+        vi.runAllTimers();
+
+        expect(phone.resizes).not.toHaveBeenCalled();
+    });
+
     it("stops checking once uninstalled", () => {
         const phone = fakeWindow({ width: 980, height: 1800 });
         const stop = installViewportResync(phone.win);
@@ -141,6 +193,7 @@ describe("installViewportResync", () => {
         phone.setSizeSilently(390, 844);
         vi.runAllTimers();
         phone.show();
+        phone.viewportResize();
         vi.runAllTimers();
 
         expect(phone.resizes).not.toHaveBeenCalled();

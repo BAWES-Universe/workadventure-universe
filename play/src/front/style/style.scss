@@ -1222,6 +1222,39 @@ body .u-close:focus {
     -webkit-backdrop-filter: blur(12px);
     box-shadow: 0 0 32px -12px rgba(134, 41, 252, 0.45);
 }
+/* A glass button on the chat footer (search, "+", Cancel): 8% white fill, 12% white edge, plain white text or glyph. It
+   hovers with the same soft white, 8%, as the bar's buttons (.u-ab-btn:hover > .u-ab-state), laid over the resting
+   fill: no shadow, no size change. 44px tall; the round ones set the width. */
+.u-glass-btn {
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    height: 2.75rem;
+    margin: 0;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 9999px;
+    color: #fff;
+    background-color: rgba(255, 255, 255, 0.08);
+    background-image: linear-gradient(transparent, transparent);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+@media (hover: hover) {
+    .u-glass-btn:hover {
+        background-image: linear-gradient(rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.08));
+    }
+}
+.u-glass-btn:active,
+.u-glass-btn[aria-expanded="true"] {
+    background-image: linear-gradient(rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.1));
+}
+.u-glass-btn:focus-visible {
+    outline: 2px solid #fff;
+    outline-offset: 2px;
+}
 .u-text-gradient {
     background: linear-gradient(135deg, #c4b5fd 0%, #e9c74c 50%, #c4b5fd 100%);
     background-size: 200% 200%;
