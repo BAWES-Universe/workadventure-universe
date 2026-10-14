@@ -158,7 +158,7 @@
 {#if $inviteUserActivated || showSearch || newChatOptions.length > 0}
     <!-- svelte-ignore a11y-no-static-element-interactions -->
     <div
-        class="invite-footer sticky bottom-0 z-30 shrink-0 px-4 pb-4 pt-3"
+        class="invite-footer sticky bottom-0 z-30 shrink-0 px-4 pb-4 pt-3 lg:px-3"
         bind:this={container}
         on:keydown={onKeyDown}
         data-testid="chatInviteFooter"
@@ -270,7 +270,7 @@
                 {#if $inviteUserActivated}
                     <button
                         type="button"
-                        class="invite-button m-0 flex h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-full px-3 text-sm font-bold text-white"
+                        class="invite-button m-0 flex h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-full px-3 text-sm font-bold text-white lg:gap-1.5 lg:px-2"
                         aria-expanded={open}
                         aria-controls="chatInviteTitle"
                         data-testid="chatInviteButton"
