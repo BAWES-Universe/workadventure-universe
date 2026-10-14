@@ -230,7 +230,7 @@
         {#if close}
             <button
                 type="button"
-                class="u-close u-join-x selectCharacterSceneClose !top-3.5 !right-3 md:!top-4 md:!right-4"
+                class="u-close u-join-x selectCharacterSceneClose !top-[calc(14px+env(safe-area-inset-top))] !right-3 md:!top-4 md:!right-4"
                 aria-label={$LL.woka.selectWoka.close()}
                 title={$LL.woka.selectWoka.close()}
                 on:click={close}
@@ -252,7 +252,7 @@
             </div>
         {:else}
             <div
-                class="flex-1 min-h-0 flex flex-col md:flex-row gap-3 md:gap-7 px-4 pt-[18px] md:px-7 md:pt-7 pb-[92px] md:pb-0"
+                class="flex-1 min-h-0 flex flex-col md:flex-row gap-3 md:gap-7 px-4 pt-[calc(18px+env(safe-area-inset-top))] md:px-7 md:pt-7 pb-[92px] md:pb-0"
             >
                 <header class="flex flex-col gap-1 md:hidden {close ? 'pe-12' : ''}">
                     <span class="u-eyebrow">{eyebrow}</span>

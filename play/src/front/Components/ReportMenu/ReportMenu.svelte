@@ -56,7 +56,7 @@
 
 <!-- Block or report: one popup under the bar, the player's name on top. -->
 <div
-    class="report-menu-main u-surface pointer-events-auto absolute left-0 right-0 top-3 md:top-16 z-[650] mx-auto flex w-[min(400px,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-2xl text-white"
+    class="report-menu-main u-surface pointer-events-auto absolute left-0 right-0 top-[calc(12px+env(safe-area-inset-top))] md:top-16 z-[650] mx-auto flex w-[min(400px,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-2xl text-white"
     transition:fly={{ y: -50, duration: 300 }}
     role="dialog"
     aria-labelledby="report-title"

@@ -118,7 +118,7 @@
         z-index: 3;
     }
     :global(.em-phone) .em-rail {
-        top: calc(var(--tiles-clear, 0px) + 78px + env(safe-area-inset-top, 0px));
+        top: calc(max(var(--tiles-clear, 0px), env(safe-area-inset-top, 0px)) + 78px);
         right: 10px;
     }
     .em-rail-items {

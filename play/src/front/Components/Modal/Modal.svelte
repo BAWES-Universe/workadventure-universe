@@ -138,7 +138,7 @@
             class={`modal-tools flex justify-center items-center content-center u-surface p-2 gap-2 rounded-full absolute z-50
                 ${
                     isFullScreened || shouldForceMobileFullScreen
-                        ? "top-4 right-4"
+                        ? "top-[calc(16px+env(safe-area-inset-top))] right-4"
                         : `${
                               shown?.position == "center" || shown?.position == "left"
                                   ? "flex-col top-0 -right-20"
@@ -221,6 +221,13 @@
         &.left {
             left: 0;
         }
+        // Where the panel meets the top of the screen (below the floating layout, and full screen), the installed app's
+        // see-through status bar (#969) would sit on the page: the panel keeps its colour up to the edge and starts the
+        // frame, which has no inset of its own, under the inset. env() is 0 in a browser.
+        &.mobile .modal-panel,
+        &.fullscreened .modal-panel {
+            padding-top: env(safe-area-inset-top, 0px);
+        }
         // Below the floating layout the panel meets the top of the screen, so the close button is held off it by the
         // bar's own 4px gap. On a phone the strip beside the panel is narrow: the button then sits 4px from the screen
         // edge, over the chat button below it, instead of running off the screen.
@@ -231,13 +238,14 @@
             &.left .modal-panel,
             &.mobile .modal-panel {
                 border-radius: 0;
+                padding-top: env(safe-area-inset-top, 0px);
             }
             &.right:not(.fullscreened) .modal-tools {
-                top: 4px;
+                top: calc(4px + env(safe-area-inset-top, 0px));
                 left: max(-80px, calc(4px - (100vw - 100%)));
             }
             &.left:not(.fullscreened) .modal-tools {
-                top: 4px;
+                top: calc(4px + env(safe-area-inset-top, 0px));
                 right: max(-80px, calc(4px - (100vw - 100%)));
             }
         }

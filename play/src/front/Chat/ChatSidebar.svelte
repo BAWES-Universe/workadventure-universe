@@ -312,7 +312,10 @@
         transition:fly={{ duration: 200, y: sheetHeight }}
         on:introend={() => reposition()}
         on:outroend={() => reposition()}
-        style="height: {sheetHeight}px;"
+        style="height: {sheetHeight}px; padding-top: max(0px, calc(env(safe-area-inset-top, 0px) - {Math.max(
+            0,
+            $windowSize.height - sheetHeight
+        )}px));"
         class="chatWindow chat-sheet u-surface-flat p-0 screen-blocker"
         class:dragging={sheetDragHeight !== undefined}
     >
@@ -427,7 +430,9 @@
         display: flex;
         flex-direction: column;
         border-radius: 24px 24px 0 0;
-        transition: height 200ms ease-out;
+        /* Dragged up under the installed app's see-through status bar (#969), the sheet keeps its colour to the top
+           edge and starts its handle and tabs below the inset (padding-top, set from the script). */
+        transition: height 200ms ease-out, padding-top 200ms ease-out;
     }
     .chat-sheet.dragging {
         transition: none;
