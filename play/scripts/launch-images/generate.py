@@ -5,7 +5,8 @@ Builds the installed app's launch screens for iPhone and iPad (#949) from the UN
 iOS ignores the manifest for its launch screen: it shows an `apple-touch-startup-image` whose media query matches the
 screen exactly, else a blank one. Each image is Universe ink with the wordmark exactly where the page's own launch
 screen (#boot-splash in index.html) and the loader (LoaderScene.svelte) put it: 40px tall, 14px above the middle of
-the page, and the page starts under the status bar. So the picture holds still from the tap to the loader.
+the page. The installed app's status bar is see-through (#969), so the page starts at the very top of the screen and
+the middle is the middle of the whole screen. So the picture holds still from the tap to the loader.
 
 Run from play/ with Pillow installed, then paste what it prints into index.html:
     python3 scripts/launch-images/generate.py
@@ -23,7 +24,8 @@ WORDMARK = os.path.join(HERE, "universe-wordmark.png")
 WORDMARK_HEIGHT = 40  # css px, as the loader's max-h-10
 ABOVE_MIDDLE = 14  # css px: the loader's 16px gap and 12px bar sit under the wordmark, centred as one column
 
-# (width, height, pixel ratio, status bar height) of each screen held upright, in css px.
+# (width, height, pixel ratio, status bar height) of each screen held upright, in css px. The status bar height is
+# kept for reference: the page runs under it since #969, so it no longer moves the wordmark.
 SCREENS = [
     # iPhone
     (440, 956, 3, 62),  # 16 Pro Max, 17 Pro Max
@@ -73,14 +75,13 @@ def save(image, name):
 def main():
     links = []
     marks = {}
-    for width, height, ratio, status_bar in SCREENS:
+    for width, height, ratio, _status_bar in SCREENS:
         mark = marks.setdefault(ratio, wordmark(ratio))
         kind = "ipad" if width >= 744 else "iphone"
         for orientation in ("portrait", "landscape"):
             w, h = (width, height) if orientation == "portrait" else (height, width)
-            # An iPhone held sideways hides the status bar; an iPad keeps it.
-            top = status_bar if orientation == "portrait" or kind == "ipad" else 0
-            centre_y = top + (h - top) / 2 - ABOVE_MIDDLE
+            # The page starts at y=0, under the see-through status bar, in either orientation.
+            centre_y = h / 2 - ABOVE_MIDDLE
             name = f"{kind}-{width}x{height}@{ratio}x-{orientation}.png"
             save(on_ink(mark, w * ratio, h * ratio, w * ratio / 2, centre_y * ratio), name)
             links.append(
