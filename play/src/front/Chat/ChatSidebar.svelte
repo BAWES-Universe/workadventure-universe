@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onDestroy, tick } from "svelte";
+    import { onDestroy, onMount, tick } from "svelte";
     import { fly } from "svelte/transition";
     import { chatVisibilityStore, INITIAL_SIDEBAR_WIDTH, INITIAL_SIDEBAR_WIDTH_MOBILE } from "../Stores/ChatStore";
     import { gameManager } from "../Phaser/Game/GameManager";
@@ -29,11 +29,17 @@
 
     let container: HTMLElement;
 
-    const gameScene = gameManager.getCurrentGameScene();
-
-    function reposition() {
-        gameScene.reposition();
+    // The scene of the moment: a reconnect replaces it while the chat stays open.
+    function reposition(instant = false) {
+        gameManager.tryGetCurrentGameScene()?.reposition(instant);
     }
+
+    // The chat can come back already open, with no slide in to end: after a reconnect (the "Reconnecting" screen
+    // takes it away, and the new scene's camera knows nothing of it) or a chat refresh. The map is centred again
+    // in the space it leaves free, at once, as the game shows again.
+    onMount(() => {
+        if ($chatVisibilityStore) reposition(true);
+    });
 
     function closeChat() {
         chatVisibilityStore.set(false);
@@ -289,8 +295,8 @@
         id="chat"
         data-testid="chat"
         transition:fly={{ duration: 200, y: sheetHeight }}
-        on:introend={reposition}
-        on:outroend={reposition}
+        on:introend={() => reposition()}
+        on:outroend={() => reposition()}
         style="height: {sheetHeight}px;"
         class="chatWindow chat-sheet u-surface-flat p-0 screen-blocker"
         class:dragging={sheetDragHeight !== undefined}
@@ -337,8 +343,8 @@
             duration: 200,
             x: isRTL ? sideBarWidth + $chatFloatInsetStore : -(sideBarWidth + $chatFloatInsetStore),
         }}
-        on:introend={reposition}
-        on:outroend={reposition}
+        on:introend={() => reposition()}
+        on:outroend={() => reposition()}
         style="width: {sideBarWidth}px; max-width: {sideBarWidth}px;"
         class=" chatWindow !min-w-[150px] max-sm:!min-w-[150px] u-surface-flat p-0 screen-blocker"
     >
