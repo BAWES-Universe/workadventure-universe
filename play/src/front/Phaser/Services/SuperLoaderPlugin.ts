@@ -136,9 +136,23 @@ export class SuperLoaderPlugin {
             const unloadCallbacks = () => {
                 this.scene.load.off("filecomplete-" + type + "-" + key, successCallback);
                 this.scene.load.off("loaderror", errorCallback);
+                this.scene.load.off(Phaser.Loader.Events.COMPLETE, loaderCompleteCallback);
                 if (destroySceneEventRegistered) {
                     this.scene.events.off(Phaser.Scenes.Events.DESTROY, unloadCallbacks);
                 }
+            };
+
+            // Phaser sends no event when a file arrives but can't be read (a picture that is not a picture): the
+            // loader just finishes without it. Without this, such a resource never resolves nor fails, and a Woka
+            // waiting for it never shows, not even as the stand-in.
+            const loaderCompleteCallback = () => {
+                unloadCallbacks();
+                const resource = fromCache();
+                if (resource !== undefined) {
+                    return res(resource);
+                }
+                console.error(`Failed loading "${type}": "${url}"`);
+                rej(new Error(`Failed loading "${type}": "${url}"`));
             };
 
             const errorCallback = (file: { src: string }) => {
@@ -150,6 +164,7 @@ export class SuperLoaderPlugin {
 
             const successCallback = (key: string, type: string, data: unknown) => {
                 this.scene.load.off("loaderror", errorCallback);
+                this.scene.load.off(Phaser.Loader.Events.COMPLETE, loaderCompleteCallback);
                 this.scene.events.off(Phaser.Scenes.Events.DESTROY, unloadCallbacks);
                 const resource = fromCache();
                 if (!resource) {
@@ -175,6 +190,7 @@ export class SuperLoaderPlugin {
 
             this.scene.load.once("filecomplete-" + type + "-" + key, successCallback);
             this.scene.load.on("loaderror", errorCallback);
+            this.scene.load.on(Phaser.Loader.Events.COMPLETE, loaderCompleteCallback);
             if (this.scene.scene.settings.status > Phaser.Scenes.LOADING) {
                 // When the scene is destroyed, let's remove our callbacks.
                 // We only need to register this destroy event is the scene is not in loading state (otherwise, Phaser
