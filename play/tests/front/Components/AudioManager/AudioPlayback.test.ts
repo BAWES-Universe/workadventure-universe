@@ -542,3 +542,195 @@ describe("native audio playback", () => {
         expect(media).toHaveLength(2);
     });
 });
+
+class FakeGainParam {
+    value = 1;
+    cancelScheduledValues = vi.fn();
+    setValueAtTime = vi.fn((value: number) => {
+        this.value = value;
+    });
+    setTargetAtTime = vi.fn((value: number) => {
+        this.value = value;
+    });
+}
+
+class FakeContext {
+    state: "running" | "suspended" = "running";
+    currentTime = 0;
+    destination = {};
+    onstatechange: (() => void) | null = null;
+    gains: { gain: FakeGainParam; connect: ReturnType<typeof vi.fn> }[] = [];
+    sources: unknown[] = [];
+    resume = vi.fn((): Promise<void> => {
+        this.state = "running";
+        this.onstatechange?.();
+        return Promise.resolve();
+    });
+    close = vi.fn((): Promise<void> => Promise.resolve());
+    createMediaElementSource = vi.fn((element: unknown) => {
+        this.sources.push(element);
+        return { connect: vi.fn() };
+    });
+    createGain = vi.fn(() => {
+        const gain = { gain: new FakeGainParam(), connect: vi.fn() };
+        this.gains.push(gain);
+        return gain;
+    });
+}
+
+describe("audio playback on browsers that ignore element volume (iPhone)", () => {
+    let media: (FakeAudio & { crossOrigin?: string | null })[];
+    let context: FakeContext;
+    let player: AudioPlayback;
+    let state: ReturnType<typeof vi.fn>;
+    let failNextCorsLoad: boolean;
+    beforeEach(() => {
+        vi.useFakeTimers();
+        media = [];
+        context = new FakeContext();
+        failNextCorsLoad = false;
+        state = vi.fn();
+        player = new AudioPlayback(
+            state,
+            vi.fn(),
+            () => {
+                const audio: FakeAudio & { crossOrigin?: string | null } = new FakeAudio();
+                // iOS Safari: element volume reads back 1 and cannot be changed.
+                Object.defineProperty(audio, "volume", { get: () => 1, set: () => undefined });
+                audio.play.mockImplementation(() => {
+                    if (failNextCorsLoad && audio.crossOrigin === "anonymous") {
+                        return Promise.reject(new DOMException("no CORS", "NotSupportedError"));
+                    }
+                    audio.paused = false;
+                    return Promise.resolve();
+                });
+                media.push(audio);
+                return audio as unknown as HTMLAudioElement;
+            },
+            1600,
+            undefined,
+            () => context as unknown as AudioContext
+        );
+        player.setControls(controls);
+    });
+    afterEach(() => {
+        player.destroy();
+        vi.restoreAllMocks();
+        vi.useRealTimers();
+    });
+
+    it("sets the level with a gain node instead of the element volume", async () => {
+        player.setSource(source("https://maps.example/a.mp3", 0.5));
+        await flush();
+        expect(media[0].crossOrigin).toBe("anonymous");
+        expect(context.createMediaElementSource).toHaveBeenCalledWith(media[0]);
+        expect(context.gains[0].gain.value).toBeCloseTo(0.4);
+        player.setControls({ ...controls, volume: 0 });
+        expect(context.gains[0].gain.value).toBe(0);
+        player.setControls({ ...controls, volume: 1 });
+        expect(context.gains[0].gain.value).toBeCloseTo(0.5);
+        player.setControls({ ...controls, volume: 1, talking: true });
+        expect(context.gains[0].gain.value).toBeCloseTo(0.25);
+    });
+
+    it("silences the gain and the element when muted", async () => {
+        player.setSource(source("https://maps.example/a.mp3"));
+        await flush();
+        player.setControls({ ...controls, muted: true });
+        expect(media[0].muted).toBe(true);
+        expect(context.gains[0].gain.value).toBe(0);
+    });
+
+    it("crossfades between tracks again, since the gain node can fade", async () => {
+        player.setSource(source("https://maps.example/a.mp3"));
+        await flush();
+        player.setSource(source("https://maps.example/b.mp3"));
+        await flush();
+        expect(media.filter((audio) => !audio.paused)).toHaveLength(2);
+        vi.advanceTimersByTime(1800);
+        expect(media[0].paused).toBe(true);
+        expect(media[1].paused).toBe(false);
+        expect(context.gains[1].gain.value).toBeCloseTo(0.8);
+    });
+
+    it("reuses the gain node of a recycled element", async () => {
+        player.setSource(source("https://maps.example/a.mp3"));
+        await flush();
+        player.setSource(source("https://maps.example/b.mp3"));
+        await flush();
+        vi.advanceTimersByTime(1800);
+        player.setSource(source("https://maps.example/c.mp3"));
+        await flush();
+        vi.advanceTimersByTime(1800);
+        expect(context.createMediaElementSource).toHaveBeenCalledTimes(2);
+        expect(media).toHaveLength(2);
+    });
+
+    it("waits for a tap when the context is suspended, then resumes it inside that tap", async () => {
+        context.state = "suspended";
+        context.resume.mockImplementation(() => Promise.resolve());
+        player.setSource(source("https://maps.example/a.mp3"));
+        await flush();
+        expect(state).toHaveBeenLastCalledWith("not_allowed");
+        expect(state).not.toHaveBeenCalledWith("playing");
+        context.resume.mockClear();
+        context.resume.mockImplementation(() => {
+            context.state = "running";
+            context.onstatechange?.();
+            return Promise.resolve();
+        });
+        player.retry();
+        expect(context.resume).toHaveBeenCalledTimes(1);
+        expect(state).toHaveBeenLastCalledWith("playing");
+    });
+
+    it("falls back to a plain element when the host does not allow CORS", async () => {
+        failNextCorsLoad = true;
+        player.setSource(source("https://nocors.example/a.mp3"));
+        await flush();
+        await flush();
+        expect(state).not.toHaveBeenCalledWith("error");
+        expect(media).toHaveLength(2);
+        expect(media[1].crossOrigin).toBeUndefined();
+        expect(media[1].src).toBe("https://nocors.example/a.mp3");
+        expect(media[1].paused).toBe(false);
+        expect(state).toHaveBeenLastCalledWith("playing");
+        expect(context.createMediaElementSource).toHaveBeenCalledTimes(1);
+        // The blocked host stays on plain elements; other hosts still get the gain node.
+        player.setSource(source("https://nocors.example/b.mp3"));
+        await flush();
+        expect(context.createMediaElementSource).toHaveBeenCalledTimes(1);
+        player.setSource(source("https://maps.example/c.mp3"));
+        await flush();
+        expect(context.createMediaElementSource).toHaveBeenCalledTimes(2);
+    });
+
+    it("keeps plain playback when Web Audio is not available", async () => {
+        player.destroy();
+        player = new AudioPlayback(
+            state,
+            vi.fn(),
+            () => {
+                const audio = new FakeAudio();
+                Object.defineProperty(audio, "volume", { get: () => 1, set: () => undefined });
+                media.push(audio);
+                return audio as unknown as HTMLAudioElement;
+            },
+            1600,
+            undefined,
+            () => undefined
+        );
+        player.setControls(controls);
+        player.setSource(source("https://maps.example/a.mp3"));
+        await flush();
+        expect(media.at(-1)?.paused).toBe(false);
+        expect(state).toHaveBeenLastCalledWith("playing");
+    });
+
+    it("closes its audio context on destroy", async () => {
+        player.setSource(source("https://maps.example/a.mp3"));
+        await flush();
+        player.destroy();
+        expect(context.close).toHaveBeenCalledTimes(1);
+    });
+});
