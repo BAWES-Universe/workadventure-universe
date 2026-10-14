@@ -30,7 +30,38 @@ type Slot = {
     // Set once play() has resolved for this load; cleared when a failed load is retried.
     confirmed: boolean;
     failed: "not_allowed" | "error" | undefined;
+    // Set when the element is routed through Web Audio because the browser ignores element volume.
+    graph: GainNode | undefined;
 };
+
+function createBrowserContext(): AudioContext | undefined {
+    if (typeof window === "undefined") return undefined;
+    const Context =
+        window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    return Context ? new Context() : undefined;
+}
+
+/** True when the host sends CORS headers (what Web Audio needs). Stops at the headers; the body is not downloaded. */
+async function hostAllowsCors(url: string): Promise<boolean> {
+    if (typeof fetch !== "function") return true;
+    const controller = new AbortController();
+    try {
+        await fetch(url, { mode: "cors", credentials: "omit", signal: controller.signal });
+        return true;
+    } catch {
+        return false;
+    } finally {
+        controller.abort();
+    }
+}
+
+function originOf(url: string): string {
+    try {
+        return new URL(url, window.location.href).origin;
+    } catch {
+        return url;
+    }
+}
 
 export function clampAudioVolume(volume: number | undefined): number {
     return volume === undefined || !Number.isFinite(volume) ? 1 : Math.max(0, Math.min(1, volume));
@@ -41,6 +72,17 @@ export class AudioPlayback {
     private outgoing: Slot | undefined;
     private fadeTimer: ReturnType<typeof setTimeout> | undefined;
     private volumeSupported: boolean | undefined;
+    // iOS Safari ignores element volume, so there the level is set with a Web Audio gain node instead.
+    private context: AudioContext | undefined;
+    private contextBlocked = false;
+    private readonly gains = new WeakMap<HTMLAudioElement, GainNode>();
+    // Web Audio needs CORS. false = this origin plays through a plain element (hardware volume only, as
+    // before); it is asked again on every track, so a dropped connection only costs volume control briefly.
+    private readonly originCors = new Map<string, boolean>();
+    private readonly probingOrigins = new Set<string>();
+    private swapping = false;
+    // URLs that failed in CORS mode and are being tried plain. If the plain load plays, the cause was CORS.
+    private readonly plainRetryUrls = new Set<string>();
     // Reuse media elements: some browsers grant autoplay permission per element.
     private readonly idleMedia: HTMLAudioElement[] = [];
     private destroyed = false;
@@ -58,7 +100,9 @@ export class AudioPlayback {
         private readonly onEnded: () => void,
         private readonly createAudio: () => HTMLAudioElement = () => new Audio(),
         private readonly duration = 1600,
-        private readonly audioContainer?: HTMLElement
+        private readonly audioContainer?: HTMLElement,
+        private readonly createContext: () => AudioContext | undefined = createBrowserContext,
+        private readonly checkCors: (url: string) => Promise<boolean> = hostAllowsCors
     ) {}
 
     setSource(source: AudioSource | undefined): void {
@@ -96,8 +140,20 @@ export class AudioPlayback {
             this.onState(undefined);
             return;
         }
-        const media = this.idleMedia.pop() ?? this.createAudio();
+        let media = this.idleMedia.pop() ?? this.createAudio();
         this.detectVolumeSupport(media);
+        const useGraph =
+            this.volumeSupported === false &&
+            this.originCors.get(originOf(source.url)) !== false &&
+            !this.plainRetryUrls.has(source.url);
+        if (!useGraph && this.gains.has(media)) {
+            // A graph-bound element cannot go back to plain playback. Reuse an idle plain element (it may
+            // already be unlocked for playback) and only create a new one when there is none.
+            const plain = this.idleMedia.findIndex((idle) => !this.gains.has(idle));
+            this.idleMedia.push(media);
+            media = plain >= 0 ? this.idleMedia.splice(plain, 1)[0] : this.createAudio();
+        }
+        const graph = useGraph ? this.attachGraph(media) : undefined;
         if (this.audioContainer) {
             media.classList.add("audio-manager-audioplayer");
             this.audioContainer.append(media);
@@ -111,8 +167,10 @@ export class AudioPlayback {
             ended: false,
             confirmed: false,
             failed: undefined,
+            graph,
         };
         this.current = slot;
+        if (this.volumeSupported === false && !this.swapping) this.probeCors(source.url);
         media.preload = "auto";
         media.onended = () => {
             if (this.current !== slot) return;
@@ -150,6 +208,8 @@ export class AudioPlayback {
 
     /** Called synchronously in the native user gesture handler for autoplay recovery. */
     retry(): void {
+        // Safari starts a Web Audio context only from a gesture, so resume it in the same call stack.
+        this.resumeContext();
         if (this.current) {
             // A resource error needs a fresh media load. Autoplay recovery must remain
             // in the original gesture and must not reset an otherwise healthy source.
@@ -169,6 +229,12 @@ export class AudioPlayback {
         this.release(this.outgoing);
         this.current = this.outgoing = undefined;
         this.idleMedia.length = 0;
+        if (this.context) {
+            this.context.onstatechange = null;
+            if (typeof document !== "undefined") document.removeEventListener("visibilitychange", this.onVisible);
+            void this.context.close().catch(() => undefined);
+            this.context = undefined;
+        }
         this.onState(undefined);
     }
 
@@ -203,7 +269,19 @@ export class AudioPlayback {
                 if (this.current !== slot || slot.attempt !== attempt || !this.canPlay()) return;
                 slot.pending = false;
                 slot.confirmed = true;
+                if (!slot.graph && this.plainRetryUrls.delete(slot.source.url)) {
+                    // It plays without CORS mode, so CORS was the problem (not a 404 or a bad file).
+                    const origin = originOf(slot.source.url);
+                    if (origin !== window.location.origin) this.originCors.set(origin, false);
+                }
                 this.startFade();
+                if (slot.graph && this.context && this.context.state !== "running") {
+                    // The element plays, but a suspended context outputs silence until a gesture resumes it.
+                    this.contextBlocked = true;
+                    this.resumeContext();
+                    this.onState("not_allowed");
+                    return;
+                }
                 this.onState("playing");
             },
             (error: unknown) => {
@@ -217,7 +295,47 @@ export class AudioPlayback {
         );
     }
 
+    private swapToPlain(slot: Slot): void {
+        const source = slot.source;
+        this.current = undefined;
+        this.release(slot);
+        // The host was just asked (or just failed to load): do not ask again for the same track.
+        this.swapping = true;
+        try {
+            this.setSource(source);
+        } finally {
+            this.swapping = false;
+        }
+    }
+
+    /**
+     * Ask a cross-origin host about CORS while the first (gesture-less) play is still blocked, so a host
+     * without it gets its plain element before the tap. Otherwise the plain element would only be created
+     * after the tap's play() failed, and Safari would need a second tap for it.
+     */
+    private probeCors(url: string): void {
+        const origin = originOf(url);
+        if (this.originCors.get(origin) === true || this.probingOrigins.has(origin)) return;
+        if (origin === window.location.origin) return;
+        this.probingOrigins.add(origin);
+        void this.checkCors(url).then((allowed) => {
+            this.probingOrigins.delete(origin);
+            if (this.destroyed) return;
+            this.originCors.set(origin, allowed);
+            const slot = this.current;
+            if (allowed || !slot?.graph || slot.confirmed || originOf(slot.source.url) !== origin) return;
+            this.swapToPlain(slot);
+        });
+    }
+
     private fail(slot: Slot, state: "not_allowed" | "error"): void {
+        if (state === "error" && slot.graph && !slot.confirmed && this.current === slot) {
+            // CORS-mode loading failed before any sound: try this track through a plain element instead.
+            this.plainRetryUrls.add(slot.source.url);
+            this.swapToPlain(slot);
+            return;
+        }
+        if (state === "error") this.plainRetryUrls.delete(slot.source.url);
         slot.attempt++;
         slot.pending = false;
         slot.failed = state;
@@ -237,9 +355,9 @@ export class AudioPlayback {
         const incoming = this.current;
         if (!incoming) return;
         const outgoing = this.outgoing;
-        // Some mobile browsers ignore element volume. Never run a gain-based
-        // overlap there: retire the old slot as soon as the new one confirms play.
-        if (!this.volumeSupported) {
+        // Some mobile browsers ignore element volume. Without a gain node there, never run a
+        // gain-based overlap: retire the old slot as soon as the new one confirms play.
+        if (!this.canSetLevel(incoming) || (outgoing && !this.canSetLevel(outgoing))) {
             incoming.envelope = 1;
             this.release(outgoing);
             this.outgoing = undefined;
@@ -288,11 +406,84 @@ export class AudioPlayback {
         for (const slot of [this.current, this.outgoing]) {
             if (!slot) continue;
             slot.media.muted = this.controls.muted;
-            if (this.volumeSupported) {
-                slot.media.volume = clampAudioVolume(master * slot.source.volume * slot.envelope);
+            const level = clampAudioVolume(master * slot.source.volume * slot.envelope);
+            if (slot.graph) {
+                this.setGain(slot.graph, this.controls.muted ? 0 : level);
+            } else if (this.volumeSupported) {
+                slot.media.volume = level;
             }
             slot.media.loop = slot.source.loop;
         }
+    }
+
+    private canSetLevel(slot: Slot): boolean {
+        return !!slot.graph || !!this.volumeSupported;
+    }
+
+    private ensureContext(): AudioContext | undefined {
+        if (this.context) return this.context;
+        try {
+            const context = this.createContext();
+            if (!context) return undefined;
+            context.onstatechange = () => {
+                if (this.destroyed) return;
+                if (context.state === "running") {
+                    if (!this.contextBlocked) return;
+                    this.contextBlocked = false;
+                    if (this.current?.confirmed) this.onState("playing");
+                    return;
+                }
+                // Screen lock, a call or backgrounding silences the graph while the element keeps "playing".
+                const slot = this.current;
+                if (slot?.graph && slot.confirmed && this.canPlay() && !slot.media.paused) {
+                    this.contextBlocked = true;
+                    this.resumeContext();
+                    this.onState("not_allowed");
+                }
+            };
+            this.context = context;
+            if (typeof document !== "undefined") document.addEventListener("visibilitychange", this.onVisible);
+        } catch {
+            this.context = undefined;
+        }
+        return this.context;
+    }
+
+    private readonly onVisible = (): void => {
+        if (document.visibilityState === "visible") this.resumeContext();
+    };
+
+    private resumeContext(): void {
+        if (this.context && this.context.state !== "running") void this.context.resume().catch(() => undefined);
+    }
+
+    /** Route one element through a gain node; undefined (plain element) when Web Audio is not available. */
+    private attachGraph(media: HTMLAudioElement): GainNode | undefined {
+        const existing = this.gains.get(media);
+        if (existing) return existing;
+        const context = this.ensureContext();
+        if (!context) return undefined;
+        try {
+            // Must be set before src is assigned; a Web Audio source needs a CORS-clean response.
+            media.crossOrigin = "anonymous";
+            const source = context.createMediaElementSource(media);
+            const gain = context.createGain();
+            gain.gain.value = 0;
+            source.connect(gain);
+            gain.connect(context.destination);
+            this.gains.set(media, gain);
+            return gain;
+        } catch {
+            return undefined;
+        }
+    }
+
+    private setGain(gain: GainNode, target: number): void {
+        const now = this.context?.currentTime ?? 0;
+        gain.gain.cancelScheduledValues(now);
+        // Zero is immediate; other changes use a short ramp so the slider does not click.
+        if (target === 0) gain.gain.setValueAtTime(0, now);
+        else gain.gain.setTargetAtTime(target, now, 0.02);
     }
 
     private cancelFade(): void {
@@ -302,6 +493,8 @@ export class AudioPlayback {
 
     private release(slot: Slot | undefined): void {
         if (!slot) return;
+        // A plain retry dropped before it played proved nothing about CORS.
+        if (!slot.graph && !slot.confirmed) this.plainRetryUrls.delete(slot.source.url);
         slot.attempt++;
         slot.media.onended = null;
         slot.media.onerror = null;
