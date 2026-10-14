@@ -3,6 +3,7 @@ import type { GameScene } from "../Game/GameScene";
 import { TexturesHelper } from "../Helpers/TexturesHelper";
 import { CharacterTextureError } from "../../Exception/CharacterTextureError";
 import { waitForGameScene } from "../Game/WhenGameScene";
+import { gameManager } from "../Game/GameManager";
 import { lazyLoadPlayerCharacterTextures } from "./PlayerTexturesLoadingManager";
 
 /**
@@ -30,6 +31,12 @@ export class CharacterLayerManager {
                 });
             })
             .catch(() => {
+                // The load can fail because the map was swapped (e.g. a reconnect destroys this scene). Retrying on
+                // the destroyed scene would fail again, so draw the woka on the current map instead.
+                const currentScene = gameManager.tryGetCurrentGameScene();
+                if (currentScene !== scene) {
+                    return this.wokaBase64(characterTextures);
+                }
                 return lazyLoadPlayerCharacterTextures(scene.superLoad, [
                     {
                         id: "color_22",

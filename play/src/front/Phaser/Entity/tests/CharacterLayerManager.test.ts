@@ -35,4 +35,29 @@ describe("CharacterLayerManager.wokaBase64 during a reconnect", () => {
             expect(lazyLoad).toHaveBeenCalledWith(superLoad, [{ id: "color_1", url: "color_1.png" }])
         );
     });
+
+    it("draws the woka on the new map, not the destroyed one, when the load fails because the map was swapped", async () => {
+        lazyLoad.mockClear();
+        const oldSuperLoad = { name: "old" };
+        const newSuperLoad = { name: "new" };
+        sceneHolder.scene = { superLoad: oldSuperLoad };
+
+        lazyLoad.mockImplementationOnce(() => {
+            // A reconnect swaps the map while the first load is in flight, and that load fails.
+            sceneHolder.scene = { superLoad: newSuperLoad };
+            return Promise.reject(new Error("Trying to load a spritesheet in a Scene that is already destroyed."));
+        });
+
+        void CharacterLayerManager.wokaBase64([{ id: "color_1", url: "color_1.png" }]);
+
+        await vi.waitFor(() =>
+            expect(lazyLoad).toHaveBeenCalledWith(newSuperLoad, [{ id: "color_1", url: "color_1.png" }])
+        );
+        // The fallback textures must never be requested from the destroyed scene.
+        for (const call of lazyLoad.mock.calls as unknown[][]) {
+            if (call[0] === oldSuperLoad) {
+                expect(call[1]).toEqual([{ id: "color_1", url: "color_1.png" }]);
+            }
+        }
+    });
 });
