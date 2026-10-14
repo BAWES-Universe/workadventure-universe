@@ -440,6 +440,8 @@ export class AudioPlayback {
 
     private release(slot: Slot | undefined): void {
         if (!slot) return;
+        // A plain retry dropped before it played proved nothing about CORS.
+        if (!slot.graph && !slot.confirmed) this.plainRetryUrls.delete(slot.source.url);
         slot.attempt++;
         slot.media.onended = null;
         slot.media.onerror = null;

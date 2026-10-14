@@ -707,6 +707,49 @@ describe("audio playback on browsers that ignore element volume (iPhone)", () =>
         expect(context.createMediaElementSource).toHaveBeenCalledTimes(2);
     });
 
+    it("tries the gain node again for a track whose plain retry was dropped before it played", async () => {
+        const plays: string[] = [];
+        player.destroy();
+        const fresh = new AudioPlayback(
+            state,
+            vi.fn(),
+            () => {
+                const audio: FakeAudio & { crossOrigin?: string | null } = new FakeAudio();
+                Object.defineProperty(audio, "volume", { get: () => 1, set: () => undefined });
+                audio.play.mockImplementation(() => {
+                    const isA = audio.src.endsWith("/a.mp3");
+                    plays.push(`${isA ? "a" : "b"}:${audio.crossOrigin === "anonymous" ? "graph" : "plain"}`);
+                    if (isA && audio.crossOrigin === "anonymous") {
+                        return Promise.reject(new DOMException("no CORS", "NotSupportedError"));
+                    }
+                    audio.paused = false;
+                    // The plain retry of "a" never settles, like a slow host.
+                    if (isA) {
+                        return new Promise<void>(() => {
+                            // never settles
+                        });
+                    }
+                    return Promise.resolve();
+                });
+                media.push(audio);
+                return audio as unknown as HTMLAudioElement;
+            },
+            1600,
+            undefined,
+            () => context as unknown as AudioContext
+        );
+        fresh.setControls(controls);
+        fresh.setSource(source("https://nocors.example/a.mp3"));
+        await flush();
+        await flush();
+        fresh.setSource(source("https://nocors.example/b.mp3"));
+        await flush();
+        fresh.setSource(source("https://nocors.example/a.mp3"));
+        await flush();
+        expect(plays).toEqual(["a:graph", "a:plain", "b:graph", "a:graph", "a:plain"]);
+        fresh.destroy();
+    });
+
     it("keeps the gain node for other tracks when a file fails for another reason", async () => {
         failAllLoads = true;
         player.setSource(source("https://maps.example/missing.mp3"));
