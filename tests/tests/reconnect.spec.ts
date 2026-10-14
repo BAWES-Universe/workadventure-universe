@@ -62,8 +62,9 @@ test.describe("Connection @nomobile @nowebkit", () => {
     // The game's connection, closed from the page side as a phone does to an app in the background.
     let dropConnection: (() => void) | undefined;
     await using page = await getPage(browser, "Alice", publicTestMapUrl("tests/mousewheel.json", "reconnect"), {
-      pageCreatedHook: (page) => {
-        void page.routeWebSocket(/\/ws\/room/, (ws) => {
+      // Set up before the page opens, so the first connection already goes through it.
+      pageCreatedHook: async (page) => {
+        await page.routeWebSocket(/\/ws\/room/, (ws) => {
           const server = ws.connectToServer();
           dropConnection = () => {
             void ws.close({ code: 4000, reason: "test drop" });

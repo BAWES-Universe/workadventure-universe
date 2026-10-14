@@ -91,7 +91,7 @@ export async function getPage(browser: Browser,
       name: "Alice" | "Bob" | "Eve" | "Mallory" | "Admin1" | "Admin2" | "Member1" | "UserMatrix" | "UserLogin1" | "John" | "UserMatrix2" | "User1",
       url:string,
       options: {
-    pageCreatedHook?: (page: Page) => void,
+    pageCreatedHook?: (page: Page) => void | Promise<void>,
       } = {}): Promise<Page> {
     await createUser(name, browser, url);
     const newBrowser: BrowserContext = await browser.newContext({ storageState: './.auth/' + name + '.json' });
@@ -100,7 +100,7 @@ export async function getPage(browser: Browser,
     const page: Page = await newBrowser.newPage();
     await watchForHang(page);
     if(options.pageCreatedHook) {
-        options.pageCreatedHook(page);
+        await options.pageCreatedHook(page);
     }
     const targetUrl = new URL(url, play_url).toString();
     await page.goto(targetUrl);
