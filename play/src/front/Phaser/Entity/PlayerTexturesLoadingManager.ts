@@ -5,6 +5,15 @@ import type { WokaTextureDescriptionInterface, PlayerTextures } from "./PlayerTe
 import Texture = Phaser.Textures.Texture;
 import LoaderPlugin = Phaser.Loader.LoaderPlugin;
 
+/**
+ * A Woka or companion picture that has not arrived after this long is asked for again (the loader retries twice), then
+ * counts as failed so the stand-in shows. Without it, a request that stalls (a phone coming back to the app) waits
+ * forever and the Woka is never drawn.
+ */
+export const WOKA_LOAD_TIMEOUT_MS = 10_000;
+// Only the timeout: Phaser keeps the file's own settings for every field left out (an image needs its "blob" type).
+export const wokaXhrSettings = { timeout: WOKA_LOAD_TIMEOUT_MS } as Phaser.Types.Loader.XHRSettingsObject;
+
 export interface FrameConfig {
     frameWidth: number;
     frameHeight: number;
@@ -48,10 +57,15 @@ export const loadWokaTexture = (
     superLoaderPlugin: SuperLoaderPlugin,
     texture: WokaTextureDescriptionInterface
 ): CancelablePromise<Texture> => {
-    return superLoaderPlugin.spritesheet(texture.id, texture.url, {
-        frameWidth: 32,
-        frameHeight: 32,
-    });
+    return superLoaderPlugin.spritesheet(
+        texture.id,
+        texture.url,
+        {
+            frameWidth: 32,
+            frameHeight: 32,
+        },
+        wokaXhrSettings
+    );
 };
 
 export const lazyLoadPlayerCharacterTextures = (
@@ -61,10 +75,15 @@ export const lazyLoadPlayerCharacterTextures = (
     const promisesList: CancelablePromise<Texture>[] = [];
     for (const texture of textures) {
         promisesList.push(
-            superLoaderPlugin.spritesheet(texture.id, texture.url, {
-                frameWidth: 32,
-                frameHeight: 32,
-            })
+            superLoaderPlugin.spritesheet(
+                texture.id,
+                texture.url,
+                {
+                    frameWidth: 32,
+                    frameHeight: 32,
+                },
+                wokaXhrSettings
+            )
         );
     }
     const returnPromise: CancelablePromise<Texture[]> = CancelablePromise.all(promisesList);
