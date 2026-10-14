@@ -34,7 +34,9 @@ export const MetaTagsDefaultValue: RequiredMetaTagsData = {
     ],
     appName: "Universe",
     shortAppName: "Universe",
-    themeColor: "#000000",
+    // Universe ink, as Orbit sends for every room: the start page the installed app opens on (#949) and its manifest
+    // (the launch screen colour on Android) use it too.
+    themeColor: "#14121E",
     // Relative: the page turns it into a full URL on its own domain (link previews need one).
     cardImage: "/static/images/universe-card.png",
 };
