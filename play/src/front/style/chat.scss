@@ -273,6 +273,7 @@
 // app's see-through status bar on an iPad (#969) its colour runs to the edge and its content starts below the inset.
 @media (max-width: 1023.98px) {
     #chat.chatWindow:not(.chat-sheet) {
+        box-sizing: border-box;
         padding-top: env(safe-area-inset-top, 0px);
     }
 }

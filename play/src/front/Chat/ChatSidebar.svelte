@@ -432,6 +432,8 @@
         display: flex;
         flex-direction: column;
         border-radius: 24px 24px 0 0;
+        /* Its height is the sheet's whole height: the padding below goes inside it. */
+        box-sizing: border-box;
         /* Dragged up under the installed app's see-through status bar (#969), the sheet keeps its colour to the top
            edge and starts its handle and tabs below the inset (padding-top, set from the script). */
         transition: height 200ms ease-out, padding-top 200ms ease-out;
