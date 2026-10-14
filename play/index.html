@@ -11,6 +11,25 @@
             name="viewport"
             content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0"
         />
+        <script>
+            // The installed app on an iPhone or iPad (opened from the Home Screen: navigator.standalone) runs under the
+            // home bar, and iOS reports that space only with viewport-fit=cover. Held upright, turn it on so the bar and
+            // the sheets at the bottom can keep clear of it (#941). Held sideways, iOS already keeps the page off the
+            // notch without it, so the viewport stays as in the browser. Browsers never change.
+            (function () {
+                if (navigator.standalone !== true || !window.matchMedia) return;
+                var meta = document.querySelector('meta[name="viewport"]');
+                if (!meta) return;
+                var base = meta.getAttribute("content");
+                var upright = window.matchMedia("(orientation: portrait)");
+                function apply() {
+                    meta.setAttribute("content", upright.matches ? base + ", viewport-fit=cover" : base);
+                }
+                apply();
+                if (upright.addEventListener) upright.addEventListener("change", apply);
+                else if (upright.addListener) upright.addListener(apply);
+            })();
+        </script>
         <meta
             http-equiv="Content-Security-Policy"
             content="default-src * 'unsafe-inline' 'unsafe-eval'; script-src * 'unsafe-inline' 'unsafe-eval'; connect-src data: blob: * 'unsafe-inline'; img-src * data: blob: 'unsafe-inline'; media-src * data: blob:; font-src * data: ; frame-src *; style-src * 'unsafe-inline'; worker-src 'self' blob:;" />

@@ -93,7 +93,7 @@
 <div
     class="@container/actions w-full {aboveSideWindow
         ? 'z-[2001]'
-        : 'z-[301]'} transition-all pointer-events-none bp-menu {$videoStreamElementsStore.length > 0 &&
+        : 'z-[301]'} transition-all pointer-events-none bp-menu bar-safe-area {$videoStreamElementsStore.length > 0 &&
     $highlightFullScreen
         ? 'hidden'
         : ''}"
@@ -139,3 +139,16 @@
         </div>
     </div>
 </div>
+
+<style>
+    /* Phones (the bar at the bottom; Tailwind's mobile: variant, written as a list the compiler can read): the bar keeps
+       clear of the home bar and the screen's rounded corners wherever the phone reports them. Only the installed app
+       on an iPhone or iPad reports them (index.html turns on viewport-fit=cover there, #941); everywhere else they
+       are 0 and the bar stays where it is. */
+    @media (max-height: 960px) and (max-width: 480px) and (pointer: coarse),
+        (max-height: 480px) and (max-width: 960px) and (pointer: coarse) {
+        .bar-safe-area {
+            padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+        }
+    }
+</style>
