@@ -148,6 +148,7 @@
     @media (max-height: 960px) and (max-width: 480px) and (pointer: coarse),
         (max-height: 480px) and (max-width: 960px) and (pointer: coarse) {
         .bar-safe-area {
+            box-sizing: border-box;
             padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
         }
     }
