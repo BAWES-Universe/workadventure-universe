@@ -2335,6 +2335,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     name: a.name,
                                     x: a.x,
                                     y: a.y,
+                                    ...(a.description ? { description: a.description } : {}),
                                 })),
                             };
                         } catch (error) {
@@ -3190,7 +3191,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     if (r.result.areas.length === 0) {
                         return `get_areas_on_map: There are no areas defined on this map.`;
                     }
-                    const areasList = r.result.areas.map((a: any) => a.name).join(', ');
+                    const areasList = r.result.areas.map((a: any) => a.description
+                        ? `${a.name} (description: ${JSON.stringify(a.description)})`
+                        : a.name).join(', ');
                     return `get_areas_on_map: Areas found on this map: ${areasList}. List these areas naturally when asked about areas.`;
                 }
             }
