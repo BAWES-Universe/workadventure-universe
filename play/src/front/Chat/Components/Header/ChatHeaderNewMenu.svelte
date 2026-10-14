@@ -142,12 +142,13 @@
     $: if (options.length === 0) open = false;
 </script>
 
+<!-- The popover is positioned against the footer row that holds this "+" (InviteFooter). -->
 <div class="chat-new-menu" bind:this={containerRef}>
     <button
         type="button"
         bind:this={triggerRef}
         data-testid="openOptionToCreateRoomOrFolder"
-        class="chat-new-trigger m-0 p-0 h-11 w-11 shrink-0 rounded-full flex items-center justify-center text-white bg-gradient-to-br from-primary to-secondary shadow-md hover:brightness-110 focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+        class="chat-new-trigger u-glass-btn w-11"
         class:is-open={open}
         aria-label={$LL.chat.header.newChat()}
         title={$LL.chat.header.newChat()}
@@ -166,7 +167,7 @@
             role="menu"
             tabindex="-1"
             aria-label={$LL.chat.header.newChat()}
-            class="chat-new-popover focus:outline-none absolute top-full end-2 mt-1 z-50 p-1.5 rounded-2xl bg-contrast/90 backdrop-blur-xl border border-solid border-white/10 shadow-2xl"
+            class="chat-new-popover focus:outline-none absolute bottom-full end-0 mb-2 z-50 p-1.5 rounded-2xl bg-contrast/90 backdrop-blur-xl border border-solid border-white/10 shadow-2xl"
             on:keydown={onMenuKeyDown}
         >
             {#each options as option, index (option)}
@@ -182,10 +183,7 @@
                         : ''}"
                     on:click={() => choose(option)}
                 >
-                    <span
-                        class="h-10 w-10 shrink-0 rounded-xl bg-gradient-to-br from-primary to-secondary text-white flex items-center justify-center"
-                        aria-hidden="true"
-                    >
+                    <span class="h-10 w-8 shrink-0 text-white flex items-center justify-center" aria-hidden="true">
                         <svelte:component this={icons[option]} font-size="20" />
                     </span>
                     <span class="flex flex-col min-w-0">
@@ -206,18 +204,19 @@
         border-radius: 0 0 0.75rem 0.75rem;
     }
 
+    /* Opens upward from the "+", right-aligned with it (the footer row is its anchor). */
     .chat-new-popover {
-        width: min(18rem, calc(100% - 1rem));
+        width: min(16.375rem, 100%);
     }
 
     @media (prefers-reduced-motion: no-preference) {
         .chat-new-popover {
             animation: chat-new-pop 140ms cubic-bezier(0.2, 0, 0, 1);
-            transform-origin: top right;
+            transform-origin: bottom right;
         }
 
         :global([dir="rtl"]) .chat-new-popover {
-            transform-origin: top left;
+            transform-origin: bottom left;
         }
 
         .chat-new-trigger :global(.chat-new-plus) {
@@ -232,7 +231,7 @@
     @keyframes chat-new-pop {
         from {
             opacity: 0;
-            transform: translateY(-4px) scale(0.97);
+            transform: translateY(4px) scale(0.97);
         }
         to {
             opacity: 1;
