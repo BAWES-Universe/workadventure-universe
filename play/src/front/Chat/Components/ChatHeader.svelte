@@ -71,7 +71,9 @@
     // The search button, New message and Find people ask for the focus: the field takes it as it appears, in the
     // tap that opened it, so the phone's keyboard comes up with it.
     onMount(() => {
-        if (!$focusChatSearchRequest) return;
+        // A footer that is already leaving (the Chats list, while New message switches to People) must not take the
+        // request: the one that stays is mounted in the same update and takes it.
+        if (!searchInput?.isConnected || !$focusChatSearchRequest) return;
         focusChatSearchRequest.set(false);
         searchInput?.focus();
     });
