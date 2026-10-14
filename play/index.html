@@ -46,6 +46,117 @@
         {{/favIcons}}
         <link rel="manifest" href="{{ manifestUrl }}" />
 
+        <!-- The installed app's launch screen on iPhone and iPad (#949): iOS ignores the manifest here and shows the
+             image whose query matches the screen exactly, else a blank screen. Universe ink and the wordmark, in the
+             same spot as #boot-splash below. iOS only reads the images when the page says it is a web app.
+             Built by scripts/launch-images/generate.py. -->
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="mobile-web-app-capable" content="yes" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/static/images/launch/iphone-440x956@3x-portrait.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)" href="/static/images/launch/iphone-440x956@3x-landscape.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 420px) and (device-height: 912px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/static/images/launch/iphone-420x912@3x-portrait.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 420px) and (device-height: 912px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)" href="/static/images/launch/iphone-420x912@3x-landscape.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 402px) and (device-height: 874px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/static/images/launch/iphone-402x874@3x-portrait.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 402px) and (device-height: 874px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)" href="/static/images/launch/iphone-402x874@3x-landscape.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/static/images/launch/iphone-430x932@3x-portrait.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)" href="/static/images/launch/iphone-430x932@3x-landscape.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/static/images/launch/iphone-393x852@3x-portrait.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)" href="/static/images/launch/iphone-393x852@3x-landscape.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/static/images/launch/iphone-428x926@3x-portrait.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)" href="/static/images/launch/iphone-428x926@3x-landscape.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/static/images/launch/iphone-390x844@3x-portrait.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)" href="/static/images/launch/iphone-390x844@3x-landscape.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/static/images/launch/iphone-375x812@3x-portrait.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)" href="/static/images/launch/iphone-375x812@3x-landscape.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/static/images/launch/iphone-414x896@3x-portrait.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)" href="/static/images/launch/iphone-414x896@3x-landscape.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/static/images/launch/iphone-414x896@2x-portrait.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)" href="/static/images/launch/iphone-414x896@2x-landscape.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 414px) and (device-height: 736px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/static/images/launch/iphone-414x736@3x-portrait.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 414px) and (device-height: 736px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)" href="/static/images/launch/iphone-414x736@3x-landscape.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/static/images/launch/iphone-375x667@2x-portrait.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)" href="/static/images/launch/iphone-375x667@2x-landscape.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 320px) and (device-height: 568px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/static/images/launch/iphone-320x568@2x-portrait.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 320px) and (device-height: 568px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)" href="/static/images/launch/iphone-320x568@2x-landscape.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 1032px) and (device-height: 1376px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/static/images/launch/ipad-1032x1376@2x-portrait.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 1032px) and (device-height: 1376px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)" href="/static/images/launch/ipad-1032x1376@2x-landscape.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/static/images/launch/ipad-1024x1366@2x-portrait.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)" href="/static/images/launch/ipad-1024x1366@2x-landscape.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 834px) and (device-height: 1210px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/static/images/launch/ipad-834x1210@2x-portrait.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 834px) and (device-height: 1210px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)" href="/static/images/launch/ipad-834x1210@2x-landscape.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 834px) and (device-height: 1194px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/static/images/launch/ipad-834x1194@2x-portrait.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 834px) and (device-height: 1194px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)" href="/static/images/launch/ipad-834x1194@2x-landscape.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 820px) and (device-height: 1180px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/static/images/launch/ipad-820x1180@2x-portrait.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 820px) and (device-height: 1180px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)" href="/static/images/launch/ipad-820x1180@2x-landscape.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 834px) and (device-height: 1112px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/static/images/launch/ipad-834x1112@2x-portrait.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 834px) and (device-height: 1112px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)" href="/static/images/launch/ipad-834x1112@2x-landscape.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 810px) and (device-height: 1080px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/static/images/launch/ipad-810x1080@2x-portrait.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 810px) and (device-height: 1080px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)" href="/static/images/launch/ipad-810x1080@2x-landscape.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 768px) and (device-height: 1024px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/static/images/launch/ipad-768x1024@2x-portrait.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 768px) and (device-height: 1024px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)" href="/static/images/launch/ipad-768x1024@2x-landscape.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 744px) and (device-height: 1133px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/static/images/launch/ipad-744x1133@2x-portrait.png" />
+        <link rel="apple-touch-startup-image" media="screen and (device-width: 744px) and (device-height: 1133px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)" href="/static/images/launch/ipad-744x1133@2x-landscape.png" />
+
+        <style>
+            /* The launch screen (#949), painted before any script: Universe ink and the wordmark, laid out exactly like
+               the loader (LoaderScene.svelte: the 40px logo, a 16px gap, the 12px bar, centred as one column), so the
+               loader takes over with nothing moving. Above the game's black canvas, under the loader (z-50); the app
+               removes it once the game or another first screen is up (BootSplash.ts). */
+            #boot-splash {
+                position: fixed;
+                inset: 0;
+                z-index: 40;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                background-color: #14121e;
+                transition: opacity 300ms ease;
+            }
+            #boot-splash img {
+                display: block;
+                height: 40px;
+                width: auto;
+                margin-bottom: 16px;
+            }
+            /* Where the loader's bar will be: a thin line that only starts moving when the wait passes a second. */
+            #boot-splash .boot-splash-line {
+                position: relative;
+                width: 120px;
+                height: 4px;
+                margin: 4px 0;
+                border-radius: 2px;
+                overflow: hidden;
+                opacity: 0;
+                animation: boot-splash-show 400ms ease 1s forwards;
+            }
+            #boot-splash .boot-splash-line::after {
+                content: "";
+                position: absolute;
+                top: 0;
+                left: -40%;
+                width: 40%;
+                height: 100%;
+                border-radius: 2px;
+                background-color: #4056f6;
+                animation: boot-splash-slide 1.1s ease-in-out infinite;
+            }
+            @keyframes boot-splash-show {
+                to {
+                    opacity: 1;
+                }
+            }
+            @keyframes boot-splash-slide {
+                to {
+                    left: 100%;
+                }
+            }
+            @media (prefers-reduced-motion: reduce) {
+                #boot-splash .boot-splash-line {
+                    display: none;
+                }
+            }
+        </style>
         <style>
             /*hide cowebsite container before scss is loaded*/
             #cowebsite,
@@ -162,7 +273,11 @@
         {{/googleDrivePickerClientId}}
 
     </head>
-    <body id="body" style="margin: 0;background-color:hsl(var(--contrast, 0 0% 0%));" class="text-white">
+    <body id="body" style="margin: 0;background-color:hsl(var(--contrast, 250 25% 9%));" class="text-white">
+        <div id="boot-splash" aria-hidden="true">
+            <img alt="" width="197" height="40" src="data:image/webp;base64,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" />
+            <div class="boot-splash-line"></div>
+        </div>
         <input type="hidden" id="authToken" value="{{ authToken }}" name="authToken">
         <input type="hidden" id="matrixLoginToken" value="{{ matrixLoginToken }}" name="matrixLoginToken">
         <div id="app"></div>
