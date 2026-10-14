@@ -2326,6 +2326,8 @@ export class GameScene extends DirtyScene {
                             if (keptAlready) return;
                             if (picture && !get(errorScreenStore)) {
                                 softReconnect.start(picture, () => showReconnectingScreen(logo));
+                                // The chat stays open: it reaches this scene until the next one is created.
+                                gameManager.keepReplacedGameScene(this);
                             } else {
                                 showReconnectingScreen(logo);
                             }

@@ -440,6 +440,8 @@ describe("ProximityChatRoom sessions", () => {
     });
 
     it("marks a message sent while it gets back in as not sent, and carries it to its stay on the next map", async () => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        vi.setSystemTime(new Date(Date.UTC(2026, 9, 14, 10, 0)));
         room.setDisplayName("Design room");
         await room.joinSpace("bubble", [], true);
         fake.space.usersStore.set(
@@ -453,9 +455,11 @@ describe("ProximityChatRoom sessions", () => {
             (Array.from(get(target.messages)) as ProximityChatMessage[]).map((message) =>
                 message.notSent ? `notSent:${get(message.content).body}` : message.session?.kind ?? "message"
             );
+        vi.setSystemTime(new Date(Date.UTC(2026, 9, 14, 10, 1)));
         room.stashHistoryForNextScene();
 
         // The chat stays open while the game gets back in: nobody would receive a message sent now.
+        vi.setSystemTime(new Date(Date.UTC(2026, 9, 14, 10, 2)));
         expect(room.isJoiningSpace).toBe(true);
         room.addNotSentMessage("before the next map", [], new Date());
         const next = nextMapRoom();
