@@ -47,7 +47,8 @@ export class GameManager {
     private currentGameSceneName: string | null = null;
     /**
      * The scene that lost its connection, while the room is kept on screen (#958): the chat stays open over it, and
-     * until the next scene is created it is the one the chat reaches (as the components it already shows do).
+     * whenever no scene is there (until the next one is created, again if it drops too) it is the one the chat reaches,
+     * as the components it already shows do.
      */
     private replacedGameScene: GameScene | undefined;
     // Note: this scenePlugin is the scenePlugin of the EntryScene. We should always provide a key in methods called on this scenePlugin.
@@ -64,6 +65,12 @@ export class GameManager {
         this.characterTextureIds = localUserStore.getCharacterTextures();
         this.companionTextureId = localUserStore.getCompanionTextureId();
         this.chatVisibilitySubscription = initializeChatVisibilitySubscription();
+        // Back in, or a screen took over: nothing on screen holds the scene that lost its connection any more.
+        // For the page's whole life, as this one is.
+        // eslint-disable-next-line svelte/no-ignored-unsubscribe
+        softReconnect.subscribe((state) => {
+            if (!state?.picture) this.replacedGameScene = undefined;
+        });
     }
 
     public async init(scenePlugin: Phaser.Scenes.ScenePlugin): Promise<string> {
@@ -191,7 +198,6 @@ export class GameManager {
 
     public gameSceneIsCreated(scene: GameScene) {
         this.currentGameSceneName = scene.scene.key;
-        this.replacedGameScene = undefined;
         // The page does not reload between maps: what is saved from here on belongs to this map's room.
         connectionManager.setCurrentRoom(scene.room);
         menuIconVisiblilityStore.set(true);
@@ -288,7 +294,7 @@ export class GameManager {
     public getCurrentGameScene(): GameScene {
         const gameScene = this.tryGetCurrentGameScene();
         if (gameScene) return gameScene;
-        if (this.replacedGameScene && softReconnect.isWaiting()) return this.replacedGameScene;
+        if (this.replacedGameScene) return this.replacedGameScene;
         throw new GameSceneNotFoundError("Not the Game Scene");
     }
 

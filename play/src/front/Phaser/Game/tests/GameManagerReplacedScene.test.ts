@@ -53,6 +53,10 @@ describe("the scene the chat reaches while the game gets back in", () => {
         internals.scenePlugin = { get: () => next };
         gameManager.gameSceneIsCreated(next);
         expect(gameManager.getCurrentGameScene()).toBe(next);
+
+        // Dropped again before it is back in: the next scene goes too, and the chat still reaches the first one.
+        internals.scenePlugin = { get: () => undefined };
+        expect(gameManager.getCurrentGameScene()).toBe(replaced);
     });
 
     it("is not kept once the room is no longer on screen", () => {
