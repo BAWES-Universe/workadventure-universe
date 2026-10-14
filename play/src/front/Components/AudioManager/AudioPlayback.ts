@@ -41,10 +41,17 @@ function createBrowserContext(): AudioContext | undefined {
     return Context ? new Context() : undefined;
 }
 
-/** True when the host sends CORS headers (what Web Audio needs). Stops at the headers; the body is not downloaded. */
-async function hostAllowsCors(url: string): Promise<boolean> {
+/** How long a host may take to answer the CORS check before the player stops waiting and treats it as unknown. */
+const CORS_CHECK_TIMEOUT_MS = 8000;
+
+/**
+ * True when the host sends CORS headers (what Web Audio needs). Stops at the headers; the body is not downloaded.
+ * `signal` lets the caller cancel a request that never answers.
+ */
+async function hostAllowsCors(url: string, signal?: AbortSignal): Promise<boolean> {
     if (typeof fetch !== "function") return true;
     const controller = new AbortController();
+    signal?.addEventListener("abort", () => controller.abort(), { once: true });
     try {
         await fetch(url, { mode: "cors", credentials: "omit", signal: controller.signal });
         return true;
@@ -102,7 +109,7 @@ export class AudioPlayback {
         private readonly duration = 1600,
         private readonly audioContainer?: HTMLElement,
         private readonly createContext: () => AudioContext | undefined = createBrowserContext,
-        private readonly checkCors: (url: string) => Promise<boolean> = hostAllowsCors
+        private readonly checkCors: (url: string, signal: AbortSignal) => Promise<boolean> = hostAllowsCors
     ) {}
 
     setSource(source: AudioSource | undefined): void {
@@ -318,14 +325,26 @@ export class AudioPlayback {
         if (this.originCors.get(origin) === true || this.probingOrigins.has(origin)) return;
         if (origin === window.location.origin) return;
         this.probingOrigins.add(origin);
-        void this.checkCors(url).then((allowed) => {
+        const controller = new AbortController();
+        let settled = false;
+        const settle = (allowed: boolean | undefined): void => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
             this.probingOrigins.delete(origin);
-            if (this.destroyed) return;
+            if (this.destroyed || allowed === undefined) return;
             this.originCors.set(origin, allowed);
             const slot = this.current;
             if (allowed || !slot?.graph || slot.confirmed || originOf(slot.source.url) !== origin) return;
             this.swapToPlain(slot);
-        });
+        };
+        // A host that never answers must not stay marked as being asked: after the limit the answer is unknown,
+        // nothing is remembered for the host, and the next track asks again.
+        const timer = setTimeout(() => {
+            controller.abort();
+            settle(undefined);
+        }, CORS_CHECK_TIMEOUT_MS);
+        void this.checkCors(url, controller.signal).then(settle);
     }
 
     private fail(slot: Slot, state: "not_allowed" | "error"): void {
