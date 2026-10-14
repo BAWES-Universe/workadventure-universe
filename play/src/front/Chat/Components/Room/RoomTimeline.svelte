@@ -101,6 +101,7 @@
     // Until when a smooth scroll to the bottom is still sliding (a smooth scroll lasts about this long).
     const SMOOTH_SCROLL_MS = 500;
     let smoothScrollUntil = 0;
+    let newestMessageId: string | undefined;
     let childListObserver: MutationObserver | undefined;
     let onScrollTop = false;
 
@@ -268,7 +269,11 @@
         room.setTimelineAsRead();
         // While the list is hidden for its first fill, it is scrolled once, when it is done.
         if (firstFillPending) return;
-        if (autoScroll) {
+        // A message you just sent always shows, even if you had scrolled up (a GIF alone has no text to report it).
+        const newest = $messages[$messages.length - 1];
+        const isNewMessage = newest !== undefined && newestMessageId !== undefined && newest.id !== newestMessageId;
+        newestMessageId = newest?.id;
+        if (autoScroll || (isNewMessage && newest?.isMyMessage === true)) {
             scrollToMessageListBottom();
         } else if (onScrollTop) {
             const oldFirstListItem = messageListRef.querySelector<HTMLLIElement>('li[data-first-li="true"]');
@@ -285,6 +290,8 @@
         // Safety check for undefined reference
         // After disposing the component, the reference can be undefined
         if (messageListRef == undefined) return;
+        // Going to the newest message (your own message sent, the chat opened): stay there while it grows, too.
+        pinnedToBottom = true;
         if (smooth) smoothScrollUntil = performance.now() + SMOOTH_SCROLL_MS;
         messageListRef.scroll({ top: messageListRef.scrollHeight, behavior: smooth ? "smooth" : "auto" });
     }
@@ -395,7 +402,7 @@
     function onUpdateMessageBody(event: CustomEvent) {
         if (firstFillPending) return;
         if (
-            autoScroll ||
+            pinnedToBottom ||
             (event.detail != undefined &&
                 $messages.length > 0 &&
                 event.detail.id === $messages[$messages.length - 1].id &&
