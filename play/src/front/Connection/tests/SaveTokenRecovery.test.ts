@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 
 const mocks = vi.hoisted(() => {
     // The game reads its settings from window.env when it is loaded.
@@ -28,13 +28,10 @@ vi.mock("../../WebRtc/HtmlUtils", () => ({ HtmlUtils: {} }));
 import { connectionManager } from "../ConnectionManager";
 import { localUserStore } from "../LocalUserStore";
 
-/** A signed-in player's game token as the store reads it: three parts, the middle one a JSON payload. */
-function gameToken(label: string): string {
-    return `header.${window.btoa(JSON.stringify({ label, accessToken: "access" }))}.signature`;
+/** A game token as the store reads it: three parts, the middle one a JSON payload. Signed in when it has an access token. */
+function gameToken(label: string, signedIn: boolean): string {
+    return `header.${window.btoa(JSON.stringify(signedIn ? { label, accessToken: "access" } : { label }))}.signature`;
 }
-
-const OLD_TOKEN = gameToken("old");
-const FRESH_TOKEN = gameToken("fresh");
 
 /** What axios throws for a response with a status. */
 function httpError(status: number) {
@@ -45,54 +42,74 @@ function httpError(status: number) {
 }
 
 // The name save answers true or false; the WOKA and the companion saves say what happened (saved, refused, failed).
-const SAVES: [string, () => Promise<unknown>, unknown, unknown][] = [
-    ["saveName", () => connectionManager.saveName("Ali"), true, false],
-    ["saveTextures", () => connectionManager.saveTextures(["body"]), "saved", "failed"],
-    ["saveCompanionTexture", () => connectionManager.saveCompanionTexture("dog"), "saved", "failed"],
+const SAVES: [string, () => Promise<unknown>, unknown][] = [
+    ["saveName", () => connectionManager.saveName("Ali"), false],
+    ["saveTextures", () => connectionManager.saveTextures(["body"]), "failed"],
+    ["saveCompanionTexture", () => connectionManager.saveCompanionTexture("dog"), "failed"],
 ];
 
+const SIGN_IN = new URL("http://pusher.example.com/login-screen?playUri=room");
+
+// A 401 from a save means the game token was refused (missing, no longer valid, or past its 30 days), and /me refuses
+// that token too, so there is nothing to renew: a signed-in player signs in again. #945
 describe("a save that gets a 401", () => {
+    const assign = vi.fn();
+    let signIn: MockInstance<typeof connectionManager.loadOpenIDScreen>;
+
     beforeEach(() => {
         vi.clearAllMocks();
-        (connectionManager as unknown as { authToken: string }).authToken = OLD_TOKEN;
-        localUserStore.setAuthToken(OLD_TOKEN);
+        // A save that never posts (a guest's name) leaves its answer queued: drop it
+        mocks.post.mockReset();
+        mocks.get.mockReset();
+        Object.defineProperty(window, "location", { value: { ...window.location, assign }, configurable: true });
+        signIn = vi.spyOn(connectionManager, "loadOpenIDScreen").mockReturnValue(SIGN_IN);
         vi.spyOn(console, "warn").mockImplementation(() => undefined);
         vi.spyOn(console, "error").mockImplementation(() => undefined);
     });
 
-    // The recovery asks /me for a new token with only an Authorization header, but /me needs the token as a query
-    // parameter, so it answers 400 (and with the parameter it would check the very same game token). #833
-    it.each(SAVES)("%s: gives up when /me refuses, and keeps the token it had", async (_name, save, _ok, failed) => {
+    function as(signedIn: boolean) {
+        const token = gameToken("old", signedIn);
+        (connectionManager as unknown as { authToken: string }).authToken = token;
+        localUserStore.setAuthToken(token);
+    }
+
+    it.each(SAVES)("%s: sends a signed-in player to sign in again, back to this room", async (_name, save, failed) => {
+        as(true);
         mocks.post.mockRejectedValueOnce(httpError(401));
-        mocks.get.mockRejectedValueOnce(httpError(400));
 
         expect(await save()).toBe(failed);
 
-        expect(mocks.get).toHaveBeenCalledTimes(1);
+        expect(signIn).toHaveBeenCalledWith(false);
+        expect(assign).toHaveBeenCalledWith(SIGN_IN.toString());
+        // Nothing to renew: /me is not asked and the save is not tried again
+        expect(mocks.get).not.toHaveBeenCalled();
         expect(mocks.post).toHaveBeenCalledTimes(1);
-        expect((connectionManager as unknown as { authToken: string }).authToken).toBe(OLD_TOKEN);
-        expect(localUserStore.getAuthToken()).toBe(OLD_TOKEN);
     });
 
-    // Not reachable today (above); if /me ever does hand out a token, it is kept for the next room change as well.
-    it.each(SAVES)("%s: a token it recovers is stored too, not only kept in memory", async (_name, save, ok) => {
-        mocks.post.mockRejectedValueOnce(httpError(401)).mockResolvedValueOnce({});
-        mocks.get.mockResolvedValueOnce({
-            data: {
-                status: "ok",
-                authToken: FRESH_TOKEN,
-                userUuid: "uuid-ali",
-                isCharacterTexturesValid: true,
-                isCompanionTextureValid: true,
-            },
-        });
+    it.each(SAVES)("%s: a guest's save just did not happen, nothing else", async (name, save, failed) => {
+        as(false);
+        mocks.post.mockRejectedValueOnce(httpError(401));
 
-        expect(await save()).toBe(ok);
+        // A guest's name is not saved on the server at all
+        if (name === "saveName") {
+            expect(await save()).toBe(false);
+            expect(mocks.post).not.toHaveBeenCalled();
+            return;
+        }
+        expect(await save()).toBe(failed);
 
-        expect(localUserStore.getAuthToken()).toBe(FRESH_TOKEN);
-        expect((connectionManager as unknown as { authToken: string }).authToken).toBe(FRESH_TOKEN);
-        expect(mocks.post).toHaveBeenLastCalledWith(expect.any(String), expect.anything(), {
-            headers: { Authorization: FRESH_TOKEN },
-        });
+        expect(signIn).not.toHaveBeenCalled();
+        expect(assign).not.toHaveBeenCalled();
+        expect(mocks.get).not.toHaveBeenCalled();
+    });
+
+    it.each(SAVES)("%s: any other error does not send anyone to sign in", async (_name, save, failed) => {
+        as(true);
+        mocks.post.mockRejectedValueOnce(httpError(502));
+
+        expect(await save()).toBe(failed);
+
+        expect(signIn).not.toHaveBeenCalled();
+        expect(assign).not.toHaveBeenCalled();
     });
 });
