@@ -873,14 +873,15 @@ class ConnectionManager {
     }
 
     /**
-     * The game token a save recovered with after a 401. Keep it for the next room change too: joining a room prefers the
-     * stored token (#802), so one kept only in memory would leave a stale one behind.
-     * Today this is never reached: `/me` needs the token as a `token` query parameter and, like the save endpoints,
-     * checks the same game token, so the recovery fails before it gets here (#833).
+     * A save got a 401: the pusher only answers that when the game token is missing, no longer valid or ran out (it lasts
+     * 30 days), and /me refuses such a token too, so there is nothing to renew. A signed-in player goes to sign in again
+     * and comes back to this room, as on entering a room with that token; a guest's save just did not happen (#945).
      */
-    private adoptRefreshedAuthToken(authToken: string): void {
-        this.authToken = authToken;
-        localUserStore.setAuthToken(authToken);
+    private signInAgainAfterRefusedToken(what: string): void {
+        console.warn(`${what}: the game token was refused, sending a signed-in player to sign in again`);
+        if (!localUserStore.isLogged()) return;
+        const redirect = this.loadOpenIDScreen(false);
+        if (redirect) window.location.assign(redirect.toString());
     }
 
     async saveName(name: string): Promise<boolean> {
@@ -907,35 +908,8 @@ class ConnectionManager {
                 return true;
             } catch (err) {
                 if (isAxiosError(err) && err.response?.status === 401) {
-                    console.warn("saveName: token expired, refreshing via /me");
-                    try {
-                        const meRes = await axiosToPusher.get("me", {
-                            headers: { Authorization: this.authToken ?? "" },
-                        });
-                        const { MeResponse } = await import("@workadventure/messages");
-                        const parsed = MeResponse.parse(meRes.data);
-                        if (parsed.status !== "ok" || !("authToken" in parsed)) {
-                            console.error("saveTextures: /me returned non-ok status");
-                            return false;
-                        }
-                        this.adoptRefreshedAuthToken((parsed as { authToken: string }).authToken);
-                        await axiosToPusher.post(
-                            "save-name",
-                            {
-                                name,
-                                roomUrl: this.currentRoom?.key,
-                            },
-                            {
-                                headers: {
-                                    Authorization: this.authToken,
-                                },
-                            }
-                        );
-                        return true;
-                    } catch (refreshErr) {
-                        console.error("saveName: token refresh failed", refreshErr);
-                        return false;
-                    }
+                    this.signInAgainAfterRefusedToken("saveName");
+                    return false;
                 }
                 console.error("saveName: HTTP POST failed", err);
                 return false;
@@ -969,7 +943,7 @@ class ConnectionManager {
         return await this.postAccountSave("saveCompanionTexture", "save-companion-texture", { texture });
     }
 
-    /** One save to the pusher, with the one retry after a 401 that every save has. */
+    /** One save to the pusher. A 401 sends a signed-in player to sign in again (see signInAgainAfterRefusedToken). */
     private async postAccountSave(what: string, path: string, payload: object): Promise<SaveResult> {
         if (!hasCapability("api/save-textures") || this.authToken === undefined) {
             // A guest: no account to save to. The device keeps it, as before.
@@ -981,36 +955,17 @@ class ConnectionManager {
             );
             return "saved";
         }
-        const post = () =>
-            axiosToPusher.post(
+        try {
+            await axiosToPusher.post(
                 path,
                 { ...payload, roomUrl: this.currentRoom?.key },
                 { headers: { Authorization: this.authToken } }
             );
-        try {
-            await post();
             return "saved";
         } catch (err) {
             if (isAxiosError(err) && err.response?.status === 401) {
-                console.warn(`${what}: token expired, refreshing via /me`);
-                try {
-                    const meRes = await axiosToPusher.get("me", {
-                        headers: { Authorization: this.authToken ?? "" },
-                    });
-                    const { MeResponse } = await import("@workadventure/messages");
-                    const parsed = MeResponse.parse(meRes.data);
-                    if (parsed.status !== "ok" || !("authToken" in parsed)) {
-                        console.error(`${what}: /me returned non-ok status`);
-                        return "failed";
-                    }
-                    this.adoptRefreshedAuthToken((parsed as { authToken: string }).authToken);
-                    // Retry with fresh token
-                    await post();
-                    return "saved";
-                } catch (refreshErr) {
-                    console.error(`${what}: token refresh failed`, refreshErr);
-                    return saveFailure(refreshErr);
-                }
+                this.signInAgainAfterRefusedToken(what);
+                return "failed";
             }
             console.error(`${what}: HTTP POST failed`, err);
             return saveFailure(err);
