@@ -1070,7 +1070,7 @@ class AnalyticsClient {
             })
             .catch((e) => console.error(e));
     }
-    /** The one-time "Get the Universe app" card was shown. */
+    /** The "Get the Universe app" card was shown. */
     installCardShown(): void {
         this.posthogPromise
             ?.then((posthog) => {
@@ -1078,7 +1078,7 @@ class AnalyticsClient {
             })
             .catch((e) => console.error(e));
     }
-    /** The ✕ of the install card: it never shows again. */
+    /** The ✕ of the install card: it comes back later. */
     installCardDismissed(): void {
         this.posthogPromise
             ?.then((posthog) => {

@@ -215,6 +215,7 @@ import { selectedRoomStore } from "../../Chat/Stores/SelectRoomStore";
 import { raceTimeout } from "../../Utils/PromiseUtils";
 import { ConversationBubble } from "../Entity/ConversationBubble";
 import { DarkenOutsideAreaEffect } from "../Components/DarkenOutsideArea/DarkenOutsideAreaEffect";
+import { installApp } from "../../Install/InstallWiring";
 import { releaseSpawnSilence, seedSpawnSilence } from "./SpawnSilence";
 import { GameMapFrontWrapper } from "./GameMap/GameMapFrontWrapper";
 import { gameManager } from "./GameManager";
@@ -2374,6 +2375,12 @@ export class GameScene extends DirtyScene {
                     this._room.id,
                     this._room.group ?? undefined
                 );
+                // Apple browsers cannot see the app: the account says it is installed. Inside the app, tell the account.
+                const roomConnection = this.connection;
+                installApp.noteRoomJoined(playerVariables, {
+                    isLogged: () => localUserStore.isLogged(),
+                    setVariable: (event) => roomConnection.emitPlayerSetVariable(event),
+                });
 
                 const broadcastService = new BroadcastService(this._spaceRegistry);
                 this._broadcastService = broadcastService;

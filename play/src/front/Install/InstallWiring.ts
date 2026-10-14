@@ -53,8 +53,9 @@ export const installApp = new InstallApp({
     env: currentInstallEnvironment(),
     quiet: quietStore,
     storage: {
-        isCardSeen: () => localUserStore.isInstallCardSeen(),
-        markCardSeen: () => localUserStore.markInstallCardSeen(),
+        readCardRecord: () => localUserStore.readInstallCard(),
+        writeCardRecord: (record) => localUserStore.writeInstallCard(record),
+        clearCardRecord: () => localUserStore.clearInstallCard(),
         isInstallReported: () => localUserStore.isInstallReported(),
         markInstallReported: () => localUserStore.markInstallReported(),
         clearInstallReported: () => localUserStore.clearInstallReported(),
@@ -71,6 +72,9 @@ export const installApp = new InstallApp({
  * listening for it later.
  */
 export function startInstallApp(): void {
+    // The test link, "?installCard=show". Read here, before the game starts: the game changes the address later, when
+    // it moves to a room.
+    if (new URLSearchParams(window.location.search).get("installCard") === "show") installApp.showForTestLink();
     // Never stopped: it listens as long as the game is open.
     // Only Chrome and Edge can say which of our apps are installed.
     const lookup = (navigator as Navigator & { getInstalledRelatedApps?: () => Promise<readonly unknown[]> })
