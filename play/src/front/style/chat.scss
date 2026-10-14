@@ -253,9 +253,10 @@
     // everything beside it counts). Phones and tablets keep it edge to edge. Its edge ring follows the corners; it
     // casts no shadow, like everything else that stays on screen.
     @media (min-width: 1024px) {
-        top: 16px;
+        // The installed app on an iPad runs under its see-through status bar (#969); env() is 0 elsewhere.
+        top: calc(16px + env(safe-area-inset-top, 0px));
         inset-inline-start: 16px;
-        height: calc(100dvh - 32px);
+        height: calc(100dvh - 32px - env(safe-area-inset-top, 0px));
         max-width: calc(100vw - 32px) !important;
         border-radius: 24px;
     }
@@ -264,8 +265,15 @@
 // size (16px padding around a 64px pill). The 16px gap at the bottom stays.
 @media (min-width: 1024px) {
     .u-bar-in-view .chatWindow {
-        top: 96px;
-        height: calc(100dvh - 112px);
+        top: calc(96px + env(safe-area-inset-top, 0px));
+        height: calc(100dvh - 112px - env(safe-area-inset-top, 0px));
+    }
+}
+// Below the floating layout the side chat (not the phone's sheet) meets the top of the screen: under the installed
+// app's see-through status bar on an iPad (#969) its colour runs to the edge and its content starts below the inset.
+@media (max-width: 1023.98px) {
+    #chat.chatWindow:not(.chat-sheet) {
+        padding-top: env(safe-area-inset-top, 0px);
     }
 }
 

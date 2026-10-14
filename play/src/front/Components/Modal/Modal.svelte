@@ -255,8 +255,9 @@
         @media (min-width: 1024px) {
             &.right:not(.fullscreened),
             &.left:not(.fullscreened) {
-                top: 16px;
-                height: calc(100dvh - 32px);
+                // The installed app on an iPad runs under its see-through status bar (#969); env() is 0 elsewhere.
+                top: calc(16px + env(safe-area-inset-top, 0px));
+                height: calc(100dvh - 32px - env(safe-area-inset-top, 0px));
 
                 .modal-panel {
                     border-radius: 24px;
@@ -277,8 +278,8 @@
             // 64px pill), and the window keeps the 16px gap at the bottom. Full screen still takes the whole screen.
             :global(.u-bar-in-view) &.right:not(.fullscreened),
             :global(.u-bar-in-view) &.left:not(.fullscreened) {
-                top: 96px;
-                height: calc(100dvh - 112px);
+                top: calc(96px + env(safe-area-inset-top, 0px));
+                height: calc(100dvh - 112px - env(safe-area-inset-top, 0px));
             }
             &.left:not(.fullscreened) {
                 left: 16px;

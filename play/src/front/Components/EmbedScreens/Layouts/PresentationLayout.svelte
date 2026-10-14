@@ -90,7 +90,7 @@
 
 {#if $proximityMeetingStore === true && !$inExternalServiceStore}
     <div
-        class="presentation-layout flex pointer-events-none h-full w-full absolute mobile:mt-[calc(12px+env(safe-area-inset-top))]"
+        class="presentation-layout flex pointer-events-none h-full mobile:h-[calc(100%-env(safe-area-inset-top))] w-full absolute mobile:mt-[calc(12px+env(safe-area-inset-top))]"
         class:flex-col={!inPictureInPicture || $highlightedEmbedScreen == undefined}
         class:flex-row-reverse={inPictureInPicture && $highlightedEmbedScreen != undefined}
         style={layoutStyle}
