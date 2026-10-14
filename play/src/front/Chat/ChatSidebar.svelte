@@ -368,7 +368,9 @@
     >
         {#if $chatCarriesItsCloseStore && isInSpecificDiscussion}
             <!-- The same plain close as the one beside the Chats and People tabs, in the same place. -->
-            <div class="close-window absolute end-2 top-3 z-50">
+            <!-- Below 1024px the side chat starts its content under the installed app's see-through status bar (chat.scss,
+                 #969), so this close does too; the floating chat from 1024px is already held off the top. -->
+            <div class="close-window absolute end-2 top-[calc(12px+env(safe-area-inset-top))] lg:top-3 z-50">
                 <button
                     class="u-close"
                     data-testid="closeChatButton"
