@@ -84,4 +84,13 @@ describe("listed area descriptions", () => {
         const { mapData } = loadMap([area("Reading corner", `  ${"a".repeat(501)}  `)]);
         expect((await mapData.getAreas(roomUrl))[0].description).toBe("a".repeat(500));
     });
+    it("keeps what areas are for to a total length and skips areas without text", () => {
+        const format = (AIService as never as { formatAreaPurposes: (areas: unknown[]) => string }).formatAreaPurposes;
+        expect(format([{ name: "Lobby" }, undefined, { name: "Quiet", description: "no calls" }])).toBe('Quiet: "no calls"');
+        const many = Array.from({ length: 10 }, (_, i) => ({ name: `Area ${i}`, description: "x".repeat(400) }));
+        const text = format(many);
+        expect(text.length).toBeLessThanOrEqual(1500 + many.length * 2);
+        expect(text).toContain("Area 0");
+        expect(text).not.toContain("Area 9");
+    });
 });
