@@ -27,7 +27,6 @@
     import { FileListener } from "../Phaser/FileUpload/FileListener";
     import { isStructuredCloneSupported } from "../Utils/BrowserCompatibility";
     import { bootSplashView, watchLoadingScreen } from "../Utils/BootSplash";
-    import { installFullViewportHeight } from "../Install/InstallApp";
     import { loadingProgressStore } from "../Stores/LoaderStore";
     import { loginSceneVisibleStore } from "../Stores/LoginSceneStore";
     import { selectCharacterSceneVisibleStore } from "../Stores/SelectCharacterStore";
@@ -78,12 +77,6 @@
         [gameSceneIsLoadedStore, softReconnect],
         ([loaded, reconnect]) => loaded || reconnect?.picture !== undefined
     );
-    // The installed iPhone app fills the whole screen, under the see-through status bar too (#1016). Only where
-    // svelte.ts set the iOS `touch-screen` layout.
-    const stopFullViewportHeight = document.documentElement.classList.contains("touch-screen")
-        ? installFullViewportHeight()
-        : undefined;
-
     const loadingScreen = bootSplashView();
     const stopWatchingLoadingScreen = watchLoadingScreen(
         { gameLoaded: gameShownStore, otherScreenShown: otherScreenShownStore, progress: loadingProgressStore },
@@ -302,7 +295,6 @@
 
     onDestroy(() => {
         stopWatchingLoadingScreen();
-        stopFullViewportHeight?.();
         canvasSizeUnsubscriber?.();
         if (canvas && handleCanvasClick) {
             canvas.removeEventListener("click", handleCanvasClick);
@@ -350,22 +342,6 @@
 {/if}
 
 <style lang="scss">
-    /* The installed iPhone app under its see-through status bar (#1016): iOS gives the page a viewport short by the
-       status bar but draws it from the top edge, so the page takes the whole screen's height (installFullViewportHeight
-       in Install/InstallApp.ts). Layout containment makes the body the box `position: fixed` measures from, so sheets,
-       popups and the bar pinned to the bottom reach the real bottom edge too. Only set while iOS sizes the page short. */
-    :global(html.touch-screen.u-full-viewport),
-    :global(html.touch-screen.u-full-viewport body) {
-        bottom: auto;
-        height: var(--u-app-height);
-    }
-    :global(html.touch-screen.u-full-viewport body) {
-        contain: layout;
-    }
-    :global(html.u-full-viewport #main-container) {
-        height: var(--u-app-height);
-    }
-
     /* alpha(t) = 0.39 * (1 - t)^1.3, in five stops: half strength, so the game shows through and the clock stays
        readable on wood and grass (about 3:1), the fade leaves no edge. */
     .status-bar-shade {
