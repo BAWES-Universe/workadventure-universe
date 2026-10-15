@@ -71,7 +71,8 @@ class NotificationManager {
         if (chatRoomId === "proximity") {
             this.proximityMeetingStore.set(true);
             // The live scene only: the one kept on screen while getting back in has handed its chat over.
-            room = gameManager.tryGetCurrentGameScene()?.proximityChatRoom;
+            const liveScene = gameManager.tryGetCurrentGameScene();
+            room = liveScene?.hasProximityChatRoom ? liveScene.proximityChatRoom : undefined;
         } else {
             const chatConnection = await gameManager.getChatConnection();
             room = chatConnection.getRoomByID(chatRoomId);

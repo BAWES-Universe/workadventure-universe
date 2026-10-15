@@ -615,12 +615,14 @@ describe("InstallApp", () => {
             expect(get(app.cardVisibleStore)).toBe(true);
         });
 
-        it("marks a logged in account once per load, from inside the app", () => {
+        it("marks each world the app enters without a mark, from inside the app", () => {
             const setVariable = vi.fn();
+            const account = { isLogged: () => true, setVariable };
             const { app } = setup({ env: env(IPHONE_SAFARI, { navigatorStandalone: true }) });
-            app.noteRoomJoined(new Map(), { isLogged: () => true, setVariable });
-            app.noteRoomJoined(new Map(), { isLogged: () => true, setVariable });
-            expect(setVariable).toHaveBeenCalledTimes(1);
+            // World A, then world B in the same load: each world keeps its own mark (#1024).
+            app.noteRoomJoined(new Map(), account);
+            app.noteRoomJoined(new Map(), account);
+            expect(setVariable).toHaveBeenCalledTimes(2);
             expect(setVariable).toHaveBeenCalledWith({
                 key: "universeAppInstalled",
                 value: true,
@@ -628,6 +630,26 @@ describe("InstallApp", () => {
                 persist: true,
                 scope: "world",
             });
+        });
+
+        it("does not mark again a world that already has the mark", () => {
+            const setVariable = vi.fn();
+            const { app } = setup({ env: env(IPHONE_SAFARI, { navigatorStandalone: true }) });
+            app.noteRoomJoined(new Map([[APP_INSTALLED_VARIABLE, true]]), { isLogged: () => true, setVariable });
+            expect(setVariable).not.toHaveBeenCalled();
+        });
+
+        it("hides the card in a browser world the app has entered, and not in one it has not", () => {
+            const account = { isLogged: () => true, setVariable: vi.fn() };
+            const markedWorld = setup();
+            markedWorld.app.noteRoomJoined(new Map([[APP_INSTALLED_VARIABLE, true]]), account);
+            markedWorld.app.noteConversationEnded();
+            expect(get(markedWorld.app.cardVisibleStore)).toBe(false);
+            // Known gap until the mark is kept per account (#1024): a world only ever opened in the browser.
+            const unmarkedWorld = setup();
+            unmarkedWorld.app.noteRoomJoined(new Map(), account);
+            unmarkedWorld.app.noteConversationEnded();
+            expect(get(unmarkedWorld.app.cardVisibleStore)).toBe(true);
         });
 
         it("marks nothing for a guest, nor from a browser tab", () => {

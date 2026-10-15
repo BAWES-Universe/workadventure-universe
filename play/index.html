@@ -14,11 +14,9 @@
         <script>
             // The installed app on an iPhone or iPad (opened from the Home Screen: navigator.standalone) runs under the
             // home bar, and iOS reports that space only with viewport-fit=cover. Held upright, turn it on so the bar and
-            // the sheets at the bottom can keep clear of it (#941). Since #969 the status bar is see-through
-            // (apple-mobile-web-app-status-bar-style below), so the same flag also gives the top inset the buttons keep
-            // clear of. Held sideways, a phone has no status bar and iOS already keeps the page off the notch without
-            // it, so the viewport stays as in the browser. An iPad keeps its status bar sideways, so there the fit
-            // stays on in both orientations. Browsers never change.
+            // the sheets at the bottom can keep clear of it (#941). Held sideways, a phone has no status bar and
+            // iOS already keeps the page off the notch without it, so the viewport stays as in the browser. An iPad
+            // keeps its status bar sideways, so there the fit stays on in both orientations. Browsers never change.
             // The zoom guard (ViewportGuard.ts) rewrites the tag to undo a page zoom, from the content it read when it
             // started: whatever writes it, the fit is put back to match how the phone is held, the rest kept as is.
             (function () {
@@ -81,9 +79,10 @@
              same spot as #boot-splash below. iOS only reads the images when the page says it is a web app.
              Built by scripts/launch-images/generate.py. -->
         <meta name="apple-mobile-web-app-capable" content="yes" />
-        <!-- See-through status bar (#969): the game runs behind the clock, the soft shade in App.svelte keeps the white
-             text readable. Safari tabs ignore it. -->
-        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+        <!-- No apple-mobile-web-app-status-bar-style: the status bar stays opaque, so the page starts under it (#1041).
+             A see-through bar (black-translucent, #969) makes iOS 26 draw the page from the top edge but size it one
+             status bar short, leaving a strip at the bottom the page cannot paint (WebKit bug 301108). iOS reads this
+             only when the app is added, so an app added with the see-through bar keeps it until it is re-added. -->
         <meta name="mobile-web-app-capable" content="yes" />
         <link rel="apple-touch-startup-image" media="screen and (device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/static/images/launch/iphone-440x956@3x-portrait.png" />
         <link rel="apple-touch-startup-image" media="screen and (device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)" href="/static/images/launch/iphone-440x956@3x-landscape.png" />
