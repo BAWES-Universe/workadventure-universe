@@ -8,7 +8,6 @@ import { e2eHooks } from "./front/Utils/E2EHooks";
 import { installViewportGuard, isTouchScreen } from "./front/Utils/ViewportGuard";
 import { isIOS } from "./front/WebRtc/DeviceUtils";
 import { installViewportResync } from "./front/Utils/ViewportResync";
-import { installFullViewportHeight } from "./front/Utils/FullViewportHeight";
 import { analyticsClient } from "./front/Administration/AnalyticsClient";
 import { startStoreFreezeWatchdog } from "./front/Utils/StoreFreezeWatchdog";
 import { browserWatchdogStorage } from "./front/Connection/ReconnectWatchdog";
@@ -27,8 +26,6 @@ if (isTouchScreen(window)) {
     // Only iOS pans or zooms the page this way (#486, #487), so desktop and Android keep their original layout.
     if (isIOS()) {
         document.documentElement.classList.add("touch-screen");
-        // The installed iPhone app fills the whole screen, under the see-through status bar too (#1016).
-        installFullViewportHeight();
         installViewportGuard(undefined, {
             onZoomReset: (scale, reason) => analyticsClient.pageZoomReset({ scale, reason }),
             onShiftReset: (properties) => analyticsClient.pageShiftReset(properties),

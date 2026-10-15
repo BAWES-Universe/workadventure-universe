@@ -1,6 +1,6 @@
 import { derived, get, readable, writable } from "svelte/store";
 import type { CoWebsite } from "../WebRtc/CoWebsite/CoWebsite";
-import { fullViewportHeight } from "../Utils/FullViewportHeight";
+import { fullViewportHeight } from "../Install/InstallApp";
 
 export function createCoWebsiteStore() {
     const { subscribe, set, update } = writable<Array<CoWebsite>>([]);
