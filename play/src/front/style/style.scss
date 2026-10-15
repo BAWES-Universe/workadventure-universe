@@ -41,6 +41,22 @@ html.touch-screen body {
     overscroll-behavior: none;
 }
 
+// The installed iPhone app under its see-through status bar (#1016): iOS gives the page a viewport 47pt short of the
+// screen but draws it from the top edge, so the page takes the whole screen's height (Utils/FullViewportHeight.ts).
+// Layout containment makes the body the box `position: fixed` measures from, so sheets, popups and the bar pinned to
+// the bottom reach the real bottom edge too. Only set while iOS sizes the page short.
+html.touch-screen.u-full-viewport,
+html.touch-screen.u-full-viewport body {
+    bottom: auto;
+    height: var(--u-app-height);
+}
+html.touch-screen.u-full-viewport body {
+    contain: layout;
+}
+html.u-full-viewport #main-container {
+    height: var(--u-app-height);
+}
+
 // The ring shows for the keyboard only: a click or a tap focuses a button too, and it must not ring.
 body button:focus-visible,
 body img:focus-visible,
