@@ -68,7 +68,7 @@
             if (clientY < 8) {
                 clientY = 8;
             }
-            // The height the split is drawn over: the whole screen in the installed iPhone app (#1016), less the strip.
+            // The height the split is drawn over: the browser window, less the strip.
             const height = $windowSize.height;
             if (clientY > height) {
                 clientY = height;
