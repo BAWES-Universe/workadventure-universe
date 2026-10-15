@@ -51,6 +51,7 @@ const actionbar: BaseTranslation = {
         disabled: "Your camera is off",
         activate: "Turn on camera",
         noDevices: "No camera device found",
+        defaultDevice: "Default camera",
         setBackground: "Set background",
         blurEffects: "Blur effects",
         disableBackgroundEffects: "Disable background effects",
@@ -60,6 +61,7 @@ const actionbar: BaseTranslation = {
         disabled: "Your microphone is off",
         activate: "Turn on microphone",
         noDevices: "No microphone device found",
+        defaultDevice: "Default microphone",
     },
     noiseFilter: {
         title: "Noise filter",
@@ -78,6 +80,7 @@ const actionbar: BaseTranslation = {
         disabled: "Your speaker is disabled",
         activate: "Activate your speaker",
         noDevices: "No speaker device found",
+        defaultDevice: "Default audio output",
     },
     status: {
         ONLINE: "Online",
