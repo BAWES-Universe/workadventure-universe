@@ -12,6 +12,7 @@ import { broadcastInboxStore, broadcastPanelOpenStore } from "../Stores/Broadcas
 import { isInRemoteConversation } from "../Stores/StreamableCollectionStore";
 import { InstallApp } from "./InstallApp";
 import { currentInstallEnvironment } from "./InstallPlatform";
+import { installRoomJoinedStore } from "./InstallRoomJoined";
 
 /** In a conversation or a call with someone, or live. */
 const talkingStore = derived(
@@ -53,8 +54,9 @@ export const installApp = new InstallApp({
     env: currentInstallEnvironment(),
     quiet: quietStore,
     storage: {
-        isCardSeen: () => localUserStore.isInstallCardSeen(),
-        markCardSeen: () => localUserStore.markInstallCardSeen(),
+        readCardRecord: () => localUserStore.readInstallCard(),
+        writeCardRecord: (record) => localUserStore.writeInstallCard(record),
+        clearCardRecord: () => localUserStore.clearInstallCard(),
         isInstallReported: () => localUserStore.isInstallReported(),
         markInstallReported: () => localUserStore.markInstallReported(),
         clearInstallReported: () => localUserStore.clearInstallReported(),
@@ -71,11 +73,20 @@ export const installApp = new InstallApp({
  * listening for it later.
  */
 export function startInstallApp(): void {
+    // The test link, "?installCard=show". Read here, before the game starts: the game changes the address later, when
+    // it moves to a room.
+    if (new URLSearchParams(window.location.search).get("installCard") === "show") installApp.showForTestLink();
     // Never stopped: it listens as long as the game is open.
     // Only Chrome and Edge can say which of our apps are installed.
     const lookup = (navigator as Navigator & { getInstalledRelatedApps?: () => Promise<readonly unknown[]> })
         .getInstalledRelatedApps;
     installApp.start(window, lookup ? () => lookup.call(navigator) : undefined);
+
+    // The account's player variables, each time a room is joined.
+    // eslint-disable-next-line svelte/no-ignored-unsubscribe
+    installRoomJoinedStore.subscribe((joined) => {
+        if (joined) installApp.noteRoomJoined(joined.variables, joined.account);
+    });
 
     // "In a room": the game scene is loaded. A conversation that ends is the first good moment.
     // Both subscriptions live as long as the game does.

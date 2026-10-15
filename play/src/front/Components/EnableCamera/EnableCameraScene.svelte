@@ -255,12 +255,12 @@
     on:submit|preventDefault={submit}
 >
     <div
-        class="u-join-card w-full md:max-w-[920px] min-h-dvh md:min-h-0 !rounded-none md:!rounded-[24px] flex flex-col px-4 pt-5 md:p-7"
+        class="u-join-card w-full md:max-w-[920px] min-h-dvh md:min-h-0 !rounded-none md:!rounded-[24px] flex flex-col px-4 pt-[calc(20px+env(safe-area-inset-top))] md:p-7"
     >
         {#if canGoBack}
             <button
                 type="button"
-                class="u-close u-join-x enableCameraSceneBack !top-3.5 !right-3 md:!top-4 md:!right-4"
+                class="u-close u-join-x enableCameraSceneBack !top-[calc(14px+env(safe-area-inset-top))] !right-3 md:!top-4 md:!right-4"
                 aria-label={$LL.camera.enable.back()}
                 title={$LL.camera.enable.back()}
                 on:click={() => enableCameraScene.back()}

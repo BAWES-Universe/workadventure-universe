@@ -4,12 +4,12 @@ const install: BaseTranslation = {
     // The row in the profile menu, under Settings
     menuRow: "Install app",
     menuRowHint: "Universe on your home screen",
-    // The small card shown once
+    // The small card that comes now and then
     card: {
         title: "Get the Universe app",
         text: "Opens in one tap, full screen.",
         install: "Install",
-        close: "Don't show this again",
+        close: "Not now",
     },
     // The note after the browser's own Install
     installed: "Universe is on your home screen",

@@ -143,6 +143,20 @@ export class UsernameDomLayer implements UsernameDomLayerHost {
         return this.ancestorScale;
     }
 
+    /**
+     * A still copy of the names as they are on screen now, placed as Phaser places them: an empty copy of the game's
+     * DOM box holding a copy of this layer. Used for the picture of the room shown while the game gets back in (#958).
+     */
+    public copyForPicture(): HTMLElement | undefined {
+        const node = this.domElement.node;
+        const box = node.parentElement;
+        if (!box) return undefined;
+        const copy = box.cloneNode(false) as HTMLElement;
+        copy.setAttribute("aria-hidden", "true");
+        copy.appendChild(node.cloneNode(true));
+        return copy;
+    }
+
     public destroy(): void {
         this.scene.events.off(Phaser.Scenes.Events.RENDER, this.onRender);
         this.clients.clear();

@@ -44,7 +44,7 @@
     $: partnerChatId = partner.chatId;
     $: requestChatPerson(partnerChatId);
     $: name = personName($nameByChatId, partnerChatId, $roomName);
-    $: picture = personPicture($wokaByChatId, partner.chatId, undefined) ?? room.pictureStore;
+    $: picture = personPicture($wokaByChatId, partner.chatId, room.pictureStore);
     $: status = partnerStatus(partner.place, $LL);
     $: live = isInUniverse(partner.place);
 </script>

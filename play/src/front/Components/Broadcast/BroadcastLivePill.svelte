@@ -38,9 +38,10 @@
 
 {#if live}
     <!-- Over the map at the top: under the status bar on a phone (the tiles sit below it), under the bar's left end on
-         a desktop, clear of the tiles in the middle and the received cards on the right. -->
+         a desktop, clear of the tiles in the middle and the received cards on the right. The installed app's status bar
+         is see-through, so a phone adds its inset (#969). -->
     <div
-        class="fixed z-[1100] pointer-events-auto inset-x-3 top-3 lg:inset-x-auto lg:left-4 lg:top-20 lg:w-[380px]"
+        class="fixed z-[1100] pointer-events-auto inset-x-3 top-[calc(12px+env(safe-area-inset-top))] lg:inset-x-auto lg:left-4 lg:top-20 lg:w-[380px]"
         transition:fly={{ y: -12, duration: 180 }}
         data-testid="broadcast-live-pill"
     >

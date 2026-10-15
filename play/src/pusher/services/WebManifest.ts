@@ -75,7 +75,10 @@ export function buildWebManifest(metaTagsData: RequiredMetaTagsData, pageUrl: st
         description: metaTagsData.description,
         // Our own manifest only: this is how Chrome and Edge can tell the page that the app is already installed
         // (navigator.getInstalledRelatedApps), so the install card and menu row can step aside.
-        related_applications: manifestUrl ? [{ platform: "webapp", url: manifestUrl }] : [],
+        // Chrome and Edge 140 and later on computers need the app's id here: the manifest id, resolved against the origin.
+        related_applications: manifestUrl
+            ? [{ platform: "webapp", url: manifestUrl, id: new URL("/", manifestUrl).href }]
+            : [],
         screenshots: [],
     };
 }

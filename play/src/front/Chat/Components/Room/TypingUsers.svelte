@@ -10,8 +10,6 @@
     export let typingMembers: { id: string; name: string | null; pictureStore: PictureStore }[];
     const NUMBER_OF_TYPING_MEMBER_TO_DISPLAY = 3;
 
-    const noPicture: Readable<string | undefined> = readable(undefined);
-
     // Typing people show the same woka, on the same colour, as next to their messages and in the header.
     const wokaByChatId: Readable<Map<string, PictureStore>> = hasContext(WOKA_BY_CHAT_ID_CONTEXT)
         ? getContext(WOKA_BY_CHAT_ID_CONTEXT)
@@ -28,7 +26,7 @@
         {#if typingMember}
             <div id={`typing-user-${typingMember.id}`} class="-ml-2">
                 <TopRowAvatar
-                    pictureStore={personPicture($wokaByChatId, typingMember.id, typingMember.pictureStore) ?? noPicture}
+                    pictureStore={personPicture($wokaByChatId, typingMember.id, typingMember.pictureStore)}
                     name={typingMember.name ?? "Unknown"}
                     color={$colourOf(typingMember.id, typingMember.name ?? undefined)}
                     size="xs"

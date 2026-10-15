@@ -380,6 +380,17 @@ export abstract class Character extends Container implements OutlineableInterfac
         this.raisedHandBadge.y = top - ABOVE_NAME_GAP - RAISED_HAND_BADGE_HEIGHT / 2;
     }
 
+    /**
+     * Faded: the game is getting back in after the connection dropped, and this player may have moved meanwhile.
+     * The picture of the room shown until then is taken with it (#958).
+     */
+    public setFaded(faded: boolean): void {
+        const alpha = faded ? 0.45 : 1;
+        this.setAlpha(alpha);
+        this.companion?.setAlpha(alpha);
+        this.usernameDisplay?.setFaded(faded);
+    }
+
     public getAvailabilityStatus() {
         return this.usernameDisplay?.getAvailabilityStatus() ?? this.availabilityStatus;
     }

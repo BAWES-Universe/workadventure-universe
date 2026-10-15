@@ -16,8 +16,8 @@
     import { isActivatedStore as todoListIsActivatedStore, isTodoListVisibleStore } from "../Stores/TodoListStore";
     import { draggingFile } from "../Stores/FileUploadStore";
     import ChatSidebar from "../Chat/ChatSidebar.svelte";
-    import { gameManager } from "../Phaser/Game/GameManager";
     import { isBanScreen } from "../Connection/BanApi";
+    import { softReconnect, softReconnectGeneration } from "../Connection/SoftReconnect";
     import LoginScene from "./Login/LoginScene.svelte";
     import MainLayout from "./MainLayout.svelte";
     import SelectCompanionScene from "./SelectCompanion/SelectCompanionScene.svelte";
@@ -25,9 +25,7 @@
     import ErrorScreen from "./UI/ErrorScreen.svelte";
     import BanScreen from "./UI/BanScreen.svelte";
     import RefreshPrompt from "./RefreshPrompt.svelte";
-    import LoaderScene from "./Loader/LoaderScene.svelte";
     import EnableCameraScene from "./EnableCamera/EnableCameraScene.svelte";
-    import bgMap from "./images/map-exemple.png";
     import BroadcastPanel from "./Broadcast/BroadcastPanel.svelte";
     import Calendar from "./Calendar/Calendar.svelte";
     import TodoList from "./TodoList/TodoList.svelte";
@@ -36,30 +34,23 @@
     import DroppingFileScene from "./DroppingFile/DroppingFileScene.svelte";
     import WokaScene from "./Woka/WokaScene.svelte";
     import WokaRefusedPopup from "./Woka/WokaRefusedPopup.svelte";
+    import ReconnectRoomPicture from "./Reconnect/ReconnectRoomPicture.svelte";
+    import ReconnectPill from "./Reconnect/ReconnectPill.svelte";
 
     export let game: Game;
-
-    // The room's own loading logo (Universe's, from the admin), fetched ahead of the loading screen.
-    const loadingLogo = gameManager.currentStartedRoom?.loadingLogo;
 
     /**
      * When changing map from an exit on the current map, the Chat and the MainLayout are not really destroyed
      * due to an internal issue of Svelte, we use a #key directive to force the destruction of the components.
      * https://github.com/sveltejs/svelte/issues/5268
      */
+
+    // Getting back in after the connection dropped, with the room kept on screen (#958): the chat stays up while the
+    // game rebuilds the room, then starts again on it (a new generation) once it is back in.
+    $: keepingRoom = $softReconnect?.picture !== undefined;
 </script>
 
-<!-- Preload image loader TODO HUGO : Better way ? -->
-<link rel="preload" as="image" href={bgMap} />
-{#if loadingLogo}
-    <link rel="preload" as="image" href={loadingLogo} />
-{/if}
-
-{#if $loaderVisibleStore}
-    <div class="bg-contrast">
-        <LoaderScene />
-    </div>
-{/if}
+<!-- The loading screen is #boot-splash in index.html (BootSplash.ts, #981). -->
 {#if $draggingFile}
     <div>
         <DroppingFileScene />
@@ -74,7 +65,8 @@
             <ErrorScreen />
         {/if}
     </div>
-{:else if $errorStore.length > 0}
+{:else if $errorStore.length > 0 && !keepingRoom}
+    <!-- (While the room is kept on screen, its pill says what is going on: a dialog waits until the game is back.) -->
     <div class="bg-contrast">
         <ErrorDialog />
     </div>
@@ -96,27 +88,36 @@
     <div class="h-dvh overflow-y-auto">
         <EnableCameraScene {game} />
     </div>
-{:else if $gameSceneIsLoadedStore && !$loaderVisibleStore}
-    {#if $refreshPromptStore}
-        <RefreshPrompt />
-    {/if}
-    {#key $forceRefreshChatStore}
-        <ChatSidebar />
-        {#if $broadcastPanelOpenStore}
-            <BroadcastPanel />
+{:else if ($gameSceneIsLoadedStore || keepingRoom) && !$loaderVisibleStore}
+    <!-- While the room is kept on screen, the chat stays open and usable, over a still picture of the room and the bar. -->
+    <ReconnectRoomPicture />
+    {#key $softReconnectGeneration}
+        {#if $refreshPromptStore && $gameSceneIsLoadedStore}
+            <RefreshPrompt />
         {/if}
+        {#key $forceRefreshChatStore}
+            <ChatSidebar />
+            {#if $gameSceneIsLoadedStore}
+                {#if $broadcastPanelOpenStore}
+                    <BroadcastPanel />
+                {/if}
 
-        <MainLayout />
+                <MainLayout />
+            {/if}
+        {/key}
+        {#if $gameSceneIsLoadedStore}
+            <MainModal />
+
+            {#if $calendarIsActivatedStore && $isCalendarVisibleStore}
+                <Calendar />
+            {/if}
+            {#if $todoListIsActivatedStore && $isTodoListVisibleStore}
+                <TodoList />
+            {/if}
+        {/if}
     {/key}
-    <MainModal />
-
-    {#if $calendarIsActivatedStore && $isCalendarVisibleStore}
-        <Calendar />
-    {/if}
-    {#if $todoListIsActivatedStore && $isTodoListVisibleStore}
-        <TodoList />
-    {/if}
 {/if}
+<ReconnectPill />
 
 <FloatingUiPopupList />
 <!-- </div> -->

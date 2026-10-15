@@ -19,6 +19,7 @@ const warning: DeepPartial<Translation["warning"]> = {
     reconnectingDetails: "On vous remet dans la partie",
     offlineTitle: "Vous êtes hors ligne",
     offlineDetails: "Nous vous reconnecterons dès que vous serez de nouveau en ligne",
+    backIn: "De retour",
     waitingConnectionTitle: "En attente du serveur",
     waitingConnectionSubtitle: "Connexion",
     megaphoneNeeds: "Pour utiliser le megaphone, vous devez activer votre caméra ou votre microphone.",

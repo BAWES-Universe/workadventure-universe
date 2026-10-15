@@ -32,6 +32,7 @@ import { VoidChatConnection } from "../../Chat/Connection/VoidChatConnection";
 import { loginTokenErrorStore, isMatrixChatEnabledStore } from "../../Stores/ChatStore";
 import { initializeChatVisibilitySubscription } from "../../Chat/Stores/ChatStore";
 import { keepOnlyProximityHistory } from "../../Chat/Stores/ProximitySessionStore";
+import { softReconnect } from "../../Connection/SoftReconnect";
 import { GameScene } from "./GameScene";
 /**
  * This class should be responsible for any scene starting/stopping
@@ -44,6 +45,12 @@ export class GameManager {
     /** What the page load decided the player still has to pick, so the step after the name page can follow it. */
     private loadNextScene: "selectCharacterScene" | "selectCompanionScene" | "gameScene" = "gameScene";
     private currentGameSceneName: string | null = null;
+    /**
+     * The scene that lost its connection, while the room is kept on screen (#958): the chat stays open over it, and
+     * whenever no scene is there (until the next one is created, again if it drops too) it is the one the chat reaches,
+     * as the components it already shows do.
+     */
+    private replacedGameScene: GameScene | undefined;
     // Note: this scenePlugin is the scenePlugin of the EntryScene. We should always provide a key in methods called on this scenePlugin.
     private scenePlugin!: Phaser.Scenes.ScenePlugin;
     private visitCardUrl: string | null = null;
@@ -58,14 +65,22 @@ export class GameManager {
         this.characterTextureIds = localUserStore.getCharacterTextures();
         this.companionTextureId = localUserStore.getCompanionTextureId();
         this.chatVisibilitySubscription = initializeChatVisibilitySubscription();
+        // Back in, or a screen took over: nothing on screen holds the scene that lost its connection any more.
+        // For the page's whole life, as this one is.
+        // eslint-disable-next-line svelte/no-ignored-unsubscribe
+        softReconnect.subscribe((state) => {
+            if (!state?.picture) this.replacedGameScene = undefined;
+        });
     }
 
     public async init(scenePlugin: Phaser.Scenes.ScenePlugin): Promise<string> {
         this.scenePlugin = scenePlugin;
         const result = await connectionManager.initGameConnexion();
         if (result instanceof URL) {
-            window.location.assign(result.toString());
-            // window.location.assign is not immediate and Javascript keeps running after.
+            // replace, not assign: this page (/login, or a room that needs sign-in) only forwards to the sign-in page,
+            // so it must not stay in the history. Back from the sign-in page then returns to the room, not here. #986
+            window.location.replace(result.toString());
+            // window.location.replace is not immediate and Javascript keeps running after.
             // so we need to redirect to an empty Phaser scene, waiting for the redirection to take place
             return EmptySceneName;
         }
@@ -203,6 +218,9 @@ export class GameManager {
     }
 
     closeGameScene(): void {
+        // A screen takes the room over: the picture, the pill and the 10 s wait of a reconnect still under way end here
+        // (#1047). Otherwise the "Reconnecting" screen would come up over that screen.
+        softReconnect.cancel();
         gameSceneIsLoadedStore.set(false);
         const gameScene = this.scenePlugin.get(this.currentGameSceneName ?? "default");
 
@@ -279,13 +297,27 @@ export class GameManager {
     }
 
     public getCurrentGameScene(): GameScene {
-        const gameScene = this.scenePlugin.get(
-            this.currentGameSceneName == undefined ? "default" : this.currentGameSceneName
-        );
-        if (!(gameScene instanceof GameScene)) {
-            throw new GameSceneNotFoundError("Not the Game Scene");
-        }
-        return gameScene;
+        const gameScene = this.tryGetCurrentGameScene();
+        if (gameScene) return gameScene;
+        if (this.replacedGameScene) return this.replacedGameScene;
+        throw new GameSceneNotFoundError("Not the Game Scene");
+    }
+
+    /**
+     * The scene the chat reads its proximity chat from. The next scene is current as soon as it is created, but has no
+     * chat until the connection is back: while the room stays on screen, the chat keeps reaching the scene that lost
+     * its connection until then (#1051). Everything else keeps using `getCurrentGameScene()`.
+     */
+    public getChatGameScene(): GameScene {
+        const gameScene = this.tryGetCurrentGameScene();
+        if (gameScene && (gameScene.hasProximityChatRoom || !this.replacedGameScene)) return gameScene;
+        if (this.replacedGameScene) return this.replacedGameScene;
+        throw new GameSceneNotFoundError("Not the Game Scene");
+    }
+
+    /** The current scene is going away while the room stays on screen (see replacedGameScene). */
+    public keepReplacedGameScene(scene: GameScene): void {
+        this.replacedGameScene = scene;
     }
 
     /**
@@ -293,12 +325,10 @@ export class GameManager {
      * For UI that can mount or react during that swap and must not throw.
      */
     public tryGetCurrentGameScene(): GameScene | undefined {
-        try {
-            return this.getCurrentGameScene();
-        } catch (error) {
-            if (error instanceof GameSceneNotFoundError) return undefined;
-            throw error;
-        }
+        const gameScene = this.scenePlugin.get(
+            this.currentGameSceneName == undefined ? "default" : this.currentGameSceneName
+        );
+        return gameScene instanceof GameScene ? gameScene : undefined;
     }
 
     public get currentStartedRoom() {

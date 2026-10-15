@@ -5,7 +5,7 @@ import { AvailabilityStatus } from "@workadventure/messages";
 import * as Sentry from "@sentry/svelte";
 import { AbortError } from "@workadventure/shared-utils/src/Abort/AbortError";
 import { localUserStore } from "../Connection/LocalUserStore";
-import { isIOS, isSafari } from "../WebRtc/DeviceUtils";
+import { isAndroid, isIOS, isSafari } from "../WebRtc/DeviceUtils";
 import type { ObtainedMediaStreamConstraints } from "../WebRtc/P2PMessages/ConstraintMessage";
 import { SoundMeter } from "../Phaser/Components/SoundMeter";
 import { findNewMediaDevices, listLacksNamesFor, rememberMediaDevices } from "../Utils/NewMediaDevices";
@@ -32,6 +32,8 @@ import { inExternalServiceStore, myCameraStore, myMicrophoneStore, proximityMeet
 import { userMovingStore } from "./GameStore";
 import { hideHelpCameraSettings } from "./HelpSettingsStore";
 import { isLiveStreamingStore } from "./IsStreamingStore";
+import { videoStreamElementsStore } from "./PeerStore";
+import { phoneMicrophoneCanRest } from "./PhoneMicrophoneRest";
 
 import {
     backgroundConfigStore,
@@ -426,6 +428,13 @@ export const mediaStreamConstraintsStore = derived(
         cameraEnergySavingStore,
         availabilityStatusStore,
         batchGetUserMediaStore,
+        videoStreamElementsStore,
+        isLiveStreamingStore,
+        isSpeakerStore,
+        isListenerStore,
+        inLivekitStore,
+        streamingMegaphoneStore,
+        displayedMegaphoneScreenStore,
     ],
     (
         [
@@ -441,6 +450,13 @@ export const mediaStreamConstraintsStore = derived(
             $cameraEnergySavingStore,
             $availabilityStatusStore,
             $batchGetUserMediaStore,
+            $videoStreamElementsStore,
+            $isLiveStreamingStore,
+            $isSpeakerStore,
+            $isListenerStore,
+            $inLivekitStore,
+            $streamingMegaphoneStore,
+            $displayedMegaphoneScreenStore,
         ],
         set
     ) => {
@@ -487,6 +503,23 @@ export const mediaStreamConstraintsStore = derived(
             if (!userCameraPrivacySetting) {
                 currentVideoConstraint = false;
             }
+        }
+
+        // On a phone the microphone stays closed while nobody can hear it, so that leaving the app and coming back
+        // (or any other pause) does not close and open it, which makes iOS play its microphone sounds.
+        if (
+            (isIOS() || isAndroid()) &&
+            phoneMicrophoneCanRest({
+                peers: $videoStreamElementsStore.length,
+                live: $isLiveStreamingStore,
+                speaker: $isSpeakerStore,
+                listener: $isListenerStore,
+                inLivekit: $inLivekitStore,
+                megaphone: $streamingMegaphoneStore || $displayedMegaphoneScreenStore,
+                setupScreen: $enableCameraSceneVisibilityStore,
+            })
+        ) {
+            currentAudioConstraint = false;
         }
 
         // Disable webcam for energy reasons (the user is not moving and we are talking to no one)
@@ -621,6 +654,17 @@ export const rawLocalStreamStore = derived<[typeof mediaStreamConstraintsStore],
                 .then(async () => {
                     try {
                         const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                        // The wanted constraints can change while the browser is still asking (someone leaves the
+                        // bubble a moment after joining). The stop that change asked for found nothing to stop,
+                        // so a track nobody wants any more is closed here, or it would stay open.
+                        for (const kind of ["audio", "video"] as const) {
+                            if (oldConstraints[kind] !== false) continue;
+                            const unwantedTracks = kind === "audio" ? stream.getAudioTracks() : stream.getVideoTracks();
+                            for (const track of unwantedTracks) {
+                                track.stop();
+                                stream.removeTrack(track);
+                            }
+                        }
                         // If there is an old video track or audio track in the current stream, we need to reuse it in the new stream
                         if (currentStream) {
                             const oldStream = currentStream;
