@@ -106,7 +106,6 @@ export class InstallApp {
     /** The card showed or was closed on this load: it does not come again before the next load. */
     private cardDone = false;
     private closeCounted = false;
-    private appMarkHandled = false;
     private testLink = false;
     private firstMomentTimer: ReturnType<typeof setTimeout> | undefined;
     private toastTimer: ReturnType<typeof setTimeout> | undefined;
@@ -215,13 +214,13 @@ export class InstallApp {
 
     /**
      * The room was joined, with the player variables of this account. Inside the installed app, a logged in player
-     * marks the account (once per load). In an Apple browser, which cannot see the app, the mark tells the card to
-     * stay away. Chrome and Edge see the app themselves.
+     * marks the world, in each world the app enters that has no mark yet: the mark is kept per world, not per account
+     * (#1024). In an Apple browser, which cannot see the app, the mark tells the card to stay away. Chrome and Edge
+     * see the app themselves.
      */
     public noteRoomJoined(variables: ReadonlyMap<string, unknown>, account: InstallAccount): void {
         if (this.installedHere) {
-            if (this.appMarkHandled || !account.isLogged()) return;
-            this.appMarkHandled = true;
+            if (variables.get(APP_INSTALLED_VARIABLE) === true || !account.isLogged()) return;
             account.setVariable({
                 key: APP_INSTALLED_VARIABLE,
                 value: true,
