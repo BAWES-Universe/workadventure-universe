@@ -64,8 +64,10 @@ export class GameManager {
         this.scenePlugin = scenePlugin;
         const result = await connectionManager.initGameConnexion();
         if (result instanceof URL) {
-            window.location.assign(result.toString());
-            // window.location.assign is not immediate and Javascript keeps running after.
+            // replace, not assign: this page (/login, or a room that needs sign-in) only forwards to the sign-in page,
+            // so it must not stay in the history. Back from the sign-in page then returns to the room, not here. #986
+            window.location.replace(result.toString());
+            // window.location.replace is not immediate and Javascript keeps running after.
             // so we need to redirect to an empty Phaser scene, waiting for the redirection to take place
             return EmptySceneName;
         }

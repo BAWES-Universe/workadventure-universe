@@ -358,6 +358,10 @@ class ConnectionManager {
                     const characterTextures = localUserStore.getCharacterTextures();
                     if (characterTextures === null || characterTextures.length === 0) {
                         nextScene = "selectCharacterScene";
+                    } else {
+                        // The game read the device when the page started, before the woka was put back: it joins with
+                        // what it holds, so it must hold this one too, or the world refuses an empty woka. #987
+                        gameManager.setCharacterTextureIds(characterTextures);
                     }
                 } else {
                     const redirect = this.loadOpenIDScreen(false);
