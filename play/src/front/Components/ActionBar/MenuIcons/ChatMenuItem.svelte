@@ -18,7 +18,7 @@
     /** The Picture in Picture button: it always ends with the chat open and the cursor in the message box. */
     export let alwaysOpen = false;
 
-    const proximityChatRoom = gameManager.getCurrentGameScene().proximityChatRoom;
+    const proximityChatRoom = gameManager.getChatGameScene().proximityChatRoom;
 
     const dispatch = createEventDispatcher<{
         click: void;

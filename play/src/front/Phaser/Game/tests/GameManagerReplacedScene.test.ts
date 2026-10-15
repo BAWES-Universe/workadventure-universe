@@ -73,12 +73,13 @@ describe("the scene the chat reaches while the game gets back in", () => {
         internals.scenePlugin = { get: () => next };
         gameManager.gameSceneIsCreated(next);
 
-        expect(gameManager.getCurrentGameScene()).toBe(replaced);
-        // UI that only checks whether a scene is there already sees the next one.
+        expect(gameManager.getChatGameScene()).toBe(replaced);
+        // Everything else already reaches the next scene: its managers are the live ones.
+        expect(gameManager.getCurrentGameScene()).toBe(next);
         expect(gameManager.tryGetCurrentGameScene()).toBe(next);
 
         next.hasProximityChatRoom = true;
-        expect(gameManager.getCurrentGameScene()).toBe(next);
+        expect(gameManager.getChatGameScene()).toBe(next);
     });
 
     it("is not kept once the room is no longer on screen", () => {

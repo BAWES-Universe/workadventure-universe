@@ -298,8 +298,18 @@ export class GameManager {
 
     public getCurrentGameScene(): GameScene {
         const gameScene = this.tryGetCurrentGameScene();
-        // The next scene is current as soon as it is created, but has no chat until the connection is back: while the
-        // room stays on screen, the chat keeps reaching the scene that lost its connection until then (#1051).
+        if (gameScene) return gameScene;
+        if (this.replacedGameScene) return this.replacedGameScene;
+        throw new GameSceneNotFoundError("Not the Game Scene");
+    }
+
+    /**
+     * The scene the chat reads its proximity chat from. The next scene is current as soon as it is created, but has no
+     * chat until the connection is back: while the room stays on screen, the chat keeps reaching the scene that lost
+     * its connection until then (#1051). Everything else keeps using `getCurrentGameScene()`.
+     */
+    public getChatGameScene(): GameScene {
+        const gameScene = this.tryGetCurrentGameScene();
         if (gameScene && (gameScene.hasProximityChatRoom || !this.replacedGameScene)) return gameScene;
         if (this.replacedGameScene) return this.replacedGameScene;
         throw new GameSceneNotFoundError("Not the Game Scene");

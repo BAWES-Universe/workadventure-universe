@@ -10,7 +10,7 @@ vi.mock("../../../Phaser/Game/GameManager", () => {
     });
     return {
         gameManager: {
-            getCurrentGameScene: () => ({ proximityChatRoom: room() }),
+            getChatGameScene: () => ({ proximityChatRoom: room() }),
             getChatConnection: () => Promise.resolve(),
             chatConnection: { rooms: readable([]), directRooms: readable([]), invitations: readable([]) },
         },
