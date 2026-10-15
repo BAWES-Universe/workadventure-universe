@@ -263,7 +263,7 @@
     <div bind:this={listElement} class="min-h-0 flex-1 overflow-x-hidden overflow-y-auto pb-2" data-testid="peopleList">
         {#if $friendNoticeStore}
             <p
-                class="u-glass mx-2 mb-2 rounded-[12px] px-3 py-2 text-sm text-white/85"
+                class="u-glass mx-4 mb-2 rounded-2xl px-3 py-2 text-sm text-white/85"
                 role="status"
                 data-testid="friendNotice"
             >

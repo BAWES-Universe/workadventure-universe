@@ -149,7 +149,7 @@
 <svelte:window bind:innerWidth />
 
 <div class="relative z-40 w-full">
-    <div class="flex items-center gap-2 ps-2 pe-2 pt-2 pb-1">
+    <div class="flex items-center gap-2 px-4 pt-2 pb-1">
         {#if hasChatsTab && hasPeopleTab}
             <div
                 class="chat-tabs u-glass relative flex grow min-w-0 gap-1 rounded-full p-1"
