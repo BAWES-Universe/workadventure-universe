@@ -60,6 +60,7 @@ import {
     selectedProximitySessionStore,
     stashProximityHistory,
     takeProximityHistory,
+    takeLeftWithoutMap,
 } from "../../Stores/ProximitySessionStore";
 import type { ProximityHistoryStash } from "../../Stores/ProximitySessionStore";
 import type { ProximitySession, ProximitySessionMarker } from "./ProximitySessions";
@@ -326,6 +327,7 @@ export class ProximityChatRoom implements ChatRoom {
 
         // The chats you had on the previous map, when the scene handed them over.
         const stash = takeProximityHistory();
+        const leftWithoutMap = takeLeftWithoutMap();
         if (stash) {
             // Reactions on them would go to this map's bubbles, where nobody has those messages. Replies still quote them.
             for (const message of stash.messages) {
@@ -347,7 +349,12 @@ export class ProximityChatRoom implements ChatRoom {
         // The old map's proximity chat was open: this one takes its place, never a chat that no longer exists.
         // It can also have been opened after the hand-over, while the old map stayed on screen to get back in, even
         // with nothing in it to hand over.
-        if (stash?.wasSelected || get(selectedRoomStore) instanceof ProximityChatRoom) selectedRoomStore.set(this);
+        if (leftWithoutMap) {
+            // The game was left: the proximity chat that was open is gone, and nothing opens by itself on the way back.
+            if (get(selectedRoomStore) instanceof ProximityChatRoom) selectedRoomStore.set(undefined);
+        } else if (stash?.wasSelected || get(selectedRoomStore) instanceof ProximityChatRoom) {
+            selectedRoomStore.set(this);
+        }
 
         this.newChatMessageWritingStatusStreamUnsubscriber =
             iframeListenerInstance.newChatMessageWritingStatusStream.subscribe((status) => {
