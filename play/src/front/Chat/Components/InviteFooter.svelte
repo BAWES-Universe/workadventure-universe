@@ -143,8 +143,9 @@
         }
     }
 
-    function close() {
+    function close(restoreFocus = true) {
         open = false;
+        if (!restoreFocus) return;
         // The button is back (it hides, kept in place, while the panel is open): the focus returns to it, also after a
         // tap on the dimmed list, which takes the focus away before it closes the panel.
         tick()
@@ -152,6 +153,13 @@
             .catch((e) => console.error(e));
     }
 
+    // A click anywhere else (the map, the tabs, another window) closes the panel too, and keeps the focus where the
+    // click put it. The Invite button toggles the panel itself; the panel and its dimmed list close it themselves.
+    function onWindowClick(event: MouseEvent) {
+        if (!open || !(event.target instanceof Node)) return;
+        if (overlay?.contains(event.target) || trigger?.contains(event.target)) return;
+        close(false);
+    }
     // Shown without "https://": the panel is narrow and the part that tells rooms apart comes after it.
     $: linkShown = link.replace(/^https?:\/\//, "");
 
@@ -199,6 +207,8 @@
         chatInviteSheetHeightStore.set(0);
     });
 </script>
+
+<svelte:window on:click={onWindowClick} />
 
 {#if $inviteUserActivated || showSearch || newChatOptions.length > 0}
     <div class="invite-footer sticky bottom-0 z-30 shrink-0 px-4 pb-4 pt-3" data-testid="chatInviteFooter">
@@ -252,13 +262,18 @@
     <!-- svelte-ignore a11y-no-static-element-interactions -->
     <div
         bind:this={overlay}
-        class="invite-overlay absolute inset-0 z-40 flex flex-col justify-end"
+        class="invite-overlay absolute inset-0 z-40 flex flex-col justify-end overflow-hidden"
         transition:fade={{ duration: 150 }}
         on:keydown={onKeyDown}
         data-testid="chatInviteOverlay"
     >
         <!-- svelte-ignore a11y-click-events-have-key-events -->
-        <div class="invite-dim absolute inset-0" aria-hidden="true" on:click={close} data-testid="chatInviteDim" />
+        <div
+            class="invite-dim absolute inset-0"
+            aria-hidden="true"
+            on:click={() => close()}
+            data-testid="chatInviteDim"
+        />
         <section
             bind:this={panel}
             bind:clientHeight={panelHeight}
@@ -281,7 +296,7 @@
                     class="u-close -me-2"
                     aria-label={$LL.chat.inviteFooter.close()}
                     data-testid="chatInviteClose"
-                    on:click={close}
+                    on:click={() => close()}
                 >
                     <IconX font-size="22" />
                 </button>
