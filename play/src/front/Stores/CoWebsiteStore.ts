@@ -1,6 +1,7 @@
 import { derived, get, readable, writable } from "svelte/store";
 import type { CoWebsite } from "../WebRtc/CoWebsite/CoWebsite";
 import { appViewportHeight, titleBarHeightStore } from "../TitleBar/WindowControlsOverlay";
+import { fullViewportHeight } from "../Install/InstallApp";
 
 export function createCoWebsiteStore() {
     const { subscribe, set, update } = writable<Array<CoWebsite>>([]);
@@ -69,9 +70,10 @@ export const coWebsites = createCoWebsiteStore();
 
 export const fullScreenCowebsite = writable(false);
 
-const browserWindowSize = readable({ width: window.innerWidth, height: window.innerHeight }, (set) => {
+// The installed iPhone app's height comes from the whole screen, not the short viewport iOS gives it (#1016).
+const browserWindowSize = readable({ width: window.innerWidth, height: fullViewportHeight() }, (set) => {
     const handleResize = () => {
-        set({ width: window.innerWidth, height: window.innerHeight });
+        set({ width: window.innerWidth, height: fullViewportHeight() });
     };
     window.addEventListener("resize", handleResize);
     return () => {

@@ -1,8 +1,8 @@
 <script lang="ts">
     import { onDestroy, onMount } from "svelte";
     import { get, type Unsubscriber } from "svelte/store";
-    import { appViewportHeight, titleBarHeightStore } from "../../TitleBar/WindowControlsOverlay";
-    import { coWebsiteRatio, coWebsites, fullScreenCowebsite } from "../../Stores/CoWebsiteStore";
+    import { titleBarHeightStore } from "../../TitleBar/WindowControlsOverlay";
+    import { coWebsiteRatio, coWebsites, fullScreenCowebsite, windowSize } from "../../Stores/CoWebsiteStore";
     import JitsiCowebsiteComponent from "../Cowebsites/JistiCowebsiteComponent.svelte";
     import SimpleCowebsiteComponent from "../Cowebsites/SimpleCowebsiteComponent.svelte";
     import { JitsiCoWebsite } from "../../WebRtc/CoWebsite/JitsiCoWebsite";
@@ -63,17 +63,18 @@
             }
         } else {
             // The page sits under the desktop title bar strip, so the pointer is measured from the page's top edge
-            const pageHeight = appViewportHeight();
             clientY -= get(titleBarHeightStore);
             // 8 is the number of pixels of the resize bar
             if (clientY < 8) {
                 clientY = 8;
             }
-            if (clientY > pageHeight) {
-                clientY = pageHeight;
+            // The height the split is drawn over: the whole screen in the installed iPhone app (#1016), less the strip.
+            const height = $windowSize.height;
+            if (clientY > height) {
+                clientY = height;
             }
 
-            coWebsiteRatio.set(clientY / pageHeight);
+            coWebsiteRatio.set(clientY / height);
         }
     };
 

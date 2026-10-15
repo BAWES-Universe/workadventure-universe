@@ -1216,6 +1216,8 @@ export class GameScene extends DirtyScene {
                             }
                         }
 
+                        // Dropped again while it was still starting up: the room that replaced this one gets back in.
+                        if (this.cleanupDone) return;
                         this.initUserPermissionsOnEntity();
                         this.hide(false);
                         gameSceneIsLoadedStore.set(true);
