@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => {
     };
     class FakeGameScene {
         constructor(public room: unknown, public scene = { key: "next" }) {}
+        hasProximityChatRoom = true;
         cleanupClosingScene = vi.fn();
         createSuccessorGameScene = vi.fn();
     }
@@ -59,6 +60,25 @@ describe("the scene the chat reaches while the game gets back in", () => {
         // Dropped again before it is back in: the next scene goes too, and the chat still reaches the first one.
         internals.scenePlugin = { get: () => undefined };
         expect(gameManager.getCurrentGameScene()).toBe(replaced);
+    });
+
+    // The next scene is current as soon as it is created, but its chat exists only once the connection is back. #1051
+    it("stays the scene that lost its connection until the next one has its chat", () => {
+        internals.scenePlugin = { get: () => undefined };
+        softReconnect.start(picture, () => undefined);
+        gameManager.keepReplacedGameScene(replaced);
+
+        const next = new mocks.FakeGameScene("room") as unknown as GameScene & { hasProximityChatRoom: boolean };
+        next.hasProximityChatRoom = false;
+        internals.scenePlugin = { get: () => next };
+        gameManager.gameSceneIsCreated(next);
+
+        expect(gameManager.getCurrentGameScene()).toBe(replaced);
+        // UI that only checks whether a scene is there already sees the next one.
+        expect(gameManager.tryGetCurrentGameScene()).toBe(next);
+
+        next.hasProximityChatRoom = true;
+        expect(gameManager.getCurrentGameScene()).toBe(next);
     });
 
     it("is not kept once the room is no longer on screen", () => {
