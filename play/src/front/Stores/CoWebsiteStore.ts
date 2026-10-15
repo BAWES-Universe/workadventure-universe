@@ -83,6 +83,8 @@ const browserWindowSize = readable({ width: window.innerWidth, height: window.in
 export const windowSize = derived([browserWindowSize, titleBarHeightStore], ([$size, $titleBarHeight]) => ({
     width: $size.width,
     height: Math.max(0, $size.height - $titleBarHeight),
+    // Portrait or landscape is judged on the whole browser window, like the CSS orientation queries, not on the page under the strip.
+    portrait: $size.width <= $size.height,
 }));
 
 export const coWebsiteRatio = writable(0.5);
@@ -99,7 +101,7 @@ export const canvasSize = derived(
                 height: 0,
             };
         }
-        if ($windowSize.width <= $windowSize.height) {
+        if ($windowSize.portrait) {
             return {
                 width: $windowSize.width,
                 height: $windowSize.height * (1 - $coWebsiteRatio),
@@ -119,7 +121,7 @@ export const coWebsitesSize = derived(
         if ($coWebsites.length === 0) {
             return { width: 0, height: 0 };
         }
-        if ($windowSize.width <= $windowSize.height) {
+        if ($windowSize.portrait) {
             return {
                 width: $windowSize.width,
                 height: $windowSize.height * $coWebsiteRatio,
@@ -135,7 +137,7 @@ export const coWebsitesSize = derived(
 
 export class CoWebsiteManager {
     get verticalMode(): boolean {
-        return window.innerWidth <= appViewportHeight();
+        return window.innerWidth <= window.innerHeight;
     }
 
     // FIXME: can we use stores to recompute this instead?
