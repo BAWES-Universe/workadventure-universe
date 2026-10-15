@@ -83,4 +83,32 @@ describe("SuperLoaderPlugin", () => {
         await expect(promise).rejects.toThrow("Failed loading");
         expect(load.listenerCount("complete")).toBe(0);
     });
+
+    it("rejects without touching the loader when Phaser already cleared the scene (scene.scene is null)", async () => {
+        const { SuperLoaderPlugin } = await import("../SuperLoaderPlugin");
+        const { load, scene } = fakeScene();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (scene as any).scene = null;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const plugin = new SuperLoaderPlugin(scene as any);
+
+        await expect(plugin.spritesheet("body", "https://example.test/body.png")).rejects.toThrow(
+            "Scene that is already destroyed"
+        );
+        expect(load.spritesheet).not.toHaveBeenCalled();
+        expect(load.listenerCount("complete")).toBe(0);
+    });
+
+    it("rejects without touching the loader when the scene is destroyed", async () => {
+        const { SuperLoaderPlugin } = await import("../SuperLoaderPlugin");
+        const { load, scene } = fakeScene();
+        scene.scene.settings.status = 9;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const plugin = new SuperLoaderPlugin(scene as any);
+
+        await expect(plugin.spritesheet("body", "https://example.test/body.png")).rejects.toThrow(
+            "Scene that is already destroyed"
+        );
+        expect(load.spritesheet).not.toHaveBeenCalled();
+    });
 });

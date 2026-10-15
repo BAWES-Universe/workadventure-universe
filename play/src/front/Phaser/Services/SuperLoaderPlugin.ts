@@ -97,6 +97,17 @@ export class SuperLoaderPlugin {
     }
 
     /**
+     * Once Phaser destroys a scene, it nulls the scene's own references (including `scene.scene`), so a missing
+     * scene plugin means the scene is gone too.
+     */
+    private isSceneDestroyed(): boolean {
+        // The Phaser typings say these are always set, but they are null after the scene is destroyed.
+        const scenePlugin = this.scene.scene as Phaser.Scenes.ScenePlugin | null | undefined;
+        const settings = scenePlugin?.settings as Phaser.Types.Scenes.SettingsObject | null | undefined;
+        return !settings || settings.status === Phaser.Scenes.DESTROYED;
+    }
+
+    /**
      * @param callback The function that calls the loader to load a resource
      * @param key The key of the resource to be loaded
      * @param fromCache A function that checks in the cache if the resource is already available
@@ -119,8 +130,8 @@ export class SuperLoaderPlugin {
         }
 
         return new CancelablePromise<T>((res, rej, cancel) => {
-            if (this.scene.scene.settings.status === Phaser.Scenes.DESTROYED) {
-                rej(new Error("Trying to load a " + type + " in a Scene that is already destroyed."));
+            if (this.isSceneDestroyed()) {
+                return rej(new Error("Trying to load a " + type + " in a Scene that is already destroyed."));
             }
 
             const resource = fromCache();
@@ -191,7 +202,7 @@ export class SuperLoaderPlugin {
             this.scene.load.once("filecomplete-" + type + "-" + key, successCallback);
             this.scene.load.on("loaderror", errorCallback);
             this.scene.load.on(Phaser.Loader.Events.COMPLETE, loaderCompleteCallback);
-            if (this.scene.scene.settings.status > Phaser.Scenes.LOADING) {
+            if (!this.isSceneDestroyed() && this.scene.scene.settings.status > Phaser.Scenes.LOADING) {
                 // When the scene is destroyed, let's remove our callbacks.
                 // We only need to register this destroy event is the scene is not in loading state (otherwise, Phaser
                 // will take care of that for us).
