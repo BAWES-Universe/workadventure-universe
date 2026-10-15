@@ -98,7 +98,7 @@
         z-index: 2;
     }
     :global(.em-phone) .em-pill {
-        top: calc(var(--tiles-clear, 0px) + 10px + env(safe-area-inset-top, 0px));
+        top: calc(max(var(--tiles-clear, 0px), env(safe-area-inset-top, 0px)) + 10px);
         left: 10px;
         right: 10px;
         width: auto;

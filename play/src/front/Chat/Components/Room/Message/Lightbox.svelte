@@ -326,7 +326,7 @@
         <div data-lightbox-content class="relative w-full h-full flex items-center justify-center" role="none">
             <!-- Save button -->
             <button
-                class="absolute top-4 right-16 z-10 p-2 rounded-full bg-black/40 text-white hover:bg-white/20 transition-colors"
+                class="absolute top-[calc(16px+env(safe-area-inset-top))] right-16 z-10 p-2 rounded-full bg-black/40 text-white hover:bg-white/20 transition-colors"
                 on:click|stopPropagation={save}
                 aria-label={$LL.chat.messageActions.save()}
                 title={$LL.chat.messageActions.save()}
@@ -337,7 +337,7 @@
 
             <!-- Close button -->
             <button
-                class="absolute top-4 right-4 z-10 p-2 rounded-full bg-black/40 text-white hover:bg-white/20 transition-colors"
+                class="absolute top-[calc(16px+env(safe-area-inset-top))] right-4 z-10 p-2 rounded-full bg-black/40 text-white hover:bg-white/20 transition-colors"
                 on:click={close}
                 aria-label="Close"
             >
@@ -445,7 +445,7 @@
             <!-- Image counter (top center) -->
             {#if showThumbnails}
                 <div
-                    class="absolute top-4 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-black/50 text-white text-xs font-medium"
+                    class="absolute top-[calc(16px+env(safe-area-inset-top))] left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-black/50 text-white text-xs font-medium"
                 >
                     {currentIndex + 1} / {thumbnails.length}
                 </div>

@@ -182,6 +182,8 @@
     .u-settings-layer {
         align-items: center;
         padding: 24px;
+        // The installed app on an iPad runs under its see-through status bar (#969); 0 everywhere else.
+        padding-top: calc(24px + env(safe-area-inset-top, 0px));
     }
     .u-settings {
         max-width: 880px;

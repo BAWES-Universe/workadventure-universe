@@ -10,7 +10,7 @@
 <!-- A short note after the app was added: "Universe is on your home screen". It goes by itself. -->
 {#if $installedToastStore}
     <div
-        class="u-surface pointer-events-auto absolute left-0 right-0 top-14 z-[650] mx-auto flex w-fit max-w-[calc(100vw-1.5rem)] items-center gap-2.5 rounded-full py-2 pl-2 pr-4 text-sm font-semibold text-white md:top-[88px]"
+        class="u-surface pointer-events-auto absolute left-0 right-0 top-14 mobile:portrait:top-[calc(56px+env(safe-area-inset-top))] z-[650] mx-auto flex w-fit max-w-[calc(100vw-1.5rem)] items-center gap-2.5 rounded-full py-2 pl-2 pr-4 text-sm font-semibold text-white md:top-[88px]"
         role="status"
         data-testid="install-installed-toast"
         transition:fly={{ y: -50, duration: 300 }}

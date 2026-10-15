@@ -167,7 +167,8 @@
 <style lang="scss">
     .totolist {
         position: absolute !important;
-        top: 0;
+        /* Under the installed app's see-through status bar (#969). */
+        top: env(safe-area-inset-top, 0px);
         right: 0;
         width: fit-content !important;
         z-index: 425;

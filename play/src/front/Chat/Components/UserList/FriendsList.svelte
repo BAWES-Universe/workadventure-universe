@@ -42,7 +42,7 @@
 <div class="flex flex-col" data-testid="friendsList">
     {#if presenceUnavailable}
         <div
-            class="u-glass mx-2 mb-2 flex items-start gap-2.5 rounded-[14px] px-3 py-2.5"
+            class="u-glass mx-4 mb-2 flex items-start gap-2.5 rounded-2xl px-3 py-2.5"
             role="status"
             data-testid="friendsUnavailable"
         >
