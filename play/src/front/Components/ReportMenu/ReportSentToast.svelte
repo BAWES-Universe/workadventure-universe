@@ -18,7 +18,7 @@
 
 {#if $reportSentToastStore !== undefined}
     <div
-        class="u-surface pointer-events-auto absolute left-0 right-0 top-[calc(12px+env(safe-area-inset-top))] md:top-16 z-[650] mx-auto flex w-fit max-w-[calc(100vw-1.5rem)] items-center gap-2.5 rounded-full py-2 pl-2 pr-4 text-sm font-semibold text-white"
+        class="u-surface pointer-events-auto absolute left-0 right-0 top-3 mobile:portrait:top-[calc(12px+env(safe-area-inset-top))] md:top-16 z-[650] mx-auto flex w-fit max-w-[calc(100vw-1.5rem)] items-center gap-2.5 rounded-full py-2 pl-2 pr-4 text-sm font-semibold text-white"
         role="status"
         data-testid="report-sent-toast"
         transition:fly={{ y: -50, duration: 300 }}

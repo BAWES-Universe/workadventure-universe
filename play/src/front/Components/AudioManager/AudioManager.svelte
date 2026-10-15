@@ -70,7 +70,7 @@
 </script>
 
 <div
-    class="main-audio-manager flex justify-center m-auto absolute left-0 -right-2 top-[calc(70px+env(safe-area-inset-top))] z-[500] pointer-events-none"
+    class="main-audio-manager flex justify-center m-auto absolute left-0 -right-2 top-[70px] z-[500] pointer-events-none"
     transition:fly={{ y: 20, duration: 150 }}
     use:clickOutside={() => {
         /*activeSecondaryZoneActionBarStore.set(undefined)*/
