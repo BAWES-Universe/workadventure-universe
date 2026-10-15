@@ -366,7 +366,8 @@
         height: var(--u-app-height);
     }
 
-    /* alpha(t) = 0.78 * (1 - t)^1.3, in five stops: the clock stays readable on any map, the fade leaves no edge. */
+    /* alpha(t) = 0.39 * (1 - t)^1.3, in five stops: half strength, so the game shows through and the clock stays
+       readable on wood and grass (about 3:1), the fade leaves no edge. */
     .status-bar-shade {
         position: fixed;
         top: 0;
@@ -376,10 +377,10 @@
         pointer-events: none;
         background: linear-gradient(
             180deg,
-            rgb(var(--u-ink) / 0.78) 0%,
-            rgb(var(--u-ink) / 0.54) 25%,
-            rgb(var(--u-ink) / 0.32) 50%,
-            rgb(var(--u-ink) / 0.12) 75%,
+            rgb(var(--u-ink) / 0.39) 0%,
+            rgb(var(--u-ink) / 0.27) 25%,
+            rgb(var(--u-ink) / 0.16) 50%,
+            rgb(var(--u-ink) / 0.06) 75%,
             rgb(var(--u-ink) / 0) 100%
         );
     }
