@@ -22,7 +22,7 @@ interface FakeTrack {
 }
 
 /** The microphone and camera as the browser reports them: which were opened and closed, in order. */
-function installFakeDevices(events: string[]) {
+function installFakeDevices(events: string[], answers: { hold: boolean; waiting: (() => void)[] }) {
     const newTrack = (kind: "audio" | "video"): FakeTrack => ({
         kind,
         readyState: "live",
@@ -54,6 +54,12 @@ function installFakeDevices(events: string[]) {
         value: {
             getUserMedia: (constraints: MediaStreamConstraints) => {
                 events.push(`open ${constraints.audio ? "audio" : ""}${constraints.video ? "video" : ""}`);
+                // While "hold" is on, the browser keeps asking until the test answers.
+                if (answers.hold) {
+                    return new Promise((resolve) => {
+                        answers.waiting.push(() => resolve(newStream(constraints)));
+                    });
+                }
                 return Promise.resolve(newStream(constraints));
             },
             enumerateDevices: () =>
@@ -80,11 +86,13 @@ function setVisibility(state: "visible" | "hidden") {
 
 describe("the microphone on a phone", { timeout: 60_000 }, () => {
     let events: string[];
+    let answers: { hold: boolean; waiting: (() => void)[] };
 
     beforeEach(() => {
         vi.resetModules();
         events = [];
-        installFakeDevices(events);
+        answers = { hold: false, waiting: [] };
+        installFakeDevices(events, answers);
     });
 
     afterEach(() => {
@@ -141,6 +149,27 @@ describe("the microphone on a phone", { timeout: 60_000 }, () => {
 
         setPeers(0);
         await wait(3);
+        expect(events).toContain("close audio");
+        unsubscribe();
+    });
+
+    it("closes the microphone when the bubble ends before the browser has answered", async () => {
+        setDevice(IPHONE_UA, "iPhone");
+        const { wait, setPeers, unsubscribe } = await enterGame();
+        events.length = 0;
+
+        answers.hold = true;
+        setPeers(1);
+        await wait(1);
+        expect(events).toContain("open audio");
+        setPeers(0);
+        await wait(1);
+
+        // The browser answers late, with a microphone nobody wants any more.
+        answers.hold = false;
+        answers.waiting.forEach((answer) => answer());
+        await wait(1);
+
         expect(events).toContain("close audio");
         unsubscribe();
     });

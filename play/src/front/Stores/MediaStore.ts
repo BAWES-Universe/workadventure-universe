@@ -654,6 +654,17 @@ export const rawLocalStreamStore = derived<[typeof mediaStreamConstraintsStore],
                 .then(async () => {
                     try {
                         const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                        // The wanted constraints can change while the browser is still asking (someone leaves the
+                        // bubble a moment after joining). The stop that change asked for found nothing to stop,
+                        // so a track nobody wants any more is closed here, or it would stay open.
+                        for (const kind of ["audio", "video"] as const) {
+                            if (oldConstraints[kind] !== false) continue;
+                            const unwantedTracks = kind === "audio" ? stream.getAudioTracks() : stream.getVideoTracks();
+                            for (const track of unwantedTracks) {
+                                track.stop();
+                                stream.removeTrack(track);
+                            }
+                        }
                         // If there is an old video track or audio track in the current stream, we need to reuse it in the new stream
                         if (currentStream) {
                             const oldStream = currentStream;
