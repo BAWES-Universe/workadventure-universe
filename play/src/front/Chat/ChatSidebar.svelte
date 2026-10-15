@@ -301,7 +301,8 @@
     }
 
     function onSheetTap() {
-        if (searchTakesRoom) return;
+        // Searching and the Invite panel borrow the sheet's height: the snap must not be worked out from it and kept.
+        if (searchTakesRoom || invitePanelHeight > 0) return;
         leaveBubbleHeight();
         keepChatSheetRest(nextSnap(nearestSnap(sheetHeight, $windowSize.height, CHAT_SHEET_SIZES)));
     }
