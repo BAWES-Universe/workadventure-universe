@@ -247,7 +247,7 @@
     >
         <div
             class="u-title-bar-row"
-            style="inset-inline-start: {$titleBarGeometryStore.x}px; width: {$titleBarGeometryStore.width}px;"
+            style="left: {$titleBarGeometryStore.x}px; width: {$titleBarGeometryStore.width}px;"
             bind:this={row}
             use:observeSize
         >
