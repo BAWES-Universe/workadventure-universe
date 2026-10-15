@@ -15,6 +15,7 @@ import { TexturesHelper } from "../Helpers/TexturesHelper";
 import type { GameScene } from "../Game/GameScene";
 import { Companion } from "../Companion/Companion";
 import { CharacterTextureError } from "../../Exception/CharacterTextureError";
+import { DEPTH_EMOTE_INDEX } from "../Game/DepthIndexes";
 import { getPlayerAnimations, PlayerAnimationTypes } from "../Player/Animation";
 import { ProtobufClientUtils } from "../../Network/ProtobufClientUtils";
 import { SpeakerIcon } from "../Components/SpeakerIcon";
@@ -534,6 +535,8 @@ export abstract class Character extends Container implements OutlineableInterfac
         // Remote players control this value. Display it as text even if the server is older or compromised.
         span.textContent = emote;
         this.emote = new DOMElement(this.scene, -1, emoteY - EMOTE_Y, span, "z-index:10;");
+        // Phaser writes the depth as the z-index, so this keeps the emote in front of every player name.
+        this.emote.setDepth(DEPTH_EMOTE_INDEX);
         this.emote.setAlpha(0);
         this.add(this.emote);
         this.createStartTransition(emoteY);
