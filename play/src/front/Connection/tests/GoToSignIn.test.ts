@@ -77,3 +77,30 @@ describe("Sign in", () => {
         expect(assign).toHaveBeenCalledWith("/login");
     });
 });
+
+// Leaving the room for the sign-in page marks the page as closing, so a lost connection is not retried. A browser can
+// show the room again from its back cache, as it was: from then on it retries again.
+describe("the room shown again from the back cache", () => {
+    function pageShow(persisted: boolean): Event {
+        const event = new Event("pageshow");
+        Object.defineProperty(event, "persisted", { value: persisted });
+        return event;
+    }
+
+    it("is no longer closing", () => {
+        window.dispatchEvent(new Event("beforeunload"));
+        expect(connectionManager.unloading).toBe(true);
+
+        window.dispatchEvent(pageShow(true));
+
+        expect(connectionManager.unloading).toBe(false);
+    });
+
+    it("stays closing on a first load", () => {
+        window.dispatchEvent(new Event("beforeunload"));
+
+        window.dispatchEvent(pageShow(false));
+
+        expect(connectionManager.unloading).toBe(true);
+    });
+});

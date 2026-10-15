@@ -116,6 +116,12 @@ class ConnectionManager {
             this._unloading = true;
             if (this.reconnectingTimeout) clearTimeout(this.reconnectingTimeout);
         });
+        // The page was left (Sign in, a link) and then shown again from the browser's back cache, as it was: it is not
+        // closing any more, so a lost connection must be retried again.
+        // eslint-disable-next-line listeners/no-missing-remove-event-listener,listeners/no-inline-function-event-listener
+        window.addEventListener("pageshow", (event) => {
+            if (event.persisted) this._unloading = false;
+        });
 
         // Initialise default application
         this.klaxoonToolActivated = KLAXOON_ENABLED;
