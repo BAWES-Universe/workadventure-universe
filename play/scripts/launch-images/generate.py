@@ -4,8 +4,9 @@ Builds the installed app's launch screens for iPhone and iPad (#949) from the Un
 
 iOS ignores the manifest for its launch screen: it shows an `apple-touch-startup-image` whose media query matches the
 screen exactly, else a blank one. Each image is Universe ink with the logo exactly where the page's own loading
-screen (#boot-splash in index.html) puts it: 36px tall, its middle 10px above the middle of the page, and the page
-starts under the status bar. So the picture holds still from the tap until the game.
+screen (#boot-splash in index.html) puts it: 36px tall, its middle 10px above the middle of the page. The installed
+app's status bar is opaque (#1041), so the page starts under it: the middle is the middle of the screen below the
+status bar (#1040). So the picture holds still from the tap until the game.
 
 universe-logo.png is docs/brand/bawes-universe-white.svg cut to the logo itself (the viewBox "24 20 634 104" that
 index.html uses), drawn 400px tall on a transparent ground.
@@ -79,7 +80,7 @@ def main():
         kind = "ipad" if width >= 744 else "iphone"
         for orientation in ("portrait", "landscape"):
             w, h = (width, height) if orientation == "portrait" else (height, width)
-            # An iPhone held sideways hides the status bar; an iPad keeps it.
+            # The page starts under the status bar. An iPhone held sideways hides the status bar; an iPad keeps it.
             top = status_bar if orientation == "portrait" or kind == "ipad" else 0
             centre_y = top + (h - top) / 2 - ABOVE_MIDDLE
             name = f"{kind}-{width}x{height}@{ratio}x-{orientation}.png"

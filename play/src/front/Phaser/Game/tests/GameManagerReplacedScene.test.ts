@@ -8,6 +8,9 @@ const mocks = vi.hoisted(() => {
     };
     class FakeGameScene {
         constructor(public room: unknown, public scene = { key: "next" }) {}
+        hasProximityChatRoom = true;
+        cleanupClosingScene = vi.fn();
+        createSuccessorGameScene = vi.fn();
     }
     return { FakeGameScene };
 });
@@ -27,7 +30,7 @@ vi.mock("../../Login/SelectCharacterScene", () => ({ SelectCharacterSceneName: "
 vi.mock("../../Login/SelectCompanionScene", () => ({ SelectCompanionSceneName: "selectCompanionScene" }));
 vi.mock("../../Login/EmptyScene", () => ({ EmptySceneName: "emptyScene" }));
 
-import { softReconnect } from "../../../Connection/SoftReconnect";
+import { FULL_SCREEN_AFTER_MS, softReconnect } from "../../../Connection/SoftReconnect";
 import type { GameScene } from "../GameScene";
 import { gameManager, GameSceneNotFoundError } from "../GameManager";
 
@@ -59,6 +62,26 @@ describe("the scene the chat reaches while the game gets back in", () => {
         expect(gameManager.getCurrentGameScene()).toBe(replaced);
     });
 
+    // The next scene is current as soon as it is created, but its chat exists only once the connection is back. #1051
+    it("stays the scene that lost its connection until the next one has its chat", () => {
+        internals.scenePlugin = { get: () => undefined };
+        softReconnect.start(picture, () => undefined);
+        gameManager.keepReplacedGameScene(replaced);
+
+        const next = new mocks.FakeGameScene("room") as unknown as GameScene & { hasProximityChatRoom: boolean };
+        next.hasProximityChatRoom = false;
+        internals.scenePlugin = { get: () => next };
+        gameManager.gameSceneIsCreated(next);
+
+        expect(gameManager.getChatGameScene()).toBe(replaced);
+        // Everything else already reaches the next scene: its managers are the live ones.
+        expect(gameManager.getCurrentGameScene()).toBe(next);
+        expect(gameManager.tryGetCurrentGameScene()).toBe(next);
+
+        next.hasProximityChatRoom = true;
+        expect(gameManager.getChatGameScene()).toBe(next);
+    });
+
     it("is not kept once the room is no longer on screen", () => {
         internals.scenePlugin = { get: () => undefined };
         softReconnect.start(picture, () => undefined);
@@ -66,5 +89,26 @@ describe("the scene the chat reaches while the game gets back in", () => {
         softReconnect.cancel();
 
         expect(() => gameManager.getCurrentGameScene()).toThrow(GameSceneNotFoundError);
+    });
+
+    // The room left while getting back in (a rename from Orbit, a Woka or camera page): that screen takes over, so the
+    // picture, the pill and the 10 s wait of the full "Reconnecting" screen end. #1047
+    it("ends the wait when the room is left", () => {
+        const showFullScreen = vi.fn();
+        vi.useFakeTimers();
+        try {
+            const scene = new mocks.FakeGameScene("room", { key: "old" });
+            internals.scenePlugin = { get: () => scene };
+            softReconnect.start(picture, showFullScreen);
+            expect(softReconnect.isWaiting()).toBe(true);
+
+            gameManager.closeGameScene();
+
+            expect(softReconnect.isWaiting()).toBe(false);
+            vi.advanceTimersByTime(FULL_SCREEN_AFTER_MS + 1_000);
+            expect(showFullScreen).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });

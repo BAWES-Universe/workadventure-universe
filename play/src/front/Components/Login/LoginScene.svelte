@@ -60,7 +60,7 @@
 
 <form
     autocomplete="off"
-    class="loginScene min-h-dvh flex flex-col items-center justify-start md:justify-center pointer-events-auto relative z-30 px-4 pt-[60px] pb-6 md:p-6"
+    class="loginScene min-h-dvh flex flex-col items-center justify-start md:justify-center pointer-events-auto relative z-30 px-4 pt-[max(60px,calc(env(safe-area-inset-top)+12px))] pb-6 md:p-6"
     on:submit|preventDefault={submit}
 >
     <div class="u-join-card w-full md:w-[440px] px-5 py-6 md:p-7">
