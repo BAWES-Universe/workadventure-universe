@@ -9,13 +9,24 @@ import { lazyLoadPlayerCharacterTextures } from "./PlayerTexturesLoadingManager"
  * Class that let you generate a base64 image from a CharacterLayer[]
  */
 export class CharacterLayerManager {
-    static wokaBase64(characterTextures: CharacterTextureMessage[]): Promise<string> {
+    /**
+     * With `standIn: false`, a Woka whose pictures can't be loaded fails instead of drawing the plain stand-in body, so
+     * the caller can show another picture of that person (the chat picture saved on their account).
+     */
+    static wokaBase64(
+        characterTextures: CharacterTextureMessage[],
+        { standIn = true }: { standIn?: boolean } = {}
+    ): Promise<string> {
         // Asked from inside stores: during a reconnect there is no map for a moment, and asking then would throw
         // (freezing the interface). Draw the woka once the map is back instead.
-        return waitForGameScene().then((scene) => this.drawWokaBase64(scene, characterTextures));
+        return waitForGameScene().then((scene) => this.drawWokaBase64(scene, characterTextures, standIn));
     }
 
-    private static drawWokaBase64(scene: GameScene, characterTextures: CharacterTextureMessage[]): Promise<string> {
+    private static drawWokaBase64(
+        scene: GameScene,
+        characterTextures: CharacterTextureMessage[],
+        standIn: boolean
+    ): Promise<string> {
         return lazyLoadPlayerCharacterTextures(
             scene.superLoad,
             characterTextures.map((texture) => ({ id: texture.id, url: texture.url }))
@@ -29,7 +40,8 @@ export class CharacterLayerManager {
                     return htmlImageElementSrc;
                 });
             })
-            .catch(() => {
+            .catch((error) => {
+                if (!standIn) throw error;
                 return lazyLoadPlayerCharacterTextures(scene.superLoad, [
                     {
                         id: "color_22",
