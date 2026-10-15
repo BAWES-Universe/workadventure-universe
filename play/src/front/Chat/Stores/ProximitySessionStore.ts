@@ -32,11 +32,7 @@ export interface ProximityHistoryStash {
      */
     takenBy?: {
         keepUnsentDraft(sessionId: string | undefined, text: string): void;
-        carryNotSentMessage(
-            message: ChatMessage,
-            stayEnd: ChatMessage | undefined,
-            after: ChatMessage | undefined
-        ): void;
+        carryNotSentMessage(message: ChatMessage, stayEnd: ChatMessage | undefined): void;
     };
 }
 
@@ -49,14 +45,27 @@ export function stashProximityHistory(history: ProximityHistoryStash): void {
             : undefined;
 }
 
+/** Set when the game was left without a new map right away; the next proximity chat reads it once. */
+let leftWithoutMap = false;
+
 /**
  * Leaving the game without a new map right away (back to the login screen, changing your woka or camera): keep the
  * chats you had, but not what was open, so the proximity chat never opens by itself when you come back.
  */
 export function keepOnlyProximityHistory(): void {
+    leftWithoutMap = true;
     if (!stash) return;
-    stash = { ...stash, wasSelected: false, chatStateToRestore: undefined };
+    // Changed in place: the old chat holds this same object, and what the next one does to it (takenBy) must reach it.
+    stash.wasSelected = false;
+    stash.chatStateToRestore = undefined;
     if (stash.messages.length === 0) stash = undefined;
+}
+
+/** Whether the game was left without a new map since the last call: the previous proximity chat is gone for good. */
+export function takeLeftWithoutMap(): boolean {
+    const left = leftWithoutMap;
+    leftWithoutMap = false;
+    return left;
 }
 
 export function takeProximityHistory(): ProximityHistoryStash | undefined {

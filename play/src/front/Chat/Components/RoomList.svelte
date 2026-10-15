@@ -41,7 +41,7 @@
     // Side by side with a thread, the Chats / People tabs sit over the list column only: the column starts below them.
     export let listTopInset = 0;
 
-    const gameScene = gameManager.getCurrentGameScene();
+    const gameScene = gameManager.getChatGameScene();
     const proximityChatRoom = gameScene.proximityChatRoom;
     const proximitySessions = proximityChatRoom.sessions;
     const proximityUnread = proximityChatRoom.unreadBySession;

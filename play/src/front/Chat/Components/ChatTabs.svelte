@@ -19,7 +19,7 @@
      */
     export let sideBarWidth: number = INITIAL_SIDEBAR_WIDTH;
 
-    const gameScene = gameManager.getCurrentGameScene();
+    const gameScene = gameManager.getChatGameScene();
     const chat = gameManager.chatConnection;
     const hasChatsTab = gameScene.room.isChatEnabled;
     const hasPeopleTab = gameScene.room.isChatOnlineListEnabled || gameScene.room.isChatDisconnectedListEnabled;
