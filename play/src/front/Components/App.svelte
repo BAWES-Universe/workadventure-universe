@@ -316,10 +316,6 @@
             class:game-scene-loaded={$gameSceneIsLoadedStore}
             bind:this={gameDiv}
         >
-            <!-- Soft ink behind the clock of the installed app, whose status bar is see-through (#969). Right after
-                 the canvas, and before every screen and button: the ones after it are positioned too, so they paint
-                 over it. Its height is the inset, so it is nothing where the inset is 0 (browsers, Android, desktop). -->
-            <div class="status-bar-shade" aria-hidden="true" />
             <GameOverlay {game} />
         </div>
         {#if $coWebsites.length > 0}
@@ -340,23 +336,3 @@
         {/if}
     </div>
 {/if}
-
-<style lang="scss">
-    /* alpha(t) = 0.78 * (1 - t)^1.3, in five stops: the clock stays readable on any map, the fade leaves no edge. */
-    .status-bar-shade {
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        height: calc(env(safe-area-inset-top, 0px) * 1.5);
-        pointer-events: none;
-        background: linear-gradient(
-            180deg,
-            rgb(var(--u-ink) / 0.78) 0%,
-            rgb(var(--u-ink) / 0.54) 25%,
-            rgb(var(--u-ink) / 0.32) 50%,
-            rgb(var(--u-ink) / 0.12) 75%,
-            rgb(var(--u-ink) / 0) 100%
-        );
-    }
-</style>
