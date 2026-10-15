@@ -259,6 +259,29 @@ describe("muting the microphone during a conversation", { timeout: 60_000 }, () 
         game.unsubscribe();
     });
 
+    it("stops the muted track when another microphone is picked", async () => {
+        const game = await enterGame(DESKTOP_UA, "Win32");
+        game.setLive(true);
+        await game.wait(3);
+        game.mute();
+        await game.wait(3);
+        const track = audioTrack();
+        expect(track?.readyState).toBe("live");
+        events.length = 0;
+
+        game.media.requestedMicrophoneDeviceIdStore.set("other-mic");
+        await game.wait(3);
+
+        // Still muted: the old microphone is released and nothing is opened.
+        expect(events).toEqual(["close audio"]);
+        expect(track?.readyState).toBe("ended");
+
+        game.unmute();
+        await game.wait(3);
+        expect(events).toContain("open audio");
+        game.unsubscribe();
+    });
+
     it("stops the muted track when the status cuts the microphone", async () => {
         const game = await enterGame(DESKTOP_UA, "Win32");
         game.setLive(true);

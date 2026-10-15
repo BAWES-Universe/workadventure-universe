@@ -410,16 +410,18 @@ availabilityStatusStore.subscribe((newStatus: AvailabilityStatus) => {
 
 let previousComputedVideoConstraint: boolean | MediaTrackConstraints = false;
 let previousComputedAudioConstraint: boolean | MediaTrackConstraints = false;
-let previousComputedKeepAudioWarm = false;
+let previousComputedKeepAudioWarm: false | MediaTrackConstraints = false;
 
 export interface MediaStreamConstraintsValue {
     video: false | MediaTrackConstraints;
     audio: false | MediaTrackConstraints;
     /**
-     * True when the microphone is off only because the user muted it during a conversation: the audio track
+     * Set when the microphone is off only because the user muted it during a conversation: the audio track
      * is then kept open (disabled) so that unmuting does not have to reopen the device.
+     * It holds the microphone constraints the kept track must still match (picking another microphone or
+     * noise filter while muted releases it).
      */
-    keepAudioWarm: boolean;
+    keepAudioWarm: false | MediaTrackConstraints;
 }
 
 /**
@@ -563,13 +565,16 @@ export const mediaStreamConstraintsStore = derived(
         // 1 to 3 seconds (much more with Bluetooth headsets switching to their call profile).
         // Only a mute by the user keeps the track open; every other reason really releases the device.
         const isInConversation = $isLiveStreamingStore || $inLivekitStore;
-        const keepAudioWarm = isInConversation && $requestedMicrophoneState === false && !audioReleased;
+        const keepAudioWarm: false | MediaTrackConstraints =
+            isInConversation && $requestedMicrophoneState === false && !audioReleased
+                ? { ...$audioConstraintStore }
+                : false;
 
         // Let's make the changes only if the new value is different from the old one.
         if (
             !deepEqual(previousComputedVideoConstraint, currentVideoConstraint) ||
             !deepEqual(previousComputedAudioConstraint, currentAudioConstraint) ||
-            previousComputedKeepAudioWarm !== keepAudioWarm
+            !deepEqual(previousComputedKeepAudioWarm, keepAudioWarm)
         ) {
             previousComputedVideoConstraint = currentVideoConstraint;
             previousComputedAudioConstraint = currentAudioConstraint;
@@ -881,9 +886,13 @@ export const rawLocalStreamStore = derived<[typeof mediaStreamConstraintsStore],
         }
 
         let warmAudioTrack = takeWarmAudio(constraints.audio);
-        // Keep the warm track only while the microphone stays muted in the conversation. Otherwise, release it
-        // before any getUserMedia call.
-        if (constraints.audio !== false || !constraints.keepAudioWarm) {
+        // Keep the warm track only while the microphone stays muted in the conversation, with the same microphone
+        // settings. Otherwise, release it before any getUserMedia call.
+        if (
+            constraints.audio !== false ||
+            !constraints.keepAudioWarm ||
+            (warmAudio && !deepEqual(warmAudio.constraints, constraints.keepAudioWarm))
+        ) {
             releaseWarmAudio();
         }
         if (warmAudioTrack && !currentStream) {
