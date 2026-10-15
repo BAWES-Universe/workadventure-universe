@@ -58,9 +58,13 @@ export class MobileJoystick extends VirtualJoystick {
     }
 
     public showAt(x: number, y: number): void {
-        // Show the joystick at the given position
-        this.x = x;
-        this.y = y;
+        // Show the joystick under the finger at the given screen position. The base does not scroll, but the camera
+        // zoom still applies to it, so the screen point is not the base position when the map is zoomed out (#1060).
+        // Rex measures from `base + scroll` to the pointer's world point: put the base where both agree.
+        const camera = this.scene.sys.cameras.main;
+        const { x: worldX, y: worldY } = camera.getWorldPoint(x, y);
+        this.x = worldX - camera.scrollX;
+        this.y = worldY - camera.scrollY;
 
         // The joystick is used by the player
         this.enable = true;
