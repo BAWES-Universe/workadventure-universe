@@ -298,8 +298,8 @@
                 scale > MIN_SCALE + 0.01 && !isVideo
                     ? "pan"
                     : Math.abs(totalY) > Math.abs(totalX)
-                      ? "dismiss"
-                      : "swipe";
+                    ? "dismiss"
+                    : "swipe";
         }
         recentMoves.push({ y: point.y, t: e.timeStamp });
         recentMoves = recentMoves.filter((move) => e.timeStamp - move.t <= RECENT_MS);
