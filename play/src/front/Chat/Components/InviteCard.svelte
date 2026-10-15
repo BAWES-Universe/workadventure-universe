@@ -74,7 +74,11 @@
 
     function share() {
         analyticsClient.inviteCopyLink();
-        navigator.share({ url: link }).catch(() => copy());
+        navigator.share({ url: link }).catch((error: unknown) => {
+            // Closing the share sheet is not a failure: only copy when sharing really could not happen.
+            if (error instanceof DOMException && error.name === "AbortError") return;
+            copy();
+        });
     }
 
     onDestroy(() => {
