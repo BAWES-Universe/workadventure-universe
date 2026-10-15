@@ -78,7 +78,9 @@ function installFakeDevices(events: string[], tracks: FakeTrack[]) {
                 if (constraints.video) opened.push(newTrack("video"));
                 const stream = new FakeMediaStream(opened);
                 if (holdAnswers) {
-                    return new Promise((resolve) => heldAnswers.push(() => resolve(stream)));
+                    return new Promise((resolve) => {
+                        heldAnswers.push(() => resolve(stream));
+                    });
                 }
                 return Promise.resolve(stream);
             },
