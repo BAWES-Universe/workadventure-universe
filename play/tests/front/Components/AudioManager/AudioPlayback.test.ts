@@ -894,6 +894,17 @@ describe("audio playback on browsers that ignore element volume (iPhone)", () =>
         expect(state).toHaveBeenLastCalledWith("playing");
     });
 
+    it("leaves the element out of CORS mode when the gain node cannot be set up", async () => {
+        context.createMediaElementSource.mockImplementationOnce(() => {
+            throw new DOMException("closed", "InvalidStateError");
+        });
+        player.setSource(source("https://nocors.example/a.mp3"));
+        await flush();
+        expect(media[0].crossOrigin).toBeNull();
+        expect(media[0].paused).toBe(false);
+        expect(state).toHaveBeenLastCalledWith("playing");
+    });
+
     it("keeps plain playback when Web Audio is not available", async () => {
         player.destroy();
         player = new AudioPlayback(

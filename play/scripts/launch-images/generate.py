@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 """
-Builds the installed app's launch screens for iPhone and iPad (#949) from the UNIVERSE wordmark.
+Builds the installed app's launch screens for iPhone and iPad (#949) from the Universe logo (#981).
 
 iOS ignores the manifest for its launch screen: it shows an `apple-touch-startup-image` whose media query matches the
-screen exactly, else a blank one. Each image is Universe ink with the wordmark exactly where the page's own launch
-screen (#boot-splash in index.html) and the loader (LoaderScene.svelte) put it: 40px tall, 14px above the middle of
-the page. The installed app's status bar is see-through (#969), so the page starts at the very top of the screen and
-the middle is the middle of the whole screen. So the picture holds still from the tap to the loader.
+screen exactly, else a blank one. Each image is Universe ink with the logo exactly where the page's own loading
+screen (#boot-splash in index.html) puts it: 36px tall, its middle 10px above the middle of the page. The installed
+app's status bar is see-through (#969), so the page starts at the very top of the screen and the middle is the middle
+of the whole screen. So the picture holds still from the tap until the game.
+
+universe-logo.png is docs/brand/bawes-universe-white.svg cut to the logo itself (the viewBox "24 20 634 104" that
+index.html uses), drawn 400px tall on a transparent ground.
 
 Run from play/ with Pillow installed, then paste what it prints into index.html:
     python3 scripts/launch-images/generate.py
 """
-import base64
-import io
 import os
 
 from PIL import Image
@@ -20,12 +21,12 @@ from PIL import Image
 INK = (0x14, 0x12, 0x1E)
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "..", "..", "public", "static", "images", "launch")
-WORDMARK = os.path.join(HERE, "universe-wordmark.png")
-WORDMARK_HEIGHT = 40  # css px, as the loader's max-h-10
-ABOVE_MIDDLE = 14  # css px: the loader's 16px gap and 12px bar sit under the wordmark, centred as one column
+LOGO = os.path.join(HERE, "universe-logo.png")
+LOGO_HEIGHT = 36  # css px, as #boot-splash svg
+ABOVE_MIDDLE = 10  # css px: the 16px gap and 4px bar sit under the logo, centred as one column
 
 # (width, height, pixel ratio, status bar height) of each screen held upright, in css px. The status bar height is
-# kept for reference: the page runs under it since #969, so it no longer moves the wordmark.
+# kept for reference: the page runs under it since #969, so it no longer moves the logo.
 SCREENS = [
     # iPhone
     (440, 956, 3, 62),  # 16 Pro Max, 17 Pro Max
@@ -54,9 +55,9 @@ SCREENS = [
 ]
 
 
-def wordmark(ratio):
-    source = Image.open(WORDMARK).convert("RGBA")
-    height = WORDMARK_HEIGHT * ratio
+def logo(ratio):
+    source = Image.open(LOGO).convert("RGBA")
+    height = LOGO_HEIGHT * ratio
     width = round(source.width * height / source.height)
     return source.resize((width, height), Image.LANCZOS)
 
@@ -76,7 +77,7 @@ def main():
     links = []
     marks = {}
     for width, height, ratio, _status_bar in SCREENS:
-        mark = marks.setdefault(ratio, wordmark(ratio))
+        mark = marks.setdefault(ratio, logo(ratio))
         kind = "ipad" if width >= 744 else "iphone"
         for orientation in ("portrait", "landscape"):
             w, h = (width, height) if orientation == "portrait" else (height, width)
@@ -90,16 +91,7 @@ def main():
                 f'(orientation: {orientation})" href="/static/images/launch/{name}" />'
             )
 
-    # The page's own launch screen: the wordmark on ink, sharp on a 3x screen and small enough (WebP, a few kB) to sit
-    # in the page itself, so it paints in the same frame as the ink.
-    mark = wordmark(3)
-    splash = Image.new("RGBA", mark.size, INK + (255,))
-    splash.alpha_composite(mark)
-    buffer = io.BytesIO()
-    splash.convert("RGB").save(buffer, "WEBP", quality=85)
     print("\n".join(links))
-    print()
-    print("data:image/webp;base64," + base64.b64encode(buffer.getvalue()).decode())
 
 
 if __name__ == "__main__":
