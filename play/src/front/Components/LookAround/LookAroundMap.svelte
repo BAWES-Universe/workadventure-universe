@@ -336,7 +336,7 @@
         transform: translateX(-50%);
     }
     .phone .you-tab-bottom {
-        bottom: calc(var(--bar-clear, 0px) + 72px + env(safe-area-inset-bottom, 0px));
+        bottom: calc(var(--bar-clear, 0px) + 72px);
     }
     .you-tab-woka {
         width: 30px;

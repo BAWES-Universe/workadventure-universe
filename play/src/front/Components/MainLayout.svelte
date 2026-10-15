@@ -374,6 +374,10 @@
             bottom: 44px;
             max-height: calc(100dvh - 144px);
         }
+        /* Popups keep their gap above the bar when it rises clear of the home bar (ResponsiveActionBar.svelte, #941). */
+        .popups {
+            margin-bottom: calc(6rem + max(0px, env(safe-area-inset-bottom, 0px) - 21px));
+        }
     }
 
     .no-scroll-bar {
