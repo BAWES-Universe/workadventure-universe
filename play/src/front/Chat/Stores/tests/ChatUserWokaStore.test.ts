@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { get, readable } from "svelte/store";
+import { get, readable, writable } from "svelte/store";
 import { Color } from "@workadventure/shared-utils";
 import type { ChatUser } from "../../Connection/ChatConnection";
 import type { UserProviderMerger } from "../../UserProviderMerger/UserProviderMerger";
@@ -50,10 +50,22 @@ describe("personPicture", () => {
 
     it("prefers the woka the game sees right now, then the chat account's picture", () => {
         const wokas = new Map([["@khalid:server", live]]);
-        expect(personPicture(wokas, "@khalid:server", account)).toBe(live);
+        expect(get(personPicture(wokas, "@khalid:server", account)!)).toBe("live-woka.png");
+        expect(personPicture(wokas, "@khalid:server", undefined)).toBe(live);
         expect(personPicture(wokas, "@bossman:server", account)).toBe(account);
         expect(personPicture(wokas, undefined, account)).toBe(account);
         expect(personPicture(new Map(), "@bossman:server", undefined)).toBeUndefined();
+    });
+
+    it("shows the chat account's picture while the woka has none (its pictures could not be loaded)", () => {
+        const failedWoka = writable<string | undefined>(undefined);
+        const wokas = new Map([["@melon:server", failedWoka]]);
+        const picture = personPicture(wokas, "@melon:server", account)!;
+        expect(get(picture)).toBe("account-picture.png");
+        failedWoka.set("melon-woka.png");
+        expect(get(picture)).toBe("melon-woka.png");
+        // The same pair gives the same store, so a list does not redraw.
+        expect(personPicture(wokas, "@melon:server", account)).toBe(picture);
     });
 });
 

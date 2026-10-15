@@ -153,14 +153,27 @@ export const WOKA_BY_CHAT_ID_CONTEXT = Symbol("wokaByChatId");
 /**
  * The one picture rule for a person everywhere in the chat: their woka as the game sees it right now, else the
  * picture their chat account carries, else nothing (the caller shows a letter). Every place picks the same way, so a
- * person never shows two different pictures.
+ * person never shows two different pictures. The account picture also shows while their woka has no picture: it is
+ * still being drawn, or its pictures can't be loaded (a saved Woka then stays empty instead of the plain stand-in).
  */
+export function personPicture(
+    wokas: Map<string, PictureStore>,
+    chatId: string | undefined,
+    accountPicture: PictureStore
+): PictureStore;
+export function personPicture(
+    wokas: Map<string, PictureStore>,
+    chatId: string | undefined,
+    accountPicture: PictureStore | undefined
+): PictureStore | undefined;
 export function personPicture(
     wokas: Map<string, PictureStore>,
     chatId: string | undefined,
     accountPicture: PictureStore | undefined
 ): PictureStore | undefined {
-    return (chatId ? wokas.get(chatId) : undefined) ?? accountPicture;
+    const woka = chatId ? wokas.get(chatId) : undefined;
+    if (woka && accountPicture) return firstPicture(woka, accountPicture);
+    return woka ?? accountPicture;
 }
 
 /**
