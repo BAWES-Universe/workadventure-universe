@@ -43,6 +43,14 @@ class FakeMediaStream {
     removeEventListener = () => undefined;
 }
 
+/** While true, getUserMedia waits until the test answers (see answerHeldRequests). */
+let holdAnswers = false;
+let heldAnswers: (() => void)[] = [];
+function answerHeldRequests() {
+    holdAnswers = false;
+    heldAnswers.splice(0).forEach((answer) => answer());
+}
+
 /** The microphone and camera as the browser reports them: which were opened and closed, in order. */
 function installFakeDevices(events: string[], tracks: FakeTrack[]) {
     vi.stubGlobal("MediaStream", FakeMediaStream);
@@ -68,7 +76,11 @@ function installFakeDevices(events: string[], tracks: FakeTrack[]) {
                 const opened: FakeTrack[] = [];
                 if (constraints.audio) opened.push(newTrack("audio"));
                 if (constraints.video) opened.push(newTrack("video"));
-                return Promise.resolve(new FakeMediaStream(opened));
+                const stream = new FakeMediaStream(opened);
+                if (holdAnswers) {
+                    return new Promise((resolve) => heldAnswers.push(() => resolve(stream)));
+                }
+                return Promise.resolve(stream);
             },
             enumerateDevices: () =>
                 Promise.resolve([
@@ -97,6 +109,8 @@ describe("muting the microphone during a conversation", { timeout: 60_000 }, () 
         vi.resetModules();
         events = [];
         tracks = [];
+        holdAnswers = false;
+        heldAnswers = [];
         installFakeDevices(events, tracks);
     });
 
@@ -279,6 +293,31 @@ describe("muting the microphone during a conversation", { timeout: 60_000 }, () 
         game.unmute();
         await game.wait(3);
         expect(events).toContain("open audio");
+        game.unsubscribe();
+    });
+
+    it("does not keep the old microphone when muting while another one is still opening", async () => {
+        const game = await enterGame(DESKTOP_UA, "Win32");
+        game.setLive(true);
+        await game.wait(3);
+        const oldTrack = audioTrack();
+
+        holdAnswers = true;
+        game.media.requestedMicrophoneDeviceIdStore.set("other-mic");
+        await game.wait(1);
+        game.mute();
+        await game.wait(1);
+
+        // The track in use is still the old microphone: it does not match the one picked, so it is not kept.
+        expect(oldTrack?.readyState).toBe("ended");
+
+        answerHeldRequests();
+        await game.wait(3);
+        events.length = 0;
+        game.unmute();
+        await game.wait(3);
+        expect(events).toContain("open audio");
+        expect(audioTrack()).not.toBe(oldTrack);
         game.unsubscribe();
     });
 

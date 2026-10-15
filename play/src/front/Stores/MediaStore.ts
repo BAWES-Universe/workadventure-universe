@@ -619,6 +619,11 @@ let currentStream: MediaStream | undefined = undefined;
  * It is out of currentStream, so the rest of the application sees the microphone as off.
  */
 let warmAudio: { track: MediaStreamTrack; constraints: MediaTrackConstraints } | undefined = undefined;
+/**
+ * The constraints each microphone track was opened with. oldConstraints already holds the next ones while
+ * getUserMedia is still answering, so it cannot tell which microphone a kept track really uses.
+ */
+const audioTrackConstraints = new WeakMap<MediaStreamTrack, MediaTrackConstraints>();
 
 function releaseWarmAudio(): void {
     warmAudio?.track.stop();
@@ -714,6 +719,11 @@ export const rawLocalStreamStore = derived<[typeof mediaStreamConstraintsStore],
                 .then(async () => {
                     try {
                         const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                        if (typeof constraints.audio === "object") {
+                            for (const track of stream.getAudioTracks()) {
+                                audioTrackConstraints.set(track, constraints.audio);
+                            }
+                        }
                         // The wanted constraints can change while the browser is still asking (someone leaves the
                         // bubble a moment after joining). The stop that change asked for found nothing to stop,
                         // so a track nobody wants any more is closed here, or it would stay open.
@@ -913,8 +923,7 @@ export const rawLocalStreamStore = derived<[typeof mediaStreamConstraintsStore],
         if (currentStream) {
             const oldStream = currentStream;
             const mustStopVideo = oldConstraints.video !== false && constraints.video === false;
-            const oldAudioConstraints = oldConstraints.audio;
-            const mustStopAudio = oldAudioConstraints !== false && constraints.audio === false;
+            const mustStopAudio = oldConstraints.audio !== false && constraints.audio === false;
 
             if (mustStopVideo) {
                 oldStream.getVideoTracks().forEach((t) => {
@@ -929,10 +938,16 @@ export const rawLocalStreamStore = derived<[typeof mediaStreamConstraintsStore],
             if (mustStopAudio) {
                 oldStream.getAudioTracks().forEach((t) => {
                     oldStream.removeTrack(t);
-                    if (constraints.keepAudioWarm && t.readyState === "live") {
+                    const trackConstraints = audioTrackConstraints.get(t);
+                    if (
+                        constraints.keepAudioWarm &&
+                        trackConstraints &&
+                        deepEqual(trackConstraints, constraints.keepAudioWarm) &&
+                        t.readyState === "live"
+                    ) {
                         releaseWarmAudio();
                         t.enabled = false;
-                        warmAudio = { track: t, constraints: oldAudioConstraints };
+                        warmAudio = { track: t, constraints: trackConstraints };
                     } else {
                         t.stop();
                     }
