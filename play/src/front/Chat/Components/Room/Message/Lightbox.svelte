@@ -405,7 +405,9 @@
     }
 
     function onResize(): void {
-        if (show) settle();
+        // A resize in the middle of a gesture (a phone's address bar sliding away) must not ease the picture under the
+        // fingers. Letting go settles it anyway.
+        if (show && fingers.size === 0) settle();
     }
 
     // Keeps the browser from also treating the touch as a scroll, a page zoom or a mouse click.
