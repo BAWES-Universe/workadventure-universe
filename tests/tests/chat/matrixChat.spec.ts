@@ -579,13 +579,19 @@ test.describe("Matrix chat tests @oidc @matrix @nowebkit", () => {
     await page.context().close();
   });
 
-  test("Header: search is always visible and one + offers New message, New room and New folder", async ({ browser }) => {
+  test("Footer: search is a button that opens the field, and one + offers New message, New room and New folder", async ({ browser }) => {
     await using page = await getPage(browser, 'Alice', Map.url("empty"));
     await oidcMatrixUserLogin(page);
     await ChatUtils.openChat(page);
 
-    // Search sits in the header, no menu to open first.
-    await expect(page.getByTestId("chatSearchInput")).toBeVisible();
+    // Search is a button in the footer: the field appears when it is tapped, focused, and Cancel puts the footer back.
+    await expect(page.getByTestId("chatSearchInput")).toHaveCount(0);
+    await page.getByTestId("chatSearchOpen").click();
+    await expect(page.getByTestId("chatSearchInput")).toBeFocused();
+    await expect(page.getByTestId("openOptionToCreateRoomOrFolder")).toHaveCount(0);
+    await page.getByTestId("chatSearchCancel").click();
+    await expect(page.getByTestId("chatSearchInput")).toHaveCount(0);
+    await expect(page.getByTestId("chatSearchOpen")).toBeVisible();
 
     const plus = page.getByTestId("openOptionToCreateRoomOrFolder");
     await plus.click();
@@ -607,12 +613,13 @@ test.describe("Matrix chat tests @oidc @matrix @nowebkit", () => {
     await page.context().close();
   });
 
-  test("Header: guests keep search on People and get no +", async ({ browser }) => {
+  test("Footer: guests keep search on People and get no +", async ({ browser }) => {
     await using page = await getPage(browser, 'Alice', Map.url("empty"));
     await ChatUtils.openChat(page);
     await expect(page.getByTestId("openOptionToCreateRoomOrFolder")).toHaveCount(0);
 
     await page.locator(".userList").click();
+    await page.getByTestId("chatSearchOpen").click();
     await expect(page.getByTestId("chatSearchInput")).toBeVisible();
     await expect(page.getByTestId("openOptionToCreateRoomOrFolder")).toHaveCount(0);
 

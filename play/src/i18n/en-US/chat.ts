@@ -871,6 +871,7 @@ const chat: BaseTranslation = {
         searchChat: "Search chats",
         searchPeople: "Search people",
         clearSearch: "Clear search",
+        cancelSearch: "Cancel",
         tabChats: "Chats",
         tabPeople: "People",
         peopleOnline: "{count} people online in this world",

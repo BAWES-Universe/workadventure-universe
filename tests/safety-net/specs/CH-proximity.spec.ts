@@ -300,6 +300,7 @@ test("CH-026 Find people from an ended chat opens People searching for Bob", asy
     await expect(way).toHaveText(/Find people/);
     await way.click();
     await expect(player.getByTestId("chatTabPeople")).toHaveAttribute("aria-selected", "true");
+    // The search opens by itself with the name filled in: no tap on the search button.
     await expect(player.getByTestId("chatSearchInput")).toHaveValue("Bob");
 });
 
@@ -413,7 +414,7 @@ test("CH-032 Each past chat has its own row, newest first", async ({ player, bro
     await expect(player.getByTestId("oneChatListShowMore")).toHaveCount(0);
 });
 
-test("CH-033 Search chats filters the rows; Escape clears then leaves; X clears; no match says so", async ({
+test("CH-033 Search chats filters the rows; Escape clears then closes; X clears; no match says so", async ({
     player,
     browser,
     url,
@@ -428,17 +429,21 @@ test("CH-033 Search chats filters the rows; Escape clears then leaves; X clears;
     const titles = player.getByTestId("proximitySessionRowTitle");
     await expect(titles).toHaveText(["Bob"], { timeout: 20_000 });
     const search = player.getByTestId("chatSearchInput");
-    await expect(search).toBeVisible();
+    // Search is a button in the footer; the field opens when it is tapped, with the focus.
+    await expect(search).toHaveCount(0);
+    await player.getByTestId("chatSearchOpen").click();
+    await expect(search).toBeFocused();
     await expect(search).toHaveAttribute("placeholder", "Search chats");
-    await search.click();
     await search.pressSequentially("Bob");
     await expect(titles).toHaveText(["Bob"]);
     await search.press("Escape");
     await expect(search).toHaveValue("");
     await expect(search).toBeFocused();
+    // The second Escape closes the search: Invite, search and + are back.
     await search.press("Escape");
-    await expect(search).not.toBeFocused();
-    await search.click();
+    await expect(search).toHaveCount(0);
+    await expect(player.getByTestId("chatSearchOpen")).toBeVisible();
+    await player.getByTestId("chatSearchOpen").click();
     await search.pressSequentially("zzz");
     await expect(titles).toHaveCount(0);
     await expect(chat(player).getByText("No conversations match your search")).toBeVisible();
