@@ -2,6 +2,7 @@ import { Buffer } from "buffer";
 import Debug from "debug";
 import type { Readable, Unsubscriber, Writable } from "svelte/store";
 import { derived, get, writable } from "svelte/store";
+import * as Sentry from "@sentry/svelte";
 import Peer from "@workadventure/simple-peer";
 import { ForwardableStore } from "@workadventure/store-utils";
 import type { IceServer } from "@workadventure/messages";
@@ -276,6 +277,10 @@ export class RemotePeer extends Peer implements Streamable {
     private localStream: MediaStream | undefined;
     private localAudioTrack: MediaStreamAudioTrack | undefined;
     private localVideoTrack: MediaStreamVideoTrack | undefined;
+    /**
+     * The audio track whose sender was emptied by a mute (the sender is kept, see localStreamStoreSubscribe).
+     */
+    private pausedAudioTrack: MediaStreamAudioTrack | undefined;
 
     constructor(
         public user: UserSimplePeerInterface,
@@ -453,8 +458,16 @@ export class RemotePeer extends Peer implements Streamable {
         ).subscribe((streamValue) => {
             if (streamValue === undefined) {
                 if (this.localStream) {
+                    if (this.pausedAudioTrack) {
+                        try {
+                            this.removeTrack(this.pausedAudioTrack, this.localStream);
+                        } catch (e) {
+                            console.warn("Could not remove the paused audio track in P2P connection", e);
+                        }
+                    }
                     this.removeStream(this.localStream);
                 }
+                this.pausedAudioTrack = undefined;
                 this.localStream = undefined;
                 return;
             }
@@ -482,14 +495,43 @@ export class RemotePeer extends Peer implements Streamable {
                             debug("Replacing audio track in P2P connection");
                             this.replaceTrack(this.localAudioTrack, newAudioTrack, this.localStream);
                         } else if (newAudioTrack && !this.localAudioTrack) {
-                            debug("Adding audio track in P2P connection");
-                            this.addTrack(newAudioTrack, this.localStream);
+                            const pausedAudioTrack = this.pausedAudioTrack;
+                            this.pausedAudioTrack = undefined;
+                            if (pausedAudioTrack) {
+                                debug("Resuming audio track in P2P connection");
+                                try {
+                                    this.replaceTrack(pausedAudioTrack, newAudioTrack, this.localStream);
+                                } catch (e) {
+                                    // Never stay silent: a new sender only costs a renegotiation.
+                                    Sentry.captureException(e);
+                                    this.addTrack(newAudioTrack, this.localStream);
+                                }
+                            } else {
+                                debug("Adding audio track in P2P connection");
+                                this.addTrack(newAudioTrack, this.localStream);
+                            }
                         } else if (this.localAudioTrack && !newAudioTrack) {
-                            debug("Removing audio track in P2P connection");
-                            this.removeTrack(this.localAudioTrack, this.localStream);
+                            // On mute, keep the sender and send nothing: simple-peer refuses to add a removed track
+                            // again (a kept microphone track comes back as the same object), and this avoids a
+                            // renegotiation on every mute.
+                            try {
+                                debug("Pausing audio track in P2P connection");
+                                // simple-peer accepts null here, its typings do not.
+                                this.replaceTrack(
+                                    this.localAudioTrack,
+                                    null as unknown as MediaStreamTrack,
+                                    this.localStream
+                                );
+                                this.pausedAudioTrack = this.localAudioTrack;
+                            } catch {
+                                debug("Removing audio track in P2P connection");
+                                this.pausedAudioTrack = undefined;
+                                this.removeTrack(this.localAudioTrack, this.localStream);
+                            }
                         }
 
-                        if (!newAudioTrack && !newVideoTrack) {
+                        // A paused audio sender still belongs to this stream: keep the stream for the unmute.
+                        if (!newAudioTrack && !newVideoTrack && !this.pausedAudioTrack) {
                             debug("No tracks left, removing stream in P2P connection");
                             // No tracks left, remove the stream
                             this.removeStream(this.localStream);
