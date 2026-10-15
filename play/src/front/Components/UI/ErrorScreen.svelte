@@ -16,6 +16,7 @@
     import LoaderIcon from "../Icons/LoaderIcon.svelte";
     import { MEMBERS_ONLY_CODE, forgetDeniedRoom, membersOnlyExit } from "../../Connection/MembersOnlyExit";
     import { reconnectingCopy } from "../../Connection/ReconnectScreen";
+    import { softReconnect } from "../../Connection/SoftReconnect";
     import {
         NEW_VERSION_CODE,
         NEW_VERSION_COUNTDOWN_MS,
@@ -111,7 +112,8 @@
     let now = Date.now();
     let reconnectingSince: number | undefined;
     $: if ($errorScreenStore?.type === "reconnecting") {
-        if (reconnectingSince === undefined) reconnectingSince = Date.now();
+        // Counted from the drop: the room may have stayed on screen with the pill first (#958).
+        if (reconnectingSince === undefined) reconnectingSince = softReconnect.droppedAt() ?? Date.now();
     } else {
         reconnectingSince = undefined;
     }
