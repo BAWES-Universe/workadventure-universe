@@ -61,6 +61,12 @@ export const chatSearchOpenStore = writable(false);
 /** Set to ask the chat panel to open its "Invite someone to join" card (from a map script, for example). */
 export const inviteCardRequestStore = writable(false);
 
+/**
+ * Height in px of the "Invite someone to join" panel while it is open, 0 when closed. On a phone's chat sheet the
+ * sheet borrows the room the panel needs while it is open (chatSheetInviteHeight) and gives it back on close.
+ */
+export const chatInvitePanelHeightStore = writable(0);
+
 /** The "Find a group" page (the public Matrix directory), shown over the chat list when true. */
 export const findGroupOpenStore = writable(false);
 

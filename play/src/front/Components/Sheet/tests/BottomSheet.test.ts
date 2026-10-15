@@ -3,9 +3,11 @@ import type { SheetSizes } from "../BottomSheet";
 import { clampHeight, getSnapHeights, nearestSnap, nextSnap } from "../BottomSheet";
 import {
     CHAT_SHEET_FIT_MARGIN,
+    CHAT_SHEET_INVITE_ROOM_ABOVE,
     CHAT_SHEET_SIZES,
     CHAT_SHEET_TOP_GAP,
     chatSheetFitHeight,
+    chatSheetInviteHeight,
     chatSheetRestingHeight,
     parseChatSheetRest,
 } from "../../../Chat/ChatSheetSizes";
@@ -73,5 +75,17 @@ describe("BottomSheet", () => {
         expect(parseChatSheetRest("")).toBeUndefined();
         expect(parseChatSheetRest("7")).toBeUndefined();
         expect(parseChatSheetRest("abc")).toBeUndefined();
+    });
+
+    it("lets the sheet borrow the height the Invite panel needs, and only that", () => {
+        const { full } = getSnapHeights(844, CHAT_SHEET_SIZES);
+        // Closed: the sheet stays where it was.
+        expect(chatSheetInviteHeight(300, 0, 844)).toBe(300);
+        // Low sheet: it rises to fit the panel plus the handle, tabs and a peek of the list.
+        expect(chatSheetInviteHeight(300, 340, 844)).toBe(340 + CHAT_SHEET_INVITE_ROOM_ABOVE);
+        // Tall enough already: it is never lowered.
+        expect(chatSheetInviteHeight(700, 340, 844)).toBe(700);
+        // A panel taller than the screen stops at "full".
+        expect(chatSheetInviteHeight(300, 2000, 844)).toBe(full);
     });
 });
