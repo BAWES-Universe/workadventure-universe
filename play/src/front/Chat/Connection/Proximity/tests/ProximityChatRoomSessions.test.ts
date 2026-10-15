@@ -503,6 +503,39 @@ describe("ProximityChatRoom sessions", () => {
         next.destroy();
     });
 
+    it("carries a message that could not be sent into its own stay when that stay ended before the hand-over", async () => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        vi.setSystemTime(new Date(Date.UTC(2026, 9, 15, 10, 0)));
+        room.setDisplayName("Design room");
+        await room.joinSpace("bubble", [], true);
+        fake.space.usersStore.set(
+            new Map([
+                ["room_1", spaceUser("room_1", "Me", "a")],
+                ["room_3", spaceUser("room_3", "Sara", "b")],
+            ])
+        );
+        fake.emit("spaceMessage", { sender: "room_3", spaceMessage: { message: "hello", name: "Sara" } });
+        const kinds = (target: ProximityChatRoom) =>
+            (Array.from(get(target.messages)) as ProximityChatMessage[])
+                .filter((message) => message.notSent || message.session || message.type === "proximity")
+                .map((message) => (message.notSent ? "notSent" : message.session?.kind ?? "message"));
+        // A file starts uploading, then the bubble ends, then the game hands its chats over, then the upload fails.
+        vi.setSystemTime(new Date(Date.UTC(2026, 9, 15, 10, 1)));
+        const submittedAt = new Date();
+        vi.setSystemTime(new Date(Date.UTC(2026, 9, 15, 10, 2)));
+        await room.leaveSpace("bubble", true);
+        vi.setSystemTime(new Date(Date.UTC(2026, 9, 15, 10, 3)));
+        room.stashHistoryForNextScene();
+        const next = nextMapRoom();
+        vi.setSystemTime(new Date(Date.UTC(2026, 9, 15, 10, 4)));
+        room.addNotSentMessage("look at this", ["plan.png"], submittedAt);
+
+        // Inside the stay it was written in, on the next map as on this one.
+        expect(kinds(room)).toEqual(["start", "message", "notSent", "end"]);
+        expect(kinds(next)).toEqual(["start", "message", "notSent", "end"]);
+        next.destroy();
+    });
+
     it("opens the next map's proximity chat in place of this one after a reconnect", async () => {
         await room.joinSpace("bubble", [], true);
         room.open();

@@ -32,11 +32,7 @@ export interface ProximityHistoryStash {
      */
     takenBy?: {
         keepUnsentDraft(sessionId: string | undefined, text: string): void;
-        carryNotSentMessage(
-            message: ChatMessage,
-            stayEnd: ChatMessage | undefined,
-            after: ChatMessage | undefined
-        ): void;
+        carryNotSentMessage(message: ChatMessage, stayEnd: ChatMessage | undefined): void;
     };
 }
 
