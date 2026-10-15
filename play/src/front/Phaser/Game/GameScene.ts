@@ -146,6 +146,7 @@ import { chatVisibilityStore, forceRefreshChatStore } from "../../Stores/ChatSto
 import { openChat } from "../../Chat/openChat";
 import type { HasPlayerMovedInterface } from "../../Api/Events/HasPlayerMovedInterface";
 import { extensionModuleStore, gameSceneIsLoadedStore, gameSceneStore } from "../../Stores/GameSceneStore";
+import { reportJoinStep } from "../../Stores/LoaderStore";
 import { exploreStore } from "../../Stores/ExploreStore";
 import { friendsStore } from "../../Chat/Stores/FriendsStore";
 import { ringStore } from "../../Chat/Stores/RingStore";
@@ -1147,26 +1148,34 @@ export class GameScene extends DirtyScene {
         });*/
 
         Promise.all([
-            this.connectionAnswerPromiseDeferred.promise.then(() =>
-                debug("Loading process: Websocket connection ready")
-            ),
+            this.connectionAnswerPromiseDeferred.promise.then(() => {
+                debug("Loading process: Websocket connection ready");
+                reportJoinStep("connection");
+            }),
             Promise.allSettled(scriptPromises).then((results) => {
                 debug("Loading process: Scripts loaded");
+                reportJoinStep("scripts");
                 return results;
             }),
-            this.CurrentPlayer.getTextureLoadedPromise().then(() =>
-                debug("Loading process: Current player texture ready")
-            ) as Promise<unknown>,
-            this.gameMapFrontWrapper.initializedPromise.promise.then(() =>
-                debug("Loading process: Game map initialized")
-            ),
+            this.CurrentPlayer.getTextureLoadedPromise().then(() => {
+                debug("Loading process: Current player texture ready");
+                reportJoinStep("woka");
+            }) as Promise<unknown>,
+            this.gameMapFrontWrapper.initializedPromise.promise.then(() => {
+                debug("Loading process: Game map initialized");
+                reportJoinStep("map");
+            }),
             // Wait at most 5 seconds for the chat connection to be established
             // If not, we can still proceed starting the scene without chat fully loaded
             raceTimeout(gameManager.getChatConnection(), 5_000)
-                .then(() => debug("Loading process: Chat connection ready"))
+                .then(() => {
+                    debug("Loading process: Chat connection ready");
+                    reportJoinStep("chat");
+                })
                 .catch((e) => {
                     if (e instanceof TimeoutError) {
                         debug("Loading process: Chat connection timeout. Continuing loading while chat loads.");
+                        reportJoinStep("chat");
                         return;
                     } else {
                         throw e;

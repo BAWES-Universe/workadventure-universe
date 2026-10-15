@@ -34,7 +34,6 @@ function gameToken(label: string): string {
 }
 
 const OLD_TOKEN = gameToken("old");
-const FRESH_TOKEN = gameToken("fresh");
 
 /** What axios throws for a response with a status. */
 function httpError(status: number, data?: unknown) {
@@ -89,39 +88,12 @@ describe("what a WOKA or companion save says happened", () => {
         expect(await save()).toBe("failed");
     });
 
-    it.each(SAVES)("%s: a 401 refreshes the token and retries once", async (_name, save) => {
-        mocks.post.mockRejectedValueOnce(httpError(401)).mockResolvedValueOnce({ status: 204 });
-        mocks.get.mockResolvedValueOnce({
-            data: {
-                status: "ok",
-                authToken: FRESH_TOKEN,
-                userUuid: "uuid-ali",
-                isCharacterTexturesValid: true,
-                isCompanionTextureValid: true,
-            },
-        });
-
-        expect(await save()).toBe("saved");
-
-        expect(mocks.post).toHaveBeenCalledTimes(2);
-        expect(mocks.post).toHaveBeenLastCalledWith(expect.any(String), expect.anything(), {
-            headers: { Authorization: FRESH_TOKEN },
-        });
-    });
-
-    it.each(SAVES)("%s: a 401, then the retry refused for this place, is notAllowed", async (_name, save) => {
-        mocks.post.mockRejectedValueOnce(httpError(401)).mockRejectedValueOnce(NOT_ALLOWED);
-        mocks.get.mockResolvedValueOnce({
-            data: {
-                status: "ok",
-                authToken: FRESH_TOKEN,
-                userUuid: "uuid-ali",
-                isCharacterTexturesValid: true,
-                isCompanionTextureValid: true,
-            },
-        });
-        expect(await save()).toBe("notAllowed");
-        expect(mocks.post).toHaveBeenCalledTimes(2);
+    // What a 401 does (sign in again) is in SaveTokenRecovery.test.ts
+    it.each(SAVES)("%s: a 401 is failed, and is not tried again", async (_name, save) => {
+        mocks.post.mockRejectedValueOnce(httpError(401));
+        expect(await save()).toBe("failed");
+        expect(mocks.post).toHaveBeenCalledTimes(1);
+        expect(mocks.get).not.toHaveBeenCalled();
     });
 
     it.each(SAVES)("%s: a guest (no save capability) is saved: the device keeps it", async (_name, save) => {

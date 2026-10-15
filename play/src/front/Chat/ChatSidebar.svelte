@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onDestroy, tick } from "svelte";
+    import { onDestroy, onMount, tick } from "svelte";
     import { fly } from "svelte/transition";
     import { chatVisibilityStore, INITIAL_SIDEBAR_WIDTH, INITIAL_SIDEBAR_WIDTH_MOBILE } from "../Stores/ChatStore";
     import { gameManager } from "../Phaser/Game/GameManager";
@@ -12,6 +12,7 @@
     import { chatFloatInsetStore, chatSidebarWidthStore, chatCarriesItsCloseStore } from "./ChatSidebarWidthStore";
     import Chat from "./Components/Chat.svelte";
     import { selectedRoomStore } from "./Stores/SelectRoomStore";
+    import { chatSearchOpenStore } from "./Stores/ChatStore";
     import {
         chatSheetHeightStore,
         chatSheetLayoutStore,
@@ -29,11 +30,17 @@
 
     let container: HTMLElement;
 
-    const gameScene = gameManager.getCurrentGameScene();
-
-    function reposition() {
-        gameScene.reposition();
+    // The scene of the moment: a reconnect replaces it while the chat stays open.
+    function reposition(instant = false) {
+        gameManager.tryGetCurrentGameScene()?.reposition(instant);
     }
+
+    // The chat can come back already open, with no slide in to end: after a reconnect (the "Reconnecting" screen
+    // takes it away, and the new scene's camera knows nothing of it) or a chat refresh. The map is centred again
+    // in the space it leaves free, at once, as the game shows again.
+    onMount(() => {
+        if ($chatVisibilityStore) reposition(true);
+    });
 
     function closeChat() {
         chatVisibilityStore.set(false);
@@ -197,7 +204,15 @@
     }
 
     $: sheetSnapHeights = getSnapHeights($windowSize.height, CHAT_SHEET_SIZES);
-    $: sheetHeight = sheetDragHeight ?? bubbleHeight ?? chatSheetRestingHeight($chatSheetSnapStore, $windowSize.height);
+    // Searching: the list's footer holds the search field above the keyboard, so the sheet goes to full height for the
+    // results. It is only borrowed: the snap, the bubble's height and the kept rest are untouched, so closing the search
+    // puts the sheet back where it was. A drag still wins. A chat open in the panel has no list, so no search to give room.
+    $: searchTakesRoom = $chatSearchOpenStore && $selectedRoomStore === undefined;
+    $: sheetHeight =
+        sheetDragHeight ??
+        (searchTakesRoom
+            ? sheetSnapHeights.full
+            : bubbleHeight ?? chatSheetRestingHeight($chatSheetSnapStore, $windowSize.height));
     // The videos above the sheet follow its height, drag included.
     $: chatSheetHeightStore.set(sheet && $chatVisibilityStore ? sheetHeight : 0);
 
@@ -265,6 +280,11 @@
             closeChat();
             return;
         }
+        // Searching holds the sheet at full height: it springs back, and nothing is kept for after the search.
+        if (searchTakesRoom) {
+            sheetDragHeight = undefined;
+            return;
+        }
         // It stays where it is let go (between its lowest height and "full"), and opens there next time.
         const kept = clampHeight(height, $windowSize.height, CHAT_SHEET_SIZES);
         sheetDragHeight = undefined;
@@ -273,6 +293,7 @@
     }
 
     function onSheetTap() {
+        if (searchTakesRoom) return;
         leaveBubbleHeight();
         keepChatSheetRest(nextSnap(nearestSnap(sheetHeight, $windowSize.height, CHAT_SHEET_SIZES)));
     }
@@ -289,8 +310,8 @@
         id="chat"
         data-testid="chat"
         transition:fly={{ duration: 200, y: sheetHeight }}
-        on:introend={reposition}
-        on:outroend={reposition}
+        on:introend={() => reposition()}
+        on:outroend={() => reposition()}
         style="height: {sheetHeight}px;"
         class="chatWindow chat-sheet u-surface-flat p-0 screen-blocker"
         class:dragging={sheetDragHeight !== undefined}
@@ -337,8 +358,8 @@
             duration: 200,
             x: isRTL ? sideBarWidth + $chatFloatInsetStore : -(sideBarWidth + $chatFloatInsetStore),
         }}
-        on:introend={reposition}
-        on:outroend={reposition}
+        on:introend={() => reposition()}
+        on:outroend={() => reposition()}
         style="width: {sideBarWidth}px; max-width: {sideBarWidth}px;"
         class=" chatWindow !min-w-[150px] max-sm:!min-w-[150px] u-surface-flat p-0 screen-blocker"
     >

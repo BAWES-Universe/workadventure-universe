@@ -164,7 +164,7 @@
     .place-card.phone {
         left: 12px;
         right: 68px;
-        bottom: calc(var(--bar-clear, 0px) + 72px + env(safe-area-inset-bottom, 0px));
+        bottom: calc(var(--bar-clear, 0px) + 72px);
         width: auto;
         transform: none;
     }

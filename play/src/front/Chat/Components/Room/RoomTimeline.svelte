@@ -41,6 +41,7 @@
     import { installStrayFileDropGuard, isFileDrag } from "../../../Utils/strayFileDropGuard";
     import { mapEditorToolbarInUseStore } from "../../../Stores/MapEditorStore";
     import Message from "./Message.svelte";
+    import { stillPinnedToBottom } from "./TimelinePin";
     import MessageInputBar from "./MessageInputBar.svelte";
     import MessageSystem from "./MessageSystem.svelte";
     import TypingUsers from "./TypingUsers.svelte";
@@ -88,7 +89,20 @@
     let myChatID = localUserStore.getChatId();
 
     let messageListRef: HTMLDivElement;
+    let messageListContentRef: HTMLUListElement;
     let autoScroll = true;
+    // True while the reader is at the newest message (see TimelinePin). While it is, the list stays on the newest
+    // message whatever changes size: a picture or GIF that finishes loading, older history coming in above, the sheet.
+    let pinnedToBottom = true;
+    let lastScrollTop = 0;
+    // Messages can change height long after they are drawn (pictures, GIFs, link cards, reactions), and none of that
+    // re-renders this list, so the sizes are watched instead.
+    let resizeObserver: ResizeObserver | undefined;
+    // Until when a smooth scroll to the bottom is still sliding (a smooth scroll lasts about this long).
+    const SMOOTH_SCROLL_MS = 500;
+    let smoothScrollUntil = 0;
+    let newestMessageId: string | undefined;
+    let childListObserver: MutationObserver | undefined;
     let onScrollTop = false;
 
     let oldScrollHeight = 0;
@@ -182,6 +196,7 @@
 
     onMount(() => {
         installStrayFileDropGuard();
+        watchSizes();
         initMessages()
             .catch((error) => console.error(error))
             .finally(() => {
@@ -245,7 +260,7 @@
         if (messageListRef) {
             oldScrollHeight = messageListRef.scrollHeight;
             const scrollableDistance = messageListRef.scrollHeight - messageListRef.offsetHeight;
-            autoScroll = messageListRef.scrollTop > scrollableDistance - 20;
+            autoScroll = pinnedToBottom || messageListRef.scrollTop > scrollableDistance - 20;
             onScrollTop = messageListRef.scrollTop === 0;
         }
     });
@@ -254,7 +269,11 @@
         room.setTimelineAsRead();
         // While the list is hidden for its first fill, it is scrolled once, when it is done.
         if (firstFillPending) return;
-        if (autoScroll) {
+        // A message you just sent always shows, even if you had scrolled up (a GIF alone has no text to report it).
+        const newest = $messages[$messages.length - 1];
+        const isNewMessage = newest !== undefined && newestMessageId !== undefined && newest.id !== newestMessageId;
+        newestMessageId = newest?.id;
+        if (autoScroll || (isNewMessage && newest?.isMyMessage === true)) {
             scrollToMessageListBottom();
         } else if (onScrollTop) {
             const oldFirstListItem = messageListRef.querySelector<HTMLLIElement>('li[data-first-li="true"]');
@@ -271,7 +290,38 @@
         // Safety check for undefined reference
         // After disposing the component, the reference can be undefined
         if (messageListRef == undefined) return;
+        // Going to the newest message (your own message sent, the chat opened): stay there while it grows, too.
+        pinnedToBottom = true;
+        if (smooth) smoothScrollUntil = performance.now() + SMOOTH_SCROLL_MS;
         messageListRef.scroll({ top: messageListRef.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+    }
+
+    function watchSizes() {
+        if (typeof ResizeObserver === "undefined" || !messageListRef || !messageListContentRef) return;
+        resizeObserver = new ResizeObserver(() => {
+            // A new message slides in: aim that slide at the new bottom instead of cutting it short.
+            if (pinnedToBottom) scrollToMessageListBottom(performance.now() < smoothScrollUntil);
+        });
+        // The list itself (the sheet changes height) and each message in it.
+        resizeObserver.observe(messageListRef);
+        for (const item of Array.from(messageListContentRef.children)) resizeObserver.observe(item);
+        childListObserver = new MutationObserver((mutations) => {
+            for (const mutation of mutations) {
+                for (const node of Array.from(mutation.addedNodes)) {
+                    if (node instanceof Element) resizeObserver?.observe(node);
+                }
+                for (const node of Array.from(mutation.removedNodes)) {
+                    if (node instanceof Element) resizeObserver?.unobserve(node);
+                }
+            }
+        });
+        childListObserver.observe(messageListContentRef, { childList: true });
+    }
+
+    function updatePinnedToBottom() {
+        if (!messageListRef) return;
+        pinnedToBottom = stillPinnedToBottom(pinnedToBottom, lastScrollTop, messageListRef);
+        lastScrollTop = messageListRef.scrollTop;
     }
 
     function goBackAndClearSelectedChatMessage() {
@@ -282,6 +332,7 @@
     }
 
     function handleScroll() {
+        updatePinnedToBottom();
         clearTimeout(scrollTimer);
         scrollTimer = setTimeout(() => {
             loadMorePreviousMessages();
@@ -323,7 +374,10 @@
 
     function shouldLoadMoreMessages() {
         const messages = Array.from(messageListRef?.querySelectorAll("li") || []);
-        const messagesBeforeViewportTop = messages.find((msg) => msg.getBoundingClientRect().top >= 0);
+        // The first message showing at the top of the list. The list can start halfway down the screen (the phone
+        // sheet), so it is measured from the list's own top, not the screen's.
+        const listTop = messageListRef?.getBoundingClientRect().top ?? 0;
+        const messagesBeforeViewportTop = messages.find((msg) => msg.getBoundingClientRect().top >= listTop);
 
         return (
             messagesBeforeViewportTop &&
@@ -348,7 +402,7 @@
     function onUpdateMessageBody(event: CustomEvent) {
         if (firstFillPending) return;
         if (
-            autoScroll ||
+            pinnedToBottom ||
             (event.detail != undefined &&
                 $messages.length > 0 &&
                 event.detail.id === $messages[$messages.length - 1].id &&
@@ -448,6 +502,8 @@
     }
 
     onDestroy(() => {
+        resizeObserver?.disconnect();
+        childListObserver?.disconnect();
         clearTimeout(fileDragTimer);
         document.removeEventListener("dragenter", onMapFileDragCapture, true);
         document.removeEventListener("dragover", onMapFileDragCapture, true);
@@ -595,6 +651,7 @@
                 </div>
             {/if}
             <ul
+                bind:this={messageListContentRef}
                 class="list-none p-0 flex-1 flex flex-col max-h-full pt-10 {$messages.length === 0
                     ? 'items-center justify-center pb-4'
                     : 'max-w-6xl'}"

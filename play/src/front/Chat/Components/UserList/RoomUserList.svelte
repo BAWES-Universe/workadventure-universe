@@ -13,7 +13,6 @@
     import { LL } from "../../../../i18n/i18n-svelte";
     import { chatSearchBarValue, peopleSectionsOpenStore, peopleViewStore } from "../../Stores/ChatStore";
     import type { UserProviderMerger } from "../../UserProviderMerger/UserProviderMerger";
-    import ChatHeader from "../ChatHeader.svelte";
     import InviteFooter from "../InviteFooter.svelte";
     import { peopleCardReturn } from "../../Stores/PeopleCardReturnStore";
     import { fold } from "../../../Utils/foldTransition";
@@ -254,7 +253,6 @@
 </script>
 
 <div class="flex flex-col h-full">
-    <ChatHeader />
     {#if $friendsEnabledStore}
         <PeopleChips
             friendsCount={friendsList?.friends.length ?? 0}

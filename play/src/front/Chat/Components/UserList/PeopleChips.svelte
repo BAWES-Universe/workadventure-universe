@@ -27,7 +27,7 @@
 </script>
 
 <div
-    class="flex items-center gap-1 overflow-x-auto px-2 pt-1 pb-3 [scrollbar-width:none]"
+    class="flex items-center gap-1 overflow-x-auto px-2 pt-4 pb-3 [scrollbar-width:none]"
     role="group"
     aria-label={$LL.chat.friends.chipsLabel()}
     data-testid="peopleChips"
