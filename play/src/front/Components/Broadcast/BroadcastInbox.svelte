@@ -48,11 +48,11 @@
 {#if $broadcastInboxStore.length > 0}
     <!-- Received broadcasts stack at the top of the screen, the newest first, each until its Got it. While you are live
          yourself they start under your Live pill, which holds the same top strip on a phone (a desktop has the pill on
-         the left and the cards on the right). -->
+         the left and the cards on the right). A phone's top strip starts under the see-through status bar (#969). -->
     <div
         class="fixed {settingsOverCards ? 'z-[890]' : 'z-[1090]'} pointer-events-none inset-x-3 {$liveBroadcastStore
-            ? 'top-20'
-            : 'top-3'} flex flex-col gap-2 lg:inset-x-auto lg:right-4 lg:top-24 lg:w-[380px]"
+            ? 'top-[calc(80px+env(safe-area-inset-top))]'
+            : 'top-[calc(12px+env(safe-area-inset-top))]'} flex flex-col gap-2 lg:inset-x-auto lg:right-4 lg:top-24 lg:w-[380px]"
         data-testid="broadcast-inbox"
     >
         {#each $broadcastInboxStore as card (card.id)}

@@ -312,7 +312,10 @@
         transition:fly={{ duration: 200, y: sheetHeight }}
         on:introend={() => reposition()}
         on:outroend={() => reposition()}
-        style="height: {sheetHeight}px;"
+        style="height: {sheetHeight}px; padding-top: max(0px, calc(env(safe-area-inset-top, 0px) - {Math.max(
+            0,
+            $windowSize.height - sheetHeight
+        )}px));"
         class="chatWindow chat-sheet u-surface-flat p-0 screen-blocker"
         class:dragging={sheetDragHeight !== undefined}
     >
@@ -365,7 +368,9 @@
     >
         {#if $chatCarriesItsCloseStore && isInSpecificDiscussion}
             <!-- The same plain close as the one beside the Chats and People tabs, in the same place. -->
-            <div class="close-window absolute end-2 top-3 z-50">
+            <!-- Below 1024px the side chat starts its content under the installed app's see-through status bar (chat.scss,
+                 #969), so this close does too; the floating chat from 1024px is already held off the top. -->
+            <div class="close-window absolute end-2 top-[calc(12px+env(safe-area-inset-top))] lg:top-3 z-50">
                 <button
                     class="u-close"
                     data-testid="closeChatButton"
@@ -427,7 +432,11 @@
         display: flex;
         flex-direction: column;
         border-radius: 24px 24px 0 0;
-        transition: height 200ms ease-out;
+        /* Its height is the sheet's whole height: the padding below goes inside it. */
+        box-sizing: border-box;
+        /* Dragged up under the installed app's see-through status bar (#969), the sheet keeps its colour to the top
+           edge and starts its handle and tabs below the inset (padding-top, set from the script). */
+        transition: height 200ms ease-out, padding-top 200ms ease-out;
     }
     .chat-sheet.dragging {
         transition: none;

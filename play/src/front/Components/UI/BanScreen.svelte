@@ -100,7 +100,7 @@
 </script>
 
 <main
-    class="ban-screen pointer-events-auto fixed inset-0 z-[700] flex flex-col items-center overflow-auto px-3 py-8 text-white"
+    class="ban-screen pointer-events-auto fixed inset-0 z-[700] flex flex-col items-center overflow-auto px-3 pb-8 pt-[calc(32px+env(safe-area-inset-top))] text-white"
     data-testid="banScreen"
     transition:fly={{ y: -200, duration: 500 }}
 >

@@ -141,6 +141,13 @@
 </div>
 
 <style>
+    /* Tablets and desktops (the bar at the top): the installed app on an iPad runs under its see-through status bar
+       (#969), so the bar starts below it. Everywhere else the inset is 0. Phones set their own padding below. */
+    .bar-safe-area {
+        box-sizing: border-box;
+        padding-top: env(safe-area-inset-top, 0px);
+    }
+
     /* Phones (the bar at the bottom; Tailwind's mobile: variant, written as a list the compiler can read): where the
        phone reports a home bar, the bar rises just clear of it, 17px from the bottom edge: the line itself is drawn in
        the bottom 13px, and 17px is where the chat's Invite button already sits. The 34px an iPhone reports, less 21px,
