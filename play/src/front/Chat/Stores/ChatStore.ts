@@ -62,10 +62,10 @@ export const chatSearchOpenStore = writable(false);
 export const inviteCardRequestStore = writable(false);
 
 /**
- * Height in px of the "Invite someone to join" panel while it is open, 0 when closed. On a phone's chat sheet the
- * sheet borrows the room the panel needs while it is open (chatSheetInviteHeight) and gives it back on close.
+ * Height in px the chat sheet needs to show the "Invite someone to join" panel whole, 0 when the panel is closed. On a
+ * phone's chat sheet the sheet borrows it while the panel is open (chatSheetInviteHeight) and gives it back on close.
  */
-export const chatInvitePanelHeightStore = writable(0);
+export const chatInviteSheetHeightStore = writable(0);
 
 /** The "Find a group" page (the public Matrix directory), shown over the chat list when true. */
 export const findGroupOpenStore = writable(false);

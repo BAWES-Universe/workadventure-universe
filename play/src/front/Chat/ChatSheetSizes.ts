@@ -50,21 +50,19 @@ export function chatSheetFitHeight(
     return Math.min(Math.max(current, current + missing), Math.max(current, full));
 }
 
-/**
- * Room the sheet keeps above the Invite panel: its handle, the Chats and People tabs and a peek of the list, which
- * stays visible (dimmed) behind the panel.
- */
-export const CHAT_SHEET_INVITE_ROOM_ABOVE = 148;
+/** The sliver of the dimmed list the sheet keeps above the Invite panel, so it still reads as laid over the list. */
+export const CHAT_SHEET_INVITE_PEEK = 56;
 
 /**
  * The Invite panel takes the footer's place at the bottom of the list and must show whole: the sheet borrows the
- * height it needs, never past "full", and never lowers it. `current` is the height it would have without the panel.
- * `panelHeight` is 0 while the panel is closed, so the sheet is back where it was.
+ * height it needs, never past "full", and never lowers it. `current` is the height it would have without the panel;
+ * `neededHeight` is the whole sheet's height that shows the panel (the panel plus everything else in the sheet, as
+ * measured by the footer), 0 while the panel is closed, so the sheet is back where it was.
  */
-export function chatSheetInviteHeight(current: number, panelHeight: number, viewportHeight: number): number {
-    if (panelHeight <= 0) return current;
+export function chatSheetInviteHeight(current: number, neededHeight: number, viewportHeight: number): number {
+    if (neededHeight <= 0) return current;
     const { full } = getSnapHeights(viewportHeight, CHAT_SHEET_SIZES);
-    return Math.min(Math.max(current, panelHeight + CHAT_SHEET_INVITE_ROOM_ABOVE), Math.max(current, full));
+    return Math.min(Math.max(current, neededHeight), Math.max(current, full));
 }
 
 /**

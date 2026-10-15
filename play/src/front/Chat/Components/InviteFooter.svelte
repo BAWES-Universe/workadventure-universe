@@ -1,11 +1,12 @@
 <script lang="ts">
     import { onDestroy, tick } from "svelte";
     import { fade, fly } from "svelte/transition";
+    import { CHAT_SHEET_INVITE_PEEK } from "../ChatSheetSizes";
     import LL from "../../../i18n/i18n-svelte";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { inviteUserActivated, userIsConnected } from "../../Stores/MenuStore";
     import {
-        chatInvitePanelHeightStore,
+        chatInviteSheetHeightStore,
         chatSearchBarValue,
         chatSearchOpenStore,
         inviteCardRequestStore,
@@ -43,8 +44,12 @@
     let entryPoint = startPositions[0] ?? "";
     let copied = false;
     let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+    let overlay: HTMLElement | undefined;
     let panel: HTMLElement | undefined;
     let panelHeight = 0;
+    // The sheet's height that shows the panel whole: the panel, everything else in the chat that is not the list
+    // column (the handle, the tabs, a banner under the list...) and a peek of the dimmed list.
+    let sheetNeeds = 0;
     let linkText: HTMLElement | undefined;
     let trigger: HTMLButtonElement | undefined;
 
@@ -90,8 +95,26 @@
     $: if (searchOpen) open = false;
     // A map script can take the invite button away while the panel is open.
     $: if (!$inviteUserActivated) open = false;
-    // The chat sheet borrows this much height while the panel is open.
-    $: chatInvitePanelHeightStore.set(open ? panelHeight : 0);
+    // The sheet's height that shows the panel whole (measured below).
+    $: sheetNeeds = measureSheetNeeds(panelHeight, overlay);
+    // The chat sheet borrows it while the panel is open.
+    $: chatInviteSheetHeightStore.set(open ? sheetNeeds : 0);
+
+    let chatResizeObserver: ResizeObserver | undefined;
+    function measureSheetNeeds(height: number, element: HTMLElement | undefined): number {
+        const chat = element?.closest<HTMLElement>("#chat");
+        if (!element || !chat || height <= 0) return 0;
+        // A banner under the list can wrap or go away while the panel is open: measure again when the chat resizes.
+        if (!chatResizeObserver && typeof ResizeObserver !== "undefined") {
+            chatResizeObserver = new ResizeObserver(() => (sheetNeeds = measureSheetNeeds(panelHeight, overlay)));
+            chatResizeObserver.observe(chat);
+        }
+        // The panel's own height is cut to the column while the sheet is low: what it needs is its content's height.
+        const panelNeeds = Math.max(height, panel?.scrollHeight ?? 0);
+        // The overlay fills the list column: what the chat has besides it stays the same at any sheet height.
+        return panelNeeds + (chat.offsetHeight - element.offsetHeight) + CHAT_SHEET_INVITE_PEEK;
+    }
+
     // The Chats tab can lose its search (chat offline): the sheet must not stay full height for a field that is gone.
     $: if (!showSearch && $chatSearchOpenStore) chatSearchOpenStore.set(false);
 
@@ -170,7 +193,8 @@
     onDestroy(() => {
         if (copiedTimer) clearTimeout(copiedTimer);
         // The Chats and People tabs each hold a footer: leaving one with the panel open gives the sheet its height back.
-        chatInvitePanelHeightStore.set(0);
+        chatResizeObserver?.disconnect();
+        chatInviteSheetHeightStore.set(0);
     });
 </script>
 
@@ -225,6 +249,7 @@
          the list behind it keeps its size. A tap on the dimmed list, the X or Escape closes it. -->
     <!-- svelte-ignore a11y-no-static-element-interactions -->
     <div
+        bind:this={overlay}
         class="invite-overlay absolute inset-0 z-40 flex flex-col justify-end"
         transition:fade={{ duration: 150 }}
         on:keydown={onKeyDown}

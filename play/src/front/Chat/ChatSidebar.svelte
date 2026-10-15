@@ -12,7 +12,7 @@
     import { chatFloatInsetStore, chatSidebarWidthStore, chatCarriesItsCloseStore } from "./ChatSidebarWidthStore";
     import Chat from "./Components/Chat.svelte";
     import { selectedRoomStore } from "./Stores/SelectRoomStore";
-    import { chatInvitePanelHeightStore, chatSearchOpenStore } from "./Stores/ChatStore";
+    import { chatInviteSheetHeightStore, chatSearchOpenStore } from "./Stores/ChatStore";
     import {
         chatSheetHeightStore,
         chatSheetLayoutStore,
@@ -211,14 +211,14 @@
     $: searchTakesRoom = $chatSearchOpenStore && $selectedRoomStore === undefined;
     // The Invite panel replaces the list's footer, over the dimmed list: the sheet is only as tall as it needs to show
     // the whole panel, borrowed the same way (it never lowers the sheet, and closing gives the height back).
-    $: invitePanelHeight = $selectedRoomStore === undefined ? $chatInvitePanelHeightStore : 0;
+    $: inviteSheetHeight = $selectedRoomStore === undefined ? $chatInviteSheetHeightStore : 0;
     $: sheetHeight =
         sheetDragHeight ??
         (searchTakesRoom
             ? sheetSnapHeights.full
             : chatSheetInviteHeight(
                   bubbleHeight ?? chatSheetRestingHeight($chatSheetSnapStore, $windowSize.height),
-                  invitePanelHeight,
+                  inviteSheetHeight,
                   $windowSize.height
               ));
     // The videos above the sheet follow its height, drag included.
@@ -302,7 +302,7 @@
 
     function onSheetTap() {
         // Searching and the Invite panel borrow the sheet's height: the snap must not be worked out from it and kept.
-        if (searchTakesRoom || invitePanelHeight > 0) return;
+        if (searchTakesRoom || inviteSheetHeight > 0) return;
         leaveBubbleHeight();
         keepChatSheetRest(nextSnap(nearestSnap(sheetHeight, $windowSize.height, CHAT_SHEET_SIZES)));
     }
