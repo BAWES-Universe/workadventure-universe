@@ -536,6 +536,50 @@ describe("ProximityChatRoom sessions", () => {
         next.destroy();
     });
 
+    it("carries a message that could not be sent into its own stay when another stay was open at the hand-over", async () => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        vi.setSystemTime(new Date(Date.UTC(2026, 9, 15, 10, 0)));
+        room.setDisplayName("Design room");
+        await room.joinSpace("bubble", [], true);
+        fake.space.usersStore.set(
+            new Map([
+                ["room_1", spaceUser("room_1", "Me", "a")],
+                ["room_3", spaceUser("room_3", "Sara", "b")],
+            ])
+        );
+        fake.emit("spaceMessage", { sender: "room_3", spaceMessage: { message: "hello", name: "Sara" } });
+        const kinds = (target: ProximityChatRoom) =>
+            (Array.from(get(target.messages)) as ProximityChatMessage[])
+                .filter((message) => message.notSent || message.session || message.type === "proximity")
+                .map((message) => (message.notSent ? "notSent" : message.session?.kind ?? "message"));
+        // A file starts uploading with Sara, that bubble ends, a bubble with Omar starts, then the game hands its
+        // chats over while still with Omar, then the upload fails.
+        vi.setSystemTime(new Date(Date.UTC(2026, 9, 15, 10, 1)));
+        const submittedAt = new Date();
+        vi.setSystemTime(new Date(Date.UTC(2026, 9, 15, 10, 2)));
+        await room.leaveSpace("bubble", true);
+        vi.setSystemTime(new Date(Date.UTC(2026, 9, 15, 10, 3)));
+        await room.joinSpace("bubble", [], true);
+        fake.space.usersStore.set(
+            new Map([
+                ["room_1", spaceUser("room_1", "Me", "a")],
+                ["room_4", spaceUser("room_4", "Omar", "c")],
+            ])
+        );
+        fake.emit("spaceMessage", { sender: "room_4", spaceMessage: { message: "hi", name: "Omar" } });
+        vi.setSystemTime(new Date(Date.UTC(2026, 9, 15, 10, 4)));
+        room.stashHistoryForNextScene();
+        const next = nextMapRoom();
+        vi.setSystemTime(new Date(Date.UTC(2026, 9, 15, 10, 5)));
+        room.addNotSentMessage("look at this", ["plan.png"], submittedAt);
+
+        // With Sara, where it was written, never in the stay with Omar that the hand-over closed (closed in the
+        // next map's copy only).
+        expect(kinds(room)).toEqual(["start", "message", "notSent", "end", "start", "message"]);
+        expect(kinds(next)).toEqual(["start", "message", "notSent", "end", "start", "message", "end"]);
+        next.destroy();
+    });
+
     it("opens the next map's proximity chat in place of this one after a reconnect", async () => {
         await room.joinSpace("bubble", [], true);
         room.open();

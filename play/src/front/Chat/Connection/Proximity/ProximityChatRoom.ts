@@ -1775,7 +1775,11 @@ export class ProximityChatRoom implements ChatRoom {
  * else by when it was written, as in the previous map's chat (inside a stay that had already ended, for instance).
  */
 function carriedIndex(messages: readonly ChatMessage[], stayEnd: ChatMessage | undefined, message: ChatMessage) {
-    const end = stayEnd ? messages.indexOf(stayEnd) : -1;
+    // Only a message written after the hand-over closed its stay belongs before that stay's end. One written earlier
+    // goes in its own stay, found by when it was written.
+    const writtenAt = message.date ?? new Date();
+    const writtenAfterHandOver = stayEnd?.date ? writtenAt.getTime() >= stayEnd.date.getTime() : false;
+    const end = stayEnd !== undefined && writtenAfterHandOver ? messages.indexOf(stayEnd) : -1;
     if (end >= 0) return end;
-    return findNotSentInsertIndex(messages, message.date ?? new Date());
+    return findNotSentInsertIndex(messages, writtenAt);
 }
