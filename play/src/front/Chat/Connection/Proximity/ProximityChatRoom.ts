@@ -60,6 +60,7 @@ import {
     selectedProximitySessionStore,
     stashProximityHistory,
     takeProximityHistory,
+    takeLeftWithoutMap,
 } from "../../Stores/ProximitySessionStore";
 import type { ProximityHistoryStash } from "../../Stores/ProximitySessionStore";
 import type { ProximitySession, ProximitySessionMarker } from "./ProximitySessions";
@@ -237,8 +238,6 @@ export class ProximityChatRoom implements ChatRoom {
     private handedOver: ProximityHistoryStash | undefined;
     /** The end of the stay closed by the hand-over, if one was open: what is written after it goes before it. */
     private handedOverStayEnd: ChatMessage | undefined;
-    /** With no stay open at the hand-over: the last message carried over, what is written after it goes after it. */
-    private lastHandedOver: ChatMessage | undefined;
     private _spaceGeneration = 0;
     // The name of the meeting area joined, for its end marker: the display name is reset before leaving.
     private meetingSessionLabel: string | undefined;
@@ -328,6 +327,7 @@ export class ProximityChatRoom implements ChatRoom {
 
         // The chats you had on the previous map, when the scene handed them over.
         const stash = takeProximityHistory();
+        const leftWithoutMap = takeLeftWithoutMap();
         if (stash) {
             // Reactions on them would go to this map's bubbles, where nobody has those messages. Replies still quote them.
             for (const message of stash.messages) {
@@ -345,9 +345,15 @@ export class ProximityChatRoom implements ChatRoom {
                 this.currentChatVisibility = stash.chatStateToRestore.visible;
                 this.keepCarriedChatState = true;
             }
-            // The old map's proximity chat was open: this one takes its place, never a chat that no longer exists.
-            // It can also have been opened after the hand-over, while the old map stayed on screen to get back in.
-            if (stash.wasSelected || get(selectedRoomStore) instanceof ProximityChatRoom) selectedRoomStore.set(this);
+        }
+        // The old map's proximity chat was open: this one takes its place, never a chat that no longer exists.
+        // It can also have been opened after the hand-over, while the old map stayed on screen to get back in, even
+        // with nothing in it to hand over.
+        if (leftWithoutMap) {
+            // The game was left: the proximity chat that was open is gone, and nothing opens by itself on the way back.
+            if (get(selectedRoomStore) instanceof ProximityChatRoom) selectedRoomStore.set(undefined);
+        } else if (stash?.wasSelected || get(selectedRoomStore) instanceof ProximityChatRoom) {
+            selectedRoomStore.set(this);
         }
 
         this.newChatMessageWritingStatusStreamUnsubscriber =
@@ -589,8 +595,7 @@ export class ProximityChatRoom implements ChatRoom {
         if (this.handedOver) {
             // Written after this room handed its chats to the next map: it goes along with them, in the stay it was
             // written in (and shows here too, while this chat is still on screen).
-            this.carryNotSentMessage(message, this.handedOverStayEnd, this.lastHandedOver);
-            if (!this.handedOverStayEnd) this.lastHandedOver = message;
+            this.carryNotSentMessage(message, this.handedOverStayEnd);
         }
         // Insert it at the end of its own group, in one update. SearchableArrayStore implements the inserting form
         // of splice, but only declares the removing one.
@@ -602,18 +607,18 @@ export class ProximityChatRoom implements ChatRoom {
 
     /**
      * A not-sent message written in the previous map's chat after it handed its chats over: at the end of the stay
-     * closed by the hand-over (before its end), or else after the messages carried over.
+     * closed by the hand-over (before its end), or else where it was written, as the previous map's chat shows it.
      */
-    public carryNotSentMessage(message: ChatMessage, stayEnd: ChatMessage | undefined, after: ChatMessage | undefined) {
+    public carryNotSentMessage(message: ChatMessage, stayEnd: ChatMessage | undefined) {
         if (this.handedOver) {
-            if (this.handedOver.takenBy) this.handedOver.takenBy.carryNotSentMessage(message, stayEnd, after);
-            else this.handedOver.messages.splice(carriedIndex(this.handedOver.messages, stayEnd, after), 0, message);
+            if (this.handedOver.takenBy) this.handedOver.takenBy.carryNotSentMessage(message, stayEnd);
+            else this.handedOver.messages.splice(carriedIndex(this.handedOver.messages, stayEnd, message), 0, message);
             return;
         }
         const messages = this.messages as unknown as {
             splice(start: number, deleteCount: number, ...items: ChatMessage[]): ChatMessage[];
         };
-        messages.splice(carriedIndex(Array.from(get(this.messages)), stayEnd, after), 0, message);
+        messages.splice(carriedIndex(Array.from(get(this.messages)), stayEnd, message), 0, message);
     }
 
     private addIncomingUser(spaceUser: SpaceUserExtended): void {
@@ -990,7 +995,6 @@ export class ProximityChatRoom implements ChatRoom {
             messages.push(this.handedOverStayEnd);
             this._currentSessionId = undefined;
         }
-        this.lastHandedOver = messages[messages.length - 1];
         this.handedOver = {
             messages,
             unreadBySession: new Map(get(this._unreadBySession)),
@@ -1773,15 +1777,16 @@ export class ProximityChatRoom implements ChatRoom {
     }
 }
 
-/** Where a message carried from the previous map goes: before the end of its stay, or after the given message. */
-function carriedIndex(
-    messages: readonly ChatMessage[],
-    stayEnd: ChatMessage | undefined,
-    after: ChatMessage | undefined
-) {
-    const end = stayEnd ? messages.indexOf(stayEnd) : -1;
+/**
+ * Where a not-sent message carried from the previous map goes: before the end of the stay the hand-over closed, or
+ * else by when it was written, as in the previous map's chat (inside a stay that had already ended, for instance).
+ */
+function carriedIndex(messages: readonly ChatMessage[], stayEnd: ChatMessage | undefined, message: ChatMessage) {
+    // Only a message written after the hand-over closed its stay belongs before that stay's end. One written earlier
+    // goes in its own stay, found by when it was written.
+    const writtenAt = message.date ?? new Date();
+    const writtenAfterHandOver = stayEnd?.date ? writtenAt.getTime() >= stayEnd.date.getTime() : false;
+    const end = stayEnd !== undefined && writtenAfterHandOver ? messages.indexOf(stayEnd) : -1;
     if (end >= 0) return end;
-    if (after === undefined) return 0;
-    const index = messages.indexOf(after);
-    return index >= 0 ? index + 1 : messages.length;
+    return findNotSentInsertIndex(messages, writtenAt);
 }

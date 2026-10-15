@@ -4516,6 +4516,11 @@ ${escapedMessage}
         return this._spaceRegistry;
     }
 
+    /** Whether the connection was up once and the proximity chat exists; the getter below throws before. */
+    get hasProximityChatRoom(): boolean {
+        return this._proximityChatRoom !== undefined;
+    }
+
     get proximityChatRoom(): ProximityChatRoom {
         if (!this._proximityChatRoom) {
             throw new Error("_proximityChatRoom not yet initialized");
