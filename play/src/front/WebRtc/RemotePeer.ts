@@ -457,17 +457,10 @@ export class RemotePeer extends Peer implements Streamable {
             this.space.isStreamingStore
         ).subscribe((streamValue) => {
             if (streamValue === undefined) {
+                this.dropPausedAudioTrack();
                 if (this.localStream) {
-                    if (this.pausedAudioTrack) {
-                        try {
-                            this.removeTrack(this.pausedAudioTrack, this.localStream);
-                        } catch (e) {
-                            console.warn("Could not remove the paused audio track in P2P connection", e);
-                        }
-                    }
                     this.removeStream(this.localStream);
                 }
-                this.pausedAudioTrack = undefined;
                 this.localStream = undefined;
                 return;
             }
@@ -715,6 +708,7 @@ export class RemotePeer extends Peer implements Streamable {
         if (!this.localStream) {
             return;
         }
+        this.dropPausedAudioTrack();
         this.removeStream(this.localStream);
         this.localStream = undefined;
         this.write(
@@ -754,6 +748,23 @@ export class RemotePeer extends Peer implements Streamable {
         return this._spaceUserId;
     }
 
+    /**
+     * Removes the sender a mute emptied. Called whenever the local stream is replaced or removed: the paused track
+     * belongs to that stream's sender and cannot be resumed on another one.
+     */
+    private dropPausedAudioTrack(): void {
+        const pausedAudioTrack = this.pausedAudioTrack;
+        this.pausedAudioTrack = undefined;
+        if (!pausedAudioTrack || !this.localStream) {
+            return;
+        }
+        try {
+            this.removeTrack(pausedAudioTrack, this.localStream);
+        } catch (e) {
+            console.warn("Could not remove the paused audio track in P2P connection", e);
+        }
+    }
+
     private sendContraintsForLocalStream = () => {
         if (this.localStream) {
             this.write(
@@ -780,6 +791,7 @@ export class RemotePeer extends Peer implements Streamable {
                 console.warn("RemotePeer::dispatchStream called with the same MediaStream as already set. Ignoring.");
                 return;
             }
+            this.dropPausedAudioTrack();
             this.removeStream(this.localStream);
             this.localStream.removeEventListener("addtrack", this.sendContraintsForLocalStream);
             this.localStream.removeEventListener("removetrack", this.sendContraintsForLocalStream);
