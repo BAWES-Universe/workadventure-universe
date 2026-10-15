@@ -160,7 +160,7 @@
         {#if canGoBack}
             <button
                 type="button"
-                class="u-close u-join-x selectCompanionSceneClose !top-3.5 !right-3 md:!top-4 md:!right-4"
+                class="u-close u-join-x selectCompanionSceneClose !top-[calc(14px+env(safe-area-inset-top))] !right-3 md:!top-4 md:!right-4"
                 aria-label={$LL.companion.select.close()}
                 title={$LL.companion.select.close()}
                 on:click={back}
@@ -170,7 +170,7 @@
         {/if}
 
         <div
-            class="flex flex-col md:flex-row gap-3 md:gap-7 px-4 pt-[18px] md:px-7 md:pt-7 pb-28 md:pb-0 flex-1 min-h-0"
+            class="flex flex-col md:flex-row gap-3 md:gap-7 px-4 pt-[calc(18px+env(safe-area-inset-top))] md:px-7 md:pt-7 pb-28 md:pb-0 flex-1 min-h-0"
         >
             <header class="flex flex-col gap-1 md:hidden {canGoBack ? 'pe-12' : ''}">
                 <span class="u-eyebrow">{$LL.companion.select.eyebrow()}</span>

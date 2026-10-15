@@ -22,10 +22,12 @@
     import { desktopApi } from "../Api/Desktop";
     import { canvasSize, coWebsiteManager, coWebsites, fullScreenCowebsite } from "../Stores/CoWebsiteStore";
     import { gameSceneIsLoadedStore } from "../Stores/GameSceneStore";
+    import { softReconnect } from "../Connection/SoftReconnect";
     import { urlManager } from "../Url/UrlManager";
     import { FileListener } from "../Phaser/FileUpload/FileListener";
     import { isStructuredCloneSupported } from "../Utils/BrowserCompatibility";
-    import { dismissBootSplash, watchBootSplash } from "../Utils/BootSplash";
+    import { bootSplashView, watchLoadingScreen } from "../Utils/BootSplash";
+    import { loadingProgressStore } from "../Stores/LoaderStore";
     import { loginSceneVisibleStore } from "../Stores/LoginSceneStore";
     import { selectCharacterSceneVisibleStore } from "../Stores/SelectCharacterStore";
     import { selectCompanionSceneVisibleStore } from "../Stores/SelectCompanionStore";
@@ -47,11 +49,10 @@
     let handleCanvasClick: () => void;
     let browserNotSupported = false;
 
-    // The launch screen from index.html (#949) stays over the black canvas until a first screen is up: the game, once
-    // the room is joined, or any screen that comes instead of it. The loader shows over it meanwhile.
-    const firstScreenShownStore = derived(
+    // The one loading screen from index.html (#949, #981) covers the black canvas until the game is up, once the room
+    // is joined, and steps aside for any screen that comes instead of the game.
+    const otherScreenShownStore = derived(
         [
-            gameSceneIsLoadedStore,
             loginSceneVisibleStore,
             selectCharacterSceneVisibleStore,
             selectCompanionSceneVisibleStore,
@@ -61,18 +62,7 @@
             wokaRefusedStore,
             refreshPromptStore,
         ],
-        ([
-            gameLoaded,
-            login,
-            selectCharacter,
-            selectCompanion,
-            enableCamera,
-            errorScreen,
-            errors,
-            wokaRefused,
-            refresh,
-        ]) =>
-            gameLoaded ||
+        ([login, selectCharacter, selectCompanion, enableCamera, errorScreen, errors, wokaRefused, refresh]) =>
             login ||
             selectCharacter ||
             selectCompanion ||
@@ -82,13 +72,23 @@
             wokaRefused !== undefined ||
             refresh !== undefined
     );
-    const stopWatchingBootSplash = watchBootSplash(firstScreenShownStore, () => dismissBootSplash());
+    // The room kept on screen while the game gets back in (#958) counts as up: its pill says what is going on.
+    const gameShownStore = derived(
+        [gameSceneIsLoadedStore, softReconnect],
+        ([loaded, reconnect]) => loaded || reconnect?.picture !== undefined
+    );
+    const loadingScreen = bootSplashView();
+    const stopWatchingLoadingScreen = watchLoadingScreen(
+        { gameLoaded: gameShownStore, otherScreenShown: otherScreenShownStore, progress: loadingProgressStore },
+        loadingScreen
+    );
 
     onMount(() => {
         // Check browser compatibility before initializing the app
         if (!isStructuredCloneSupported()) {
             browserNotSupported = true;
-            dismissBootSplash();
+            stopWatchingLoadingScreen();
+            loadingScreen.hide();
             return;
         }
         if (SENTRY_DSN_FRONT != undefined) {
@@ -294,7 +294,7 @@
     });
 
     onDestroy(() => {
-        stopWatchingBootSplash();
+        stopWatchingLoadingScreen();
         canvasSizeUnsubscriber?.();
         if (canvas && handleCanvasClick) {
             canvas.removeEventListener("click", handleCanvasClick);

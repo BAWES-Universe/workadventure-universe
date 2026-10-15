@@ -25,6 +25,12 @@ export function indexWokasByChatId(usersByRoom: UsersByRoom): Map<string, Pictur
 }
 
 /**
+ * The pictures behind an entry `withFetchedWokas` made: the world's own (if any) and Orbit's. `personPicture` reads it
+ * so the chat account's picture comes before Orbit's Woka (Orbit's only fills in where the person has no chat picture).
+ */
+const fetchedParts = new WeakMap<PictureStore, { world: PictureStore | undefined; orbit: PictureStore }>();
+
+/**
  * Adds what Orbit said about people outside the world: where the world has a picture for someone it keeps it, and
  * Orbit's Woka fills in when that has none (a letter, before); where the world knows nothing, Orbit's Woka is the picture.
  */
@@ -37,7 +43,9 @@ export function withFetchedWokas(
         if (!person.picture) continue;
         if (result === wokas) result = new Map(wokas);
         const known = wokas.get(chatId);
-        result.set(chatId, known ? firstPicture(known, person.picture) : person.picture);
+        const picture = known ? firstPicture(known, person.picture) : person.picture;
+        fetchedParts.set(picture, { world: known, orbit: person.picture });
+        result.set(chatId, picture);
     }
     return result;
 }
@@ -151,16 +159,35 @@ function createByChatIdStore<T>(
 export const WOKA_BY_CHAT_ID_CONTEXT = Symbol("wokaByChatId");
 
 /**
- * The one picture rule for a person everywhere in the chat: their woka as the game sees it right now, else the
- * picture their chat account carries, else nothing (the caller shows a letter). Every place picks the same way, so a
- * person never shows two different pictures.
+ * The one picture rule for a person everywhere in the chat: their woka as the world sees it (live, or saved in its
+ * member list), else the picture their chat account carries (the Woka their own game saved, as Element shows it), else
+ * the Woka Orbit describes for someone outside the world, else nothing (the caller shows a letter). Every place picks
+ * the same way, so a person never shows two different pictures. The account picture also shows while the world's woka
+ * has no picture: it is still being drawn, or its pictures can't be loaded (a saved Woka then stays empty instead of
+ * the plain stand-in).
  */
+export function personPicture(
+    wokas: Map<string, PictureStore>,
+    chatId: string | undefined,
+    accountPicture: PictureStore
+): PictureStore;
+export function personPicture(
+    wokas: Map<string, PictureStore>,
+    chatId: string | undefined,
+    accountPicture: PictureStore | undefined
+): PictureStore | undefined;
 export function personPicture(
     wokas: Map<string, PictureStore>,
     chatId: string | undefined,
     accountPicture: PictureStore | undefined
 ): PictureStore | undefined {
-    return (chatId ? wokas.get(chatId) : undefined) ?? accountPicture;
+    const woka = chatId ? wokas.get(chatId) : undefined;
+    if (!woka || !accountPicture) return woka ?? accountPicture;
+    const parts = fetchedParts.get(woka);
+    if (!parts) return firstPicture(woka, accountPicture);
+    // Someone Orbit described: the chat account's picture comes before Orbit's Woka.
+    const beforeOrbit = parts.world ? firstPicture(parts.world, accountPicture) : accountPicture;
+    return firstPicture(beforeOrbit, parts.orbit);
 }
 
 /**

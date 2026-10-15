@@ -204,7 +204,7 @@
             <BroadcastLivePill />
             <BroadcastInbox />
             {#if $notificationPlayingStore}
-                <div class="flex flex-col absolute w-auto end-0">
+                <div class="flex flex-col absolute w-auto end-0 mobile:portrait:top-[env(safe-area-inset-top)]">
                     {#each [...$notificationPlayingStore.values()] as notification, index (`${index}-${notification.id}`)}
                         <Notification {notification} />
                     {/each}

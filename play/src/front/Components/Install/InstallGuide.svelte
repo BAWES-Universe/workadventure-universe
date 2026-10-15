@@ -345,7 +345,9 @@
         class="u-surface pointer-events-auto absolute z-[1100] flex flex-col gap-2 rounded-3xl px-4 pb-3.5 pt-3 text-white {browserSheet.place ===
         'desktop'
             ? 'right-4 top-12 w-[440px] max-w-[calc(100vw-2rem)]'
-            : `inset-x-2 mx-auto max-w-[440px] ${browserSheet.place === 'top' ? 'top-2' : 'bottom-6'}`}"
+            : `inset-x-2 mx-auto max-w-[440px] ${
+                  browserSheet.place === 'top' ? 'top-[calc(8px+env(safe-area-inset-top))]' : 'bottom-6'
+              }`}"
         role="dialog"
         aria-label={browserSheet.title}
         data-testid="install-guide"
@@ -408,7 +410,10 @@
         {/if}
     </div>
     {#if browserSheet.arrow}
-        <div class="hint hint-up pointer-events-none absolute right-[92px] top-1.5 z-[1101]" aria-hidden="true">
+        <div
+            class="hint hint-up pointer-events-none absolute right-[92px] top-[calc(6px+env(safe-area-inset-top))] z-[1101]"
+            aria-hidden="true"
+        >
             <IconArrowDown font-size="34" />
         </div>
     {/if}

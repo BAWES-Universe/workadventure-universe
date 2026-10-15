@@ -129,6 +129,8 @@ import {
     waitForNetwork,
 } from "../../Connection/ReconnectScreen";
 import { reconnectWatchdog } from "../../Connection/AppReconnectWatchdog";
+import type { RoomPicture } from "../../Connection/SoftReconnect";
+import { softReconnect, softReconnectGeneration, stillCopy } from "../../Connection/SoftReconnect";
 import { BackgroundLeave, markLeftInBackground, waitToComeBack } from "../../Connection/BackgroundLeave";
 import { privacyShutdownStore } from "../../Stores/PrivacyShutdownStore";
 import { isLiveStreamingStore } from "../../Stores/IsStreamingStore";
@@ -146,6 +148,7 @@ import { chatVisibilityStore, forceRefreshChatStore } from "../../Stores/ChatSto
 import { openChat } from "../../Chat/openChat";
 import type { HasPlayerMovedInterface } from "../../Api/Events/HasPlayerMovedInterface";
 import { extensionModuleStore, gameSceneIsLoadedStore, gameSceneStore } from "../../Stores/GameSceneStore";
+import { reportJoinStep } from "../../Stores/LoaderStore";
 import { exploreStore } from "../../Stores/ExploreStore";
 import { friendsStore } from "../../Chat/Stores/FriendsStore";
 import { ringStore } from "../../Chat/Stores/RingStore";
@@ -215,9 +218,11 @@ import { selectedRoomStore } from "../../Chat/Stores/SelectRoomStore";
 import { raceTimeout } from "../../Utils/PromiseUtils";
 import { ConversationBubble } from "../Entity/ConversationBubble";
 import { DarkenOutsideAreaEffect } from "../Components/DarkenOutsideArea/DarkenOutsideAreaEffect";
+import { installRoomJoinedStore } from "../../Install/InstallRoomJoined";
 import { releaseSpawnSilence, seedSpawnSilence } from "./SpawnSilence";
 import { GameMapFrontWrapper } from "./GameMap/GameMapFrontWrapper";
 import { gameManager } from "./GameManager";
+import { Game } from "./Game";
 import { EmoteManager } from "./EmoteManager";
 import { OutlineManager } from "./UI/OutlineManager";
 import { soundManager } from "./SoundManager";
@@ -770,7 +775,10 @@ export class GameScene extends DirtyScene {
         }
 
         //this function must stay at the end of preload function
-        this.loader.addLoader();
+        // Getting back in with the room kept on screen (#958): no loading screen over it.
+        if (!(this.isReconnecting && softReconnect.isWaiting())) {
+            this.loader.addLoader();
+        }
     }
 
     private handleErrorAndCleanup(
@@ -1055,6 +1063,8 @@ export class GameScene extends DirtyScene {
                         } catch (err) {
                             console.error("Scene sleep error: ", err);
                         }
+                        // The room stays on screen with the pill until this scene is in (#958).
+                        if (softReconnect.isWaiting()) return;
                         const shown = get(errorScreenStore);
                         if (shown) {
                             // Already up: the "Reconnecting" screen shown when the connection dropped, or a real error.
@@ -1146,26 +1156,34 @@ export class GameScene extends DirtyScene {
         });*/
 
         Promise.all([
-            this.connectionAnswerPromiseDeferred.promise.then(() =>
-                debug("Loading process: Websocket connection ready")
-            ),
+            this.connectionAnswerPromiseDeferred.promise.then(() => {
+                debug("Loading process: Websocket connection ready");
+                reportJoinStep("connection");
+            }),
             Promise.allSettled(scriptPromises).then((results) => {
                 debug("Loading process: Scripts loaded");
+                reportJoinStep("scripts");
                 return results;
             }),
-            this.CurrentPlayer.getTextureLoadedPromise().then(() =>
-                debug("Loading process: Current player texture ready")
-            ) as Promise<unknown>,
-            this.gameMapFrontWrapper.initializedPromise.promise.then(() =>
-                debug("Loading process: Game map initialized")
-            ),
+            this.CurrentPlayer.getTextureLoadedPromise().then(() => {
+                debug("Loading process: Current player texture ready");
+                reportJoinStep("woka");
+            }) as Promise<unknown>,
+            this.gameMapFrontWrapper.initializedPromise.promise.then(() => {
+                debug("Loading process: Game map initialized");
+                reportJoinStep("map");
+            }),
             // Wait at most 5 seconds for the chat connection to be established
             // If not, we can still proceed starting the scene without chat fully loaded
             raceTimeout(gameManager.getChatConnection(), 5_000)
-                .then(() => debug("Loading process: Chat connection ready"))
+                .then(() => {
+                    debug("Loading process: Chat connection ready");
+                    reportJoinStep("chat");
+                })
                 .catch((e) => {
                     if (e instanceof TimeoutError) {
                         debug("Loading process: Chat connection timeout. Continuing loading while chat loads.");
+                        reportJoinStep("chat");
                         return;
                     } else {
                         throw e;
@@ -1198,9 +1216,15 @@ export class GameScene extends DirtyScene {
                             }
                         }
 
+                        // Dropped again while it was still starting up: the room that replaced this one gets back in.
+                        if (this.cleanupDone) return;
                         this.initUserPermissionsOnEntity();
                         this.hide(false);
                         gameSceneIsLoadedStore.set(true);
+                        // Back in after keeping the room on screen: the bar and the chat start again on this scene.
+                        if (softReconnect.finish()) {
+                            softReconnectGeneration.next();
+                        }
                         this.sceneReadyToStartDeferred.resolve();
                         this.initializeAreaManager();
                     })
@@ -1985,6 +2009,63 @@ export class GameScene extends DirtyScene {
         this.gameMapFrontWrapper.initializeAreaManager(userConnectedTags, userCanEdit);
     }
 
+    /**
+     * The room as it is on screen now, the others faded (they may move while the game gets back in), to show in its
+     * place until it is (#958). Undefined when there is nothing to show (no renderer, a lost drawing context).
+     */
+    private takeRoomPicture(): Promise<RoomPicture | undefined> {
+        const game = this.game;
+        const canvas = game.canvas;
+        const box = canvas?.parentElement;
+        const renderer = game.renderer;
+        if (!box || game.config.renderType === Phaser.HEADLESS || !(game instanceof Game)) {
+            return Promise.resolve(undefined);
+        }
+        // A phone may drop the drawing context of a page in the background: the picture would be black.
+        if (renderer instanceof Phaser.Renderer.WebGL.WebGLRenderer && renderer.contextLost) {
+            return Promise.resolve(undefined);
+        }
+        const canvasRect = canvas.getBoundingClientRect();
+        const boxRect = box.getBoundingClientRect();
+        if (canvasRect.width === 0 || canvasRect.height === 0) {
+            return Promise.resolve(undefined);
+        }
+        for (const player of this.MapPlayersByKey.values()) {
+            player.setFaded(true);
+        }
+        const bar = document.getElementById("main-layout");
+        const ui = bar ? stillCopy(bar) : undefined;
+        return new Promise((resolve) => {
+            const giveUp = setTimeout(() => resolve(undefined), 1000);
+            renderer.snapshot((image) => {
+                clearTimeout(giveUp);
+                if (!(image instanceof HTMLImageElement) || !image.src) {
+                    resolve(undefined);
+                    return;
+                }
+                resolve({
+                    src: image.src,
+                    left: canvasRect.left - boxRect.left,
+                    top: canvasRect.top - boxRect.top,
+                    width: canvasRect.width,
+                    height: canvasRect.height,
+                    // Copied once drawn: the draw lays the names out for the room as it is now (zoom, window size).
+                    names: this.usernameDomLayer?.copyForPicture(),
+                    ui,
+                });
+            });
+            // Drawn now with the others faded, and the picture taken at the end: the game loop may not be running (the
+            // drop is often seen just as the app comes back, before the next frame).
+            try {
+                game.renderNow();
+            } catch (e) {
+                console.error("Could not draw the room for its picture", e);
+                clearTimeout(giveUp);
+                resolve(undefined);
+            }
+        });
+    }
+
     private hide(hide = true): void {
         this.scene.setVisible(!hide);
         iframeListener?.hideIFrames(hide);
@@ -2241,14 +2322,38 @@ export class GameScene extends DirtyScene {
                 // The serverDisconnected stream is completed in the RoomConnection. No need to unsubscribe.
                 //eslint-disable-next-line rxjs/no-ignored-subscription, svelte/no-ignored-unsubscribe
                 this.connection.serverDisconnected.subscribe(() => {
-                    // Nothing failed: the game is getting back in. Say so right away, instead of an error.
-                    showReconnectingScreen(this._room.errorSceneLogo);
                     // If getting back in stalls anywhere, the page refreshes itself (as a manual refresh would).
                     reconnectWatchdog.arm();
                     console.info("Player disconnected from server. Reloading scene.");
-                    this.cleanupClosingScene();
-
-                    this.createSuccessorGameScene(true, true);
+                    const logo = this._room.errorSceneLogo;
+                    // Nothing failed: the game is getting back in. The room stays on screen as it was, with the bar,
+                    // the chat and a small pill (#958); without a picture of it, the "Reconnecting" screen right away.
+                    // Dropped again while still getting back in: the room kept from the first drop stays, its waits
+                    // running on. This scene is not on screen yet, so a picture of it would be blank.
+                    const keptAlready = softReconnect.isWaiting();
+                    const takingPicture =
+                        keptAlready || !this.scene.isVisible() ? Promise.resolve(undefined) : this.takeRoomPicture();
+                    takingPicture
+                        .then((picture) => {
+                            // Left the room meanwhile (a map exit, leaving the game): that took over.
+                            if (keptAlready || this.cleanupDone) return;
+                            if (picture && !get(errorScreenStore)) {
+                                softReconnect.start(picture, () => showReconnectingScreen(logo));
+                                // The chat stays open: it reaches this scene until the next one is created.
+                                gameManager.keepReplacedGameScene(this);
+                            } else {
+                                showReconnectingScreen(logo);
+                            }
+                        })
+                        .catch((e) => {
+                            console.error("Could not keep the room on screen", e);
+                            if (!this.cleanupDone) showReconnectingScreen(logo);
+                        })
+                        .finally(() => {
+                            if (this.cleanupDone) return;
+                            this.cleanupClosingScene();
+                            this.createSuccessorGameScene(true, true);
+                        });
                 });
                 this.watchBackgroundLeave();
                 hideConnectionIssueMessage();
@@ -2374,6 +2479,15 @@ export class GameScene extends DirtyScene {
                     this._room.id,
                     this._room.group ?? undefined
                 );
+                // Apple browsers cannot see the app: the account says it is installed. Inside the app, tell the account.
+                const roomConnection = this.connection;
+                installRoomJoinedStore.set({
+                    variables: playerVariables,
+                    account: {
+                        isLogged: () => localUserStore.isLogged(),
+                        setVariable: (event) => roomConnection.emitPlayerSetVariable(event),
+                    },
+                });
 
                 const broadcastService = new BroadcastService(this._spaceRegistry);
                 this._broadcastService = broadcastService;
@@ -4400,6 +4514,11 @@ ${escapedMessage}
             throw new Error("_spaceRegistry not yet initialized");
         }
         return this._spaceRegistry;
+    }
+
+    /** Whether the connection was up once and the proximity chat exists; the getter below throws before. */
+    get hasProximityChatRoom(): boolean {
+        return this._proximityChatRoom !== undefined;
     }
 
     get proximityChatRoom(): ProximityChatRoom {

@@ -41,7 +41,7 @@
     // Side by side with a thread, the Chats / People tabs sit over the list column only: the column starts below them.
     export let listTopInset = 0;
 
-    const gameScene = gameManager.getCurrentGameScene();
+    const gameScene = gameManager.getChatGameScene();
     const proximityChatRoom = gameScene.proximityChatRoom;
     const proximitySessions = proximityChatRoom.sessions;
     const proximityUnread = proximityChatRoom.unreadBySession;
@@ -181,7 +181,7 @@
                     </div>
                     {#if showSayHiCard}
                         <!-- Nothing yet: say how it starts, and offer the People tab. -->
-                        <section class="u-glass-warm mx-4 mb-2 rounded-2xl px-4 pt-4 pb-3" data-testid="nearbyHint">
+                        <section class="u-glass-warm mx-4 mb-2 rounded-2xl p-4" data-testid="nearbyHint">
                             <div class="flex items-start gap-3">
                                 <div class="flex h-11 w-11 shrink-0 items-end justify-center" aria-hidden="true">
                                     <WokaFromUserId userId={-1} customWidth="40px" placeholderSrc="" />
@@ -196,7 +196,7 @@
                             {#if hasPeopleTab}
                                 <button
                                     type="button"
-                                    class="u-cta mt-3 flex h-10 w-full items-center justify-center gap-1.5 rounded-xl px-4 text-sm font-bold"
+                                    class="u-cta mt-3 flex h-11 w-full items-center justify-center gap-1.5 rounded-xl px-4 text-sm font-bold"
                                     data-testid="nearbyHintPeople"
                                     on:click={() => navChat.switchToUserList()}
                                 >
@@ -220,12 +220,12 @@
                     {#if !$userIsConnected && isMatrixChatEnabled}
                         <!-- Guests: under the conversations, so what you had stays together at the top. -->
                         <section
-                            class="u-glass mx-2 mb-2 rounded-2xl px-4 pt-4 pb-4 text-sm text-white/80"
+                            class="u-glass mx-4 mb-2 rounded-2xl px-4 pt-4 pb-4 text-sm text-white/80"
                             aria-labelledby="chatGuestTitle"
                             data-testid="chatGuestCard"
                         >
                             <span class="u-eyebrow">{$LL.chat.guest.eyebrow()}</span>
-                            <h3 id="chatGuestTitle" class="u-text-gradient m-0 mt-1.5 text-lg font-bold leading-6">
+                            <h3 id="chatGuestTitle" class="u-text-gradient m-0 mt-1.5 text-base font-bold leading-6">
                                 {$LL.chat.guest.title()}
                             </h3>
                             <p class="m-0 mt-1 text-xs leading-5 text-white/60">{$LL.chat.guest.intro()}</p>

@@ -19,6 +19,7 @@ const warning: DeepPartial<Translation["warning"]> = {
     reconnectingDetails: "نعيدك إلى الداخل",
     offlineTitle: "أنت غير متصل بالإنترنت",
     offlineDetails: "سنعيد الاتصال فور عودتك إلى الإنترنت",
+    backIn: "عدت إلى الداخل",
     waitingConnectionTitle: "انتظار الاتصال", // "Waiting for connection"
     waitingConnectionSubtitle: "الاتصال", // "Connecting"
     megaphoneNeeds: "لاستخدام الميكروفون، يجب عليك تفعيل الكاميرا أو الميكروفون أو مشاركة شاشتك.", // "To use the microphone, you must enable the camera or microphone, or share your screen."

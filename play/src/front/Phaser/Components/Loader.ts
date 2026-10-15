@@ -1,5 +1,5 @@
 import { SuperLoaderPlugin } from "../Services/SuperLoaderPlugin";
-import { loaderProgressStore, loaderVisibleStore } from "../../Stores/LoaderStore";
+import { loaderVisibleStore, reportFilesProgress, startLoading } from "../../Stores/LoaderStore";
 
 export class Loader {
     private progress!: Phaser.GameObjects.Graphics;
@@ -9,10 +9,11 @@ export class Loader {
     // Event handlers as named functions
     private handleProgress = (value: number) => {
         this.progressAmount = value;
-        loaderProgressStore.set(value);
+        reportFilesProgress(value);
     };
 
     private handleComplete = () => {
+        reportFilesProgress(1);
         loaderVisibleStore.set(false);
     };
 
@@ -21,6 +22,7 @@ export class Loader {
     }
 
     public addLoader(): void {
+        startLoading();
         loaderVisibleStore.set(true);
         this.scene.load.on("progress", this.handleProgress);
         this.scene.load.on("complete", this.handleComplete);

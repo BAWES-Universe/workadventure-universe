@@ -53,6 +53,7 @@ import { shouldSaveNameOnServer } from "./LocalUserUtils";
 import type { OnConnectInterface, PositionInterface, ViewportInterface } from "./ConnexionModels";
 import { RoomConnection } from "./RoomConnection";
 import { watchConnectAttempt } from "./ConnectAttemptWatch";
+import { softReconnect } from "./SoftReconnect";
 import { HtmlUtils } from "./../WebRtc/HtmlUtils";
 import { hasCapability } from "./Capabilities";
 
@@ -358,6 +359,10 @@ class ConnectionManager {
                     const characterTextures = localUserStore.getCharacterTextures();
                     if (characterTextures === null || characterTextures.length === 0) {
                         nextScene = "selectCharacterScene";
+                    } else {
+                        // The game read the device when the page started, before the woka was put back: it joins with
+                        // what it holds, so it must hold this one too, or the world refuses an empty woka. #987
+                        gameManager.setCharacterTextureIds(characterTextures);
                     }
                 } else {
                     const redirect = this.loadOpenIDScreen(false);
@@ -685,8 +690,9 @@ class ConnectionManager {
         }).catch((err) => {
             console.info("connectToRoomSocket => catch => new Promise[OnConnectInterface] => err", err);
 
-            // Keep any screen already shown: the "Reconnecting" one, or a real error the server sent (e.g. a ban).
-            if (!get(errorScreenStore) && !options.cancelled?.()) {
+            // Keep any screen already shown: the "Reconnecting" one, or a real error the server sent (e.g. a ban). Nor
+            // while the room is kept on screen with its pill (#958): it says so, and brings the full screen if it lasts.
+            if (!get(errorScreenStore) && !softReconnect.isWaiting() && !options.cancelled?.()) {
                 errorScreenStore.setError(
                     ErrorScreenMessage.fromPartial({
                         type: "reconnecting",

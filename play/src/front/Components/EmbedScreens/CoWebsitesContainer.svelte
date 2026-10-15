@@ -205,7 +205,10 @@
     style="transition: background-color 0.2s ease-in-out, backdrop-filter 0.2s ease-in-out;"
 >
     <div class="h-full w-full flex flex-col">
-        <div class="flex py-2 ms-3 items-center height-tab overflow-hidden flex-none">
+        <!-- The tabs lead the page on a phone held upright, where the installed app's status bar is see-through (#969). -->
+        <div
+            class="flex pb-2 pt-[calc(8px+env(safe-area-inset-top))] ms-3 items-center height-tab overflow-hidden flex-none"
+        >
             {#if tabsOverflowing && tabsScrollX > 0}
                 <div class="flex-0 w-10">
                     <button
