@@ -88,6 +88,13 @@ test.describe("Proximity chat in the chat list @chat @nomobile @nowebkit", () =>
     await expect(alice.getByTestId("peopleHereTitle")).toContainText("2 here");
     await expect(alice.getByTestId("walk-to-Bob")).toBeVisible();
 
+    // Alice had a proximity chat, so the "Say hi in person" card is gone for good on this device: after a reload the
+    // chat history is empty again, and the list says so plainly instead of bringing the card back.
+    await alice.reload();
+    await chatUtils.open(alice, false);
+    await expect(alice.getByTestId("chatTabChats")).toHaveAttribute("aria-selected", "true");
+    await expect(alice.getByTestId("nearbyHint")).toBeHidden();
+
     await bob.context().close();
     await alice.context().close();
   });

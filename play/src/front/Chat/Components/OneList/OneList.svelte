@@ -44,6 +44,8 @@
     export let extraEntries: Readable<OneListEntry[]> = readable([]);
     /** Whether an empty list says so; off while the saved chat is not connected, so guests see no empty text. */
     export let showEmpty = true;
+    /** Nothing in the list and nothing typed in the search: the parent can show its own empty state instead. */
+    export let isEmpty = false;
     /** Opens a proximity chat you had. */
     export let onOpenSession: (session: ProximitySession<ChatMessage>) => void = () => undefined;
 
@@ -140,6 +142,7 @@
     $: visibleEntries = showAll ? $displayed : $displayed.slice(0, PAGE_SIZE);
     $: hiddenCount = Math.max(0, $displayed.length - PAGE_SIZE);
     $: isSearching = $chatSearchBarValue.trim() !== "";
+    $: isEmpty = $displayed.length === 0 && !isSearching;
 </script>
 
 <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->

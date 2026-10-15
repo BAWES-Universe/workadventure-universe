@@ -14,10 +14,10 @@
     import type { ProximitySession } from "../Connection/Proximity/ProximitySessions";
     import { ROOM_MESSAGES_SESSION_ID, listableSessions } from "../Connection/Proximity/ProximitySessions";
     import WokaFromUserId from "../../Components/Woka/WokaFromUserId.svelte";
+    import { readHadProximityChat, shouldShowSayHiCard } from "../Stores/SayHiCardStore";
     import RoomTimeline from "./Room/RoomTimeline.svelte";
     import ChatLoader from "./ChatLoader.svelte";
     import ChatError from "./ChatError.svelte";
-    import ChatHeader from "./ChatHeader.svelte";
     import FindGroup from "./FindGroup.svelte";
     import InviteFooter from "./InviteFooter.svelte";
     import RequireConnection from "./requireConnection.svelte";
@@ -102,6 +102,26 @@
     let liveCardVisible = false;
     $: hasProximityHistory = $proximityEntries.length > 0;
 
+    // The "Say hi in person" card is the empty state of this list: it shows to a player with no chats, and never again
+    // once they had a proximity chat on this device (proximity history itself is only kept until the page reloads; the
+    // proximity chat room remembers the first chat as it ends, and the list's own history covers the rest of this visit).
+    const hadProximityChatBefore = readHadProximityChat();
+    // Set by the list below, which only exists once the saved chats are loaded. While the chat is connecting or in
+    // error the saved chats are not known yet (the loader or the error shows). Offline there are none to list.
+    let listEmpty = false;
+    $: savedChatsEmpty =
+        $chatConnectionStatus === "ONLINE"
+            ? listEmpty
+            : $chatConnectionStatus === "OFFLINE" || !$userIsConnected
+            ? true
+            : undefined;
+    $: showSayHiCard = shouldShowSayHiCard({
+        liveCardVisible,
+        hasProximityHistory,
+        hadProximityChatBefore,
+        savedChatsEmpty,
+    });
+
     // One rule for both the columns and the list: at 670px and wider, list and thread sit side by side.
     // Below that, an open thread takes the whole panel, and the list (with the Chats / People tabs) hides.
     $: layout = resolveChatLayout(sideBarWidth, CHAT_LAYOUT_LIMIT, $selectedRoomStore !== undefined);
@@ -126,8 +146,7 @@
                 {#if $shouldRetrySendingEvents}
                     <RefreshChat />
                 {/if}
-                <ChatHeader />
-                <!-- Only the list scrolls, as on the People tab: the search bar above and the invite footer below stay
+                <!-- Only the list scrolls, as on the People tab: the tabs above and the footer below (Invite, search, "+") stay
                      put, and the footer sits under the last row instead of over it (often on a phone's chat sheet). -->
                 <div class="relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto pt-1" data-testid="chatsList">
                     {#if $chatConnectionStatus === "CONNECTING" && $userIsConnected}
@@ -160,7 +179,7 @@
                         />
                         <AreaChatRows />
                     </div>
-                    {#if !liveCardVisible && !hasProximityHistory}
+                    {#if showSayHiCard}
                         <!-- Nothing yet: say how it starts, and offer the People tab. -->
                         <section class="u-glass-warm mx-4 mb-2 rounded-2xl px-4 pt-4 pb-3" data-testid="nearbyHint">
                             <div class="flex items-start gap-3">
@@ -192,7 +211,8 @@
                         <div class="px-2 pb-2">
                             <OneList
                                 extraEntries={proximityEntries}
-                                showEmpty={$chatConnectionStatus === "ONLINE"}
+                                showEmpty={$chatConnectionStatus === "ONLINE" && !showSayHiCard}
+                                bind:isEmpty={listEmpty}
                                 onOpenSession={openSession}
                             />
                         </div>

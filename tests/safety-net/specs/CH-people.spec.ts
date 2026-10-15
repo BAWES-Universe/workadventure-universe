@@ -217,6 +217,9 @@ test("CH-051 Search people highlights matches, says No matching people., and cle
     await bobApart(browser, testInfo, player, url);
     await openPeople(player);
     const search = player.getByTestId("chatSearchInput");
+    // Search is a button in the footer; the field opens when it is tapped.
+    await expect(search).toHaveCount(0);
+    await player.getByTestId("chatSearchOpen").click();
     await expect(search).toHaveAttribute("placeholder", "Search people");
     const elsewhere = player.getByTestId("peopleElsewhereToggle");
     const hasElsewhere = await elsewhere.isVisible();
