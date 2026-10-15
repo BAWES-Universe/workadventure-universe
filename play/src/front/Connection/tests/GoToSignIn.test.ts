@@ -103,4 +103,17 @@ describe("the room shown again from the back cache", () => {
 
         expect(connectionManager.unloading).toBe(true);
     });
+
+    it("then does what was held back while leaving (a retry, a lost connection), once", () => {
+        const heldBack = vi.fn();
+        window.dispatchEvent(new Event("beforeunload"));
+        connectionManager.whenShownAgain(heldBack);
+
+        window.dispatchEvent(pageShow(false));
+        expect(heldBack).not.toHaveBeenCalled();
+
+        window.dispatchEvent(pageShow(true));
+        window.dispatchEvent(pageShow(true));
+        expect(heldBack).toHaveBeenCalledTimes(1);
+    });
 });

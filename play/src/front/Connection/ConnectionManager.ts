@@ -77,10 +77,11 @@ class ConnectionManager {
     private localUser!: LocalUser;
 
     private connexionType?: GameConnexionTypes;
-    private reconnectingTimeout: NodeJS.Timeout | null = null;
     /** Failed attempts to open the room socket in a row: the first retry comes sooner. */
     private failedSocketAttempts = 0;
     private _unloading = false;
+    /** Work held back while the page was being left, done if the browser shows the page again from its back cache. */
+    private shownAgain: (() => void)[] = [];
     private authToken: string | null = null;
     private _currentRoom: Room | null = null;
 
@@ -109,18 +110,26 @@ class ConnectionManager {
         return this._unloading;
     }
 
+    /** Does `then` if this page, now being left, is shown again from the browser's back cache, as it was. */
+    public whenShownAgain(then: () => void): void {
+        this.shownAgain.push(then);
+    }
+
     constructor() {
         // The listener never needs to be removed, because we are in a singleton that is never destroyed.
         // eslint-disable-next-line listeners/no-missing-remove-event-listener,listeners/no-inline-function-event-listener
         window.addEventListener("beforeunload", () => {
             this._unloading = true;
-            if (this.reconnectingTimeout) clearTimeout(this.reconnectingTimeout);
         });
         // The page was left (Sign in, a link) and then shown again from the browser's back cache, as it was: it is not
-        // closing any more, so a lost connection must be retried again.
+        // closing any more, so a lost connection is retried again, and what was held back while leaving is done now.
         // eslint-disable-next-line listeners/no-missing-remove-event-listener,listeners/no-inline-function-event-listener
         window.addEventListener("pageshow", (event) => {
-            if (event.persisted) this._unloading = false;
+            if (!event.persisted) return;
+            this._unloading = false;
+            const heldBack = this.shownAgain;
+            this.shownAgain = [];
+            heldBack.forEach((then) => then());
         });
 
         // Initialise default application
@@ -749,17 +758,18 @@ class ConnectionManager {
             return new Promise<OnConnectInterface | undefined>((resolve) => {
                 console.info("connectToRoomSocket => catch => new Promise[OnConnectInterface] => reconnectingTimeout");
 
-                // This retry's own timer. The shared handle (cleared on page unload) may by now hold a newer map's
-                // retry: a cancelled chain must never clear that one.
                 let ownTimeout: NodeJS.Timeout | null = null;
                 const retry = () => {
                     window.removeEventListener("online", retry);
                     if (ownTimeout) clearTimeout(ownTimeout);
-                    if (this.reconnectingTimeout === ownTimeout) this.reconnectingTimeout = null;
                     ownTimeout = null;
-                    // The page is closing: no new attempt (the pending one was cancelled on beforeunload). Nor when the
-                    // map that asked was closed: the map replacing it makes its own attempts.
-                    if (this._unloading || options.cancelled?.()) return;
+                    // The map that asked was closed: the map replacing it makes its own attempts.
+                    if (options.cancelled?.()) return;
+                    // The page is being left: no new attempt, unless the browser shows it again from its back cache.
+                    if (this._unloading) {
+                        this.whenShownAgain(retry);
+                        return;
+                    }
                     //todo: allow a way to break recursion?
                     //todo: find a way to avoid recursive function. Otherwise, the call stack will grow indefinitely.
                     console.info(
@@ -791,7 +801,6 @@ class ConnectionManager {
                     });
                 };
                 ownTimeout = setTimeout(retry, retryDelay);
-                this.reconnectingTimeout = ownTimeout;
                 window.addEventListener("online", retry);
             });
         });

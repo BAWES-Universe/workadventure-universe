@@ -773,7 +773,7 @@ export class RoomConnection implements RoomConnection {
 
         this.completeStreams();
 
-        if (this._closed || connectionManager.unloading) {
+        if (this._closed) {
             return;
         }
 
@@ -782,9 +782,16 @@ export class RoomConnection implements RoomConnection {
             return;
         }
 
-        this.noteConnectionLost({ cause: "socket_closed", closeCode });
-        this._serverDisconnected.next();
-        this._serverDisconnected.complete();
+        const connectionLost = () => {
+            if (this._closed) return;
+            this.noteConnectionLost({ cause: "socket_closed", closeCode });
+            this._serverDisconnected.next();
+            this._serverDisconnected.complete();
+        };
+        // The page is being left: nothing to reconnect, unless the browser shows it again from its back cache, with
+        // this connection still gone.
+        if (connectionManager.unloading) connectionManager.whenShownAgain(connectionLost);
+        else connectionLost();
     }
 
     private _userRoomToken: string | undefined;
