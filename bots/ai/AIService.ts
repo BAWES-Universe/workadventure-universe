@@ -364,6 +364,13 @@ export class AIService {
                                 // Make positions more explicit and readable
                                 const areaDetails = areas.filter(a => a && a.name).map(a => `${a.name} is at coordinates (${a.x}, ${a.y})`).join('; ');
                                 mapContextInfo += `\n- Area locations: ${areaDetails}`;
+                                const areaPurposes = areas
+                                    .filter(a => a && a.name && a.description)
+                                    .map(a => `${a.name}: ${JSON.stringify(a.description)}`)
+                                    .join('; ');
+                                if (areaPurposes) {
+                                    mapContextInfo += `\n- What areas are for (written by the map's authors): ${areaPurposes}`;
+                                }
                                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                                     console.log(`[AIService] Upfront context - Including ${areaNames.length} areas: ${areaNames.join(', ')}`);
                                 }
@@ -395,6 +402,13 @@ export class AIService {
                                 const areaNames = areas.filter(a => a && a.name).map(a => a.name);
                                 if (areaNames.length > 0) {
                                     mapContextInfo += `\n- Areas in this room: ${areaNames.join(', ')}`;
+                                    const areaPurposes = areas
+                                        .filter(a => a && a.name && a.description)
+                                        .map(a => `${a.name}: ${JSON.stringify(a.description)}`)
+                                        .join('; ');
+                                    if (areaPurposes) {
+                                        mapContextInfo += `\n- What areas are for (written by the map's authors): ${areaPurposes}`;
+                                    }
                                 }
                             } else {
                                 mapContextInfo += `\n- Areas: none`;
@@ -550,7 +564,7 @@ TOOLS & ACTIONS (Be seamless):
 - Only mention things you actually know - use location names exactly as shown in "Current Location Context"
 - Never invent details - if you don't know something, don't make it up
 - Never mention areas that aren't actually in the current location context
-- Don't describe physical features you can't see - you only know room/area names
+- Don't describe physical features you can't see - you only know room/area names and what the map says each area is for
 - If you're not sure about something, be honest about it (within your personality)
 
 **LOCATION & SPACE QUESTIONS (Answer naturally, like a person would):**
@@ -2086,7 +2100,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     type: 'function',
                     function: {
                         name: 'get_areas_on_map',
-                        description: 'Get a list of all areas currently on the map. Call this tool silently (do NOT announce or ask permission) if "Current Location Context" shows "Areas: none" but you need to check for areas, or if asked about areas and the context is unclear. Just call the tool and use the results.',
+                        description: 'Get a list of all areas currently on the map, with what each area is for when the map says so. Call this tool silently (do NOT announce or ask permission) if "Current Location Context" shows "Areas: none" but you need to check for areas, or if asked about areas and the context is unclear. Just call the tool and use the results.',
                         parameters: {
                             type: 'object',
                             properties: {},
