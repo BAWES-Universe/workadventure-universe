@@ -112,6 +112,17 @@ export class Game extends Phaser.Game {
     }
 
     /**
+     * Draws the scenes right away, outside the game loop (which does not run while the page is hidden, or until the
+     * next frame). A snapshot asked for beforehand is taken at its end.
+     */
+    public renderNow(): void {
+        const renderer = this.renderer;
+        renderer.preRender();
+        this.scene.render(renderer);
+        renderer.postRender();
+    }
+
+    /**
      * Marks the game as needing to be redrawn.
      */
     public markDirty(): void {

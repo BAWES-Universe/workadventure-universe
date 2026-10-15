@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { get, writable } from "svelte/store";
-import type { BeforeInstallPromptEvent, InstallAnalytics, InstallStorage } from "../InstallApp";
-import { FIRST_MOMENT_MS, INSTALLED_TOAST_MS, InstallApp } from "../InstallApp";
+import type { BeforeInstallPromptEvent, InstallAnalytics, InstallCardRecord, InstallStorage } from "../InstallApp";
+import {
+    APP_INSTALLED_VARIABLE,
+    CARD_GAP_MS,
+    FIRST_MOMENT_MS,
+    INSTALLED_TOAST_MS,
+    InstallApp,
+    LONG_CARD_GAP_MS,
+} from "../InstallApp";
 import type { InstallEnvironment } from "../InstallPlatform";
 
 const IPHONE_SAFARI =
@@ -23,13 +30,19 @@ function env(userAgent: string, overrides: Partial<InstallEnvironment> = {}): In
     };
 }
 
-function memoryStorage(seen = false, reported = false): InstallStorage & { seen: boolean; reported: boolean } {
+function memoryStorage(
+    record: InstallCardRecord | undefined = undefined,
+    reported = false
+): InstallStorage & { record: InstallCardRecord | undefined; reported: boolean } {
     const storage = {
-        seen,
+        record,
         reported,
-        isCardSeen: () => storage.seen,
-        markCardSeen: () => {
-            storage.seen = true;
+        readCardRecord: () => storage.record,
+        writeCardRecord: (next: InstallCardRecord) => {
+            storage.record = next;
+        },
+        clearCardRecord: () => {
+            storage.record = undefined;
         },
         isInstallReported: () => storage.reported,
         markInstallReported: () => {
@@ -123,7 +136,7 @@ describe("InstallApp", () => {
             expect(get(app.canInstallStore)).toBe(false);
             app.noteConversationEnded();
             expect(get(app.cardVisibleStore)).toBe(false);
-            expect(storage.seen).toBe(false);
+            expect(storage.record).toBeUndefined();
         });
 
         it("is not possible, and never shows, inside the installed app", () => {
@@ -131,7 +144,7 @@ describe("InstallApp", () => {
             expect(get(app.canInstallStore)).toBe(false);
             app.noteConversationEnded();
             expect(get(app.cardVisibleStore)).toBe(false);
-            expect(storage.seen).toBe(false);
+            expect(storage.record).toBeUndefined();
         });
 
         it("keeps the browser's own mini bar away, so the card picks the moment", () => {
@@ -157,7 +170,7 @@ describe("InstallApp", () => {
             expect(analytics.cardShown).toHaveBeenCalledTimes(1);
         });
 
-        it("shows after three minutes in a room when there was no conversation", () => {
+        it("shows five seconds after being in a room when there was no conversation", () => {
             const { app } = setup();
             app.noteInRoom();
             vi.advanceTimersByTime(FIRST_MOMENT_MS - 1);
@@ -182,24 +195,125 @@ describe("InstallApp", () => {
             expect(analytics.cardShown).toHaveBeenCalledTimes(1);
         });
 
-        it("shows once ever: remembered the moment it shows, so another visit never brings it back", () => {
-            const first = setup();
-            first.app.noteConversationEnded();
-            expect(first.storage.seen).toBe(true);
-            const second = setup({ storage: first.storage });
-            second.app.noteInRoom();
-            second.app.noteConversationEnded();
-            expect(get(second.app.cardVisibleStore)).toBe(false);
-            expect(second.analytics.cardShown).not.toHaveBeenCalled();
+        it("is remembered the moment it shows, with no closes yet", () => {
+            const { app, storage } = setup();
+            app.noteConversationEnded();
+            expect(storage.record).toEqual({ lastShownAt: Date.now(), closeStreak: 0, lastClosed: false });
         });
 
-        it("goes for good with the ✕ and is counted as dismissed", () => {
+        it("does not come back within a day after it was ignored, and comes back after a day", () => {
+            const first = setup();
+            first.app.noteConversationEnded();
+            expect(get(first.app.cardVisibleStore)).toBe(true);
+
+            vi.advanceTimersByTime(CARD_GAP_MS - 1);
+            const early = setup({ storage: first.storage });
+            early.app.noteInRoom();
+            early.app.noteConversationEnded();
+            expect(get(early.app.cardVisibleStore)).toBe(false);
+            expect(early.analytics.cardShown).not.toHaveBeenCalled();
+
+            vi.advanceTimersByTime(1);
+            const later = setup({ storage: first.storage });
+            later.app.noteInRoom();
+            vi.advanceTimersByTime(FIRST_MOMENT_MS);
+            expect(get(later.app.cardVisibleStore)).toBe(true);
+            expect(later.analytics.cardShown).toHaveBeenCalledTimes(1);
+        });
+
+        it("goes with the ✕ and is counted as dismissed and as a close", () => {
             const { app, analytics, storage } = setup();
             app.noteConversationEnded();
             app.dismissCard();
             expect(get(app.cardVisibleStore)).toBe(false);
             expect(analytics.cardDismissed).toHaveBeenCalledTimes(1);
-            expect(storage.seen).toBe(true);
+            expect(storage.record).toEqual({ lastShownAt: Date.now(), closeStreak: 1, lastClosed: true });
+        });
+
+        it("does not come back on this load after the ✕", () => {
+            const { app, quiet } = setup();
+            app.noteConversationEnded();
+            app.dismissCard();
+            quiet.set(false);
+            quiet.set(true);
+            app.noteConversationEnded();
+            expect(get(app.cardVisibleStore)).toBe(false);
+        });
+
+        /** Shows the card on a new visit, a gap after the last one, and closes it with the ✕. */
+        function closeOnNewVisit(storage: ReturnType<typeof memoryStorage>, gap: number) {
+            vi.advanceTimersByTime(gap);
+            const visit = setup({ storage });
+            visit.app.noteConversationEnded();
+            expect(get(visit.app.cardVisibleStore)).toBe(true);
+            visit.app.dismissCard();
+        }
+
+        it("waits a week after three closes in a row", () => {
+            const storage = memoryStorage();
+            const first = setup({ storage });
+            first.app.noteConversationEnded();
+            first.app.dismissCard();
+            closeOnNewVisit(storage, CARD_GAP_MS);
+            closeOnNewVisit(storage, CARD_GAP_MS);
+            expect(storage.record?.closeStreak).toBe(3);
+
+            vi.advanceTimersByTime(LONG_CARD_GAP_MS - 1);
+            const early = setup({ storage });
+            early.app.noteConversationEnded();
+            expect(get(early.app.cardVisibleStore)).toBe(false);
+
+            vi.advanceTimersByTime(1);
+            const later = setup({ storage });
+            later.app.noteConversationEnded();
+            expect(get(later.app.cardVisibleStore)).toBe(true);
+        });
+
+        it("waits only a day after two closes in a row", () => {
+            const storage = memoryStorage();
+            const first = setup({ storage });
+            first.app.noteConversationEnded();
+            first.app.dismissCard();
+            closeOnNewVisit(storage, CARD_GAP_MS);
+            expect(storage.record?.closeStreak).toBe(2);
+            vi.advanceTimersByTime(CARD_GAP_MS);
+            const later = setup({ storage });
+            later.app.noteConversationEnded();
+            expect(get(later.app.cardVisibleStore)).toBe(true);
+        });
+
+        it("starts the row of closes again after a showing that was ignored", () => {
+            const storage = memoryStorage();
+            const first = setup({ storage });
+            first.app.noteConversationEnded();
+            first.app.dismissCard();
+            closeOnNewVisit(storage, CARD_GAP_MS);
+            expect(storage.record?.closeStreak).toBe(2);
+
+            // Shown, then ignored: the streak is cleared at the next showing, not before.
+            vi.advanceTimersByTime(CARD_GAP_MS);
+            const ignored = setup({ storage });
+            ignored.app.noteConversationEnded();
+            expect(get(ignored.app.cardVisibleStore)).toBe(true);
+            expect(storage.record).toEqual({ lastShownAt: Date.now(), closeStreak: 2, lastClosed: false });
+
+            closeOnNewVisit(storage, CARD_GAP_MS);
+            expect(storage.record).toEqual({ lastShownAt: Date.now(), closeStreak: 1, lastClosed: true });
+            // One close in the new row: a day is enough again.
+            vi.advanceTimersByTime(CARD_GAP_MS);
+            const later = setup({ storage });
+            later.app.noteConversationEnded();
+            expect(get(later.app.cardVisibleStore)).toBe(true);
+        });
+
+        it("does not show when the record says it showed a moment ago, even after a conversation", () => {
+            const storage = memoryStorage({ lastShownAt: Date.now(), closeStreak: 0, lastClosed: false });
+            const { app, analytics } = setup({ storage });
+            app.noteInRoom();
+            vi.advanceTimersByTime(FIRST_MOMENT_MS);
+            app.noteConversationEnded();
+            expect(get(app.cardVisibleStore)).toBe(false);
+            expect(analytics.cardShown).not.toHaveBeenCalled();
         });
 
         it("waits for the browser's install event on Chrome before it shows", () => {
@@ -289,13 +403,47 @@ describe("InstallApp", () => {
             expect(get(app.canInstallStore)).toBe(true);
         });
 
-        it("never shows the card after the player cancelled the browser's window", async () => {
+        it("counts a cancel from the menu as a close that also sets the time the card showed, so it waits its gap", async () => {
             const { app, win, storage } = setup({ env: env(CHROME) });
             win.fire("beforeinstallprompt", installEvent("dismissed").event);
             await app.install("menu");
-            expect(storage.seen).toBe(true);
+            expect(storage.record).toEqual({ lastShownAt: Date.now(), closeStreak: 1, lastClosed: true });
             app.noteConversationEnded();
             expect(get(app.cardVisibleStore)).toBe(false);
+
+            vi.advanceTimersByTime(CARD_GAP_MS);
+            const later = setup({ env: env(CHROME), storage });
+            later.win.fire("beforeinstallprompt", installEvent("accepted").event);
+            later.app.noteConversationEnded();
+            expect(get(later.app.cardVisibleStore)).toBe(true);
+        });
+
+        it("counts a cancel from the card as one close of that showing", async () => {
+            const { app, win, storage } = setup({ env: env(CHROME) });
+            win.fire("beforeinstallprompt", installEvent("dismissed").event);
+            app.noteConversationEnded();
+            const shownAt = Date.now();
+            vi.advanceTimersByTime(1000);
+            await app.install("card");
+            expect(storage.record).toEqual({ lastShownAt: shownAt, closeStreak: 1, lastClosed: true });
+        });
+
+        it("counts a window that fails to open as a close", async () => {
+            const { app, win, storage } = setup({ env: env(CHROME) });
+            const { event } = installEvent("accepted");
+            event.prompt = vi.fn(() => Promise.reject(new Error("used already")));
+            vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            win.fire("beforeinstallprompt", event);
+            await app.install("menu");
+            expect(storage.record?.closeStreak).toBe(1);
+            expect(storage.record?.lastClosed).toBe(true);
+        });
+
+        it("counts nothing when the player installs", async () => {
+            const { app, win, storage } = setup({ env: env(CHROME) });
+            win.fire("beforeinstallprompt", installEvent("accepted").event);
+            await app.install("menu");
+            expect(storage.record).toBeUndefined();
         });
 
         it("does not bring the card back after a cancel from the menu when the card was waiting", async () => {
@@ -332,19 +480,19 @@ describe("InstallApp", () => {
 
     describe("an app installed earlier in this browser", () => {
         it("brings the row back when the browser offers the install again (the app was removed)", () => {
-            const { app, win } = setup({ env: env(CHROME), storage: memoryStorage(false, true) });
+            const { app, win } = setup({ env: env(CHROME), storage: memoryStorage(undefined, true) });
             win.fire("beforeinstallprompt", installEvent("accepted").event);
             // the browser offers the install again: the app was removed, so the row is back
             expect(get(app.canInstallStore)).toBe(true);
         });
 
         it("keeps the row hidden when the browser sends no install offer", () => {
-            const { app } = setup({ env: env(CHROME), storage: memoryStorage(false, true) });
+            const { app } = setup({ env: env(CHROME), storage: memoryStorage(undefined, true) });
             expect(get(app.canInstallStore)).toBe(false);
         });
 
         it("forgets the old install when the browser offers it again, so a new one counts", () => {
-            const storage = memoryStorage(false, true);
+            const storage = memoryStorage(undefined, true);
             const { win } = setup({ env: env(CHROME), storage });
             win.fire("beforeinstallprompt", installEvent("accepted").event);
             expect(storage.reported).toBe(false);
@@ -385,7 +533,7 @@ describe("InstallApp", () => {
         });
 
         it("keeps the row on iPhone Safari, which cannot tell", () => {
-            const { app } = setup({ storage: memoryStorage(false, true) });
+            const { app } = setup({ storage: memoryStorage(undefined, true) });
             expect(get(app.canInstallStore)).toBe(true);
         });
     });
@@ -397,6 +545,145 @@ describe("InstallApp", () => {
             expect(first.analytics.installed).toHaveBeenCalledWith("app");
             const second = setup({ env: env(IPHONE_SAFARI, { navigatorStandalone: true }), storage });
             expect(second.analytics.installed).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("an app installed", () => {
+        it("never shows the card again after the player installed it, whatever the record says", async () => {
+            const storage = memoryStorage();
+            const first = setup({ env: env(CHROME), storage });
+            first.win.fire("beforeinstallprompt", installEvent("accepted").event);
+            await first.app.install("menu");
+            vi.advanceTimersByTime(LONG_CARD_GAP_MS);
+            const later = setup({ env: env(CHROME), storage });
+            later.app.noteInRoom();
+            vi.advanceTimersByTime(FIRST_MOMENT_MS);
+            later.app.noteConversationEnded();
+            expect(get(later.app.canInstallStore)).toBe(false);
+            expect(get(later.app.cardVisibleStore)).toBe(false);
+            expect(later.analytics.cardShown).not.toHaveBeenCalled();
+        });
+
+        it("never shows the card inside the app, however long ago it showed", () => {
+            const storage = memoryStorage({
+                lastShownAt: Date.now() - LONG_CARD_GAP_MS,
+                closeStreak: 0,
+                lastClosed: false,
+            });
+            const { app } = setup({ env: env(IPHONE_SAFARI, { navigatorStandalone: true }), storage });
+            app.noteInRoom();
+            vi.advanceTimersByTime(FIRST_MOMENT_MS);
+            app.noteConversationEnded();
+            expect(get(app.cardVisibleStore)).toBe(false);
+        });
+    });
+
+    describe("the app on the account", () => {
+        const onAccount = new Map<string, unknown>([[APP_INSTALLED_VARIABLE, true]]);
+        const account = { isLogged: () => true, setVariable: vi.fn() };
+
+        it("keeps the card away on Apple's browsers, and the menu row stays", () => {
+            const { app, analytics } = setup();
+            app.noteRoomJoined(onAccount, account);
+            app.noteConversationEnded();
+            expect(get(app.cardVisibleStore)).toBe(false);
+            expect(analytics.cardShown).not.toHaveBeenCalled();
+            expect(get(app.canInstallStore)).toBe(true);
+        });
+
+        it("hides a card that is already on screen", () => {
+            const { app } = setup();
+            app.noteConversationEnded();
+            expect(get(app.cardVisibleStore)).toBe(true);
+            app.noteAppOnAccount();
+            expect(get(app.cardVisibleStore)).toBe(false);
+        });
+
+        it("shows the card on Apple's browsers when the account has no mark", () => {
+            const { app } = setup();
+            app.noteRoomJoined(new Map([[APP_INSTALLED_VARIABLE, false]]), account);
+            app.noteConversationEnded();
+            expect(get(app.cardVisibleStore)).toBe(true);
+        });
+
+        it("is ignored on Chromium, which sees its own install", () => {
+            const { app, win } = setup({ env: env(CHROME) });
+            win.fire("beforeinstallprompt", installEvent("accepted").event);
+            app.noteRoomJoined(onAccount, account);
+            app.noteAppOnAccount();
+            app.noteConversationEnded();
+            expect(get(app.cardVisibleStore)).toBe(true);
+        });
+
+        it("marks a logged in account once per load, from inside the app", () => {
+            const setVariable = vi.fn();
+            const { app } = setup({ env: env(IPHONE_SAFARI, { navigatorStandalone: true }) });
+            app.noteRoomJoined(new Map(), { isLogged: () => true, setVariable });
+            app.noteRoomJoined(new Map(), { isLogged: () => true, setVariable });
+            expect(setVariable).toHaveBeenCalledTimes(1);
+            expect(setVariable).toHaveBeenCalledWith({
+                key: "universeAppInstalled",
+                value: true,
+                public: false,
+                persist: true,
+                scope: "world",
+            });
+        });
+
+        it("marks nothing for a guest, nor from a browser tab", () => {
+            const setVariable = vi.fn();
+            const inApp = setup({ env: env(IPHONE_SAFARI, { navigatorStandalone: true }) });
+            inApp.app.noteRoomJoined(new Map(), { isLogged: () => false, setVariable });
+            const inBrowser = setup();
+            inBrowser.app.noteRoomJoined(new Map(), { isLogged: () => true, setVariable });
+            expect(setVariable).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("the test link", () => {
+        const account = { isLogged: () => true, setVariable: vi.fn() };
+        const closed = { lastShownAt: Date.now(), closeStreak: 5, lastClosed: true };
+
+        it("forgets the record and shows as soon as the player is in a room, with no wait", () => {
+            const storage = memoryStorage(closed);
+            const { app, analytics } = setup({ storage });
+            app.showForTestLink();
+            // Not over the loading or login screen.
+            expect(get(app.cardVisibleStore)).toBe(false);
+            app.noteInRoom();
+            expect(get(app.cardVisibleStore)).toBe(true);
+            expect(analytics.cardShown).toHaveBeenCalledTimes(1);
+            expect(storage.record).toEqual({ lastShownAt: Date.now(), closeStreak: 0, lastClosed: false });
+        });
+
+        it("ignores the mark on the account", () => {
+            const { app } = setup();
+            app.showForTestLink();
+            app.noteRoomJoined(new Map([[APP_INSTALLED_VARIABLE, true]]), account);
+            app.noteInRoom();
+            expect(get(app.cardVisibleStore)).toBe(true);
+        });
+
+        it("still shows only where installing is possible and while quiet", () => {
+            const chrome = setup({ env: env(CHROME) });
+            chrome.app.showForTestLink();
+            chrome.app.noteInRoom();
+            expect(get(chrome.app.cardVisibleStore)).toBe(false);
+            chrome.win.fire("beforeinstallprompt", installEvent("accepted").event);
+            expect(get(chrome.app.cardVisibleStore)).toBe(true);
+
+            const firefox = setup({ env: env(FIREFOX) });
+            firefox.app.showForTestLink();
+            firefox.app.noteInRoom();
+            expect(get(firefox.app.cardVisibleStore)).toBe(false);
+
+            const busy = setup();
+            busy.quiet.set(false);
+            busy.app.showForTestLink();
+            busy.app.noteInRoom();
+            expect(get(busy.app.cardVisibleStore)).toBe(false);
+            busy.quiet.set(true);
+            expect(get(busy.app.cardVisibleStore)).toBe(true);
         });
     });
 });

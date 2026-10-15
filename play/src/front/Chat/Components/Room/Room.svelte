@@ -57,7 +57,7 @@
     $: partnerId = room.type === "direct" ? $members.find((member) => member.id !== myChatId)?.id : undefined;
     // Someone outside the world is asked of Orbit (once), for their Woka and the name they go by.
     $: requestChatPerson(partnerId);
-    $: partnerWoka = partnerId ? personPicture($wokaByChatId, partnerId, undefined) : undefined;
+    $: partnerWoka = partnerId ? personPicture($wokaByChatId, partnerId, room.pictureStore) : undefined;
     // A direct chat is titled with the name the other person goes by in Universe, else the chat room's name.
     $: title = room.type === "direct" ? personName($nameByChatId, partnerId, $roomName) : $roomName;
 

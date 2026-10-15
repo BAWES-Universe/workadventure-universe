@@ -22,6 +22,7 @@
     import { desktopApi } from "../Api/Desktop";
     import { canvasSize, coWebsiteManager, coWebsites, fullScreenCowebsite } from "../Stores/CoWebsiteStore";
     import { gameSceneIsLoadedStore } from "../Stores/GameSceneStore";
+    import { softReconnect } from "../Connection/SoftReconnect";
     import { urlManager } from "../Url/UrlManager";
     import { FileListener } from "../Phaser/FileUpload/FileListener";
     import { isStructuredCloneSupported } from "../Utils/BrowserCompatibility";
@@ -71,9 +72,14 @@
             wokaRefused !== undefined ||
             refresh !== undefined
     );
+    // The room kept on screen while the game gets back in (#958) counts as up: its pill says what is going on.
+    const gameShownStore = derived(
+        [gameSceneIsLoadedStore, softReconnect],
+        ([loaded, reconnect]) => loaded || reconnect?.picture !== undefined
+    );
     const loadingScreen = bootSplashView();
     const stopWatchingLoadingScreen = watchLoadingScreen(
-        { gameLoaded: gameSceneIsLoadedStore, otherScreenShown: otherScreenShownStore, progress: loadingProgressStore },
+        { gameLoaded: gameShownStore, otherScreenShown: otherScreenShownStore, progress: loadingProgressStore },
         loadingScreen
     );
 

@@ -19,6 +19,7 @@ const warning: DeepPartial<Translation["warning"]> = {
     reconnectingDetails: "Gleich bist du wieder dabei",
     offlineTitle: "Du bist offline",
     offlineDetails: "Wir verbinden dich wieder, sobald du online bist",
+    backIn: "Wieder da",
     waitingConnectionTitle: "Warten auf Verbindung",
     waitingConnectionSubtitle: "Verbinden",
     megaphoneNeeds:
