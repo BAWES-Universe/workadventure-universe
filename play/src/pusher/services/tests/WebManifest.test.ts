@@ -74,6 +74,7 @@ describe("buildWebManifest", () => {
             {
                 platform: "webapp",
                 url: "https://play.test/static/images/favicons/manifest.json?url=https%3A%2F%2Fplay.test%2F%40%2Fbawes%2Flobby%2Fmain",
+                id: "https://play.test/",
             },
         ]);
         expect(buildWebManifest(meta, "not a url").related_applications).toEqual([]);

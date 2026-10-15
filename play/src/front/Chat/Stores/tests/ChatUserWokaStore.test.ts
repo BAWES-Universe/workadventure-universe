@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { get, readable } from "svelte/store";
+import { get, readable, writable } from "svelte/store";
 import { Color } from "@workadventure/shared-utils";
 import type { ChatUser } from "../../Connection/ChatConnection";
 import type { UserProviderMerger } from "../../UserProviderMerger/UserProviderMerger";
@@ -50,10 +50,47 @@ describe("personPicture", () => {
 
     it("prefers the woka the game sees right now, then the chat account's picture", () => {
         const wokas = new Map([["@khalid:server", live]]);
-        expect(personPicture(wokas, "@khalid:server", account)).toBe(live);
+        expect(get(personPicture(wokas, "@khalid:server", account))).toBe("live-woka.png");
+        expect(personPicture(wokas, "@khalid:server", undefined)).toBe(live);
         expect(personPicture(wokas, "@bossman:server", account)).toBe(account);
         expect(personPicture(wokas, undefined, account)).toBe(account);
         expect(personPicture(new Map(), "@bossman:server", undefined)).toBeUndefined();
+    });
+
+    it("shows the chat account's picture while the woka has none (its pictures could not be loaded)", () => {
+        const failedWoka = writable<string | undefined>(undefined);
+        const wokas = new Map([["@melon:server", failedWoka]]);
+        const picture = personPicture(wokas, "@melon:server", account);
+        expect(get(picture)).toBe("account-picture.png");
+        failedWoka.set("melon-woka.png");
+        expect(get(picture)).toBe("melon-woka.png");
+        // The same pair gives the same store, so a list does not redraw.
+        expect(personPicture(wokas, "@melon:server", account)).toBe(picture);
+    });
+
+    it("shows the chat account's picture before the Woka Orbit describes for someone outside the world", () => {
+        const orbitWoka = writable<string | undefined>("orbit-woka.png");
+        const wokas = withFetchedWokas(new Map(), new Map([["@melon:server", { picture: orbitWoka }]]));
+        const savedPicture = writable<string | undefined>("melon-chat-picture.png");
+        const picture = personPicture(wokas, "@melon:server", savedPicture);
+        expect(get(picture)).toBe("melon-chat-picture.png");
+        // No chat picture: Orbit's Woka fills in (a letter before #738).
+        savedPicture.set(undefined);
+        expect(get(picture)).toBe("orbit-woka.png");
+        expect(personPicture(wokas, "@melon:server", savedPicture)).toBe(picture);
+    });
+
+    it("keeps the world's woka first for someone Orbit also described, then the chat picture, then Orbit's", () => {
+        const world = writable<string | undefined>("world-woka.png");
+        const orbitWoka = readable<string | undefined>("orbit-woka.png");
+        const wokas = withFetchedWokas(
+            new Map([["@away:server", world]]),
+            new Map([["@away:server", { picture: orbitWoka }]])
+        );
+        const picture = personPicture(wokas, "@away:server", account);
+        expect(get(picture)).toBe("world-woka.png");
+        world.set(undefined);
+        expect(get(picture)).toBe("account-picture.png");
     });
 });
 

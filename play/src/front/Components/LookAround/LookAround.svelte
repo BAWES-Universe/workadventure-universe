@@ -115,7 +115,7 @@
         white-space: nowrap;
     }
     .phone .la-hint {
-        top: calc(var(--tiles-clear, 0px) + 12px + env(safe-area-inset-top, 0px));
+        top: calc(max(var(--tiles-clear, 0px), env(safe-area-inset-top, 0px)) + 12px);
         left: 40px;
         right: 40px;
         transform: none;

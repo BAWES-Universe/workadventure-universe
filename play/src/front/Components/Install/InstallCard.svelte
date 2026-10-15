@@ -9,8 +9,8 @@
     const iconSrc = installIconSrc();
 </script>
 
-<!-- The one-time card: a small raised note at the top, under the bar on a computer. Never blocks the map: the page
-     around it stays playable, and ✕ removes it for good. -->
+<!-- The install card: a small raised note at the top, under the bar on a computer. Never blocks the map: the page
+     around it stays playable, and ✕ closes it for now (it comes back later, see InstallApp). -->
 {#if $cardVisibleStore}
     <div
         class="u-surface pointer-events-auto absolute left-2 right-2 top-[calc(8px+env(safe-area-inset-top))] z-[650] flex items-center gap-3 rounded-[20px] py-3 pl-3.5 pr-2 text-white md:left-1/2 md:right-auto md:top-[88px] md:w-[440px] md:-translate-x-1/2"

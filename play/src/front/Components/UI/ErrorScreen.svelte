@@ -16,6 +16,7 @@
     import LoaderIcon from "../Icons/LoaderIcon.svelte";
     import { MEMBERS_ONLY_CODE, forgetDeniedRoom, membersOnlyExit } from "../../Connection/MembersOnlyExit";
     import { reconnectingCopy } from "../../Connection/ReconnectScreen";
+    import { softReconnect } from "../../Connection/SoftReconnect";
     import {
         NEW_VERSION_CODE,
         NEW_VERSION_COUNTDOWN_MS,
@@ -111,7 +112,8 @@
     let now = Date.now();
     let reconnectingSince: number | undefined;
     $: if ($errorScreenStore?.type === "reconnecting") {
-        if (reconnectingSince === undefined) reconnectingSince = Date.now();
+        // Counted from the drop: the room may have stayed on screen with the pill first (#958).
+        if (reconnectingSince === undefined) reconnectingSince = softReconnect.droppedAt() ?? Date.now();
     } else {
         reconnectingSince = undefined;
     }
@@ -131,7 +133,7 @@
 
 {#if $errorScreenStore}
     <main
-        class="errorScreen bg-contrast h-dvh pointer-events-auto w-full text-white text-center absolute flex flex-wrap items-center justify-center h-full top-0 left-0 right-0 mx-auto overflow-scroll py-5"
+        class="errorScreen bg-contrast h-dvh pointer-events-auto w-full text-white text-center absolute flex flex-wrap items-center justify-center h-full top-0 left-0 right-0 mx-auto overflow-scroll pb-5 pt-[calc(20px+env(safe-area-inset-top))]"
         style={getBackgroundColor() != undefined ? `background-color: ${getBackgroundColor()};` : ""}
         transition:fly={{ y: -200, duration: 500 }}
     >

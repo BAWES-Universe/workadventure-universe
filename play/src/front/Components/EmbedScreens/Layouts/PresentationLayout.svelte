@@ -84,13 +84,13 @@
         inPictureInPicture && $highlightedEmbedScreen != undefined
             ? "height: calc(100vh - 80px);"
             : sheetOpen
-            ? `height: calc(100% - ${$chatSheetHeightStore}px - 12px);`
+            ? `height: calc(100% - ${$chatSheetHeightStore}px - 12px - env(safe-area-inset-top, 0px));`
             : "";
 </script>
 
 {#if $proximityMeetingStore === true && !$inExternalServiceStore}
     <div
-        class="presentation-layout flex pointer-events-none h-full w-full absolute mobile:mt-3"
+        class="presentation-layout flex pointer-events-none h-full mobile:h-[calc(100%-env(safe-area-inset-top))] w-full absolute mobile:mt-[calc(12px+env(safe-area-inset-top))]"
         class:flex-col={!inPictureInPicture || $highlightedEmbedScreen == undefined}
         class:flex-row-reverse={inPictureInPicture && $highlightedEmbedScreen != undefined}
         style={layoutStyle}

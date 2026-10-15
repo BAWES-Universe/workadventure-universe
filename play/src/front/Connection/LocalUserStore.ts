@@ -8,6 +8,7 @@ import type { RequestedStatus } from "../Rules/StatusRules/statusRules";
 import { requestedStatusFactory } from "../Rules/StatusRules/StatusFactory/RequestedStatusFactory";
 import { INITIAL_SIDEBAR_WIDTH } from "../Stores/ChatStore";
 import { isAndroid, isIOS } from "../WebRtc/DeviceUtils";
+import type { InstallCardRecord } from "../Install/InstallApp";
 import type { LocalUser } from "./LocalUser";
 import { areCharacterTexturesValid, isUserNameValid } from "./LocalUserUtils";
 
@@ -64,9 +65,17 @@ const editHintSeenKey = "editHintSeen";
 const recentEditObjectsKey = "recentEditObjects";
 const bubbleSound = "bubbleSound";
 const knownMediaDevices = "knownMediaDevices";
+// The old flag "the card was shown once": only read to move it to the record (installCard).
 const installCardSeenKey = "installCardSeen";
+const installCardKey = "installCard";
 const installReportedKey = "installReported";
 const ignoredNewMediaDevices = "ignoredNewMediaDevices";
+
+const isInstallCardRecord = z.object({
+    lastShownAt: z.number().finite(),
+    closeStreak: z.number().int().min(0),
+    lastClosed: z.boolean(),
+}) satisfies z.ZodType<InstallCardRecord>;
 
 const INITIAL_MAP_EDITOR_SIDEBAR_WIDTH = 448;
 
@@ -287,14 +296,49 @@ class LocalUserStore {
         }
     }
 
-    // The install flag reads and writes never throw: a browser that blocks storage must still start the game.
-    /** The install card was shown (or dismissed) on this device: it never shows again. */
-    isInstallCardSeen(): boolean {
-        return this.readInstallFlag(installCardSeenKey);
+    // The install reads and writes never throw: a browser that blocks storage must still start the game.
+    /** What the install card remembers: when it last showed and how it was closed. A malformed record counts as none. */
+    readInstallCard(): InstallCardRecord | undefined {
+        try {
+            const record = this.parseInstallCard(localStorage.getItem(installCardKey));
+            if (record !== undefined) return record;
+            // The card used to show once, ever (a flag): that last showing counts as now, so it waits the gap.
+            if (localStorage.getItem(installCardSeenKey) !== "true") return undefined;
+            const migrated: InstallCardRecord = { lastShownAt: Date.now(), closeStreak: 0, lastClosed: false };
+            localStorage.setItem(installCardKey, JSON.stringify(migrated));
+            localStorage.removeItem(installCardSeenKey);
+            return migrated;
+        } catch (e) {
+            console.warn("Could not read the install state from the browser storage", e);
+            return undefined;
+        }
     }
-    markInstallCardSeen(): void {
-        this.writeInstallFlag(installCardSeenKey, true);
+    writeInstallCard(record: InstallCardRecord): void {
+        try {
+            localStorage.setItem(installCardKey, JSON.stringify(record));
+        } catch (e) {
+            console.warn("Could not save the install state in the browser storage", e);
+        }
     }
+    clearInstallCard(): void {
+        try {
+            localStorage.removeItem(installCardKey);
+            localStorage.removeItem(installCardSeenKey);
+        } catch (e) {
+            console.warn("Could not save the install state in the browser storage", e);
+        }
+    }
+
+    private parseInstallCard(raw: string | null): InstallCardRecord | undefined {
+        if (raw === null) return undefined;
+        try {
+            const parsed = isInstallCardRecord.safeParse(JSON.parse(raw));
+            return parsed.success ? parsed.data : undefined;
+        } catch {
+            return undefined;
+        }
+    }
+
     /** The install of the app was already counted on this device. */
     isInstallReported(): boolean {
         return this.readInstallFlag(installReportedKey);

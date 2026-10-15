@@ -57,7 +57,7 @@
     $: partnerId = room.type === "direct" ? $members.find((member) => member.id !== myChatId)?.id : undefined;
     // Someone outside the world is asked of Orbit (once), for their Woka and the name they go by.
     $: requestChatPerson(partnerId);
-    $: partnerWoka = partnerId ? personPicture($wokaByChatId, partnerId, undefined) : undefined;
+    $: partnerWoka = partnerId ? personPicture($wokaByChatId, partnerId, room.pictureStore) : undefined;
     // A direct chat is titled with the name the other person goes by in Universe, else the chat room's name.
     $: title = room.type === "direct" ? personName($nameByChatId, partnerId, $roomName) : $roomName;
 
@@ -108,7 +108,7 @@
 </script>
 
 <div
-    class="group/chatItem relative text-md m-0 flex gap-3 flex-row items-center min-h-14 ps-2 pe-1 py-2 rounded-xl hover:bg-white/10 transition-colors hover:!cursor-pointer cursor-pointer w-full"
+    class="group/chatItem relative text-md m-0 flex gap-3 flex-row items-center min-h-14 ps-2 pe-2 py-2 rounded-xl hover:bg-white/10 transition-colors hover:!cursor-pointer cursor-pointer w-full"
     class:bg-white={isSelected}
     class:bg-opacity-10={isSelected}
     on:click={() => selectedRoomStore.set(room)}

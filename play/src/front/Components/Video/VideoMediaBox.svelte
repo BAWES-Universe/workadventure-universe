@@ -223,9 +223,10 @@
 
                 <!-- The button at the top of the video that opens the menu to go fullscreen -->
                 {#if !inCameraContainer}
-                    <!-- The menu to go fullscreen -->
+                    <!-- The menu to go fullscreen. Full screen runs under the installed app's see-through status bar (#969). -->
                     <div
                         class="absolute m-auto top-0 right-0 left-0 h-14 w-fit z-20 rounded-lg bg-contrast/50 backdrop-blur transition-all opacity-50 hover:opacity-100 [@media(pointer:coarse)]:opacity-100 flex items-center justify-center cursor-pointer"
+                        style={fullScreen ? "top: env(safe-area-inset-top, 0px)" : undefined}
                     >
                         <div class="h-full w-full flex flex-row justify-evenly cursor-pointer">
                             {#if !fullScreen}
@@ -250,7 +251,12 @@
                     </div>
                 {/if}
                 {#if $statusStore === "connected" && $hasAudioStore && (!$videoSmall || $isMutedStore)}
-                    <div class="z-[251] absolute p-2 right-1" class:top-1={videoEnabled} class:top-0={!videoEnabled}>
+                    <div
+                        class="z-[251] absolute p-2 right-1"
+                        class:top-1={videoEnabled}
+                        class:top-0={!videoEnabled}
+                        style={fullScreen ? "margin-top: env(safe-area-inset-top, 0px)" : undefined}
+                    >
                         {#if !$isMutedStore}
                             <SoundMeterWidget
                                 volume={volumeMeter}
