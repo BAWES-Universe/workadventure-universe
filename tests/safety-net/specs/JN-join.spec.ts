@@ -196,9 +196,13 @@ test.describe("Join: WOKA picker", () => {
         await serveManyCollections(page);
         await openWokaPicker(page, roomUrl(testInfo));
         await expect(page.locator(".woka-swipe-hint")).toHaveText("swipe for the next collection");
+        const hintTop = () => page.locator(".woka-swipe-hint").evaluate((node) => node.getBoundingClientRect().top);
+        const longTop = await hintTop();
         const tabs = page.getByRole("tab");
         await swipe(activeTiles(page), -120);
         await expect(tabs.nth(1)).toHaveAttribute("aria-selected", "true");
+        // The next collection has 3 Wokas: the hint stays just above the buttons, it does not move up with the tiles
+        expect(Math.abs((await hintTop()) - longTop)).toBeLessThanOrEqual(1);
         await swipe(activeTiles(page), 120);
         await expect(tabs.nth(0)).toHaveAttribute("aria-selected", "true");
         await swipe(activeTiles(page), -40);
@@ -285,7 +289,7 @@ test.describe("Join: WOKA picker", () => {
         await expect(active).toHaveCount(1);
     });
 
-    test("JN-014 Long tile list is cut half way through a row, with a fade and scroll bar", async ({
+    test("JN-014 Long tile list fills the space down to the hint, with a fade and scroll bar", async ({
         page,
     }, testInfo) => {
         await openWokaBuilder(page, roomUrl(testInfo));
@@ -294,16 +298,14 @@ test.describe("Join: WOKA picker", () => {
         const box = page.locator(".woka-tiles");
         await expect(box).toHaveClass(/woka-tiles-more/);
         await expect(page.locator(".woka-scrollbar")).toBeVisible();
-        const fraction = await activeTiles(page).evaluate((scroller) => {
-            const grid = scroller.firstElementChild as HTMLElement;
-            const tile = grid.firstElementChild as HTMLElement;
-            const gap = parseFloat(getComputedStyle(grid).rowGap) || 0;
-            const padding = parseFloat(getComputedStyle(grid).paddingTop) || 0;
-            const rows = (scroller.clientHeight - padding + gap) / (tile.offsetHeight + gap);
-            return rows - Math.floor(rows);
+        // No empty band under the tiles: the box, then the hint on a phone, reach the bottom of the area above the buttons
+        const gap = await box.evaluate((node) => {
+            const hint = document.querySelector<HTMLElement>(".woka-swipe-hint");
+            const area = node.closest(".woka-swipe-area") as HTMLElement;
+            const last = hint && hint.offsetHeight > 0 ? hint : node;
+            return Math.abs(area.getBoundingClientRect().bottom - last.getBoundingClientRect().bottom);
         });
-        expect(fraction).toBeGreaterThanOrEqual(0.2);
-        expect(fraction).toBeLessThanOrEqual(0.8);
+        expect(gap).toBeLessThanOrEqual(1);
         await activeTiles(page).evaluate((node) => (node.scrollTop = node.scrollHeight));
         await expect(box).not.toHaveClass(/woka-tiles-more/);
         await expect(wokaTiles(page).last()).toBeInViewport();
