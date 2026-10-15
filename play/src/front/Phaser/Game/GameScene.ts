@@ -176,7 +176,6 @@ import {
 import { endLiveBroadcast } from "../../Components/Broadcast/live";
 import { CompanionTextureError } from "../../Exception/CompanionTextureError";
 import { SelectCompanionScene, SelectCompanionSceneName } from "../Login/SelectCompanionScene";
-import { scriptUtils } from "../../Api/ScriptUtils";
 import { statusChanger } from "../../Components/ActionBar/AvailabilityStatus/statusChanger";
 import { warningMessageStore } from "../../Stores/ErrorStore";
 import { closeCoWebsite, getCoWebSite, openCoWebSite, openCoWebSiteWithoutSource } from "../../Chat/Utils";
@@ -3688,7 +3687,7 @@ ${escapedMessage}
             if (!ENABLE_OPENID) {
                 throw new Error("Cannot access login page. OpenID connect must configured first.");
             }
-            scriptUtils.goToPage("/login");
+            connectionManager.goToSignIn();
         });
 
         iframeListener.registerAnswerer("playSoundInBubble", async (message) => {

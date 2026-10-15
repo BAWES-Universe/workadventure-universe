@@ -157,8 +157,18 @@ class ConnectionManager {
             return null;
         }
         analyticsClient.loggedWithSso();
+        return this.openIdScreenUrl(this._currentRoom, manuallyTriggered, providerId, providerScopes);
+    }
+
+    /** The sign-in page (through the pusher) that comes back to this room once signed in. */
+    private openIdScreenUrl(
+        room: Room,
+        manuallyTriggered: boolean,
+        providerId?: string,
+        providerScopes?: string[]
+    ): URL {
         const redirectUrl = new URL("login-screen", ABSOLUTE_PUSHER_URL);
-        redirectUrl.searchParams.append("playUri", this._currentRoom.key);
+        redirectUrl.searchParams.append("playUri", room.key);
         if (manuallyTriggered) {
             redirectUrl.searchParams.append("manuallyTriggered", "true");
         }
@@ -171,6 +181,22 @@ class ConnectionManager {
             });
         }
         return redirectUrl;
+    }
+
+    /**
+     * The Sign in buttons: straight to the sign-in page from the room the player is in. Going through /login started the
+     * whole app again just to forward, behind the loading screen, and left that page under the sign-in page: in the
+     * installed iPhone app, closing the sign-in sheet landed on it, frozen and then empty (#1017). The room stays as it
+     * is (the device keeps its token and WOKA), so closing the sheet, or Back in a browser, finds it as it was. Signing
+     * in comes back to this room with the account's token, as through /login.
+     */
+    public goToSignIn(): void {
+        if (!ENABLE_OPENID || !this._currentRoom) {
+            window.location.assign("/login");
+            return;
+        }
+        analyticsClient.loggedWithSso();
+        window.location.assign(this.openIdScreenUrl(this._currentRoom, true).toString());
     }
 
     /**

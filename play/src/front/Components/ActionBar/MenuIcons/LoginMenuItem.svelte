@@ -2,6 +2,7 @@
     import ActionBarButton from "../ActionBarButton.svelte";
     import LL from "../../../../i18n/i18n-svelte";
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
+    import { connectionManager } from "../../../Connection/ConnectionManager";
     import { IconUserCircle } from "@wa-icons";
 
     export let first: boolean | undefined = undefined;
@@ -11,7 +12,7 @@
 
     function goToLogin() {
         analyticsClient.login();
-        window.location.href = "/login";
+        connectionManager.goToSignIn();
     }
 </script>
 

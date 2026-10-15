@@ -10,6 +10,7 @@
     import getCloseImg from "../images/get-close.png";
     import ExternalComponents from "../../Components/ExternalModules/ExternalComponents.svelte";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
+    import { connectionManager } from "../../Connection/ConnectionManager";
     import type { ChatMessage } from "../Connection/ChatConnection";
     import type { ProximitySession } from "../Connection/Proximity/ProximitySessions";
     import { ROOM_MESSAGES_SESSION_ID, listableSessions } from "../Connection/Proximity/ProximitySessions";
@@ -252,7 +253,10 @@
                                 class="u-cta mt-4 flex min-h-11 items-center justify-center gap-1.5 rounded-xl px-4 text-sm font-bold no-underline hover:no-underline"
                                 href="/login"
                                 data-testid="chatGuestSignIn"
-                                on:click={() => analyticsClient.login()}
+                                on:click|preventDefault={() => {
+                                    analyticsClient.login();
+                                    connectionManager.goToSignIn();
+                                }}
                             >
                                 <span>{$LL.chat.guest.action()}</span>
                                 <IconChevronRight font-size="16" class="shrink-0 rtl:-scale-x-100" aria-hidden="true" />
