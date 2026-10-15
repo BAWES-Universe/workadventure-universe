@@ -218,6 +218,9 @@ export class GameManager {
     }
 
     closeGameScene(): void {
+        // A screen takes the room over: the picture, the pill and the 10 s wait of a reconnect still under way end here
+        // (#1047). Otherwise the "Reconnecting" screen would come up over that screen.
+        softReconnect.cancel();
         gameSceneIsLoadedStore.set(false);
         const gameScene = this.scenePlugin.get(this.currentGameSceneName ?? "default");
 
