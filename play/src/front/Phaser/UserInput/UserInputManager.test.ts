@@ -54,4 +54,23 @@ describe("UserInputManager", () => {
         expect(inputManager.getEventListForGameTick().get(UserInputEvent.MoveUp)).toBe(false);
         expect(inputManager.getEventListForGameTick().any()).toBe(false);
     });
+
+    it("lets go of a held joystick direction when the app goes to the background, so it does not walk on after the Home swipe", () => {
+        const { inputManager } = manager();
+        const hide = vi.fn();
+        const joystickEvents = new ActiveEventList();
+        joystickEvents.set(UserInputEvent.MoveUp, true);
+        Object.assign(inputManager, { joystickEvents, joystick: { hide }, joystickForceAccuY: 40 });
+
+        const visibility = vi.spyOn(document, "visibilityState", "get");
+        visibility.mockReturnValue("visible");
+        inputManager.handlePageHidden();
+        expect(hide).not.toHaveBeenCalled();
+
+        visibility.mockReturnValue("hidden");
+        inputManager.handlePageHidden();
+        expect(hide).toHaveBeenCalledWith(0);
+        expect(inputManager.getEventListForGameTick().any()).toBe(false);
+        visibility.mockRestore();
+    });
 });
