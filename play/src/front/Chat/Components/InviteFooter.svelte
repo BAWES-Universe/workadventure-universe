@@ -144,10 +144,12 @@
     }
 
     function close() {
-        const hadFocusInside = panel?.contains(document.activeElement) ?? false;
         open = false;
-        // The button is back (it hides, kept in place, while the panel is open): the focus returns to it.
-        if (hadFocusInside) tick().then(() => trigger?.focus({ preventScroll: true }), console.error);
+        // The button is back (it hides, kept in place, while the panel is open): the focus returns to it, also after a
+        // tap on the dimmed list, which takes the focus away before it closes the panel.
+        tick()
+            .then(() => trigger?.focus({ preventScroll: true }))
+            .catch((e) => console.error(e));
     }
 
     // Shown without "https://": the panel is narrow and the part that tells rooms apart comes after it.
