@@ -92,5 +92,12 @@ describe("listed area descriptions", () => {
         expect(text.length).toBeLessThanOrEqual(1500 + many.length * 2);
         expect(text).toContain("Area 0");
         expect(text).not.toContain("Area 9");
+        const mixed = format([
+            { name: "Big 1", description: "x".repeat(700) },
+            { name: "Big 2", description: "x".repeat(700) },
+            { name: "Big 3", description: "x".repeat(700) },
+            { name: "Small", description: "short" },
+        ]);
+        expect(mixed).toContain("Small");
     });
 });

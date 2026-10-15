@@ -89,7 +89,7 @@ export class AIService {
         for (const area of areas) {
             if (!area || !area.name || !area.description) continue;
             const part = `${area.name}: ${JSON.stringify(area.description)}`;
-            if (used + part.length > maxTotalLength) break;
+            if (used + part.length > maxTotalLength) continue;
             parts.push(part);
             used += part.length;
         }
