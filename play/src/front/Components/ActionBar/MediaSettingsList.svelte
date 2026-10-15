@@ -6,6 +6,7 @@
     import {
         cameraListStore,
         enableCameraSceneVisibilityStore,
+        localStreamStore,
         microphoneListStore,
         requestedCameraDeviceIdStore,
         requestedCameraState,
@@ -60,13 +61,21 @@
 
     // iOS names a kind of device only once the page has opened it, and phones keep the microphone closed while nobody
     // is near: until then the list has one microphone with no name or id. It shows as the default one, in use, instead
-    // of a blank row, and the real name replaces it when the microphone opens.
+    // of a blank row, and the real name replaces it when the microphone opens. When the browser refused the camera or
+    // microphone, nothing is in use, so it gets no check.
     function deviceName(device: MediaDeviceInfo, fallback: string): string {
         return StringUtils.normalizeDeviceName(device.label) || fallback;
     }
 
-    function isInUse(device: MediaDeviceInfo, usedDeviceId: string | undefined, list: MediaDeviceInfo[]): boolean {
-        return usedDeviceId === device.deviceId || (device.label === "" && list.length === 1);
+    $: streamFailed = $localStreamStore.type === "error";
+
+    function isInUse(
+        device: MediaDeviceInfo,
+        usedDeviceId: string | undefined,
+        list: MediaDeviceInfo[],
+        streamFailed: boolean
+    ): boolean {
+        return usedDeviceId === device.deviceId || (device.label === "" && list.length === 1 && !streamFailed);
     }
 
     function selectCamera(deviceId: string) {
@@ -164,8 +173,8 @@
                     <button
                         type="button"
                         class="device-row group min-h-10 mobile:min-h-12"
-                        class:selected={isInUse(camera, $usedCameraDeviceIdStore, $cameraListStore)}
-                        aria-pressed={isInUse(camera, $usedCameraDeviceIdStore, $cameraListStore)}
+                        class:selected={isInUse(camera, $usedCameraDeviceIdStore, $cameraListStore, streamFailed)}
+                        aria-pressed={isInUse(camera, $usedCameraDeviceIdStore, $cameraListStore, streamFailed)}
                         title={deviceName(camera, $LL.actionbar.camera.defaultDevice())}
                         on:click|stopPropagation|preventDefault={() => {
                             analyticsClient.selectCamera();
@@ -179,7 +188,7 @@
                         {#if $newDeviceTagsStore.has(camera.deviceId)}
                             <span class="new-tag u-count u-badge" data-new-device>{$LL.camera.newDevice.newTag()}</span>
                         {/if}
-                        {#if isInUse(camera, $usedCameraDeviceIdStore, $cameraListStore)}
+                        {#if isInUse(camera, $usedCameraDeviceIdStore, $cameraListStore, streamFailed)}
                             <IconCheck font-size="16" class="shrink-0 text-[#c4b5fd]" />
                         {/if}
                     </button>
@@ -211,8 +220,18 @@
                     <button
                         type="button"
                         class="device-row group min-h-10 mobile:min-h-12"
-                        class:selected={isInUse(microphone, $usedMicrophoneDeviceIdStore, $microphoneListStore)}
-                        aria-pressed={isInUse(microphone, $usedMicrophoneDeviceIdStore, $microphoneListStore)}
+                        class:selected={isInUse(
+                            microphone,
+                            $usedMicrophoneDeviceIdStore,
+                            $microphoneListStore,
+                            streamFailed
+                        )}
+                        aria-pressed={isInUse(
+                            microphone,
+                            $usedMicrophoneDeviceIdStore,
+                            $microphoneListStore,
+                            streamFailed
+                        )}
                         title={deviceName(microphone, $LL.actionbar.microphone.defaultDevice())}
                         on:click={() => {
                             analyticsClient.selectMicrophone();
@@ -226,7 +245,7 @@
                         {#if $newDeviceTagsStore.has(microphone.deviceId)}
                             <span class="new-tag u-count u-badge" data-new-device>{$LL.camera.newDevice.newTag()}</span>
                         {/if}
-                        {#if isInUse(microphone, $usedMicrophoneDeviceIdStore, $microphoneListStore)}
+                        {#if isInUse(microphone, $usedMicrophoneDeviceIdStore, $microphoneListStore, streamFailed)}
                             <IconCheck font-size="16" class="shrink-0 text-[#c4b5fd]" />
                         {/if}
                     </button>
@@ -261,8 +280,8 @@
                     <button
                         type="button"
                         class="device-row group min-h-10 mobile:min-h-12"
-                        class:selected={isInUse(speaker, $speakerSelectedStore, $speakerListStore)}
-                        aria-pressed={isInUse(speaker, $speakerSelectedStore, $speakerListStore)}
+                        class:selected={isInUse(speaker, $speakerSelectedStore, $speakerListStore, streamFailed)}
+                        aria-pressed={isInUse(speaker, $speakerSelectedStore, $speakerListStore, streamFailed)}
                         title={deviceName(speaker, $LL.actionbar.speaker.defaultDevice())}
                         on:click={() => {
                             analyticsClient.selectSpeaker();
@@ -276,7 +295,7 @@
                         {#if $newDeviceTagsStore.has(speaker.deviceId)}
                             <span class="new-tag u-count u-badge" data-new-device>{$LL.camera.newDevice.newTag()}</span>
                         {/if}
-                        {#if isInUse(speaker, $speakerSelectedStore, $speakerListStore)}
+                        {#if isInUse(speaker, $speakerSelectedStore, $speakerListStore, streamFailed)}
                             <IconCheck font-size="16" class="shrink-0 text-[#c4b5fd]" />
                         {/if}
                     </button>
