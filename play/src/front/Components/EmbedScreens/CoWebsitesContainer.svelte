@@ -1,7 +1,7 @@
 <script lang="ts">
     import { onDestroy, onMount } from "svelte";
     import type { Unsubscriber } from "svelte/store";
-    import { coWebsiteRatio, coWebsites, fullScreenCowebsite } from "../../Stores/CoWebsiteStore";
+    import { coWebsiteRatio, coWebsites, fullScreenCowebsite, windowSize } from "../../Stores/CoWebsiteStore";
     import JitsiCowebsiteComponent from "../Cowebsites/JistiCowebsiteComponent.svelte";
     import SimpleCowebsiteComponent from "../Cowebsites/SimpleCowebsiteComponent.svelte";
     import { JitsiCoWebsite } from "../../WebRtc/CoWebsite/JitsiCoWebsite";
@@ -65,11 +65,13 @@
             if (clientY < 8) {
                 clientY = 8;
             }
-            if (clientY > window.innerHeight) {
-                clientY = window.innerHeight;
+            // The height the split is drawn over: the whole screen in the installed iPhone app (#1016).
+            const height = $windowSize.height;
+            if (clientY > height) {
+                clientY = height;
             }
 
-            coWebsiteRatio.set(clientY / window.innerHeight);
+            coWebsiteRatio.set(clientY / height);
         }
     };
 
