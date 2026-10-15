@@ -35,6 +35,7 @@
     import GifPicker from "../../Gif/GifPicker.svelte";
     import { withoutPreview } from "../../LinkPreview/ChatLinks";
     import { appendEmoji } from "./AppendEmoji";
+    import { canHover } from "./FocusAfterSend";
     import MessageInput from "./MessageInput.svelte";
     import ReplyPreview from "./MessageActions/ReplyPreview.svelte";
     import { captureSendDestination, isSendDestinationOpen, spaceGenerationOf } from "./SendDestination";
@@ -650,7 +651,8 @@
         if (!isSendDestinationOpen(destination)) return;
         analyticsClient.chatMessageSent(room instanceof ProximityChatRoom ? "proximity" : "matrix");
         destination.room.sendMessage(url);
-        messageInput?.focus();
+        // Only with a mouse: on a phone, focusing the box would open the keyboard after a GIF.
+        if (canHover()) messageInput?.focus();
     }
 
     function showEmojiPicker() {

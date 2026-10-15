@@ -293,7 +293,7 @@
         max-width: min(480px, calc(100% - 120px));
     }
     .em-phone .em-hint-top {
-        top: calc(var(--tiles-clear, 0px) + 80px + env(safe-area-inset-top, 0px));
+        top: calc(max(var(--tiles-clear, 0px), env(safe-area-inset-top, 0px)) + 80px);
         left: 14px;
         right: 84px;
         width: auto;

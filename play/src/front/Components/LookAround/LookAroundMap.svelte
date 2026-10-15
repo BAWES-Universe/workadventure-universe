@@ -328,7 +328,7 @@
         transform: translateX(-50%);
     }
     .phone .you-tab-top {
-        top: calc(var(--tiles-clear, 0px) + 12px + env(safe-area-inset-top, 0px));
+        top: calc(max(var(--tiles-clear, 0px), env(safe-area-inset-top, 0px)) + 12px);
     }
     .you-tab-bottom {
         bottom: 0;

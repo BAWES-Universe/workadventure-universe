@@ -72,7 +72,7 @@
         z-index: 2;
     }
     :global(.em-phone) .em-panel {
-        top: calc(var(--tiles-clear, 0px) + 78px + env(safe-area-inset-top, 0px));
+        top: calc(max(var(--tiles-clear, 0px), env(safe-area-inset-top, 0px)) + 78px);
         bottom: calc(12px + env(safe-area-inset-bottom, 0px));
         left: 10px;
         right: 80px;

@@ -118,14 +118,15 @@
 <svelte:window on:keydown={onKeyDown} />
 
 <!-- Over the map and beside the bar, never over it: the game stays usable while the card is open. A phone has the
-     card at the top, under the status bar; a desktop centres it like a dialog. -->
+     card at the top, under the status bar (see-through in the installed app, #969: its inset is added); a desktop centres
+     it like a dialog. -->
 <div
-    class="fixed z-[1200] pointer-events-auto inset-x-3 top-8 lg:inset-x-auto lg:top-1/2 lg:left-1/2 lg:-translate-x-1/2 lg:-translate-y-1/2 lg:w-[420px]"
+    class="fixed z-[1200] pointer-events-auto inset-x-3 top-[calc(32px+env(safe-area-inset-top))] lg:inset-x-auto lg:top-1/2 lg:left-1/2 lg:-translate-x-1/2 lg:-translate-y-1/2 lg:w-[420px]"
     transition:fly={{ y: -16, duration: 180 }}
     data-testid="broadcast-panel"
 >
     <div
-        class="broadcast-card u-surface rounded-3xl text-white p-4 flex flex-col gap-3 max-h-[calc(100vh-4rem)] overflow-y-auto"
+        class="broadcast-card u-surface rounded-3xl text-white p-4 flex flex-col gap-3 max-h-[calc(100vh-4rem-env(safe-area-inset-top))] overflow-y-auto"
         role="dialog"
         aria-label={title}
     >
