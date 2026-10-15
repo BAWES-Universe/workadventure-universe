@@ -683,11 +683,34 @@ describe("ProximityChatRoom sessions", () => {
         room.stashHistoryForNextScene();
         room.destroy();
         keepOnlyProximityHistory();
-        selectedRoomStore.set(undefined);
 
+        // The destroyed chat is still the selected one until the next map starts: it must not pull the new one in.
+        expect(get(selectedRoomStore)).toBe(room);
         const next = nextMapRoom();
         expect(get(selectedRoomStore)).toBeUndefined();
         expect(get(next.sessions)).toHaveLength(1);
+        next.destroy();
+    });
+
+    it("still carries a message written in the old chat after leaving the game and coming back", async () => {
+        await room.joinSpace("bubble", [], true);
+        fake.space.usersStore.set(
+            new Map([
+                ["room_1", spaceUser("room_1", "Me", "a")],
+                ["room_3", spaceUser("room_3", "Sara", "b")],
+            ])
+        );
+        fake.emit("spaceMessage", { sender: "room_3", spaceMessage: { message: "hello", name: "Sara" } });
+        room.stashHistoryForNextScene();
+        keepOnlyProximityHistory();
+
+        const next = nextMapRoom();
+        room.addNotSentMessage("written late", [], new Date());
+
+        const bodies = (Array.from(get(next.messages)) as ProximityChatMessage[])
+            .filter((message) => message.notSent)
+            .map((message) => get(message.content).body);
+        expect(bodies).toEqual(["written late"]);
         next.destroy();
     });
 
