@@ -5,8 +5,8 @@ Builds the installed app's launch screens for iPhone and iPad (#949) from the Un
 iOS ignores the manifest for its launch screen: it shows an `apple-touch-startup-image` whose media query matches the
 screen exactly, else a blank one. Each image is Universe ink with the logo exactly where the page's own loading
 screen (#boot-splash in index.html) puts it: 36px tall, its middle 10px above the middle of the page. The installed
-app's status bar is see-through (#969), so the page starts at the very top of the screen and the middle is the middle
-of the whole screen. So the picture holds still from the tap until the game.
+app's status bar is opaque (#1041), so the page starts under it: the middle is the middle of the screen below the
+status bar (#1040). So the picture holds still from the tap until the game.
 
 universe-logo.png is docs/brand/bawes-universe-white.svg cut to the logo itself (the viewBox "24 20 634 104" that
 index.html uses), drawn 400px tall on a transparent ground.
@@ -25,8 +25,7 @@ LOGO = os.path.join(HERE, "universe-logo.png")
 LOGO_HEIGHT = 36  # css px, as #boot-splash svg
 ABOVE_MIDDLE = 10  # css px: the 16px gap and 4px bar sit under the logo, centred as one column
 
-# (width, height, pixel ratio, status bar height) of each screen held upright, in css px. The status bar height is
-# kept for reference: the page runs under it since #969, so it no longer moves the logo.
+# (width, height, pixel ratio, status bar height) of each screen held upright, in css px.
 SCREENS = [
     # iPhone
     (440, 956, 3, 62),  # 16 Pro Max, 17 Pro Max
@@ -76,13 +75,14 @@ def save(image, name):
 def main():
     links = []
     marks = {}
-    for width, height, ratio, _status_bar in SCREENS:
+    for width, height, ratio, status_bar in SCREENS:
         mark = marks.setdefault(ratio, logo(ratio))
         kind = "ipad" if width >= 744 else "iphone"
         for orientation in ("portrait", "landscape"):
             w, h = (width, height) if orientation == "portrait" else (height, width)
-            # The page starts at y=0, under the see-through status bar, in either orientation.
-            centre_y = h / 2 - ABOVE_MIDDLE
+            # The page starts under the status bar. An iPhone held sideways hides the status bar; an iPad keeps it.
+            top = status_bar if orientation == "portrait" or kind == "ipad" else 0
+            centre_y = top + (h - top) / 2 - ABOVE_MIDDLE
             name = f"{kind}-{width}x{height}@{ratio}x-{orientation}.png"
             save(on_ink(mark, w * ratio, h * ratio, w * ratio / 2, centre_y * ratio), name)
             links.append(

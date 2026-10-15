@@ -9,25 +9,31 @@
 
 {#if pill}
     <!-- Top centre, where the game's other top pills sit: under the status bar on a phone, under the bar on a desktop.
-         It only says what is going on; the room, the bar and the chat stay as they are under it (#958). -->
+         It only says what is going on; the room, the bar and the chat stay as they are under it (#958).
+         The row centres it, not a transform: fly keeps the transform it read when the pill came in, so the shorter
+         "Back in" pill would jump sideways as it leaves. -->
     <div
-        class="u-surface pointer-events-none fixed left-1/2 top-[calc(12px+env(safe-area-inset-top))] z-[2100] flex -translate-x-1/2 items-center gap-2 whitespace-nowrap rounded-full py-2 pe-4 ps-3 text-sm font-semibold text-white md:top-[88px]"
-        role="status"
-        aria-live="polite"
-        transition:fly={{ y: -12, duration: 180 }}
-        data-testid="reconnect-pill"
-        data-state={pill}
+        class="pointer-events-none fixed inset-x-0 top-[calc(12px+env(safe-area-inset-top))] z-[2100] flex justify-center md:top-[88px]"
     >
-        {#if pill === "reconnecting"}
-            <IconLoader2 class="reconnect-pill-spin text-[#c4b5fd]" font-size="17" aria-hidden="true" />
-            {$LL.warning.reconnectingTitle()}
-        {:else if pill === "offline"}
-            <IconWifiOff class="text-[#c4b5fd]" font-size="17" aria-hidden="true" />
-            {$LL.warning.offlineTitle()}
-        {:else}
-            <IconCheck class="text-[#4ade80]" font-size="17" aria-hidden="true" />
-            {$LL.warning.backIn()}
-        {/if}
+        <div
+            class="u-surface flex items-center gap-2 whitespace-nowrap rounded-full py-2 pe-4 ps-3 text-sm font-semibold text-white"
+            role="status"
+            aria-live="polite"
+            transition:fly={{ y: -12, duration: 180 }}
+            data-testid="reconnect-pill"
+            data-state={pill}
+        >
+            {#if pill === "reconnecting"}
+                <IconLoader2 class="reconnect-pill-spin text-[#c4b5fd]" font-size="17" aria-hidden="true" />
+                {$LL.warning.reconnectingTitle()}
+            {:else if pill === "offline"}
+                <IconWifiOff class="text-[#c4b5fd]" font-size="17" aria-hidden="true" />
+                {$LL.warning.offlineTitle()}
+            {:else}
+                <IconCheck class="text-[#4ade80]" font-size="17" aria-hidden="true" />
+                {$LL.warning.backIn()}
+            {/if}
+        </div>
     </div>
 {/if}
 
