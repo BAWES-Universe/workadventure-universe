@@ -41,3 +41,34 @@ export function screenSpace(scene: Phaser.Scene): ScreenSpace {
         },
     };
 }
+
+/**
+ * How many CSS pixels the bar covers at the top of the canvas (the bar floats over the map on a computer; on a phone
+ * it sits under it and covers nothing at the top).
+ */
+export function barCoverAtTopOfCanvas(canvas: HTMLCanvasElement): number {
+    const bar = document.querySelector(".bp-menu");
+    if (!bar) return 0;
+    const canvasRect = canvas.getBoundingClientRect();
+    const barRect = bar.getBoundingClientRect();
+    if (barRect.height <= 0 || barRect.top > canvasRect.top + canvasRect.height / 2) return 0;
+    return Math.max(0, barRect.bottom - canvasRect.top);
+}
+
+/**
+ * The camera centre (world y) that keeps the map's top edge out from under a bar covering the top `coverCss` CSS
+ * pixels of a `viewHeightCss` tall canvas, drawn at `scale` CSS pixels per world unit. The map's top edge is world
+ * y 0. Only a top edge that would be on screen moves down: looking at the middle of a tall map, the bar covers the
+ * map like anything else, and the centre stays where it is.
+ */
+export function centerYClearOfTopCover(
+    centerY: number,
+    viewHeightCss: number,
+    scale: number,
+    coverCss: number
+): number {
+    if (coverCss <= 0 || scale <= 0 || !Number.isFinite(scale)) return centerY;
+    const mapTopOnScreen = viewHeightCss / 2 - centerY * scale;
+    if (mapTopOnScreen < -1 || mapTopOnScreen >= coverCss) return centerY;
+    return centerY - (coverCss - mapTopOnScreen) / scale;
+}

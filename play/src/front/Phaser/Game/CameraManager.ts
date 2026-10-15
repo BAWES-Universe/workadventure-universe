@@ -101,8 +101,8 @@ export class CameraManager extends Phaser.Events.EventEmitter {
 
     // The point of the scene the explorer mode is focusing on.
     private explorerFocusOn: { x: number; y: number } = { x: 0, y: 0 };
-    // If set, the camera will move toward this target.
-    private explorerFocusOnTarget: { x: number; y: number; zoom: number } | undefined;
+    // If set, the camera will move toward this target (and toward its zoom, if it has one).
+    private explorerFocusOnTarget: { x: number; y: number; zoom?: number } | undefined;
     // True while a drag on the map, while editing, holds the camera off the player.
     private freedByDrag = false;
     // The player-moved listener that drag set, so that following resumes once and the listener can be dropped.
@@ -713,6 +713,12 @@ export class CameraManager extends Phaser.Events.EventEmitter {
         this.startAnimation();
     }
 
+    /** Glides the camera's centre to a point and leaves the zoom alone, so a zoom on its way keeps going. */
+    public panCameraTo(position: { x: number; y: number }): void {
+        this.explorerFocusOnTarget = { ...position };
+        this.startAnimation();
+    }
+
     /**
      * Zooms the camera by a factor passed in parameter.
      * Is the final zoom level is greater than the max zoom level, an animation will slowly bring back the camera to the max zoom level
@@ -871,10 +877,12 @@ export class CameraManager extends Phaser.Events.EventEmitter {
         }
 
         if (this.explorerFocusOnTarget) {
+            const targetZoom = this.explorerFocusOnTarget.zoom;
             let newZoom =
-                this.waScaleManager.zoomModifier +
-                (((this.explorerFocusOnTarget.zoom - this.waScaleManager.zoomModifier) * delta) / 100) *
-                    this.focusTargetSpeed;
+                targetZoom === undefined
+                    ? undefined
+                    : this.waScaleManager.zoomModifier +
+                      (((targetZoom - this.waScaleManager.zoomModifier) * delta) / 100) * this.focusTargetSpeed;
 
             let x =
                 this.explorerFocusOn.x +
@@ -886,11 +894,11 @@ export class CameraManager extends Phaser.Events.EventEmitter {
             if (Math.abs(this.explorerFocusOnTarget.x - x) < 1 && Math.abs(this.explorerFocusOnTarget.y - y) < 1) {
                 x = this.explorerFocusOnTarget.x;
                 y = this.explorerFocusOnTarget.y;
-                newZoom = this.explorerFocusOnTarget.zoom;
+                newZoom = targetZoom;
                 this.explorerFocusOnTarget = undefined;
             }
 
-            waScaleManager.zoomModifier = newZoom;
+            if (newZoom !== undefined) waScaleManager.zoomModifier = newZoom;
             this.explorerFocusOn.x = x;
             this.explorerFocusOn.y = y;
         }

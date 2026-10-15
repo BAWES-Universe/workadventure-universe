@@ -21,6 +21,7 @@ import type { MapEditorModeManager } from "../MapEditorModeManager";
 import type { EntitiesManager } from "../../GameMap/EntitiesManager";
 import { AreaPreview } from "../../../Components/MapEditor/AreaPreview";
 import { waScaleManager } from "../../../Services/WaScaleManager";
+import { barCoverAtTopOfCanvas, centerYClearOfTopCover } from "../ScreenSpace";
 import { enableUserInputsStore } from "../../../../Stores/UserInputStore";
 import type { MapEditorTool } from "./MapEditorTool";
 
@@ -294,11 +295,27 @@ export class ExplorerTool implements MapEditorTool {
 
         this.scene.playSound("audio-cloud");
 
-        // Glide out around you, a little. Already further out (entering by zooming out), nothing moves.
-        if (waScaleManager.zoomModifier > EXPLORE_GLIDE_OUT_TO) {
-            this.scene
-                .getCameraManager()
-                .centerCameraOn({ x: this.scene.CurrentPlayer.x, y: this.scene.CurrentPlayer.y }, EXPLORE_GLIDE_OUT_TO);
+        // Glide out around you, a little. Already further out (entering by zooming out), nothing moves, unless the
+        // top of the map is under the bar: while following you the camera stops at the map's top edge, so the bar
+        // covered what is there. Either way, the top edge ends up just below the bar.
+        const cameraManager = this.scene.getCameraManager();
+        const glideOut = waScaleManager.zoomModifier > EXPLORE_GLIDE_OUT_TO;
+        const camera = this.scene.cameras.main;
+        const canvas = this.scene.game.canvas;
+        const canvasRect = canvas.getBoundingClientRect();
+        const zoomRatio = glideOut ? EXPLORE_GLIDE_OUT_TO / waScaleManager.zoomModifier : 1;
+        const scale = camera.worldView.width > 0 ? (canvasRect.width / camera.worldView.width) * zoomRatio : 0;
+        const from = glideOut
+            ? { x: this.scene.CurrentPlayer.x, y: this.scene.CurrentPlayer.y }
+            : { x: camera.worldView.centerX, y: camera.worldView.centerY };
+        const target = {
+            x: from.x,
+            y: centerYClearOfTopCover(from.y, canvasRect.height, scale, barCoverAtTopOfCanvas(canvas)),
+        };
+        if (glideOut) {
+            cameraManager.centerCameraOn(target, EXPLORE_GLIDE_OUT_TO);
+        } else if (target.y !== from.y) {
+            cameraManager.panCameraTo(target);
         }
 
         // Mark the scene as dirty
