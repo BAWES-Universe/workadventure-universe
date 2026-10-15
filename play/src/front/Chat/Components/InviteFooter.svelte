@@ -159,7 +159,7 @@
 {#if $inviteUserActivated || showSearch || newChatOptions.length > 0}
     <!-- svelte-ignore a11y-no-static-element-interactions -->
     <div
-        class="invite-footer sticky bottom-0 z-30 shrink-0 px-4 pb-4 pt-3 lg:px-3"
+        class="invite-footer sticky bottom-0 z-30 shrink-0 px-4 pb-4 pt-3"
         bind:this={container}
         on:keydown={onKeyDown}
         data-testid="chatInviteFooter"

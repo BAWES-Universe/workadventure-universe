@@ -44,7 +44,7 @@
                 {$LL.chat.friends.seeAllLink()}
             </button>
         </h3>
-        <ul class="m-0 flex list-none gap-1 overflow-x-auto px-2 pb-1 [scrollbar-width:none]">
+        <ul class="m-0 flex list-none gap-1 overflow-x-auto px-4 pb-1 [scrollbar-width:none]">
             {#each visible as entry (entry.friend.uuid)}
                 <li class="shrink-0">
                     <button

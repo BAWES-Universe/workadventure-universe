@@ -108,7 +108,7 @@
 </script>
 
 <div
-    class="group/chatItem relative text-md m-0 flex gap-3 flex-row items-center min-h-14 ps-2 pe-1 py-2 rounded-xl hover:bg-white/10 transition-colors hover:!cursor-pointer cursor-pointer w-full"
+    class="group/chatItem relative text-md m-0 flex gap-3 flex-row items-center min-h-14 ps-2 pe-2 py-2 rounded-xl hover:bg-white/10 transition-colors hover:!cursor-pointer cursor-pointer w-full"
     class:bg-white={isSelected}
     class:bg-opacity-10={isSelected}
     on:click={() => selectedRoomStore.set(room)}
