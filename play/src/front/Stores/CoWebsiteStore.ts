@@ -1,5 +1,6 @@
 import { derived, get, readable, writable } from "svelte/store";
 import type { CoWebsite } from "../WebRtc/CoWebsite/CoWebsite";
+import { appViewportHeight, titleBarHeightStore } from "../TitleBar/WindowControlsOverlay";
 
 export function createCoWebsiteStore() {
     const { subscribe, set, update } = writable<Array<CoWebsite>>([]);
@@ -68,7 +69,7 @@ export const coWebsites = createCoWebsiteStore();
 
 export const fullScreenCowebsite = writable(false);
 
-export const windowSize = readable({ width: window.innerWidth, height: window.innerHeight }, (set) => {
+const browserWindowSize = readable({ width: window.innerWidth, height: window.innerHeight }, (set) => {
     const handleResize = () => {
         set({ width: window.innerWidth, height: window.innerHeight });
     };
@@ -78,13 +79,19 @@ export const windowSize = readable({ width: window.innerWidth, height: window.in
     };
 });
 
+/** What the game and its windows are laid out in: the browser window, less the installed app's title bar (if any). */
+export const windowSize = derived([browserWindowSize, titleBarHeightStore], ([$size, $titleBarHeight]) => ({
+    width: $size.width,
+    height: Math.max(0, $size.height - $titleBarHeight),
+}));
+
 export const coWebsiteRatio = writable(0.5);
 
 export const canvasSize = derived(
     [coWebsites, windowSize, coWebsiteRatio, fullScreenCowebsite],
     ([$coWebsites, $windowSize, $coWebsiteRatio, $fullScreenCowebsite]) => {
         if ($coWebsites.length === 0) {
-            return { width: window.innerWidth, height: window.innerHeight };
+            return { width: window.innerWidth, height: $windowSize.height };
         }
         if ($fullScreenCowebsite) {
             return {
@@ -128,7 +135,7 @@ export const coWebsitesSize = derived(
 
 export class CoWebsiteManager {
     get verticalMode(): boolean {
-        return window.innerWidth <= window.innerHeight;
+        return window.innerWidth <= appViewportHeight();
     }
 
     // FIXME: can we use stores to recompute this instead?
@@ -142,9 +149,9 @@ export class CoWebsiteManager {
 
     private calculateNewHeight() {
         if (this.verticalMode && get(coWebsites).length > 0) {
-            return Math.round(window.innerHeight - (1 - get(coWebsiteRatio)));
+            return Math.round(appViewportHeight() - (1 - get(coWebsiteRatio)));
         } else {
-            return window.innerHeight;
+            return appViewportHeight();
         }
     }
 
