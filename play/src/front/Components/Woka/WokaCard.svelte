@@ -73,41 +73,19 @@
         await tick();
         pills?.querySelectorAll("[role=tab]")[index]?.scrollIntoView({ block: "nearest", inline: "nearest" });
         if (tiles) tiles.scrollTop = 0;
-        fitTiles();
+        measureTiles();
     }
 
-    // Tiles: they scroll down. The box stops half way through a row so the cut row shows there is more, with a fade
-    // at the bottom and a scroll bar while there is.
+    // Tiles: they scroll down inside a box that fills the space down to the swipe hint (or the buttons), so the hint
+    // stays in one place whatever the collection's size and no empty band is left above the buttons. A fade at the
+    // bottom and a scroll bar show there is more.
     let tilesBox: HTMLDivElement | undefined;
     let tiles: HTMLDivElement | undefined;
-    let tilesHeight: number | undefined;
     let moreBelow = false;
     let thumbHeight = 0;
     let thumbTop = 0;
 
-    function fitTiles() {
-        if (!tilesBox || !tiles) return;
-        const grid = tiles.firstElementChild;
-        // The first tile (the Recent page has a label above its tiles)
-        const tile = grid?.querySelector("[role=radio]") ?? grid?.firstElementChild;
-        if (!(grid instanceof HTMLElement) || !(tile instanceof HTMLElement)) {
-            tilesHeight = undefined;
-            return;
-        }
-        const available = tilesBox.clientHeight - (swipeHintBox?.offsetHeight ?? 0);
-        const gap = parseFloat(getComputedStyle(grid).rowGap) || 0;
-        const row = tile.offsetHeight + gap;
-        // The grid's own padding keeps the selected ring visible at the top
-        const padding = parseFloat(getComputedStyle(grid).paddingTop) || 0;
-        if (row <= 0 || grid.offsetHeight <= available) {
-            tilesHeight = undefined;
-        } else {
-            // Keep the cut row between a quarter and three quarters visible; otherwise stop half way through it
-            const fit = (available - padding + gap) / row;
-            const cut = fit - Math.floor(fit);
-            const rows = cut >= 0.25 && cut <= 0.75 ? fit : Math.max(Math.round(fit) - 0.5, 1.5);
-            tilesHeight = Math.min(available, Math.round(padding + rows * row));
-        }
+    function measureTiles() {
         void tick().then(updateScroll);
     }
 
@@ -121,7 +99,6 @@
 
     // Swiping sideways under the pills moves to the next or previous category (phones). The tiles follow the finger, and
     // the categories on either side are already drawn, so the next one is there as soon as it slides in.
-    let swipeHintBox: HTMLParagraphElement | undefined;
     let pagesBox: HTMLDivElement | undefined;
     let drag: { x: number; y: number; axis?: "x" | "y" } | undefined;
     let dragX = 0;
@@ -198,7 +175,7 @@
         resizeObserver = undefined;
         if (!box || !scroller) return;
         resizeObserver = new ResizeObserver(() => {
-            fitTiles();
+            measureTiles();
             updatePills();
         });
         resizeObserver.observe(box);
@@ -350,11 +327,7 @@
                         on:touchend={onTouchEnd}
                         on:touchcancel={onTouchEnd}
                     >
-                        <div
-                            class="woka-tiles relative min-h-0"
-                            class:woka-tiles-more={moreBelow}
-                            style={tilesHeight ? `height: ${tilesHeight}px;` : ""}
-                        >
+                        <div class="woka-tiles relative flex-1 min-h-0" class:woka-tiles-more={moreBelow}>
                             <div class="woka-pages h-full" class:woka-pages-sliding={sliding} bind:this={pagesBox}>
                                 {#each pageIndexes as index (index)}
                                     <div
@@ -377,7 +350,7 @@
                             {/if}
                         </div>
                         {#if swipeHint && categories.length > 1}
-                            <p class="woka-swipe-hint" bind:this={swipeHintBox}>
+                            <p class="woka-swipe-hint">
                                 <IconChevronLeft font-size="14" />
                                 {swipeHint}
                                 <IconChevronRight font-size="14" />
@@ -401,7 +374,7 @@
     </div>
 </div>
 
-<svelte:window on:resize={fitTiles} />
+<svelte:window on:resize={measureTiles} />
 
 <style lang="scss">
     .woka-backdrop {
