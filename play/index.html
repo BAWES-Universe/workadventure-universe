@@ -40,27 +40,6 @@
                     new MutationObserver(apply).observe(meta, { attributes: true, attributeFilter: ["content"] });
                 }
             })();
-            // The installed app's window can grow while the page loads: iOS applies the fit above only after the first
-            // paint. Anything centred in the window would then move, so the loading screen places its logo from the
-            // screen, which does not change, at the same spot as the launch image (#1040). Only while the app fills
-            // the screen's width: an iPad window in Split View or Stage Manager is smaller than the screen, so there
-            // the logo stays centred in the window.
-            (function () {
-                if (navigator.standalone !== true || !window.matchMedia) return;
-                var root = document.documentElement;
-                var upright = window.matchMedia("(orientation: portrait)");
-                function place() {
-                    var long = Math.max(screen.width, screen.height);
-                    var short = Math.min(screen.width, screen.height);
-                    var fullWidth = Math.abs(window.innerWidth - (upright.matches ? short : long)) <= 1;
-                    root.style.setProperty("--boot-splash-screen-height", (upright.matches ? long : short) + "px");
-                    root.classList.toggle("boot-splash-on-screen", fullWidth);
-                }
-                place();
-                if (upright.addEventListener) upright.addEventListener("change", place);
-                else if (upright.addListener) upright.addListener(place);
-                window.addEventListener("resize", place);
-            })();
         </script>
         <meta
             http-equiv="Content-Security-Policy"
@@ -168,13 +147,6 @@
                 gap: 16px;
                 background-color: #14121e;
                 transition: opacity 300ms ease;
-            }
-            /* The installed app on iPhone and iPad: the logo's middle 10px above the middle of the screen, as the
-               launch image (generate.py), however tall the window is at the time (#1040). 28px is half of the logo, gap
-               and bar (36 + 16 + 4). */
-            .boot-splash-on-screen #boot-splash {
-                justify-content: flex-start;
-                padding-top: calc(var(--boot-splash-screen-height) / 2 - 28px);
             }
             #boot-splash svg {
                 display: block;
