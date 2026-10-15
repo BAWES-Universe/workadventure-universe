@@ -2030,7 +2030,6 @@ export class GameScene extends DirtyScene {
         for (const player of this.MapPlayersByKey.values()) {
             player.setFaded(true);
         }
-        const names = this.usernameDomLayer?.copyForPicture();
         const bar = document.getElementById("main-layout");
         const ui = bar ? stillCopy(bar) : undefined;
         return new Promise((resolve) => {
@@ -2047,7 +2046,8 @@ export class GameScene extends DirtyScene {
                     top: canvasRect.top - boxRect.top,
                     width: canvasRect.width,
                     height: canvasRect.height,
-                    names,
+                    // Copied once drawn: the draw lays the names out for the room as it is now (zoom, window size).
+                    names: this.usernameDomLayer?.copyForPicture(),
                     ui,
                 });
             });
