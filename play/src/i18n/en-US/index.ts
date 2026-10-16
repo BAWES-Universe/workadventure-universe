@@ -57,6 +57,15 @@ const en_US: BaseTranslation = {
     locate,
     broadcast,
     install,
+    // The installed computer app's own title bar (TitleBar.svelte).
+    titleBar: {
+        here: "{count:number} here",
+        hereLabel: "{count:number} here. Open the people list.",
+        roomLabel: "{room:string}. Open Orbit.",
+        inConversation: "In conversation",
+        lookingAround: "Looking around",
+        fullScreen: "Full screen",
+    },
 };
 
 export default en_US;
