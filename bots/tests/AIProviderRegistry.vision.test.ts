@@ -9,6 +9,7 @@ vi.mock("../ai/encryption", () => ({ decryptApiKey: () => "test-key" }));
 const providers = [
     { type: "openai" as const, model: "deepseek-v4-flash", endpoint: "https://api.deepseek.com/v1", vision: false },
     { type: "openai" as const, model: "deepseek-flash", endpoint: "https://api.deepseek.com/v1", vision: false },
+    { type: "openai" as const, model: "claude-sonnet-4-6", endpoint: "https://api.example.com/v1", vision: true },
     {
         type: "lmstudio" as const,
         model: "meta-llama-3.1-8b-instruct",
@@ -21,7 +22,7 @@ const providers = [
 
 afterEach(() => vi.unstubAllGlobals());
 
-describe("DeepSeek on openai and local LM Studio keep their vision behavior", () => {
+describe("DeepSeek and local LM Studio keep their vision behavior, current Claude models see pictures", () => {
     describe.each(providers)("$type / $model", ({ type, model, endpoint, vision }) => {
         it.each([undefined, null, true, false])(
             "preserves routing and image payloads with override %s",
