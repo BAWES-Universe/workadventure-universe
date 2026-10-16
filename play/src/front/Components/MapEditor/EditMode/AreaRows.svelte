@@ -65,7 +65,9 @@
                 const entry = ($LL.mapEditor.edit.properties as Record<string, { title?: () => string } | undefined>)[
                     p.type
                 ];
-                return entry?.title?.() ?? "";
+                // Called straight, not as `entry?.title?.()`: the production build turns that into `title.call(entry)`,
+                // and the translation proxy answers `.call` with an empty text, so every row read "No settings yet".
+                return entry && typeof entry.title === "function" ? entry.title() : "";
             })
             .filter((title) => title !== "");
         // "Listed in Places" is a switch on the area's page next to the settings it has, so the row names it too.

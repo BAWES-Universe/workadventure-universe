@@ -98,6 +98,57 @@ test("ME-031 Areas panel: title, line, New area, In this room list", async ({ pa
     await expect(isPhone(testInfo) ? sheet : panel).not.toContainText("No areas yet");
 });
 
+test("ME-031 Areas list: a row names the settings the area's page shows as turned on", async ({ page }, testInfo) => {
+    const url = await areasOpen(page, testInfo);
+    await newArea(page, testInfo, url, "Stage");
+    await page.getByTestId("speakerMegaphone").click();
+    await backToAreaRows(page);
+    await page.getByTestId("highlight").click();
+    await backToAreaRows(page);
+    await backToAreaList(page);
+    if (isPhone(testInfo)) await page.getByTestId("area-all").click();
+    const row = page.getByTestId("area-row");
+    await expect(row).toHaveCount(1);
+    await expect(row).toContainText("Stage · Highlight");
+    await expect(row).not.toContainText("No settings yet");
+});
+
+test("ME-031 Areas list: rows of areas saved earlier name their settings too", async ({ page }, testInfo) => {
+    const url = await wamRoom(testInfo, "empty");
+    await addWamAreas(url, [
+        {
+            id: "attendees",
+            name: "Attendees",
+            x: 32,
+            y: 32,
+            width: 96,
+            height: 96,
+            properties: [{ id: "p1", type: "listenerMegaphone", speakerZoneName: "Stage", chatEnabled: false }],
+        },
+        {
+            id: "speaker",
+            name: "Speaker",
+            x: 160,
+            y: 32,
+            width: 96,
+            height: 96,
+            properties: [
+                { id: "p2", type: "speakerMegaphone", name: "Stage", chatEnabled: false },
+                { id: "p3", type: "highlight", opacity: 0.6, gradientWidth: 10, duration: 250, color: "#000000" },
+            ],
+        },
+    ]);
+    await join(page, url, "Alice");
+    await openEditor(page, testInfo);
+    await pickAreas(page);
+    if (isPhone(testInfo)) await page.getByTestId("area-all").click();
+    const rows = page.getByTestId("area-row");
+    await expect(rows).toHaveCount(2);
+    await expect(rows.filter({ hasText: "Attendees" })).toContainText("Audience");
+    await expect(rows.filter({ hasText: "Speaker" })).toContainText("Stage · Highlight");
+    await expect(rows.filter({ hasText: "No settings yet" })).toHaveCount(0);
+});
+
 test("ME-032 @local New area box: drag draws it, dots resize, inside drag moves, Next creates it where the box was, Cancel removes", async ({
     page,
 }, testInfo) => {
