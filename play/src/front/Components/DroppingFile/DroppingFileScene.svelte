@@ -1,13 +1,15 @@
 <script lang="ts">
     import LL from "../../../i18n/i18n-svelte";
     import { draggingFilePosition } from "../../Stores/FileUploadStore";
+    import { titleBarHeightStore } from "../../TitleBar/WindowControlsOverlay";
 
     // The spot the file will land on, under the cursor. Only shown in edit mode (see FileListener).
     const WIDTH = 168;
     const HEIGHT = 104;
 
     $: left = ($draggingFilePosition?.x ?? 0) - WIDTH / 2;
-    $: top = ($draggingFilePosition?.y ?? 0) - HEIGHT / 2;
+    // The pointer is measured from the top of the window; the page sits under the title bar strip.
+    $: top = ($draggingFilePosition?.y ?? 0) - $titleBarHeightStore - HEIGHT / 2;
 </script>
 
 {#if $draggingFilePosition}
