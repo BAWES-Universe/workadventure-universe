@@ -8,6 +8,7 @@ import type { UserInputHandlerInterface } from "../../Interfaces/UserInputHandle
 import { mapEditorModeStore } from "../../Stores/MapEditorStore";
 import LL from "../../../i18n/i18n-svelte";
 import { eventClientPoint, isInCameraArea } from "../../Utils/CameraArea";
+import { startsInHomeBarZone } from "../../Utils/HomeBarZone";
 
 // Event listeners are valid for the lifetime of the Phaser object and will be garbage collected when the object is destroyed
 /* eslint-disable listeners/no-missing-remove-event-listener, listeners/no-inline-function-event-listener */
@@ -79,13 +80,17 @@ export class UserInputManager {
     private joystickForceThreshold = 60;
     private joystickForceAccuX = 0;
     private joystickForceAccuY = 0;
-    /** The current touch or click started on the camera block (see CameraArea): it neither walks nor steers. */
+    /**
+     * The current touch or click started somewhere that is not the map's: on the camera block (see CameraArea) or, on
+     * an iPhone, in the home bar strip (see HomeBarZone). It neither walks nor steers.
+     */
     private pointerStartedOnCameras = false;
 
     public userInputHandler: UserInputHandlerInterface;
     private enableUserInputsStoreUnsubscribe: Unsubscriber;
     private mapEditorModeStoreUnsubscribe: Unsubscriber;
     private readonly disableControlsReasons: Set<DisableControlsReason> = new Set();
+    private readonly onVisibilityChange = () => this.handlePageHidden();
 
     constructor(scene: Phaser.Scene, userInputHandler: UserInputHandlerInterface) {
         this.scene = scene;
@@ -282,6 +287,16 @@ export class UserInputManager {
         this.joystick?.hide(0);
     }
 
+    /**
+     * The page went to the background (Home swipe, app switch): iOS may never tell the page the finger lifted, so the
+     * joystick direction held at that moment must not keep walking when the player comes back (#1000).
+     */
+    handlePageHidden(): void {
+        if (document.visibilityState === "hidden") {
+            this.clearHeldMovement();
+        }
+    }
+
     get isControlsEnabled() {
         return !this.isInputDisabled;
     }
@@ -362,9 +377,11 @@ export class UserInputManager {
         this.mapEditorModeStoreUnsubscribe();
         this.joystick?.destroy();
         this.joystick = undefined;
+        document.removeEventListener("visibilitychange", this.onVisibilityChange);
     }
 
     private bindInputEventHandlers() {
+        document.addEventListener("visibilitychange", this.onVisibilityChange);
         this.scene.input.on(
             Phaser.Input.Events.POINTER_WHEEL,
             (
@@ -404,9 +421,12 @@ export class UserInputManager {
                 if (this.isInputDisabled) {
                     return;
                 }
-                // A touch between or around the cameras, or near their resize bar, was meant for them.
+                // A touch between or around the cameras, or near their resize bar, was meant for them. A touch that
+                // starts in the home bar strip is the phone's swipe up to go Home, not a walk (#1000).
                 const point = eventClientPoint(pointer.event);
-                this.pointerStartedOnCameras = point !== undefined && isInCameraArea(point.x, point.y);
+                this.pointerStartedOnCameras =
+                    point !== undefined &&
+                    (isInCameraArea(point.x, point.y) || (pointer.wasTouch && startsInHomeBarZone(point.y)));
                 if (this.pointerStartedOnCameras) {
                     return;
                 }
