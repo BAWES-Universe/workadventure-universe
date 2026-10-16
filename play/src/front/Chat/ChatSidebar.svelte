@@ -12,7 +12,7 @@
     import { chatFloatInsetStore, chatSidebarWidthStore, chatCarriesItsCloseStore } from "./ChatSidebarWidthStore";
     import Chat from "./Components/Chat.svelte";
     import { selectedRoomStore } from "./Stores/SelectRoomStore";
-    import { chatSearchOpenStore } from "./Stores/ChatStore";
+    import { chatInviteSheetHeightStore, chatSearchOpenStore } from "./Stores/ChatStore";
     import {
         chatSheetHeightStore,
         chatSheetLayoutStore,
@@ -23,6 +23,7 @@
         CHAT_SHEET_CLOSE_DISTANCE,
         CHAT_SHEET_SIZES,
         chatSheetFitHeight,
+        chatSheetInviteHeight,
         chatSheetRestingHeight,
     } from "./ChatSheetSizes";
     import { getLastChatOpenSource } from "./openChat";
@@ -208,11 +209,18 @@
     // results. It is only borrowed: the snap, the bubble's height and the kept rest are untouched, so closing the search
     // puts the sheet back where it was. A drag still wins. A chat open in the panel has no list, so no search to give room.
     $: searchTakesRoom = $chatSearchOpenStore && $selectedRoomStore === undefined;
+    // The Invite panel replaces the list's footer, over the dimmed list: the sheet is only as tall as it needs to show
+    // the whole panel, borrowed the same way (it never lowers the sheet, and closing gives the height back).
+    $: inviteSheetHeight = $selectedRoomStore === undefined ? $chatInviteSheetHeightStore : 0;
     $: sheetHeight =
         sheetDragHeight ??
         (searchTakesRoom
             ? sheetSnapHeights.full
-            : bubbleHeight ?? chatSheetRestingHeight($chatSheetSnapStore, $windowSize.height));
+            : chatSheetInviteHeight(
+                  bubbleHeight ?? chatSheetRestingHeight($chatSheetSnapStore, $windowSize.height),
+                  inviteSheetHeight,
+                  $windowSize.height
+              ));
     // The videos above the sheet follow its height, drag included.
     $: chatSheetHeightStore.set(sheet && $chatVisibilityStore ? sheetHeight : 0);
 
@@ -293,7 +301,8 @@
     }
 
     function onSheetTap() {
-        if (searchTakesRoom) return;
+        // Searching and the Invite panel borrow the sheet's height: the snap must not be worked out from it and kept.
+        if (searchTakesRoom || inviteSheetHeight > 0) return;
         leaveBubbleHeight();
         keepChatSheetRest(nextSnap(nearestSnap(sheetHeight, $windowSize.height, CHAT_SHEET_SIZES)));
     }
