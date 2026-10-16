@@ -5,7 +5,7 @@
     import WebFontLoaderPlugin from "phaser3-rex-plugins/plugins/webfontloader-plugin.js";
     import AwaitLoaderPlugin from "phaser3-rex-plugins/plugins/awaitloader-plugin.js";
     import OutlinePipelinePlugin from "phaser3-rex-plugins/plugins/outlinepipeline-plugin.js";
-    import type { Unsubscriber } from "svelte/store";
+    import { derived, type Unsubscriber } from "svelte/store";
     import { DEBUG_MODE, RELEASE_VERSION, SENTRY_DSN_FRONT, SENTRY_ENVIRONMENT } from "../Enum/EnvironmentVariable";
     import { HdpiManager } from "../Phaser/Services/HdpiManager";
     import { EntryScene } from "../Phaser/Login/EntryScene";
@@ -21,12 +21,24 @@
     import { iframeListener } from "../Api/IframeListener";
     import { desktopApi } from "../Api/Desktop";
     import { canvasSize, coWebsiteManager, coWebsites, fullScreenCowebsite } from "../Stores/CoWebsiteStore";
+    import { gameSceneIsLoadedStore } from "../Stores/GameSceneStore";
+    import { softReconnect } from "../Connection/SoftReconnect";
     import { urlManager } from "../Url/UrlManager";
     import { FileListener } from "../Phaser/FileUpload/FileListener";
     import { isStructuredCloneSupported } from "../Utils/BrowserCompatibility";
-    import GameOverlay from "./GameOverlay.svelte";
-    import CoWebsitesContainer from "./EmbedScreens/CoWebsitesContainer.svelte";
+    import { bootSplashView, watchLoadingScreen } from "../Utils/BootSplash";
+    import { loadingProgressStore } from "../Stores/LoaderStore";
+    import { loginSceneVisibleStore } from "../Stores/LoginSceneStore";
+    import { selectCharacterSceneVisibleStore } from "../Stores/SelectCharacterStore";
+    import { selectCompanionSceneVisibleStore } from "../Stores/SelectCompanionStore";
+    import { enableCameraSceneVisibilityStore } from "../Stores/MediaStore";
+    import { errorScreenStore } from "../Stores/ErrorScreenStore";
+    import { errorStore } from "../Stores/ErrorStore";
+    import { wokaRefusedStore } from "../Stores/WokaRefusedStore";
+    import { refreshPromptStore } from "../Stores/RefreshPromptStore";
     import BrowserNotSupported from "./BrowserNotSupported/BrowserNotSupported.svelte";
+    import CoWebsitesContainer from "./EmbedScreens/CoWebsitesContainer.svelte";
+    import GameOverlay from "./GameOverlay.svelte";
 
     let WebGLRenderer = Phaser.Renderer.WebGL.WebGLRenderer;
     let game: Game;
@@ -37,10 +49,46 @@
     let handleCanvasClick: () => void;
     let browserNotSupported = false;
 
+    // The one loading screen from index.html (#949, #981) covers the black canvas until the game is up, once the room
+    // is joined, and steps aside for any screen that comes instead of the game.
+    const otherScreenShownStore = derived(
+        [
+            loginSceneVisibleStore,
+            selectCharacterSceneVisibleStore,
+            selectCompanionSceneVisibleStore,
+            enableCameraSceneVisibilityStore,
+            errorScreenStore,
+            errorStore,
+            wokaRefusedStore,
+            refreshPromptStore,
+        ],
+        ([login, selectCharacter, selectCompanion, enableCamera, errorScreen, errors, wokaRefused, refresh]) =>
+            login ||
+            selectCharacter ||
+            selectCompanion ||
+            enableCamera ||
+            errorScreen !== undefined ||
+            errors.length > 0 ||
+            wokaRefused !== undefined ||
+            refresh !== undefined
+    );
+    // The room kept on screen while the game gets back in (#958) counts as up: its pill says what is going on.
+    const gameShownStore = derived(
+        [gameSceneIsLoadedStore, softReconnect],
+        ([loaded, reconnect]) => loaded || reconnect?.picture !== undefined
+    );
+    const loadingScreen = bootSplashView();
+    const stopWatchingLoadingScreen = watchLoadingScreen(
+        { gameLoaded: gameShownStore, otherScreenShown: otherScreenShownStore, progress: loadingProgressStore },
+        loadingScreen
+    );
+
     onMount(() => {
         // Check browser compatibility before initializing the app
         if (!isStructuredCloneSupported()) {
             browserNotSupported = true;
+            stopWatchingLoadingScreen();
+            loadingScreen.hide();
             return;
         }
         if (SENTRY_DSN_FRONT != undefined) {
@@ -49,7 +97,14 @@
                     dsn: SENTRY_DSN_FRONT,
                     release: RELEASE_VERSION,
                     environment: SENTRY_ENVIRONMENT,
-                    integrations: [Sentry.browserTracingIntegration()],
+                    // Keep Sentry's default integrations except browserApiErrors: it wraps every
+                    // setTimeout, setInterval, requestAnimationFrame, addEventListener and XHR callback,
+                    // which is a steady main-thread cost in a game. Uncaught errors in those callbacks
+                    // are still reported by the globalHandlers integration (window.onerror / unhandledrejection).
+                    integrations: (defaultIntegrations) => [
+                        ...defaultIntegrations.filter((integration) => integration.name !== "BrowserApiErrors"),
+                        Sentry.browserTracingIntegration(),
+                    ],
                     // Set tracesSampleRate to 1.0 to capture 100%
                     // of transactions for performance monitoring.
                     // We recommend adjusting this value in production
@@ -239,6 +294,7 @@
     });
 
     onDestroy(() => {
+        stopWatchingLoadingScreen();
         canvasSizeUnsubscriber?.();
         if (canvas && handleCanvasClick) {
             canvas.removeEventListener("click", handleCanvasClick);
@@ -254,7 +310,12 @@
         id="main-container"
         bind:this={gameContainer}
     >
-        <div id="game" class="relative {$fullScreenCowebsite ? 'hidden' : ''}" bind:this={gameDiv}>
+        <div
+            id="game"
+            class="relative {$fullScreenCowebsite ? 'hidden' : ''}"
+            class:game-scene-loaded={$gameSceneIsLoadedStore}
+            bind:this={gameDiv}
+        >
             <GameOverlay {game} />
         </div>
         {#if $coWebsites.length > 0}

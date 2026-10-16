@@ -49,7 +49,7 @@ test.describe("Say bubbles @nomobile @nowebkit", () => {
         );
         
         // Wait for both users to be connected
-        await expect(alicePage.getByText("Bob", { exact: true })).toBeVisible({ timeout: 20_000 });
+        await expect(alicePage.locator("#cameras-container").getByText("Bob", { exact: true })).toBeVisible({ timeout: 20_000 });
         await Map.teleportToPosition(alicePage, 15*12, 15*12);
         
         // Alice sends a message
@@ -81,7 +81,7 @@ test.describe("Say bubbles @nomobile @nowebkit", () => {
         );
 
         // Wait for both users to be connected
-        await expect(alicePage.getByText("Bob", { exact: true })).toBeVisible({timeout : 20_000});
+        await expect(alicePage.locator("#cameras-container").getByText("Bob", { exact: true })).toBeVisible({timeout : 20_000});
         await Map.teleportToPosition(alicePage, 15*12, 15*12);
 
         // Alice sends a thinking message
@@ -111,7 +111,7 @@ test.describe("Say bubbles @nomobile @nowebkit", () => {
             publicTestMapUrl("tests/E2E/empty.json", "say_bubbles_stack")
         );
 
-        await expect(alicePage.getByText("Bob", { exact: true })).toBeVisible({ timeout: 20_000 });
+        await expect(alicePage.locator("#cameras-container").getByText("Bob", { exact: true })).toBeVisible({ timeout: 20_000 });
         await Map.teleportToPosition(alicePage, 15*12, 15*12);
 
         await sendSay(alicePage, "First line");
@@ -135,7 +135,7 @@ test.describe("Say bubbles @nomobile @nowebkit", () => {
             publicTestMapUrl("tests/E2E/empty.json", "say_bubbles_cap")
         );
 
-        await expect(alicePage.getByText("Bob", { exact: true })).toBeVisible({ timeout: 20_000 });
+        await expect(alicePage.locator("#cameras-container").getByText("Bob", { exact: true })).toBeVisible({ timeout: 20_000 });
         await Map.teleportToPosition(alicePage, 15*12, 15*12);
 
         await sendSay(alicePage, "Line 1");
@@ -166,7 +166,7 @@ test.describe("Say bubbles @nomobile @nowebkit", () => {
             publicTestMapUrl("tests/E2E/empty.json", "say_bubbles_think")
         );
 
-        await expect(alicePage.getByText("Bob", { exact: true })).toBeVisible({ timeout: 20_000 });
+        await expect(alicePage.locator("#cameras-container").getByText("Bob", { exact: true })).toBeVisible({ timeout: 20_000 });
         await Map.teleportToPosition(alicePage, 15*12, 15*12);
 
         await sendSay(alicePage, "Said out loud");

@@ -991,6 +991,55 @@ describe("SpaceToFrontDispatcher", () => {
                 expect(mockEmitInBatch).not.toHaveBeenCalled();
                 expect(mockEmitInBatch3).not.toHaveBeenCalled();
             });
+
+            it("remembers a speaking invitation before telling the receiver, and forgets it when they move to the audience", () => {
+                const sender = SpaceUser.fromPartial({ spaceUserId: "foo_1", uuid: "uuid-foo-1" });
+                const receiver = SpaceUser.fromPartial({ spaceUserId: "foo_2", uuid: "uuid-foo-2" });
+                const invitedToSpeak = new Set<string>();
+                const seenWhenTold: boolean[] = [];
+
+                const receiverSocket = mock<Socket>({
+                    getUserData: vi.fn().mockReturnValue({
+                        spaceUser: receiver,
+                        invitedToSpeak,
+                        emitInBatch: vi.fn(() => seenWhenTold.push(invitedToSpeak.has("stage-space"))),
+                    }),
+                });
+                const mockSpace = {
+                    name: "world.stage-space",
+                    users: new Map<string, SpaceUser>([["foo_2", receiver]]),
+                    _localConnectedUser: new Map<string, Socket>([["foo_2", receiverSocket]]),
+                    _localConnectedUserWithSpaceUser: new Map<Socket, SpaceUser>([[receiverSocket, receiver]]),
+                    _localWatchers: new Set<string>(),
+                    localName: "stage-space",
+                    forwarder: mock<SpaceToBackForwarder>({ forwardMessageToSpaceBack: vi.fn() }),
+                } as unknown as Space;
+
+                const dispatcher = new SpaceToFrontDispatcher(mockSpace, new EventProcessor());
+                const send = (
+                    event:
+                        | { $case: "inviteToSpeak"; inviteToSpeak: object }
+                        | { $case: "moveToAudience"; moveToAudience: object }
+                ) =>
+                    dispatcher.handleMessage({
+                        message: {
+                            $case: "privateEvent",
+                            privateEvent: {
+                                spaceName: "world.stage-space",
+                                sender,
+                                receiverUserId: "foo_2",
+                                spaceEvent: { event },
+                            },
+                        },
+                    } as never);
+
+                send({ $case: "inviteToSpeak", inviteToSpeak: {} });
+                expect(seenWhenTold).toEqual([true]);
+                expect(invitedToSpeak.has("stage-space")).toBe(true);
+
+                send({ $case: "moveToAudience", moveToAudience: {} });
+                expect(invitedToSpeak.has("stage-space")).toBe(false);
+            });
         });
     });
     describe("notifyMe", () => {

@@ -32,6 +32,8 @@ export interface BotData {
     };
     chatInstructions?: string;
     aiProviderRef?: string; // Reference to AI provider config in Admin API
+    toolTimeoutSeconds?: number | null; // "Patience": how long the bot waits for a tool, null = the server's 90 s
+    companionTextureId?: string | null; // The companion (pet) that walks with it, a companion texture id; null = none
     enabled?: boolean; // Whether bot is active
     createdAt?: string;
     updatedAt?: string;

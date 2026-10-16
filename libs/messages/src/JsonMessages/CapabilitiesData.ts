@@ -22,6 +22,10 @@ export const isCapabilities = z.object({
         description: "Means the api can save the textures of the Woka when configured in WorkAdventure.",
         example: "v1",
     }),
+    "api/woka/mine": extendApi(z.optional(z.string()), {
+        description: "Means the api tells a player what they wear and wore lately, in the room they are in.",
+        example: "v1",
+    }),
     "api/livekit/credentials": extendApi(z.optional(z.string()), {
         description: "Means the api implements the livekit credentials",
         example:"v1"

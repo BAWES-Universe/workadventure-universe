@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
     MAX_KNOWN_MEDIA_DEVICES,
+    buildNewDeviceOffer,
     findNewMediaDevices,
+    ignoreKeysForOffer,
+    isIgnoredMediaDevice,
+    splitSharedDeviceName,
     groupMediaDevicesByLabel,
     listLacksNamesFor,
     mediaDeviceKey,
@@ -101,5 +105,76 @@ describe("listLacksNamesFor", () => {
 
     it("asks for one when there is no list yet", () => {
         expect(listLacksNamesFor({ video: false, audio: true }, undefined)).toBe(true);
+    });
+});
+
+describe("buildNewDeviceOffer", () => {
+    it("offers a headset as one device with its microphone and speaker", () => {
+        const offer = buildNewDeviceOffer([headsetMic, headsetSpeaker]);
+        expect(offer).toEqual({ type: "one", label: "USB Headset", devices: [headsetMic, headsetSpeaker] });
+    });
+
+    it("drops the USB id and the driver name from the name it shows", () => {
+        const webcam = device("videoinput", "HD Pro Webcam C920 (046d:082d)");
+        const sonarChat = device("audiooutput", "SteelSeries Sonar - Chat (SteelSeries Sonar Virtual Audio Device)");
+        expect(buildNewDeviceOffer([webcam])).toMatchObject({ type: "one", label: "HD Pro Webcam C920" });
+        expect(buildNewDeviceOffer([sonarChat])).toMatchObject({ type: "one", label: "SteelSeries Sonar - Chat" });
+    });
+
+    it("names what several devices share and what tells them apart", () => {
+        const sonarMic = device("audioinput", "SteelSeries Sonar - Microphone");
+        const offer = buildNewDeviceOffer([sonarMedia, sonarGame, sonarMic]);
+        expect(offer).toEqual({
+            type: "several",
+            name: "SteelSeries Sonar",
+            parts: ["Media", "Game", "Microphone"],
+            devices: [sonarMedia, sonarGame, sonarMic],
+            audioOnly: true,
+        });
+    });
+
+    it("lists the whole names when several devices share nothing", () => {
+        const webcam = device("videoinput", "Logitech Brio");
+        const offer = buildNewDeviceOffer([webcam, sonarMedia]);
+        expect(offer).toMatchObject({
+            type: "several",
+            name: undefined,
+            parts: ["Logitech Brio", "SteelSeries Sonar - Media"],
+            audioOnly: false,
+        });
+    });
+
+    it("offers nothing for no devices", () => {
+        expect(buildNewDeviceOffer([])).toBeUndefined();
+    });
+});
+
+describe("splitSharedDeviceName", () => {
+    it("only shares whole words", () => {
+        expect(splitSharedDeviceName(["Speakers A", "Speakerphone B"])).toBeUndefined();
+    });
+
+    it("needs something left of each name", () => {
+        expect(splitSharedDeviceName(["Jabra", "Jabra Link"])).toBeUndefined();
+    });
+});
+
+describe("ignored devices", () => {
+    it("ignores only the device itself after Don't ask for this device", () => {
+        const offer = buildNewDeviceOffer([headsetMic, headsetSpeaker]);
+        if (!offer) throw new Error("no offer");
+        const keys = ignoreKeysForOffer(offer);
+        expect(isIgnoredMediaDevice(headsetMic, keys)).toBe(true);
+        expect(isIgnoredMediaDevice(device("audioinput", "USB Headset 2"), keys)).toBe(false);
+    });
+
+    it("ignores every device of the same app after Don't ask about it", () => {
+        const offer = buildNewDeviceOffer([sonarMedia, sonarGame]);
+        if (!offer) throw new Error("no offer");
+        const keys = ignoreKeysForOffer(offer);
+        expect(isIgnoredMediaDevice(device("audiooutput", "SteelSeries Sonar - Aux"), keys)).toBe(true);
+        expect(isIgnoredMediaDevice(device("audiooutput", "SteelSeries Sonar"), keys)).toBe(true);
+        expect(isIgnoredMediaDevice(device("audiooutput", "SteelSeries Sonaric"), keys)).toBe(false);
+        expect(isIgnoredMediaDevice(headsetSpeaker, keys)).toBe(false);
     });
 });

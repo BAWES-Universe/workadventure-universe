@@ -96,9 +96,9 @@
         data-testid="explore-list"
         transition:unfold
     >
-        <header class="flex items-center gap-3 px-4 sm:px-6 pt-4 sm:pt-5">
-            <!-- Orbit's universe kind -->
-            <span class="kind-universe" aria-hidden="true"><IconPlanet font-size="18" /></span>
+        <header class="flex items-center gap-2 px-4 sm:px-6 pt-4 sm:pt-5">
+            <!-- Orbit's universe kind, next to the name -->
+            <span class="kind-universe" aria-hidden="true"><IconPlanet font-size="22" /></span>
             <h2
                 id="explore-title"
                 class="m-0 font-sans normal-case text-lg sm:text-xl font-bold tracking-tight truncate"
@@ -179,6 +179,26 @@
                             data-testid="explore-world-toggle"
                             on:click={() => toggle(world.slug)}
                         >
+                            <!-- Orbit's world kind: Lucide "earth" in the world colour -->
+                            <svg
+                                class="kind-world"
+                                width="14"
+                                height="14"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                aria-hidden="true"
+                            >
+                                <path d="M21.54 15H17a2 2 0 0 0-2 2v4.54" />
+                                <path
+                                    d="M7 3.34V5a3 3 0 0 0 3 3a2 2 0 0 1 2 2c0 1.1.9 2 2 2a2 2 0 0 0 2-2c0-1.1.9-2 2-2h3.17"
+                                />
+                                <path d="M11 21.95V18a2 2 0 0 0-2-2a2 2 0 0 1-2-2v-1a2 2 0 0 0-2-2H2.05" />
+                                <circle cx="12" cy="12" r="10" />
+                            </svg>
                             <span class="u-eyebrow truncate">{displayName(world.name)}</span>
                             <span class="u-count shrink-0">{world.total}</span>
                             <span class="grow" />
@@ -232,14 +252,14 @@
     .accent {
         color: #fbbf24;
     }
+    /* Orbit's universe and world colours (--kind-universe-solid, --kind-world-solid), with no box. */
     .kind-universe {
-        display: inline-grid;
-        place-items: center;
+        display: inline-flex;
         flex: none;
-        width: 2.25rem;
-        height: 2.25rem;
-        border-radius: 0.75rem;
-        color: #fff;
-        background-image: linear-gradient(135deg, #8629fc, #4156f6);
+        color: #a78bfa;
+    }
+    .kind-world {
+        flex: none;
+        color: #2dd4bf;
     }
 </style>

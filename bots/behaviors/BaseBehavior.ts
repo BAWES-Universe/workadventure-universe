@@ -125,6 +125,16 @@ export abstract class BaseBehavior {
     
     // UUID tracking - map userId (number) to UUID (string) for conversation storage
     protected userIdToUuid: Map<number, string> = new Map();
+
+    /** The in-room user id of the player with this uuid, if the bot has seen them join. */
+    getUserIdForUuid(uuid: string): number | undefined {
+        for (const [userId, userUuid] of this.userIdToUuid) {
+            if (userUuid === uuid) {
+                return userId;
+            }
+        }
+        return undefined;
+    }
     // Authentication tracking - map userId (number) to isLogged (boolean)
     protected userIdToIsLogged: Map<number, boolean> = new Map();
     // Pending UUID tracking - map spaceUserId (string) to userId (number) for users we've seen but don't have UUID yet
@@ -187,6 +197,17 @@ export abstract class BaseBehavior {
         } else {
             // Fallback to current position if no assignedSpace
             this.spawnPosition = { x: botPos.x, y: botPos.y };
+        }
+    }
+
+    /**
+     * Move the bot's spot (its home, and the centre of its area) after it was moved in the editor, so it
+     * walks back to the new spot after a chat instead of the old one.
+     */
+    setHome(position: PositionInterface): void {
+        this.spawnPosition = { x: position.x, y: position.y };
+        if (this.config.assignedSpace) {
+            this.config.assignedSpace = { ...this.config.assignedSpace, center: { x: position.x, y: position.y } };
         }
     }
 

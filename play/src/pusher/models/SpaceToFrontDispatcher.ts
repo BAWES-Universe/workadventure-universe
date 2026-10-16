@@ -14,6 +14,7 @@ import { applyFieldMask } from "protobuf-fieldmask";
 import { z } from "zod";
 import { Deferred } from "ts-deferred";
 import type { Socket } from "../services/SocketManager";
+import { forgetSpeakInvitation, recordSpeakInvitation } from "./MegaphoneRights";
 import type { EventProcessor } from "./EventProcessor";
 import type { SpaceUserExtended, Space, PartialSpaceUser } from "./Space";
 
@@ -384,6 +385,20 @@ export class SpaceToFrontDispatcher implements SpaceToFrontDispatcherInterface {
             lowercaseName: message.sender.name.toLowerCase(),
         };
 
+        const processedEvent = this.eventProcessor.processPrivateEvent(
+            spaceEvent.event,
+            extendedSender,
+            receiverSpaceUser
+        );
+
+        // Remembered before the receiver is told, so their answer (going live) never beats the invitation. Only a
+        // stage whose speaker zone is closed to them needs it (see canGoLiveIn).
+        if (processedEvent.$case === "inviteToSpeak") {
+            recordSpeakInvitation(receiverSocket.getUserData(), this._space.localName);
+        } else if (processedEvent.$case === "moveToAudience") {
+            forgetSpeakInvitation(receiverSocket.getUserData(), this._space.localName);
+        }
+
         receiverSocket.getUserData().emitInBatch({
             message: {
                 $case: "privateEvent",
@@ -391,11 +406,7 @@ export class SpaceToFrontDispatcher implements SpaceToFrontDispatcherInterface {
                     sender: extendedSender,
                     receiverUserId: message.receiverUserId,
                     spaceEvent: {
-                        event: this.eventProcessor.processPrivateEvent(
-                            spaceEvent.event,
-                            extendedSender,
-                            receiverSpaceUser
-                        ),
+                        event: processedEvent,
                     },
                     // The name of the space in the browser is the local name (i.e. the name without the "world" prefix)
                     spaceName: this._space.localName,

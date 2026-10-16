@@ -103,7 +103,7 @@
 
     <span class="place">
         <span class="name-row">
-            <!-- Orbit's room kind: Lucide "door-open" on the room gradient -->
+            <!-- Orbit's room kind: Lucide "door-open" in the room colour, next to the name -->
             <span class="kind" aria-hidden="true">
                 <svg
                     width="18"
@@ -277,18 +277,14 @@
     .name-row {
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 8px;
         min-width: 0;
     }
+    /* Orbit's room colour (--kind-room-solid), with no box: the icon sits on the name's line. */
     .kind {
-        display: inline-grid;
-        place-items: center;
+        display: inline-flex;
         flex: none;
-        width: 2.25rem;
-        height: 2.25rem;
-        border-radius: 0.75rem;
-        color: #fff;
-        background-image: linear-gradient(135deg, #f59e0b, #ec4899);
+        color: #fbbf24;
     }
     .room-name {
         min-width: 0;

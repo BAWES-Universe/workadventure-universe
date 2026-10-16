@@ -11,6 +11,8 @@
     import { isListenerStore } from "../../Stores/MediaStore";
     import type { StreamOriginCategory } from "../../Stores/StreamableCollectionStore";
     import RangeSlider from "../Input/RangeSlider.svelte";
+    import { raisedHandsStore } from "../../Space/RaiseHand/RaiseHandStore";
+    import { broughtOnStageStore, canInviteToSpeakStore, moveToAudience } from "../../Space/RaiseHand/PodiumStore";
     import { IconAlertTriangle, IconUser, IconMute, IconUnMute } from "@wa-icons";
 
     export let spaceUser: SpaceUserExtended;
@@ -23,6 +25,7 @@
 
     const isMicrophoneEnabled = spaceUser.reactiveUser.microphoneState;
     const isVideoEnabled = spaceUser.reactiveUser.cameraState;
+    const handRaisedAt = spaceUser.reactiveUser.handRaisedAt;
 
     let moreActionOpened = false;
 
@@ -62,6 +65,22 @@
         spaceUser.space.emitPublicMessage({
             $case: "muteVideoForEverybody",
             muteVideoForEverybody: {},
+        });
+        close();
+    }
+
+    function lowerHand(spaceUser: SpaceUserExtended) {
+        spaceUser.emitPrivateEvent({
+            $case: "lowerHand",
+            lowerHand: {},
+        });
+        close();
+    }
+
+    function lowerAllHands(spaceUser: SpaceUserExtended) {
+        spaceUser.space.emitPublicMessage({
+            $case: "lowerAllHands",
+            lowerAllHands: {},
         });
         close();
     }
@@ -142,6 +161,45 @@
             />
         </div>
     </div>
+
+    <!-- Podium: send someone we brought on stage from the audience back to it -->
+    {#if $canInviteToSpeakStore && !isScreenSharing && $broughtOnStageStore.has(spaceUser.uuid)}
+        <button
+            class="action-button flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded leading-4 text-left text-white"
+            data-testid="move-to-audience"
+            on:click|preventDefault|stopPropagation={() => {
+                moveToAudience(spaceUser);
+                close();
+            }}
+        >
+            <IconUser class="w-4 h-4 text-white flex-shrink-0" />
+            {$LL.say.raiseHand.moveToAudience()}
+        </button>
+    {/if}
+
+    <!-- Lower hand (moderators: the pusher only lets admins do it) -->
+    {#if $userIsAdminStore && !isScreenSharing && ($handRaisedAt ?? 0) > 0}
+        <button
+            class="action-button flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded leading-4 text-left text-white"
+            data-testid="lower-hand-user"
+            on:click|preventDefault|stopPropagation={() => lowerHand(spaceUser)}
+        >
+            <span class="hand-emoji" aria-hidden="true">✊</span>
+            {$LL.say.raiseHand.lowerSomeone()}
+        </button>
+    {/if}
+
+    <!-- Lower all hands -->
+    {#if $userIsAdminStore && $raisedHandsStore.length > 0}
+        <button
+            class="action-button flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded leading-4 text-left text-white"
+            data-testid="lower-all-hands"
+            on:click|preventDefault|stopPropagation={() => lowerAllHands(spaceUser)}
+        >
+            <span class="hand-emoji" aria-hidden="true">✊</span>
+            {$LL.say.raiseHand.lowerAll()}
+        </button>
+    {/if}
 
     <!-- Mute audio user -->
     {#if ($userIsAdminStore || !$isListenerStore) && !isScreenSharing}
@@ -240,3 +298,15 @@
         {$LL.camera.menu.blockOrReportUser()}
     </button>
 </div>
+
+<style>
+    /* The hand emojis match the ✋ button: ✊ is a lowered hand. */
+    .hand-emoji {
+        display: inline-flex;
+        justify-content: center;
+        flex-shrink: 0;
+        width: 1rem;
+        font-size: 0.875rem;
+        line-height: 1rem;
+    }
+</style>

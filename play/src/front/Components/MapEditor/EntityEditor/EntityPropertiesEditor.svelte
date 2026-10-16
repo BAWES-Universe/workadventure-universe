@@ -3,18 +3,14 @@
     import { onDestroy } from "svelte";
     import type { ApplicationDefinitionInterface } from "@workadventure/messages";
     import { v4 as uuid } from "uuid";
-    import {
-        mapEditorEntityModeStore,
-        mapEditorSelectedEntityPrefabStore,
-        mapEditorSelectedEntityStore,
-    } from "../../../Stores/MapEditorStore";
+    import { mapEditorSelectedEntityStore } from "../../../Stores/MapEditorStore";
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
     import LL from "../../../../i18n/i18n-svelte";
     import AddPropertyButtonWrapper from "../PropertyEditor/AddPropertyButtonWrapper.svelte";
     import PlayAudioPropertyEditor from "../PropertyEditor/PlayAudioPropertyEditor.svelte";
     import OpenWebsitePropertyEditor from "../PropertyEditor/OpenWebsitePropertyEditor.svelte";
     import { connectionManager } from "../../../Connection/ConnectionManager";
-    import { IconChevronDown, IconArrowLeft } from "../../Icons";
+    import { IconChevronDown } from "../../Icons";
     import Input from "../../Input/Input.svelte";
     import TextArea from "../../Input/TextArea.svelte";
     import InputSwitch from "../../Input/InputSwitch.svelte";
@@ -254,12 +250,6 @@
         }
     }
 
-    function backToSelectObject() {
-        mapEditorSelectedEntityStore.set(undefined);
-        mapEditorSelectedEntityPrefabStore.set(undefined);
-        mapEditorEntityModeStore.set("ADD");
-    }
-
     onDestroy(() => {
         selectedEntityUnsubscriber();
         selectedEntity?.removeEditColor();
@@ -274,15 +264,6 @@
     {$LL.mapEditor.entityEditor.editInstructions()}
 {:else}
     <div class="overflow-x-hidden overflow-y-auto">
-        <div class="header-container">
-            <h3>{$LL.mapEditor.entityEditor.editing({ name: $mapEditorSelectedEntityStore.getPrefab().name })}</h3>
-        </div>
-        <!-- svelte-ignore a11y-click-events-have-key-events -->
-        <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-        <p on:click|preventDefault={backToSelectObject} class="flex flex-row items-center text-xs m-0">
-            <IconArrowLeft font-size="12" class="cursor-pointer" />
-            <span class="ml-1 cursor-pointer">{$LL.mapEditor.entityEditor.itemPicker.backToSelectObject()}</span>
-        </p>
         <div class="properties-buttons flex flex-row m-2">
             <AddPropertyButtonWrapper
                 property="playAudio"

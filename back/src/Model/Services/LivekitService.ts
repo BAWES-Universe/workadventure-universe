@@ -15,6 +15,13 @@ import Debug from "debug";
 
 const debug = Debug("LivekitService");
 
+const PUBLISH_SOURCES = [
+    TrackSource.CAMERA,
+    TrackSource.MICROPHONE,
+    TrackSource.SCREEN_SHARE,
+    TrackSource.SCREEN_SHARE_AUDIO,
+];
+
 const defaultRoomServiceClient = (livekitHost: string, livekitApiKey: string, livekitApiSecret: string) =>
     new RoomServiceClient(livekitHost, livekitApiKey, livekitApiSecret);
 const defaultEgressClient = (livekitHost: string, livekitApiKey: string, livekitApiSecret: string) =>
@@ -67,7 +74,12 @@ export class LiveKitService {
         await this.roomServiceClient.createRoom(createOptions);
     }
 
-    async generateToken(roomName: string, user: SpaceUser): Promise<string> {
+    /**
+     * @param canPublish Whether this person may send camera, microphone or screen. Only the people streaming in the
+     * space may; everybody else receives. The media server enforces it, so a browser that ignores the app's rules
+     * still cannot publish.
+     */
+    async generateToken(roomName: string, user: SpaceUser, canPublish: boolean): Promise<string> {
         const hashedRoomName = this.getHashedRoomName(roomName);
 
         const token = new AccessToken(this.livekitApiKey, this.livekitApiSecret, {
@@ -81,17 +93,10 @@ export class LiveKitService {
 
         token.addGrant({
             room: hashedRoomName,
-            // Note: everyone can publish in Livekit, moderation is handled at application level. If a user should
-            // not have published, its VideoBox will never be visible by anyone anyway.
-            canPublish: true,
+            canPublish,
             canSubscribe: true,
             roomJoin: true,
-            canPublishSources: [
-                TrackSource.CAMERA,
-                TrackSource.MICROPHONE,
-                TrackSource.SCREEN_SHARE,
-                TrackSource.SCREEN_SHARE_AUDIO,
-            ],
+            canPublishSources: canPublish ? PUBLISH_SOURCES : [],
         });
         return token.toJwt();
     }
@@ -114,18 +119,50 @@ export class LiveKitService {
         }
     }
 
-    private getParticipantIdentity(participantName: string): string {
-        return participantName;
+    private getParticipantIdentity(spaceUserId: string): string {
+        return spaceUserId;
     }
 
-    async removeParticipant(roomName: string, participantName: string): Promise<void> {
+    /**
+     * Lets a person already in the media room start or stop sending, without a new token. When they stop, the media
+     * server ends the tracks they were sending. Returns false when they are not in the media room (yet).
+     */
+    async setParticipantCanPublish(roomName: string, spaceUserId: string, canPublish: boolean): Promise<boolean> {
+        const hashedRoomName = this.getHashedRoomName(roomName);
+        const identity = this.getParticipantIdentity(spaceUserId);
+        try {
+            const participants = await this.roomServiceClient.listParticipants(hashedRoomName);
+            if (!participants.some((participant) => participant.identity === identity)) {
+                return false;
+            }
+            await this.roomServiceClient.updateParticipant(hashedRoomName, identity, undefined, {
+                canPublish,
+                canSubscribe: true,
+                canPublishSources: canPublish ? PUBLISH_SOURCES : [],
+            });
+            return true;
+        } catch (error) {
+            console.error(
+                `LivekitService.setParticipantCanPublish: Error updating ${spaceUserId} in room ${roomName}:`,
+                error
+            );
+            Sentry.captureException(error);
+            return false;
+        }
+    }
+
+    /**
+     * Removes a person from the media room. The identity is the space user id, the one their token was made with (not
+     * their display name, which is neither unique nor what the media server knows them by).
+     */
+    async removeParticipant(roomName: string, spaceUserId: string): Promise<void> {
         try {
             const rooms = await this.roomServiceClient.listRooms([this.getHashedRoomName(roomName)]);
 
             if (rooms && rooms.length > 0) {
                 const participants = await this.roomServiceClient.listParticipants(this.getHashedRoomName(roomName));
                 const participantExists = participants.some(
-                    (p) => p.identity === this.getParticipantIdentity(participantName)
+                    (p) => p.identity === this.getParticipantIdentity(spaceUserId)
                 );
 
                 if (!participantExists) {
@@ -135,10 +172,13 @@ export class LiveKitService {
                 console.warn(`LivekitService.removeParticipant: Room ${roomName} not found`);
                 return;
             }
-            await this.roomServiceClient.removeParticipant(this.getHashedRoomName(roomName), participantName);
+            await this.roomServiceClient.removeParticipant(
+                this.getHashedRoomName(roomName),
+                this.getParticipantIdentity(spaceUserId)
+            );
         } catch (error) {
             console.error(
-                `LivekitService.removeParticipant: Error removing participant ${participantName} from room ${roomName}:`,
+                `LivekitService.removeParticipant: Error removing participant ${spaceUserId} from room ${roomName}:`,
                 error
             );
             Sentry.captureException(error);

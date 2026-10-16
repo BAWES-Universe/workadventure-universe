@@ -1,13 +1,33 @@
 import { z } from "zod";
 import type { Request, Response } from "express";
 import Debug from "debug";
+import { isAxiosError } from "axios";
+import * as Sentry from "@sentry/node";
 import { adminService } from "../services/AdminService";
 import { validatePostQuery } from "../services/QueryValidator";
+import { describeError } from "../services/SafeErrorLog";
 import type { ResponseWithUserIdentifier } from "../middlewares/Authenticated";
 import { authenticated } from "../middlewares/Authenticated";
 import { BaseHttpController } from "./BaseHttpController";
 
 const debug = Debug("pusher:requests");
+
+/**
+ * Answers a save the admin did not accept. The admin refusing the Woka or companion (422 WOKA_NOT_ALLOWED) is told
+ * to the game as it is, so the picker can say so; anything else is a 502.
+ */
+function sendSaveError(res: Response, what: string, err: unknown): void {
+    if (
+        isAxiosError(err) &&
+        err.response?.status === 422 &&
+        (err.response.data as { code?: unknown } | undefined)?.code === "WOKA_NOT_ALLOWED"
+    ) {
+        res.status(422).json({ code: "WOKA_NOT_ALLOWED" });
+        return;
+    }
+    Sentry.captureException(`Cannot ${what} on the admin API: ${describeError(err)}`);
+    res.status(502).send("The admin could not save this");
+}
 
 export class UserController extends BaseHttpController {
     // Returns a map mapping map name to file name of the map
@@ -47,6 +67,10 @@ export class UserController extends BaseHttpController {
      *     responses:
      *      204:
      *         description: Save succeeded
+     *       422:
+     *         description: The admin does not allow this here (code WOKA_NOT_ALLOWED)
+     *       502:
+     *         description: The admin could not save it
      *       404:
      *         description: User or room not found
      *         schema:
@@ -120,6 +144,10 @@ export class UserController extends BaseHttpController {
      *     responses:
      *      204:
      *         description: Save succeeded
+     *       422:
+     *         description: The admin does not allow this here (code WOKA_NOT_ALLOWED)
+     *       502:
+     *         description: The admin could not save it
      *       404:
      *         description: User or room not found
      *         schema:
@@ -153,7 +181,12 @@ export class UserController extends BaseHttpController {
 
             // Not logged? Nothing to save!
             if (res.isLogged) {
-                await adminService.saveTextures(res.userIdentifier, body.textures, body.roomUrl);
+                try {
+                    await adminService.saveTextures(res.userIdentifier, body.textures, body.roomUrl);
+                } catch (err) {
+                    sendSaveError(res, "save textures", err);
+                    return;
+                }
             }
 
             res.status(204).send("");
@@ -191,6 +224,10 @@ export class UserController extends BaseHttpController {
      *     responses:
      *      204:
      *         description: Save succeeded
+     *       422:
+     *         description: The admin does not allow this here (code WOKA_NOT_ALLOWED)
+     *       502:
+     *         description: The admin could not save it
      *       404:
      *         description: User or room not found
      *         schema:
@@ -227,7 +264,12 @@ export class UserController extends BaseHttpController {
 
                 // Not logged? Nothing to save!
                 if (res.isLogged) {
-                    await adminService.saveCompanionTexture(res.userIdentifier, body.texture, body.roomUrl);
+                    try {
+                        await adminService.saveCompanionTexture(res.userIdentifier, body.texture, body.roomUrl);
+                    } catch (err) {
+                        sendSaveError(res, "save the companion texture", err);
+                        return;
+                    }
                 }
 
                 res.status(204).send("");

@@ -5,7 +5,7 @@ import type { Readable, Writable, Unsubscriber } from "svelte/store";
 import { derived, get, writable, readable } from "svelte/store";
 import { v4 as uuidv4 } from "uuid";
 import type { Subscription } from "rxjs";
-import type { CharacterTextureMessage } from "@workadventure/messages";
+import type { CharacterTextureMessage, SpaceMessageQuote, SpaceMessageReaction } from "@workadventure/messages";
 import { AvailabilityStatus, FilterType } from "@workadventure/messages";
 import { ChatMessageTypes } from "@workadventure/shared-utils";
 import { asError } from "catch-unknown";
@@ -25,7 +25,12 @@ import type { SpaceInterface, SpaceUserExtended } from "../../../Space/SpaceInte
 import type { SpaceRegistryInterface } from "../../../Space/SpaceRegistry/SpaceRegistryInterface";
 import { chatVisibilityStore } from "../../../Stores/ChatStore";
 import { openChat } from "../../openChat";
-import { isAChatRoomIsVisible, navChat, shouldRestoreChatStateStore } from "../../Stores/ChatStore";
+import {
+    isAChatRoomIsVisible,
+    navChat,
+    selectedChatMessageToReply,
+    shouldRestoreChatStateStore,
+} from "../../Stores/ChatStore";
 import { selectedRoomStore } from "../../Stores/SelectRoomStore";
 import { mapExtendedSpaceUserToChatUser } from "../../UserProvider/ChatUserMapper";
 import { gameManager } from "../../../Phaser/Game/GameManager";
@@ -50,12 +55,22 @@ import { BubbleNotification as BasicNotification } from "../../../Notification/B
 import { formatPeopleNames } from "../../Components/TopRow/TopRowSummary";
 import { composerDraftStore } from "../../Stores/ComposerDraftStore";
 import { areaChatRooms } from "../../Stores/AreaPresenceStore";
+import { rememberProximityChat } from "../../Stores/SayHiCardStore";
 import {
     selectedProximitySessionStore,
     stashProximityHistory,
     takeProximityHistory,
+    takeLeftWithoutMap,
 } from "../../Stores/ProximitySessionStore";
+import type { ProximityHistoryStash } from "../../Stores/ProximitySessionStore";
 import type { ProximitySession, ProximitySessionMarker } from "./ProximitySessions";
+import {
+    applyReaction,
+    buildQuote,
+    isUsableReaction,
+    isUsableSharedId,
+    quoteContent,
+} from "./ProximityMessageRelations";
 import {
     DEFAULT_CONTINUATION,
     ROOM_MESSAGES_SESSION_ID,
@@ -89,12 +104,28 @@ export interface ProximityChatParticipant {
  */
 export type ProximitySpaceKind = "none" | "bubble" | "meeting" | "stream";
 
+export interface ProximityChatMessageOptions {
+    session?: ProximitySessionMarker;
+    notSent?: boolean;
+    /** The message this one replies to. */
+    quotedMessage?: ChatMessage;
+    /** Set on the copy of a message shown inside a reply's quote. */
+    isQuotedMessage?: boolean;
+    /**
+     * Sends a reaction on this message to the others and applies it here. Only messages whose id is the same for
+     * everyone (sent by this game) get one; without it the message takes no reactions.
+     */
+    react?: (message: ProximityChatMessage, key: string) => void;
+}
+
 export class ProximityChatMessage implements ChatMessage {
-    isQuotedMessage = undefined;
-    quotedMessage = undefined;
+    isQuotedMessage: boolean | undefined;
+    quotedMessage: ChatMessage | undefined;
     isDeleted = writable(false);
     isModified = writable(false);
     canDelete = writable(false);
+    canReact = writable(false);
+    canReply = writable(false);
     reactions: MapStore<string, ChatMessageReaction> = new MapStore();
     /**
      * Set on the local markers written when this tab joins or leaves a group, so the timeline can draw
@@ -118,10 +149,16 @@ export class ProximityChatMessage implements ChatMessage {
         public date: Date,
         public isMyMessage: boolean,
         public type: ChatMessageType,
-        options: { session?: ProximitySessionMarker; notSent?: boolean } = {}
+        private readonly options: ProximityChatMessageOptions = {}
     ) {
         this.session = options.session;
         this.notSent = options.notSent;
+        this.quotedMessage = options.quotedMessage;
+        this.isQuotedMessage = options.isQuotedMessage;
+        const isConversation = !options.session && !options.notSent && !options.isQuotedMessage;
+        const hasContent = type !== "incoming" && type !== "outcoming";
+        this.canReact.set(isConversation && hasContent && options.react !== undefined);
+        this.canReply.set(isConversation && hasContent);
     }
 
     remove(): void {
@@ -132,8 +169,13 @@ export class ProximityChatMessage implements ChatMessage {
         return Promise.resolve();
     }
     addReaction(reaction: string): Promise<void> {
-        console.info("Function not implemented.", reaction);
+        this.options.react?.(this, reaction);
         return Promise.resolve();
+    }
+
+    /** No more reactions, for a message carried to the next map: the people it was sent to aren't in its chat. */
+    stopReactions(): void {
+        this.canReact.set(false);
     }
 }
 
@@ -155,6 +197,7 @@ export class ProximityChatRoom implements ChatRoom {
     private _spacePromise: Promise<SpaceInterface | undefined> = Promise.resolve(undefined);
     private spaceMessageSubscription: Subscription | undefined;
     private spaceIsTypingSubscription: Subscription | undefined;
+    private spaceMessageReactionSubscription: Subscription | undefined;
     // Expiry timers of the typing entries, by spaceUserId of the sender
     private typingExpiryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
     private spaceStreamMessageSubscription: Subscription | undefined;
@@ -168,6 +211,7 @@ export class ProximityChatRoom implements ChatRoom {
     private spaceWatcherUserJoinedObserver: Subscription | undefined;
     private spaceWatcherUserLeftObserver: Subscription | undefined;
     private newChatMessageWritingStatusStreamUnsubscriber: Subscription;
+    private hadProximityChatUnsubscriber: Unsubscriber;
     private joinSpaceAbortController: AbortController | undefined;
     areNotificationsMuted = writable(false);
     isRoomFolder = false;
@@ -190,6 +234,10 @@ export class ProximityChatRoom implements ChatRoom {
     currentChatVisibility = false;
     /** The chat state to put back came from the previous map's proximity chat (see stashHistoryForNextScene). */
     private keepCarriedChatState = false;
+    /** What this room handed to the next map's proximity chat (see stashHistoryForNextScene). */
+    private handedOver: ProximityHistoryStash | undefined;
+    /** The end of the stay closed by the hand-over, if one was open: what is written after it goes before it. */
+    private handedOverStayEnd: ChatMessage | undefined;
     private _spaceGeneration = 0;
     // The name of the meeting area joined, for its end marker: the display name is reset before leaving.
     private meetingSessionLabel: string | undefined;
@@ -217,9 +265,11 @@ export class ProximityChatRoom implements ChatRoom {
     }
 
     /**
-     * True while a space is being joined and is not connected yet: a message sent now would reach nobody.
+     * True while a message sent now would reach nobody: a space is being joined and is not connected yet, or this map
+     * already handed its chats to the next one (the chat stays open while the game gets back in, #958).
      */
     public get isJoiningSpace(): boolean {
+        if (this.handedOver) return true;
         return this._space === undefined && this.joinSpaceAbortController !== undefined;
     }
 
@@ -266,10 +316,24 @@ export class ProximityChatRoom implements ChatRoom {
             ([$messages, $spaceJoinedAt, $unsentDrafts]) =>
                 buildProximitySessions(Array.from($messages), $spaceJoinedAt, DEFAULT_CONTINUATION, $unsentDrafts)
         );
+        // The first proximity chat you had is remembered on this device as soon as someone writes in it, whether or not
+        // the chat panel is open and before the stay ends: the "Say hi in person" card on the Chats tab never comes back
+        // after it. The room messages are not a chat you had, and neither is a stay with only an unsent draft.
+        this.hadProximityChatUnsubscriber = this.sessions.subscribe(($sessions) => {
+            if ($sessions.some((session) => session.id !== ROOM_MESSAGES_SESSION_ID && session.messages.length > 0)) {
+                rememberProximityChat();
+            }
+        });
 
         // The chats you had on the previous map, when the scene handed them over.
         const stash = takeProximityHistory();
+        const leftWithoutMap = takeLeftWithoutMap();
         if (stash) {
+            // Reactions on them would go to this map's bubbles, where nobody has those messages. Replies still quote them.
+            for (const message of stash.messages) {
+                if (message instanceof ProximityChatMessage) message.stopReactions();
+            }
+            stash.takenBy = this;
             this.messages.push(...stash.messages);
             this._unreadBySession.set(stash.unreadBySession);
             this._unsentDrafts.set(stash.unsentDrafts);
@@ -281,8 +345,15 @@ export class ProximityChatRoom implements ChatRoom {
                 this.currentChatVisibility = stash.chatStateToRestore.visible;
                 this.keepCarriedChatState = true;
             }
-            // The old map's proximity chat was open: this one takes its place, never a chat that no longer exists.
-            if (stash.wasSelected) selectedRoomStore.set(this);
+        }
+        // The old map's proximity chat was open: this one takes its place, never a chat that no longer exists.
+        // It can also have been opened after the hand-over, while the old map stayed on screen to get back in, even
+        // with nothing in it to hand over.
+        if (leftWithoutMap) {
+            // The game was left: the proximity chat that was open is gone, and nothing opens by itself on the way back.
+            if (get(selectedRoomStore) instanceof ProximityChatRoom) selectedRoomStore.set(undefined);
+        } else if (stash?.wasSelected || get(selectedRoomStore) instanceof ProximityChatRoom) {
+            selectedRoomStore.set(this);
         }
 
         this.newChatMessageWritingStatusStreamUnsubscriber =
@@ -401,14 +472,18 @@ export class ProximityChatRoom implements ChatRoom {
             chatUser = mapExtendedSpaceUserToChatUser(spaceUser);
         }
 
-        // Create message
+        // A reply quotes the message picked in this chat, then the composer stops replying to it.
+        const quotedMessage = broadcast ? this.takeMessageToReplyTo() : undefined;
+
+        // Create message. Its id goes to the others too, so reactions and replies can point at it.
         const newMessage = new ProximityChatMessage(
             uuidv4(),
             chatUser,
             writable(newChatMessageContent),
             new Date(),
             true,
-            messageType
+            messageType,
+            { quotedMessage, react: broadcast ? this.reactToMessage : undefined }
         );
 
         // Add message to the list
@@ -430,6 +505,8 @@ export class ProximityChatRoom implements ChatRoom {
                     galleryUrls: galleryUrls ?? [],
                     fileName: fileName,
                     fileNames: fileNames ?? [],
+                    id: newMessage.id,
+                    replyTo: quotedMessage ? buildQuote(quotedMessage, get(quotedMessage.content)) : undefined,
                 },
             });
         }
@@ -515,12 +592,33 @@ export class ProximityChatRoom implements ChatRoom {
             "proximity",
             { notSent: true }
         );
+        if (this.handedOver) {
+            // Written after this room handed its chats to the next map: it goes along with them, in the stay it was
+            // written in (and shows here too, while this chat is still on screen).
+            this.carryNotSentMessage(message, this.handedOverStayEnd);
+        }
         // Insert it at the end of its own group, in one update. SearchableArrayStore implements the inserting form
         // of splice, but only declares the removing one.
         const messages = this.messages as unknown as {
             splice(start: number, deleteCount: number, ...items: ChatMessage[]): ChatMessage[];
         };
         messages.splice(findNotSentInsertIndex(get(this.messages), submittedAt), 0, message);
+    }
+
+    /**
+     * A not-sent message written in the previous map's chat after it handed its chats over: at the end of the stay
+     * closed by the hand-over (before its end), or else where it was written, as the previous map's chat shows it.
+     */
+    public carryNotSentMessage(message: ChatMessage, stayEnd: ChatMessage | undefined) {
+        if (this.handedOver) {
+            if (this.handedOver.takenBy) this.handedOver.takenBy.carryNotSentMessage(message, stayEnd);
+            else this.handedOver.messages.splice(carriedIndex(this.handedOver.messages, stayEnd, message), 0, message);
+            return;
+        }
+        const messages = this.messages as unknown as {
+            splice(start: number, deleteCount: number, ...items: ChatMessage[]): ChatMessage[];
+        };
+        messages.splice(carriedIndex(Array.from(get(this.messages)), stayEnd, message), 0, message);
     }
 
     private addIncomingUser(spaceUser: SpaceUserExtended): void {
@@ -559,11 +657,22 @@ export class ProximityChatRoom implements ChatRoom {
         mimeType?: string | null,
         galleryUrls?: string[] | null,
         fileName?: string | null,
-        fileNames?: string[] | null
+        fileNames?: string[] | null,
+        sharedId?: string | null,
+        replyTo?: SpaceMessageQuote | null
     ): void {
         // Ignore messages from the current user
         if (senderUserId === this._spaceUserId) {
             return;
+        }
+
+        // The same message from the same sender again (a resend) is already here. Someone else reusing that id still
+        // gets their message shown, under a local id below, so they can't hide or take over the original.
+        if (isUsableSharedId(sharedId)) {
+            const existing = this.messages.get(sharedId);
+            if (existing?.sender?.spaceUserId === senderUserId) {
+                return;
+            }
         }
 
         // Determine message type from media
@@ -621,14 +730,20 @@ export class ProximityChatRoom implements ChatRoom {
             chatUser.username = name;
         }
 
-        // Create message
+        // The sender's id is shared by everyone who got the message, so reactions find it. Bots and older games
+        // send none: the message then gets a local id and takes no reactions.
+        const isShared = isUsableSharedId(sharedId) && !this.messages.has(sharedId);
         const newMessage = new ProximityChatMessage(
-            uuidv4(),
+            isShared ? sharedId : uuidv4(),
             chatUser,
             writable(newChatMessageContent),
             new Date(),
             false,
-            messageType
+            messageType,
+            {
+                quotedMessage: replyTo ? this.resolveQuote(replyTo) : undefined,
+                react: isShared ? this.reactToMessage : undefined,
+            }
         );
 
         // Add message to the list
@@ -647,6 +762,71 @@ export class ProximityChatRoom implements ChatRoom {
                 console.error("Error while sending message to WorkAdventure scripting API", e);
             }
         }
+    }
+
+    /**
+     * The message the composer is replying to, when it is one of this chat's, and stops replying to it. A reply picked
+     * in another chat stays for that chat.
+     */
+    private takeMessageToReplyTo(): ChatMessage | undefined {
+        const selected = get(selectedChatMessageToReply);
+        if (!selected || this.messages.get(selected.id) !== selected) return undefined;
+        selectedChatMessageToReply.set(null);
+        return selected;
+    }
+
+    /** The message a received reply quotes: our own copy when we have it, else what the reply says it was. */
+    private resolveQuote(quote: SpaceMessageQuote): ChatMessage {
+        const original = isUsableSharedId(quote.id) ? this.messages.get(quote.id) : undefined;
+        if (original && !(original instanceof ProximityChatMessage && original.session)) return original;
+
+        const isMine = quote.senderUserId !== undefined && quote.senderUserId === this._spaceUserId;
+        const spaceUser = quote.senderUserId ? this.users?.get(quote.senderUserId) : undefined;
+        const sender: AnyKindOfUser = spaceUser
+            ? mapExtendedSpaceUserToChatUser(spaceUser)
+            : { ...this.unknownUser, username: quote.name || this.unknownUser.username };
+        const content = quoteContent(quote);
+        const type: ChatMessageType =
+            content.urls !== undefined
+                ? "gallery"
+                : content.url
+                ? this.inferTypeFromUrl(content.url) ?? "file"
+                : "proximity";
+        return new ProximityChatMessage(quote.id, sender, writable(content), new Date(), isMine, type, {
+            isQuotedMessage: true,
+        });
+    }
+
+    /** Toggles this tab's reaction on a nearby message, here and for the others. */
+    private readonly reactToMessage = (message: ProximityChatMessage, key: string): void => {
+        if (!isUsableReaction(key) || !get(message.canReact) || this.messages.get(message.id) !== message) return;
+        const add = !message.reactions.get(key)?.users.has(this._spaceUserId);
+        const spaceUser = this.users?.get(this._spaceUserId);
+        const me = spaceUser ? mapExtendedSpaceUserToChatUser(spaceUser) : this.unknownUser;
+        if (
+            !applyReaction(message.reactions, key, this._spaceUserId, me, add, true, (k) =>
+                this.reactToMessage(message, k)
+            )
+        ) {
+            return;
+        }
+        this._space?.emitPublicMessage({
+            $case: "spaceMessageReaction",
+            spaceMessageReaction: { messageId: message.id, reaction: key, add },
+        });
+    };
+
+    private applyRemoteReaction(senderUserId: string, event: SpaceMessageReaction): void {
+        if (!isUsableReaction(event.reaction)) return;
+        const message = this.messages.get(event.messageId);
+        if (!(message instanceof ProximityChatMessage) || !get(message.canReact)) return;
+        const spaceUser = this.users?.get(senderUserId);
+        const user: AnyKindOfUser = spaceUser
+            ? mapExtendedSpaceUserToChatUser(spaceUser)
+            : { ...this.unknownUser, username: event.name || this.unknownUser.username };
+        applyReaction(message.reactions, event.reaction, senderUserId, user, event.add, false, (k) =>
+            this.reactToMessage(message, k)
+        );
     }
 
     sendFiles(files: FileList): Promise<void> {
@@ -762,6 +942,13 @@ export class ProximityChatRoom implements ChatRoom {
     /** Keeps what the composer still held when its stay ended, to show it there as unsent. */
     public keepUnsentDraft(sessionId: string | undefined, text: string): void {
         if (sessionId === undefined || text.replace(/<br\s*\/?>/gi, "").trim() === "") return;
+        // The composer closed after this room handed its chats to the next map (the chat stays open while the game
+        // gets back in): the text goes along with them.
+        if (this.handedOver) {
+            if (this.handedOver.takenBy) this.handedOver.takenBy.keepUnsentDraft(sessionId, text);
+            else this.handedOver.unsentDrafts.set(sessionId, text);
+            return;
+        }
         const drafts = new Map(get(this._unsentDrafts));
         drafts.set(sessionId, text);
         this._unsentDrafts.set(drafts);
@@ -793,23 +980,22 @@ export class ProximityChatRoom implements ChatRoom {
                 ? Array.from(this.users.values()).filter((user) => user.spaceUserId !== this._spaceUserId)
                 : [];
             const isArea = this.meetingSessionLabel !== undefined;
-            messages.push(
-                this.createSessionMarker(
-                    isArea ? get(LL).chat.timeLine.youleftMeetingRoom() : get(LL).chat.timeLine.youLeft(),
-                    "outcoming",
-                    {
-                        kind: "end",
-                        label: isArea ? this.meetingSessionLabel ?? "" : "",
-                        participants: isArea ? [] : others.map((user) => user.name),
-                        participantIds: isArea ? [] : others.map((user) => user.spaceUserId),
-                        isArea,
-                        sessionId: openSessionId,
-                    }
-                )
+            this.handedOverStayEnd = this.createSessionMarker(
+                isArea ? get(LL).chat.timeLine.youleftMeetingRoom() : get(LL).chat.timeLine.youLeft(),
+                "outcoming",
+                {
+                    kind: "end",
+                    label: isArea ? this.meetingSessionLabel ?? "" : "",
+                    participants: isArea ? [] : others.map((user) => user.name),
+                    participantIds: isArea ? [] : others.map((user) => user.spaceUserId),
+                    isArea,
+                    sessionId: openSessionId,
+                }
             );
+            messages.push(this.handedOverStayEnd);
             this._currentSessionId = undefined;
         }
-        stashProximityHistory({
+        this.handedOver = {
             messages,
             unreadBySession: new Map(get(this._unreadBySession)),
             unsentDrafts,
@@ -827,7 +1013,8 @@ export class ProximityChatRoom implements ChatRoom {
                       proximityChat: this.currentMatrixRoom === this,
                   }
                 : undefined,
-        });
+        };
+        stashProximityHistory(this.handedOver);
     }
 
     loadMorePreviousMessages(): Promise<void> {
@@ -1075,7 +1262,9 @@ export class ProximityChatRoom implements ChatRoom {
                 event.spaceMessage.mimeType,
                 event.spaceMessage.galleryUrls,
                 event.spaceMessage.fileName,
-                event.spaceMessage.fileNames
+                event.spaceMessage.fileNames,
+                event.spaceMessage.id,
+                event.spaceMessage.replyTo
             );
             // if the proximity chat is not open, open it to see the message
             openChat("bubble");
@@ -1093,6 +1282,16 @@ export class ProximityChatRoom implements ChatRoom {
                 this.removeTypingUserbyID(event.sender);
             }
         });
+
+        this.spaceMessageReactionSubscription?.unsubscribe();
+        this.spaceMessageReactionSubscription = this._space
+            .observePublicEvent("spaceMessageReaction")
+            .subscribe((event) => {
+                if (isBlackListed(event.sender) || event.sender === this._spaceUserId) {
+                    return;
+                }
+                this.applyRemoteReaction(event.sender, event.spaceMessageReaction);
+            });
 
         // Subscribe to streaming bot responses — tokens arrive incrementally
         this.spaceStreamMessageSubscription = this._space
@@ -1270,6 +1469,7 @@ export class ProximityChatRoom implements ChatRoom {
                 this._currentSessionId = undefined;
                 this.spaceMessageSubscription?.unsubscribe();
                 this.spaceIsTypingSubscription?.unsubscribe();
+                this.spaceMessageReactionSubscription?.unsubscribe();
                 this.spaceStreamMessageSubscription?.unsubscribe();
                 this.streamMessages.clear();
                 if (this._space) {
@@ -1490,6 +1690,7 @@ export class ProximityChatRoom implements ChatRoom {
 
         this.spaceMessageSubscription?.unsubscribe();
         this.spaceIsTypingSubscription?.unsubscribe();
+        this.spaceMessageReactionSubscription?.unsubscribe();
         this.spaceStreamMessageSubscription?.unsubscribe();
         this.streamMessages.clear();
 
@@ -1554,10 +1755,12 @@ export class ProximityChatRoom implements ChatRoom {
 
     public destroy(): void {
         this.newChatMessageWritingStatusStreamUnsubscriber.unsubscribe();
+        this.hadProximityChatUnsubscriber();
         this.startListeningToStreamInBubbleStreamUnsubscriber.unsubscribe();
         this.stopListeningToStreamInBubbleStreamUnsubscriber.unsubscribe();
         this.spaceMessageSubscription?.unsubscribe();
         this.spaceIsTypingSubscription?.unsubscribe();
+        this.spaceMessageReactionSubscription?.unsubscribe();
         this.spaceStreamMessageSubscription?.unsubscribe();
         this.streamMessages.clear();
         this.clearTypingMembers();
@@ -1572,4 +1775,18 @@ export class ProximityChatRoom implements ChatRoom {
             this.usersUnsubscriber();
         }
     }
+}
+
+/**
+ * Where a not-sent message carried from the previous map goes: before the end of the stay the hand-over closed, or
+ * else by when it was written, as in the previous map's chat (inside a stay that had already ended, for instance).
+ */
+function carriedIndex(messages: readonly ChatMessage[], stayEnd: ChatMessage | undefined, message: ChatMessage) {
+    // Only a message written after the hand-over closed its stay belongs before that stay's end. One written earlier
+    // goes in its own stay, found by when it was written.
+    const writtenAt = message.date ?? new Date();
+    const writtenAfterHandOver = stayEnd?.date ? writtenAt.getTime() >= stayEnd.date.getTime() : false;
+    const end = stayEnd !== undefined && writtenAfterHandOver ? messages.indexOf(stayEnd) : -1;
+    if (end >= 0) return end;
+    return findNotSentInsertIndex(messages, writtenAt);
 }

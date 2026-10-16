@@ -4,7 +4,6 @@
     import type { Unsubscriber } from "svelte/store";
     import { get } from "svelte/store";
     import { onDestroy, onMount } from "svelte";
-    import type { AudioManagerVolume } from "../../Stores/AudioManagerStore";
     import { audioManagerVolumeStore } from "../../Stores/AudioManagerStore";
     import { localUserStore } from "../../Connection/LocalUserStore";
     import LL from "../../../i18n/i18n-svelte";
@@ -16,18 +15,7 @@
     let currentVolume: number = localUserStore.getAudioPlayerVolume();
 
     onMount(() => {
-        let volume = Math.min(localUserStore.getAudioPlayerVolume(), get(audioManagerVolumeStore).volume);
-        audioManagerVolumeStore.setVolume(volume);
-        audioManagerVolumeStore.setMuted(localUserStore.getAudioPlayerMuted());
-
-        unsubscriberVolumeStore = audioManagerVolumeStore.subscribe((audioManager: AudioManagerVolume) => {
-            const reduceVolume = audioManager.talking && audioManager.decreaseWhileTalking;
-            if (reduceVolume && !audioManager.volumeReduced) {
-                audioManager.volume *= 0.5;
-            } else if (!reduceVolume && audioManager.volumeReduced) {
-                audioManager.volume *= 2.0;
-            }
-            audioManager.volumeReduced = reduceVolume;
+        unsubscriberVolumeStore = audioManagerVolumeStore.subscribe(() => {
             updateVolumeUI();
         });
     });
@@ -49,9 +37,7 @@
             currentVolume = volume;
             audioPlayerVol.value = "" + volume;
             audioPlayerVolumeIcon.classList.remove("muted");
-            if (volume == 0) {
-                onMute();
-            } else if (volume < 0.3) {
+            if (volume < 0.3) {
                 audioPlayerVolumeIcon.classList.add("low");
             } else if (volume < 0.7) {
                 audioPlayerVolumeIcon.classList.remove("low");

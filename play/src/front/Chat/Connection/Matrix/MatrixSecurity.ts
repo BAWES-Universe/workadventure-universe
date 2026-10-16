@@ -157,9 +157,8 @@ export class MatrixSecurity {
                     }
                     resolve();
                 })
-                .catch((error) => {
-                    throw new Error(error);
-                });
+                // Throwing here would leave the promise unsettled, and every chat waits for it before it loads.
+                .catch(reject);
         });
 
         return this.restoreRoomMessagesPromise;

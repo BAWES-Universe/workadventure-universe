@@ -2,6 +2,7 @@
     import { onMount, onDestroy } from "svelte";
     import type { UserInputManager } from "../../Phaser/UserInput/UserInputManager";
     import PopUpContainer from "./PopUpContainer.svelte";
+    import PopUpHintText from "./PopUpHintText.svelte";
 
     export let message: string;
     export let click: () => void;
@@ -17,20 +18,11 @@
 </script>
 
 <PopUpContainer reduceOnSmallScreen={true}>
-    {message}
+    <PopUpHintText {message} />
     <svelte:fragment slot="buttons">
-        <button class="btn btn-secondary w-1/2 max-w-80 justify-center responsive-message" on:click={click}>
-            Open Tab
-        </button>
+        <button
+            class="u-cta flex min-h-11 w-full max-w-96 cursor-pointer items-center justify-center rounded-full border-0 px-4 text-sm font-bold"
+            on:click={click}>Open Tab</button
+        >
     </svelte:fragment>
 </PopUpContainer>
-
-<style>
-    @media (max-width: 768px) {
-        .responsive-message {
-            font-size: 24px;
-            line-height: 32px;
-            padding-bottom: 14px;
-        }
-    }
-</style>

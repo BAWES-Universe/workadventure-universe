@@ -1,5 +1,6 @@
 import { Loader } from "../Components/Loader";
 import { selectCharacterSceneVisibleStore } from "../../Stores/SelectCharacterStore";
+import { isWokaRefusedShown } from "../../Stores/WokaRefusedStore";
 import { waScaleManager } from "../Services/WaScaleManager";
 import { AbstractCharacterScene } from "./AbstractCharacterScene";
 
@@ -25,7 +26,8 @@ export class SelectCharacterScene extends AbstractCharacterScene {
     public create() {
         super.create();
         waScaleManager.zoomModifier = 1;
-        selectCharacterSceneVisibleStore.set(true);
+        // After a refused join the popup asks first; its "Choose another" opens the picker
+        if (!isWokaRefusedShown()) selectCharacterSceneVisibleStore.set(true);
 
         this.onResize();
     }

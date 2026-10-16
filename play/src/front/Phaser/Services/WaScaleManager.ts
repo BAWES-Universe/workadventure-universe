@@ -9,6 +9,9 @@ export enum WaScaleManagerEvent {
     RefreshFocusOnTarget = "wa-scale-manager:refresh-focus-on-target",
 }
 
+/** Phaser.Scale.Events.RESIZE, spelled out so this file does not need the Phaser global to be loaded. */
+const PHASER_RESIZE_EVENT = "resize";
+
 export type WaScaleManagerFocusTarget = { x: number; y: number; width?: number; height?: number };
 
 export class WaScaleManager {
@@ -17,6 +20,13 @@ export class WaScaleManager {
     private game!: Game;
     private actualZoom = 1;
     private _saveZoom = 1;
+    private zoomCamera?: Phaser.Cameras.Scene2D.Camera;
+    /**
+     * The CSS scale the DOM layer needs while the zoom goes through the camera, undefined otherwise (Phaser's own
+     * value is right then). See applyDomContainerScale().
+     */
+    private domContainerScale: { x: number; y: number } | undefined;
+    private readonly onPhaserResize = (): void => this.applyDomContainerScale();
 
     private focusTarget?: WaScaleManagerFocusTarget;
 
@@ -25,13 +35,33 @@ export class WaScaleManager {
     }
 
     public setGame(game: Game): void {
+        this.scaleManager?.off(PHASER_RESIZE_EVENT, this.onPhaserResize);
         this.scaleManager = game.scale;
+        // Phaser sets the DOM layer's scale again each time it refreshes: put ours back right after.
+        this.scaleManager.on(PHASER_RESIZE_EVENT, this.onPhaserResize);
         this.game = game;
+        this.zoomCamera = undefined;
     }
 
     public applyNewSize(camera?: Phaser.Cameras.Scene2D.Camera) {
         if (this.scaleManager === undefined) {
             return;
+        }
+        // Resizes and focus refreshes do not pass a camera. Reuse the one whose zoom we manage,
+        // but only while it still belongs to an active scene, leaving other scene cameras alone.
+        if (camera) {
+            this.zoomCamera = camera;
+        } else if (this.zoomCamera) {
+            const zoomCamera = this.zoomCamera;
+            if (
+                this.game.scene
+                    .getScenes(true)
+                    .some((scene) => scene === zoomCamera.scene && scene.cameras.cameras.includes(zoomCamera))
+            ) {
+                camera = zoomCamera;
+            } else {
+                this.zoomCamera = undefined;
+            }
         }
         const { width, height } = coWebsiteManager.getGameSize();
         const devicePixelRatio = window.devicePixelRatio ?? 1;
@@ -51,6 +81,7 @@ export class WaScaleManager {
             this.scaleManager.resize(gameSize.width, gameSize.height);
             this.scaleManager.setZoom(this.actualZoom);
             camera?.setZoom(1);
+            this.domContainerScale = undefined;
         } else {
             if (this.scaleManager.width !== realSize.width || this.scaleManager.height !== realSize.height) {
                 this.scaleManager.resize(realSize.width, realSize.height);
@@ -60,6 +91,12 @@ export class WaScaleManager {
                 this.hdpiManager.zoomModifier * this.hdpiManager.getOptimalZoomLevel(realSize.width * realSize.height);
             this.scaleManager.setZoom(this.actualZoom);
             camera?.setZoom(zoom);
+            // The canvas is not scaled in this mode (the camera zooms), so neither is the DOM layer. Phaser would
+            // scale it down by the camera zoom, as its own zoom is set to `actualZoom`.
+            this.domContainerScale = {
+                x: realSize.width !== 0 ? Math.ceil(realSize.width / devicePixelRatio) / realSize.width : 1,
+                y: realSize.height !== 0 ? Math.ceil(realSize.height / devicePixelRatio) / realSize.height : 1,
+            };
         }
 
         // Override bug in canvas resizing in Phaser. Let's resize the canvas ourselves
@@ -85,6 +122,7 @@ export class WaScaleManager {
         this.scaleManager.displaySize.width = realSize.width;
         this.scaleManager.displaySize.height = realSize.height;
         this.scaleManager.refresh(realSize.width, realSize.height);
+        this.applyDomContainerScale();
 
         // Note: onResize will be called twice (once here and once in Game.ts), but we have no better way.
         for (const scene of this.game.scene.getScenes(true)) {
@@ -95,6 +133,20 @@ export class WaScaleManager {
         }
 
         this.game.markDirty();
+    }
+
+    /**
+     * Phaser scales the DOM layer (the player names, speech bubbles, embedded websites) by `displaySize / baseSize`,
+     * which `refresh()` computes again from its own zoom. That is right when the canvas is scaled, but not when
+     * the zoom goes through the camera: the layer then ends up scaled by the camera zoom and everything in it
+     * lands closer to the top left of the screen than the map under it.
+     */
+    private applyDomContainerScale(): void {
+        const domContainer = this.game?.domContainer;
+        if (!domContainer || !this.domContainerScale) {
+            return;
+        }
+        domContainer.style.transform = `scale(${this.domContainerScale.x}, ${this.domContainerScale.y})`;
     }
 
     /**
@@ -185,6 +237,9 @@ export class WaScaleManager {
     }
     public get maxZoomOut(): number {
         return this.hdpiManager.maxZoomOut;
+    }
+    public set zoomOutPastMapFit(zoomModifier: number | undefined) {
+        this.hdpiManager.zoomOutPastMapFit = zoomModifier;
     }
 
     public get isMaximumZoomOutReached(): boolean {

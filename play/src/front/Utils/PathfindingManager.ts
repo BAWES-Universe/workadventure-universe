@@ -15,6 +15,8 @@ export class PathfindingManager {
     private tileDimensions: { width: number; height: number };
     private currentPathfindingInstanceId: number | null = null;
     private pathfindingTimeout: number | null = null;
+    private pathfindingRequestId = 0;
+    private resolveCancelledPath?: () => void;
 
     constructor(collisionsGrid: number[][], tileDimensions: { width: number; height: number }) {
         this.easyStar = new EasyStar.js();
@@ -37,6 +39,7 @@ export class PathfindingManager {
      * Clean up any ongoing pathfinding operations
      */
     public cleanup(): void {
+        this.pathfindingRequestId++;
         this.cancelCurrentPathfinding();
     }
 
@@ -45,26 +48,29 @@ export class PathfindingManager {
         end: { x: number; y: number },
         tryFindingNearestAvailable = false
     ): Promise<{ x: number; y: number }[]> {
+        const requestId = ++this.pathfindingRequestId;
+        this.cancelCurrentPathfinding();
         const startTile = this.mapPixelsToTileUnits(this.clampToMap(start));
-        const endTile = this.mapPixelsToTileUnits(this.clampToMap(end));
-        const result = await this.findPath(startTile, endTile, tryFindingNearestAvailable);
+        const clampedEnd = this.clampToMap(end);
+        const endTile = this.mapPixelsToTileUnits(clampedEnd);
+        const result = await this.findPath(startTile, endTile, tryFindingNearestAvailable, requestId);
         const path = result.path;
         if (path.length > 1) {
             // Replace the first element of the path with the actual start position
             path[0] = { x: start.x, y: start.y + this.tileDimensions.height * 0.5 }; // We need to add half of the tile height to get the bottom center of the tile as long as the player origin is centered
-            if (result.isExactTarget) {
-                // Let's put back the exact position.
-                // Actually, we are not targeting always the absolutely exact pixel-perfect position.
-                // Indeed, we want the hitbox of the sprite to be completely inside the tile.
-                // Otherwise, the hitbox of the sprite could overflow a collide tile, so the player could use
-                // his keyboard to move the sprite inside the wall.
-                path[path.length - 1] = this.fitBodyWithinTile(
-                    end.x,
-                    end.y,
-                    this.tileDimensions.width,
-                    this.tileDimensions.height
-                );
-            }
+        }
+        if (path.length > 0 && result.isExactTarget) {
+            // Let's put back the exact position.
+            // Actually, we are not targeting always the absolutely exact pixel-perfect position.
+            // Indeed, we want the hitbox of the sprite to be completely inside the tile.
+            // Otherwise, the hitbox of the sprite could overflow a collide tile, so the player could use
+            // his keyboard to move the sprite inside the wall.
+            path[path.length - 1] = this.fitBodyWithinTile(
+                clampedEnd.x,
+                clampedEnd.y,
+                this.tileDimensions.width,
+                this.tileDimensions.height
+            );
         }
         return path;
     }
@@ -96,7 +102,8 @@ export class PathfindingManager {
     private async findPath(
         start: { x: number; y: number },
         end: { x: number; y: number },
-        tryFindingNearestAvailable = false
+        tryFindingNearestAvailable: boolean,
+        requestId: number
     ): Promise<{ path: { x: number; y: number }[]; isExactTarget: boolean }> {
         let isExactTarget = true;
         let endPoints: { x: number; y: number }[] = [end];
@@ -125,6 +132,10 @@ export class PathfindingManager {
             // rejected Promise will return undefined for path
             // eslint-disable-next-line no-await-in-loop
             path = await this.getPath(start, endPoint).catch();
+            // A cancelled request must not try another neighbour or cancel the newer request.
+            if (requestId !== this.pathfindingRequestId) {
+                return { path: [], isExactTarget: false };
+            }
             if (path && path.length > 0) {
                 return { path: this.mapTileUnitsToPixels(path), isExactTarget };
             }
@@ -188,10 +199,10 @@ export class PathfindingManager {
         if (y < 0) {
             y = 0;
         }
-        if (x > mapWidth * this.tileDimensions.width) {
+        if (x >= mapWidth * this.tileDimensions.width) {
             x = mapWidth * this.tileDimensions.width - 1;
         }
-        if (y > mapHeight * this.tileDimensions.height) {
+        if (y >= mapHeight * this.tileDimensions.height) {
             y = mapHeight * this.tileDimensions.height - 1;
         }
 
@@ -205,11 +216,21 @@ export class PathfindingManager {
         start: { x: number; y: number },
         end: { x: number; y: number }
     ): Promise<{ x: number; y: number }[]> {
-        // Cancel any ongoing pathfinding operation
-        this.cancelCurrentPathfinding();
+        // EasyStar returns [] for start=end, even on a blocked tile. A walkable same-tile
+        // destination is a valid path; keep one point so the exact within-tile fit is applied.
+        if (start.x === end.x && start.y === end.y) {
+            const tile = this.grid[end.y]?.[end.x];
+            return tile === PathTileType.Walkable || tile === PathTileType.Exit || tile === PathTileType.Start
+                ? [{ ...end }]
+                : [];
+        }
 
         return new Promise((resolve) => {
             let pathFound = false;
+            this.resolveCancelledPath = () => {
+                pathFound = true;
+                resolve([]);
+            };
             let calculationCount = 0;
             const maxCalculations = 50; // Maximum number of calculate() iterations
             const maxTimeMs = 3000; // Maximum time in milliseconds (3 seconds)
@@ -220,6 +241,7 @@ export class PathfindingManager {
                 if (pathFound) return; // Already resolved
 
                 pathFound = true;
+                this.resolveCancelledPath = undefined;
                 this.clearPathfindingTimeout();
                 this.currentPathfindingInstanceId = null;
 
@@ -270,6 +292,8 @@ export class PathfindingManager {
      * Cancel the current pathfinding operation if one is in progress
      */
     private cancelCurrentPathfinding(): void {
+        this.resolveCancelledPath?.();
+        this.resolveCancelledPath = undefined;
         if (this.currentPathfindingInstanceId !== null) {
             this.easyStar.cancelPath(this.currentPathfindingInstanceId);
             this.currentPathfindingInstanceId = null;
@@ -288,6 +312,7 @@ export class PathfindingManager {
     }
 
     private setEasyStarGrid(grid: number[][]): void {
+        this.grid = grid;
         this.easyStar.setGrid(grid);
         this.easyStar.setAcceptableTiles([PathTileType.Walkable, PathTileType.Exit, PathTileType.Start]);
     }

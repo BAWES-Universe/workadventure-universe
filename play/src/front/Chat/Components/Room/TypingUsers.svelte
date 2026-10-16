@@ -1,9 +1,22 @@
 <script lang="ts">
-    import Avatar from "../Avatar.svelte";
+    import { getContext, hasContext } from "svelte";
+    import { readable } from "svelte/store";
+    import type { Readable } from "svelte/store";
+    import TopRowAvatar from "../TopRow/TopRowAvatar.svelte";
     import type { PictureStore } from "../../../Stores/PictureStore";
+    import { PERSON_COLOUR_CONTEXT, WOKA_BY_CHAT_ID_CONTEXT, personPicture } from "../../Stores/ChatUserWokaStore";
+    import type { PersonColourOf } from "../../Stores/ChatUserWokaStore";
 
     export let typingMembers: { id: string; name: string | null; pictureStore: PictureStore }[];
     const NUMBER_OF_TYPING_MEMBER_TO_DISPLAY = 3;
+
+    // Typing people show the same woka, on the same colour, as next to their messages and in the header.
+    const wokaByChatId: Readable<Map<string, PictureStore>> = hasContext(WOKA_BY_CHAT_ID_CONTEXT)
+        ? getContext(WOKA_BY_CHAT_ID_CONTEXT)
+        : readable(new Map<string, PictureStore>());
+    const colourOf: Readable<PersonColourOf> = hasContext(PERSON_COLOUR_CONTEXT)
+        ? getContext(PERSON_COLOUR_CONTEXT)
+        : readable(() => undefined);
 </script>
 
 <div class="flex row w-full text-gray-300 text-sm m-0 px-2 mb-2">
@@ -12,10 +25,12 @@
         .slice(0, NUMBER_OF_TYPING_MEMBER_TO_DISPLAY) as typingMember (typingMember.id)}
         {#if typingMember}
             <div id={`typing-user-${typingMember.id}`} class="-ml-2">
-                <Avatar
-                    isChatAvatar={true}
-                    pictureStore={typingMember.pictureStore}
-                    fallbackName={typingMember.name ? typingMember.name : "Unknown"}
+                <TopRowAvatar
+                    pictureStore={personPicture($wokaByChatId, typingMember.id, typingMember.pictureStore)}
+                    name={typingMember.name ?? "Unknown"}
+                    color={$colourOf(typingMember.id, typingMember.name ?? undefined)}
+                    size="xs"
+                    ring={typingMembers.length > 1}
                 />
             </div>
         {/if}

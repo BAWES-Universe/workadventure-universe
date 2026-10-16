@@ -5,7 +5,9 @@ import type { AreaData, AreaDataProperties } from "@workadventure/map-editor";
 import { GameMapProperties } from "@workadventure/map-editor";
 import { Jitsi } from "@workadventure/shared-utils";
 import { getSpeakerMegaphoneAreaName } from "@workadventure/map-editor/src/Utils";
+import { areaSpaceName } from "@workadventure/shared-utils/src/Space/areaSpaceName";
 import { z } from "zod";
+import { registerNativeSoundscapeProperties } from "../../Components/AudioManager/NativeSoundscapeProperties";
 import { scriptUtils } from "../../Api/ScriptUtils";
 import { coWebsites } from "../../Stores/CoWebsiteStore";
 import { localUserStore } from "../../Connection/LocalUserStore";
@@ -15,17 +17,12 @@ import { SimpleCoWebsite } from "../../WebRtc/CoWebsite/SimpleCoWebsite";
 import { bbbFactory } from "../../WebRtc/BBBFactory";
 import { JITSI_PRIVATE_MODE, JITSI_URL } from "../../Enum/EnvironmentVariable";
 import { JitsiCoWebsite } from "../../WebRtc/CoWebsite/JitsiCoWebsite";
-import {
-    audioManagerFileStore,
-    audioManagerVisibilityStore,
-    audioManagerVolumeStore,
-} from "../../Stores/AudioManagerStore";
+import { audioManagerFileStore, audioManagerVisibilityStore } from "../../Stores/AudioManagerStore";
 import { iframeListener } from "../../Api/IframeListener";
 import { Room } from "../../Connection/Room";
-import { LL } from "../../../i18n/i18n-svelte";
 import { inBbbStore, inJitsiStore, inOpenWebsite, isSpeakerStore, silentStore } from "../../Stores/MediaStore";
 import { currentLiveStreamingSpaceStore } from "../../Stores/MegaphoneStore";
-import { isMediaBreakpointUp } from "../../Utils/BreakpointsUtils";
+import { getTriggerHint } from "../../Utils/TriggerHint";
 import type { Area } from "../Entity/Area";
 import { popupStore } from "../../Stores/PopupStore";
 import PopUpJitsi from "../../Components/PopUp/PopUpJitsi.svelte";
@@ -81,9 +78,7 @@ export class GameMapPropertiesListener {
                 if (forceTrigger || openWebsiteTriggerValue === ON_ACTION_TRIGGER_BUTTON) {
                     let message = allProps.get(GameMapProperties.OPEN_WEBSITE_TRIGGER_MESSAGE);
                     if (message === undefined) {
-                        message = isMediaBreakpointUp("md")
-                            ? get(LL).trigger.mobile.newTab()
-                            : get(LL).trigger.newTab();
+                        message = getTriggerHint("newTab");
                     }
 
                     popupStore.addPopup(
@@ -258,9 +253,7 @@ export class GameMapPropertiesListener {
             if (forceTrigger || jitsiTriggerValue === ON_ACTION_TRIGGER_BUTTON) {
                 let message = allProps.get(GameMapProperties.JITSI_TRIGGER_MESSAGE);
                 if (message === undefined) {
-                    message = isMediaBreakpointUp("md")
-                        ? get(LL).trigger.mobile.jitsiRoom()
-                        : get(LL).trigger.jitsiRoom();
+                    message = getTriggerHint("jitsiRoom");
                 }
 
                 popupStore.addPopup(
@@ -381,32 +374,35 @@ export class GameMapPropertiesListener {
             }
         });
 
-        this.gameMapFrontWrapper.onPropertyChange(GameMapProperties.PLAY_AUDIO, (newValue, oldValue, allProps) => {
-            if (localUserStore.getBlockAudio()) {
-                if (newValue !== undefined) {
-                    audioManagerVisibilityStore.set("disabledBySettings");
-                } else {
-                    audioManagerVisibilityStore.set("hidden");
-                }
-                return;
-            }
-            const volume = allProps.get(GameMapProperties.AUDIO_VOLUME) as number | undefined;
-            const loop = allProps.get(GameMapProperties.AUDIO_LOOP) as boolean | undefined;
+        registerNativeSoundscapeProperties(this.gameMapFrontWrapper, this.scene.getMapUrl());
 
-            if (newValue !== undefined) {
-                audioManagerFileStore.playAudio(newValue, this.scene.getMapUrl(), volume, loop);
-                // FIXME: maybe we can switch to "visible" only when the sound actually starts playing?
-                audioManagerVisibilityStore.set("visible");
-            } else {
-                // Stop the audio if it is playing
-                if (get(audioManagerFileStore) != "") audioManagerVolumeStore.stopSound(true);
-                if (get(audioManagerFileStore) != "") audioManagerFileStore.unloadAudio();
-                audioManagerVisibilityStore.set("hidden");
+        this.gameMapFrontWrapper.onPropertyChange(GameMapProperties.AUDIO_VOLUME, (newValue, oldValue, allProps) => {
+            const url = allProps.get(GameMapProperties.PLAY_AUDIO);
+            if (
+                !localUserStore.getBlockAudio() &&
+                url !== undefined &&
+                get(audioManagerFileStore) === new URL(String(url), this.scene.getMapUrl()).toString()
+            ) {
+                audioManagerFileStore.setVolume(newValue as number | undefined);
+            }
+        });
+        this.gameMapFrontWrapper.onPropertyChange(GameMapProperties.AUDIO_LOOP, (newValue, oldValue, allProps) => {
+            const url = allProps.get(GameMapProperties.PLAY_AUDIO);
+            if (
+                !localUserStore.getBlockAudio() &&
+                url !== undefined &&
+                get(audioManagerFileStore) === new URL(String(url), this.scene.getMapUrl()).toString()
+            ) {
+                audioManagerFileStore.setLoop(newValue === true);
             }
         });
 
         // TODO: This legacy property should be removed at some point
         this.gameMapFrontWrapper.onPropertyChange(GameMapProperties.PLAY_AUDIO_LOOP, (newValue) => {
+            if (localUserStore.getBlockAudio()) {
+                audioManagerVisibilityStore.set(newValue === undefined ? "hidden" : "disabledBySettings");
+                return;
+            }
             if (newValue !== undefined) {
                 audioManagerFileStore.playAudio(newValue, this.scene.getMapUrl(), undefined, true);
                 // FIXME: maybe we can switch to "visible" only when the sound actually starts playing?
@@ -653,9 +649,7 @@ export class GameMapPropertiesListener {
 
         if (localUserStore.getForceCowebsiteTrigger() || websiteTriggerProperty === ON_ACTION_TRIGGER_BUTTON) {
             if (!websiteTriggerMessageProperty) {
-                websiteTriggerMessageProperty = isMediaBreakpointUp("md")
-                    ? get(LL).trigger.mobile.cowebsite()
-                    : get(LL).trigger.cowebsite();
+                websiteTriggerMessageProperty = getTriggerHint("cowebsite");
             }
 
             this.coWebsitesActionTriggerByPlace.set(this.getIdFromPlace(place), actionId);
@@ -737,7 +731,10 @@ export class GameMapPropertiesListener {
                 "handleSpeakerMegaphonePropertiesOnEnter => joinSpace => speakerZone.value : ",
                 speakerZone.value
             );
-            const space = await this.scene.broadcastService.joinSpace(speakerZone.value, abortSignal);
+            const space = await this.scene.broadcastService.joinSpace(
+                areaSpaceName(speakerZone.value, this.scene.roomUrl),
+                abortSignal
+            );
             currentLiveStreamingSpaceStore.set(space);
         }
     }
@@ -750,7 +747,7 @@ export class GameMapPropertiesListener {
         if (speakerZone && speakerZone.type === "string" && speakerZone.value !== undefined) {
             isSpeakerStore.set(false);
             currentLiveStreamingSpaceStore.set(undefined);
-            this.scene.broadcastService.leaveSpace(speakerZone.value).catch((e) => {
+            this.scene.broadcastService.leaveSpace(areaSpaceName(speakerZone.value, this.scene.roomUrl)).catch((e) => {
                 console.error("Error while leaving space", e);
                 Sentry.captureException(e);
             });
@@ -778,7 +775,10 @@ export class GameMapPropertiesListener {
                     "handleListenerMegaphonePropertiesOnEnter => joinSpace => speakerZoneName : ",
                     speakerZoneName
                 );
-                const space = await this.scene.broadcastService.joinSpace(speakerZoneName, abortSignal);
+                const space = await this.scene.broadcastService.joinSpace(
+                    areaSpaceName(speakerZoneName, this.scene.roomUrl),
+                    abortSignal
+                );
                 currentLiveStreamingSpaceStore.set(space);
             }
         }
@@ -798,10 +798,12 @@ export class GameMapPropertiesListener {
             );
             if (speakerZoneName) {
                 currentLiveStreamingSpaceStore.set(undefined);
-                this.scene.broadcastService.leaveSpace(speakerZoneName).catch((e) => {
-                    console.error("Error while leaving space", e);
-                    Sentry.captureException(e);
-                });
+                this.scene.broadcastService
+                    .leaveSpace(areaSpaceName(speakerZoneName, this.scene.roomUrl))
+                    .catch((e) => {
+                        console.error("Error while leaving space", e);
+                        Sentry.captureException(e);
+                    });
             }
         }
     }

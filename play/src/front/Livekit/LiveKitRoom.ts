@@ -1,7 +1,16 @@
 import { z } from "zod";
 import { MapStore } from "@workadventure/store-utils";
-import type { Participant, LocalParticipant } from "livekit-client";
-import { VideoPresets, Room, RoomEvent, LocalVideoTrack, LocalAudioTrack, Track } from "livekit-client";
+import type { Participant, LocalParticipant, LocalTrackPublication } from "livekit-client";
+import {
+    VideoPresets,
+    Room,
+    RoomEvent,
+    LocalVideoTrack,
+    LocalAudioTrack,
+    Track,
+    ConnectionState,
+    DisconnectReason,
+} from "livekit-client";
 import type { Readable, Unsubscriber } from "svelte/store";
 import { get } from "svelte/store";
 import * as Sentry from "@sentry/svelte";
@@ -37,6 +46,20 @@ export class LiveKitRoom implements LiveKitRoomInterface {
     private localCameraTrack: LocalVideoTrack | undefined;
     private localMicrophoneTrack: LocalAudioTrack | undefined;
     private unsubscribers: Unsubscriber[] = [];
+    // The camera and microphone stream the media tracks were last made from: published again if the media server
+    // only lets us send after the track was first offered (see handleParticipantPermissionsChanged).
+    private lastLocalStream: LocalStreamStoreValue | undefined;
+    private destroyed = false;
+    /**
+     * Called when the media server connection is lost for good (livekit-client gave up reconnecting): this room is
+     * already torn down, and a new one is needed.
+     */
+    public onConnectionLost: (() => void) | undefined;
+
+    // Bound once, so that destroy() removes the very listeners that were added
+    private readonly boundHandleParticipantConnected = this.handleParticipantConnected.bind(this);
+    private readonly boundHandleParticipantDisconnected = this.handleParticipantDisconnected.bind(this);
+    private readonly boundHandleActiveSpeakersChanged = this.handleActiveSpeakersChanged.bind(this);
 
     constructor(
         private serverUrl: string,
@@ -186,15 +209,30 @@ export class LiveKitRoom implements LiveKitRoomInterface {
         }
 
         if (!this.localCameraTrack) {
-            this.localCameraTrack = new LocalVideoTrack(videoTrack);
+            if (!this.isRoomConnected()) {
+                // Skipped on purpose: see isRoomConnected(). handleReconnected() publishes it.
+                return;
+            }
+            const cameraTrack = new LocalVideoTrack(videoTrack);
+            this.localCameraTrack = cameraTrack;
             this.localParticipant
-                .publishTrack(this.localCameraTrack, {
+                .publishTrack(cameraTrack, {
                     source: Track.Source.Camera,
                     videoCodec: "vp8",
                     simulcast: true,
                     videoSimulcastLayers: [VideoPresets.h1080, VideoPresets.h360, VideoPresets.h90],
                 })
                 .catch((err) => {
+                    // Not published: the next camera update must publish again, not replace a track that was
+                    // never published ("unable to replace an unpublished track").
+                    if (this.localCameraTrack === cameraTrack) {
+                        this.localCameraTrack = undefined;
+                    }
+                    // Not allowed to send yet: the permission arrives a moment after we start streaming, and
+                    // publishing is tried again then. Any other failure is reported.
+                    if (this.mayNotPublishYet()) {
+                        return;
+                    }
                     console.error("An error occurred while publishing camera track", err);
                     Sentry.captureException(err);
                 });
@@ -230,8 +268,8 @@ export class LiveKitRoom implements LiveKitRoomInterface {
         }
 
         // Are we trying to publish the same track again?
-        // Note: in practice, we never reach this point with the same track, because we get a new track
-        // each time we stop and restart the microphone.
+        // This happens when unmuting during a conversation: the muted microphone track is kept (see keepAudioWarm
+        // in MediaStore).
         if (this.localMicrophoneTrack && this.localMicrophoneTrack.mediaStreamTrack.id === audioTrack.id) {
             if (this.localMicrophoneTrack.isUpstreamPaused) {
                 this.localMicrophoneTrack.resumeUpstream().catch((err) => {
@@ -247,13 +285,25 @@ export class LiveKitRoom implements LiveKitRoomInterface {
         }
 
         if (!this.localMicrophoneTrack) {
-            this.localMicrophoneTrack = new LocalAudioTrack(audioTrack);
+            if (!this.isRoomConnected()) {
+                // Skipped on purpose: see isRoomConnected(). handleReconnected() publishes it.
+                return;
+            }
+            const microphoneTrack = new LocalAudioTrack(audioTrack);
+            this.localMicrophoneTrack = microphoneTrack;
 
             this.localParticipant
-                .publishTrack(this.localMicrophoneTrack, {
+                .publishTrack(microphoneTrack, {
                     source: Track.Source.Microphone,
                 })
                 .catch((err) => {
+                    // Not published: the next update must publish again (see handleCameraTrack)
+                    if (this.localMicrophoneTrack === microphoneTrack) {
+                        this.localMicrophoneTrack = undefined;
+                    }
+                    if (this.mayNotPublishYet()) {
+                        return;
+                    }
                     console.error("An error occurred while publishing microphone track", err);
                     Sentry.captureException(err);
                 });
@@ -272,97 +322,14 @@ export class LiveKitRoom implements LiveKitRoomInterface {
     private synchronizeMediaState() {
         this.unsubscribers.push(
             deriveSwitchStore(this._localStreamStore, this.space.isStreamingStore).subscribe((localStream) => {
+                this.lastLocalStream = localStream;
                 this.handleCameraTrack(localStream);
                 this.handleMicrophoneTrack(localStream);
             })
         );
 
         this.unsubscribers.push(
-            this.screenSharingLocalStreamStore.subscribe((stream) => {
-                const streamResult = stream.type === "success" ? stream.stream : undefined;
-
-                if (!this.localParticipant) {
-                    console.error("Local participant not found");
-                    Sentry.captureException(new Error("Local participant not found"));
-                    return;
-                }
-                if (this.localScreenSharingVideoTrack || this.localScreenSharingAudioTrack) {
-                    this.unpublishAllScreenShareTrack().catch((err) => {
-                        console.error("An error occurred while unpublishing all screen share track", err);
-                        Sentry.captureException(err);
-                    });
-                }
-
-                if (streamResult) {
-                    // Create a new video track instance
-                    const screenShareVideoTrack = streamResult.getVideoTracks()[0];
-                    const screenShareAudioTrack = streamResult.getAudioTracks()[0];
-
-                    if (!screenShareVideoTrack) {
-                        return;
-                    }
-
-                    if (!this.localScreenSharingVideoTrack) {
-                        this.localScreenSharingVideoTrack = new LocalVideoTrack(screenShareVideoTrack);
-
-                        // Publish video track
-                        this.localParticipant
-                            .publishTrack(this.localScreenSharingVideoTrack, {
-                                source: Track.Source.ScreenShare,
-                                videoCodec: "vp8",
-                                simulcast: true,
-                                videoSimulcastLayers: [VideoPresets.h1080, VideoPresets.h360, VideoPresets.h90],
-                            })
-                            .catch((err) => {
-                                console.error("An error occurred while publishing screen share video track", err);
-                                Sentry.captureException(err);
-                            });
-                    } else {
-                        // Replace existing video track
-                        this.localScreenSharingVideoTrack
-                            .replaceTrack(screenShareVideoTrack, {
-                                userProvidedTrack: true,
-                            })
-                            .catch((err) => {
-                                console.error("An error occurred while replacing screen share video track", err);
-                                Sentry.captureException(err);
-                            });
-                    }
-
-                    // Publish audio track if available
-                    if (screenShareAudioTrack) {
-                        if (!this.localScreenSharingAudioTrack) {
-                            this.localScreenSharingAudioTrack = new LocalAudioTrack(screenShareAudioTrack);
-
-                            this.localParticipant
-                                .publishTrack(this.localScreenSharingAudioTrack, {
-                                    source: Track.Source.ScreenShareAudio,
-                                })
-                                .catch((err) => {
-                                    console.error("An error occurred while publishing screen share audio track", err);
-                                    Sentry.captureException(err);
-                                });
-                        } else {
-                            this.localScreenSharingAudioTrack
-                                .replaceTrack(screenShareAudioTrack, {
-                                    userProvidedTrack: true,
-                                })
-                                .catch((err) => {
-                                    console.error("An error occurred while replacing screen share audio track", err);
-                                    Sentry.captureException(err);
-                                });
-                        }
-                    } else {
-                        // If there is no audio track in the new stream, unpublish the existing one
-                        if (this.localScreenSharingAudioTrack) {
-                            this.localScreenSharingAudioTrack.pauseUpstream().catch((err) => {
-                                console.error("An error occurred while unpublishing screen share audio track", err);
-                                Sentry.captureException(err);
-                            });
-                        }
-                    }
-                }
-            })
+            this.screenSharingLocalStreamStore.subscribe((stream) => this.handleScreenShareStream(stream))
         );
 
         this.unsubscribers.push(
@@ -376,6 +343,246 @@ export class LiveKitRoom implements LiveKitRoomInterface {
             })
         );
     }
+
+    private handleScreenShareStream(stream: LocalStreamStoreValue): void {
+        const streamResult = stream.type === "success" ? stream.stream : undefined;
+
+        if (!this.localParticipant) {
+            console.error("Local participant not found");
+            Sentry.captureException(new Error("Local participant not found"));
+            return;
+        }
+        // The same screen share again (the media server just let us send): it only needs to be sent again, not
+        // replaced. Replacing a track by itself does nothing, so pausing it first would leave it paused.
+        if (streamResult && this.isScreenShareAlreadyPublished(streamResult)) {
+            this.localScreenSharingVideoTrack?.resumeUpstream().catch((err) => {
+                console.error("An error occurred while resuming screen share video track", err);
+                Sentry.captureException(err);
+            });
+            this.localScreenSharingAudioTrack?.resumeUpstream().catch((err) => {
+                console.error("An error occurred while resuming screen share audio track", err);
+                Sentry.captureException(err);
+            });
+            return;
+        }
+        if (this.localScreenSharingVideoTrack || this.localScreenSharingAudioTrack) {
+            this.unpublishAllScreenShareTrack().catch((err) => {
+                console.error("An error occurred while unpublishing all screen share track", err);
+                Sentry.captureException(err);
+            });
+        }
+
+        if (streamResult) {
+            // Create a new video track instance
+            const screenShareVideoTrack = streamResult.getVideoTracks()[0];
+            const screenShareAudioTrack = streamResult.getAudioTracks()[0];
+
+            if (!screenShareVideoTrack) {
+                return;
+            }
+
+            if (!this.localScreenSharingVideoTrack) {
+                if (!this.isRoomConnected()) {
+                    // Skipped on purpose: see isRoomConnected(). handleReconnected() publishes it.
+                    return;
+                }
+                const screenShareVideoLocalTrack = new LocalVideoTrack(screenShareVideoTrack);
+                this.localScreenSharingVideoTrack = screenShareVideoLocalTrack;
+
+                // Publish video track
+                this.localParticipant
+                    .publishTrack(screenShareVideoLocalTrack, {
+                        source: Track.Source.ScreenShare,
+                        videoCodec: "vp8",
+                        simulcast: true,
+                        videoSimulcastLayers: [VideoPresets.h1080, VideoPresets.h360, VideoPresets.h90],
+                    })
+                    .catch((err) => {
+                        // Not published: the next update must publish again (see handleCameraTrack)
+                        if (this.localScreenSharingVideoTrack === screenShareVideoLocalTrack) {
+                            this.localScreenSharingVideoTrack = undefined;
+                        }
+                        if (this.mayNotPublishYet()) {
+                            return;
+                        }
+                        console.error("An error occurred while publishing screen share video track", err);
+                        Sentry.captureException(err);
+                    });
+            } else {
+                // Replace existing video track
+                this.localScreenSharingVideoTrack
+                    .replaceTrack(screenShareVideoTrack, {
+                        userProvidedTrack: true,
+                    })
+                    .catch((err) => {
+                        console.error("An error occurred while replacing screen share video track", err);
+                        Sentry.captureException(err);
+                    });
+            }
+
+            // Publish audio track if available
+            if (screenShareAudioTrack) {
+                if (!this.localScreenSharingAudioTrack) {
+                    const screenShareAudioLocalTrack = new LocalAudioTrack(screenShareAudioTrack);
+                    this.localScreenSharingAudioTrack = screenShareAudioLocalTrack;
+
+                    this.localParticipant
+                        .publishTrack(screenShareAudioLocalTrack, {
+                            source: Track.Source.ScreenShareAudio,
+                        })
+                        .catch((err) => {
+                            // Not published: the next update must publish again (see handleCameraTrack)
+                            if (this.localScreenSharingAudioTrack === screenShareAudioLocalTrack) {
+                                this.localScreenSharingAudioTrack = undefined;
+                            }
+                            if (this.mayNotPublishYet()) {
+                                return;
+                            }
+                            console.error("An error occurred while publishing screen share audio track", err);
+                            Sentry.captureException(err);
+                        });
+                } else {
+                    this.localScreenSharingAudioTrack
+                        .replaceTrack(screenShareAudioTrack, {
+                            userProvidedTrack: true,
+                        })
+                        .catch((err) => {
+                            console.error("An error occurred while replacing screen share audio track", err);
+                            Sentry.captureException(err);
+                        });
+                }
+            } else {
+                // If there is no audio track in the new stream, unpublish the existing one
+                if (this.localScreenSharingAudioTrack) {
+                    this.localScreenSharingAudioTrack.pauseUpstream().catch((err) => {
+                        console.error("An error occurred while unpublishing screen share audio track", err);
+                        Sentry.captureException(err);
+                    });
+                }
+            }
+        }
+    }
+
+    /** True when this stream carries the very tracks that are already published as our screen share. */
+    private isScreenShareAlreadyPublished(stream: MediaStream): boolean {
+        const videoTrack = stream.getVideoTracks()[0];
+        const audioTrack = stream.getAudioTracks()[0];
+        if (!videoTrack || this.localScreenSharingVideoTrack?.mediaStreamTrack.id !== videoTrack.id) {
+            return false;
+        }
+        return audioTrack?.id === this.localScreenSharingAudioTrack?.mediaStreamTrack.id;
+    }
+
+    /**
+     * True when the media server has not (yet) let us send. A token made while we only listened carries no permission
+     * to send; the server grants it once we start streaming, and publishing is then tried again.
+     */
+    private mayNotPublishYet(): boolean {
+        return this.localParticipant?.permissions?.canPublish !== true;
+    }
+
+    /**
+     * publishTrack() on a room whose signal connection is down waits 15 seconds for it to come back, then fails,
+     * and the camera / microphone stays unpublished. New publications are therefore skipped while the room is not
+     * connected, and made by handleReconnected() once it is back.
+     */
+    private isRoomConnected(): boolean {
+        return this.room?.state === ConnectionState.Connected;
+    }
+
+    private readonly handleReconnected = (): void => {
+        if (this.destroyed) {
+            return;
+        }
+        // Tracks already published are left as they are: only what was skipped meanwhile is published.
+        this.publishLocalTracksAgain();
+    };
+
+    /**
+     * After a network outage, livekit-client tries to resume the connection for about 50 seconds, then emits
+     * Disconnected (with no reason) and never reconnects that room. Left alone, the room stays subscribed to the
+     * camera / microphone / screen share with a dead engine: nobody hears or sees us again until we leave the space.
+     */
+    private readonly handleDisconnected = (reason?: DisconnectReason): void => {
+        if (
+            this.destroyed ||
+            this.abortSignal.aborted ||
+            reason === DisconnectReason.CLIENT_INITIATED ||
+            reason === DisconnectReason.ROOM_CLOSED ||
+            reason === DisconnectReason.ROOM_DELETED
+        ) {
+            // We left, or the back closed the room: the disconnect / switch messages handle the cleanup.
+            return;
+        }
+
+        const reasonLabel = reason === undefined ? "none" : DisconnectReason[reason] ?? String(reason);
+        Sentry.captureMessage(`Livekit room disconnected without a valid reason: ${reasonLabel}`, {
+            level: "warning",
+            tags: { reason: reasonLabel },
+        });
+
+        // Tear it down right away so the media stores stop feeding a dead engine.
+        this.destroy();
+
+        if (reason === DisconnectReason.DUPLICATE_IDENTITY || reason === DisconnectReason.PARTICIPANT_REMOVED) {
+            // Another connection took our place, or the back removed us on purpose: a new room would fight it.
+            return;
+        }
+
+        this.onConnectionLost?.();
+    };
+
+    private publishLocalTracksAgain(): void {
+        this.handleCameraTrack(this.lastLocalStream);
+        this.handleMicrophoneTrack(this.lastLocalStream);
+        this.handleScreenShareStream(get(this.screenSharingLocalStreamStore));
+    }
+
+    /**
+     * The media server changes who may send while people are in the room (a listener invited on stage, a speaker
+     * moved back to the audience).
+     * - Us, now allowed: what we could not send before is sent.
+     * - Somebody else, now allowed: they appear like anybody who was allowed when we joined.
+     */
+    private readonly handleParticipantPermissionsChanged = (
+        _previous: Participant["permissions"],
+        participant: Participant
+    ): void => {
+        if (this.abortSignal.aborted || participant.permissions?.canPublish !== true) {
+            return;
+        }
+        if (participant === this.localParticipant) {
+            this.publishLocalTracksAgain();
+            return;
+        }
+        if (!this.participants.has(participant.sid)) {
+            this.handleParticipantConnected(participant);
+        }
+    };
+
+    /**
+     * The media server took one of our tracks away (it does so when we may no longer send, for instance after being
+     * moved back to the audience). Such a track cannot be sent again, so it is forgotten here: when we may send
+     * again, the camera, microphone or screen share is published as a new track instead of reusing this one.
+     */
+    private readonly handleLocalTrackUnpublished = (publication: LocalTrackPublication): void => {
+        switch (publication.source) {
+            case Track.Source.Camera:
+                this.localCameraTrack = undefined;
+                break;
+            case Track.Source.Microphone:
+                this.localMicrophoneTrack = undefined;
+                break;
+            case Track.Source.ScreenShare:
+                this.localScreenSharingVideoTrack = undefined;
+                break;
+            case Track.Source.ScreenShareAudio:
+                this.localScreenSharingAudioTrack = undefined;
+                break;
+            default:
+                break;
+        }
+    };
 
     private async unpublishAllScreenShareTrack() {
         if (!this.localParticipant) {
@@ -451,9 +658,13 @@ export class LiveKitRoom implements LiveKitRoomInterface {
             return;
         }
 
-        this.room.on(RoomEvent.ParticipantConnected, this.handleParticipantConnected.bind(this));
-        this.room.on(RoomEvent.ParticipantDisconnected, this.handleParticipantDisconnected.bind(this));
-        this.room.on(RoomEvent.ActiveSpeakersChanged, this.handleActiveSpeakersChanged.bind(this));
+        this.room.on(RoomEvent.ParticipantConnected, this.boundHandleParticipantConnected);
+        this.room.on(RoomEvent.ParticipantDisconnected, this.boundHandleParticipantDisconnected);
+        this.room.on(RoomEvent.ActiveSpeakersChanged, this.boundHandleActiveSpeakersChanged);
+        this.room.on(RoomEvent.ParticipantPermissionsChanged, this.handleParticipantPermissionsChanged);
+        this.room.on(RoomEvent.LocalTrackUnpublished, this.handleLocalTrackUnpublished);
+        this.room.on(RoomEvent.Reconnected, this.handleReconnected);
+        this.room.on(RoomEvent.Disconnected, this.handleDisconnected);
     }
 
     private parseParticipantMetadata(participant: Participant): ParticipantMetadata {
@@ -578,6 +789,10 @@ export class LiveKitRoom implements LiveKitRoomInterface {
 
         // Let's reset the priority of the participant
         for (const videoStream of this.space.allVideoStreamStore.values()) {
+            // A live broadcast keeps its place at the front of the strip, speaking or not.
+            if (videoStream.isMegaphoneSpace) {
+                continue;
+            }
             const lastSpeakTimestamp = videoStream.lastSpeakTimestamp;
             let bonusPriority = 0;
             if (lastSpeakTimestamp) {
@@ -621,12 +836,21 @@ export class LiveKitRoom implements LiveKitRoomInterface {
     }
 
     public destroy() {
+        if (this.destroyed) {
+            // Called both from handleDisconnected() and from LivekitConnection
+            return;
+        }
+        this.destroyed = true;
         try {
             this.unsubscribers.forEach((unsubscriber) => unsubscriber());
             this.participants.forEach((participant) => participant.destroy());
-            this.room?.off(RoomEvent.ParticipantConnected, this.handleParticipantConnected.bind(this));
-            this.room?.off(RoomEvent.ParticipantDisconnected, this.handleParticipantDisconnected.bind(this));
-            this.room?.off(RoomEvent.ActiveSpeakersChanged, this.handleActiveSpeakersChanged.bind(this));
+            this.room?.off(RoomEvent.ParticipantConnected, this.boundHandleParticipantConnected);
+            this.room?.off(RoomEvent.ParticipantDisconnected, this.boundHandleParticipantDisconnected);
+            this.room?.off(RoomEvent.ActiveSpeakersChanged, this.boundHandleActiveSpeakersChanged);
+            this.room?.off(RoomEvent.ParticipantPermissionsChanged, this.handleParticipantPermissionsChanged);
+            this.room?.off(RoomEvent.LocalTrackUnpublished, this.handleLocalTrackUnpublished);
+            this.room?.off(RoomEvent.Reconnected, this.handleReconnected);
+            this.room?.off(RoomEvent.Disconnected, this.handleDisconnected);
 
             this.leaveRoom();
         } finally {

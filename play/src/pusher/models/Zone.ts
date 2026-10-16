@@ -108,11 +108,14 @@ export class UserDescriptor {
                 this.sayMessage = sayMessage;
             }
         }
+        // A player's front sometimes sends only texture ids, with empty urls (see emitPlayerTextures). Handing those
+        // to everyone who sees the player would draw the blank stand-in Woka, so they are ignored: the textures that
+        // came with the player's join, which have urls, stay.
         const newTextures = playerDetails.characterTextures;
-        if (newTextures.length > 0) {
+        if (newTextures.length > 0 && newTextures.every((texture) => texture.url !== "")) {
             this.characterTextures = newTextures;
         }
-        if (playerDetails.companionTexture !== undefined) {
+        if (playerDetails.companionTexture !== undefined && playerDetails.companionTexture.url !== "") {
             this.companionTexture = playerDetails.companionTexture;
         }
     }

@@ -51,8 +51,21 @@ export const navChat = createNavChatStore();
 
 export const chatSearchBarValue = writable<string>("");
 
+/**
+ * The chat footer's search field is open (on both tabs). Opened by the search button, or by anything that fills the
+ * search or asks for its focus (isChatSearchOpen); it stays open until Cancel. On a phone's chat sheet the sheet
+ * goes to full height while it is open. Per tab and in memory.
+ */
+export const chatSearchOpenStore = writable(false);
+
 /** Set to ask the chat panel to open its "Invite someone to join" card (from a map script, for example). */
 export const inviteCardRequestStore = writable(false);
+
+/**
+ * Height in px the chat sheet needs to show the "Invite someone to join" panel whole, 0 when the panel is closed. On a
+ * phone's chat sheet the sheet borrows it while the panel is open (chatSheetInviteHeight) and gives it back on close.
+ */
+export const chatInviteSheetHeightStore = writable(0);
 
 /** The "Find a group" page (the public Matrix directory), shown over the chat list when true. */
 export const findGroupOpenStore = writable(false);
@@ -69,6 +82,10 @@ export const peopleSectionsOpenStore = writable<{
     people: true,
     bots: true,
 });
+
+/** Which people the People tab lists: everyone (the default), only friends, or friend requests. Per tab, in memory. */
+export type PeopleView = "everyone" | "friends" | "requests";
+export const peopleViewStore = writable<PeopleView>("everyone");
 
 export function initializeChatVisibilitySubscription() {
     const unsubscriber = chatVisibilityStore.subscribe((visible) => {

@@ -30,6 +30,18 @@ vi.mock("../../../Stores/ChatStore.ts", () => {
     };
 });
 describe("MatrixSecurity", () => {
+    describe("restoreRoomsMessages", () => {
+        it("rejects, and does not stay unsettled, when the key backup cannot be read (every chat waits for it)", async () => {
+            const matrixSecurity = new MatrixSecurity();
+            matrixSecurity.updateMatrixClientStore({
+                getCrypto: vi.fn().mockReturnValue({}),
+                getKeyBackupVersion: vi.fn().mockRejectedValue(new Error("offline")),
+            } as unknown as MatrixClient);
+
+            await expect(matrixSecurity.restoreRoomsMessages()).rejects.toThrow("offline");
+        });
+    });
+
     describe("initClientCryptoConfiguration", () => {
         const basicMockClient = {
             isGuest: vi.fn().mockReturnValue(null),

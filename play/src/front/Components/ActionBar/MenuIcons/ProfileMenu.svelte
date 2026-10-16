@@ -46,10 +46,11 @@
     import ActionBarButton from "../ActionBarButton.svelte";
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import { warningMessageStore } from "../../../Stores/ErrorStore";
+    import { installApp } from "../../../Install/InstallWiring";
     import ContextualMenuItems from "./ContextualMenuItems.svelte";
     import HeaderMenuItem from "./HeaderMenuItem.svelte";
     import AdditionalMenuItems from "./AdditionalMenuItems.svelte";
-    import { IconBug, IconLogout } from "@wa-icons";
+    import { IconBug, IconDownload, IconLogout } from "@wa-icons";
 
     // The ActionBarButton component is displayed differently in the profile menu.
     // We use the context to decide how to render it.
@@ -228,6 +229,14 @@
         const form = await feedbackIntegrationInstance?.createForm();
         form?.appendToDom();
         form?.open();
+    }
+
+    const { canInstallStore } = installApp;
+
+    function installFromMenu() {
+        // The menu closes first: the browser's window, or the guide, opens over the game.
+        openedMenuStore.close("profileMenu");
+        void installApp.install("menu");
     }
 
     async function goToPersonalDesk() {
@@ -455,6 +464,14 @@
                 <ActionBarButton label={$LL.actionbar.editCamMic()} chevron on:click={openEnableCameraScene}>
                     <CamSettingsIcon />
                 </ActionBarButton>
+
+                {#if $canInstallStore}
+                    <!-- Hidden inside the installed app, and where the browser cannot install (Firefox on a computer). -->
+                    <ActionBarButton label={$LL.install.menuRow()} chevron on:click={installFromMenu}>
+                        <IconDownload font-size="22" />
+                        <span slot="end" class="u-menu-hint">{$LL.install.menuRowHint()}</span>
+                    </ActionBarButton>
+                {/if}
 
                 {#if SENTRY_DSN_FRONT != undefined && connectionManager.currentRoom?.isIssueReportEnabled}
                     <ActionBarButton

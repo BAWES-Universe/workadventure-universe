@@ -7,6 +7,7 @@ vi.mock("../../../Phaser/Game/GameManager", () => ({
     },
 }));
 vi.mock("../../../Connection/ConnectionManager", () => ({ connectionManager: { logout: vi.fn() } }));
+vi.mock("../../../Connection/LocalUserStore", () => ({ localUserStore: { setLastRoomUrl: vi.fn() } }));
 vi.mock("../../../../i18n/i18n-svelte", async () => {
     const { readable } = await import("svelte/store");
     const text = {

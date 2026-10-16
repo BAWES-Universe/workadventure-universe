@@ -421,14 +421,6 @@ class AnalyticsClient {
             .catch((e) => console.error(e));
     }
 
-    menuContact(): void {
-        this.posthogPromise
-            ?.then((posthog) => {
-                posthog.capture("wa_menu_contact");
-            })
-            .catch((e) => console.error(e));
-    }
-
     inviteCopyLink(): void {
         this.posthogPromise
             ?.then((posthog) => {
@@ -990,6 +982,29 @@ class AnalyticsClient {
             })
             .catch((e) => console.error(e));
     }
+    raiseHand(): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_raise_hand");
+            })
+            .catch((e) => console.error(e));
+    }
+    /** Why the hand went down: lowered by its owner, after they spoke, or by a moderator. */
+    lowerHand(reason: "self" | "spoke" | "moderator"): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_lower_hand", { reason });
+            })
+            .catch((e) => console.error(e));
+    }
+    /** "Keep it raised" after speaking with the hand up. */
+    keepHandRaised(): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_keep_hand_raised");
+            })
+            .catch((e) => console.error(e));
+    }
     /** The chat panel went from closed to open. Tab switches inside an open panel don't count. */
     chatPanelOpened(source: ChatOpenSource): void {
         this.posthogPromise
@@ -1052,6 +1067,30 @@ class AnalyticsClient {
         this.posthogPromise
             ?.then((posthog) => {
                 posthog.capture("wa_go_to_user");
+            })
+            .catch((e) => console.error(e));
+    }
+    /** The "Get the Universe app" card was shown. */
+    installCardShown(): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_install_card_shown");
+            })
+            .catch((e) => console.error(e));
+    }
+    /** The ✕ of the install card: it comes back later. */
+    installCardDismissed(): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_install_card_dismissed");
+            })
+            .catch((e) => console.error(e));
+    }
+    /** Universe was installed as an app: from the card or the menu, from the browser's own menu, or seen running as one. */
+    appInstalled(source: "card" | "menu" | "browser" | "app"): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_app_installed", { source });
             })
             .catch((e) => console.error(e));
     }

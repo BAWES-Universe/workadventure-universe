@@ -18,11 +18,17 @@ const warning: BaseTranslation = {
     reconnectingDetails: "Getting you back in",
     offlineTitle: "You're offline",
     offlineDetails: "We'll reconnect as soon as you're back online",
+    backIn: "Back in",
     newVersion: {
         title: "Universe just got an update",
         countdown: "Refreshing in {seconds:number}s to load the latest version",
         manual: "Refresh to load the latest version",
         refreshNow: "Refresh now",
+    },
+    membersOnly: {
+        back: "Back to {room}",
+        backToLastRoom: "Back to the last room",
+        startRoom: "Go to the start room",
     },
     waitingConnectionTitle: "Waiting for connection",
     waitingConnectionSubtitle: "Connecting",
@@ -34,8 +40,11 @@ const warning: BaseTranslation = {
         content: "Please allow popups for this website in your browser settings.",
         done: "Ok",
     },
+    cameraStalled:
+        "Your camera stopped sending images, so it was turned off. Another application may be using it. Turn it on again to retry.",
     backgroundProcessing: {
         failedToApply: "Failed to apply background effects",
+        notSupportedOnThisBrowser: "Background effects can't run on this device",
     },
     browserNotSupported: {
         title: "😢 Browser Not Supported",

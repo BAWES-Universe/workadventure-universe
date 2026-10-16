@@ -33,6 +33,10 @@ export interface CreateBotDto {
     behaviorConfig: BotData["behaviorConfig"];
     chatInstructions?: string;
     aiProviderRef?: string;
+    /** "Patience": how long the bot waits for a tool to answer, in seconds; null = the bot server's default */
+    toolTimeoutSeconds?: number | null;
+    /** The companion (pet) that walks with the bot: a companion texture id, or null for none */
+    companionTextureId?: string | null;
 }
 
 export interface UpdateBotDto extends Partial<CreateBotDto> {
@@ -92,6 +96,14 @@ export class BotApiService {
         }
         this.roomId = roomId;
         return roomIdChanged;
+    }
+
+    /**
+     * The bot server this service sends credentials to: null when the address was refused as unsafe. Anything that
+     * sends the player's tokens to the bot server must use this, never the raw setting.
+     */
+    getBotServerUrl(): string | null {
+        return this.botServerUrl;
     }
 
     /**
@@ -386,6 +398,21 @@ export class BotApiService {
     }
 
     /**
+     * How many things in Orbit wait for this player's answer (pending invitations for now), for the count on the
+     * Orbit button. Null when it can't be known: a guest, no Orbit, or Orbit didn't answer.
+     */
+    async getAttentionCount(): Promise<number | null> {
+        if (!this.adminUrl || !this.accessToken) return null;
+        try {
+            const response = await this.fetch("/api/me/attention");
+            const data = (await response.json()) as { count?: unknown };
+            return typeof data.count === "number" && Number.isFinite(data.count) ? Math.max(0, data.count) : null;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
      * List all bots for the current room
      */
     async listBots(roomId?: string): Promise<BotData[]> {
@@ -448,8 +475,37 @@ export class BotApiService {
     }
 
     /**
+     * The player's game token. The bot server checks it on the routes every player uses (room enter/leave, a bot's
+     * feelings), guests included.
+     */
+    getGameToken(): string | null {
+        return this.gameToken?.userAccessToken ?? null;
+    }
+
+    /**
+     * Headers for reading a bot's feelings about the local player: the game token, plus the Orbit session when the
+     * person is signed in (the bot server asks for it to know the feelings are about them).
+     */
+    async getEmotionsHeaders(): Promise<Record<string, string>> {
+        const headers: Record<string, string> = {};
+        const gameToken = this.getGameToken();
+        if (gameToken) {
+            headers["X-WA-Auth"] = gameToken;
+        }
+        try {
+            const sessionToken = await this.getAdminApiSessionToken();
+            if (sessionToken) {
+                headers.Authorization = `Bearer ${sessionToken}`;
+            }
+        } catch {
+            // No session (a guest): the game token alone is enough for them.
+        }
+        return headers;
+    }
+
+    /**
      * Call bot-server API (for spawning/despawning bots)
-     * Note: room-enter/leave endpoints don't require authentication
+     * Note: room-enter/leave only need the game token, so guests can spawn bots too
      * Uses Admin API session tokens (same as Admin API) for authenticated endpoints
      */
     private async fetchBotServer(endpoint: string, options: RequestInit = {}): Promise<Response> {
@@ -466,6 +522,10 @@ export class BotApiService {
             ...(options.headers as Record<string, string>),
         };
         const isPublicRoomLifecycle = endpoint === "/api/bots/room-enter" || endpoint === "/api/bots/room-leave";
+        const gameToken = this.getGameToken();
+        if (gameToken) {
+            headers["X-WA-Auth"] = gameToken;
+        }
 
         if (sessionToken) {
             headers.Authorization = `Bearer ${sessionToken}`;
@@ -646,6 +706,8 @@ export class BotApiService {
             position?: { x: number; y: number };
             behaviorConfig?: Record<string, unknown>;
             behaviorType?: string;
+            /** Put a route bot on stop 1 to start its route again (Done after editing the route). */
+            restartRoute?: boolean;
         }
     ): Promise<{ updated: boolean; reason?: string; changes?: string[] }> {
         try {

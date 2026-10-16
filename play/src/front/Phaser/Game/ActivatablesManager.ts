@@ -1,9 +1,7 @@
 import { MathUtils } from "@workadventure/math-utils";
-import { get } from "svelte/store";
 import { isOutlineable } from "../../Utils/CustomTypeGuards";
 import type { Player } from "../Player/Player";
-import LL from "../../../i18n/i18n-svelte";
-import { isMediaBreakpointUp } from "../../Utils/BreakpointsUtils";
+import { getTriggerHint } from "../../Utils/TriggerHint";
 import { RemotePlayer } from "../Entity/RemotePlayer";
 import { Entity } from "../ECS/Entity";
 import type { ActivatableInterface } from "./ActivatableInterface";
@@ -88,9 +86,7 @@ export class ActivatablesManager {
             this.selectedActivatableObjectByDistance?.characterCloseByOutline(this.outlineColor);
             if (this.selectedActivatableObjectByDistance instanceof RemotePlayer == false) {
                 // TODO: improve this to show multiple trigger messages
-                let triggerMessage: string = isMediaBreakpointUp("md")
-                    ? get(LL).trigger.mobile.object()
-                    : get(LL).trigger.object();
+                let triggerMessage: string = getTriggerHint("object");
                 if (this.selectedActivatableObjectByDistance instanceof Entity) {
                     for (const property of this.selectedActivatableObjectByDistance.getEntityData().properties) {
                         if (property.type === "entityDescriptionProperties") continue;

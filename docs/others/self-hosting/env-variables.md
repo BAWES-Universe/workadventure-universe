@@ -43,6 +43,7 @@ Environment variables for the Play service (frontend and pusher).
 | `OPENID_WOKA_NAME_POLICY` | No | Policy for avatar naming: 'user_input' or 'openid_nickname' |
 | `OPENID_TAGS_CLAIM` | No | JWT claim containing user tags/roles |
 | `DISABLE_ANONYMOUS` | No | If true, anonymous users cannot access the platform. Defaults to false |
+| `ENFORCE_AREA_SPACE_RIGHTS` | No | If true (the default), the server refuses to let a player join the meeting room or speaker zone of an area limited to roles the player does not have. Set to false to leave that check to the browser only. |
 | `PROMETHEUS_AUTHORIZATION_TOKEN` | No | The token to access the Prometheus metrics. |
 | `PROMETHEUS_PORT` | No | The port to access the Prometheus metrics. If not set, the default port is used AND an authorization token is required. |
 | `ENABLE_CHAT` | No | Enable/disable the chat feature. Defaults to true |
@@ -64,7 +65,7 @@ Environment variables for the Play service (frontend and pusher).
 | `TURN_USER` | No | Username for TURN server authentication |
 | `TURN_PASSWORD` | No | Password for TURN server authentication |
 | `TURN_STATIC_AUTH_SECRET` | No | The auth secret to generate TURN credentials on the fly (enabled by the --use-auth-secret and --auth-secret in Coturn). |
-| `TURN_CREDENTIALS_RENEWAL_TIME` | No | Time interval (in milliseconds) for renewing TURN server credentials. Defaults to 10800000 milliseconds (3 hours) |
+| `TURN_CREDENTIALS_RENEWAL_TIME` | No | Time interval (in milliseconds) for renewing TURN server credentials. Defaults to 3600000 milliseconds (1 hour). Must stay well below the 24 hours validity of the generated credentials. |
 | `JITSI_URL` | No | URL of the Jitsi Meet server for video conferencing |
 | `JITSI_PRIVATE_MODE` | No | If true, Jitsi rooms are private and require authentication. Defaults to false |
 | `MAX_USERNAME_LENGTH` | No | Maximum allowed length for usernames. Defaults to 32 (full names from sign-in fit) |
@@ -73,6 +74,7 @@ Environment variables for the Play service (frontend and pusher).
 | `NODE_ENV` | No | Node.js environment: 'development', 'production', or 'test' |
 | `CONTACT_URL` | No | URL for users to contact support or administrators |
 | `POSTHOG_API_KEY` | No | PostHog API key for analytics tracking |
+| `KLIPY_API_KEY` | No | Klipy API key. When set, the chat has a GIF button that searches Klipy. Players' browsers call Klipy with this key, so it is not a secret. |
 | `POSTHOG_URL` | Yes | PostHog server URL for analytics. Defaults to PostHog cloud |
 | `FALLBACK_LOCALE` | No | Default locale/language code when user's locale is not available (e.g., 'en', 'fr') |
 | `ENABLE_REPORT_ISSUES_MENU` | No | Enable the 'Report Issues' menu option. Defaults to false |
@@ -118,7 +120,6 @@ Environment variables for the Play service (frontend and pusher).
 | `MATRIX_DOMAIN` | No | Matrix server domain |
 | `EMBEDLY_KEY` | No | Embedly API key for rich link previews |
 | `GRPC_MAX_MESSAGE_SIZE` | Yes | The maximum size of a gRPC message. Defaults to 20 MB. |
-| `BACKGROUND_TRANSFORMER_ENGINE` | No | Virtual background transformer engine: 'tasks-vision' (GPU-accelerated, experimental) or 'selfie-segmentation' (CPU-based, stable). Currently defaults to 'selfie-segmentation'; 'tasks-vision' is intended as the future default once considered stable. |
 
 ## Back Service
 

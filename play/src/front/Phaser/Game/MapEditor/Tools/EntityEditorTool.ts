@@ -4,6 +4,7 @@ import type { EditMapCommandMessage } from "@workadventure/messages";
 import type { Unsubscriber } from "svelte/store";
 import { get } from "svelte/store";
 import { v4 as uuidv4 } from "uuid";
+import { screenSpace } from "../ScreenSpace";
 import {
     mapEditorCopiedEntityDataPropertiesStore,
     mapEditorDeleteCustomEntityEventStore,
@@ -11,8 +12,9 @@ import {
     mapEditorEntityModeStore,
     mapEditorEntityUploadEventStore,
     mapEditorModifyCustomEntityEventStore,
+    mapEditorSelectedEntityPrefabStore,
     mapEditorSelectedEntityStore,
-    mapEditorSelectedToolStore,
+    mapEditorVisibilityStore,
 } from "../../../../Stores/MapEditorStore";
 import { TexturesHelper } from "../../../Helpers/TexturesHelper";
 import { CopyEntityEventData, EntitiesManagerEvent } from "../../GameMap/EntitiesManager";
@@ -23,9 +25,9 @@ import { ModifyCustomEntityFrontCommand } from "../Commands/Entity/ModifyCustomE
 import { UpdateEntityFrontCommand } from "../Commands/Entity/UpdateEntityFrontCommand";
 import { UploadEntityFrontCommand } from "../Commands/Entity/UploadEntityFrontCommand";
 import type { MapEditorModeManager } from "../MapEditorModeManager";
-import { EditorToolName } from "../MapEditorModeManager";
 import { AreaPreview } from "../../../Components/MapEditor/AreaPreview";
-import { mapEditorActivated } from "../../../../Stores/MenuStore";
+import type { Entity } from "../../../ECS/Entity";
+import { editObjectsViewStore, editRecentObjectsStore, editTouchPreviewStore } from "../../../../Stores/EditModeStore";
 import { EntityRelatedEditorTool } from "./EntityRelatedEditorTool";
 
 export class EntityEditorTool extends EntityRelatedEditorTool {
@@ -62,14 +64,41 @@ export class EntityEditorTool extends EntityRelatedEditorTool {
 
     public activate(): void {
         super.activate();
+        // The areas stay out of sight here: the page draws them as faded frames with their names (AreaFrames, quiet).
         this.createAreaPreviews();
-        this.setAreaPreviewsVisibility(true);
         this.subscribeToEntityUpload();
         this.subscribeToModifyCustomEntityEventStore();
         this.subscribeToDeleteCustomEntityEventStore();
 
         this.bindEventHandlers();
         this.bindEntitiesManagerEventHandlers();
+    }
+
+    public update(time: number, dt: number): void {
+        super.update(time, dt);
+        // The "Tap again to place" pill follows the preview when the map is dragged underneath it.
+        if (this.touchPreviewWaiting) {
+            this.publishTouchPreview();
+        }
+        // With a finger, the preview stays hidden until a tap puts it somewhere: it has no pointer to follow.
+        if (
+            this.entityPrefabPreview?.visible &&
+            !this.touchPreviewWaiting &&
+            !this.touchDraggingPreview &&
+            this.scene.input.activePointer.wasTouch
+        ) {
+            this.entityPrefabPreview.setVisible(false);
+            this.scene.markDirty();
+        }
+    }
+
+    protected cleanPreview(): void {
+        super.cleanPreview();
+        this.touchPreviewWaiting = false;
+        this.touchDraggingPreview = false;
+        this.touchDownOnPreview = false;
+        this.mouseDownPlacing = false;
+        editTouchPreviewStore.set(undefined);
     }
 
     public clear(): void {
@@ -223,6 +252,7 @@ export class EntityEditorTool extends EntityRelatedEditorTool {
         this.pointerDownEventHandler = (pointer: Phaser.Input.Pointer, gameObjects: Phaser.GameObjects.GameObject[]) =>
             this.handlePointerDownEvent(pointer, gameObjects);
         this.scene.input.on(Phaser.Input.Events.POINTER_DOWN, this.pointerDownEventHandler);
+        this.scene.input.on(Phaser.Input.Events.POINTER_UP, this.pointerUpHandler);
 
         this.shiftKey?.on(Phaser.Input.Keyboard.Events.DOWN, () => {
             this.changePreviewTint();
@@ -311,14 +341,27 @@ export class EntityEditorTool extends EntityRelatedEditorTool {
             return;
         }
 
+        // With a finger, the preview waits where it was tapped and only follows a drag that started on it.
+        if (pointer.wasTouch) {
+            if (!this.touchDraggingPreview || !pointer.isDown) return;
+        }
+        this.movePreviewTo(pointer.worldX, pointer.worldY);
+        if (pointer.wasTouch) this.publishTouchPreview();
+    }
+
+    /** Move the preview to a world position, snapping to the tile grid when the object or Shift asks for it. */
+    private movePreviewTo(worldX: number, worldY: number): void {
+        if (!this.entityPrefabPreview || !this.entityPrefab) {
+            return;
+        }
         if (this.entityPrefab.collisionGrid || this.shiftKey?.isDown) {
             const offset = this.getEntityPrefabAlignWithGridOffset();
             this.entityPrefabPreview.setPosition(
-                Math.floor(pointer.worldX / 32) * 32 + offset.x,
-                Math.floor(pointer.worldY / 32) * 32 + offset.y
+                Math.floor(worldX / 32) * 32 + offset.x,
+                Math.floor(worldY / 32) * 32 + offset.y
             );
         } else {
-            this.entityPrefabPreview.setPosition(Math.floor(pointer.worldX), Math.floor(pointer.worldY));
+            this.entityPrefabPreview.setPosition(Math.floor(worldX), Math.floor(worldY));
         }
         this.entityPrefabPreview.setDepth(
             this.entityPrefabPreview.y +
@@ -327,6 +370,119 @@ export class EntityEditorTool extends EntityRelatedEditorTool {
         );
         this.changePreviewTint();
     }
+
+    // Placing with a finger: the first tap puts the preview down, a drag on it moves it, a tap on it (or Done) places it.
+    private touchPreviewWaiting = false;
+    private touchDraggingPreview = false;
+    private touchDownOnPreview = false;
+    /** A left press with a mouse while placing: the release places unless the press dragged the map. */
+    private mouseDownPlacing = false;
+
+    /** Where the waiting preview is on screen, for the "Tap again to place" pill. */
+    private publishTouchPreview(): void {
+        if (!this.entityPrefabPreview || !this.touchPreviewWaiting) {
+            editTouchPreviewStore.set(undefined);
+            return;
+        }
+        const topLeft = this.entityPrefabPreview.getTopLeft();
+        const next = screenSpace(this.scene).rect(
+            topLeft.x ?? 0,
+            topLeft.y ?? 0,
+            this.entityPrefabPreview.displayWidth,
+            this.entityPrefabPreview.displayHeight
+        );
+        const last = get(editTouchPreviewStore);
+        if (
+            last &&
+            last.x === next.x &&
+            last.y === next.y &&
+            last.width === next.width &&
+            last.height === next.height
+        ) {
+            return;
+        }
+        editTouchPreviewStore.set(next);
+    }
+
+    private isPointerOnPreview(pointer: Phaser.Input.Pointer): boolean {
+        if (!this.entityPrefabPreview || !this.touchPreviewWaiting) return false;
+        const bounds = this.entityPrefabPreview.getBounds();
+        // A finger is wider than the picture: a tap just beside a thin object still counts.
+        const margin = 12 / screenSpace(this.scene).scale;
+        return (
+            pointer.worldX >= bounds.left - margin &&
+            pointer.worldX <= bounds.right + margin &&
+            pointer.worldY >= bounds.top - margin &&
+            pointer.worldY <= bounds.bottom + margin
+        );
+    }
+
+    /** A finger on the waiting preview drags the preview, not the map. */
+    public canDragToLookAround(pointer: Phaser.Input.Pointer): boolean {
+        return !(pointer.wasTouch && this.isPointerOnPreview(pointer));
+    }
+
+    /** Stop placing: the "Done" of the placing bar. */
+    public stopPlacing(): void {
+        this.cleanPreview();
+    }
+
+    /** Put a copy of an object right beside it (the "Copy" action). */
+    public duplicateEntity(entity: Entity): void {
+        const data = entity.getEntityData();
+        const step = Math.max(32, Math.ceil(entity.displayWidth / 32) * 32);
+        this.copyEntity({
+            position: { x: data.x + step, y: data.y },
+            prefabRef: data.prefabRef,
+            properties: structuredClone(data.properties ?? []),
+            entityDimensions: { width: entity.width, height: entity.height },
+        });
+    }
+
+    /** Place the waiting preview where it is (the "Done" of the placing bar, or a tap on the preview). */
+    public placeWaitingPreview(): void {
+        if (!this.entityPrefabPreview || !this.entityPrefab || !this.touchPreviewWaiting) return;
+        this.placePreview();
+    }
+
+    private readonly pointerUpHandler = (pointer: Phaser.Input.Pointer) => {
+        if (!pointer.wasTouch) {
+            const placing = this.mouseDownPlacing;
+            this.mouseDownPlacing = false;
+            if (!placing || !this.entityPrefabPreview || !this.entityPrefab) return;
+            // A press that dragged (the map, or from an object on it) is not a click: nothing is placed.
+            if (this.mapEditorModeManager.isDraggingToLookAround || pointer.getDistance() > 8) return;
+            if (!this.canEntityBePlaced()) {
+                // Show why nothing was placed: the preview turns red where it cannot go.
+                this.changePreviewTint();
+                return;
+            }
+            this.placePreview();
+            return;
+        }
+        const wasDraggingPreview = this.touchDraggingPreview;
+        const downOnPreview = this.touchDownOnPreview;
+        this.touchDraggingPreview = false;
+        this.touchDownOnPreview = false;
+        if (!this.entityPrefabPreview || !this.entityPrefab) return;
+        const dragged = pointer.getDistance() > 8;
+        if (downOnPreview && !dragged) {
+            // A tap on the waiting preview places it.
+            this.placePreview();
+            return;
+        }
+        if (wasDraggingPreview) {
+            this.publishTouchPreview();
+            return;
+        }
+        if (dragged || this.mapEditorModeManager.isDraggingToLookAround) return;
+        // A tap on the empty map puts the preview there, or moves it there, without placing it.
+        if (pointer.downElement?.tagName !== "CANVAS") return;
+        this.movePreviewTo(pointer.worldX, pointer.worldY);
+        this.entityPrefabPreview.setVisible(true);
+        this.touchPreviewWaiting = true;
+        this.publishTouchPreview();
+    };
 
     protected changePreviewTint(): void {
         if (!this.entityPrefabPreview || !this.entityPrefab) {
@@ -356,18 +512,15 @@ export class EntityEditorTool extends EntityRelatedEditorTool {
             mapEditorSelectedEntityStore.set(undefined);
         }
 
+        // Nothing to place: a tap on the map, an area included, is left alone. The Objects tool only acts on objects.
         if (!this.entityPrefabPreview || !this.entityPrefab) {
-            // Check that the user can open map editor to edit an area
-            if (get(mapEditorActivated)) {
-                const areaEditorToolObjects = gameObjects.filter((obj) => obj instanceof AreaPreview);
-                if (areaEditorToolObjects.length > 0 && get(mapEditorSelectedToolStore) !== EditorToolName.AreaEditor) {
-                    this.scene.getMapEditorModeManager().equipTool(EditorToolName.AreaEditor);
-                }
-            }
             return;
         }
 
-        if (!this.canEntityBePlaced()) {
+        if (pointer.wasTouch) {
+            // Nothing is placed on the way down: see touchPointerUpHandler.
+            this.touchDownOnPreview = this.isPointerOnPreview(pointer);
+            this.touchDraggingPreview = this.touchDownOnPreview;
             return;
         }
 
@@ -375,14 +528,22 @@ export class EntityEditorTool extends EntityRelatedEditorTool {
             this.cleanPreview();
             return;
         }
-        let x = Math.floor(pointer.worldX);
-        let y = Math.floor(pointer.worldY);
+        // Nothing is placed on the way down with a mouse either: the same press may turn into a drag that pans the
+        // map, and an object must not be left where the drag started. The release places (pointerUpHandler).
+        this.mouseDownPlacing = pointer.leftButtonDown();
+    }
 
-        if (this.entityPrefab.collisionGrid || this.shiftKey?.isDown) {
-            const offsets = this.getEntityPrefabAlignWithGridOffset();
-            x = Math.floor(pointer.worldX / 32) * 32 + offsets.x;
-            y = Math.floor(pointer.worldY / 32) * 32 + offsets.y;
+    /** Create the object where the preview is, and keep placing. */
+    private placePreview(): void {
+        if (!this.entityPrefabPreview || !this.entityPrefab) {
+            return;
         }
+        if (!this.canEntityBePlaced()) {
+            this.changePreviewTint();
+            return;
+        }
+        const x = Math.floor(this.entityPrefabPreview.x);
+        const y = Math.floor(this.entityPrefabPreview.y);
 
         const entityId = uuidv4();
 
@@ -396,6 +557,9 @@ export class EntityEditorTool extends EntityRelatedEditorTool {
             name: properties?.find((p) => p.type === "openFile")?.name ?? undefined,
         };
 
+        editRecentObjectsStore.add(this.entityPrefab);
+        this.touchPreviewWaiting = false;
+        this.publishTouchPreview();
         this.mapEditorModeManager
             .executeCommand(
                 new CreateEntityFrontCommand(
@@ -410,12 +574,43 @@ export class EntityEditorTool extends EntityRelatedEditorTool {
             .then(() => {
                 const openEntity = this.entitiesManager.getEntities().get(entityId);
                 if (get(mapEditorEntityFileDroppedStore)) {
+                    // A dropped file is placed once: placing ends and the new object's settings open, with the file
+                    // in them, as the old editor did.
                     mapEditorEntityFileDroppedStore.set(false);
+                    mapEditorCopiedEntityDataPropertiesStore.set(undefined);
+                    mapEditorSelectedEntityPrefabStore.set(undefined);
                     mapEditorEntityModeStore.set("EDIT");
                     mapEditorSelectedEntityStore.set(openEntity);
+                    editObjectsViewStore.set("settings");
+                    mapEditorVisibilityStore.set(true);
                 }
             })
             .catch((e) => console.error(e));
+    }
+
+    /**
+     * A file dropped on the map in edit mode: its object goes where the file was dropped (window CSS pixels), once its
+     * picture is loaded. Where it cannot go, it stays in hand there, red, to be put down like any other object.
+     */
+    public async placeDroppedFileAt(clientX: number, clientY: number): Promise<void> {
+        const entityPrefab = this.entityPrefab;
+        if (!entityPrefab) {
+            return;
+        }
+        await TexturesHelper.loadEntityImage(this.scene, entityPrefab.imagePath, entityPrefab.imagePath);
+        if (this.entityPrefab !== entityPrefab) {
+            return;
+        }
+        if (!this.entityPrefabPreview) {
+            this.entityPrefabPreview = this.scene.add.image(0, 0, entityPrefab.imagePath);
+        }
+        const view = this.scene.cameras.main.worldView;
+        const canvas = this.scene.game.canvas.getBoundingClientRect();
+        const scale = view.width > 0 && canvas.width > 0 ? canvas.width / view.width : this.scene.cameras.main.zoom;
+        this.movePreviewTo(view.x + (clientX - canvas.left) / scale, view.y + (clientY - canvas.top) / scale);
+        this.entityPrefabPreview.setVisible(true);
+        this.scene.markDirty();
+        this.placePreview();
     }
 
     protected unbindEventHandlers(): void {
@@ -423,6 +618,10 @@ export class EntityEditorTool extends EntityRelatedEditorTool {
         this.shiftKey?.off(Phaser.Input.Keyboard.Events.DOWN);
         this.shiftKey?.off(Phaser.Input.Keyboard.Events.UP);
         this.scene.input.off(Phaser.Input.Events.POINTER_DOWN, this.pointerDownEventHandler);
+        this.scene.input.off(Phaser.Input.Events.POINTER_UP, this.pointerUpHandler);
+        this.touchPreviewWaiting = false;
+        this.touchDraggingPreview = false;
+        editTouchPreviewStore.set(undefined);
     }
 
     protected unbindEntitiesManagerEventHandlers(): void {

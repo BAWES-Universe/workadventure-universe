@@ -69,6 +69,7 @@ services:
       - FALLBACK_LOCALE
       - ENABLE_CHAT
       - ENABLE_CHAT_UPLOAD
+      - KLIPY_API_KEY
       - ENABLE_CHAT_ONLINE_LIST
       - ENABLE_CHAT_DISCONNECTED_LIST
       - UPLOADER_URL=/uploader
@@ -209,6 +210,8 @@ services:
     image: thecodingmachine/workadventure-uploader:${VERSION}
     environment:
       - UPLOADER_URL=https://${DOMAIN}/uploader
+      # Verifies the play session token sent with audio message uploads
+      - SECRET_KEY
       #AWS
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}

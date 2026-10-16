@@ -19,6 +19,8 @@ import { DeleteEntityFrontCommand } from "../Commands/Entity/DeleteEntityFrontCo
 import type { GameMapFrontWrapper } from "../../GameMap/GameMapFrontWrapper";
 import { TexturesHelper } from "../../../Helpers/TexturesHelper";
 import type { Entity } from "../../../ECS/Entity";
+import { showUndoToast } from "../../../../Stores/EditModeStore";
+import { LL } from "../../../../../i18n/i18n-svelte";
 import { MapEditorTool } from "./MapEditorTool";
 
 export abstract class EntityRelatedEditorTool extends MapEditorTool {
@@ -101,9 +103,14 @@ export abstract class EntityRelatedEditorTool extends MapEditorTool {
             }
             case "backspace":
             case "delete": {
-                get(mapEditorSelectedEntityStore)?.delete();
+                const entity = get(mapEditorSelectedEntityStore);
+                if (!entity) break;
+                const name =
+                    entity.getEntityData().name || entity.getPrefab().name || get(LL).mapEditor.edit.tools.objects();
+                entity.delete();
                 mapEditorSelectedEntityStore.set(undefined);
                 mapEditorEntityModeStore.set("ADD");
+                showUndoToast(get(LL).mapEditor.edit.deleteTool.removed({ name }));
                 break;
             }
         }

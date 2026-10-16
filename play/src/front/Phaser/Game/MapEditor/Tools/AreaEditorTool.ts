@@ -5,7 +5,21 @@ import { get } from "svelte/store";
 import { v4 as uuid } from "uuid";
 import { openModal } from "svelte-modals";
 import type { MapEditorAreaToolMode } from "../../../../Stores/MapEditorStore";
-import { mapEditorAreaModeStore, mapEditorSelectedAreaPreviewStore } from "../../../../Stores/MapEditorStore";
+import {
+    mapEditorAreaModeStore,
+    mapEditorSelectedAreaPreviewStore,
+    mapEditorVisibilityStore,
+} from "../../../../Stores/MapEditorStore";
+import {
+    editAreaDraftStore,
+    editAreaDrawArmedStore,
+    editAreaGhostStore,
+    editAreaSheetOpenStore,
+    editAreaJustDrawnStore,
+    editAreaSketchStore,
+    showUndoToast,
+} from "../../../../Stores/EditModeStore";
+import { mobileLayoutStore } from "../../../../Stores/MobileLayoutStore";
 import { AreaPreview, AreaPreviewEvent } from "../../../Components/MapEditor/AreaPreview";
 import { SizeAlteringSquare } from "../../../Components/MapEditor/SizeAlteringSquare";
 import type { CopyAreaEventData } from "../../GameMap/EntitiesManager";
@@ -37,11 +51,13 @@ export class AreaEditorTool extends MapEditorTool {
 
     private drawingNewArea: boolean;
     private drawinNewAreaStartPos?: { x: number; y: number };
-    private newAreaPreview!: Phaser.GameObjects.Graphics;
-    private areaOldPositionPreview!: Phaser.GameObjects.Graphics;
+    /** The glide of the map to an area picked in the list. */
+    private glide?: Phaser.Tweens.Tween;
 
     private draggingdArea: boolean;
     private wasAreaMoved: boolean;
+    /** Where the pressed area was: its dashed line shows once the pointer moves, so a tap shows none. */
+    private ghostOnMove?: { x: number; y: number; width: number; height: number };
 
     private shiftKey?: Phaser.Input.Keyboard.Key;
     private ctrlKey?: Phaser.Input.Keyboard.Key;
@@ -78,9 +94,6 @@ export class AreaEditorTool extends MapEditorTool {
 
         this.drawinNewAreaStartPos = undefined;
 
-        this.newAreaPreview = this.scene.add.graphics();
-        this.areaOldPositionPreview = this.scene.add.graphics();
-
         this.subscribeToStores();
     }
 
@@ -95,6 +108,14 @@ export class AreaEditorTool extends MapEditorTool {
         this.wasAreaMoved = false;
         this.drawinNewAreaStartPos = undefined;
         mapEditorSelectedAreaPreviewStore.set(undefined);
+        // A "New area" box left on the map goes with the tool: the next time the tool opens, it starts clean.
+        editAreaDraftStore.set(undefined);
+        editAreaDrawArmedStore.set(false);
+        editAreaSketchStore.set(undefined);
+        this.ghostOnMove = undefined;
+        editAreaGhostStore.set(undefined);
+        this.glide?.stop();
+        this.glide = undefined;
         this.setAreaPreviewsVisibility(false);
         this.scene.input.setDefaultCursor("auto");
         this.unbindEventHandlers();
@@ -177,7 +198,21 @@ export class AreaEditorTool extends MapEditorTool {
         }
     }
 
-    public handleDeleteAreaFrontCommandExecution(areaId: string, editorTool?: AreaEditorTool | TrashEditorTool): void {
+    /**
+     * Removes the area and shows the "removed · Undo" toast, but only once it really goes: a personal area with
+     * objects inside asks first, and a cancelled ask removes nothing and shows nothing.
+     */
+    /** @param onRemoved Runs once the area is really gone, so a removal that asks first and is cancelled leaves everything as it was. */
+    public handleDeleteAreaFrontCommandExecution(
+        areaId: string,
+        editorTool?: AreaEditorTool | TrashEditorTool,
+        onRemoved?: () => void
+    ): void {
+        const name = this.getAreaPreviewConfig(areaId)?.name || get(LL).mapEditor.edit.deleteTool.area();
+        const removed = () => {
+            showUndoToast(get(LL).mapEditor.edit.deleteTool.removed({ name }));
+            onRemoved?.();
+        };
         const isPersonalArea = this.getIsPersonalArea(areaId);
         const deleteAreaCommand = new DeleteAreaFrontCommand(
             this.scene.getGameMap(),
@@ -190,14 +225,20 @@ export class AreaEditorTool extends MapEditorTool {
             const entitiesInsideArea = this.getEntitiesInsideArea(areaId);
             if (entitiesInsideArea.size > 0) {
                 openModal(ActionPopupOnPersonalAreaWithEntities, {
-                    onDeleteEntities: () => this.executeDeletePersonalAreaWithEntities(areaId, deleteAreaCommand, true),
-                    onKeepEntities: () => this.executeDeletePersonalAreaWithEntities(areaId, deleteAreaCommand),
+                    onDeleteEntities: () =>
+                        this.executeDeletePersonalAreaWithEntities(areaId, deleteAreaCommand, removed, true),
+                    onKeepEntities: () =>
+                        this.executeDeletePersonalAreaWithEntities(areaId, deleteAreaCommand, removed),
                     onCancel: () => {},
                 });
                 return;
             }
         }
-        this.mapEditorModeManager.executeCommand(deleteAreaCommand).catch((error) => console.error(error));
+        // The toast follows the command, so a removal that did not go through shows no toast.
+        this.mapEditorModeManager
+            .executeCommand(deleteAreaCommand)
+            .then(removed)
+            .catch((error) => console.error(error));
     }
 
     private getIsPersonalArea(areaId: string): boolean {
@@ -293,6 +334,7 @@ export class AreaEditorTool extends MapEditorTool {
                 this.scene.input.setDefaultCursor("grab");
             }
         }
+        this.keepDotCursor(pointer);
     };
 
     private pointerOutEventHandler = (pointer: Phaser.Input.Pointer, gameObjects: Phaser.GameObjects.GameObject[]) => {
@@ -305,7 +347,20 @@ export class AreaEditorTool extends MapEditorTool {
                 this.scene.input.setDefaultCursor("crosshair");
             }
         }
+        this.keepDotCursor(pointer);
     };
+
+    /**
+     * The hand and the + above are set on the whole canvas, so entering or leaving an area under a dot used to replace
+     * the dot's resize arrow. A dot under the pointer keeps its arrow.
+     */
+    private keepDotCursor(pointer: Phaser.Input.Pointer): void {
+        const dot = this.scene.input
+            .hitTestPointer(pointer)
+            .find((object): object is SizeAlteringSquare => object instanceof SizeAlteringSquare && object.visible);
+        const cursor = dot?.input?.cursor;
+        if (typeof cursor === "string" && cursor !== "") this.scene.game.canvas.style.cursor = cursor;
+    }
 
     private handlePointerDownEvent(pointer: Phaser.Input.Pointer, gameObjects: Phaser.GameObjects.GameObject[]): void {
         const areaEditorToolObjects = this.getAreaEditorToolObjectsFromGameObjects(gameObjects);
@@ -314,10 +369,27 @@ export class AreaEditorTool extends MapEditorTool {
         }
         const mode = get(mapEditorAreaModeStore);
 
+        // After "New area", a drag draws the new area's box wherever it starts, over other areas too.
+        if (get(editAreaDrawArmedStore)) {
+            this.draggingdArea = false;
+            this.wasAreaMoved = false;
+            this.drawingNewArea = true;
+            this.drawinNewAreaStartPos = { x: pointer.worldX, y: pointer.worldY };
+            return;
+        }
+
         if (areaEditorToolObjects.length === 0) {
             this.draggingdArea = false;
             this.wasAreaMoved = false;
 
+            // A finger on the empty map pans it; it draws only after "New area".
+            if (pointer.wasTouch) {
+                return;
+            }
+            // With the box of a new area up, a mouse drag beside it does not start a second area.
+            if (get(editAreaDraftStore)) {
+                return;
+            }
             if (mode === "ADD") {
                 this.drawingNewArea = true;
                 this.drawinNewAreaStartPos = { x: pointer.worldX, y: pointer.worldY };
@@ -335,6 +407,7 @@ export class AreaEditorTool extends MapEditorTool {
         if (areaEditorToolObjects.length === 1) {
             if (this.isAreaPreview(areaEditorToolObjects[0])) {
                 this.changeAreaMode("EDIT", areaEditorToolObjects[0]);
+                this.tuckSheetOnPhone(areaEditorToolObjects[0]);
                 this.scene.input.setDefaultCursor("grabbing");
                 this.wasAreaMoved = true;
             }
@@ -353,6 +426,28 @@ export class AreaEditorTool extends MapEditorTool {
             else this.destroyTooltip();
         }
 
+        // The dashed line of where a moved or resized area was goes when the pointer lets go, wherever it is.
+        this.ghostOnMove = undefined;
+        editAreaGhostStore.set(undefined);
+
+        if (get(editAreaDrawArmedStore)) {
+            // A box drawn from inside an area also started a drag of that area: it ends here too.
+            this.draggingdArea = false;
+            if (this.drawinNewAreaStartPos) {
+                const drawingData = this.getNewAreaDrawingData(pointer);
+                // Too small to be a drag (a tap): still waiting for the drag that draws the box.
+                if (drawingData.width >= 10 && drawingData.height >= 10) {
+                    editAreaDraftStore.set(drawingData);
+                    editAreaDrawArmedStore.set(false);
+                }
+            }
+            this.drawinNewAreaStartPos = undefined;
+            this.drawingNewArea = false;
+            editAreaSketchStore.set(undefined);
+            this.scene.markDirty();
+            return;
+        }
+
         const mode = get(mapEditorAreaModeStore);
         const sortedAreaPreviews = gameObjects
             .filter((obj) => this.isAreaPreview(obj))
@@ -369,11 +464,20 @@ export class AreaEditorTool extends MapEditorTool {
                 }
                 this.drawinNewAreaStartPos = undefined;
                 this.drawingNewArea = false;
-                this.newAreaPreview.clear();
+                editAreaSketchStore.set(undefined);
                 this.scene.markDirty();
                 return;
             }
+            if (
+                pointer.wasTouch &&
+                (sortedAreaPreviews.length === 0 || this.mapEditorModeManager.isDraggingToLookAround)
+            ) {
+                // A tap on the empty map has nothing to select, and a pan selects nothing wherever it ends.
+                return;
+            }
             this.changeAreaMode("EDIT", sortedAreaPreviews[0]);
+            // Nothing under the pointer (a handle let go over the empty map): nothing was picked, the sheet stays.
+            if (sortedAreaPreviews.length > 0) this.tuckSheetOnPhone(sortedAreaPreviews[0]);
         } else if (mode === "EDIT") {
             const currentlySelectedArea = get(mapEditorSelectedAreaPreviewStore);
 
@@ -385,12 +489,19 @@ export class AreaEditorTool extends MapEditorTool {
                 }
             }
 
+            if (pointer.wasTouch && this.mapEditorModeManager.isDraggingToLookAround) {
+                // A finger pan keeps the selected area wherever it ends; a tap on the empty map still deselects it,
+                // as a click does, and a tap on an area selects that area.
+                return;
+            }
+
             if (currentlySelectedArea) {
                 if (!sortedAreaPreviews.includes(currentlySelectedArea)) {
                     if (document.activeElement instanceof HTMLElement) {
                         document.activeElement.blur();
                     }
                     mapEditorSelectedAreaPreviewStore.set(sortedAreaPreviews[0]);
+                    this.tuckSheetOnPhone(sortedAreaPreviews[0]);
                 } else {
                     if (this.wasAreaMoved) {
                         this.draggingdArea = false;
@@ -418,27 +529,35 @@ export class AreaEditorTool extends MapEditorTool {
     }
 
     private handlePointerMoveEvent(pointer: Phaser.Input.Pointer): void {
+        this.keepDotCursor(pointer);
         if (this.drawingNewArea && this.drawinNewAreaStartPos) {
             this.drawNewArea(pointer);
         }
         if (this.draggingdArea) {
             this.wasAreaMoved = true;
+            if (this.ghostOnMove) {
+                editAreaGhostStore.set(this.ghostOnMove);
+                this.ghostOnMove = undefined;
+            }
         }
     }
 
+    /** The box being drawn is drawn by the page, as the frame every area has (AreaFrames.svelte). */
     private drawNewArea(pointer: Phaser.Input.Pointer): void {
-        const drawingData = this.getNewAreaDrawingData(pointer);
-        this.newAreaPreview.clear();
-        this.newAreaPreview.fillStyle(0x0000ff, 0.5);
-        this.newAreaPreview.fillRect(drawingData.x, drawingData.y, drawingData.width, drawingData.height);
+        editAreaSketchStore.set(this.getNewAreaDrawingData(pointer));
         this.scene.markDirty();
     }
 
-    private drawAreaOldPositionPreview(x: number, y: number, width: number, height: number): void {
-        this.areaOldPositionPreview.clear();
-        this.areaOldPositionPreview.fillStyle(0x0000ff, 0.25);
-        this.areaOldPositionPreview.fillRect(x, y, width, height);
-        this.scene.markDirty();
+    /**
+     * On a phone, an area picked on the map puts the Areas sheet away, so the area and its dots are in view; a tap that
+     * picks nothing (beside the area) brings the sheet back.
+     */
+    private tuckSheetOnPhone(picked: AreaPreview | undefined): void {
+        if (!get(mobileLayoutStore)) return;
+        // Put away, the sheet also goes back to its small size, as when an area is picked from its list: otherwise
+        // it comes back open the next time a tap picks nothing.
+        if (picked !== undefined) editAreaSheetOpenStore.set(false);
+        mapEditorVisibilityStore.set(picked === undefined);
     }
 
     private getNewAreaDrawingData(pointer: Phaser.Input.Pointer): {
@@ -497,6 +616,7 @@ export class AreaEditorTool extends MapEditorTool {
         this.deleteAreaPreview(id);
         this.scene.markDirty();
         mapEditorSelectedAreaPreviewStore.set(undefined);
+        this.tuckSheetOnPhone(undefined);
     }
 
     public handleAreaCreation(config: AreaData, localCommand: boolean): void {
@@ -525,7 +645,11 @@ export class AreaEditorTool extends MapEditorTool {
 
         if (area) {
             area.updatePreview(newConfig);
-            mapEditorSelectedAreaPreviewStore.set(area);
+            // The panel re-reads the selected area; a change to another area (a save that lands after you moved on,
+            // or someone else's edit) must not open that area instead.
+            if (get(mapEditorSelectedAreaPreviewStore) === area) {
+                mapEditorSelectedAreaPreviewStore.set(area);
+            }
         }
 
         this.scene.markDirty();
@@ -552,6 +676,7 @@ export class AreaEditorTool extends MapEditorTool {
 
     private createAreaPreview(areaConfig: AreaData): AreaPreview {
         const areaPreview = new AreaPreview(this.scene, structuredClone(areaConfig), true, this.shiftKey, this.ctrlKey);
+        areaPreview.useMapFrame();
         this.bindAreaPreviewEventHandlers(areaPreview);
         this.areaPreviews.push(areaPreview);
         return areaPreview;
@@ -582,8 +707,90 @@ export class AreaEditorTool extends MapEditorTool {
             .catch((e) => console.error(e));
     }
 
+    /** Open an area's settings from the list in the panel. */
+    public selectArea(id: string): void {
+        const preview = this.getAreaPreview(id);
+        if (!preview) return;
+        this.changeAreaMode("EDIT", preview);
+    }
+
+    /** Back to the list: no area selected. */
+    public deselectArea(): void {
+        // "New area" comes through here: a glide to an area picked a moment ago stops, so the map holds still to draw on.
+        this.glide?.stop();
+        this.glide = undefined;
+        this.changeAreaMode("ADD");
+    }
+
+    /** Create an area from the box drawn in the "New area" overlay (phones and computers alike). */
+    public createNewAreaFromDraft(draft: { x: number; y: number; width: number; height: number }): void {
+        if (draft.width < 10 || draft.height < 10) return;
+        this.createNewArea(Math.round(draft.x), Math.round(draft.y), Math.round(draft.width), Math.round(draft.height));
+    }
+
+    /** Dragging the empty map moves around unless it is drawing a new area. */
+    public canDragToLookAround(pointer: Phaser.Input.Pointer): boolean {
+        return pointer.wasTouch && !this.drawingNewArea && !get(editAreaDrawArmedStore);
+    }
+
+    /** The areas of the room as the tool shows them, for the page that draws their frames. */
+    public getAreaPreviews(): readonly AreaPreview[] {
+        return this.active ? this.areaPreviews : [];
+    }
+
+    /**
+     * An area picked in the list: the map glides to it when it is not already in full view, and it is picked as a
+     * tap on it would. The free part of the screen is given by the caller, in screen pixels of the canvas.
+     */
+    public glideToArea(id: string, free?: { left: number; top: number; right: number; bottom: number }): void {
+        const preview = this.getAreaPreview(id);
+        if (!preview) return;
+        // A glide still running goes to the area picked before this one: it stops first, whatever happens next.
+        this.glide?.stop();
+        // Picking an area from the list ends "New area", or the next drag on it would also draw a box.
+        editAreaDrawArmedStore.set(false);
+        this.changeAreaMode("EDIT", preview);
+        if (get(mobileLayoutStore)) mapEditorVisibilityStore.set(false);
+        const camera = this.scene.cameras.main;
+        const view = camera.worldView;
+        if (view.width === 0) return;
+        const scale = this.scene.game.canvas.getBoundingClientRect().width / view.width;
+        const data = preview.getAreaData();
+        const box = free ?? { left: 0, top: 0, right: view.width * scale, bottom: view.height * scale };
+        const inView =
+            data.x >= view.x + box.left / scale &&
+            data.y >= view.y + box.top / scale &&
+            data.x + data.width <= view.x + box.right / scale &&
+            data.y + data.height <= view.y + box.bottom / scale;
+        if (inView) return;
+        // From where the middle of the free part is now, to the middle of the area.
+        const fromX = view.x + (box.left + box.right) / 2 / scale;
+        const fromY = view.y + (box.top + box.bottom) / 2 / scale;
+        const dx = data.x + data.width / 2 - fromX;
+        const dy = data.y + data.height / 2 - fromY;
+        const cameraManager = this.scene.getCameraManager();
+        let done = 0;
+        this.glide = this.scene.tweens.addCounter({
+            from: 0,
+            to: 1,
+            duration: 450,
+            ease: "Sine.easeOut",
+            onUpdate: (tween) => {
+                const progress = tween.getValue() ?? 0;
+                // The same moves as a drag, so the camera lets go of the player the way a drag makes it.
+                cameraManager.dragCamera(dx * (progress - done), dy * (progress - done));
+                done = progress;
+            },
+        });
+    }
+
     private createNewArea(x: number, y: number, width: number, height: number): void {
         const id = uuid();
+        // Its page opens with the cursor in the name field. Only for a moment: a page opened on it later is just a page.
+        editAreaJustDrawnStore.set(id);
+        setTimeout(() => {
+            if (get(editAreaJustDrawnStore) === id) editAreaJustDrawnStore.set(undefined);
+        }, 1500);
         this.mapEditorModeManager
             .executeCommand(
                 new CreateAreaFrontCommand(
@@ -592,7 +799,10 @@ export class AreaEditorTool extends MapEditorTool {
                         id,
                         name: "",
                         visible: true,
-                        properties: [],
+                        // The description comes with the area, so that selecting it adds nothing to the undo history.
+                        properties: [
+                            { id: uuid(), type: "areaDescriptionProperties", description: "", searchable: false },
+                        ],
                         width,
                         height,
                         x,
@@ -632,12 +842,16 @@ export class AreaEditorTool extends MapEditorTool {
     private executeDeletePersonalAreaWithEntities(
         areaId: string,
         deleteAreaCommand: DeleteAreaFrontCommand,
+        onRemoved: () => void,
         removeEntities?: boolean
     ): void {
         if (removeEntities) {
             this.removeAreaEntities(areaId);
         }
-        this.mapEditorModeManager.executeCommand(deleteAreaCommand).catch((error) => console.error(error));
+        this.mapEditorModeManager
+            .executeCommand(deleteAreaCommand)
+            .then(onRemoved)
+            .catch((error) => console.error(error));
     }
 
     private executeUpdateAreaFrontCommand(
@@ -677,13 +891,17 @@ export class AreaEditorTool extends MapEditorTool {
     private bindAreaPreviewEventHandlers(areaPreview: AreaPreview): void {
         areaPreview.on(AreaPreviewEvent.DragStart, () => {
             this.draggingdArea = true;
-            const areaData = areaPreview.getAreaData();
-            this.drawAreaOldPositionPreview(areaData.x, areaData.y, areaData.width, areaData.height);
+            // Only the picked area moves or resizes: its old place shows as a faint dashed line meanwhile.
+            if (areaPreview.isSelected()) {
+                const { x, y, width, height } = areaPreview.getAreaData();
+                this.ghostOnMove = { x, y, width, height };
+            }
             areaPreview.destroyText();
         });
         areaPreview.on(AreaPreviewEvent.Released, () => {
             this.draggingdArea = false;
-            this.areaOldPositionPreview.clear();
+            this.ghostOnMove = undefined;
+            editAreaGhostStore.set(undefined);
         });
         areaPreview.on(AreaPreviewEvent.Copied, (data: CopyAreaEventData) => {
             this.copyArea(data);
@@ -704,7 +922,8 @@ export class AreaEditorTool extends MapEditorTool {
         });
         areaPreview.on(AreaPreviewEvent.UpdateVisibility, (visibility: boolean) => {
             if (!visibility) {
-                this.areaOldPositionPreview.clear();
+                this.ghostOnMove = undefined;
+                editAreaGhostStore.set(undefined);
                 areaPreview.destroyText();
             }
         });

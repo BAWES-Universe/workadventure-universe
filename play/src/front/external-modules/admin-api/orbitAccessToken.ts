@@ -49,10 +49,22 @@ function accessTokenExpiry(accessToken: string): number | null {
 const ACCESS_TOKEN_MARGIN_MS = 60_000;
 
 /**
+ * How long a /me renewal may take. Without a limit a play server that accepts the request and never answers would
+ * hold up the room join for good, since the join waits for the renewal; at the limit it counts as a failed renewal.
+ */
+const RENEWAL_TIMEOUT_MS = 10_000;
+
+/**
  * The /me renewal in flight, shared by every request made with the same game token (Orbit's frame and the bot
  * editor alike). A forced request doesn't join an unforced one: that one may hand back the very token just refused.
  */
-let renewal: { gameToken: string; force: boolean; promise: Promise<string | null> } | null = null;
+let renewal: {
+    gameToken: string;
+    force: boolean;
+    promise: Promise<string | null>;
+    /** Every caller waiting on this renewal: its answer is kept while any one of them still wants it. */
+    wanted: Set<() => boolean>;
+} | null = null;
 
 /** Forgets the renewal in flight, so a late answer isn't shared with the next room's requests. */
 export function forgetOrbitAccessTokenRenewal(): void {
@@ -73,21 +85,30 @@ async function renewGameToken(
 ): Promise<string | null> {
     try {
         const response = await axiosToPusher.get("me", {
+            timeout: RENEWAL_TIMEOUT_MS,
             // `refresh` makes the pusher renew an access token the provider still accepts but Orbit refused.
             params: { token: gameToken, playUri: holder.roomId, ...(force ? { refresh: "true" } : {}) },
         });
         const parsed = MeResponse.parse(response.data);
-        if (parsed.status !== "ok" || !("authToken" in parsed) || typeof parsed.authToken !== "string") return null;
-        const renewed = getAccessTokenFromJwt(parsed.authToken);
+        // A room that refuses this player (not a member) still sends the renewed token along: keep it, since the
+        // refresh token it replaces may no longer work.
+        const renewedGameToken =
+            parsed.status === "ok" ? parsed.authToken : (response.data as { authToken?: unknown } | null)?.authToken;
+        if (typeof renewedGameToken !== "string") return null;
+        const renewed = getAccessTokenFromJwt(renewedGameToken);
         if (!renewed) return null;
-        const stillCurrent =
-            isCurrent() && holder.userAccessToken === gameToken && localUserStore.getAuthToken() !== null;
+        const stored = localUserStore.getAuthToken();
+        const stillCurrent = isCurrent() && holder.userAccessToken === gameToken && stored !== null;
         if (!stillCurrent) return null;
+        // The store is shared by every tab: another tab may have saved a newer token while this answer was on its way.
+        // Its token may already have replaced the refresh token this answer carries, so this one is not kept. Every
+        // caller then moves on to the stored token (see freshOrbitAccessToken).
+        if (stored !== gameToken) return null;
         // The rest of the game uses the renewed token from here on too. `stillCurrent` just checked, synchronously,
         // that the holder still has the token this renewal started from.
         // eslint-disable-next-line require-atomic-updates
-        holder.userAccessToken = parsed.authToken;
-        localUserStore.setAuthToken(parsed.authToken);
+        holder.userAccessToken = renewedGameToken;
+        localUserStore.setAuthToken(renewedGameToken);
         return renewed;
     } catch (error) {
         console.warn("Orbit sign-in: could not renew the access token", error);
@@ -119,15 +140,50 @@ export async function freshOrbitAccessToken(
     if (!force && !stale) return current;
 
     let inFlight = renewal?.gameToken === gameToken && (renewal.force || !force) ? renewal : null;
-    if (!inFlight) {
-        const promise: Promise<string | null> = renewGameToken(holder, gameToken, force, isCurrent).finally(() => {
+    if (inFlight) {
+        // Whoever started it may be gone by the time it answers (the player moved to another room): this caller
+        // still wants the answer.
+        inFlight.wanted.add(isCurrent);
+    } else {
+        const wanted = new Set([isCurrent]);
+        const promise: Promise<string | null> = renewGameToken(holder, gameToken, force, () =>
+            [...wanted].some((stillWanted) => stillWanted())
+        ).finally(() => {
             if (renewal?.promise === promise) renewal = null;
         });
-        inFlight = renewal = { gameToken, force, promise };
+        inFlight = renewal = { gameToken, force, promise, wanted };
     }
     const renewed = await inFlight.promise;
     // Torn down or signed out meanwhile: nothing to hand out.
     if (!isCurrent() || localUserStore.getAuthToken() === null) return null;
-    // Couldn't renew (or another caller's renewal got there first): answer with the newest token there is.
+    // Couldn't renew, or the answer was not kept (another caller's renewal got there first, or another tab saved a
+    // newer token meanwhile): answer with the newest token there is, and let this holder start from it next time. This
+    // runs for every caller sharing the renewal, each with its own holder.
+    if (renewed === null) {
+        const stored = localUserStore.getAuthToken();
+        // eslint-disable-next-line require-atomic-updates -- the store is read just now; nothing else is awaited
+        if (stored) holder.userAccessToken = stored;
+    }
     return renewed ?? getAccessTokenFromJwt(holder.userAccessToken);
+}
+
+/**
+ * The game's token to join a room with: the newest one there is (Orbit's frame and the bot editor renew the stored
+ * one), renewed first when the OIDC access token inside has run out. Without that, a room opened an hour after page
+ * load joins with a token Orbit can't check, and Orbit treats its owner as a stranger.
+ */
+export async function gameTokenToJoinWith(
+    gameToken: string,
+    roomId: string,
+    isCurrent: () => boolean
+): Promise<string> {
+    const holder: GameTokenHolder = { userAccessToken: gameToken, roomId };
+    try {
+        await freshOrbitAccessToken(holder, false, isCurrent);
+    } catch (error) {
+        console.warn("Could not renew the sign-in token before joining a room", error);
+    }
+    // A renewal another caller started (Orbit's frame) and this one shared saved its result to the store, not to this
+    // holder: the store has the newest token.
+    return localUserStore.getAuthToken() ?? holder.userAccessToken ?? gameToken;
 }

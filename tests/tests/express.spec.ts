@@ -16,7 +16,7 @@ test.describe("Express button @nowebkit", () => {
         await using alicePage = await getPage(browser, "Alice", publicTestMapUrl("tests/E2E/empty.json", "express"));
         await using bobPage = await getPage(browser, "Bob", publicTestMapUrl("tests/E2E/empty.json", "express"));
 
-        await expect(alicePage.getByText("Bob", { exact: true })).toBeVisible({ timeout: 20_000 });
+        await expect(alicePage.locator("#cameras-container").getByText("Bob", { exact: true })).toBeVisible({ timeout: 20_000 });
         await Map.teleportToPosition(alicePage, 15 * 12, 15 * 12);
 
         await alicePage.getByTestId("express-button").click();

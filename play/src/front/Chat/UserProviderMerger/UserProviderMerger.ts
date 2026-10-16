@@ -1,6 +1,7 @@
 import { AvailabilityStatus } from "@workadventure/messages";
 import type { Readable } from "svelte/store";
 import { derived, writable } from "svelte/store";
+import type { PictureStore } from "../../Stores/PictureStore";
 import type { UserProviderInterface } from "../UserProvider/UserProviderInterface";
 import type { AnyKindOfUser, ChatId, ChatUser, PartialAnyKindOfUser, UserUuid } from "../Connection/ChatConnection";
 
@@ -81,6 +82,13 @@ export class UserProviderMerger {
     setFilter(searchText: string): Promise<void[]> {
         return Promise.all(this.userProviders.map((userProvider) => userProvider.setFilter(searchText)));
     }
+
+    /** Lets the providers that keep a list read it again when it has become old (see `refreshIfStale`). */
+    async refreshStaleProviders(): Promise<void> {
+        await Promise.all(
+            this.userProviders.map((userProvider) => userProvider.refreshIfStale?.() ?? Promise.resolve())
+        );
+    }
 }
 
 /**
@@ -117,6 +125,9 @@ function mergeEntries(chatUserList: PartialAnyKindOfUser[]): AnyKindOfUser {
             chatId: user.chatId || acc.chatId,
             uuid: user.uuid || acc.uuid,
             username: user.username || acc.username,
+            // The name in Universe, from the world (live) or the back office, never the chat account's: later providers win.
+            gameName: user.gameName || acc.gameName,
+            storedWoka: user.storedWoka || acc.storedWoka,
             availabilityStatus: user.availabilityStatus || acc.availabilityStatus,
             pictureStore: user.pictureStore || acc.pictureStore,
             roomName: user.roomName || acc.roomName,
@@ -140,9 +151,18 @@ function mergeEntries(chatUserList: PartialAnyKindOfUser[]): AnyKindOfUser {
         spaceUserId: undefined,
     };
 
+    // Someone in the world now shows their live avatar. Someone who is away shows their saved Woka, which comes before
+    // the picture their chat account carries, so a person looks the same in every list.
+    const hasLiveAvatar = chatUserList.some((user) => user.spaceUserId !== undefined && user.pictureStore);
+    const storedWoka = chatUserList.reduce<PictureStore | undefined>(
+        (found, user) => user.storedWoka ?? found,
+        undefined
+    );
+
     const fullUser = {
         ...defaultUser,
         ...mergedUser,
+        pictureStore: (hasLiveAvatar ? undefined : storedWoka) ?? mergedUser.pictureStore ?? defaultUser.pictureStore,
         username: mergedUser.username ?? "",
         availabilityStatus: mergedUser.availabilityStatus ?? writable(AvailabilityStatus.UNCHANGED),
     };

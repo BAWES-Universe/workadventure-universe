@@ -9,6 +9,8 @@ const video: BaseTranslation = {
     exit_fullscreen: "Exit fullscreen",
     click_to_unmute: "Click to unmute",
     click_and_drag_to_resize: "Click and drag to resize",
+    showEveryone: "Show everyone ({count} more)",
+    more: "more",
 };
 
 export default video;

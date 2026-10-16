@@ -29,8 +29,11 @@ import { jwtTokenManager } from "./services/JWTTokenManager";
 import { CompanionService } from "./services/CompanionService";
 import { WokaService } from "./services/WokaService";
 import { UserController } from "./controllers/UserController";
+import { WokaMineController } from "./controllers/WokaMineController";
 import { MatrixRoomAreaController } from "./controllers/MatrixRoomAreaController";
 import { LocalScriptController } from "./controllers/LocalScriptController";
+import { BanController } from "./controllers/BanController";
+import { LinkPreviewController } from "./controllers/LinkPreviewController";
 
 class App {
     private readonly app: Application;
@@ -107,7 +110,10 @@ class App {
         }
         new FrontController(this.app);
         new UserController(this.app);
+        new WokaMineController(this.app);
+        new BanController(this.app);
         new MatrixRoomAreaController(this.app);
+        new LinkPreviewController(this.app);
 
         const staticOptions = {
             extensions: [

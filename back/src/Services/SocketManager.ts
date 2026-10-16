@@ -26,6 +26,7 @@ import type {
     RoomsList,
     SendEventQuery,
     SendUserMessage,
+    BroadcastMeta,
     SetPlayerDetailsMessage,
     SubToPusherRoomMessage,
     UpdateMapToNewestWithKeyMessage,
@@ -56,7 +57,6 @@ import Jwt from "jsonwebtoken";
 import BigbluebuttonJs from "bigbluebutton-js";
 import Debug from "debug";
 import * as Sentry from "@sentry/node";
-import { WAMSettingsUtils } from "@workadventure/map-editor";
 import { z } from "zod";
 import type { ServiceError } from "@grpc/grpc-js";
 import { asError } from "catch-unknown";
@@ -79,6 +79,7 @@ import { clientEventsEmitter } from "./ClientEventsEmitter";
 import { getMapStorageClient } from "./MapStorageClient";
 import { emitError } from "./MessageHelpers";
 import { cpuTracker } from "./CpuTracker";
+import { isValidEmote } from "./EmoteValidator";
 
 const debug = Debug("socketmanager");
 
@@ -226,12 +227,8 @@ export class SocketManager {
             applications: user.applications ?? [],
             playerVariable: playerVariablesMessage,
             megaphoneSettings: {
-                enabled: WAMSettingsUtils.canUseMegaphone(room.wamSettings, user.tags),
-                url: WAMSettingsUtils.getMegaphoneUrl(
-                    room.wamSettings,
-                    room.roomGroup ?? new URL(room.roomUrl).host,
-                    room.roomUrl
-                ),
+                ...room.getMegaphoneSettingsFor(user.tags),
+                ...(await room.getAreaSpacePolicyFor(user)),
             },
         };
 
@@ -693,10 +690,17 @@ export class SocketManager {
                 case "roomTagsQuery":
                 case "roomsFromSameWorldQuery":
                 case "roomsFromSameUniverseQuery":
+                case "friendsListQuery":
+                case "friendActionQuery":
+                case "friendSearchQuery":
+                case "friendSettingsQuery":
+                case "ringQuery":
+                case "ringReplyQuery":
                 case "searchMemberQuery":
                 case "getMemberQuery":
                 case "searchTagsQuery":
                 case "chatMembersQuery":
+                case "chatPersonQuery":
                 case "oauthRefreshTokenQuery":
                 case "joinSpaceQuery":
                 case "leaveSpaceQuery":
@@ -1100,7 +1104,7 @@ export class SocketManager {
         }
     }
 
-    async sendAdminRoomMessage(roomId: string, message: string, type: string) {
+    async sendAdminRoomMessage(roomId: string, message: string, type: string, broadcast?: BroadcastMeta) {
         const room = await this.roomsPromises.get(roomId);
         if (!room) {
             //todo: this should cause the http call to return a 500
@@ -1123,6 +1127,7 @@ export class SocketManager {
                 sendUserMessage: {
                     message,
                     type,
+                    broadcast,
                 },
             });
         });
@@ -1172,6 +1177,10 @@ export class SocketManager {
     }
 
     handleEmoteEventMessage(room: GameRoom, user: User, emotePromptMessage: EmotePromptMessage) {
+        if (!isValidEmote(emotePromptMessage.emote)) {
+            debug("Invalid emote received. Dropping message.");
+            return;
+        }
         room.emitEmoteEvent(user, {
             emote: emotePromptMessage.emote,
             actorUserId: user.id,

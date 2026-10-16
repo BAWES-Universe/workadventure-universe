@@ -12,6 +12,7 @@
     import PictureInPictureActionBar from "../../ActionBar/PictureInPictureActionBar.svelte";
     import { activePictureInPictureStore } from "../../../Stores/PeerStore";
     import { isListenerStore } from "../../../Stores/MediaStore";
+    import { chatSheetHeightStore, chatSheetLayoutStore } from "../../../Chat/ChatSheetStore";
 
     export let inPictureInPicture: boolean;
 
@@ -74,34 +75,46 @@
     }
 
     $: oneLineMaxHeight = containerHeight * 0.2;
+
+    // On a phone with the chat sheet open, the videos (and whoever is shown big) live in the space above the sheet,
+    // laid out in rows whether the player walks or not: the sheet's handle sizes them.
+    $: sheetOpen = !inPictureInPicture && $chatSheetLayoutStore && $chatSheetHeightStore > 0;
+    $: oneLine = $isOnOneLine && !sheetOpen;
+    $: layoutStyle =
+        inPictureInPicture && $highlightedEmbedScreen != undefined
+            ? "height: calc(100vh - 80px);"
+            : sheetOpen
+            ? `height: calc(100% - ${$chatSheetHeightStore}px - 12px - env(safe-area-inset-top, 0px));`
+            : "";
 </script>
 
 {#if $proximityMeetingStore === true && !$inExternalServiceStore}
     <div
-        class="presentation-layout flex pointer-events-none h-full w-full absolute mobile:mt-3"
+        class="presentation-layout flex pointer-events-none h-full mobile:h-[calc(100%-env(safe-area-inset-top))] w-full absolute mobile:mt-[calc(12px+env(safe-area-inset-top))]"
         class:flex-col={!inPictureInPicture || $highlightedEmbedScreen == undefined}
         class:flex-row-reverse={inPictureInPicture && $highlightedEmbedScreen != undefined}
-        style={inPictureInPicture && $highlightedEmbedScreen != undefined ? "height: calc(100vh - 80px);" : ""}
+        style={layoutStyle}
         bind:clientHeight={containerHeight}
     >
         {#if $streamableCollectionStore.size > 0}
             <div
                 class="justify-end md:justify-center w-full relative"
-                class:max-height-quarter={$isOnOneLine && !inPictureInPicture}
-                class:h-full={!$isOnOneLine || inPictureInPicture}
+                class:max-height-quarter={oneLine && !inPictureInPicture}
+                class:h-full={!oneLine || inPictureInPicture}
                 class:overflow-y-auto={inPictureInPicture}
                 class:flex-1={inPictureInPicture && $highlightedEmbedScreen != undefined}
                 bind:this={camContainer}
             >
                 <CamerasContainer
                     {oneLineMaxHeight}
-                    isOnOneLine={$isOnOneLine}
+                    isOnOneLine={oneLine}
                     oneLineMode={inPictureInPicture ? "vertical" : "horizontal"}
                 />
             </div>
         {/if}
 
-        {#if $streamableCollectionStore.size > 0 && $highlightedEmbedScreen && !$playerMovedInTheLast10Seconds}
+        <!-- Over the phone's chat sheet there is no room to show anyone big: they stay in the rows above it. -->
+        {#if $streamableCollectionStore.size > 0 && $highlightedEmbedScreen && !$playerMovedInTheLast10Seconds && !sheetOpen}
             <div
                 id="highlighted-media"
                 class="md:mb-0"

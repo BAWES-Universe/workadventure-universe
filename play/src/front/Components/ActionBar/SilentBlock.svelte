@@ -1,11 +1,52 @@
 <script lang="ts">
     import { fly } from "svelte/transition";
     import { LL } from "../../../i18n/i18n-svelte";
+    import { modalFullScreenStore, modalIframeStore, modalVisibilityStore } from "../../Stores/ModalStore";
     import { IconMute } from "@wa-icons";
 
     /** Where the bar is: "above" it on phones (bar at the bottom), "below" it elsewhere (bar at the top). */
     export let placement: "above" | "below";
+
+    // A window on the right (Orbit) has its close and expand buttons in a column just left of it. This block sits on top
+    // of the window layer, so it stops short of that column instead of covering it. Where the block starts depends on
+    // the bar, so the room left is measured: from the block's left edge to the column's.
+    const MAX_WIDTH = 352; // 22rem
+    const MIN_WIDTH = 144; // 9rem
+    let block: HTMLElement | undefined;
+    let maxWidth: string | undefined;
+
+    $: besideRightWindow =
+        placement === "below" &&
+        $modalVisibilityStore &&
+        $modalIframeStore?.position === "right" &&
+        !$modalFullScreenStore;
+
+    function measure() {
+        const tools = document.querySelector(".modal-tools");
+        if (!besideRightWindow || !block || !tools) {
+            maxWidth = undefined;
+            return;
+        }
+        const toolsBox = tools.getBoundingClientRect();
+        const blockBox = block.getBoundingClientRect();
+        // Below 1024px the column sits at the very top of the screen, above this block: nothing to avoid.
+        if (toolsBox.bottom <= blockBox.top) {
+            maxWidth = undefined;
+            return;
+        }
+        const room = toolsBox.left - blockBox.left - 8;
+        // Never so narrow that the text is unreadable, and never wider than the 22rem it has without a window.
+        maxWidth = `${Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.floor(room)))}px`;
+    }
+
+    // The window slides in: measure again once it has settled, as it flies in.
+    $: if (besideRightWindow !== undefined) {
+        measure();
+        setTimeout(measure, 450);
+    }
 </script>
+
+<svelte:window on:resize={measure} />
 
 <!-- The same dark surface as the other panels, so the text reads on any floor, with an amber tile so it is noticed.
      The explanation shows everywhere: nothing to tap.
@@ -13,6 +54,8 @@
      screen, above the device tab.
      "below": everywhere else, where the bar is at the top. Under the microphone and camera, as before. -->
 <div
+    bind:this={block}
+    style:max-width={maxWidth}
     class="silent-block {placement === 'above'
         ? 'bottom-full left-0 right-[72px] mx-auto mb-10 max-w-[22rem]'
         : 'top-20 start-0 w-max max-w-[min(22rem,calc(100vw-1rem))]'} flex absolute z-0 u-surface rounded-2xl text-white text-start transition-all pointer-events-auto items-start gap-3 px-3 py-2.5"

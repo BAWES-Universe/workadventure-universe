@@ -37,7 +37,6 @@ const camera: DeepPartial<Translation["camera"]> = {
         preparingYouNetworkGuide: '"네트워크 준비" 가이드',
         refresh: "새로고침",
         continue: "계속하기",
-        newDeviceDetected: "새 장치를 발견했습니다: {device} 🎉 전환할까요? [SPACE]",
     },
     my: {
         silentZone: "조용한 구역",

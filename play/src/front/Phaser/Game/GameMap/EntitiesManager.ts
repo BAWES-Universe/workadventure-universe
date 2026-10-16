@@ -128,6 +128,10 @@ export class EntitiesManager extends Phaser.Events.EventEmitter {
                         .setTexture(prefab.imagePath)
                         .setDepth(entity.y + entity.displayHeight + (entity.getPrefab().depthOffset ?? 0))
                         .setVisible(true);
+                    if (get(mapEditorModeStore)) {
+                        // The picture has its real size now: a tap anywhere on it must find it.
+                        this.setEntityHitArea(entity, true);
+                    }
                 }
             })
             .catch((e) => console.error(e));
@@ -229,7 +233,27 @@ export class EntitiesManager extends Phaser.Events.EventEmitter {
         entities.forEach((entity) => {
             entity.setInteractive({ pixelPerfect: true, cursor: "pointer" });
             this.scene.input.setDraggable(entity);
+            this.setEntityHitArea(entity, !activatableOnly);
         });
+    }
+
+    /**
+     * While editing, the whole picture is the hit area: a finger (or a click) between the leaves of a plant still
+     * selects the plant. In play mode, only the drawn pixels react, so a transparent corner does not open anything.
+     * The fields are changed in place, which is safe inside an input callback (removeInteractive is not).
+     */
+    private setEntityHitArea(entity: Entity, wholePicture: boolean): void {
+        if (!entity.input) {
+            return;
+        }
+        if (wholePicture) {
+            entity.input.hitArea = new Phaser.Geom.Rectangle(0, 0, entity.width, entity.height);
+            entity.input.hitAreaCallback = (hitArea: Phaser.Geom.Rectangle, x: number, y: number) =>
+                Phaser.Geom.Rectangle.Contains(hitArea, x, y);
+        } else {
+            entity.input.hitArea = {};
+            entity.input.hitAreaCallback = this.scene.input.makePixelPerfect() as Phaser.Types.Input.HitAreaCallback;
+        }
     }
 
     private bindEventHandlers(): void {
@@ -335,8 +359,11 @@ export class EntitiesManager extends Phaser.Events.EventEmitter {
                     entity.setPosition(oldPos.x, oldPos.y);
                     entity.clearTint();
                 } else {
+                    const oldPosition = entity.getOldPosition();
                     if (this.ctrlKey?.isDown) {
                         this.copyEntity(entity);
+                    } else if (entity.x === oldPosition.x && entity.y === oldPosition.y) {
+                        // A tap that did not move the object: nothing to save, and no empty step for Undo.
                     } else {
                         const data: Partial<EntityData> = {
                             id: entity.entityId,
@@ -358,14 +385,10 @@ export class EntitiesManager extends Phaser.Events.EventEmitter {
                 return;
             }
 
-            // If the entity is not editable and the entity editor tool is not active, switch automatically to entity editor tool
-            if (
-                get(mapEditorModeStore) &&
-                get(mapEditorSelectedToolStore) != EditorToolName.ExploreTheRoom &&
-                this.isEntityEditorToolActive() == false
-            ) {
-                // Activate entity editor tool
-                this.scene.getMapEditorModeManager().equipTool(EditorToolName.EntityEditor);
+            // Each tool only acts on its own things: with Areas, Bots or any other tool open, a tap on a placed
+            // object neither picks it up nor switches to the Objects tool.
+            if (get(mapEditorModeStore) && !this.isEntityEditorToolActive() && !this.isExplorerToolActive()) {
+                return;
             }
 
             if (get(mapEditorModeStore) && !get(mapEditorSelectedEntityPrefabStore)) {

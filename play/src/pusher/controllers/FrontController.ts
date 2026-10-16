@@ -8,6 +8,7 @@ import Debug from "debug";
 import { MetaTagsBuilder } from "../services/MetaTagsBuilder";
 import { absoluteUrl, requestProtocol } from "../services/AbsoluteUrl";
 import { adminService } from "../services/AdminService";
+import { buildWebManifest, isInstalledAppStart, manifestUrlOfPage } from "../services/WebManifest";
 import { getStringPalette, wrapWithStyleTag } from "../services/GenerateCustomColors";
 import { notWaHost } from "../middlewares/NotWaHost";
 import { version } from "../../../package.json";
@@ -317,10 +318,13 @@ export class FrontController extends BaseHttpController {
 
         let redirectUrl: string | undefined;
 
-        try {
-            redirectUrl = await builder.getRedirectUrl();
-        } catch (e) {
-            console.info(`Cannot get redirect URL "%s"`, url, e);
+        // The installed app opens "/?installRoom=...": no redirect to the start room, so the game opens the last room.
+        if (!isInstalledAppStart(url)) {
+            try {
+                redirectUrl = await builder.getRedirectUrl();
+            } catch (e) {
+                console.info(`Cannot get redirect URL "%s"`, url, e);
+            }
         }
 
         if (redirectUrl) {
@@ -371,6 +375,8 @@ export class FrontController extends BaseHttpController {
                 // TODO change it to push data from admin
                 msApplicationTileImage: metaTagsData.favIcons[metaTagsData.favIcons.length - 1].src,
                 url,
+                manifestUrl:
+                    manifestUrlOfPage(url) ?? "/static/images/favicons/manifest.json?url=" + encodeURIComponent(url),
                 script: await this.getScript(),
                 authToken: authToken,
                 googleDrivePickerClientId: GOOGLE_DRIVE_PICKER_CLIENT_ID,
@@ -390,46 +396,7 @@ export class FrontController extends BaseHttpController {
 
         const metaTagsData = await builder.getMeta(req.header("User-Agent"));
 
-        const manifest = {
-            short_name: metaTagsData.title,
-            name: metaTagsData.title,
-            icons: metaTagsData.manifestIcons,
-            start_url: url.replace(`${req.protocol}://${req.hostname}`, ""),
-            background_color: metaTagsData.themeColor,
-            display_override: ["window-control-overlay", "minimal-ui"],
-            display: "standalone",
-            orientation: "portrait-primary",
-            scope: "/",
-            lang: "en",
-            theme_color: metaTagsData.themeColor,
-            shortcuts: [
-                {
-                    name: metaTagsData.title,
-                    short_name: metaTagsData.title,
-                    description: metaTagsData.description,
-                    url: "/",
-                    icons: [
-                        {
-                            src: "/static/images/favicons/android-icon-192x192.png",
-                            sizes: "192x192",
-                            type: "image/png",
-                        },
-                    ],
-                },
-            ],
-            description: metaTagsData.description,
-            screenshots: [],
-            related_applications: [
-                {
-                    platform: "web",
-                    url: "https://workadventu.re",
-                },
-                {
-                    platform: "play",
-                    url: "https://play.workadventu.re",
-                },
-            ],
-        };
+        const manifest = buildWebManifest(metaTagsData, url);
 
         res.contentType("application/manifest+json").json(manifest);
         return;

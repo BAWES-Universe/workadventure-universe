@@ -3,6 +3,8 @@
     import type { ProximityChatRoom } from "../../../Connection/Proximity/ProximityChatRoom";
     import TopRowAvatar from "../../TopRow/TopRowAvatar.svelte";
     import { formatPeopleNames, resolveTopRowState } from "../../TopRow/TopRowSummary";
+    import RaisedHandsPill from "../../../../Components/Video/RaisedHandsPill.svelte";
+    import { chatSheetLayoutStore } from "../../../ChatSheetStore";
     import { IconMessageCircle2 } from "@wa-icons";
 
     /**
@@ -42,11 +44,7 @@
         : $LL.chat.nearby.title();
 </script>
 
-<div
-    class="flex min-w-0 max-w-full items-center justify-center gap-2.5"
-    data-testid="threadNow"
-    data-state={state.kind}
->
+<div class="flex min-w-0 max-w-full items-center justify-start gap-2.5" data-testid="threadNow" data-state={state.kind}>
     <div class="relative flex shrink-0 items-center" aria-hidden="true">
         {#if stackedPeople.length > 0}
             {#each stackedPeople as person, index (person.id)}
@@ -72,6 +70,10 @@
             <span class="truncate">{subtitle}</span>
         </div>
     </div>
+    {#if $chatSheetLayoutStore && isLive}
+        <!-- With the phone's chat sheet open, the "N raised" pill under the videos moves up here. -->
+        <RaisedHandsPill compact />
+    {/if}
 </div>
 
 <style>

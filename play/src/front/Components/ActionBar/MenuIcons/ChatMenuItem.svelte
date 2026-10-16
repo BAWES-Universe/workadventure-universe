@@ -6,7 +6,7 @@
     import MessageCircleIcon from "../../Icons/MessageCircleIcon.svelte";
     import ActionBarButton from "../ActionBarButton.svelte";
     import { activeSubMenuStore, menuVisiblilityStore } from "../../../Stores/MenuStore";
-    import { chatVisibilityStore, chatZoneLiveStore } from "../../../Stores/ChatStore";
+    import { chatVisibilityStore, chatZoneLiveStore, requestChatComposerFocus } from "../../../Stores/ChatStore";
     import { openChat } from "../../../Chat/openChat";
     import LL from "../../../../i18n/i18n-svelte";
     import { gameManager } from "../../../Phaser/Game/GameManager";
@@ -15,6 +15,8 @@
 
     export let last: boolean | undefined = undefined;
     export let chatEnabledInAdmin = false;
+    /** The Picture in Picture button: it always ends with the chat open and the cursor in the message box. */
+    export let alwaysOpen = false;
 
     const proximityChatRoom = gameManager.getCurrentGameScene().proximityChatRoom;
 
@@ -28,9 +30,9 @@
             activeSubMenuStore.activateByIndex(0);
         }
 
-        if ($chatVisibilityStore) {
+        if ($chatVisibilityStore && !alwaysOpen) {
             chatVisibilityStore.set(false);
-        } else {
+        } else if (!$chatVisibilityStore) {
             openChat("button");
         }
         dispatch("click");
@@ -133,6 +135,7 @@
             proximityChatRoom.hasUnreadMessages.set(false);
             proximityChatRoom.unreadNotificationCount.set(0);
         }
+        if (alwaysOpen) requestChatComposerFocus();
         analyticsClient.openedChat();
     }}
     classList="group/btn-message-circle rounded-e-xl pe-2 {last ? '' : '@sm/actions:rounded-e-none @sm/actions:pe-0'}"
@@ -149,14 +152,22 @@
 </ActionBarButton>
 {#if $chatZoneLiveStore || totalUnreadCount > 0}
     <div>
-        <span class="w-4 h-4 block rounded-full absolute -top-1 -start-1 animate-ping bg-white" />
-        <span class="w-3 h-3 block rounded-full absolute -top-0.5 -start-0.5 bg-white" />
+        <span class="w-4 h-4 block rounded-full absolute -top-1 start-1 animate-ping bg-white" />
+        <span class="w-3 h-3 block rounded-full absolute -top-0.5 start-1.5 bg-white" />
     </div>
 {/if}
 {#if totalUnreadCount > 0}
     <div
-        class="absolute -top-2 -start-2 aspect-square flex w-5 h-5 items-center justify-center text-sm font-bold leading-none text-contrast bg-success rounded-full z-10"
+        class="u-badge chat-unread-badge absolute -top-2 start-0 flex min-w-5 h-5 px-1 items-center justify-center text-sm font-bold leading-none tabular-nums rounded-full z-10"
+        data-testid="chatUnreadBadge"
     >
         {displayCount}
     </div>
 {/if}
+
+<style>
+    /* A thin ink ring keeps the count apart from the chat button it sits on. */
+    .chat-unread-badge {
+        box-shadow: 0 0 0 2px #0a0814, 0 2px 8px -2px rgba(134, 41, 252, 0.8);
+    }
+</style>

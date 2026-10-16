@@ -17,7 +17,12 @@ let loadedRoomUrl: string | null = null;
 let inFlight: { roomUrl: string; promise: Promise<void> } | null = null;
 
 function currentRoomUrl(): string | null {
-    return gameManager?.currentStartedRoom?.href || window.location.href || null;
+    return gameManager?.currentMapRoom?.href || window.location.href || null;
+}
+
+/** A moving player starts no new request, so also check that they are still in the room this answer is for. */
+function isStillWanted(roomUrl: string): boolean {
+    return inFlight?.roomUrl === roomUrl && currentRoomUrl() === roomUrl;
 }
 
 /**
@@ -46,9 +51,9 @@ export function ensureBotWokaCatalog(): Promise<void> {
                     credentials: "include",
                 }
             );
-            if (!response.ok || inFlight?.roomUrl !== roomUrl) return;
+            if (!response.ok || !isStillWanted(roomUrl)) return;
             const data = (await response.json()) as WokaData;
-            if (inFlight?.roomUrl !== roomUrl) return;
+            if (!isStillWanted(roomUrl)) return;
             loadedRoomUrl = roomUrl;
             catalogStore.set(data);
         } catch (err) {

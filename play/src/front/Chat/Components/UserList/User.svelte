@@ -17,6 +17,9 @@
     import { requestVisitCardsStore } from "../../../Stores/GameStore";
     import { canOpenOrbit } from "../../../external-modules/admin-api/index";
     import { adminDashboardActivatedStore } from "../../../Stores/MenuStore";
+    import { friendsEnabledStore, relationshipsStore } from "../../Stores/FriendsStore";
+    import { invitesEnabledStore, ringStore } from "../../Stores/RingStore";
+    import { blackListManager } from "../../../WebRtc/BlackListManager";
     import UserActionButton from "./UserActionButton.svelte";
     import ImageWithFallback from "./ImageWithFallback.svelte";
     import PersonActionButton from "./PersonActionButton.svelte";
@@ -31,7 +34,19 @@
         showMyself,
         walkToPerson,
     } from "./PersonNavigation";
-    import { IconChevronDown, IconDoorIn, IconLoader, IconMapPin, IconMessage, IconWalk } from "@wa-icons";
+    import { friendMenuAction } from "./FriendMenuAction";
+    import type { FriendMenuAction } from "./FriendMenuAction";
+    import RingButton from "./RingButton.svelte";
+    import {
+        IconChevronDown,
+        IconDoorIn,
+        IconLoader,
+        IconMapPin,
+        IconMessage,
+        IconUsersPlus,
+        IconUserCheck,
+        IconWalk,
+    } from "@wa-icons";
 
     export let user: ChatUser;
     /** All of this person's sessions (tabs, devices), `user` first. One row stands for all of them. */
@@ -57,6 +72,11 @@
     $: isMe = isSelf(user, me);
     // Your own account seen from somewhere else (another of your tabs is listed before this one is): no chat with it.
     $: isMine = !isMe && isMyAccount(user, me);
+
+    // Someone who isn't in a world with you can still be online on chat (in another world, or Element): the chat says so.
+    $: presence =
+        !isMe && !isMine && !user.isBot && chatId ? gameManager.chatConnection.userPresence(chatId) : undefined;
+    $: onlineElsewhere = !$userStatus && !!$presence && $presence !== "offline";
 
     // Someone with several sessions shows as available as their most available one.
     $: sessionsStatus =
@@ -105,7 +125,54 @@
     // Someone else with several sessions: Walk to, Go to room and Locate open the list, so you pick which one.
     $: choosesSession = !isMe && listedSessions.length > 0;
     $: showLocateInMenu = actions.locate && !choosesSession;
-    $: hasMenu = showLocateInMenu || actions.viewProfile || actions.ban;
+    // Friends: a badge on friends, and Add friend (or what comes next) in the menu, for signed-in people only.
+    $: relationship = user.uuid ? $relationshipsStore.get(user.uuid) ?? "none" : "none";
+    $: isFriend = relationship === "friends";
+    $: friendAction =
+        $friendsEnabledStore && !isMe && !isMine && !user.isBot && user.uuid && user.chatId
+            ? friendMenuAction(relationship, user.uuid, displayName, $LL)
+            : undefined;
+    // A friend who is here can be invited over from the row; Message then moves to ⋮ so the row keeps three buttons.
+    $: canRing = $friendsEnabledStore && $invitesEnabledStore && isFriend && !isMe && !!user.uuid && !!$userStatus;
+    // Anyone else who is here, guests too, can be invited from ⋮, so Message stays in the row as it was.
+    $: menuInvite =
+        $invitesEnabledStore &&
+        !canRing &&
+        !isMe &&
+        !isMine &&
+        !user.isBot &&
+        !!user.uuid &&
+        (!!$userStatus || onlineElsewhere) &&
+        !blackListManager.isBlackListed(user.uuid)
+            ? ([
+                  {
+                      label: $LL.chat.friends.ring.ring(),
+                      icon: IconUsersPlus,
+                      danger: false,
+                      act: () => {
+                          if (user.uuid) ringStore.ring(user.uuid, displayName).catch((e) => console.error(e));
+                      },
+                  },
+              ] satisfies FriendMenuAction[])
+            : [];
+    $: menuMessage =
+        canRing && actions.message !== "hidden"
+            ? ([
+                  {
+                      label: $LL.chat.userList.message(),
+                      icon: IconMessage,
+                      danger: false,
+                      act: sendMessage,
+                  },
+              ] satisfies FriendMenuAction[])
+            : [];
+    $: hasMenu =
+        showLocateInMenu ||
+        actions.viewProfile ||
+        actions.ban ||
+        friendAction !== undefined ||
+        menuMessage.length > 0 ||
+        menuInvite.length > 0;
 
     function walkTo() {
         if (choosesSession) {
@@ -161,7 +228,8 @@
             showMyself(user.uuid ?? undefined);
             return;
         }
-        if (user.uuid == undefined) return;
+        // Members with no map to show (away, or not in this world) have no card to open.
+        if (user.uuid == undefined || !user.playUri) return;
         // Track the open woka menu action
         analyticsClient.openWokaMenu();
         // On a phone the sidebar makes way for their card, and comes back when the card is closed.
@@ -186,7 +254,9 @@
             <!-- svelte-ignore a11y-click-events-have-key-events -->
             <!-- svelte-ignore a11y-no-static-element-interactions -->
             <div
-                class="relative wa-avatar {!$userStatus ? 'opacity-50' : ''} cursor-pointer w-7 h-7 rounded-md"
+                class="relative wa-avatar {!$userStatus && !onlineElsewhere
+                    ? 'opacity-50'
+                    : ''} cursor-pointer w-7 h-7 rounded-md"
                 style={`background-color: ${color ?? defaultColor}`}
                 on:click|stopPropagation={openWokaMenu}
             >
@@ -201,7 +271,7 @@
             <!-- svelte-ignore a11y-click-events-have-key-events -->
             <!-- svelte-ignore a11y-no-static-element-interactions -->
             <div
-                class={`flex-auto min-w-0 ms-1 ${!$userStatus && "opacity-50"} cursor-pointer`}
+                class={`flex-auto min-w-0 ms-1 ${!$userStatus && !onlineElsewhere && "opacity-50"} cursor-pointer`}
                 on:click|stopPropagation={openWokaMenu}
             >
                 <div class="flex items-center h-4 min-w-0">
@@ -219,6 +289,15 @@
                                     ?.replace("[", "")
                                     ?.replace("]", "")}
                             </div>
+                        {/if}
+                        {#if isFriend}
+                            <span
+                                class="ms-1 flex shrink-0 text-[#c4b5fd]"
+                                title={$LL.chat.friends.friendBadge()}
+                                data-testid={`friend-badge-${user.username}`}
+                            >
+                                <IconUserCheck font-size="14" aria-label={$LL.chat.friends.friendBadge()} />
+                            </span>
                         {/if}
                         {#if isAdmin}
                             <div
@@ -242,6 +321,18 @@
                                 />
                             {/if}
                             {statusLabel($userStatus, $LL)}
+                        </div>
+                    {:else if onlineElsewhere}
+                        <div
+                            class="flex items-center brightness-150"
+                            style="color:{getColorHexOfStatus(AvailabilityStatus.ONLINE)}"
+                            data-testid={`online-elsewhere-${user.username}`}
+                        >
+                            <div
+                                class="rounded-full me-1 h-1.5 w-1.5"
+                                style="background:{getColorHexOfStatus(AvailabilityStatus.ONLINE)}"
+                            />
+                            {$LL.chat.userList.onlineElsewhere()}
                         </div>
                     {:else}
                         {$LL.chat.userList.disconnected()}
@@ -304,7 +395,14 @@
                         <IconMapPin font-size="20" />
                     </PersonActionButton>
                 {/if}
-                {#if actions.message !== "hidden"}
+                {#if canRing && user.uuid}
+                    <RingButton
+                        uuid={user.uuid}
+                        name={displayName}
+                        status={$userStatus}
+                        testId={`ring-${user.username}`}
+                    />
+                {:else if actions.message !== "hidden"}
                     <PersonActionButton
                         label={$LL.chat.userList.message()}
                         ariaLabel={$LL.chat.userList.messageUser({ userName: displayName })}
@@ -324,6 +422,8 @@
                         showLocate={showLocateInMenu}
                         showViewProfile={actions.viewProfile}
                         showBan={actions.ban}
+                        {friendAction}
+                        extraActions={[...menuMessage, ...menuInvite]}
                     />
                 {/if}
             </div>

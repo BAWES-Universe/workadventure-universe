@@ -1,306 +1,340 @@
 <script lang="ts">
-    import { onDestroy, onMount } from "svelte";
+    import { onDestroy, onMount, tick } from "svelte";
+    import type { WokaMine } from "@workadventure/messages";
     import { LL } from "../../../i18n/i18n-svelte";
     import { gameManager } from "../../Phaser/Game/GameManager";
-    import { localUserStore } from "../../Connection/LocalUserStore";
-    import { ABSOLUTE_PUSHER_URL } from "../../Enum/ComputedConst";
-    import WokaPreview from "./WokaPreview.svelte";
+    import { joinDesktopStore } from "../../Stores/JoinDesktopStore";
     import type { WokaCollection, WokaData, WokaTexture } from "./WokaTypes";
-    import { getItemsPerRow } from "./ItemsPerRow";
     import WokaImage from "./WokaImage.svelte";
-    import { IconShuffle } from "@wa-icons";
+    import WokaCard from "./WokaCard.svelte";
+    import { fetchWokaData, fetchWokaMine, getWokaTextureUrl } from "./WokaData";
+    import { IconCheck, IconPencil } from "@wa-icons";
 
     export let customize: () => void;
     export let saveAndContinue: (texturesId: string[]) => void;
+    export let close: (() => void) | undefined = undefined;
+    /** Why the last Continue did not save, shown above the buttons */
+    export let saveError = "";
+
+    /** At most this many Recent tiles, in one row (Orbit already caps, filters and orders them) */
+    const maxRecent = 4;
 
     let wokaData: WokaData | null = null;
-    let currentWokaCollection: WokaCollection | null = null;
-    let selectedWokaTextureId: Record<string, string>;
+    // The collection pill on screen (Recent is a row above the pills, not a pill)
+    let category = 0;
+    let selectedId = "";
+    // A Recent tile is a whole outfit (several layers): the one picked, or null when a catalog tile is
+    let recent: WokaMine["recent"] = [];
+    let selectedRecent: number | null = null;
     let isLoading = true;
     let error = "";
-    let assetsDirection: number = 0;
+    let direction = 0;
+
+    $: tileSize = $joinDesktopStore ? 64 : 52;
+
+    $: hasRecent = recent.length > 0;
+    $: collections = wokaData?.woka?.collections ?? [];
+    $: textures = collections[category]?.textures ?? [];
+    $: categories = collections.map((collection) => ({ label: collection.name, count: collection.textures.length }));
+    $: selectedTextures = { woka: selectedId };
+    $: previewLayers =
+        selectedRecent !== null ? recent[selectedRecent]?.textures.map((texture) => texture.url) ?? null : null;
 
     async function loadWokaData() {
+        isLoading = true;
+        error = "";
         try {
-            isLoading = true;
-            const roomUrl = gameManager.currentStartedRoom.href;
-            const response = await fetch(`${ABSOLUTE_PUSHER_URL}woka/list?roomUrl=${encodeURIComponent(roomUrl)}`, {
-                headers: {
-                    Authorization: localUserStore.getAuthToken() || "",
-                },
-                credentials: "include",
-            });
-
-            if (!response.ok) {
-                throw new Error("Failed to load Woka data");
-            }
-
-            wokaData = await response.json();
-
-            loadSavedTextures();
+            // What you wore lately is asked each time the picker opens (it changes with every pick); a failure just
+            // leaves Recent out
+            const [data, mine] = await Promise.all([fetchWokaData({ fresh: true }), fetchWokaMine()]);
+            wokaData = data;
+            recent = (mine?.recent ?? []).filter((outfit) => outfit.textures.length > 0).slice(0, maxRecent);
+            loadSavedTexture();
         } catch (err) {
             console.error("Error loading Woka data:", err);
-            error = "Failed to load Woka customization data";
+            error = $LL.woka.selectWoka.loadError();
         } finally {
             isLoading = false;
         }
+        await tick();
+        // The row does not scroll; only a checked tile further down the grid needs to come into view
+        if (selectedRecent === null)
+            document.getElementById(`woka-${selectedId}`)?.scrollIntoView({ block: "nearest" });
     }
 
-    function loadSavedTextures() {
-        try {
-            const savedTextureIds = gameManager.getCharacterTextureIds();
-            // find the collection used to select the Woka
-            const collectionIndex = wokaData?.["woka"]?.collections.findIndex((c: WokaCollection) =>
-                c.textures.find((t: WokaTexture) => t.id === savedTextureIds?.[0])
-            );
-            if (collectionIndex === undefined || collectionIndex < 0) {
-                throw new Error("No valid Woka collection found for the saved texture ID");
-            }
-            selectTexture(
-                collectionIndex,
-                savedTextureIds != null
-                    ? savedTextureIds[0]
-                    : wokaData?.["woka"]?.collections?.[0]?.textures?.[0]?.id || ""
-            );
-
-            // Scroll to the selected collection
-            setTimeout(() => {
-                const element = document.getElementById(`woka-${selectedWokaTextureId["woka"]}`);
-                if (element == undefined) return;
-                element.scrollIntoView({ behavior: "smooth", block: "end" });
-            }, 800);
-        } catch (err) {
-            console.warn("Cannot load previous WOKA textures:", err);
-            selectTexture(0, wokaData?.["woka"]?.collections?.[0]?.textures?.[0]?.id || "");
-        } finally {
-            // Find the collection used to select the Woka
-            currentWokaCollection = (wokaData as WokaData)["woka"].collections.find((c: WokaCollection) =>
-                c.textures.find((t: WokaTexture) => t.id === selectedWokaTextureId["woka"])
-            ) as WokaCollection;
-            selectCurrentCollection(currentWokaCollection.name);
+    function findTexture(
+        list: WokaCollection[],
+        id: string | undefined
+    ): { collectionIndex: number; texture: WokaTexture } | undefined {
+        if (!id) return undefined;
+        for (const [index, collection] of list.entries()) {
+            const texture = collection.textures.find((t) => t.id === id);
+            if (texture) return { collectionIndex: index, texture };
         }
+        return undefined;
     }
 
-    function selectCurrentCollection(collectionName: string) {
-        // Check if the collection exists in the wokaData
-        if (!wokaData || !wokaData["woka"] || !wokaData["woka"].collections) {
-            console.error("Woka data is not loaded or invalid");
-            throw new Error("Woka data is not loaded or invalid");
+    // Opens on the WOKA you have, or the first one. With a Recent row, the one you wear now is checked there and the
+    // grid opens on its collection (Default when it is a built outfit, which no collection holds).
+    function loadSavedTexture() {
+        const list = wokaData?.woka?.collections ?? [];
+        const now = recent.findIndex((outfit) => outfit.current);
+        if (now !== -1) {
+            const layers = recent[now].textures;
+            category = (layers.length === 1 ? findTexture(list, layers[0].id)?.collectionIndex : undefined) ?? 0;
+            selectedRecent = now;
+            selectedId = "";
+            return;
         }
-        const collection = wokaData["woka"].collections.find((c: WokaCollection) => c.name === collectionName);
-        if (!collection) {
-            console.error(`Collection ${collectionName} does not exist in the Woka data`);
-            throw new Error(`Collection ${collectionName} does not exist in the Woka data`);
-        }
-        currentWokaCollection = collection;
+        const saved = findTexture(list, gameManager.getCharacterTextureIds()?.[0]);
+        category = saved?.collectionIndex ?? 0;
+        selectedRecent = null;
+        selectedId = saved?.texture.id ?? list[0]?.textures[0]?.id ?? "";
     }
 
-    function selectTexture(collectionIndex: number, textureId: string) {
-        // check that the textureId is existing in the wokaData
-        if (!wokaData || !wokaData["woka"] || !wokaData["woka"].collections) {
-            console.error("Woka data is not loaded or invalid");
-            throw new Error("Woka data is not loaded or invalid");
-        }
-        const textures = wokaData["woka"].collections[collectionIndex].textures;
-        if (!textures.some((texture: WokaTexture) => texture.id === textureId)) {
-            console.error(`Texture ID ${textureId} does not exist in the Woka data`);
-            throw new Error(`Texture ID ${textureId} does not exist in the Woka data`);
-        }
-
-        selectedWokaTextureId = { woka: textureId }; // Trigger reactivity
+    function select(id: string) {
+        selectedId = id;
+        selectedRecent = null;
+        document.getElementById(`woka-${id}`)?.scrollIntoView({ block: "nearest" });
     }
 
-    function randomizeOutfit() {
-        if (!wokaData) return;
-        const randomCollectionIndex = Math.floor(Math.random() * wokaData["woka"].collections.length);
-        const randomTexture =
-            wokaData["woka"].collections[randomCollectionIndex].textures[
-                Math.floor(Math.random() * wokaData["woka"].collections[randomCollectionIndex].textures.length)
-            ];
-        selectedWokaTextureId = { woka: randomTexture.id };
+    function selectRecent(index: number) {
+        selectedRecent = index;
+        document.getElementById(`woka-recent-${index}`)?.scrollIntoView({ block: "nearest" });
     }
 
-    function getTextureUrl(relativeUrl: string): string {
-        if (relativeUrl.startsWith("http://") || relativeUrl.startsWith("https://")) {
-            return relativeUrl;
-        }
+    // Randomize picks from every collection and shows the one it landed in
+    async function randomize() {
+        const all = collections.flatMap((collection, index) => collection.textures.map((t) => ({ index, t })));
+        if (all.length === 0) return;
+        const pick = all[Math.floor(Math.random() * all.length)];
+        // Through the card, so the collection's pill scrolls into view too
+        if (card) await card.selectCategory(pick.index);
+        else category = pick.index;
+        await tick();
+        select(pick.t.id);
+    }
 
-        return `${ABSOLUTE_PUSHER_URL}${relativeUrl}`;
+    let card: WokaCard | undefined;
+
+    // Tiles per row (the Recent row and the grid draw the same columns)
+    function columns(): number {
+        const grid = document.getElementById("woka-grid");
+        if (!grid) return 1;
+        return getComputedStyle(grid).gridTemplateColumns.split(" ").length;
+    }
+
+    function save() {
+        // A Recent tile is a whole outfit: Continue saves exactly its texture ids
+        const outfit = selectedRecent !== null ? recent[selectedRecent] : undefined;
+        if (outfit) saveAndContinue(outfit.textures.map((texture) => texture.id));
+        else if (selectedId) saveAndContinue([selectedId]);
     }
 
     let enterPressed = false;
 
-    // Function to validate character textures
-    function useKeyBoardNavigation(event: KeyboardEvent) {
-        if (!wokaData || !currentWokaCollection) return;
-        if (
-            event.key === "ArrowLeft" ||
-            event.key === "ArrowRight" ||
-            event.key === "ArrowUp" ||
-            event.key === "ArrowDown"
-        ) {
-            event.preventDefault();
-            const currentCollectionIndex = wokaData?.["woka"]?.collections.findIndex(
-                (c: WokaCollection) => c.name === currentWokaCollection?.name
-            );
-            if (currentCollectionIndex === undefined || currentCollectionIndex < 0) return;
-
-            const textures = wokaData["woka"].collections[currentCollectionIndex].textures;
-            const currentTextureIndex = textures.findIndex((t: WokaTexture) => t.id === selectedWokaTextureId["woka"]);
-
-            let newIndex = currentCollectionIndex;
-            if (event.key === "ArrowLeft") {
-                newIndex = Math.max(currentTextureIndex - 1, 0);
-            } else if (event.key === "ArrowRight") {
-                newIndex = Math.min(currentTextureIndex + 1, textures.length - 1);
-            } else if (event.key === "ArrowUp") {
-                const itemsPerRow = getItemsPerRow(document.getElementById(`woka-line-0`));
-                newIndex = Math.max(currentTextureIndex - itemsPerRow, 0);
-            } else if (event.key === "ArrowDown") {
-                const itemsPerRow = getItemsPerRow(document.getElementById(`woka-line-0`));
-                newIndex = Math.min(currentTextureIndex + itemsPerRow, textures.length - 1);
+    function onKeyDown(event: KeyboardEvent) {
+        if (!wokaData || event.target instanceof HTMLInputElement) return;
+        const onRecent = selectedRecent !== null;
+        const count = onRecent ? recent.length : textures.length;
+        const index = onRecent ? selectedRecent ?? -1 : textures.findIndex((t) => t.id === selectedId);
+        const wide = columns();
+        let next = index;
+        if (event.key === "ArrowLeft") next = Math.max(index - 1, 0);
+        else if (event.key === "ArrowRight") next = Math.min(index + 1, count - 1);
+        else if (event.key === "ArrowUp") {
+            // From the top row of the grid, up goes into the Recent row, to the tile above (or the last one)
+            if (!onRecent && hasRecent && index >= 0 && index < wide) {
+                event.preventDefault();
+                selectRecent(Math.min(index, recent.length - 1));
+                return;
             }
-            if (newIndex !== currentTextureIndex) {
-                selectTexture(currentCollectionIndex, textures[newIndex].id);
-                // Scroll to the newly selected texture
-                const element = document.getElementById(`woka-${textures[newIndex].id}`);
-                if (element) {
-                    element.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
-                }
+            next = Math.max(index - wide, 0);
+        } else if (event.key === "ArrowDown") {
+            // From the Recent row, down goes into the grid, to the tile below (or the last one)
+            if (onRecent && textures.length > 0) {
+                event.preventDefault();
+                select(textures[Math.min(index, textures.length - 1)].id);
+                return;
             }
+            next = Math.min(index + wide, count - 1);
         } else if (event.key === "Enter") {
+            // A focused button (Randomize, Build, Save…) does its own job on Enter; tiles let Enter save
+            if (event.target instanceof HTMLButtonElement && event.target.getAttribute("role") !== "radio") return;
             enterPressed = true;
-        }
+            return;
+        } else return;
+        event.preventDefault();
+        if (next === index) return;
+        if (onRecent) {
+            if (recent[next]) selectRecent(next);
+        } else if (textures[next]) select(textures[next].id);
     }
 
-    function useKeyBoardNavigationUp(event: KeyboardEvent) {
-        if (!wokaData || !currentWokaCollection) return;
+    function onKeyUp(event: KeyboardEvent) {
+        // On key up, so the Enter that saves does not reach the next screen
         if (event.key === "Enter" && enterPressed) {
             enterPressed = false;
-            saveAndContinue([selectedWokaTextureId["woka"]]); // Save and continue when Enter is pressed
+            save();
         }
     }
 
     onMount(() => {
-        loadWokaData().catch((err) => {
-            console.error("Error in onMount while loading Woka data:", err);
-        });
-        document.addEventListener("keydown", useKeyBoardNavigation);
-        document.addEventListener("keyup", useKeyBoardNavigationUp);
+        loadWokaData().catch((err) => console.error(err));
+        document.addEventListener("keydown", onKeyDown);
+        document.addEventListener("keyup", onKeyUp);
     });
 
     onDestroy(() => {
-        document.removeEventListener("keydown", useKeyBoardNavigation);
-        document.removeEventListener("keyup", useKeyBoardNavigationUp);
+        document.removeEventListener("keydown", onKeyDown);
+        document.removeEventListener("keyup", onKeyUp);
     });
 </script>
 
-<div class="mobile-webkit bg-contrast w-screen md:!mt-[15vh] h-full md:!h-[70vh] flex items-center justify-center">
-    <div
-        class="mobile-webkit rounded-lg flex flex-col max-w-4xl w-full h-full m-4 relative bg-white/10 backdrop-blur-md"
-    >
-        {#if isLoading}
-            <div class="flex items-center justify-center h-64">
-                <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500" />
-            </div>
-        {:else if error}
-            <div class="text-center text-red-600 mb-4">
-                <p>{error}</p>
-                <button class="mt-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600" on:click={loadWokaData}>
-                    Retry
-                </button>
-            </div>
-        {:else}
-            <div class="flex-1 flex flex-col sm:flex-row items-start gap-6 min-h-0 p-6">
-                <div class="flex flex-row gap-4 w-full sm:w-fit">
-                    <div class="flex flex-col gap-2">
-                        <WokaPreview
-                            selectedTextures={selectedWokaTextureId}
-                            {wokaData}
-                            {getTextureUrl}
-                            on:rotate={(e) => {
-                                assetsDirection = e.detail.direction;
-                            }}
-                        />
+<WokaCard
+    bind:this={card}
+    eyebrow={$LL.woka.selectWoka.eyebrow()}
+    title={$LL.woka.selectWoka.heading()}
+    {selectedTextures}
+    {previewLayers}
+    {saveError}
+    {wokaData}
+    {isLoading}
+    {error}
+    retry={loadWokaData}
+    {randomize}
+    {close}
+    {categories}
+    bind:category
+    swipeHint={$LL.woka.selectWoka.swipeHint()}
+    bind:direction
+>
+    <svelte:fragment slot="hint">
+        <span class="u-join-kbd">←</span>
+        <span class="u-join-kbd">→</span>
+        {$LL.woka.selectWoka.browse()} ·
+        <span class="u-join-kbd">Enter</span>
+        {$LL.woka.selectWoka.save()}
+    </svelte:fragment>
 
-                        <div class="mt-4 space-y-2">
-                            <button
-                                class="btn btn-sm btn-light btn-border w-full px-4 py-2 bg-white/10 text-white rounded hover:bg-white/10 flex flex-row items-center justify-center gap-2"
-                                on:click={randomizeOutfit}
-                            >
-                                <IconShuffle font-size="20" class="text-white" />
-                                <span>{$LL.woka.selectWoka.randomize()}</span>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="flex flex-col flex-1 h-full min-h-0 min-w-0">
-                    <div class="rounded-lg flex flex-col flex-1 min-h-0 min-w-0">
-                        <h3 class="text-lg font-semibold capitalize">Woka</h3>
-                        <div
-                            class="flex-none lg:flex-1 flex flex-col items-start gap-0 min-h-0 min-w-0 max-h-full overflow-y-scroll overflow-x-auto scroll-mask py-[20px]"
-                        >
-                            {#each wokaData?.["woka"]?.collections || [] as collection, collectionIndex (collection.name)}
-                                <p class="text-sm text-gray-500 mb-1 mt-4 p-0">{collection.name}</p>
-                                <div
-                                    id="woka-line-{collectionIndex}"
-                                    class="w-full flex flex-row flex-wrap items-start justify-start gap-3"
-                                >
-                                    {#each collection.textures || [] as texture (texture.id)}
-                                        <button
-                                            class="rounded border border-solid box-border p-0 h-fit {selectedWokaTextureId?.woka ===
-                                            texture.id
-                                                ? 'bg-white/50 border-white'
-                                                : 'bg-white/10 hover:bg-white/20 border-transparent'}"
-                                            id="woka-{texture.id}"
-                                            on:click={() => selectTexture(collectionIndex, texture.id)}
-                                        >
-                                            <WokaImage
-                                                selectedTextures={{ woka: texture.id }}
-                                                {wokaData}
-                                                {getTextureUrl}
-                                                classList="p-2"
-                                                direction={assetsDirection}
-                                            />
-                                        </button>
-                                    {/each}
-                                </div>
-                            {/each}
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div
-                class="w-full p-3 flex flex-row items-center gap-2 border-t-2 border-t-white/10"
-                style="border-top-style: solid;"
-            >
-                <button class="w-full px-4 py-3 bg-white/10 hover:bg-white/20 text-white rounded" on:click={customize}>
-                    {$LL.woka.selectWoka.customize()}
-                </button>
-                <button
-                    class="selectCharacterSceneFormSubmit w-full px-4 py-3 bg-secondary text-white rounded hover:bg-secondary-600"
-                    on:click={() => saveAndContinue([selectedWokaTextureId["woka"]])}
+    <!-- Recent: one row above the pills. It never scrolls or swipes; one tile is checked across the row and the grid -->
+    <svelte:fragment slot="recent">
+        {#if hasRecent}
+            <div class="woka-recent-row mb-1 md:mb-0.5">
+                <p class="woka-recent-label">{$LL.woka.selectWoka.recentLabel()}</p>
+                <div
+                    class="grid grid-cols-4 md:grid-cols-6 gap-2 p-1"
+                    role="radiogroup"
+                    aria-label={$LL.woka.selectWoka.recentLabel()}
                 >
-                    {$LL.woka.selectWoka.continue()}
-                </button>
+                    {#each recent as outfit, outfitIndex (outfitIndex)}
+                        <button
+                            type="button"
+                            role="radio"
+                            id={`woka-recent-${outfitIndex}`}
+                            class="u-join-tile"
+                            aria-checked={selectedRecent === outfitIndex}
+                            aria-label={outfit.name ?? $LL.woka.refused.yourWoka()}
+                            on:click={() => selectRecent(outfitIndex)}
+                        >
+                            <WokaImage
+                                selectedTextures={{}}
+                                layers={outfit.textures.map((texture) => texture.url)}
+                                getTextureUrl={getWokaTextureUrl}
+                                canvasSize={tileSize}
+                                {direction}
+                            />
+                            {#if outfit.current}
+                                <span class="woka-now">{$LL.woka.selectWoka.now()}</span>
+                            {/if}
+                            {#if selectedRecent === outfitIndex}
+                                <span class="u-join-tile-check"><IconCheck font-size="12" /></span>
+                            {/if}
+                        </button>
+                    {/each}
+                </div>
             </div>
         {/if}
+    </svelte:fragment>
+
+    <!-- The card also draws the collections on either side, ready to slide in: only the one on screen has the ids -->
+    <div
+        slot="tiles"
+        let:index
+        let:active
+        id={active ? "woka-grid" : undefined}
+        class="grid grid-cols-4 md:grid-cols-6 gap-2 p-1"
+        role="radiogroup"
+        aria-label={$LL.woka.selectWoka.heading()}
+    >
+        {#each collections[index]?.textures ?? [] as texture (texture.id)}
+            <button
+                type="button"
+                role="radio"
+                id={active ? `woka-${texture.id}` : undefined}
+                class="u-join-tile"
+                aria-checked={selectedRecent === null && selectedId === texture.id}
+                aria-label={texture.name}
+                on:click={() => select(texture.id)}
+            >
+                <WokaImage
+                    selectedTextures={{ woka: texture.id }}
+                    {wokaData}
+                    getTextureUrl={getWokaTextureUrl}
+                    canvasSize={tileSize}
+                    {direction}
+                />
+                {#if selectedRecent === null && selectedId === texture.id}
+                    <span class="u-join-tile-check"><IconCheck font-size="12" /></span>
+                {/if}
+            </button>
+        {/each}
     </div>
-</div>
+
+    <svelte:fragment slot="footer">
+        <button type="button" class="u-join-btn u-cta-secondary wokaBuildButton !px-3 md:!px-5" on:click={customize}>
+            <IconPencil font-size="16" />
+            <span class="md:hidden">{$LL.woka.selectWoka.build()}</span>
+            <span class="hidden md:inline">{$LL.woka.selectWoka.customize()}</span>
+        </button>
+        <button
+            type="button"
+            class="u-join-btn u-cta md:min-w-[180px] selectCharacterSceneFormSubmit"
+            disabled={!selectedId && selectedRecent === null}
+            on:click={save}
+        >
+            {$LL.woka.selectWoka.continue()}
+        </button>
+    </svelte:fragment>
+</WokaCard>
 
 <style>
-    .mobile-webkit {
-        max-height: -webkit-fill-available !important;
+    .woka-recent-row {
+        margin-right: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
     }
-    .scroll-mask {
-        mask-image: linear-gradient(to bottom, transparent 0px, black 40px, black calc(100% - 40px), transparent 100%);
-        -webkit-mask-image: linear-gradient(
-            to bottom,
-            transparent 0px,
-            black 40px,
-            black calc(100% - 40px),
-            transparent 100%
-        );
+    .woka-recent-label {
+        margin: 0;
+        padding: 0 4px;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.5);
+    }
+    /* "Now": marks the WOKA you wear at the bottom of its tile */
+    .woka-now {
+        position: absolute;
+        left: 50%;
+        bottom: 4px;
+        transform: translateX(-50%);
+        padding: 0 7px;
+        border-radius: 9999px;
+        background: rgba(10, 8, 20, 0.8);
+        font-size: 10px;
+        font-weight: 700;
+        color: #c4b5fd;
     }
 </style>

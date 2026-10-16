@@ -13,6 +13,9 @@ import { hasCapability } from "../../Connection/Capabilities";
 import { isUserNameValid, maxUserNameLength } from "../../Connection/LocalUserUtils";
 import type { ModalEvent } from "../../Api/Events/ModalEvent";
 import { analyticsClient } from "../../Administration/AnalyticsClient";
+import { blackListManager } from "../../WebRtc/BlackListManager";
+import { ringStore } from "../../Chat/Stores/RingStore";
+import { openDirectChatRoom } from "../../Chat/Utils";
 import {
     ORBIT_AUTH_VERSION,
     buildAdminLoginUrl,
@@ -24,6 +27,8 @@ import {
     OrbitBridge,
     isOrbitBridgeAckMessage,
     isOrbitBridgeReadyMessage,
+    isOrbitInvitePersonMessage,
+    isOrbitMessagePersonMessage,
     isOrbitProfileChangedMessage,
     newRoomRevision,
     type OrbitEventTopic,
@@ -147,6 +152,16 @@ function handleAdminAuthMessage(event: MessageEvent<unknown>) {
             pendingPlayerName = name;
         return;
     }
+    if (isOrbitInvitePersonMessage(event.data)) {
+        // A request, like a tap on Invite in the People tab: the game checks reach, Busy and blocks itself.
+        if (bridge && event.data.roomRevision === bridge.roomRevision)
+            invitePersonFromOrbit(event.data.uuid, event.data.name.trim());
+        return;
+    }
+    if (isOrbitMessagePersonMessage(event.data)) {
+        if (bridge && event.data.roomRevision === bridge.roomRevision) messagePersonFromOrbit(event.data.chatId);
+        return;
+    }
     if (!isOrbitAuthReadyMessage(event.data)) return;
     const { nonce, refresh } = event.data;
     const source = event.source;
@@ -163,6 +178,39 @@ function handleAdminAuthMessage(event: MessageEvent<unknown>) {
         };
         source.postMessage(response, origin);
     });
+}
+
+/**
+ * How long an invite or a chat from Orbit waits for the room's connection. Closing Orbit applies a name saved there
+ * by rejoining the room, which drops the connection until the new one is up.
+ */
+const ROOM_CONNECTION_WAIT_MS = 15_000;
+
+/** Orbit asked to invite someone over: Orbit closes so the invite and its answer are seen, and the game invites them. */
+function invitePersonFromOrbit(uuid: string, name: string) {
+    // Not yourself, and not someone you blocked here (the People tab offers neither).
+    if (uuid === localUserStore.getLocalUser()?.uuid || blackListManager.isBlackListed(uuid)) return;
+    closeAdminModal();
+    // After closing, so a rejoin for a new name has already dropped the old connection and the invite uses the new one.
+    // The wait's result is not checked on purpose: when the connection never came back (15 seconds), `ring` fails by
+    // itself and shows the same "failed" toast as any invite that can't be sent, so there is nothing more to stop here.
+    ringStore
+        .whenConnected(ROOM_CONNECTION_WAIT_MS)
+        .then(() => ringStore.ring(uuid, name))
+        .catch((error) => console.error("Could not invite from Orbit", error));
+}
+
+/** Orbit asked to message someone: Orbit closes and the game opens their chat. */
+function messagePersonFromOrbit(chatId: string) {
+    if (chatId === localUserStore.getChatId()) return;
+    closeAdminModal();
+    // Like an invite, it waits out a rejoin so the chat opens in the room you end up in. The wait's result is not
+    // checked on purpose: the chat connection belongs to the game manager and outlives a rejoin, so after the 15
+    // seconds the chat can still open, and stopping here would make Message do nothing when it could have worked.
+    ringStore
+        .whenConnected(ROOM_CONNECTION_WAIT_MS)
+        .then(() => openDirectChatRoom(chatId))
+        .catch((error) => console.error("Could not open the chat from Orbit", error));
 }
 
 /**
@@ -266,6 +314,14 @@ export function openOrbitProfile(userUuid: string): boolean {
     return requestOrbitPage("user-profile", { userUuid });
 }
 
+/**
+ * The same page for someone the game only knows from a chat (a direct chat with a person who is away), by their exact
+ * Matrix id. Orbit looks the account up itself and sends a Matrix id it has no account for to its home.
+ */
+export function openOrbitProfileByChatId(chatId: string): boolean {
+    return requestOrbitPage("user-profile", { chatId });
+}
+
 /** Tells an open Orbit that something it shows changed (a hint to fetch again; it trusts nothing in it). */
 export function notifyOrbitChanged(topic: OrbitEventTopic) {
     if (!adminModalOpen || !bridge) return;
@@ -305,7 +361,7 @@ function applyPendingPlayerName() {
     if (!name || name === gameManager.getPlayerName()) return;
     gameManager.setPlayerName(name);
     // Signed-in players get their name from the server, which Orbit already updated; others keep it locally.
-    if (!hasCapability("api/save-name")) localUserStore.setName(name);
+    if (!hasCapability("api/save-name") || !localUserStore.isLogged()) localUserStore.setName(name);
     gameManager.rejoinCurrentRoom();
 }
 

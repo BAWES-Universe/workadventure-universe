@@ -61,7 +61,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         calmMap: "落ち着いたマップ（アニメーションなし）",
         pictureInPicture: "ピクチャー・イン・ピクチャー",
         mapCredits: "マップのクレジット",
-        contact: "お問い合わせ",
         report: "問題を報告",
         back: "戻る",
         close: "閉じる",
@@ -118,17 +117,6 @@ const menu: DeepPartial<Translation["menu"]> = {
             "ファイルのアップロードエラーです。ファイルを確認して、もう一度やり直してください。問題が解決しない場合は、管理者に連絡してください。",
         dragAndDrop: "ファイルをアップロードするには、ドラッグアンドドロップするか、ここをクリックしてください 🎧",
     },
-    contact: {
-        gettingStarted: {
-            title: "入門",
-            description:
-                "Universe を使用すると、他のユーザと自然にコミュニケーションできるオンラインスペースを作成することができます",
-        },
-        createMap: {
-            title: "マップを作成します",
-            description: "ドキュメントの手順に従って、独自のカスタムマップを作成することもできます",
-        },
-    },
     about: {
         mapInfo: "マップ情報",
         mapLink: "このマップへのリンク",
@@ -153,7 +141,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         invite: "招待",
         credit: "クレジット",
         globalMessages: "グローバルメッセージ",
-        contact: "コンタクト",
         report: "問題の報告",
     },
 };

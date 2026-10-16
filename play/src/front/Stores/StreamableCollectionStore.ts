@@ -16,6 +16,7 @@ import { scriptingVideoStore } from "./ScriptingVideoStore";
 import { myCameraStore } from "./MyMediaStore";
 import {
     cameraEnergySavingStore,
+    displayedMegaphoneScreenStore,
     isListenerStore,
     localVoiceIndicatorStore,
     localVolumeStore,
@@ -93,6 +94,8 @@ export interface MyLocalStreamable extends Streamable {
 export const SCREEN_SHARE_STARTING_PRIORITY = 1000; // Priority for screen sharing streams
 export const VIDEO_STARTING_PRIORITY = 2000; // Priority for other video streams
 export const LAST_VIDEO_BOX_PRIORITY = 20000; // Priority for the last video boxes
+// A live broadcast (someone on the megaphone): first in the strip after your own camera and screen.
+export const LIVE_BROADCAST_VIDEO_BOX_PRIORITY = 1;
 
 const localstreamStoreValue = derived(localStreamStore, (myLocalStream) => {
     if (myLocalStream.type === "success") {
@@ -160,6 +163,7 @@ function createStreamableCollectionStore(): Readable<Map<string, VideoBox>> {
             windowSize,
             isLiveStreamingStore,
             isListenerStore,
+            displayedMegaphoneScreenStore,
         ],
         (
             [
@@ -175,6 +179,7 @@ function createStreamableCollectionStore(): Readable<Map<string, VideoBox>> {
                 $windowSize,
                 $isLiveStreamingStore,
                 $isListenerStore,
+                $displayedMegaphoneScreenStore,
             ] /*, set*/
         ) => {
             const peers = new Map<string, VideoBox>();
@@ -197,6 +202,11 @@ function createStreamableCollectionStore(): Readable<Map<string, VideoBox>> {
                 }
 
                 if ($isListenerStore) {
+                    shouldAddMyCamera = false;
+                }
+
+                // Broadcast's Go live step shows your camera in its own preview: one picture of you, not two.
+                if ($displayedMegaphoneScreenStore) {
                     shouldAddMyCamera = false;
                 }
 

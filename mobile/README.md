@@ -63,7 +63,7 @@ The shell is pre-configured for push notifications via `@capacitor/push-notifica
 
 - **Android**: Requires `GOOGLE_SERVICES_JSON` secret (from Firebase Console) — see PR #4
 - **iOS**: Requires APNs certificate — see PR #5
-- Notification payloads are handled by the web app's existing service worker (`play/public/notification-service-worker.js`)
+- Notification payloads are handled by the web app's existing service worker (`play/public/service-worker.js`)
 
 ## LiveKit Video / iframe compatibility
 

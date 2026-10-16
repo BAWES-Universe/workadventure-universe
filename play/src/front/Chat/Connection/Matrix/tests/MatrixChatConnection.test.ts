@@ -5,9 +5,11 @@ import { KnownMembership } from "matrix-js-sdk/lib/types";
 import type { Readable } from "svelte/store";
 import { get, readable, writable } from "svelte/store";
 import type { AvailabilityStatus } from "@workadventure/messages";
+import { MapStore } from "@workadventure/store-utils";
 import { MatrixChatConnection } from "../MatrixChatConnection";
 import type { CreateRoomOptions } from "../../ChatConnection";
 import type { MatrixChatRoom } from "../MatrixChatRoom";
+import type { MatrixRoomFolder } from "../MatrixRoomFolder";
 import type { MatrixSecurity } from "../MatrixSecurity";
 import type { RequestedStatus } from "../../../../Rules/StatusRules/statusRules";
 
@@ -533,6 +535,8 @@ describe("MatrixChatConnection", () => {
                 getUserId: vi.fn().mockReturnValue("@me:matrix.test"),
                 startClient: mockStartClient,
                 createRoom: vi.fn().mockResolvedValue(expected),
+                // The account already lists the room as the chat with Alice.
+                getAccountData: vi.fn().mockReturnValue({ getContent: () => ({ AliceID: ["old_direct_room"] }) }),
             } as unknown as MatrixClient;
 
             const clientPromise = Promise.resolve(mockMatrixClient);
@@ -543,7 +547,10 @@ describe("MatrixChatConnection", () => {
             const userId = "AliceID";
             const oldDirectRoom = {
                 id: "old_direct_room",
+                members: readable([]),
+                myMembership: readable(KnownMembership.Join),
             } as unknown as MatrixChatRoom;
+            matrixChatConnection["isClientReady"] = true;
 
             const spyGetDirectRoomFor = vi.spyOn(matrixChatConnection, "getDirectRoomFor");
 
@@ -577,6 +584,7 @@ describe("MatrixChatConnection", () => {
                 startClient: mockStartClient,
                 createRoom: vi.fn().mockResolvedValue(expected),
                 getRoom: vi.fn(),
+                getAccountData: vi.fn(),
             } as unknown as MatrixClient;
 
             const clientPromise = Promise.resolve(mockMatrixClient);
@@ -586,6 +594,7 @@ describe("MatrixChatConnection", () => {
             await clientPromise;
 
             const userId = "AliceID";
+            matrixChatConnection["isClientReady"] = true;
 
             const spyGetDirectRoomFor = vi.spyOn(matrixChatConnection, "getDirectRoomFor");
             spyGetDirectRoomFor.mockImplementation(() => undefined);
@@ -599,6 +608,10 @@ describe("MatrixChatConnection", () => {
             await matrixChatConnection.createDirectRoom(userId);
 
             expect(mockMatrixClient["createRoom"]).toHaveBeenCalledOnce();
+            // Both people get the same power level.
+            expect(mockMatrixClient["createRoom"]).toHaveBeenCalledWith(
+                expect.objectContaining({ preset: "trusted_private_chat", is_direct: true })
+            );
             expect(matrixChatConnection["addDMRoomInAccountData"]).toHaveBeenCalledOnce();
             //eslint-disable-next-line @typescript-eslint/unbound-method
             expect(mockMatrixClient.getRoom).toHaveBeenCalledOnce();
@@ -872,7 +885,10 @@ describe("MatrixChatConnection", () => {
     describe("addDMRoomInAccountData", () => {
         it("should create and set account data when account data is undefined", async () => {
             const mockStartClient = vi.fn();
-            const mockGetContent = vi.fn().mockReturnValue(null);
+            // The account has no list on the server yet.
+            const mockReadList = vi
+                .fn()
+                .mockRejectedValue(Object.assign(new Error("not found"), { data: { errcode: "M_NOT_FOUND" } }));
             const mockSetAccountData = vi.fn();
             const mockMatrixClient = {
                 isGuest: vi.fn(),
@@ -888,9 +904,8 @@ describe("MatrixChatConnection", () => {
                 createRoom: vi.fn(),
                 getRoom: vi.fn().mockReturnValue(null),
                 joinRoom: vi.fn().mockResolvedValue(""),
-                getAccountData: vi.fn().mockReturnValue({
-                    getContent: mockGetContent,
-                }),
+                getSafeUserId: () => "@me:matrix.test",
+                http: { authedRequest: mockReadList },
                 setAccountData: mockSetAccountData,
             } as unknown as MatrixClient;
 
@@ -904,11 +919,8 @@ describe("MatrixChatConnection", () => {
             const roomId = "roomTest";
             await matrixChatConnection["addDMRoomInAccountData"](userId, roomId);
 
-            //eslint-disable-next-line @typescript-eslint/unbound-method
-            expect(mockMatrixClient.getAccountData).toHaveBeenCalledOnce();
-            //eslint-disable-next-line @typescript-eslint/unbound-method
-            expect(mockMatrixClient.getAccountData).toHaveBeenCalledWith("m.direct");
-            expect(mockGetContent).toHaveBeenCalledOnce();
+            // The list is read from the server, not from the client's copy that lags behind.
+            expect(mockReadList).toHaveBeenCalledOnce();
             //eslint-disable-next-line @typescript-eslint/unbound-method
             expect(mockMatrixClient.setAccountData).toHaveBeenCalledOnce();
 
@@ -923,7 +935,7 @@ describe("MatrixChatConnection", () => {
             const directRoomAccountData: Record<string, string[]> = { [userId]: [roomId] };
 
             const mockStartClient = vi.fn();
-            const mockGetContent = vi.fn().mockReturnValue(directRoomAccountData);
+            const mockReadList = vi.fn().mockResolvedValue(directRoomAccountData);
             const mockSetAccountData = vi.fn();
             const mockMatrixClient = {
                 isGuest: vi.fn(),
@@ -939,9 +951,8 @@ describe("MatrixChatConnection", () => {
                 createRoom: vi.fn(),
                 getRoom: vi.fn().mockReturnValue(null),
                 joinRoom: vi.fn().mockResolvedValue(""),
-                getAccountData: vi.fn().mockReturnValue({
-                    getContent: mockGetContent,
-                }),
+                getSafeUserId: () => "@me:matrix.test",
+                http: { authedRequest: mockReadList },
                 setAccountData: mockSetAccountData,
             } as unknown as MatrixClient;
 
@@ -953,17 +964,158 @@ describe("MatrixChatConnection", () => {
 
             await matrixChatConnection["addDMRoomInAccountData"](userId, roomId2);
 
-            //eslint-disable-next-line @typescript-eslint/unbound-method
-            expect(mockMatrixClient.getAccountData).toHaveBeenCalledOnce();
-            //eslint-disable-next-line @typescript-eslint/unbound-method
-            expect(mockMatrixClient.getAccountData).toHaveBeenCalledWith("m.direct");
-            expect(mockGetContent).toHaveBeenCalledOnce();
+            // The list is read from the server, not from the client's copy that lags behind.
+            expect(mockReadList).toHaveBeenCalledOnce();
             //eslint-disable-next-line @typescript-eslint/unbound-method
             expect(mockMatrixClient.setAccountData).toHaveBeenCalledOnce();
 
             expect(mockSetAccountData.mock.calls[0][0]).toBe("m.direct");
             expect(mockSetAccountData.mock.calls[0][1][userId]).toContain(roomId);
             expect(mockSetAccountData.mock.calls[0][1][userId]).toContain(roomId2);
+        });
+    });
+    describe("a direct chat whose m.direct list arrives after the chat", () => {
+        const roomId = "!dm:chat.example.com";
+
+        async function connectionWith(rooms: Record<string, Partial<MatrixChatRoom>>) {
+            const matrixRoom = { roomId };
+            const client = {
+                getRoom: vi.fn().mockReturnValue(matrixRoom),
+                getAccountData: vi.fn().mockReturnValue(undefined),
+                getUserId: vi.fn().mockReturnValue("@me:matrix.test"),
+            } as unknown as MatrixClient;
+            const connection = await getMatrixConnection(Promise.resolve(client));
+            Object.entries(rooms).forEach(([id, room]) =>
+                connection["roomList"].set(id, {
+                    id,
+                    myMembership: readable("leave"),
+                    ...room,
+                } as unknown as MatrixChatRoom)
+            );
+            const created = vi
+                .spyOn(
+                    connection as unknown as { createAndAddNewRootRoom: (room: unknown) => unknown },
+                    "createAndAddNewRootRoom"
+                )
+                .mockImplementation(() => undefined);
+            return { connection, client, matrixRoom, created };
+        }
+
+        const event = (type: string) =>
+            ({ getType: () => type } as unknown as Parameters<MatrixChatConnection["onAccountDataEvent"]>[0]);
+
+        it("makes a chat again when the m.direct list changes its type, and leaves the others alone", async () => {
+            const stale = { hasOutdatedType: () => true, destroy: vi.fn() };
+            const current = { hasOutdatedType: () => false, destroy: vi.fn() };
+            const { connection, client, matrixRoom, created } = await connectionWith({
+                [roomId]: stale,
+                other: current,
+            });
+
+            connection["onAccountDataEvent"](event(EventType.Direct));
+
+            expect(stale.destroy).toHaveBeenCalledOnce();
+            expect(connection["roomList"].has(roomId)).toBe(false);
+            //eslint-disable-next-line @typescript-eslint/unbound-method
+            expect(client.getRoom).toHaveBeenCalledWith(roomId);
+            expect(created).toHaveBeenCalledExactlyOnceWith(matrixRoom);
+            expect(current.destroy).not.toHaveBeenCalled();
+            expect(connection["roomList"].has("other")).toBe(true);
+        });
+
+        describe("inside a folder (#853)", () => {
+            /** A folder holding the given chats, and optionally other folders, as the connection sees it. */
+            function folderWith(
+                rooms: Record<string, Partial<MatrixChatRoom>>,
+                subFolders: Record<string, MatrixRoomFolder> = {}
+            ) {
+                const roomList = new MapStore<string, MatrixChatRoom>();
+                Object.entries(rooms).forEach(([id, room]) =>
+                    roomList.set(id, { id, ...room } as unknown as MatrixChatRoom)
+                );
+                const folderList = new MapStore<string, MatrixRoomFolder>();
+                Object.entries(subFolders).forEach(([id, folder]) => folderList.set(id, folder));
+                return { roomList, folderList } as unknown as MatrixRoomFolder;
+            }
+
+            async function connectionWithFolders(folders: Record<string, MatrixRoomFolder>) {
+                const connection = await getMatrixConnection(
+                    Promise.resolve({
+                        getRoom: vi.fn((id: string) => ({ roomId: id })),
+                        getAccountData: vi.fn().mockReturnValue(undefined),
+                        getUserId: vi.fn().mockReturnValue("@me:matrix.test"),
+                    } as unknown as MatrixClient)
+                );
+                Object.entries(folders).forEach(([id, folder]) => connection["roomFolders"].set(id, folder));
+                const made = vi
+                    .spyOn(
+                        connection as unknown as { createChatRoom: (room: { roomId: string }) => unknown },
+                        "createChatRoom"
+                    )
+                    .mockImplementation((room) => ({ id: room.roomId, made: true }));
+                const createdAtRoot = vi
+                    .spyOn(
+                        connection as unknown as { createAndAddNewRootRoom: (room: unknown) => unknown },
+                        "createAndAddNewRootRoom"
+                    )
+                    .mockImplementation(() => undefined);
+                return { connection, made, createdAtRoot };
+            }
+
+            it("makes a chat in a folder again in the same folder, not at the top level", async () => {
+                const stale = { hasOutdatedType: () => true, destroy: vi.fn() };
+                const current = { hasOutdatedType: () => false, destroy: vi.fn() };
+                const folder = folderWith({ [roomId]: stale, other: current });
+                const { connection, made, createdAtRoot } = await connectionWithFolders({ folder });
+                const untouched = folder.roomList.get("other");
+
+                connection["onAccountDataEvent"](event(EventType.Direct));
+
+                expect(stale.destroy).toHaveBeenCalledOnce();
+                expect(made).toHaveBeenCalledExactlyOnceWith({ roomId });
+                expect(folder.roomList.get(roomId)).toEqual({ id: roomId, made: true });
+                expect(folder.roomList.get("other")).toBe(untouched);
+                expect(current.destroy).not.toHaveBeenCalled();
+                expect(createdAtRoot).not.toHaveBeenCalled();
+                expect(connection["roomList"].has(roomId)).toBe(false);
+            });
+
+            it("also looks inside folders that sit in other folders", async () => {
+                const stale = { hasOutdatedType: () => true, destroy: vi.fn() };
+                const inner = folderWith({ [roomId]: stale });
+                const outer = folderWith({}, { inner });
+                const { connection, createdAtRoot } = await connectionWithFolders({ outer });
+
+                connection["onAccountDataEvent"](event(EventType.Direct));
+
+                expect(inner.roomList.get(roomId)).toEqual({ id: roomId, made: true });
+                expect(outer.roomList.has(roomId)).toBe(false);
+                expect(createdAtRoot).not.toHaveBeenCalled();
+            });
+
+            it("leaves chats in folders alone when their type is up to date", async () => {
+                const current = { hasOutdatedType: () => false, destroy: vi.fn() };
+                const folder = folderWith({ [roomId]: current });
+                const { connection, made } = await connectionWithFolders({ folder });
+                const untouched = folder.roomList.get(roomId);
+
+                connection["onAccountDataEvent"](event(EventType.Direct));
+
+                expect(made).not.toHaveBeenCalled();
+                expect(current.destroy).not.toHaveBeenCalled();
+                expect(folder.roomList.get(roomId)).toBe(untouched);
+            });
+        });
+
+        it("does nothing for other account data", async () => {
+            const stale = { hasOutdatedType: vi.fn(() => true), destroy: vi.fn() };
+            const { connection, created } = await connectionWith({ [roomId]: stale });
+
+            connection["onAccountDataEvent"](event("m.push_rules_other"));
+
+            expect(stale.hasOutdatedType).not.toHaveBeenCalled();
+            expect(stale.destroy).not.toHaveBeenCalled();
+            expect(created).not.toHaveBeenCalled();
         });
     });
 });

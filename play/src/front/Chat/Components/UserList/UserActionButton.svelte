@@ -1,6 +1,6 @@
 <script lang="ts">
     import { onDestroy, onMount } from "svelte";
-    import { computePosition, flip, shift, offset, autoUpdate } from "@floating-ui/dom";
+    import { autoUpdate } from "@floating-ui/dom";
     import type { Readable } from "svelte/store";
     import type { ChatUser } from "../../Connection/ChatConnection";
     import { gameManager } from "../../../Phaser/Game/GameManager";
@@ -11,9 +11,12 @@
     import type { UserProviderMerger } from "../../UserProviderMerger/UserProviderMerger";
     import { peopleCardReturn } from "../../Stores/PeopleCardReturnStore";
     import { openOrbitProfile } from "../../../external-modules/admin-api/index";
+    import RoomOption from "../Room/RoomMenu/RoomOption.svelte";
     import PersonActionButton from "./PersonActionButton.svelte";
+    import { placePersonMenu } from "./PersonMenuPlacement";
     import { locatePerson } from "./PersonNavigation";
     import { openPersonMenuStore } from "./PersonMenuStore";
+    import type { FriendMenuAction } from "./FriendMenuAction";
     import { IconForbid, IconDots, IconMapPin, IconUserCircle } from "@wa-icons";
 
     export let user: ChatUser;
@@ -22,6 +25,10 @@
     /** Their profile in Orbit. */
     export let showViewProfile = false;
     export let showBan = false;
+    /** Add friend, or what comes next with them (cancel, accept, remove). */
+    export let friendAction: FriendMenuAction | undefined = undefined;
+    /** Entries moved here from the row to keep it short (Message, when the row shows Ring). */
+    export let extraActions: FriendMenuAction[] = [];
 
     let popoversElement: HTMLDivElement;
 
@@ -60,20 +67,13 @@
         user.spaceUserId ? u.spaceUserId === user.spaceUserId : u.uuid === user.uuid
     );
 
+    // A line before the first red item, when something sits above it.
+    $: hasRowsBeforeFriend = extraActions.length > 0 || showLocate || showViewProfile;
+    $: hasRowsBeforeBan = hasRowsBeforeFriend || friendAction !== undefined;
+
     function repositionIfOverflowing() {
         if (!buttonElement || !popoversElement) return;
-        computePosition(buttonElement, popoversElement, {
-            middleware: [offset(6), flip(), shift({ padding: 5 })],
-        })
-            .then(({ x, y }) => {
-                Object.assign(popoversElement.style, {
-                    left: `${x}px`,
-                    top: `${y}px`,
-                });
-            })
-            .catch((error) => {
-                console.error("Failed to compute popover position : ", error);
-            });
+        placePersonMenu(buttonElement, popoversElement);
     }
 
     const closeChatUserMenu = () => {
@@ -164,60 +164,68 @@
         <div
             bind:this={popoversElement}
             role="menu"
-            class="wa-dropdown-menu z-10 mr-1 fixed rounded-xl p-1 shadow-2xl bg-contrast/95 border border-white/10 backdrop-blur"
+            class="wa-dropdown-menu u-surface fixed z-40 w-max min-w-48 rounded-2xl p-1"
         >
-            {#if showLocate}
-                <!-- svelte-ignore a11y-click-events-have-key-events -->
-                <span
+            {#each extraActions as action (action.label)}
+                <RoomOption
                     role="menuitem"
-                    tabindex={userToLocate == undefined ? -1 : 0}
-                    aria-disabled={userToLocate == undefined}
-                    class={`follow wa-dropdown-item text-nowrap flex gap-2 items-center hover:bg-white/10 m-0 px-3 min-h-10 w-full text-sm rounded cursor-pointer ${
-                        userToLocate == undefined ? "opacity-50 cursor-not-allowed pointer-events-none" : ""
-                    }`}
-                    on:click|stopPropagation={locateUser}
-                    on:keydown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            locateUser();
-                        }
+                    IconComponent={action.icon}
+                    title={action.label}
+                    on:click={() => {
+                        action.act();
+                        closeChatUserMenu();
                     }}
-                >
-                    <IconMapPin class="w-4" />
-                    {$LL.chat.userList.follow()}
-                </span>
+                />
+            {/each}
+
+            {#if showLocate}
+                <RoomOption
+                    role="menuitem"
+                    IconComponent={IconMapPin}
+                    title={$LL.chat.userList.follow()}
+                    bg={userToLocate == undefined ? "opacity-50" : ""}
+                    disabled={userToLocate == undefined}
+                    on:click={locateUser}
+                />
             {/if}
             {#if showViewProfile}
-                <!-- svelte-ignore a11y-click-events-have-key-events -->
-                <span
+                <RoomOption
                     role="menuitem"
-                    tabindex="0"
-                    data-testid={`view-profile-${user.username}`}
-                    class="view-profile wa-dropdown-item text-nowrap flex gap-2 items-center hover:bg-white/10 m-0 px-3 min-h-10 w-full text-sm rounded cursor-pointer"
-                    on:click|stopPropagation={viewProfile}
-                    on:keydown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            viewProfile();
-                        }
-                    }}><IconUserCircle font-size="13" /> {$LL.chat.userList.viewProfile()}</span
-                >
+                    IconComponent={IconUserCircle}
+                    title={$LL.chat.userList.viewProfile()}
+                    dataTestId={`view-profile-${user.username}`}
+                    on:click={viewProfile}
+                />
+            {/if}
+
+            {#if friendAction}
+                {#if friendAction.danger && hasRowsBeforeFriend}
+                    <div class="u-menu-divider" />
+                {/if}
+                <RoomOption
+                    role="menuitem"
+                    IconComponent={friendAction.icon}
+                    title={friendAction.label}
+                    dataTestId={`friend-action-${user.username}`}
+                    bg={friendAction.danger ? "u-danger" : ""}
+                    on:click={() => {
+                        friendAction?.act();
+                        closeChatUserMenu();
+                    }}
+                />
             {/if}
 
             {#if showBan}
-                <!-- svelte-ignore a11y-click-events-have-key-events -->
-                <span
+                {#if hasRowsBeforeBan && !friendAction?.danger}
+                    <div class="u-menu-divider" />
+                {/if}
+                <RoomOption
                     role="menuitem"
-                    tabindex="0"
-                    class="ban wa-dropdown-item text-pop-red text-nowrap flex gap-2 items-center hover:bg-white/10 m-0 px-3 min-h-10 w-full text-sm rounded cursor-pointer"
-                    on:click|stopPropagation={banUser}
-                    on:keydown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            banUser();
-                        }
-                    }}><IconForbid font-size="13" /> {$LL.chat.ban.title()}</span
-                >
+                    IconComponent={IconForbid}
+                    title={$LL.chat.ban.title()}
+                    bg="u-danger"
+                    on:click={banUser}
+                />
             {/if}
         </div>
     {/if}

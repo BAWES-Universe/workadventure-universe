@@ -1,4 +1,6 @@
+import fs from "fs";
 import type { BrowserContext, Page } from "@playwright/test";
+import { expect } from "@playwright/test";
 import MatrixApi from "./matrixApi";
 
 const DEFAULT_PASSPHRASE = "defaultPassphrase";
@@ -27,6 +29,10 @@ class ChatUtils {
 
   public async resetMatrixDatabase() {
     await MatrixApi.resetMatrixUsers();
+    // Deactivating the Matrix users revoked all their access tokens, including the ones kept in the saved login
+    // states (.auth/*.json, reused for an hour by getPage). The game only shows a player's chat ID once the Matrix
+    // server confirms their token, so drop those states: the next test using them logs in again.
+    forgetSavedMatrixLogins();
   }
 
   public async initEndToEndEncryption(
@@ -105,6 +111,58 @@ class ChatUtils {
       timeout: 20_000,
     });
   }
+
+  /**
+   * Starts an action on a message the way the device offers it: the hover bar (and its "More" menu) with a mouse,
+   * the press-and-hold menu on a screen without hover.
+   */
+  public async messageAction(
+    page: Page,
+    messageText: string,
+    action: "reply" | "react" | "edit" | "delete"
+  ) {
+    const message = page.getByText(messageText);
+    const touchScreen = await page.evaluate(() => window.matchMedia("(hover: none)").matches);
+    if (touchScreen) {
+      // The same event a long press or a right-click sends. Headless desktop Firefox reports no hover, and its
+      // synthetic right-click doesn't reliably reach the menu, so the event is sent straight to the message.
+      await message.dispatchEvent("contextmenu");
+      const menu = page.getByTestId("messageActionMenu");
+      await expect(menu).toBeVisible();
+      const item = {
+        reply: "menuReplyButton",
+        react: "moreReactionsButton",
+        edit: "menuEditButton",
+        delete: "menuDeleteButton",
+      }[action];
+      await menu.getByTestId(item).click();
+      return;
+    }
+    await message.hover();
+    if (action === "reply") {
+      await page.getByTestId("replyToMessageButton").click();
+    } else if (action === "react") {
+      await page.getByTestId("openEmojiPickerButton").click();
+    } else {
+      await page.getByTestId("messageMoreButton").click();
+      await page.getByTestId(action === "edit" ? "editMessageButton" : "removeMessageButton").click();
+    }
+  }
 }
 
 export default new ChatUtils();
+
+function forgetSavedMatrixLogins(dir = "./.auth") {
+  if (!fs.existsSync(dir)) {
+    return;
+  }
+  for (const file of fs.readdirSync(dir)) {
+    if (!file.endsWith(".json")) {
+      continue;
+    }
+    const path = `${dir}/${file}`;
+    if (fs.readFileSync(path, "utf-8").includes('"matrixAccessToken"')) {
+      fs.rmSync(path, { force: true });
+    }
+  }
+}

@@ -8,7 +8,9 @@
  * only the game's own maximise button changes). Nothing sent over it proves anything: Orbit resolves and
  * authorises every page itself. Orbit's actions on the game (closing, visiting a room) stay on the WorkAdventure
  * scripting API (`WA.*`), so the bridge has no message for them. The one thing Orbit tells the game is that you
- * renamed yourself in your profile (`orbit-profile-changed`), which the game applies as its own rename does.
+ * renamed yourself in your profile (`orbit-profile-changed`), which the game applies as its own rename does, and asks
+ * the game to invite someone over (`orbit-invite-person`) or open a chat with them (`orbit-message-person`). Those two
+ * are requests: the game checks reach, Busy and blocks itself, exactly as when you invite from the People tab.
  *
  * Every visit (a room join or a reconnect) gets a new room revision. Requests carry it; Orbit refuses one from another
  * revision, and the game ignores answers from another revision, so an old Orbit frame can't act after a room or
@@ -88,12 +90,38 @@ export interface OrbitProfileChangedMessage {
     name: string;
 }
 
+/** Orbit asks the game to invite this person over (the game's "invite" capability). */
+export interface OrbitInvitePersonMessage {
+    type: "orbit-invite-person";
+    version: typeof ORBIT_BRIDGE_VERSION;
+    roomRevision: string;
+    /** Their account id, as the game invites by. */
+    uuid: string;
+    name: string;
+}
+
+/** Orbit asks the game to open a direct chat with this person (the game's "message" capability). */
+export interface OrbitMessagePersonMessage {
+    type: "orbit-message-person";
+    version: typeof ORBIT_BRIDGE_VERSION;
+    roomRevision: string;
+    uuid: string;
+    name: string;
+    /** Their Matrix id, the chat's address for them. */
+    chatId: string;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
     return !!value && typeof value === "object";
 }
 
 function isBoundedString(value: unknown, min: number, max: number): value is string {
     return typeof value === "string" && value.length >= min && value.length <= max;
+}
+
+/** A player name: 1 to 128 characters, and not only spaces (an invite would ring with an empty name). */
+function isPlayerName(value: unknown): value is string {
+    return isBoundedString(value, 1, 128) && value.trim().length > 0;
 }
 
 export function isOrbitBridgeReadyMessage(value: unknown): value is OrbitBridgeReadyMessage {
@@ -125,7 +153,33 @@ export function isOrbitProfileChangedMessage(value: unknown): value is OrbitProf
         value.type === "orbit-profile-changed" &&
         value.version === ORBIT_BRIDGE_VERSION &&
         isBoundedString(value.roomRevision, 16, 128) &&
-        isBoundedString(value.name, 1, 128)
+        isPlayerName(value.name)
+    );
+}
+
+function isInvitePersonBase(value: unknown): value is Record<string, unknown> {
+    return (
+        isRecord(value) &&
+        value.version === ORBIT_BRIDGE_VERSION &&
+        isBoundedString(value.roomRevision, 16, 128) &&
+        isBoundedString(value.uuid, 1, 64) &&
+        isPlayerName(value.name)
+    );
+}
+
+export function isOrbitInvitePersonMessage(value: unknown): value is OrbitInvitePersonMessage {
+    return isInvitePersonBase(value) && value.type === "orbit-invite-person";
+}
+
+/** A Matrix id: @name:server. */
+const MATRIX_ID = /^@[^:\s]+:\S+$/;
+
+export function isOrbitMessagePersonMessage(value: unknown): value is OrbitMessagePersonMessage {
+    return (
+        isInvitePersonBase(value) &&
+        value.type === "orbit-message-person" &&
+        isBoundedString(value.chatId, 3, 256) &&
+        MATRIX_ID.test(value.chatId)
     );
 }
 
@@ -169,7 +223,7 @@ export class OrbitBridge {
             type: "orbit-bridge-init",
             version: ORBIT_BRIDGE_VERSION,
             roomRevision: this.roomRevision,
-            capabilities: ["navigate", "event", "view", "profile"],
+            capabilities: ["navigate", "event", "view", "profile", "invite", "message"],
             view: this.view,
             ...(this.maxNameLength ? { maxNameLength: this.maxNameLength } : {}),
         });

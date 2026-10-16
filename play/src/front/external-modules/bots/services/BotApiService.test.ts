@@ -63,6 +63,25 @@ describe("BotApiService Orbit session contract", () => {
         );
     });
 
+    it("sends the player's game token so the bot server lets guests open a room", async () => {
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+            new Response(JSON.stringify({ botsSpawned: 0 }), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+            })
+        );
+        const service = new BotApiService();
+        const token = authToken("oidc-token");
+        service.initialize(token, undefined, "room-1", "http://bot-server.workadventure.localhost");
+
+        await service.notifyRoomEnter();
+
+        expect(fetchMock).toHaveBeenCalledWith(
+            "http://bot-server.workadventure.localhost/api/bots/room-enter",
+            expect.objectContaining({ headers: expect.objectContaining({ "X-WA-Auth": token }) })
+        );
+    });
+
     it("clears a cached Orbit session when the authenticated token changes", () => {
         const service = new BotApiService();
         const firstToken = authToken("first-oidc-token");
@@ -146,7 +165,10 @@ describe("BotApiService once the OIDC access token has run out", () => {
         service.initialize(expired, ADMIN, "room-1");
 
         await expect(service.listBots()).resolves.toEqual([]);
-        expect(mocks.pusherGet).toHaveBeenCalledWith("me", { params: { token: expired, playUri: "room-1" } });
+        expect(mocks.pusherGet).toHaveBeenCalledWith("me", {
+            timeout: 10_000,
+            params: { token: expired, playUri: "room-1" },
+        });
         expect(mocks.setAuthToken).toHaveBeenCalledWith(renewed);
         expect(sessionStorage.getItem("orbit_admin_session_v2")).toBe(SESSION);
     });
@@ -163,6 +185,7 @@ describe("BotApiService once the OIDC access token has run out", () => {
         await expect(service.listBots()).resolves.toEqual([]);
         expect(mocks.pusherGet).toHaveBeenCalledTimes(1);
         expect(mocks.pusherGet).toHaveBeenCalledWith("me", {
+            timeout: 10_000,
             params: { token: refused, playUri: "room-1", refresh: "true" },
         });
     });

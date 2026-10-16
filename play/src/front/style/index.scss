@@ -5,9 +5,10 @@
 @import "style";
 @import "chat.scss";
 @import "@workadventure/tailwind/style/index.scss";
-// Inter for Say bubbles and Think clouds (style.scss). Only the 500 weight, and the browser downloads only the
-// alphabets a bubble actually uses.
+// Inter for Say bubbles and Think clouds (style.scss) and for the names over the players (600). Only these weights,
+// and the browser downloads only the alphabets a bubble or a name actually uses.
 @import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
 @import "wa-theme/action-menu-bar.scss";
 @import "audio-range";
 @import "map-editor";

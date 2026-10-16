@@ -21,6 +21,7 @@ export interface FrontConfigurationInterface {
     NODE_ENV: string;
     CONTACT_URL: string | undefined;
     POSTHOG_API_KEY: string | undefined;
+    KLIPY_API_KEY: string | undefined;
     POSTHOG_URL: string | undefined;
     DISABLE_ANONYMOUS: boolean;
     ENABLE_OPENID: boolean;
@@ -68,5 +69,4 @@ export interface FrontConfigurationInterface {
     ENABLE_ISSUE_REPORT: boolean | undefined;
     GRPC_MAX_MESSAGE_SIZE: number;
     TURN_CREDENTIALS_RENEWAL_TIME: number;
-    BACKGROUND_TRANSFORMER_ENGINE: "tasks-vision" | "selfie-segmentation" | undefined;
 }

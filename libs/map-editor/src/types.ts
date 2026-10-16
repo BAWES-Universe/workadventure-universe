@@ -261,6 +261,9 @@ export const EntityRawPrefab = z.object({
     color: z.string(),
     collisionGrid: CollisionGrid.optional(),
     depthOffset: z.number().optional(),
+    // Custom uploads only: another side or colour of an upload carries the id of that upload's first picture, so the
+    // pictures group into one object (sides to turn between, colours to choose from), as built-in objects do by name.
+    variantOf: z.string().optional(),
 });
 
 export const EntityPrefabType = z.union([z.literal("Default"), z.literal("Custom")]);
@@ -356,8 +359,11 @@ export const WAMVendor = z
 export const MegaphoneSettings = z.object({
     enabled: z.boolean(),
     title: z.string().optional(),
+    // The single reach of rooms configured before "scopes" existed ("ROOM" or "WORLD").
     scope: z.string().optional(),
     rights: z.array(z.string()).optional(),
+    // The reaches people may go live at from this room ("ROOM", "WORLD", "UNIVERSE"). Replaces "scope".
+    scopes: z.array(z.string()).optional(),
 });
 
 export type MegaphoneSettings = z.infer<typeof MegaphoneSettings>;

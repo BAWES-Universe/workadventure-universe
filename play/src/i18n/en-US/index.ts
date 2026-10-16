@@ -25,6 +25,8 @@ import externalModule from "./externalModule";
 import form from "./form";
 import messageScreen from "./messageScreen";
 import locate from "./locate";
+import broadcast from "./broadcast";
+import install from "./install";
 
 const en_US: BaseTranslation = {
     area,
@@ -53,6 +55,17 @@ const en_US: BaseTranslation = {
     form,
     messageScreen,
     locate,
+    broadcast,
+    install,
+    // The installed computer app's own title bar (TitleBar.svelte).
+    titleBar: {
+        here: "{count:number} here",
+        hereLabel: "{count:number} here. Open the people list.",
+        roomLabel: "{room:string}. Open Orbit.",
+        inConversation: "In conversation",
+        lookingAround: "Looking around",
+        fullScreen: "Full screen",
+    },
 };
 
 export default en_US;

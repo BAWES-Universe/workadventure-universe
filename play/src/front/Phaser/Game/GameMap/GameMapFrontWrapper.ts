@@ -458,9 +458,7 @@ export class GameMapFrontWrapper {
 
         this.oldKey = this.key;
 
-        const xMap = Math.floor(x / (map.tilewidth ?? this.gameMap.getDefaultTileSize()));
-        const yMap = Math.floor(y / (map.tileheight ?? this.gameMap.getDefaultTileSize()));
-        const key = xMap + yMap * map.width;
+        const key = this.getTileKey(x, y, map);
 
         if (key === this.key) {
             return;
@@ -470,6 +468,40 @@ export class GameMapFrontWrapper {
 
         this.triggerAllProperties();
         this.triggerLayersChange();
+    }
+
+    private getTileKey(x: number, y: number, map: ITiledMap): number {
+        const xMap = Math.floor(x / (map.tilewidth ?? this.gameMap.getDefaultTileSize()));
+        const yMap = Math.floor(y / (map.tileheight ?? this.gameMap.getDefaultTileSize()));
+        return xMap + yMap * (map.width ?? 0);
+    }
+
+    /**
+     * True once setPosition has evaluated a position, i.e. the map property listeners have run at least once.
+     */
+    public hasPosition(): boolean {
+        return this.position !== undefined;
+    }
+
+    /**
+     * Tells whether a player standing at (x, y) is in a silent zone (a `silent` tile/layer/area property or a
+     * map-editor silent area). It reads the same sources, with the same precedence and offsets, as setPosition and
+     * the area listeners, but fires no callback and keeps no state, so it is safe before the room is joined.
+     */
+    public isSilentAt(x: number, y: number): boolean {
+        const map = this.getMap();
+        if (!map.width || !map.height) {
+            return false;
+        }
+        const position = { x, y };
+
+        const silentProperty = this.getProperties(this.getTileKey(x, y, map), position).get(GameMapProperties.SILENT);
+        if (silentProperty !== undefined && silentProperty !== false && silentProperty !== "") {
+            return true;
+        }
+
+        const areas = this.gameMap.getGameMapAreas()?.getAreasOnPlayerPosition(position) ?? [];
+        return areas.some((area) => area.properties.some((property) => property.type === "silent"));
     }
 
     public getCurrentProperties(): Map<string, string | boolean | number> {
@@ -1218,7 +1250,10 @@ export class GameMapFrontWrapper {
      * to the tileset tile + properties attached to the activated entities (if any) + properties attached to the dynamic
      * areas.
      */
-    private getProperties(key: number): Map<string, string | boolean | number> {
+    private getProperties(
+        key: number,
+        position: { x: number; y: number } | undefined = this.position
+    ): Map<string, string | boolean | number> {
         const properties = new Map<string, string | boolean | number>();
         // NOTE: WE DO NOT WANT AREAS TO BE THE PART OF THE OLD PROPERTIES CHANGE SYSTEM
         // CHECK FOR AREAS PROPERTIES
@@ -1232,8 +1267,8 @@ export class GameMapFrontWrapper {
         //}
 
         // CHECK FOR DYNAMIC AREAS PROPERTIES
-        if (this.position) {
-            const dynamicAreasProperties = this.getDynamicAreasProperties(this.position);
+        if (position) {
+            const dynamicAreasProperties = this.getDynamicAreasProperties(position);
             if (dynamicAreasProperties) {
                 for (const [key, value] of dynamicAreasProperties) {
                     properties.set(key, value);

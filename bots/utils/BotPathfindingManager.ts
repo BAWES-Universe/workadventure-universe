@@ -16,7 +16,8 @@ export class BotPathfindingManager {
     private easyStar: EasyStar.js;
     private grid: number[][];
     private tileDimensions: { width: number; height: number };
-    private currentPathfindingInstanceId: number | null = null;
+    private readonly ITERATIONS_PER_CALCULATION = 1000;
+    private readonly MAX_CALCULATE_ROUNDS = 64; // up to 64,000 expanded nodes per search before giving up
     
     // Path caching for performance
     private pathCache: Map<string, { path: PositionInterface[]; timestamp: number }> = new Map();
@@ -28,7 +29,7 @@ export class BotPathfindingManager {
         this.easyStar.enableDiagonals();
         this.easyStar.disableCornerCutting(); // Prevent cutting corners through walls
         this.easyStar.setTileCost(PathTileType.Exit, 100); // Make exits expensive but walkable
-        this.easyStar.setIterationsPerCalculation(1000); // Process up to 1000 nodes per calculation
+        this.easyStar.setIterationsPerCalculation(this.ITERATIONS_PER_CALCULATION);
 
         this.grid = collisionGrid;
         this.tileDimensions = tileDimensions;
@@ -296,23 +297,27 @@ export class BotPathfindingManager {
         end: { x: number; y: number }
     ): Promise<{ x: number; y: number }[]> {
         return new Promise((resolve) => {
-            // Cancel any ongoing pathfinding
-            if (this.currentPathfindingInstanceId !== null) {
-                this.easyStar.cancelPath(this.currentPathfindingInstanceId);
+            let settled = false;
+            const settle = (path: { x: number; y: number }[]) => {
+                if (settled) return;
+                settled = true;
+                resolve(path);
+            };
+
+            const instanceId = this.easyStar.findPath(start.x, start.y, end.x, end.y, (path) => settle(path || []));
+
+            // calculate() expands at most ITERATIONS_PER_CALCULATION nodes per call, so a longer search needs more
+            // calls (a no-op once the search is done). EasyStar calls back on a timer, never inside calculate(), so
+            // the give-up below is deferred the same way and only runs when no result came: a search never stays
+            // in flight, or its caller would wait forever with its "move in progress" flag up.
+            for (let round = 0; round < this.MAX_CALCULATE_ROUNDS; round++) {
+                this.easyStar.calculate();
             }
-
-            this.currentPathfindingInstanceId = this.easyStar.findPath(
-                start.x,
-                start.y,
-                end.x,
-                end.y,
-                (path) => {
-                    this.currentPathfindingInstanceId = null;
-                    resolve(path || []);
-                }
-            );
-
-            this.easyStar.calculate();
+            setTimeout(() => {
+                if (settled) return;
+                this.easyStar.cancelPath(instanceId);
+                settle([]);
+            });
         });
     }
 

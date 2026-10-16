@@ -1,4 +1,5 @@
-import { NODE_ENV } from "../Enum/EnvironmentVariable";
+/** The one service worker of the game. It also shows and answers the chat notifications. */
+export const SERVICE_WORKER_URL = "/service-worker.js";
 
 export class _ServiceWorker {
     constructor() {
@@ -20,24 +21,10 @@ export class _ServiceWorker {
     }
 
     init() {
-        //Check node env and if is development, use service worker dev file
-        if (NODE_ENV === "development") {
-            navigator.serviceWorker
-                .register(
-                    `/service-worker-dev.js?playUri=${window.location.protocol}//${window.location.host}${window.location.pathname}`
-                )
-                .then((serviceWorker) => {
-                    console.info("Service Worker registered: ", serviceWorker);
-                })
-                .catch((error) => {
-                    console.error("Error registering the Service Worker: ", error);
-                });
-            return;
-        }
+        // One worker for every room and every build, at a stable address: a changing address (it used to carry the
+        // room) made the browser install a new worker on every room change.
         navigator.serviceWorker
-            .register(
-                `/service-worker-prod.js?playUri=${window.location.protocol}//${window.location.host}${window.location.pathname}`
-            )
+            .register(SERVICE_WORKER_URL)
             .then((serviceWorker) => {
                 console.info("Service Worker registered: ", serviceWorker);
             })

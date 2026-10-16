@@ -17,7 +17,11 @@ import { userIsConnected } from "../../Stores/MenuStore";
 import { localUserStore } from "../../Connection/LocalUserStore";
 import { analyticsClient } from "../../Administration/AnalyticsClient";
 import { canOpenOrbit, openOrbitProfile } from "../../external-modules/admin-api/index";
-import { IconMessage, IconUserCircle, IconWalk } from "@wa-icons";
+import { friendsEnabledStore, relationshipsStore } from "../../Chat/Stores/FriendsStore";
+import { invitesEnabledStore, ringStore } from "../../Chat/Stores/RingStore";
+import { isBotUser } from "../../Chat/UserProvider/ChatUserMapper";
+import { friendMenuAction } from "../../Chat/Components/UserList/FriendMenuAction";
+import { IconMessage, IconUserCircle, IconUsersPlus, IconWalk } from "@wa-icons";
 
 export enum RemotePlayerEvent {
     Clicked = "Clicked",
@@ -204,6 +208,25 @@ export class RemotePlayer extends Character implements ActivatableInterface {
         const chatID = this.getChatID();
         const isMyOtherSession =
             chatID === localUserStore.getChatId() || this.userUuid === localUserStore.getLocalUser()?.uuid;
+        // Invite: anyone on the map you haven't blocked, guests too, between Walk to and Add friend. The server says
+        // where it reaches; "can't invite from here" shows if it doesn't.
+        const worldUser = [...(get(this.scene.allUsersInWorldStore)?.values() ?? [])].find(
+            (user) => user.uuid === this.userUuid
+        );
+        const isBot = isBotUser({ uuid: this.userUuid, tags: worldUser?.tags });
+        if (get(invitesEnabledStore) && !isMyOtherSession && !isBot && !blackListManager.isBlackListed(this.userUuid)) {
+            actions.push({
+                actionName: get(LL).chat.friends.ring.ring(),
+                protected: false,
+                priority: 1.8,
+                style: "bg-white/10 hover:bg-white/30",
+                testId: "wokamenu-invite-button",
+                callback: () => {
+                    ringStore.ring(this.userUuid, this.playerName).catch((e) => console.error(e));
+                },
+                actionIcon: IconUsersPlus,
+            });
+        }
         if (chatID !== undefined && get(userIsConnected) && !isMyOtherSession) {
             actions.push({
                 actionName: get(LL).chat.userList.message(),
@@ -229,6 +252,25 @@ export class RemotePlayer extends Character implements ActivatableInterface {
                 },
                 actionIcon: IconMessage,
             });
+        }
+        // Add friend beside Message when you are both signed in; once asked or friends, the follow-up (cancel,
+        // remove) waits under "more", and accepting their request stays beside Message.
+        if (chatID !== undefined && get(friendsEnabledStore) && !isMyOtherSession) {
+            const relationship = get(relationshipsStore).get(this.userUuid) ?? "none";
+            const friendAction = friendMenuAction(relationship, this.userUuid, this.playerName, get(LL));
+            if (friendAction) {
+                const inMain = relationship === "none" || relationship === "request_received";
+                actions.push({
+                    actionName: friendAction.label,
+                    protected: false,
+                    priority: inMain ? 1.5 : -0.5,
+                    overflow: !inMain,
+                    style: friendAction.danger ? "text-red-500" : "bg-white/10 hover:bg-white/30",
+                    testId: "wokamenu-friend-button",
+                    callback: friendAction.act,
+                    actionIcon: friendAction.icon,
+                });
+            }
         }
         // Their profile in Orbit, when you are both signed in (only signed-in players have a chat id): after Message.
         if (chatID !== undefined && canOpenOrbit()) {

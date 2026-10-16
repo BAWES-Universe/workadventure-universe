@@ -4,6 +4,8 @@ import {
     OrbitBridge,
     isOrbitBridgeAckMessage,
     isOrbitBridgeReadyMessage,
+    isOrbitInvitePersonMessage,
+    isOrbitMessagePersonMessage,
     isOrbitProfileChangedMessage,
     newRoomRevision,
     type OrbitBridgeOutgoing,
@@ -58,6 +60,38 @@ describe("Orbit bridge messages", () => {
     });
 });
 
+describe("Orbit's invite and message requests", () => {
+    const base = { version: 1, roomRevision: revision, uuid: "uuid-ali", name: "Ali" };
+
+    it("accepts a well-formed invite request", () => {
+        expect(isOrbitInvitePersonMessage({ ...base, type: "orbit-invite-person" })).toBe(true);
+    });
+
+    it("refuses an invite request with the wrong version, type, id or name", () => {
+        const invite = { ...base, type: "orbit-invite-person" };
+        expect(isOrbitInvitePersonMessage({ ...invite, version: 2 })).toBe(false);
+        expect(isOrbitInvitePersonMessage({ ...invite, type: "orbit-navigate" })).toBe(false);
+        expect(isOrbitInvitePersonMessage({ ...invite, uuid: "" })).toBe(false);
+        expect(isOrbitInvitePersonMessage({ ...invite, uuid: "u".repeat(65) })).toBe(false);
+        expect(isOrbitInvitePersonMessage({ ...invite, name: 42 })).toBe(false);
+        expect(isOrbitInvitePersonMessage({ ...invite, name: "" })).toBe(false);
+        expect(isOrbitInvitePersonMessage({ ...invite, name: "   " })).toBe(false);
+        expect(isOrbitInvitePersonMessage({ ...invite, roomRevision: "short" })).toBe(false);
+        expect(isOrbitInvitePersonMessage(null)).toBe(false);
+    });
+
+    it("accepts a message request with a Matrix id, and refuses anything else as the address", () => {
+        const message = { ...base, type: "orbit-message-person", chatId: "@ali:chat.example.com" };
+        expect(isOrbitMessagePersonMessage(message)).toBe(true);
+        expect(isOrbitMessagePersonMessage({ ...message, name: " \t " })).toBe(false);
+        expect(isOrbitMessagePersonMessage({ ...message, chatId: "ali" })).toBe(false);
+        expect(isOrbitMessagePersonMessage({ ...message, chatId: "@ali" })).toBe(false);
+        expect(isOrbitMessagePersonMessage({ ...message, chatId: "@a li:server" })).toBe(false);
+        expect(isOrbitMessagePersonMessage({ ...message, chatId: undefined })).toBe(false);
+        expect(isOrbitMessagePersonMessage({ ...message, type: "orbit-invite-person" })).toBe(false);
+    });
+});
+
 describe("OrbitBridge", () => {
     beforeEach(() => vi.restoreAllMocks());
 
@@ -71,7 +105,7 @@ describe("OrbitBridge", () => {
             type: "orbit-bridge-init",
             version: 1,
             roomRevision: revision,
-            capabilities: ["navigate", "event", "view", "profile"],
+            capabilities: ["navigate", "event", "view", "profile", "invite", "message"],
             view: "compact",
         });
         expect(posted[1]).toEqual({
@@ -151,6 +185,7 @@ describe("OrbitBridge", () => {
         };
         expect(isOrbitProfileChangedMessage(good)).toBe(true);
         expect(isOrbitProfileChangedMessage({ ...good, name: "" })).toBe(false);
+        expect(isOrbitProfileChangedMessage({ ...good, name: "   " })).toBe(false);
         expect(isOrbitProfileChangedMessage({ ...good, name: 5 })).toBe(false);
         expect(isOrbitProfileChangedMessage({ ...good, version: 2 })).toBe(false);
         expect(isOrbitProfileChangedMessage({ ...good, roomRevision: "short" })).toBe(false);

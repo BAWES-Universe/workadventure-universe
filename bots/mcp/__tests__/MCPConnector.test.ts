@@ -14,7 +14,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import axios from 'axios';
-import { MCPConnector, REQUEST_TIMEOUT, type McpToolDefinition } from '../MCPConnector';
+import { MCPConnector, REQUEST_TIMEOUT, toolTimeoutMs, type McpToolDefinition } from '../MCPConnector';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -814,6 +814,134 @@ describe('MCPConnector', () => {
 
             warnSpy.mockRestore();
             logSpy.mockRestore();
+        });
+    });
+
+    // --- per-bot tool timeout ("Patience") --------------------------------
+
+    describe('per-bot tool timeout (Patience)', () => {
+        const URL_ = 'https://slow.example.com/mcp';
+
+        // A tools/call that only ends when its request is aborted.
+        function hangUntilAborted(_url: string, _body: any, config?: any) {
+            return new Promise((_resolve, reject) => {
+                config?.signal?.addEventListener('abort', () => {
+                    const err: any = new Error('canceled');
+                    err.code = 'ERR_CANCELED';
+                    reject(err);
+                });
+            });
+        }
+
+        beforeEach(() => {
+            mockedAxios.isCancel.mockImplementation((err: any) => err?.code === 'ERR_CANCELED');
+            mockedAxios.post.mockReset();
+        });
+
+        it('turns a saved Patience into milliseconds, clamped to 5 s to 10 min', () => {
+            expect(toolTimeoutMs(undefined)).toBeUndefined();
+            expect(toolTimeoutMs(null)).toBeUndefined();
+            expect(toolTimeoutMs(0)).toBeUndefined();
+            expect(toolTimeoutMs(Number.NaN)).toBeUndefined();
+            expect(toolTimeoutMs(15)).toBe(15_000);
+            expect(toolTimeoutMs(180)).toBe(180_000);
+            expect(toolTimeoutMs(2)).toBe(5_000);
+            expect(toolTimeoutMs(9999)).toBe(600_000);
+        });
+
+        it('gives up on a tool call after the bot\'s own timeout', async () => {
+            const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            mockedAxios.post.mockResolvedValueOnce(MOCK_INIT_RESPONSE).mockImplementationOnce(hangUntilAborted);
+
+            let result: any;
+            void MCPConnector.executeToolCall('s', URL_, 'render', {}, 'none', undefined, undefined, 'p-1', undefined, 15_000)
+                .then((r) => (result = r));
+
+            await vi.advanceTimersByTimeAsync(14_999);
+            expect(result).toBeUndefined();
+            await vi.advanceTimersByTimeAsync(1);
+            expect(result).toEqual({ error: 'Tool unavailable: render (server not reachable)' });
+            expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('timed out after 15000ms for tools/call'));
+            warnSpy.mockRestore();
+        });
+
+        it('waits longer than the default when the bot is more patient', async () => {
+            const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            mockedAxios.post.mockResolvedValueOnce(MOCK_INIT_RESPONSE).mockImplementationOnce(hangUntilAborted);
+
+            let result: any;
+            void MCPConnector.executeToolCall('s', URL_, 'render', {}, 'none', undefined, undefined, 'p-2', undefined, 180_000)
+                .then((r) => (result = r));
+
+            await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT + 1_000);
+            expect(result).toBeUndefined();
+            await vi.advanceTimersByTimeAsync(180_000 - REQUEST_TIMEOUT - 1_000);
+            expect(result?.error).toContain('Tool unavailable');
+            warnSpy.mockRestore();
+        });
+
+        it('gives the retry after a failed call only the time left of Patience', async () => {
+            const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+            mockedAxios.post
+                .mockResolvedValueOnce(MOCK_INIT_RESPONSE)
+                // The first call fails after 10 s without reaching the server: the session is dropped, so it retries
+                .mockImplementationOnce(
+                    () => new Promise((_resolve, reject) => setTimeout(() => reject(makeAxiosError(502)), 10_000))
+                )
+                .mockResolvedValueOnce(MOCK_INIT_RESPONSE)
+                .mockImplementationOnce(hangUntilAborted);
+
+            let result: any;
+            void MCPConnector.executeToolCall('s', URL_, 'render', {}, 'none', undefined, undefined, 'p-5', undefined, 15_000)
+                .then((r) => (result = r));
+
+            await vi.advanceTimersByTimeAsync(14_999);
+            expect(result).toBeUndefined();
+            await vi.advanceTimersByTimeAsync(1);
+            expect(result?.error).toContain('Tool unavailable');
+            expect(mockedAxios.post).toHaveBeenCalledTimes(4);
+            warnSpy.mockRestore();
+            errorSpy.mockRestore();
+        });
+
+        it('keeps the default timeout when the bot has no Patience set', async () => {
+            const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            mockedAxios.post.mockResolvedValueOnce(MOCK_INIT_RESPONSE).mockImplementationOnce(hangUntilAborted);
+
+            let result: any;
+            void MCPConnector.executeToolCall('s', URL_, 'render', {}, 'none', undefined, undefined, 'p-3')
+                .then((r) => (result = r));
+
+            await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT - 1);
+            expect(result).toBeUndefined();
+            await vi.advanceTimersByTimeAsync(1);
+            expect(result?.error).toContain('Tool unavailable');
+            warnSpy.mockRestore();
+        });
+
+        it('counts a slow initialize against Patience, without aborting or retrying it', async () => {
+            const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            let initSignal: AbortSignal | undefined;
+            mockedAxios.post.mockImplementationOnce((url: string, body: any, config?: any) => {
+                initSignal = config?.signal;
+                return hangUntilAborted(url, body, config);
+            });
+
+            let result: any;
+            void MCPConnector.executeToolCall('s', URL_, 'render', {}, 'none', undefined, undefined, 'p-4', undefined, 15_000)
+                .then((r) => (result = r));
+
+            await vi.advanceTimersByTimeAsync(15_000);
+            expect(result).toEqual({ error: 'Tool unavailable: render (server not reachable)' });
+            expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('(during initialize)'));
+            // Only the initialize went out: no tools/call and no retry
+            expect(mockedAxios.post).toHaveBeenCalledTimes(1);
+            // The initialize itself keeps running, per the MCP spec
+            expect(initSignal?.aborted).toBe(false);
+            await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT);
+            expect(initSignal?.aborted).toBe(true);
+            warnSpy.mockRestore();
         });
     });
 });

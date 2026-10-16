@@ -3,6 +3,12 @@ import { analyticsClient } from "../Administration/AnalyticsClient";
 import { chatVisibilityStore } from "../Stores/ChatStore";
 
 let pendingChatOpenSource: ChatOpenSource | undefined;
+let lastChatOpenSource: ChatOpenSource = "unknown";
+
+/** What opened the chat the last time it opened ("unknown" for a direct call to the store). */
+export function getLastChatOpenSource(): ChatOpenSource {
+    return lastChatOpenSource;
+}
 
 /**
  * Opens the chat panel and records what opened it. Use this instead of `chatVisibilityStore.set(true)`
@@ -22,7 +28,8 @@ let previousChatVisibility = false;
 // eslint-disable-next-line svelte/no-ignored-unsubscribe
 chatVisibilityStore.subscribe((visible) => {
     if (visible && !previousChatVisibility) {
-        analyticsClient.chatPanelOpened(pendingChatOpenSource ?? "unknown");
+        lastChatOpenSource = pendingChatOpenSource ?? "unknown";
+        analyticsClient.chatPanelOpened(lastChatOpenSource);
     }
     previousChatVisibility = visible;
 });

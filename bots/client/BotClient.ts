@@ -30,6 +30,7 @@ import { PathSmoother } from '../utils/PathSmoother';
 import { movementLogger } from '../utils/MovementLogger';
 import type { BotConfiguration } from '../server/AdminApiService';
 import { FileParser } from '../services/FileParser';
+import { extractChatLinks } from '../utils/chatLinks';
 import { resolve4, resolve6 } from 'dns/promises';
 import * as Sentry from '@sentry/node';
 
@@ -176,7 +177,8 @@ export class BotClient {
             if (this.config.companionTextureId) {
                 params.set('companionTextureId', this.config.companionTextureId);
             }
-            params.set('availabilityStatus', '0'); // ONLINE
+            // ONLINE (1). This used to send 0, which is UNCHANGED: people saw the bot as offline in the People list
+            params.set('availabilityStatus', '1');
             params.set('version', apiVersionHash); // Imported from @workadventure/messages
             params.set('chatID', '');
             params.set('roomName', '');
@@ -266,6 +268,13 @@ export class BotClient {
     isOtherBot(playerId: number): boolean {
         // It's another bot if it's in the bot set AND it's not ourselves
         return playerId !== this.userId && BotClient.isBot(playerId);
+    }
+
+    /**
+     * The behavior running this bot, if any
+     */
+    getBehavior(): BaseBehavior | null {
+        return this.behavior ?? null;
     }
 
     /**
@@ -1972,6 +1981,24 @@ export class BotClient {
     }
 
     /**
+     * Where this bot sees the player with this uuid, or undefined when that player is not in the bot's room (or the
+     * bot has no position for them yet). Bots are never returned.
+     */
+    getPlayerPositionByUuid(uuid: string): PositionInterface | undefined {
+        // Anybody in the room, whether or not they have come close enough to the bot to be in one of its spaces.
+        const seenInRoom = [...this.players.values()].find((candidate) => candidate.uuid === uuid);
+        const userId = seenInRoom?.userId ?? this.behavior?.getUserIdForUuid(uuid);
+        if (userId === undefined || BotClient.isBot(userId)) {
+            return undefined;
+        }
+        const player = this.players.get(userId);
+        if (!player || (player.position.x === 0 && player.position.y === 0)) {
+            return undefined;
+        }
+        return { x: player.position.x, y: player.position.y };
+    }
+
+    /**
      * Get all nearby players
      */
     getNearbyPlayers(radius: number): PlayerInfo[] {
@@ -2392,6 +2419,7 @@ export class BotClient {
                         }
                         this.players.set(userId, {
                             userId: userId,
+                            uuid: message.userJoinedMessage.userUuid || undefined,
                             name: message.userJoinedMessage.name,
                             position: playerPos,
                             availabilityStatus: message.userJoinedMessage.availabilityStatus ?? 0,
@@ -3102,11 +3130,8 @@ export class BotClient {
      * message drive arbitrary resource consumption.
      */
     private extractUrlsFromText(text: string): string[] {
-        const matches = text.match(/https?:\/\/[^\s)]+/g) || [];
-        return matches
-            .map(match => match.replace(/[.,!?;:]+$/, ''))
-            .filter((url, index, all) => all.indexOf(url) === index)
-            .slice(0, BotClient.MAX_CHAT_URLS);
+        // Full URLs and bare site names ("check out bawes.net"); see utils/chatLinks.
+        return extractChatLinks(text, BotClient.MAX_CHAT_URLS);
     }
 
     /**
@@ -3228,6 +3253,8 @@ export class BotClient {
 
 interface PlayerInfo {
     userId: number;
+    /** The player's uuid, as the room told the bot when they joined. */
+    uuid?: string;
     name: string;
     position: PositionInterface;
     availabilityStatus: number;

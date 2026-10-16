@@ -243,7 +243,8 @@ test.describe('Meeting actions test @nomobile @nowebkit', () => {
   
           // Click on the mute button
           await page.getByRole('button', { name: 'Moderation', exact: true }).click();
-          await page.getByRole('button', { name: 'Block this user' }).click();
+          await page.getByTestId('blockmenu-block-user-button').filter({ hasText: /^\s*Block / }).click();
+          await expect(page.locator('.report-menu-main')).toHaveCount(0);
 
 
           await expect.poll(async() => await page.getByTestId('webrtc-video').count()).toBe(1);
@@ -254,11 +255,9 @@ test.describe('Meeting actions test @nomobile @nowebkit', () => {
           await userBob.getByTestId('messageInput').fill('Hello banned!');
           await userBob.getByTestId('messageInput').press('Enter');
   
+          // Bob's woka; the small map sits in the middle of the screen.
           await page.locator('canvas').click({
-              position: {
-                  x: 266,
-                  y: 240
-              }
+              position: Map.onScreen(page, 266, 240)
           });
 
 
@@ -266,6 +265,7 @@ test.describe('Meeting actions test @nomobile @nowebkit', () => {
           await page.getByTestId('wokamenu-more-button').click();
           await page.getByTestId('wokamenu-block-user-button').click();
           await page.getByTestId('blockmenu-block-user-button').click();
+          await expect(page.locator('.report-menu-main')).toHaveCount(0);
   
           await userBob.getByTestId('messageInput').fill('Hello unbanned!');
           await userBob.getByTestId('messageInput').press('Enter');
@@ -283,7 +283,8 @@ test.describe('Meeting actions test @nomobile @nowebkit', () => {
   
           // Click on the mute button
           await page.getByRole('button', { name: 'Moderation', exact: true }).click();
-          await page.getByRole('button', { name: 'Block this user' }).click();
+          await page.getByTestId('blockmenu-block-user-button').filter({ hasText: /^\s*Block / }).click();
+          await expect(page.locator('.report-menu-main')).toHaveCount(0);
 
 
           await expect.poll(async() => await page.getByTestId('webrtc-video').count()).toBe(1);
@@ -303,7 +304,8 @@ test.describe('Meeting actions test @nomobile @nowebkit', () => {
   
           // Click on the mute button
           await page.getByRole('button', { name: 'Moderation', exact: true }).click();
-          await page.getByRole('button', { name: 'Unblock this user' }).click();
+          await page.getByTestId('blockmenu-block-user-button').filter({ hasText: /^\s*Unblock / }).click();
+          await expect(page.locator('.report-menu-main')).toHaveCount(0);
 
           await expect.poll(async() => await page.getByTestId('webrtc-video').count()).toBe(2);
           await expect.poll(async() => await userBob.getByTestId('webrtc-video').count()).toBe(2);
@@ -318,7 +320,8 @@ test.describe('Meeting actions test @nomobile @nowebkit', () => {
   
           // Click on the mute button
           await page.getByRole('button', { name: 'Moderation', exact: true }).click();
-          await page.getByRole('button', { name: 'Block this user' }).click();
+          await page.getByTestId('blockmenu-block-user-button').filter({ hasText: /^\s*Block / }).click();
+          await expect(page.locator('.report-menu-main')).toHaveCount(0);
 
 
                     // Click on the action button of "Bob" on Alice screen
@@ -326,7 +329,8 @@ test.describe('Meeting actions test @nomobile @nowebkit', () => {
   
           // Click on the mute button
           await userBob.getByRole('button', { name: 'Moderation', exact: true }).click();
-          await userBob.getByRole('button', { name: 'Block this user' }).click();
+          await userBob.getByTestId('blockmenu-block-user-button').filter({ hasText: /^\s*Block / }).click();
+          await expect(userBob.locator('.report-menu-main')).toHaveCount(0);
 
 
           await expect.poll(async() => await page.getByTestId('webrtc-video').count()).toBe(1);
@@ -338,7 +342,8 @@ test.describe('Meeting actions test @nomobile @nowebkit', () => {
           // Click on the mute button
           await page.getByRole('button', { name: 'Moderation', exact: true }).click();
 
-            await page.getByRole('button', { name: 'Unblock this user' }).click();
+            await page.getByTestId('blockmenu-block-user-button').filter({ hasText: /^\s*Unblock / }).click();
+            await expect(page.locator('.report-menu-main')).toHaveCount(0);
 
           await expect.poll(async() => await page.getByTestId('webrtc-video').count()).toBe(1);
           await expect.poll(async() => await userBob.getByTestId('webrtc-video').count()).toBe(1);

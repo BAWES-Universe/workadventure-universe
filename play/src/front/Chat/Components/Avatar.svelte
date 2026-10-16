@@ -1,8 +1,11 @@
 <script lang="ts">
+    import { readable } from "svelte/store";
+    import type { Readable } from "svelte/store";
     import { getColorByString } from "../../Utils/ColorGenerator";
     import type { PictureStore } from "../../Stores/PictureStore";
 
-    export let pictureStore: PictureStore | undefined;
+    /** A chat picture may say it's still downloading: no letter is shown until then, so none flashes. */
+    export let pictureStore: (PictureStore & { loading?: Readable<boolean> }) | undefined;
     export let fallbackName = "A";
     export let color: string | null = null;
     export let isChatAvatar = false;
@@ -11,6 +14,7 @@
     export let round = false;
 
     $: shapeClass = round ? "rounded-full" : size === "lg" ? "rounded-lg" : "rounded-sm";
+    $: loading = pictureStore?.loading ?? readable(false);
 </script>
 
 {#if $pictureStore}
@@ -30,7 +34,9 @@
         draggable="false"
         style:background-color={`${color ? color : getColorByString(fallbackName)}`}
     >
-        {fallbackName.charAt(0)}
+        {#if !$loading}
+            {fallbackName.charAt(0)}
+        {/if}
     </div>
 {/if}
 

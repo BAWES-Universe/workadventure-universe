@@ -5,9 +5,11 @@ export function createSilentStore() {
 
     let area = false;
     let others = false;
+    // Silence found at the spawn point before the map listeners have run. The first position update replaces it.
+    let spawn = false;
 
     const updateSilent = () => {
-        set(area || others);
+        set(area || others || spawn);
     };
 
     return {
@@ -20,6 +22,15 @@ export function createSilentStore() {
 
         setOthersSilent(silent: boolean) {
             others = silent;
+            updateSilent();
+        },
+
+        /**
+         * Marks the player as silent from the moment they appear in a silent zone, so the room join already carries
+         * it. It is dropped once the map has evaluated the player's position.
+         */
+        setSpawnSilent(silent: boolean) {
+            spawn = silent;
             updateSilent();
         },
     };

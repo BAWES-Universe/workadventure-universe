@@ -3,18 +3,23 @@ import { derived, get, readable, writable } from "svelte/store";
 import deepEqual from "fast-deep-equal";
 import { AvailabilityStatus } from "@workadventure/messages";
 import * as Sentry from "@sentry/svelte";
+import { AbortError } from "@workadventure/shared-utils/src/Abort/AbortError";
 import { localUserStore } from "../Connection/LocalUserStore";
-import { isIOS, isSafari } from "../WebRtc/DeviceUtils";
+import { isAndroid, isIOS, isSafari } from "../WebRtc/DeviceUtils";
 import type { ObtainedMediaStreamConstraints } from "../WebRtc/P2PMessages/ConstraintMessage";
 import { SoundMeter } from "../Phaser/Components/SoundMeter";
 import { findNewMediaDevices, listLacksNamesFor, rememberMediaDevices } from "../Utils/NewMediaDevices";
 import type { RequestedStatus } from "../Rules/StatusRules/statusRules";
 import { statusChanger } from "../Components/ActionBar/AvailabilityStatus/statusChanger";
 import {
+    BackgroundProcessingUnsupportedError,
     createBackgroundTransformer,
     type BackgroundTransformer,
     type BackgroundConfig,
+    type BackgroundMode,
 } from "../WebRtc/BackgroundProcessor/createBackgroundTransformer";
+import { waitForFirstVideoFrame } from "../WebRtc/BackgroundProcessor/waitForFirstVideoFrame";
+import { NoiseSuppressionTransformer } from "../WebRtc/NoiseSuppression/NoiseSuppressionTransformer";
 import { LL } from "../../i18n/i18n-svelte";
 import { MediaStreamConstraintsError } from "./Errors/MediaStreamConstraintsError";
 import { BrowserTooOldError } from "./Errors/BrowserTooOldError";
@@ -27,8 +32,21 @@ import { inExternalServiceStore, myCameraStore, myMicrophoneStore, proximityMeet
 import { userMovingStore } from "./GameStore";
 import { hideHelpCameraSettings } from "./HelpSettingsStore";
 import { isLiveStreamingStore } from "./IsStreamingStore";
+import { videoStreamElementsStore } from "./PeerStore";
+import { phoneMicrophoneCanRest } from "./PhoneMicrophoneRest";
 
-import { backgroundConfigStore, backgroundProcessingEnabledStore } from "./BackgroundTransformStore";
+import {
+    backgroundConfigStore,
+    backgroundEffectStartingStore,
+    backgroundProcessingEnabledStore,
+} from "./BackgroundTransformStore";
+import {
+    noiseFilterStore,
+    strongNoiseEngineStore,
+    strongNoiseFilterStateStore,
+    strongNoiseFilterSupported,
+    voiceIsolationSupportedStore,
+} from "./NoiseFilterStore";
 
 /**
  * A store that contains the camera state requested by the user (on or off).
@@ -255,26 +273,33 @@ export const videoConstraintStore = derived(
 /**
  * A store that contains video constraints.
  */
-export const audioConstraintStore = derived(requestedMicrophoneDeviceIdStore, ($microphoneDeviceIdStore) => {
-    let constraints = {
-        //TODO: make these values configurable in the game settings menu and store them in localstorage
-        autoGainControl: true,
-        echoCancellation: true,
-        noiseSuppression: true,
-    } as boolean | MediaTrackConstraints;
+export const audioConstraintStore = derived(
+    [requestedMicrophoneDeviceIdStore, noiseFilterStore, strongNoiseFilterStateStore],
+    ([$microphoneDeviceIdStore, $noiseFilterStore, $strongNoiseFilterStateStore]) => {
+        let constraints = {
+            autoGainControl: true,
+            echoCancellation: true,
+            // The Strong filter replaces the browser's once it runs. Until then the browser's filter stays on.
+            noiseSuppression: !($noiseFilterStore === "strong" && $strongNoiseFilterStateStore === "on"),
+        } as boolean | MediaTrackConstraints;
 
-    if (typeof constraints === "boolean") {
-        constraints = {};
+        if (typeof constraints === "boolean") {
+            constraints = {};
+        }
+        if (
+            $microphoneDeviceIdStore !== undefined &&
+            navigator.mediaDevices &&
+            navigator.mediaDevices.getSupportedConstraints().deviceId === true
+        ) {
+            constraints.deviceId = { exact: $microphoneDeviceIdStore };
+        }
+        if ($noiseFilterStore === "voiceOnly") {
+            // Browsers that don't know this constraint ignore it.
+            constraints.voiceIsolation = true;
+        }
+        return constraints;
     }
-    if (
-        $microphoneDeviceIdStore !== undefined &&
-        navigator.mediaDevices &&
-        navigator.mediaDevices.getSupportedConstraints().deviceId === true
-    ) {
-        constraints.deviceId = { exact: $microphoneDeviceIdStore };
-    }
-    return constraints;
-});
+);
 
 /**
  * A store that contains "true" if the webcam should be stopped for energy efficiency reason - i.e. we are not moving and not in a conversation.
@@ -385,6 +410,19 @@ availabilityStatusStore.subscribe((newStatus: AvailabilityStatus) => {
 
 let previousComputedVideoConstraint: boolean | MediaTrackConstraints = false;
 let previousComputedAudioConstraint: boolean | MediaTrackConstraints = false;
+let previousComputedKeepAudioWarm: false | MediaTrackConstraints = false;
+
+export interface MediaStreamConstraintsValue {
+    video: false | MediaTrackConstraints;
+    audio: false | MediaTrackConstraints;
+    /**
+     * Set when the microphone is off only because the user muted it during a conversation: the audio track
+     * is then kept open (disabled) so that unmuting does not have to reopen the device.
+     * It holds the microphone constraints the kept track must still match (picking another microphone or
+     * noise filter while muted releases it).
+     */
+    keepAudioWarm: false | MediaTrackConstraints;
+}
 
 /**
  * A store containing the media constraints we want to apply.
@@ -403,6 +441,13 @@ export const mediaStreamConstraintsStore = derived(
         cameraEnergySavingStore,
         availabilityStatusStore,
         batchGetUserMediaStore,
+        videoStreamElementsStore,
+        isLiveStreamingStore,
+        isSpeakerStore,
+        isListenerStore,
+        inLivekitStore,
+        streamingMegaphoneStore,
+        displayedMegaphoneScreenStore,
     ],
     (
         [
@@ -418,6 +463,13 @@ export const mediaStreamConstraintsStore = derived(
             $cameraEnergySavingStore,
             $availabilityStatusStore,
             $batchGetUserMediaStore,
+            $videoStreamElementsStore,
+            $isLiveStreamingStore,
+            $isSpeakerStore,
+            $isListenerStore,
+            $inLivekitStore,
+            $streamingMegaphoneStore,
+            $displayedMegaphoneScreenStore,
         ],
         set
     ) => {
@@ -428,6 +480,8 @@ export const mediaStreamConstraintsStore = derived(
 
         let currentVideoConstraint: boolean | MediaTrackConstraints = $videoConstraintStore;
         let currentAudioConstraint: boolean | MediaTrackConstraints = $audioConstraintStore;
+        // Set when something other than a mute by the user cuts the microphone.
+        let audioReleased = false;
 
         // Disable webcam if the user requested so
         if ($requestedCameraState === false) {
@@ -447,11 +501,13 @@ export const mediaStreamConstraintsStore = derived(
         // Disable microphone when in a Jitsi
         if ($myMicrophoneStore === false) {
             currentAudioConstraint = false;
+            audioReleased = true;
         }
 
         if ($inExternalServiceStore === true) {
             currentVideoConstraint = false;
             currentAudioConstraint = false;
+            audioReleased = true;
         }
 
         // Disable webcam for privacy reasons (the game is not visible and we were talking to no one)
@@ -460,16 +516,36 @@ export const mediaStreamConstraintsStore = derived(
             const userCameraPrivacySetting = localUserStore.getCameraPrivacySettings();
             if (!userMicrophonePrivacySetting) {
                 currentAudioConstraint = false;
+                audioReleased = true;
             }
             if (!userCameraPrivacySetting) {
                 currentVideoConstraint = false;
             }
         }
 
+        // On a phone the microphone stays closed while nobody can hear it, so that leaving the app and coming back
+        // (or any other pause) does not close and open it, which makes iOS play its microphone sounds.
+        if (
+            (isIOS() || isAndroid()) &&
+            phoneMicrophoneCanRest({
+                peers: $videoStreamElementsStore.length,
+                live: $isLiveStreamingStore,
+                speaker: $isSpeakerStore,
+                listener: $isListenerStore,
+                inLivekit: $inLivekitStore,
+                megaphone: $streamingMegaphoneStore || $displayedMegaphoneScreenStore,
+                setupScreen: $enableCameraSceneVisibilityStore,
+            })
+        ) {
+            currentAudioConstraint = false;
+            audioReleased = true;
+        }
+
         // Disable webcam for energy reasons (the user is not moving and we are talking to no one)
         if ($cameraEnergySavingStore === true && $enableCameraSceneVisibilityStore === false) {
             currentVideoConstraint = false;
             currentAudioConstraint = false;
+            audioReleased = true;
         }
 
         if (
@@ -482,15 +558,27 @@ export const mediaStreamConstraintsStore = derived(
         ) {
             currentVideoConstraint = false;
             currentAudioConstraint = false;
+            audioReleased = true;
         }
+
+        // Unmuting must be instant during a conversation: reopening the microphone with getUserMedia takes
+        // 1 to 3 seconds (much more with Bluetooth headsets switching to their call profile).
+        // Only a mute by the user keeps the track open; every other reason really releases the device.
+        const isInConversation = $isLiveStreamingStore || $inLivekitStore;
+        const keepAudioWarm: false | MediaTrackConstraints =
+            isInConversation && $requestedMicrophoneState === false && !audioReleased
+                ? { ...$audioConstraintStore }
+                : false;
 
         // Let's make the changes only if the new value is different from the old one.
         if (
             !deepEqual(previousComputedVideoConstraint, currentVideoConstraint) ||
-            !deepEqual(previousComputedAudioConstraint, currentAudioConstraint)
+            !deepEqual(previousComputedAudioConstraint, currentAudioConstraint) ||
+            !deepEqual(previousComputedKeepAudioWarm, keepAudioWarm)
         ) {
             previousComputedVideoConstraint = currentVideoConstraint;
             previousComputedAudioConstraint = currentAudioConstraint;
+            previousComputedKeepAudioWarm = keepAudioWarm;
             // Let's copy the objects.
             if (typeof previousComputedVideoConstraint !== "boolean") {
                 previousComputedVideoConstraint = { ...previousComputedVideoConstraint };
@@ -502,16 +590,15 @@ export const mediaStreamConstraintsStore = derived(
             set({
                 video: currentVideoConstraint,
                 audio: currentAudioConstraint,
+                keepAudioWarm,
             });
         }
     },
     {
         video: false,
         audio: false,
-    } as {
-        video: false | MediaTrackConstraints;
-        audio: false | MediaTrackConstraints;
-    }
+        keepAudioWarm: false,
+    } as MediaStreamConstraintsValue
 );
 
 export type LocalStreamStoreValue = StreamSuccessValue | StreamErrorValue;
@@ -527,6 +614,40 @@ interface StreamErrorValue {
 }
 
 let currentStream: MediaStream | undefined = undefined;
+/**
+ * The microphone track muted during a conversation, kept open but disabled (see keepAudioWarm).
+ * It is out of currentStream, so the rest of the application sees the microphone as off.
+ */
+let warmAudio: { track: MediaStreamTrack; constraints: MediaTrackConstraints } | undefined = undefined;
+/**
+ * The constraints each microphone track was opened with. oldConstraints already holds the next ones while
+ * getUserMedia is still answering, so it cannot tell which microphone a kept track really uses.
+ */
+const audioTrackConstraints = new WeakMap<MediaStreamTrack, MediaTrackConstraints>();
+
+function releaseWarmAudio(): void {
+    warmAudio?.track.stop();
+    warmAudio = undefined;
+}
+
+/**
+ * Returns the warm microphone track if it can serve the requested audio constraints, re-enabled.
+ */
+function takeWarmAudio(audioConstraints: false | MediaTrackConstraints): MediaStreamTrack | undefined {
+    if (
+        warmAudio === undefined ||
+        audioConstraints === false ||
+        warmAudio.track.readyState !== "live" ||
+        !deepEqual(warmAudio.constraints, audioConstraints)
+    ) {
+        return undefined;
+    }
+    const track = warmAudio.track;
+    warmAudio = undefined;
+    track.enabled = true;
+    return track;
+}
+
 let oldConstraints: { video: MediaTrackConstraints | false; audio: MediaTrackConstraints | false } = {
     video: false,
     audio: false,
@@ -542,18 +663,15 @@ let lastBackgroundConfig: BackgroundConfig | undefined = undefined;
 export function updateBackgroundProcessor(config: {
     blurAmount?: number;
     backgroundImage?: string;
-    backgroundVideo?: string;
-    mode?: string;
-    segmenterOptions?: unknown;
+    mode?: BackgroundMode;
 }) {
     if (backgroundTransformer && backgroundTransformer.updateConfig) {
         try {
             backgroundTransformer
                 .updateConfig({
-                    mode: config.mode as "none" | "blur" | "image" | "video",
+                    mode: config.mode,
                     blurAmount: config.blurAmount,
                     backgroundImage: config.backgroundImage,
-                    backgroundVideo: config.backgroundVideo,
                 })
                 .catch((error) => {
                     console.warn("[MediaStore] Failed to update background transformer configuration:", error);
@@ -561,16 +679,13 @@ export function updateBackgroundProcessor(config: {
 
             // Update the tracked config
             if (lastBackgroundConfig && config.mode) {
-                lastBackgroundConfig.mode = config.mode as "none" | "blur" | "image" | "video";
+                lastBackgroundConfig.mode = config.mode;
             }
             if (lastBackgroundConfig && config.blurAmount !== undefined) {
                 lastBackgroundConfig.blurAmount = config.blurAmount;
             }
             if (lastBackgroundConfig && config.backgroundImage !== undefined) {
                 lastBackgroundConfig.backgroundImage = config.backgroundImage;
-            }
-            if (lastBackgroundConfig && config.backgroundVideo !== undefined) {
-                lastBackgroundConfig.backgroundVideo = config.backgroundVideo;
             }
         } catch (error) {
             console.warn("[MediaStore] Failed to update background transformer configuration:", error);
@@ -604,6 +719,22 @@ export const rawLocalStreamStore = derived<[typeof mediaStreamConstraintsStore],
                 .then(async () => {
                     try {
                         const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                        if (typeof constraints.audio === "object") {
+                            for (const track of stream.getAudioTracks()) {
+                                audioTrackConstraints.set(track, constraints.audio);
+                            }
+                        }
+                        // The wanted constraints can change while the browser is still asking (someone leaves the
+                        // bubble a moment after joining). The stop that change asked for found nothing to stop,
+                        // so a track nobody wants any more is closed here, or it would stay open.
+                        for (const kind of ["audio", "video"] as const) {
+                            if (oldConstraints[kind] !== false) continue;
+                            const unwantedTracks = kind === "audio" ? stream.getAudioTracks() : stream.getVideoTracks();
+                            for (const track of unwantedTracks) {
+                                track.stop();
+                                stream.removeTrack(track);
+                            }
+                        }
                         // If there is an old video track or audio track in the current stream, we need to reuse it in the new stream
                         if (currentStream) {
                             const oldStream = currentStream;
@@ -665,7 +796,12 @@ export const rawLocalStreamStore = derived<[typeof mediaStreamConstraintsStore],
                             requestedCameraState.enableWebcam();
                         }
                         if (currentStream.getAudioTracks().length > 0) {
-                            usedMicrophoneDeviceIdStore.set(currentStream.getAudioTracks()[0]?.getSettings().deviceId);
+                            const audioTrackSettings = currentStream.getAudioTracks()[0]?.getSettings();
+                            usedMicrophoneDeviceIdStore.set(audioTrackSettings?.deviceId);
+                            voiceIsolationSupportedStore.set(
+                                navigator.mediaDevices?.getSupportedConstraints().voiceIsolation === true &&
+                                    audioTrackSettings?.voiceIsolation !== undefined
+                            );
                             obtainedMediaConstraintStore.update((c) => {
                                 c.audio = true;
                                 return c;
@@ -759,13 +895,30 @@ export const rawLocalStreamStore = derived<[typeof mediaStreamConstraintsStore],
             });
         }
 
+        let warmAudioTrack = takeWarmAudio(constraints.audio);
+        // Keep the warm track only while the microphone stays muted in the conversation, with the same microphone
+        // settings. Otherwise, release it before any getUserMedia call.
+        if (
+            constraints.audio !== false ||
+            !constraints.keepAudioWarm ||
+            (warmAudio && !deepEqual(warmAudio.constraints, constraints.keepAudioWarm))
+        ) {
+            releaseWarmAudio();
+        }
+        if (warmAudioTrack && !currentStream) {
+            // Nothing to put it back into: open the microphone normally.
+            warmAudioTrack.stop();
+            warmAudioTrack = undefined;
+        }
+
         // Let's see what has changed compared to old constraints
         const mustRequestNewVideo =
             (constraints.video && !deepEqual(oldConstraints.video, constraints.video)) ||
             (!currentStream && constraints.video);
         const mustRequestNewAudio =
-            (constraints.audio && !deepEqual(oldConstraints.audio, constraints.audio)) ||
-            (!currentStream && constraints.audio);
+            !warmAudioTrack &&
+            ((constraints.audio && !deepEqual(oldConstraints.audio, constraints.audio)) ||
+                (!currentStream && constraints.audio));
 
         if (currentStream) {
             const oldStream = currentStream;
@@ -784,8 +937,20 @@ export const rawLocalStreamStore = derived<[typeof mediaStreamConstraintsStore],
             }
             if (mustStopAudio) {
                 oldStream.getAudioTracks().forEach((t) => {
-                    t.stop();
                     oldStream.removeTrack(t);
+                    const trackConstraints = audioTrackConstraints.get(t);
+                    if (
+                        constraints.keepAudioWarm &&
+                        trackConstraints &&
+                        deepEqual(trackConstraints, constraints.keepAudioWarm) &&
+                        t.readyState === "live"
+                    ) {
+                        releaseWarmAudio();
+                        t.enabled = false;
+                        warmAudio = { track: t, constraints: trackConstraints };
+                    } else {
+                        t.stop();
+                    }
                 });
                 obtainedMediaConstraintStore.update((c) => {
                     c.audio = false;
@@ -798,6 +963,22 @@ export const rawLocalStreamStore = derived<[typeof mediaStreamConstraintsStore],
                     stream: oldStream,
                 });
             }
+        }
+
+        if (warmAudioTrack) {
+            // Handed out in a new stream, as a getUserMedia answer would be.
+            currentStream = new MediaStream([
+                ...(currentStream?.getVideoTracks().filter((track) => track.readyState !== "ended") ?? []),
+                warmAudioTrack,
+            ]);
+            obtainedMediaConstraintStore.update((c) => {
+                c.audio = true;
+                return c;
+            });
+            set({
+                type: "success",
+                stream: currentStream,
+            });
         }
 
         if (mustRequestNewVideo || mustRequestNewAudio) {
@@ -827,12 +1008,30 @@ export const rawLocalStreamStore = derived<[typeof mediaStreamConstraintsStore],
     }
 );
 
-export const localStreamStore = derived<
+// After this, the effect's stream is used even if it hasn't drawn yet (upstream's behaviour).
+const FIRST_EFFECT_FRAME_TIMEOUT_MS = 20_000;
+
+// Aborts the transform still loading for the previous stream, so a late result never replaces a newer stream.
+let currentTransformAbortController: AbortController | undefined = undefined;
+
+function dropBackgroundTransformer(transformer: BackgroundTransformer): void {
+    transformer.close();
+    if (backgroundTransformer === transformer) {
+        backgroundTransformer = undefined;
+        lastBackgroundConfig = undefined;
+    }
+}
+
+const backgroundProcessedStreamStore = derived<
     [typeof rawLocalStreamStore, typeof backgroundProcessingEnabledStore],
     LocalStreamStoreValue
 >(
     [rawLocalStreamStore, backgroundProcessingEnabledStore],
     ([$rawLocalStreamStore, $backgroundProcessingEnabled], set) => {
+        currentTransformAbortController?.abort(new AbortError("Background transform cancelled: new stream update"));
+        currentTransformAbortController = undefined;
+        backgroundEffectStartingStore.set(false);
+
         if (
             $rawLocalStreamStore.type === "error" ||
             $rawLocalStreamStore.stream === undefined ||
@@ -847,34 +1046,182 @@ export const localStreamStore = derived<
             return;
         }
 
-        let finalStream;
-
         if (!backgroundTransformer) {
-            // Get current config from the store
-            const currentConfig = get(backgroundConfigStore);
-
-            backgroundTransformer = createBackgroundTransformer(currentConfig);
+            const transformer = createBackgroundTransformer(get(backgroundConfigStore), (error) => {
+                // The worker died after it started (lost WebGL context, crash...): fall back to the plain camera.
+                if (backgroundTransformer !== transformer) {
+                    return;
+                }
+                console.warn("[MediaStore] Background transformer stopped after a terminal failure:", error);
+                Sentry.captureException(error);
+                warningMessageStore.addWarningMessage(get(LL).warning.backgroundProcessing.failedToApply());
+                dropBackgroundTransformer(transformer);
+                backgroundConfigStore.reset();
+            });
+            backgroundTransformer = transformer;
         }
 
-        (async () => {
-            // Only create if we don't have a transformer yet
-            if ($rawLocalStreamStore.stream && backgroundTransformer) {
-                // Transform the stream using the new approach if available
-                finalStream = await backgroundTransformer.transform($rawLocalStreamStore.stream);
+        const transformer = backgroundTransformer;
+        const abortController = new AbortController();
+        currentTransformAbortController = abortController;
+        // The first effect downloads and starts the model; the device list shows "Starting…" meanwhile.
+        backgroundEffectStartingStore.set(true);
+
+        transformer
+            .transform($rawLocalStreamStore.stream, abortController.signal)
+            .then(async (finalStream) => {
+                // Keep sending the previous camera image until the effect has drawn its first frame.
+                await waitForFirstVideoFrame(finalStream, abortController.signal, FIRST_EFFECT_FRAME_TIMEOUT_MS);
+                if (abortController.signal.aborted) {
+                    return;
+                }
+                backgroundEffectStartingStore.set(false);
                 // Store config for next comparison
                 lastBackgroundConfig = { ...get(backgroundConfigStore) };
-
                 set({
                     type: "success",
                     stream: finalStream,
                 });
+            })
+            .catch((error) => {
+                if (abortController.signal.aborted || error instanceof AbortError) {
+                    return;
+                }
+                backgroundEffectStartingStore.set(false);
+                if (error instanceof BackgroundProcessingUnsupportedError) {
+                    console.warn("[MediaStore] Background processing is not supported on this browser:", error.message);
+                    warningMessageStore.addWarningMessage(
+                        get(LL).warning.backgroundProcessing.notSupportedOnThisBrowser()
+                    );
+                } else {
+                    console.warn("[MediaStore] Failed to transform stream:", error);
+                    Sentry.captureException(error);
+                    warningMessageStore.addWarningMessage(get(LL).warning.backgroundProcessing.failedToApply());
+                }
+                dropBackgroundTransformer(transformer);
+                backgroundConfigStore.reset();
+            });
+    }
+);
+
+let noiseSuppressionTransformer: NoiseSuppressionTransformer | undefined = undefined;
+// Aborts the noise filter still starting for the previous microphone track.
+let currentNoiseFilterAbortController: AbortController | undefined = undefined;
+
+/**
+ * Strong could not start or stopped working. DeepFilterNet3 gets one more chance as the lighter DTLN, unless the
+ * device is simply too slow for it. Otherwise back to the browser's filter, and the device list says why.
+ */
+function failStrongNoiseFilter(error: unknown, options: { overloaded?: boolean } = {}): void {
+    console.warn("[MediaStore] Strong noise filter failed:", error);
+    if (!options.overloaded) {
+        // A device that is too slow is expected, not a bug.
+        Sentry.captureException(error);
+    }
+    const transformer = noiseSuppressionTransformer;
+    noiseSuppressionTransformer = undefined;
+    transformer?.closeAndDestroy().catch((closeError) => {
+        console.warn("[MediaStore] Failed to close the noise filter:", closeError);
+    });
+    if (transformer?.engine === "deepfilternet" && !options.overloaded) {
+        // Switching engine makes localStreamStore build a new transformer. "starting" puts the browser's filter back
+        // on the microphone until the new one is ready.
+        strongNoiseFilterStateStore.set("starting");
+        // The output of the failed engine is dead: hand out the browser-filtered microphone again right away.
+        rawStreamPublished = undefined;
+        strongNoiseEngineStore.set("dtln");
+        return;
+    }
+    strongNoiseFilterStateStore.set("failed");
+    noiseFilterStore.set("standard");
+    // After the choice is back to Standard, so no new transformer starts. Picking Strong again tries the full model.
+    strongNoiseEngineStore.set("deepfilternet");
+}
+
+/** The stream last handed out without the Strong filter, so the same one is not handed out again while it loads. */
+let rawStreamPublished: MediaStream | undefined = undefined;
+
+/**
+ * The stream everyone else gets: the camera after background effects, and the microphone after the Strong noise
+ * filter when it is picked. The filter comes last so changing it never restarts a background effect.
+ */
+export const localStreamStore = derived<
+    [typeof backgroundProcessedStreamStore, typeof noiseFilterStore, typeof strongNoiseEngineStore],
+    LocalStreamStoreValue
+>(
+    [backgroundProcessedStreamStore, noiseFilterStore, strongNoiseEngineStore],
+    ([$backgroundProcessedStream, $noiseFilter, $strongNoiseEngine], set) => {
+        currentNoiseFilterAbortController?.abort(new AbortError("Noise filter cancelled: new stream update"));
+        currentNoiseFilterAbortController = undefined;
+
+        const inputStream =
+            $backgroundProcessedStream.type === "success" ? $backgroundProcessedStream.stream : undefined;
+        const audioTrack = inputStream?.getAudioTracks()[0];
+        if ($noiseFilter !== "strong" || !strongNoiseFilterSupported || !inputStream || !audioTrack) {
+            noiseSuppressionTransformer?.stop();
+            if ($noiseFilter !== "strong") {
+                // Keep "failed" so the device list can still explain why Standard is back.
+                strongNoiseFilterStateStore.update((state) => (state === "failed" ? state : "off"));
             }
-        })().catch((error) => {
-            console.warn("[MediaStore] Failed to transform stream:", error);
-            Sentry.captureException(error);
-            warningMessageStore.addWarningMessage(get(LL).warning.backgroundProcessing.failedToApply());
-            backgroundConfigStore.reset();
-        });
+            rawStreamPublished = inputStream;
+            set($backgroundProcessedStream);
+            return;
+        }
+
+        // Each engine owns its AudioContext (48 kHz for DeepFilterNet3, 16 kHz for DTLN).
+        if (noiseSuppressionTransformer && noiseSuppressionTransformer.engine !== $strongNoiseEngine) {
+            const previous = noiseSuppressionTransformer;
+            noiseSuppressionTransformer = undefined;
+            previous.closeAndDestroy().catch((closeError) => {
+                console.warn("[MediaStore] Failed to close the noise filter:", closeError);
+            });
+        }
+
+        if (!noiseSuppressionTransformer) {
+            const transformer = new NoiseSuppressionTransformer({
+                engine: $strongNoiseEngine,
+                onStatusChange: (message) => {
+                    if (noiseSuppressionTransformer !== transformer) {
+                        return;
+                    }
+                    if (message.status === "ready") {
+                        strongNoiseFilterStateStore.set("on");
+                    } else if (message.status === "error") {
+                        failStrongNoiseFilter(new Error(message.message ?? "The noise filter failed to start"), {
+                            overloaded: message.overloaded,
+                        });
+                    }
+                },
+            });
+            noiseSuppressionTransformer = transformer;
+            strongNoiseFilterStateStore.set("starting");
+        }
+
+        const transformer = noiseSuppressionTransformer;
+        const abortController = new AbortController();
+        currentNoiseFilterAbortController = abortController;
+        // The microphone is wired only once the model is loaded, which takes a download the first time. Until
+        // then everyone keeps getting the browser-filtered microphone rather than nothing.
+        if (get(strongNoiseFilterStateStore) !== "on" && rawStreamPublished !== inputStream) {
+            rawStreamPublished = inputStream;
+            set($backgroundProcessedStream);
+        }
+        transformer
+            .transform(audioTrack, abortController.signal)
+            .then((outputTrack) => {
+                if (abortController.signal.aborted) {
+                    return;
+                }
+                set({ type: "success", stream: new MediaStream([...inputStream.getVideoTracks(), outputTrack]) });
+            })
+            .catch((error) => {
+                if (abortController.signal.aborted || error instanceof AbortError) {
+                    return;
+                }
+                if (noiseSuppressionTransformer === transformer) {
+                    failStrongNoiseFilter(error);
+                }
+            });
     }
 );
 
@@ -1230,8 +1577,8 @@ export const lastNewMediaDeviceDetectedStore = writable<MediaDeviceInfo[]>([]);
  * This avoids recreating the entire stream when only parameters change
  */
 const backgroundConfigStoreSubscription = backgroundConfigStore.subscribe(($config) => {
-    // Skip if no transformer exists yet
-    if (!backgroundTransformer || !lastBackgroundConfig) {
+    // Skip if no transformer exists yet. A transformer still starting gets the change too: it applies it once ready.
+    if (!backgroundTransformer) {
         return;
     }
 
@@ -1239,7 +1586,6 @@ const backgroundConfigStoreSubscription = backgroundConfigStore.subscribe(($conf
         mode: $config.mode,
         blurAmount: $config.blurAmount,
         backgroundImage: $config.backgroundImage,
-        backgroundVideo: $config.backgroundVideo,
     });
 });
 export const unsubscribeBackgroundConfigStoreSubscription = () => {

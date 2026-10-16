@@ -1,5 +1,6 @@
 import type { Room } from "../Connection/Room";
 import { localUserStore } from "../Connection/LocalUserStore";
+import { pointManifestAtRoom } from "../Install/ManifestLink";
 
 export enum GameConnexionTypes {
     room = 1,
@@ -49,6 +50,8 @@ class UrlManager {
         const hash = window.location.hash;
         const search = room.search.toString();
         history.pushState({}, "WorkAdventure", room.id + (search ? "?" + search : "") + hash);
+        // The app installed from here must start in this room.
+        pointManifestAtRoom(room.id);
     }
 
     public getStartPositionNameFromUrl(): string | undefined {

@@ -336,6 +336,31 @@ describe("ProximityChatRoom sessions", () => {
         expect(listableSessions(all).map((session) => session.label)).toEqual(["Other room"]);
     });
 
+    it("remembers the first proximity chat you had on this device as soon as someone writes, panel open or not", async () => {
+        const kept = new Map<string, string>();
+        vi.stubGlobal("localStorage", {
+            getItem: (key: string) => kept.get(key) ?? null,
+            setItem: (key: string, value: string) => void kept.set(key, value),
+        });
+        try {
+            // A stay where nobody wrote is not a chat you had.
+            room.setDisplayName("Design room");
+            await room.joinSpace("bubble", [], true);
+            await room.leaveSpace("bubble", true);
+            expect(kept.size).toBe(0);
+
+            room.setDisplayName("Other room");
+            await room.joinSpace("bubble", [], true);
+            fake.emit("spaceMessage", { sender: "room_3", spaceMessage: { message: "hello", name: "Sara" } });
+            // Right away, while the stay is still live: closing the tab now must not lose it.
+            expect(Array.from(kept.values())).toEqual(["1"]);
+            await room.leaveSpace("bubble", true);
+            expect(Array.from(kept.values())).toEqual(["1"]);
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+
     it("closes the open stay before handing the timeline to the next map", async () => {
         room.setDisplayName("Design room");
         await room.joinSpace("bubble", [], true);
@@ -406,11 +431,172 @@ describe("ProximityChatRoom sessions", () => {
         next.destroy();
     });
 
+    it("keeps the text the composer held when it closes after the hand-over, before or after the next map is in", async () => {
+        room.setDisplayName("Design room");
+        await room.joinSpace("bubble", [], true);
+        fake.space.usersStore.set(
+            new Map([
+                ["room_1", spaceUser("room_1", "Me", "a")],
+                ["room_3", spaceUser("room_3", "Sara", "b")],
+            ])
+        );
+        fake.emit("spaceMessage", { sender: "room_3", spaceMessage: { message: "hello", name: "Sara" } });
+        const stayId = room.currentSessionId ?? "";
+
+        // The "Reconnecting" screen: the composer closes right after the hand-over, before the next map is in.
+        room.stashHistoryForNextScene();
+        room.keepUnsentDraft(stayId, "was about to say");
+        const next = nextMapRoom();
+        expect(get(next.sessions)[0].unsentDraft).toBe("was about to say");
+
+        // The room kept on screen (#958): the chat stays open, and the composer only closes once the next map is in.
+        next.setDisplayName("Other room");
+        await next.joinSpace("bubble", [], true);
+        fake.emit("spaceMessage", { sender: "room_3", spaceMessage: { message: "again", name: "Sara" } });
+        const secondStayId = next.currentSessionId ?? "";
+        next.stashHistoryForNextScene();
+        const third = nextMapRoom();
+        next.keepUnsentDraft(secondStayId, "typed while it reconnected");
+        expect(get(third.sessions).find((session) => session.id === secondStayId)?.unsentDraft).toBe(
+            "typed while it reconnected"
+        );
+        next.destroy();
+        third.destroy();
+    });
+
+    it("marks a message sent while it gets back in as not sent, and carries it to its stay on the next map", async () => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        vi.setSystemTime(new Date(Date.UTC(2026, 9, 14, 10, 0)));
+        room.setDisplayName("Design room");
+        await room.joinSpace("bubble", [], true);
+        fake.space.usersStore.set(
+            new Map([
+                ["room_1", spaceUser("room_1", "Me", "a")],
+                ["room_3", spaceUser("room_3", "Sara", "b")],
+            ])
+        );
+        fake.emit("spaceMessage", { sender: "room_3", spaceMessage: { message: "hello", name: "Sara" } });
+        const kinds = (target: ProximityChatRoom) =>
+            (Array.from(get(target.messages)) as ProximityChatMessage[]).map((message) =>
+                message.notSent ? `notSent:${get(message.content).body}` : message.session?.kind ?? "message"
+            );
+        vi.setSystemTime(new Date(Date.UTC(2026, 9, 14, 10, 1)));
+        room.stashHistoryForNextScene();
+
+        // The chat stays open while the game gets back in: nobody would receive a message sent now.
+        vi.setSystemTime(new Date(Date.UTC(2026, 9, 14, 10, 2)));
+        expect(room.isJoiningSpace).toBe(true);
+        room.addNotSentMessage("before the next map", [], new Date());
+        const next = nextMapRoom();
+        room.addNotSentMessage("after the next map", [], new Date());
+
+        expect(kinds(next)).toEqual([
+            "start",
+            "message",
+            "notSent:before the next map",
+            "notSent:after the next map",
+            "end",
+        ]);
+        // Still shown in the chat on screen until the game is back in.
+        expect(kinds(room)).toEqual(["start", "message", "notSent:before the next map", "notSent:after the next map"]);
+        expect(fake.space.emitPublicMessage).not.toHaveBeenCalled();
+        next.destroy();
+    });
+
+    it("carries a message that could not be sent into its own stay when that stay ended before the hand-over", async () => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        vi.setSystemTime(new Date(Date.UTC(2026, 9, 15, 10, 0)));
+        room.setDisplayName("Design room");
+        await room.joinSpace("bubble", [], true);
+        fake.space.usersStore.set(
+            new Map([
+                ["room_1", spaceUser("room_1", "Me", "a")],
+                ["room_3", spaceUser("room_3", "Sara", "b")],
+            ])
+        );
+        fake.emit("spaceMessage", { sender: "room_3", spaceMessage: { message: "hello", name: "Sara" } });
+        const kinds = (target: ProximityChatRoom) =>
+            (Array.from(get(target.messages)) as ProximityChatMessage[])
+                .filter((message) => message.notSent || message.session || message.type === "proximity")
+                .map((message) => (message.notSent ? "notSent" : message.session?.kind ?? "message"));
+        // A file starts uploading, then the bubble ends, then the game hands its chats over, then the upload fails.
+        vi.setSystemTime(new Date(Date.UTC(2026, 9, 15, 10, 1)));
+        const submittedAt = new Date();
+        vi.setSystemTime(new Date(Date.UTC(2026, 9, 15, 10, 2)));
+        await room.leaveSpace("bubble", true);
+        vi.setSystemTime(new Date(Date.UTC(2026, 9, 15, 10, 3)));
+        room.stashHistoryForNextScene();
+        const next = nextMapRoom();
+        vi.setSystemTime(new Date(Date.UTC(2026, 9, 15, 10, 4)));
+        room.addNotSentMessage("look at this", ["plan.png"], submittedAt);
+
+        // Inside the stay it was written in, on the next map as on this one.
+        expect(kinds(room)).toEqual(["start", "message", "notSent", "end"]);
+        expect(kinds(next)).toEqual(["start", "message", "notSent", "end"]);
+        next.destroy();
+    });
+
+    it("carries a message that could not be sent into its own stay when another stay was open at the hand-over", async () => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        vi.setSystemTime(new Date(Date.UTC(2026, 9, 15, 10, 0)));
+        room.setDisplayName("Design room");
+        await room.joinSpace("bubble", [], true);
+        fake.space.usersStore.set(
+            new Map([
+                ["room_1", spaceUser("room_1", "Me", "a")],
+                ["room_3", spaceUser("room_3", "Sara", "b")],
+            ])
+        );
+        fake.emit("spaceMessage", { sender: "room_3", spaceMessage: { message: "hello", name: "Sara" } });
+        const kinds = (target: ProximityChatRoom) =>
+            (Array.from(get(target.messages)) as ProximityChatMessage[])
+                .filter((message) => message.notSent || message.session || message.type === "proximity")
+                .map((message) => (message.notSent ? "notSent" : message.session?.kind ?? "message"));
+        // A file starts uploading with Sara, that bubble ends, a bubble with Omar starts, then the game hands its
+        // chats over while still with Omar, then the upload fails.
+        vi.setSystemTime(new Date(Date.UTC(2026, 9, 15, 10, 1)));
+        const submittedAt = new Date();
+        vi.setSystemTime(new Date(Date.UTC(2026, 9, 15, 10, 2)));
+        await room.leaveSpace("bubble", true);
+        vi.setSystemTime(new Date(Date.UTC(2026, 9, 15, 10, 3)));
+        await room.joinSpace("bubble", [], true);
+        fake.space.usersStore.set(
+            new Map([
+                ["room_1", spaceUser("room_1", "Me", "a")],
+                ["room_4", spaceUser("room_4", "Omar", "c")],
+            ])
+        );
+        fake.emit("spaceMessage", { sender: "room_4", spaceMessage: { message: "hi", name: "Omar" } });
+        vi.setSystemTime(new Date(Date.UTC(2026, 9, 15, 10, 4)));
+        room.stashHistoryForNextScene();
+        const next = nextMapRoom();
+        vi.setSystemTime(new Date(Date.UTC(2026, 9, 15, 10, 5)));
+        room.addNotSentMessage("look at this", ["plan.png"], submittedAt);
+
+        // With Sara, where it was written, never in the stay with Omar that the hand-over closed (closed in the
+        // next map's copy only).
+        expect(kinds(room)).toEqual(["start", "message", "notSent", "end", "start", "message"]);
+        expect(kinds(next)).toEqual(["start", "message", "notSent", "end", "start", "message", "end"]);
+        next.destroy();
+    });
+
     it("opens the next map's proximity chat in place of this one after a reconnect", async () => {
         await room.joinSpace("bubble", [], true);
         room.open();
         room.stashHistoryForNextScene();
         room.destroy();
+
+        const next = nextMapRoom();
+        expect(get(selectedRoomStore)).toBe(next);
+        next.destroy();
+    });
+
+    it("opens the next map's proximity chat in place of this one when it was opened while getting back in", () => {
+        selectedRoomStore.set(undefined);
+        room.stashHistoryForNextScene();
+        room.destroy();
+        // Opened from the chat kept on screen, or from a notification, after the hand-over.
+        selectedRoomStore.set(room);
 
         const next = nextMapRoom();
         expect(get(selectedRoomStore)).toBe(next);
@@ -497,11 +683,34 @@ describe("ProximityChatRoom sessions", () => {
         room.stashHistoryForNextScene();
         room.destroy();
         keepOnlyProximityHistory();
-        selectedRoomStore.set(undefined);
 
+        // The destroyed chat is still the selected one until the next map starts: it must not pull the new one in.
+        expect(get(selectedRoomStore)).toBe(room);
         const next = nextMapRoom();
         expect(get(selectedRoomStore)).toBeUndefined();
         expect(get(next.sessions)).toHaveLength(1);
+        next.destroy();
+    });
+
+    it("still carries a message written in the old chat after leaving the game and coming back", async () => {
+        await room.joinSpace("bubble", [], true);
+        fake.space.usersStore.set(
+            new Map([
+                ["room_1", spaceUser("room_1", "Me", "a")],
+                ["room_3", spaceUser("room_3", "Sara", "b")],
+            ])
+        );
+        fake.emit("spaceMessage", { sender: "room_3", spaceMessage: { message: "hello", name: "Sara" } });
+        room.stashHistoryForNextScene();
+        keepOnlyProximityHistory();
+
+        const next = nextMapRoom();
+        room.addNotSentMessage("written late", [], new Date());
+
+        const bodies = (Array.from(get(next.messages)) as ProximityChatMessage[])
+            .filter((message) => message.notSent)
+            .map((message) => get(message.content).body);
+        expect(bodies).toEqual(["written late"]);
         next.destroy();
     });
 

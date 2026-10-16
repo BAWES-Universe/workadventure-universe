@@ -1,6 +1,27 @@
 import { get } from "svelte/store";
 import { marked } from "marked";
 import LL from "../../../i18n/i18n-svelte";
+import { sanitizeHtml } from "../../Utils/HtmlSanitizer";
+import { isTouchDevice } from "../../Utils/TouchDevice";
+import { replaceSpaceToken, SOUND_ICON_PATHS } from "../../Utils/HintKey";
+
+function createSoundIcon(): SVGSVGElement {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "2");
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("stroke-linejoin", "round");
+    svg.setAttribute("aria-hidden", "true");
+    svg.classList.add("u-hint-icon");
+    for (const d of SOUND_ICON_PATHS) {
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", d);
+        svg.appendChild(path);
+    }
+    return svg;
+}
 
 export class SpeechDomElement extends Phaser.GameObjects.DOMElement {
     private timeoutDestroyText: NodeJS.Timeout | null = null;
@@ -13,59 +34,51 @@ export class SpeechDomElement extends Phaser.GameObjects.DOMElement {
         x = -1,
         y = -50,
         public readonly callback = () => this.destroy(),
-        type: "warning" | "message" = "message"
+        type: "warning" | "message" = "message",
+        icon?: "sound"
     ) {
-        // Create SVG white triangle with border radius and add the text "space"
-        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-        svg.setAttribute("width", "20");
-        svg.setAttribute("height", "10");
-        svg.setAttribute("viewBox", "0 0 20 10");
-        svg.style.marginRight = "2px";
-        svg.style.marginLeft = "2px";
-        svg.style.fill = "white";
-        svg.style.borderRadius = "2px";
-        svg.style.border = "1px solid white";
-        svg.style.padding = "2px";
-        svg.style.boxSizing = "border-box";
-        svg.style.backgroundColor = "white";
-
-        // Create text element
-        const textElement = document.createElementNS("http://www.w3.org/2000/svg", "text");
-        textElement.setAttribute("x", "50%");
-        textElement.setAttribute("y", "50%");
-        textElement.setAttribute("text-anchor", "middle");
-        textElement.setAttribute("dominant-baseline", "middle");
-        textElement.style.fontSize = "10px";
-        textElement.style.fill = "black";
-        textElement.style.fontWeight = "bold";
-        textElement.textContent = "SPACE";
-        svg.appendChild(textElement);
-
         // Create span element
-        const textTransformed = text.replace(get(LL).trigger.spaceKeyboard(), svg.outerHTML);
-        const textMarked = marked.parse(textTransformed);
+        // Map-authored raw HTML is displayed literally; Markdown formatting still works.
+        // Use a local renderer so other Markdown consumers are not affected.
+        const renderer = new marked.Renderer();
+        renderer.html = (html) => {
+            const escaped = document.createElement("span");
+            escaped.textContent = html;
+            return escaped.innerHTML;
+        };
+        const textMarked = marked.parse(text, { renderer });
+        // The [SPACE] of a hint is shown as a key chip: "Space" on a computer, "Tap" on a touch screen.
+        const trigger = get(LL).trigger;
+        const keyLabel = isTouchDevice() ? trigger.keyTap() : trigger.keySpace();
+        const renderText = (html: string) => sanitizeHtml(replaceSpaceToken(html, trigger.spaceKeyboard(), keyLabel));
+        const content = document.createElement("span");
         const span = document.createElement("span");
+        const row = document.createElement("span");
+        row.classList.add("u-hint-row");
+        if (icon === "sound") row.appendChild(createSoundIcon());
+        row.appendChild(content);
+        span.appendChild(row);
 
         if (textMarked instanceof Promise) {
             textMarked
                 .then((resolvedText) => {
-                    span.innerHTML = resolvedText;
+                    content.innerHTML = renderText(resolvedText);
                 })
                 .catch((e) => console.error(e));
         } else {
-            span.innerHTML = textMarked;
+            content.innerHTML = renderText(textMarked);
         }
         span.id = `spanText-${id}`;
-        span.classList.add("characterTriggerAction");
+        span.classList.add("characterTriggerAction", "u-hint");
 
         super(
             scene,
             x,
             y,
             span,
-            `z-index:10; background-color: #000000cc; color: ${
+            `z-index:10; color: ${
                 type === "message" ? "#ffffff" : "#f9e81e"
-            }; padding: 5px; border-radius: 5px; font-size: 9px; cursor: pointer; max-width: 300px; max-height: 150px; overflow-y: auto; whie-space: pre-wrap;`
+            }; cursor: pointer; max-height: 150px; overflow-y: auto;`
         );
 
         this.span = span;

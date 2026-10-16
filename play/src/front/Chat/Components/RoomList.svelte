@@ -10,14 +10,15 @@
     import getCloseImg from "../images/get-close.png";
     import ExternalComponents from "../../Components/ExternalModules/ExternalComponents.svelte";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
+    import { connectionManager } from "../../Connection/ConnectionManager";
     import type { ChatMessage } from "../Connection/ChatConnection";
     import type { ProximitySession } from "../Connection/Proximity/ProximitySessions";
     import { ROOM_MESSAGES_SESSION_ID, listableSessions } from "../Connection/Proximity/ProximitySessions";
     import WokaFromUserId from "../../Components/Woka/WokaFromUserId.svelte";
+    import { readHadProximityChat, shouldShowSayHiCard } from "../Stores/SayHiCardStore";
     import RoomTimeline from "./Room/RoomTimeline.svelte";
     import ChatLoader from "./ChatLoader.svelte";
     import ChatError from "./ChatError.svelte";
-    import ChatHeader from "./ChatHeader.svelte";
     import FindGroup from "./FindGroup.svelte";
     import InviteFooter from "./InviteFooter.svelte";
     import RequireConnection from "./requireConnection.svelte";
@@ -41,7 +42,7 @@
     // Side by side with a thread, the Chats / People tabs sit over the list column only: the column starts below them.
     export let listTopInset = 0;
 
-    const gameScene = gameManager.getCurrentGameScene();
+    const gameScene = gameManager.getChatGameScene();
     const proximityChatRoom = gameScene.proximityChatRoom;
     const proximitySessions = proximityChatRoom.sessions;
     const proximityUnread = proximityChatRoom.unreadBySession;
@@ -102,6 +103,26 @@
     let liveCardVisible = false;
     $: hasProximityHistory = $proximityEntries.length > 0;
 
+    // The "Say hi in person" card is the empty state of this list: it shows to a player with no chats, and never again
+    // once they had a proximity chat on this device (proximity history itself is only kept until the page reloads; the
+    // proximity chat room remembers the first chat as it ends, and the list's own history covers the rest of this visit).
+    const hadProximityChatBefore = readHadProximityChat();
+    // Set by the list below, which only exists once the saved chats are loaded. While the chat is connecting or in
+    // error the saved chats are not known yet (the loader or the error shows). Offline there are none to list.
+    let listEmpty = false;
+    $: savedChatsEmpty =
+        $chatConnectionStatus === "ONLINE"
+            ? listEmpty
+            : $chatConnectionStatus === "OFFLINE" || !$userIsConnected
+            ? true
+            : undefined;
+    $: showSayHiCard = shouldShowSayHiCard({
+        liveCardVisible,
+        hasProximityHistory,
+        hadProximityChatBefore,
+        savedChatsEmpty,
+    });
+
     // One rule for both the columns and the list: at 670px and wider, list and thread sit side by side.
     // Below that, an open thread takes the whole panel, and the list (with the Chats / People tabs) hides.
     $: layout = resolveChatLayout(sideBarWidth, CHAT_LAYOUT_LIMIT, $selectedRoomStore !== undefined);
@@ -126,12 +147,9 @@
                 {#if $shouldRetrySendingEvents}
                     <RefreshChat />
                 {/if}
-                <ChatHeader />
-                <div
-                    class="relative pt-1 {$isEncryptionRequiredAndNotSet === true && $isGuest === false
-                        ? ' h-[calc(100%-2rem)]'
-                        : 'h-full'}"
-                >
+                <!-- Only the list scrolls, as on the People tab: the tabs above and the footer below (Invite, search, "+") stay
+                     put, and the footer sits under the last row instead of over it (often on a phone's chat sheet). -->
+                <div class="relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto pt-1" data-testid="chatsList">
                     {#if $chatConnectionStatus === "CONNECTING" && $userIsConnected}
                         <ChatLoader label={$LL.chat.connecting()} />
                     {/if}
@@ -162,9 +180,9 @@
                         />
                         <AreaChatRows />
                     </div>
-                    {#if !liveCardVisible && !hasProximityHistory}
+                    {#if showSayHiCard}
                         <!-- Nothing yet: say how it starts, and offer the People tab. -->
-                        <section class="u-glass-warm mx-4 mb-2 rounded-2xl px-4 pt-4 pb-3" data-testid="nearbyHint">
+                        <section class="u-glass-warm mx-4 mb-2 rounded-2xl p-4" data-testid="nearbyHint">
                             <div class="flex items-start gap-3">
                                 <div class="flex h-11 w-11 shrink-0 items-end justify-center" aria-hidden="true">
                                     <WokaFromUserId userId={-1} customWidth="40px" placeholderSrc="" />
@@ -179,7 +197,7 @@
                             {#if hasPeopleTab}
                                 <button
                                     type="button"
-                                    class="u-cta mt-3 flex h-10 w-full items-center justify-center gap-1.5 rounded-xl px-4 text-sm font-bold"
+                                    class="u-cta mt-3 flex h-11 w-full items-center justify-center gap-1.5 rounded-xl px-4 text-sm font-bold"
                                     data-testid="nearbyHintPeople"
                                     on:click={() => navChat.switchToUserList()}
                                 >
@@ -194,7 +212,8 @@
                         <div class="px-2 pb-2">
                             <OneList
                                 extraEntries={proximityEntries}
-                                showEmpty={$chatConnectionStatus === "ONLINE"}
+                                showEmpty={$chatConnectionStatus === "ONLINE" && !showSayHiCard}
+                                bind:isEmpty={listEmpty}
                                 onOpenSession={openSession}
                             />
                         </div>
@@ -202,31 +221,31 @@
                     {#if !$userIsConnected && isMatrixChatEnabled}
                         <!-- Guests: under the conversations, so what you had stays together at the top. -->
                         <section
-                            class="u-glass mx-2 mb-2 rounded-2xl px-4 pt-4 pb-4 text-sm text-white/80"
+                            class="u-glass mx-4 mb-2 rounded-2xl px-4 pt-4 pb-4 text-sm text-white/80"
                             aria-labelledby="chatGuestTitle"
                             data-testid="chatGuestCard"
                         >
                             <span class="u-eyebrow">{$LL.chat.guest.eyebrow()}</span>
-                            <h3 id="chatGuestTitle" class="u-text-gradient m-0 mt-1.5 text-lg font-bold leading-6">
+                            <h3 id="chatGuestTitle" class="u-text-gradient m-0 mt-1.5 text-base font-bold leading-6">
                                 {$LL.chat.guest.title()}
                             </h3>
                             <p class="m-0 mt-1 text-xs leading-5 text-white/60">{$LL.chat.guest.intro()}</p>
                             <ul class="m-0 mt-3 flex list-none flex-col gap-2.5 p-0 text-[13px] leading-5">
                                 <li class="flex items-start gap-3">
-                                    <span class="guest-tile" aria-hidden="true"><IconTools font-size="16" /></span>
+                                    <span class="guest-tile" aria-hidden="true"><IconTools font-size="18" /></span>
                                     <span>{$LL.chat.guest.build()}</span>
                                 </li>
                                 <li class="flex items-start gap-3">
-                                    <span class="guest-tile" aria-hidden="true"><IconWorldSearch font-size="16" /></span
+                                    <span class="guest-tile" aria-hidden="true"><IconWorldSearch font-size="18" /></span
                                     >
                                     <span>{$LL.chat.guest.orbit()}</span>
                                 </li>
                                 <li class="flex items-start gap-3">
-                                    <span class="guest-tile" aria-hidden="true"><IconMessage font-size="16" /></span>
+                                    <span class="guest-tile" aria-hidden="true"><IconMessage font-size="18" /></span>
                                     <span>{$LL.chat.guest.messageAnyone()}</span>
                                 </li>
                                 <li class="flex items-start gap-3">
-                                    <span class="guest-tile" aria-hidden="true"><IconUserCircle font-size="16" /></span>
+                                    <span class="guest-tile" aria-hidden="true"><IconUserCircle font-size="18" /></span>
                                     <span>{$LL.chat.guest.keepWoka()}</span>
                                 </li>
                             </ul>
@@ -234,7 +253,10 @@
                                 class="u-cta mt-4 flex min-h-11 items-center justify-center gap-1.5 rounded-xl px-4 text-sm font-bold no-underline hover:no-underline"
                                 href="/login"
                                 data-testid="chatGuestSignIn"
-                                on:click={() => analyticsClient.login()}
+                                on:click|preventDefault={() => {
+                                    analyticsClient.login();
+                                    connectionManager.goToSignIn();
+                                }}
                             >
                                 <span>{$LL.chat.guest.action()}</span>
                                 <IconChevronRight font-size="16" class="shrink-0 rtl:-scale-x-100" aria-hidden="true" />
@@ -248,7 +270,9 @@
     {/if}
     {#if $selectedRoomStore !== undefined}
         <div class="overflow-y-auto">
-            <RoomTimeline room={$selectedRoomStore} />
+            {#key $selectedRoomStore.id}
+                <RoomTimeline room={$selectedRoomStore} />
+            {/key}
         </div>
     {:else if $selectedRoomStore === undefined && sideBarWidth >= CHAT_LAYOUT_LIMIT}
         <div class="flex flex-col flex-1 ps-4 items-center pt-8">
@@ -285,17 +309,14 @@
 </div>
 
 <style>
-    /* The small icon tiles of the guest card: a purple → blue gradient, like the "+" menu's. */
+    /* The guest card's icons: plain white, with no box behind them, like the game menu's. */
     .guest-tile {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        width: 1.75rem;
-        height: 1.75rem;
+        width: 1.25rem;
+        height: 1.25rem;
         flex-shrink: 0;
-        border-radius: 0.5rem;
         color: #fff;
-        background: linear-gradient(135deg, rgba(134, 41, 252, 0.9), rgba(65, 86, 246, 0.9));
-        box-shadow: 0 4px 10px -4px rgba(134, 41, 252, 0.7);
     }
 </style>

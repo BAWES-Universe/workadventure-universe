@@ -20,6 +20,7 @@ import { PersonalAreaAccessClaimMode } from "@workadventure/map-editor";
 import * as Sentry from "@sentry/svelte";
 import { getSpeakerMegaphoneAreaName } from "@workadventure/map-editor/src/Utils";
 import { Jitsi } from "@workadventure/shared-utils";
+import { areaSpaceName } from "@workadventure/shared-utils/src/Space/areaSpaceName";
 import type { Unsubscriber } from "svelte/store";
 import { get } from "svelte/store";
 import type { Member } from "@workadventure/messages";
@@ -73,7 +74,7 @@ import {
     requestVisitCardsStore,
     selectedChatIDRemotePlayerStore,
 } from "../../../Stores/GameStore";
-import { isMediaBreakpointUp } from "../../../Utils/BreakpointsUtils";
+import { getTriggerHint } from "../../../Utils/TriggerHint";
 import type { MessageUserJoined } from "../../../Connection/ConnexionModels";
 import { navChat } from "../../../Chat/Stores/ChatStore";
 import type { Area } from "../../Entity/Area";
@@ -519,7 +520,7 @@ export class AreasPropertiesListener {
                 this.coWebsitesActionTriggers.set(property.id, actionId);
                 let message = property.triggerMessage;
                 if (message === undefined) {
-                    message = isMediaBreakpointUp("md") ? get(LL).trigger.mobile.newTab() : get(LL).trigger.newTab();
+                    message = getTriggerHint("newTab");
                 }
 
                 popupStore.addPopup(
@@ -578,7 +579,7 @@ export class AreasPropertiesListener {
         if (localUserStore.getForceCowebsiteTrigger() || property.trigger === ON_ACTION_TRIGGER_BUTTON) {
             let message = property.triggerMessage;
             if (!message) {
-                message = isMediaBreakpointUp("md") ? get(LL).trigger.mobile.cowebsite() : get(LL).trigger.cowebsite();
+                message = getTriggerHint("cowebsite");
             }
 
             this.coWebsitesActionTriggers.set(property.id, actionId);
@@ -818,7 +819,7 @@ export class AreasPropertiesListener {
         if (forceTrigger || property.trigger === ON_ACTION_TRIGGER_BUTTON) {
             let message = property.triggerMessage;
             if (message === undefined) {
-                message = isMediaBreakpointUp("md") ? get(LL).trigger.mobile.jitsiRoom() : get(LL).trigger.jitsiRoom();
+                message = getTriggerHint("jitsiRoom");
             }
 
             popupStore.addPopup(
@@ -881,6 +882,7 @@ export class AreasPropertiesListener {
         const roomID = property.roomName.trim().length === 0 ? property.id : property.roomName;
 
         const roomName = Jitsi.slugifyJitsiRoomName(roomID, this.scene.roomUrl).trim();
+        const spaceName = areaSpaceName(roomID, this.scene.roomUrl);
 
         const livekitRoomConfig = property.livekitRoomConfig ?? {
             startWithAudioMuted: false,
@@ -921,7 +923,7 @@ export class AreasPropertiesListener {
             const proximityRoom = this.scene.proximityChatRoom;
             proximityRoom.setDisplayName(displayName);
             await proximityRoom.joinSpace(
-                roomName,
+                spaceName,
                 ["cameraState", "microphoneState", "screenShareState"],
                 true,
                 FilterType.ALL_USERS
@@ -929,7 +931,7 @@ export class AreasPropertiesListener {
         } else {
             const spaceRegistry = this.scene.spaceRegistry;
             const space = await spaceRegistry.joinSpace(
-                roomName,
+                spaceName,
                 FilterType.ALL_USERS,
                 ["cameraState", "microphoneState", "screenShareState"],
                 abortSignal
@@ -1198,7 +1200,7 @@ export class AreasPropertiesListener {
     private async handleLivekitRoomPropertyOnLeave(property: LivekitRoomPropertyData): Promise<void> {
         const proximityRoom = this.scene.proximityChatRoom;
         const roomID = property.roomName.trim().length === 0 ? property.id : property.roomName;
-        const roomName = Jitsi.slugifyJitsiRoomName(roomID, this.scene.roomUrl, false);
+        const roomName = areaSpaceName(roomID, this.scene.roomUrl);
 
         areaPresenceStore.delete(property.id);
         if (!property.livekitRoomConfig?.disableChat) {
@@ -1368,7 +1370,7 @@ export class AreasPropertiesListener {
         abortSignal: AbortSignal
     ): Promise<void> {
         if (property.name !== undefined && property.id !== undefined) {
-            const uniqRoomName = Jitsi.slugifyJitsiRoomName(property.name, this.scene.roomUrl).trim();
+            const uniqRoomName = areaSpaceName(property.name, this.scene.roomUrl);
 
             let space: SpaceInterface | undefined;
             const spaceRegistry = this.scene.spaceRegistry;
@@ -1404,7 +1406,7 @@ export class AreasPropertiesListener {
     private async handleSpeakerMegaphonePropertyOnLeave(property: SpeakerMegaphonePropertyData): Promise<void> {
         if (property.name !== undefined && property.id !== undefined) {
             isSpeakerStore.set(false);
-            const uniqRoomName = Jitsi.slugifyJitsiRoomName(property.name, this.scene.roomUrl, false);
+            const uniqRoomName = areaSpaceName(property.name, this.scene.roomUrl);
             currentLiveStreamingSpaceStore.set(undefined);
 
             const spaceRegistry = this.scene.spaceRegistry;
@@ -1433,7 +1435,7 @@ export class AreasPropertiesListener {
                 property.speakerZoneName
             );
             if (speakerZoneName) {
-                const uniqRoomName = Jitsi.slugifyJitsiRoomName(speakerZoneName.trim(), this.scene.roomUrl).trim();
+                const uniqRoomName = areaSpaceName(speakerZoneName, this.scene.roomUrl);
                 const spaceRegistry = this.scene.spaceRegistry;
                 let space: SpaceInterface | undefined;
                 if (property.chatEnabled) {
@@ -1469,7 +1471,7 @@ export class AreasPropertiesListener {
                 property.speakerZoneName
             );
             if (speakerZoneName) {
-                const uniqRoomName = Jitsi.slugifyJitsiRoomName(speakerZoneName, this.scene.roomUrl);
+                const uniqRoomName = areaSpaceName(speakerZoneName, this.scene.roomUrl);
                 if (property.chatEnabled) {
                     const proximityRoom = this.scene.proximityChatRoom;
                     proximityRoom.setDisplayName(get(LL).chat.proximity());
@@ -1540,7 +1542,7 @@ export class AreasPropertiesListener {
                 this.coWebsitesActionTriggers.set(property.id, actionId);
                 let message = property.triggerMessage;
                 if (message === undefined) {
-                    message = isMediaBreakpointUp("md") ? get(LL).trigger.mobile.newTab() : get(LL).trigger.newTab();
+                    message = getTriggerHint("newTab");
                 }
 
                 popupStore.addPopup(
@@ -1574,7 +1576,7 @@ export class AreasPropertiesListener {
         if (localUserStore.getForceCowebsiteTrigger() || property.trigger === ON_ACTION_TRIGGER_BUTTON) {
             let message = property.triggerMessage;
             if (!message) {
-                message = isMediaBreakpointUp("md") ? get(LL).trigger.mobile.cowebsite() : get(LL).trigger.cowebsite();
+                message = getTriggerHint("cowebsite");
             }
 
             this.coWebsitesActionTriggers.set(property.id, actionId);

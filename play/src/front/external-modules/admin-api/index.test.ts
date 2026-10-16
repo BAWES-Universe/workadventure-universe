@@ -49,6 +49,10 @@ const mocks = vi.hoisted(() => ({
     setAuthToken: vi.fn(),
     getAuthToken: vi.fn((): string | null => "game-token"),
     pusherGet: vi.fn(),
+    isBlackListed: vi.fn((): boolean => false),
+    ring: vi.fn((): Promise<boolean> => Promise.resolve(true)),
+    whenConnected: vi.fn((): Promise<boolean> => Promise.resolve(true)),
+    openDirectChatRoom: vi.fn((): Promise<void> => Promise.resolve()),
 }));
 
 /** The browser's history, small enough to see through: entries and the one being shown. */
@@ -82,8 +86,16 @@ vi.mock("../../Connection/LocalUserStore", () => ({
         setName: mocks.setLocalName,
         setAuthToken: mocks.setAuthToken,
         getAuthToken: mocks.getAuthToken,
+        getLocalUser: () => ({ uuid: "uuid-me" }),
+        getChatId: () => "@me:chat.example.com",
     },
 }));
+
+vi.mock("../../WebRtc/BlackListManager", () => ({ blackListManager: { isBlackListed: mocks.isBlackListed } }));
+vi.mock("../../Chat/Stores/RingStore", () => ({
+    ringStore: { ring: mocks.ring, whenConnected: mocks.whenConnected },
+}));
+vi.mock("../../Chat/Utils", () => ({ openDirectChatRoom: mocks.openDirectChatRoom }));
 
 vi.mock("../../Connection/Capabilities", () => ({
     hasCapability: (name: string) => name === "api/save-name",
@@ -420,7 +432,7 @@ describe("The Orbit bridge", () => {
                 type: "orbit-bridge-init",
                 version: 1,
                 roomRevision: revision,
-                capabilities: ["navigate", "event", "view", "profile"],
+                capabilities: ["navigate", "event", "view", "profile", "invite", "message"],
                 view: "compact",
                 maxNameLength: 25,
             },
@@ -513,6 +525,168 @@ describe("The Orbit bridge", () => {
         (await openAndRename("Someone", "rev-from-an-earlier-visit-0000"))();
         expect(mocks.setPlayerName).not.toHaveBeenCalled();
         expect(mocks.rejoinCurrentRoom).not.toHaveBeenCalled();
+    });
+
+    describe("asking the game to invite or message someone", () => {
+        async function openOrbit() {
+            const index = await freshIndex();
+            index.default.init({}, makeOptions());
+            vi.advanceTimersByTime(3000);
+            index.openAdminModalFromMenu();
+            fromOrbit({ type: "orbit-bridge-ready", version: 1, capabilities: [] });
+            mocks.modalVisibilitySet.mockClear();
+            return lastInitRevision();
+        }
+
+        const invite = (roomRevision: string, uuid = "uuid-ali") => ({
+            type: "orbit-invite-person",
+            version: 1,
+            roomRevision,
+            uuid,
+            name: "Ali",
+        });
+        const message = (roomRevision: string, chatId = "@ali:chat.example.com") => ({
+            type: "orbit-message-person",
+            version: 1,
+            roomRevision,
+            uuid: "uuid-ali",
+            name: "Ali",
+            chatId,
+        });
+
+        /** The invite and the chat wait on the room's connection, so they happen a moment after the request. */
+        const settle = () => vi.advanceTimersByTimeAsync(0);
+
+        it("invites them and closes Orbit, as a tap on Invite in the People tab does", async () => {
+            const revision = await openOrbit();
+            fromOrbit(invite(revision));
+            await settle();
+            expect(mocks.ring).toHaveBeenCalledWith("uuid-ali", "Ali");
+            expect(mocks.modalVisibilitySet).toHaveBeenCalledWith(false);
+        });
+
+        it("opens their chat and closes Orbit", async () => {
+            const revision = await openOrbit();
+            fromOrbit(message(revision));
+            await settle();
+            expect(mocks.openDirectChatRoom).toHaveBeenCalledWith("@ali:chat.example.com");
+            expect(mocks.modalVisibilitySet).toHaveBeenCalledWith(false);
+        });
+
+        describe("after a name saved in Orbit, which rejoins the room as Orbit closes", () => {
+            const order: string[] = [];
+            let connect: (connected: boolean) => void;
+
+            async function renameThenOpen() {
+                order.length = 0;
+                mocks.playerName = "Khalid";
+                let onVisibility: ((visible: boolean) => void) | undefined;
+                mocks.modalVisibilitySubscribe.mockImplementation(((callback: (visible: boolean) => void) => {
+                    onVisibility = callback;
+                    return vi.fn();
+                }) as unknown as () => ReturnType<typeof vi.fn>);
+                // Closing Orbit sets the store to hidden, which tells the module Orbit closed (and applies the new name).
+                mocks.modalVisibilitySet.mockImplementation(((visible: boolean) => {
+                    order.push(`modal ${visible ? "shown" : "hidden"}`);
+                    if (!visible) onVisibility?.(false);
+                }) as unknown as () => void);
+                mocks.rejoinCurrentRoom.mockImplementation(() => {
+                    order.push("rejoin");
+                });
+                // The old connection is gone after the rejoin; the new one arrives when `connect` is called.
+                mocks.whenConnected.mockImplementationOnce(
+                    () =>
+                        new Promise<boolean>((resolve) => {
+                            order.push("waiting for the new connection");
+                            connect = resolve;
+                        })
+                );
+                mocks.ring.mockImplementation(() => {
+                    order.push("ring");
+                    return Promise.resolve(true);
+                });
+                mocks.openDirectChatRoom.mockImplementation(() => {
+                    order.push("open chat");
+                    return Promise.resolve();
+                });
+                const revision = await openOrbit();
+                fromOrbit({ type: "orbit-profile-changed", version: 1, roomRevision: revision, name: "Khalid A" });
+                return revision;
+            }
+
+            it("rings only once the new connection is up, not on the one the rejoin closed", async () => {
+                const revision = await renameThenOpen();
+                fromOrbit(invite(revision));
+                await settle();
+                expect(order.slice(-3)).toEqual(["modal hidden", "rejoin", "waiting for the new connection"]);
+                expect(mocks.ring).not.toHaveBeenCalled();
+
+                connect(true);
+                await settle();
+                expect(order.at(-1)).toBe("ring");
+                expect(mocks.ring).toHaveBeenCalledWith("uuid-ali", "Ali");
+            });
+
+            it("still tries the invite after the wait times out, and ring reports the failure itself", async () => {
+                const revision = await renameThenOpen();
+                fromOrbit(invite(revision));
+                await settle();
+                expect(mocks.ring).not.toHaveBeenCalled();
+
+                // No connection within the wait: `ring` fails by itself (and shows its "failed" toast).
+                connect(false);
+                await settle();
+                expect(order.at(-1)).toBe("ring");
+                expect(mocks.ring).toHaveBeenCalledWith("uuid-ali", "Ali");
+            });
+
+            it("still opens their chat after the wait times out, as the chat connection survives a rejoin", async () => {
+                const revision = await renameThenOpen();
+                fromOrbit(message(revision));
+                await settle();
+                expect(mocks.openDirectChatRoom).not.toHaveBeenCalled();
+
+                connect(false);
+                await settle();
+                expect(order.at(-1)).toBe("open chat");
+            });
+
+            it("opens their chat once the new connection is up", async () => {
+                const revision = await renameThenOpen();
+                fromOrbit(message(revision));
+                await settle();
+                expect(mocks.openDirectChatRoom).not.toHaveBeenCalled();
+
+                connect(true);
+                await settle();
+                expect(order.at(-1)).toBe("open chat");
+            });
+        });
+
+        it("ignores a request from another window, origin or visit, and a malformed one", async () => {
+            const revision = await openOrbit();
+            fromOrbit(invite(revision), { postMessage: vi.fn() });
+            fromOrbit(invite(revision), frame, "https://evil.example.com");
+            fromOrbit(invite("rev-from-an-earlier-visit-0000"));
+            fromOrbit(message(revision, "not a matrix id"));
+            fromOrbit({ ...invite(revision), uuid: "" });
+            fromOrbit({ ...invite(revision), version: 2 });
+            await settle();
+            expect(mocks.ring).not.toHaveBeenCalled();
+            expect(mocks.openDirectChatRoom).not.toHaveBeenCalled();
+            expect(mocks.modalVisibilitySet).not.toHaveBeenCalled();
+        });
+
+        it("never invites yourself or someone you blocked, and never opens a chat with yourself", async () => {
+            const revision = await openOrbit();
+            fromOrbit(invite(revision, "uuid-me"));
+            mocks.isBlackListed.mockReturnValueOnce(true);
+            fromOrbit(invite(revision));
+            fromOrbit(message(revision, "@me:chat.example.com"));
+            await settle();
+            expect(mocks.ring).not.toHaveBeenCalled();
+            expect(mocks.openDirectChatRoom).not.toHaveBeenCalled();
+        });
     });
 
     it("gives focus back to the control that opened Orbit when Orbit closes", async () => {
@@ -821,6 +995,7 @@ describe("Signing Orbit in when the OIDC access token has run out", () => {
         await openedWith(makeAccessTokenJwt(expired));
         await orbitAsks();
         expect(mocks.pusherGet).toHaveBeenCalledWith("me", {
+            timeout: 10_000,
             params: { token: makeAccessTokenJwt(expired), playUri: "https://play.example.com/@/room" },
         });
         expect(mocks.setAuthToken).toHaveBeenCalledWith(renewedGameToken);
@@ -843,6 +1018,7 @@ describe("Signing Orbit in when the OIDC access token has run out", () => {
         expect(mocks.pusherGet).toHaveBeenCalledTimes(1);
         // The pusher is told to renew even though the provider may still accept the old token.
         expect(mocks.pusherGet).toHaveBeenCalledWith("me", {
+            timeout: 10_000,
             params: { token: makeAccessTokenJwt(opaque), playUri: "https://play.example.com/@/room", refresh: "true" },
         });
         expect(frame.postMessage).toHaveBeenCalledWith(expect.objectContaining({ accessToken: renewed }), ADMIN);
@@ -855,6 +1031,125 @@ describe("Signing Orbit in when the OIDC access token has run out", () => {
         await orbitAsks();
         expect(mocks.setAuthToken).not.toHaveBeenCalled();
         expect(frame.postMessage).toHaveBeenCalledWith(expect.objectContaining({ accessToken: expired }), ADMIN);
+    });
+
+    it("keeps the renewed token a room that refuses the player sends along with its refusal", async () => {
+        const expired = makeOidcToken(nowSeconds() - 10);
+        const renewed = makeOidcToken(nowSeconds() + 3600);
+        const renewedGameToken = makeAccessTokenJwt(renewed);
+        mocks.pusherGet.mockResolvedValue({
+            data: {
+                status: "error",
+                type: "error",
+                title: "Members only",
+                subtitle: "This place is only open to its members",
+                code: "MEMBERS_ONLY",
+                details: "Ask one of its admins to invite you, then come back.",
+                authToken: renewedGameToken,
+            },
+        });
+        await openedWith(makeAccessTokenJwt(expired));
+        await orbitAsks();
+        expect(mocks.setAuthToken).toHaveBeenCalledWith(renewedGameToken);
+        expect(frame.postMessage).toHaveBeenCalledWith(expect.objectContaining({ accessToken: renewed }), ADMIN);
+    });
+
+    describe("when joining a room", () => {
+        async function gameTokenToJoinWith(gameToken: string) {
+            vi.resetModules();
+            const module = await import("./orbitAccessToken");
+            return module.gameTokenToJoinWith(gameToken, "https://play.example.com/@/other-room", () => true);
+        }
+
+        it("renews an expired token first and joins with the renewed one", async () => {
+            const expired = makeAccessTokenJwt(makeOidcToken(nowSeconds() - 10));
+            const renewed = makeAccessTokenJwt(makeOidcToken(nowSeconds() + 3600));
+            mocks.getAuthToken.mockReturnValue(expired);
+            mocks.setAuthToken.mockImplementation((token: string) => mocks.getAuthToken.mockReturnValue(token));
+            mocks.pusherGet.mockResolvedValue(meAnswer(renewed));
+            expect(await gameTokenToJoinWith(expired)).toBe(renewed);
+            expect(mocks.pusherGet).toHaveBeenCalledWith("me", {
+                timeout: 10_000,
+                params: { token: expired, playUri: "https://play.example.com/@/other-room" },
+            });
+        });
+
+        it("joins with the token Orbit's frame renewed meanwhile, with no trip to /me", async () => {
+            const old = makeAccessTokenJwt(makeOidcToken(nowSeconds() - 10));
+            const newer = makeAccessTokenJwt(makeOidcToken(nowSeconds() + 3600));
+            mocks.getAuthToken.mockReturnValue(newer);
+            expect(await gameTokenToJoinWith(old)).toBe(newer);
+            expect(mocks.pusherGet).not.toHaveBeenCalled();
+        });
+
+        it("leaves a token that is still good, and a guest's token, as they are", async () => {
+            const good = makeAccessTokenJwt(makeOidcToken(nowSeconds() + 3600));
+            mocks.getAuthToken.mockReturnValue(good);
+            expect(await gameTokenToJoinWith(good)).toBe(good);
+            mocks.getAuthToken.mockReturnValue("guest-token");
+            expect(await gameTokenToJoinWith("guest-token")).toBe("guest-token");
+            expect(mocks.pusherGet).not.toHaveBeenCalled();
+        });
+
+        it("joins with the renewed token when it shares a renewal another caller started", async () => {
+            const expired = makeAccessTokenJwt(makeOidcToken(nowSeconds() - 10));
+            const renewed = makeAccessTokenJwt(makeOidcToken(nowSeconds() + 3600));
+            mocks.getAuthToken.mockReturnValue(expired);
+            mocks.setAuthToken.mockImplementation((token: string) => mocks.getAuthToken.mockReturnValue(token));
+            vi.resetModules();
+            const module = await import("./orbitAccessToken");
+            const release = pendingMe();
+            // Orbit's frame starts the renewal; the room join arrives while it runs.
+            const frame = module.freshOrbitAccessToken({ userAccessToken: expired, roomId: "room" }, false, () => true);
+            const joined = module.gameTokenToJoinWith(expired, "other-room", () => true);
+            release(renewed);
+            await frame;
+            expect(await joined).toBe(renewed);
+            expect(mocks.pusherGet).toHaveBeenCalledTimes(1);
+        });
+
+        it("keeps the renewal for the next room when the room that started it was left meanwhile", async () => {
+            const expired = makeAccessTokenJwt(makeOidcToken(nowSeconds() - 10));
+            const renewed = makeAccessTokenJwt(makeOidcToken(nowSeconds() + 3600));
+            mocks.getAuthToken.mockReturnValue(expired);
+            mocks.setAuthToken.mockImplementation((token: string) => mocks.getAuthToken.mockReturnValue(token));
+            vi.resetModules();
+            const module = await import("./orbitAccessToken");
+            const release = pendingMe();
+            let firstRoomIsCurrent = true;
+            const firstRoom = module.gameTokenToJoinWith(expired, "first-room", () => firstRoomIsCurrent);
+            // The player moves on while the renewal runs; the next room waits on the same renewal.
+            const nextRoom = module.gameTokenToJoinWith(expired, "next-room", () => true);
+            firstRoomIsCurrent = false;
+            release(renewed);
+            await firstRoom;
+            expect(await nextRoom).toBe(renewed);
+            expect(mocks.pusherGet).toHaveBeenCalledTimes(1);
+        });
+
+        it("joins with the token it has when /me can't renew", async () => {
+            const expired = makeAccessTokenJwt(makeOidcToken(nowSeconds() - 10));
+            mocks.getAuthToken.mockReturnValue(expired);
+            mocks.pusherGet.mockRejectedValue(new Error("pusher down"));
+            expect(await gameTokenToJoinWith(expired)).toBe(expired);
+        });
+
+        it("joins with the token it has when /me never answers", async () => {
+            const expired = makeAccessTokenJwt(makeOidcToken(nowSeconds() - 10));
+            mocks.getAuthToken.mockReturnValue(expired);
+            // Like axios: a request that gets no answer fails once its `timeout` has passed.
+            mocks.pusherGet.mockImplementation(
+                (_url: string, config: { timeout?: number }) =>
+                    new Promise((_resolve, reject) => {
+                        if (config.timeout) setTimeout(() => reject(new Error("timeout exceeded")), config.timeout);
+                    })
+            );
+            vi.resetModules();
+            const module = await import("./orbitAccessToken");
+            const joined = module.gameTokenToJoinWith(expired, "https://play.example.com/@/other-room", () => true);
+            await vi.advanceTimersByTimeAsync(10_000);
+            expect(await joined).toBe(expired);
+        });
     });
 
     it("keeps nothing from a /me answer that doesn't match the pusher's schema", async () => {
@@ -926,6 +1221,68 @@ describe("Signing Orbit in when the OIDC access token has run out", () => {
         await vi.runAllTimersAsync();
         expect(mocks.setAuthToken).not.toHaveBeenCalled();
         expect(frame.postMessage).not.toHaveBeenCalled();
+    });
+
+    it("keeps the newer token another tab saved while this tab's renewal was on its way", async () => {
+        const expired = makeOidcToken(nowSeconds() - 10);
+        const fromOtherTab = makeOidcToken(nowSeconds() + 7200);
+        const late = makeOidcToken(nowSeconds() + 3600);
+        const release = pendingMe();
+        await openedWith(makeAccessTokenJwt(expired));
+        orbitSends();
+        await vi.runAllTimersAsync();
+        // Another tab renewed first and saved its token in the shared store.
+        const otherTabToken = makeAccessTokenJwt(fromOtherTab);
+        mocks.getAuthToken.mockReturnValue(otherTabToken);
+
+        release(makeAccessTokenJwt(late));
+        await vi.runAllTimersAsync();
+        // The late answer is not written over it, and Orbit is signed in with the stored one.
+        expect(mocks.setAuthToken).not.toHaveBeenCalled();
+        expect(mocks.getAuthToken()).toBe(otherTabToken);
+        expect(frame.postMessage).toHaveBeenCalledWith(expect.objectContaining({ accessToken: fromOtherTab }), ADMIN);
+        expect(frame.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ accessToken: late }), ADMIN);
+    });
+
+    it("joins a room with the newer token another tab saved while the renewal was on its way", async () => {
+        const expired = makeAccessTokenJwt(makeOidcToken(nowSeconds() - 10));
+        const otherTabToken = makeAccessTokenJwt(makeOidcToken(nowSeconds() + 7200));
+        const late = makeAccessTokenJwt(makeOidcToken(nowSeconds() + 3600));
+        mocks.getAuthToken.mockReturnValue(expired);
+        mocks.setAuthToken.mockImplementation((token: string) => mocks.getAuthToken.mockReturnValue(token));
+        vi.resetModules();
+        const module = await import("./orbitAccessToken");
+        const release = pendingMe();
+        const joined = module.gameTokenToJoinWith(expired, "other-room", () => true);
+        mocks.getAuthToken.mockReturnValue(otherTabToken);
+        release(late);
+        expect(await joined).toBe(otherTabToken);
+        expect(mocks.setAuthToken).not.toHaveBeenCalled();
+    });
+
+    it("hands every caller sharing the renewal the newer token another tab saved, each with its own holder", async () => {
+        const expired = makeAccessTokenJwt(makeOidcToken(nowSeconds() - 10));
+        const fromOtherTab = makeOidcToken(nowSeconds() + 7200);
+        const otherTabToken = makeAccessTokenJwt(fromOtherTab);
+        mocks.getAuthToken.mockReturnValue(expired);
+        mocks.setAuthToken.mockImplementation((token: string) => mocks.getAuthToken.mockReturnValue(token));
+        vi.resetModules();
+        const module = await import("./orbitAccessToken");
+        const release = pendingMe();
+        // Orbit's frame and the bot editor each hold the game token in their own object, and share one renewal
+        const orbit = { userAccessToken: expired, roomId: "room" };
+        const botEditor = { userAccessToken: expired, roomId: "room" };
+        const orbitAnswer = module.freshOrbitAccessToken(orbit, false, () => true);
+        const botEditorAnswer = module.freshOrbitAccessToken(botEditor, false, () => true);
+        mocks.getAuthToken.mockReturnValue(otherTabToken);
+        release(makeAccessTokenJwt(makeOidcToken(nowSeconds() + 3600)));
+
+        expect(await orbitAnswer).toBe(fromOtherTab);
+        expect(await botEditorAnswer).toBe(fromOtherTab);
+        expect(orbit.userAccessToken).toBe(otherTabToken);
+        expect(botEditor.userAccessToken).toBe(otherTabToken);
+        expect(mocks.pusherGet).toHaveBeenCalledTimes(1);
+        expect(mocks.setAuthToken).not.toHaveBeenCalled();
     });
 
     it("starts from the game's newest token when the bot editor already renewed it", async () => {

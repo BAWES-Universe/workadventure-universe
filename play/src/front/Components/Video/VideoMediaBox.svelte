@@ -3,7 +3,8 @@
 <script lang="ts">
     //STYLE: Classes factorizing tailwind's ones are defined in video-ui.scss
 
-    import { getContext, onDestroy } from "svelte";
+    import { getContext, hasContext, onDestroy } from "svelte";
+    import { get, readable, type Readable } from "svelte/store";
     import SoundMeterWidget from "../SoundMeterWidget.svelte";
     import { highlightedEmbedScreen } from "../../Stores/HighlightedEmbedScreenStore";
     import type { VideoBox } from "../../Space/Space";
@@ -14,6 +15,9 @@
     import { highlightFullScreen } from "../../Stores/ActionsCamStore";
     import { showFloatingUi } from "../../Utils/svelte-floatingui-show";
     import { userActivationManager } from "../../Stores/UserActivationStore";
+    import { liveBroadcastStore } from "../../Stores/MegaphoneStore";
+    import { chatSheetOpenStore } from "../../Chat/ChatSheetStore";
+    import { chatVisibilityStore } from "../../Stores/ChatStore";
     import ActionMediaBox from "./ActionMediaBox.svelte";
     import UserName from "./UserName.svelte";
     import UpDownChevron from "./UpDownChevron.svelte";
@@ -28,6 +32,8 @@
 
     // The inCameraContainer is used to know if the VideoMediaBox is part of a series or video or if it is the highlighted video.
     let inCameraContainer: boolean = getContext("inCameraContainer");
+    // A video can be shown small (VideoBox.svelte): the picture fills it, with no name or sound meter over it.
+    const videoSmall: Readable<boolean> = hasContext("videoSmall") ? getContext("videoSmall") : readable(false);
 
     let extendedSpaceUser = videoBox.spaceUser;
 
@@ -56,7 +62,9 @@
 
     $: videoEnabled = $hasVideoStore;
 
-    $: isMegaphoneSpace = videoBox.isMegaphoneSpace ?? false;
+    // Live: someone else's broadcast you listen to, or your own tile while you are live.
+    $: isMegaphoneSpace =
+        (videoBox.isMegaphoneSpace ?? false) || (videoBox.uniqueId === "-1" && $liveBroadcastStore !== undefined);
 
     function toggleFullScreen() {
         highlightFullScreen.update((current) => !current);
@@ -124,6 +132,8 @@
     });
 
     function highlightPeer(videoBox: VideoBox) {
+        // Over the phone's chat sheet there is no room to show a video big: the chat closes to make room.
+        if (get(chatSheetOpenStore)) chatVisibilityStore.set(false);
         highlightedEmbedScreen.highlight(videoBox);
         analyticsClient.pinMeetingAction();
         window.focus();
@@ -183,7 +193,7 @@
                 verticalAlign={!inCameraContainer && !fullScreen ? "top" : "center"}
                 isTalking={showVoiceIndicator}
                 flipX={streamable?.flipX}
-                cover={streamable?.displayMode === "cover" && inCameraContainer && !fullScreen}
+                cover={(streamable?.displayMode === "cover" || $videoSmall) && inCameraContainer && !fullScreen}
                 isBlocked={$isBlockedStore}
                 withBackground={(inCameraContainer && $statusStore !== "error" && $statusStore !== "connecting") ||
                     $isBlockedStore}
@@ -192,6 +202,7 @@
                 <UserName
                     name={name ?? "unknown"}
                     picture={pictureStore}
+                    pictureOnly={$videoSmall}
                     isPlayingAudio={showVoiceIndicator}
                     isCameraDisabled={!videoEnabled && !miniMode}
                     isBlocked={$isBlockedStore}
@@ -212,9 +223,10 @@
 
                 <!-- The button at the top of the video that opens the menu to go fullscreen -->
                 {#if !inCameraContainer}
-                    <!-- The menu to go fullscreen -->
+                    <!-- The menu to go fullscreen. Full screen runs under the installed app's see-through status bar (#969). -->
                     <div
                         class="absolute m-auto top-0 right-0 left-0 h-14 w-fit z-20 rounded-lg bg-contrast/50 backdrop-blur transition-all opacity-50 hover:opacity-100 [@media(pointer:coarse)]:opacity-100 flex items-center justify-center cursor-pointer"
+                        style={fullScreen ? "top: env(safe-area-inset-top, 0px)" : undefined}
                     >
                         <div class="h-full w-full flex flex-row justify-evenly cursor-pointer">
                             {#if !fullScreen}
@@ -238,8 +250,13 @@
                         </div>
                     </div>
                 {/if}
-                {#if $statusStore === "connected" && $hasAudioStore}
-                    <div class="z-[251] absolute p-2 right-1" class:top-1={videoEnabled} class:top-0={!videoEnabled}>
+                {#if $statusStore === "connected" && $hasAudioStore && (!$videoSmall || $isMutedStore)}
+                    <div
+                        class="z-[251] absolute p-2 right-1"
+                        class:top-1={videoEnabled}
+                        class:top-0={!videoEnabled}
+                        style={fullScreen ? "margin-top: env(safe-area-inset-top, 0px)" : undefined}
+                    >
                         {#if !$isMutedStore}
                             <SoundMeterWidget
                                 volume={volumeMeter}
@@ -281,6 +298,7 @@
         {/if}
     </div>
 
+    <!-- Shows the video big. -->
     {#if inCameraContainer && videoEnabled && $isBlockedStore === false}
         {#await userActivationManager.waitForUserActivation()}
             <!-- Waiting for user activation; nothing to show -->

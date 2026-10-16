@@ -1,8 +1,8 @@
 <script lang="ts">
     import { analyticsClient } from "../../Administration/AnalyticsClient";
-    import { mapEditorModeStore, mapExplorationModeStore } from "../../Stores/MapEditorStore";
+    import { mapExplorationModeStore } from "../../Stores/MapEditorStore";
     import { gameManager } from "../../Phaser/Game/GameManager";
-    import { EditorToolName } from "../../Phaser/Game/MapEditor/MapEditorModeManager";
+    import { enterExploreTheRoom, leaveExploreTheRoom } from "../../Phaser/Game/MapEditor/ExploreTheRoom";
     import LL from "../../../i18n/i18n-svelte";
     import { roomListActivated } from "../../Stores/MenuStore";
     import { roomListVisibilityStore } from "../../Stores/ModalStore";
@@ -10,7 +10,7 @@
     import { mobileLayoutStore } from "../../Stores/MobileLayoutStore";
     import { displayName } from "../Exploration/exploreText";
     import { toggleExploreList } from "../Exploration/toggleExploreList";
-    import { IconFocusCentered, IconMinus, IconPlanet, IconPlus, IconZoomOutArea } from "@wa-icons";
+    import { IconMinus, IconPlanet, IconPlus, IconZoomOutArea } from "@wa-icons";
 
     function zoomIn() {
         analyticsClient.clickToZoomIn();
@@ -26,18 +26,39 @@
         cameraManager.zoomByFactor(0.8, true);
     }
 
-    function openMapExplorer() {
+    // The map button opens "Look around the map" and, while it is open, brings you back: one button, grey while open.
+    function toggleLookAround() {
+        if ($mapExplorationModeStore) {
+            analyticsClient.clickCenterToUser();
+            leaveExploreTheRoom();
+            return;
+        }
         analyticsClient.clickTopOpenMapExplorer();
-
-        mapEditorModeStore.switchMode(true);
-        gameManager.getCurrentGameScene().getMapEditorModeManager().equipTool(EditorToolName.ExploreTheRoom);
+        enterExploreTheRoom();
     }
 
-    function centerToUser() {
-        analyticsClient.clickCenterToUser();
-
-        mapEditorModeStore.switchMode(false);
-        gameManager.getCurrentGameScene().getMapEditorModeManager().equipTool(EditorToolName.CloseMapEditor);
+    // On a touch screen there is no hover: holding a finger on the map button shows its tip, as a long press does
+    // elsewhere on a phone. The tip goes when the finger lifts or moves away, and the press itself does not open.
+    let tipHeld = false;
+    let holdTimer: ReturnType<typeof setTimeout> | undefined;
+    let tipShown = false;
+    function holdStart() {
+        holdTimer = setTimeout(() => {
+            tipHeld = true;
+            tipShown = true;
+        }, 450);
+    }
+    function holdEnd() {
+        if (holdTimer) clearTimeout(holdTimer);
+        holdTimer = undefined;
+        tipShown = false;
+    }
+    function tapMap() {
+        if (tipHeld) {
+            tipHeld = false;
+            return;
+        }
+        toggleLookAround();
     }
 </script>
 
@@ -77,28 +98,31 @@
         </button>
         <span class="explorer-divider" aria-hidden="true" />
     {/if}
-    {#if $mapExplorationModeStore === false}
+    <span class="explorer-map">
         <button
             type="button"
             class="explorer-btn group"
-            aria-label={$LL.mapEditor.explorer.title()}
+            class:open={$mapExplorationModeStore}
+            aria-label={$mapExplorationModeStore
+                ? $LL.mapEditor.explorer.showMyLocation()
+                : $LL.mapEditor.lookAround.title()}
+            aria-pressed={$mapExplorationModeStore}
             data-testid="map-overview-button"
-            on:click={openMapExplorer}
+            on:click={tapMap}
+            on:touchstart={holdStart}
+            on:touchend={holdEnd}
+            on:touchmove={holdEnd}
+            on:touchcancel={holdEnd}
+            on:contextmenu|preventDefault
         >
             <IconZoomOutArea font-size="20" />
-            <span class="explorer-tip" aria-hidden="true">{$LL.mapEditor.explorer.title()}</span>
+            <span class="explorer-tip" class:shown={tipShown} aria-hidden="true"
+                >{$mapExplorationModeStore
+                    ? $LL.mapEditor.explorer.showMyLocation()
+                    : $LL.mapEditor.lookAround.title()}</span
+            >
         </button>
-    {:else}
-        <button
-            type="button"
-            class="explorer-btn group"
-            aria-label={$LL.mapEditor.explorer.showMyLocation()}
-            on:click={centerToUser}
-        >
-            <IconFocusCentered font-size="20" />
-            <span class="explorer-tip" aria-hidden="true">{$LL.mapEditor.explorer.showMyLocation()}</span>
-        </button>
-    {/if}
+    </span>
 </div>
 
 <style>
@@ -165,6 +189,10 @@
         outline: none;
         box-shadow: inset 0 0 0 2px #fff;
     }
+    .explorer-map {
+        position: relative;
+        display: block;
+    }
     .explorer-divider {
         width: 22px;
         height: 1px;
@@ -195,7 +223,8 @@
             opacity: 1;
         }
     }
-    .explorer-btn:focus-visible .explorer-tip {
+    .explorer-btn:focus-visible .explorer-tip,
+    .explorer-tip.shown {
         opacity: 1;
     }
 </style>

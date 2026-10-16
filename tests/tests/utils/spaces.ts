@@ -1,3 +1,5 @@
+import { createHash } from "crypto";
+
 /**
  * Same hash as libs/shared-utils/src/String/shortHash.ts, which the app uses to name a room's spaces.
  */
@@ -12,10 +14,13 @@ function shortHash(s: string): string {
 
 /**
  * The backend name of the space a LiveKit area property joins, for a room loaded from `mapUrl`.
- * The front names it `<shortHash(room URL)>-<room name>` (see slugifyJitsiRoomName), without the URL's query,
- * and the local admin puts every room in "localWorld".
+ * The front names it `area__<shortHash(room URL)>-<room name>` (see libs/shared-utils/src/Space/areaSpaceName.ts),
+ * without the URL's query, and the pusher puts the room's SHA-256 and its world in front of it (see
+ * toServerSpaceName in play/src/pusher/services/SpaceJoinPolicy.ts). The local admin puts every room in "localWorld".
  */
 export function livekitAreaSpaceName(mapUrl: string, roomName: string): string {
     const url = new URL(mapUrl);
-    return `localWorld.${shortHash(url.origin + url.pathname)}-${roomName}`;
+    const roomUrl = url.origin + url.pathname;
+    const roomKey = createHash("sha256").update(roomUrl).digest("hex");
+    return `localWorld.area__${roomKey}.area__${shortHash(roomUrl)}-${roomName}`;
 }

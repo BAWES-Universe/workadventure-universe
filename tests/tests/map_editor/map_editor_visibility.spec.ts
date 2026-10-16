@@ -43,7 +43,7 @@ test.describe("Map editor @oidc @nomobile @nowebkit", () => {
     test("Assert map explorer visible for guest", async ({ browser, request }) => {
         await using page = await getPage(browser, 'Alice', Map.url("empty"));
 
-        // Open the map editor
-        await Menu.openMapExplorer(page);
+        // A guest gets "Look around the map", not the editor
+        await Menu.openLookAround(page);
     });
 });

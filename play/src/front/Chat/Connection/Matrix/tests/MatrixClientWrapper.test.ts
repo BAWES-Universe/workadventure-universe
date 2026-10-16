@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ICreateClientOpts } from "matrix-js-sdk";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ICreateClientOpts, IndexedDBStore } from "matrix-js-sdk";
+import { RemoteIndexedDBStoreBackend } from "matrix-js-sdk/lib/store/indexeddb-remote-backend";
 import type { MatrixClientWrapperInterface, MatrixLocalUserStore } from "../MatrixClientWrapper";
 import { MatrixClientWrapper } from "../MatrixClientWrapper";
 
@@ -17,6 +18,10 @@ vi.mock("../InteractiveAuthDialog.svelte", () => {
 
 vi.mock("../../../Stores/ChatStore.ts", () => {
     return {};
+});
+// The worker itself only runs in a browser
+vi.mock("../matrixIndexedDbWorker?worker&inline", () => {
+    return { default: class {} };
 });
 describe("MatrixClientWrapper", () => {
     beforeEach(() => {
@@ -304,6 +309,48 @@ describe("MatrixClientWrapper", () => {
 
             expect(lastCreateClientArg.cryptoCallbacks?.getSecretStorageKey).toBeDefined();
             expect(lastCreateClientArg.cryptoCallbacks?.cacheSecretStorageKey).toBeDefined();
+        });
+    });
+
+    describe("matrixWebClientStore", () => {
+        const localUserStoreMock = {} as unknown as MatrixLocalUserStore;
+
+        beforeEach(() => {
+            // An earlier test stubs matrixWebClientStore itself
+            vi.restoreAllMocks();
+            // jsdom has no IndexedDB; the stores only open it later, on startup()
+            vi.stubGlobal("indexedDB", {});
+        });
+
+        afterEach(() => {
+            vi.unstubAllGlobals();
+        });
+
+        it("persists the sync data on a web worker, not on the main thread", () => {
+            // jsdom has no Worker: stand in for the browser's
+            vi.stubGlobal("Worker", class {});
+            const wrapper = new MatrixClientWrapper("baseUrl", localUserStoreMock, vi.fn());
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { matrixStore } = (wrapper as any).matrixWebClientStore("@user:server") as {
+                matrixStore: IndexedDBStore;
+            };
+
+            // matrix-js-sdk picks the backend from the options: without a workerFactory, persistSyncData (the
+            // structured clone of the whole /sync blob) runs on the main thread and freezes the UI for seconds.
+            expect(matrixStore.backend).toBeInstanceOf(RemoteIndexedDBStoreBackend);
+        });
+
+        it("stays on the main thread where there are no web workers", () => {
+            vi.stubGlobal("Worker", undefined);
+            const wrapper = new MatrixClientWrapper("baseUrl", localUserStoreMock, vi.fn());
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { matrixStore } = (wrapper as any).matrixWebClientStore("@user:server") as {
+                matrixStore: IndexedDBStore;
+            };
+
+            expect(matrixStore.backend).not.toBeInstanceOf(RemoteIndexedDBStoreBackend);
         });
     });
 });

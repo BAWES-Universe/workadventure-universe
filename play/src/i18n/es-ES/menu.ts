@@ -61,7 +61,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         calmMap: "Mapa tranquilo (sin animaciones)",
         pictureInPicture: "Imagen en imagen",
         mapCredits: "Créditos del mapa",
-        contact: "Contacto",
         report: "Informar de un problema",
         back: "Atrás",
         close: "Cerrar",
@@ -113,17 +112,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         errorUpload:
             "Error al cargar el archivo. Por favor revise su archivo y vuelva a intentarlo. Si el problema persiste, póngase en contacto con el administrador.",
     },
-    contact: {
-        gettingStarted: {
-            title: "Empezar",
-            description:
-                "Universe le permite crear un espacio en línea para comunicarse espontáneamente con otros. Y todo empieza creando su propio espacio. Escoja de una gran selección de mapas prefabricados por nuestro equipo.",
-        },
-        createMap: {
-            title: "Crear su mapa",
-            description: "También puede crear su propio mapa personalizado siguiendo los pasos de la documentación.",
-        },
-    },
     about: {
         mapInfo: "Información en el mapa",
         mapLink: "enlace a este mapa",
@@ -148,7 +136,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         invite: "Invitar",
         credit: "Créditos",
         globalMessages: "Mensajes Globales",
-        contact: "Contacto",
         report: "Report Issues",
     },
 };

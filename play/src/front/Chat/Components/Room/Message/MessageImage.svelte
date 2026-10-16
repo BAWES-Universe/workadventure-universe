@@ -1,5 +1,7 @@
 <script lang="ts">
     import type { Readable } from "svelte/store";
+    import { getAttachmentOpenUrl } from "../../../../Utils/AttachmentUrls";
+    import { getSaveableFiles } from "../MessageActions/messageActions";
     import type { ChatMessageContent } from "../../../Connection/ChatConnection";
     import Lightbox from "./Lightbox.svelte";
 
@@ -9,13 +11,21 @@
 
     function openLightbox(e: MouseEvent) {
         e.preventDefault();
+        // Still loading: there's no image to show yet.
+        if (!$content.url) return;
         showLightbox = true;
     }
 
     $: hasCaption = $content.body && $content.body.trim();
 </script>
 
-<a href={$content.url} target="_blank" class="cursor-pointer relative group block p-1 pb-0" on:click={openLightbox}>
+<a
+    href={getAttachmentOpenUrl($content.url)}
+    target="_blank"
+    rel="noopener noreferrer"
+    class="cursor-pointer relative group block p-1 pb-0"
+    on:click={openLightbox}
+>
     <div
         class="bg-contrast/50 p-1 rounded absolute top-2 right-2 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all h-fit w-fit"
     >
@@ -39,7 +49,12 @@
             </svg>
         </div>
     </div>
-    <img class="w-full object-cover max-h-52 rounded" src={$content.url} alt={$content.body} draggable="false" />
+    {#if $content.url}
+        <img class="w-full object-cover max-h-52 rounded" src={$content.url} alt={$content.body} draggable="false" />
+    {:else}
+        <!-- Matrix images are fetched with the access token first -->
+        <div class="w-48 max-w-full h-32 rounded bg-white/10 animate-pulse" data-testid="messageImageLoading" />
+    {/if}
 </a>
 
 {#if hasCaption}
@@ -49,6 +64,7 @@
 <Lightbox
     src={$content.url}
     alt={$content.body}
+    filename={getSaveableFiles("image", $content)[0]?.name}
     show={showLightbox}
     hasPrev={false}
     hasNext={false}

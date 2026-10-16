@@ -65,7 +65,7 @@ export class LoginScene extends ResizableScene {
         }
 
         this.scene.stop(LoginSceneName);
-        gameManager.tryResumingGame(SelectCharacterSceneName);
+        gameManager.goToNextSceneAfterName();
         this.scene.remove(LoginSceneName);
         loginSceneVisibleStore.set(false);
     }

@@ -27,6 +27,18 @@ export class SpeakerIcon extends Phaser.GameObjects.Image {
         this.showAnimation(show, forceClose);
     }
 
+    /** Moves the icon's resting place (the name pill can change size with the zoom). */
+    public setBaseY(value: number): this {
+        if (this.defaultPosition.y === value) {
+            return this;
+        }
+        this.defaultPosition.y = value;
+        if (!this.showAnimationTween?.isPlaying()) {
+            this.y = value;
+        }
+        return this;
+    }
+
     private showAnimation(show = true, forceClose = false) {
         if (forceClose && !show) {
             this.showAnimationTween?.stop();
@@ -50,6 +62,11 @@ export class SpeakerIcon extends Phaser.GameObjects.Image {
                 this.showAnimationTween = undefined;
             },
         });
+    }
+
+    /** Height of the icon at rest, in game pixels. */
+    public get restingHeight(): number {
+        return this.height * this.defaultScale;
     }
 
     public isShown(): boolean {

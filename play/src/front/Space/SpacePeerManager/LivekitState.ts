@@ -9,9 +9,16 @@ export class LivekitState implements ICommunicationState {
     constructor(
         private _space: SpaceInterface,
         private _streamableSubjects: StreamableSubjects,
-        private _blockedUsersStore: Readable<Set<string>>
+        private _blockedUsersStore: Readable<Set<string>>,
+        getCurrentMediaStream?: () => MediaStream | undefined
     ) {
-        this.livekitConnection = new LivekitConnection(this._space, this._streamableSubjects, this._blockedUsersStore);
+        this.livekitConnection = new LivekitConnection(
+            this._space,
+            this._streamableSubjects,
+            this._blockedUsersStore,
+            undefined,
+            getCurrentMediaStream
+        );
     }
 
     destroy() {

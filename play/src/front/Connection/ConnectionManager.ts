@@ -16,6 +16,7 @@ import { analyticsClient } from "../Administration/AnalyticsClient";
 import { userIsConnected, warningBannerStore } from "../Stores/MenuStore";
 import { loginSceneVisibleIframeStore } from "../Stores/LoginSceneStore";
 import { _ServiceWorker } from "../Network/ServiceWorker";
+import { INSTALL_ROOM_PARAMETER, installRoomPath } from "../Install/InstallRoom";
 import { GameConnexionTypes, urlManager } from "../Url/UrlManager";
 import {
     CARDS_ENABLED,
@@ -42,15 +43,30 @@ import { ABSOLUTE_PUSHER_URL } from "../Enum/ComputedConst";
 import { openChatRoom } from "../Chat/Utils";
 import LL from "../../i18n/i18n-svelte";
 import { errorScreenStore } from "../Stores/ErrorScreenStore";
+import { refusedOnLoad } from "../Stores/WokaRefusedStore";
+import { gameTokenToJoinWith } from "../external-modules/admin-api/orbitAccessToken";
 import { axiosToPusher, axiosWithRetry } from "./AxiosUtils";
 import { Room } from "./Room";
 import { LocalUser } from "./LocalUser";
 import { localUserStore } from "./LocalUserStore";
+import { shouldSaveNameOnServer } from "./LocalUserUtils";
 import type { OnConnectInterface, PositionInterface, ViewportInterface } from "./ConnexionModels";
 import { RoomConnection } from "./RoomConnection";
 import { watchConnectAttempt } from "./ConnectAttemptWatch";
+import { softReconnect } from "./SoftReconnect";
 import { HtmlUtils } from "./../WebRtc/HtmlUtils";
 import { hasCapability } from "./Capabilities";
+
+/** How a save of the WOKA or the companion ended: kept, refused for this place by the admin, or not saved at all. */
+export type SaveResult = "saved" | "notAllowed" | "failed";
+
+function saveFailure(err: unknown): SaveResult {
+    const refused =
+        isAxiosError(err) &&
+        err.response?.status === 422 &&
+        (err.response.data as { code?: unknown } | undefined)?.code === "WOKA_NOT_ALLOWED";
+    return refused ? "notAllowed" : "failed";
+}
 
 export interface ConnectOptions {
     /** Whether whoever asked no longer wants this connection (the map was closed): no more retries, no screen changes. */
@@ -61,10 +77,11 @@ class ConnectionManager {
     private localUser!: LocalUser;
 
     private connexionType?: GameConnexionTypes;
-    private reconnectingTimeout: NodeJS.Timeout | null = null;
     /** Failed attempts to open the room socket in a row: the first retry comes sooner. */
     private failedSocketAttempts = 0;
     private _unloading = false;
+    /** Work held back while the page was being left, done if the browser shows the page again from its back cache. */
+    private shownAgain: (() => void)[] = [];
     private authToken: string | null = null;
     private _currentRoom: Room | null = null;
 
@@ -93,12 +110,26 @@ class ConnectionManager {
         return this._unloading;
     }
 
+    /** Does `then` if this page, now being left, is shown again from the browser's back cache, as it was. */
+    public whenShownAgain(then: () => void): void {
+        this.shownAgain.push(then);
+    }
+
     constructor() {
         // The listener never needs to be removed, because we are in a singleton that is never destroyed.
         // eslint-disable-next-line listeners/no-missing-remove-event-listener,listeners/no-inline-function-event-listener
         window.addEventListener("beforeunload", () => {
             this._unloading = true;
-            if (this.reconnectingTimeout) clearTimeout(this.reconnectingTimeout);
+        });
+        // The page was left (Sign in, a link) and then shown again from the browser's back cache, as it was: it is not
+        // closing any more, so a lost connection is retried again, and what was held back while leaving is done now.
+        // eslint-disable-next-line listeners/no-missing-remove-event-listener,listeners/no-inline-function-event-listener
+        window.addEventListener("pageshow", (event) => {
+            if (!event.persisted) return;
+            this._unloading = false;
+            const heldBack = this.shownAgain;
+            this.shownAgain = [];
+            heldBack.forEach((then) => then());
         });
 
         // Initialise default application
@@ -141,8 +172,18 @@ class ConnectionManager {
             return null;
         }
         analyticsClient.loggedWithSso();
+        return this.openIdScreenUrl(this._currentRoom, manuallyTriggered, providerId, providerScopes);
+    }
+
+    /** The sign-in page (through the pusher) that comes back to this room once signed in. */
+    private openIdScreenUrl(
+        room: Room,
+        manuallyTriggered: boolean,
+        providerId?: string,
+        providerScopes?: string[]
+    ): URL {
         const redirectUrl = new URL("login-screen", ABSOLUTE_PUSHER_URL);
-        redirectUrl.searchParams.append("playUri", this._currentRoom.key);
+        redirectUrl.searchParams.append("playUri", room.key);
         if (manuallyTriggered) {
             redirectUrl.searchParams.append("manuallyTriggered", "true");
         }
@@ -155,6 +196,22 @@ class ConnectionManager {
             });
         }
         return redirectUrl;
+    }
+
+    /**
+     * The Sign in buttons: straight to the sign-in page from the room the player is in. Going through /login started the
+     * whole app again just to forward, behind the loading screen, and left that page under the sign-in page: in the
+     * installed iPhone app, closing the sign-in sheet landed on it, frozen and then empty (#1017). The room stays as it
+     * is (the device keeps its token and WOKA), so closing the sheet, or Back in a browser, finds it as it was. Signing
+     * in comes back to this room with the account's token, as through /login.
+     */
+    public goToSignIn(): void {
+        if (!ENABLE_OPENID || !this._currentRoom) {
+            window.location.assign("/login");
+            return;
+        }
+        analyticsClient.loggedWithSso();
+        window.location.assign(this.openIdScreenUrl(this._currentRoom, true).toString());
     }
 
     /**
@@ -292,17 +349,24 @@ class ConnectionManager {
             let roomPath: string;
             if (this.connexionType === GameConnexionTypes.empty) {
                 roomPath = localUserStore.getLastRoomUrl();
+                let lastRoomKnown = localUserStore.hasLastRoomUrl();
                 //get last room path from cache api
                 try {
                     const lastRoomUrl = await localUserStore.getLastRoomUrlCacheApi();
                     if (lastRoomUrl != undefined) {
                         roomPath = lastRoomUrl;
+                        lastRoomKnown = true;
                     }
                 } catch (err) {
                     console.error(err);
                     if (err instanceof Error) {
                         console.error(err.stack);
                     }
+                }
+                // The installed app's first launch, with empty storage: the room it was installed from.
+                const installRoom = installRoomPath(urlParams.get(INSTALL_ROOM_PARAMETER));
+                if (!lastRoomKnown && installRoom !== undefined) {
+                    roomPath = window.location.protocol + "//" + window.location.host + installRoom;
                 }
             } else {
                 const query = urlParams.toString();
@@ -336,6 +400,10 @@ class ConnectionManager {
                     const characterTextures = localUserStore.getCharacterTextures();
                     if (characterTextures === null || characterTextures.length === 0) {
                         nextScene = "selectCharacterScene";
+                    } else {
+                        // The game read the device when the page started, before the woka was put back: it joins with
+                        // what it holds, so it must hold this one too, or the world refuses an empty woka. #987
+                        gameManager.setCharacterTextureIds(characterTextures);
                     }
                 } else {
                     const redirect = this.loadOpenIDScreen(false);
@@ -364,7 +432,12 @@ class ConnectionManager {
                         };
                     }
                     if (response.status === "ok") {
-                        if (response.isCharacterTexturesValid === false) {
+                        // A world that refuses what the player wears asks them first: the join is refused too and opens
+                        // the popup (WokaRefusedPopup), so no picker here. Without a Woka on the device there is nothing
+                        // to ask about and the picker opens.
+                        if (refusedOnLoad(response, localUserStore.getCharacterTextures())) {
+                            nextScene = "gameScene";
+                        } else if (response.isCharacterTexturesValid === false) {
                             nextScene = "selectCharacterScene";
                         } else if (response.isCompanionTextureValid === false) {
                             nextScene = "selectCompanionScene";
@@ -461,7 +534,21 @@ class ConnectionManager {
         this.localUser = new LocalUser("");
     }
 
-    public connectToRoomSocket(
+    /**
+     * Joining a room uses the game's token, whose OIDC access token runs out after about an hour: join with the newest
+     * token there is, renewed first when it has run out.
+     */
+    private async useNewestAuthToken(roomUrl: string, isCurrent: () => boolean): Promise<void> {
+        if (!this.authToken) return;
+        try {
+            this.authToken = await gameTokenToJoinWith(this.authToken, roomUrl, isCurrent);
+        } catch (error) {
+            // Browser storage can be unavailable: join with the token we have rather than not at all.
+            console.warn("[ConnectionManager] Could not pick the newest sign-in token before joining a room", error);
+        }
+    }
+
+    public async connectToRoomSocket(
         roomUrl: string,
         name: string,
         characterTextureIds: string[],
@@ -471,8 +558,11 @@ class ConnectionManager {
         availabilityStatus: AvailabilityStatus,
         lastCommandId?: string,
         options: ConnectOptions = {}
-    ): Promise<OnConnectInterface> {
-        return new Promise<OnConnectInterface>((resolve, reject) => {
+    ): Promise<OnConnectInterface | undefined> {
+        await this.useNewestAuthToken(roomUrl, () => !options.cancelled?.());
+        // The map that asked was closed while the token was renewed: don't open a socket for it.
+        if (options.cancelled?.()) return undefined;
+        return new Promise<OnConnectInterface | undefined>((resolve, reject) => {
             const connection = new RoomConnection(
                 this.authToken,
                 roomUrl,
@@ -641,8 +731,9 @@ class ConnectionManager {
         }).catch((err) => {
             console.info("connectToRoomSocket => catch => new Promise[OnConnectInterface] => err", err);
 
-            // Keep any screen already shown: the "Reconnecting" one, or a real error the server sent (e.g. a ban).
-            if (!get(errorScreenStore) && !options.cancelled?.()) {
+            // Keep any screen already shown: the "Reconnecting" one, or a real error the server sent (e.g. a ban). Nor
+            // while the room is kept on screen with its pill (#958): it says so, and brings the full screen if it lasts.
+            if (!get(errorScreenStore) && !softReconnect.isWaiting() && !options.cancelled?.()) {
                 errorScreenStore.setError(
                     ErrorScreenMessage.fromPartial({
                         type: "reconnecting",
@@ -664,20 +755,21 @@ class ConnectionManager {
                 this.failedSocketAttempts === 1
                     ? 1000 + Math.floor(Math.random() * 1000)
                     : 4000 + Math.floor(Math.random() * 2000);
-            return new Promise<OnConnectInterface>((resolve) => {
+            return new Promise<OnConnectInterface | undefined>((resolve) => {
                 console.info("connectToRoomSocket => catch => new Promise[OnConnectInterface] => reconnectingTimeout");
 
-                // This retry's own timer. The shared handle (cleared on page unload) may by now hold a newer map's
-                // retry: a cancelled chain must never clear that one.
                 let ownTimeout: NodeJS.Timeout | null = null;
                 const retry = () => {
                     window.removeEventListener("online", retry);
                     if (ownTimeout) clearTimeout(ownTimeout);
-                    if (this.reconnectingTimeout === ownTimeout) this.reconnectingTimeout = null;
                     ownTimeout = null;
-                    // The page is closing: no new attempt (the pending one was cancelled on beforeunload). Nor when the
-                    // map that asked was closed: the map replacing it makes its own attempts.
-                    if (this._unloading || options.cancelled?.()) return;
+                    // The map that asked was closed: the map replacing it makes its own attempts.
+                    if (options.cancelled?.()) return;
+                    // The page is being left: no new attempt, unless the browser shows it again from its back cache.
+                    if (this._unloading) {
+                        this.whenShownAgain(retry);
+                        return;
+                    }
                     //todo: allow a way to break recursion?
                     //todo: find a way to avoid recursive function. Otherwise, the call stack will grow indefinitely.
                     console.info(
@@ -703,12 +795,12 @@ class ConnectionManager {
                         lastCommandId,
                         options
                     ).then((connection) => {
-                        if (!options.cancelled?.()) this._roomConnectionStream.next(connection.connection);
+                        if (connection && !options.cancelled?.())
+                            this._roomConnectionStream.next(connection.connection);
                         resolve(connection);
                     });
                 };
                 ownTimeout = setTimeout(retry, retryDelay);
-                this.reconnectingTimeout = ownTimeout;
                 window.addEventListener("online", retry);
             });
         });
@@ -737,6 +829,7 @@ class ConnectionManager {
                     localStorageCharacterTextureIds: localUserStore.getCharacterTextures() ?? undefined,
                     localStorageCompanionTextureId: localUserStore.getCompanionTextureId() ?? undefined,
                     chatID: localUserStore.getChatId() ?? undefined,
+                    name: localUserStore.getName() ?? undefined,
                 },
             })
             .then((res) => {
@@ -749,6 +842,12 @@ class ConnectionManager {
         const response = MeResponse.parse(data);
 
         if (response.status === "error") {
+            // A refusal the pusher sent after renewing the token carries it: keep it, the old one may no longer work.
+            const renewedToken = (data as { authToken?: unknown } | null)?.authToken;
+            if (typeof renewedToken === "string") {
+                localUserStore.setAuthToken(renewedToken);
+                this.authToken = renewedToken;
+            }
             return response;
         }
 
@@ -820,8 +919,26 @@ class ConnectionManager {
         return response;
     }
 
+    /**
+     * A save got a 401: the pusher only answers that when the game token is missing, no longer valid or ran out (it lasts
+     * 30 days), and /me refuses such a token too, so there is nothing to renew. A signed-in player goes to sign in again
+     * and comes back to this room, as on entering a room with that token; a guest's save just did not happen (#945).
+     */
+    private signInAgainAfterRefusedToken(what: string): void {
+        console.warn(`${what}: the game token was refused, sending a signed-in player to sign in again`);
+        if (!localUserStore.isLogged()) return;
+        const redirect = this.loadOpenIDScreen(false);
+        if (redirect) window.location.assign(redirect.toString());
+    }
+
     async saveName(name: string): Promise<boolean> {
-        if (hasCapability("api/save-name") && this.authToken !== undefined) {
+        if (
+            shouldSaveNameOnServer({
+                hasNameCapability: Boolean(hasCapability("api/save-name")),
+                hasAuthToken: this.authToken !== undefined,
+                isSignedIn: localUserStore.isLogged(),
+            })
+        ) {
             try {
                 await axiosToPusher.post(
                     "save-name",
@@ -838,35 +955,8 @@ class ConnectionManager {
                 return true;
             } catch (err) {
                 if (isAxiosError(err) && err.response?.status === 401) {
-                    console.warn("saveName: token expired, refreshing via /me");
-                    try {
-                        const meRes = await axiosToPusher.get("me", {
-                            headers: { Authorization: this.authToken ?? "" },
-                        });
-                        const { MeResponse } = await import("@workadventure/messages");
-                        const parsed = MeResponse.parse(meRes.data);
-                        if (parsed.status !== "ok" || !("authToken" in parsed)) {
-                            console.error("saveTextures: /me returned non-ok status");
-                            return false;
-                        }
-                        this.authToken = (parsed as { authToken: string }).authToken;
-                        await axiosToPusher.post(
-                            "save-name",
-                            {
-                                name,
-                                roomUrl: this.currentRoom?.key,
-                            },
-                            {
-                                headers: {
-                                    Authorization: this.authToken,
-                                },
-                            }
-                        );
-                        return true;
-                    } catch (refreshErr) {
-                        console.error("saveName: token refresh failed", refreshErr);
-                        return false;
-                    }
+                    this.signInAgainAfterRefusedToken("saveName");
+                    return false;
                 }
                 console.error("saveName: HTTP POST failed", err);
                 return false;
@@ -882,136 +972,64 @@ class ConnectionManager {
         }
     }
 
-    async saveTextures(textures: string[]): Promise<boolean> {
-        if (hasCapability("api/save-textures") && this.authToken !== undefined) {
-            try {
-                await axiosToPusher.post(
-                    "save-textures",
-                    {
-                        textures,
-                        roomUrl: this.currentRoom?.key,
-                    },
-                    {
-                        headers: {
-                            Authorization: this.authToken,
-                        },
-                    }
-                );
-                // Broadcast texture change to other users in the room via WebSocket
-                this._roomConnection?.emitPlayerTextures(textures);
-                return true;
-            } catch (err) {
-                if (isAxiosError(err) && err.response?.status === 401) {
-                    console.warn("saveTextures: token expired, refreshing via /me");
-                    try {
-                        const meRes = await axiosToPusher.get("me", {
-                            headers: { Authorization: this.authToken ?? "" },
-                        });
-                        const { MeResponse } = await import("@workadventure/messages");
-                        const parsed = MeResponse.parse(meRes.data);
-                        if (parsed.status !== "ok" || !("authToken" in parsed)) {
-                            console.error("saveTextures: /me returned non-ok status");
-                            return false;
-                        }
-                        this.authToken = (parsed as { authToken: string }).authToken;
-                        // Retry with fresh token
-                        await axiosToPusher.post(
-                            "save-textures",
-                            {
-                                textures,
-                                roomUrl: this.currentRoom?.key,
-                            },
-                            {
-                                headers: {
-                                    Authorization: this.authToken,
-                                },
-                            }
-                        );
-                        this._roomConnection?.emitPlayerTextures(textures);
-                        return true;
-                    } catch (refreshErr) {
-                        console.error("saveTextures: token refresh failed", refreshErr);
-                        return false;
-                    }
-                }
-                console.error("saveTextures: HTTP POST failed", err);
-                return false;
-            }
-        } else {
-            console.warn(
-                "saveTextures: skipped — missing auth or capability. authToken:",
-                !!this.authToken,
-                "capability:",
-                hasCapability("api/save-textures")
-            );
-            return false;
+    /**
+     * Saves the player's WOKA. "saved" also covers a guest (nothing is kept on an account, the device remembers it).
+     * "notAllowed" is the admin refusing this WOKA here; "failed" is anything else, so the caller can tell the player
+     * and keep what they wear.
+     */
+    async saveTextures(textures: string[]): Promise<SaveResult> {
+        const result = await this.postAccountSave("saveTextures", "save-textures", { textures });
+        if (result === "saved") {
+            // Broadcast texture change to other users in the room via WebSocket
+            this._roomConnection?.emitPlayerTextures(textures);
         }
+        return result;
     }
 
-    async saveCompanionTexture(texture: string | null): Promise<boolean> {
-        if (hasCapability("api/save-textures") && this.authToken !== undefined) {
-            try {
-                await axiosToPusher.post(
-                    "save-companion-texture",
-                    {
-                        texture,
-                        roomUrl: this.currentRoom?.key,
-                    },
-                    {
-                        headers: {
-                            Authorization: this.authToken,
-                        },
-                    }
-                );
-                return true;
-            } catch (err) {
-                if (isAxiosError(err) && err.response?.status === 401) {
-                    console.warn("saveCompanionTexture: token expired, refreshing via /me");
-                    try {
-                        const meRes = await axiosToPusher.get("me", {
-                            headers: { Authorization: this.authToken ?? "" },
-                        });
-                        const { MeResponse } = await import("@workadventure/messages");
-                        const parsed = MeResponse.parse(meRes.data);
-                        if (parsed.status !== "ok" || !("authToken" in parsed)) {
-                            console.error("saveCompanionTexture: /me returned non-ok");
-                            return false;
-                        }
-                        this.authToken = (parsed as { authToken: string }).authToken;
-                        await axiosToPusher.post(
-                            "save-companion-texture",
-                            {
-                                texture,
-                                roomUrl: this.currentRoom?.key,
-                            },
-                            {
-                                headers: {
-                                    Authorization: this.authToken,
-                                },
-                            }
-                        );
-                        return true;
-                    } catch (refreshErr) {
-                        console.error("saveCompanionTexture: token refresh failed", refreshErr);
-                        return false;
-                    }
-                }
-                console.error("saveCompanionTexture: HTTP POST failed", err);
-                return false;
-            }
-        } else {
+    async saveCompanionTexture(texture: string | null): Promise<SaveResult> {
+        return await this.postAccountSave("saveCompanionTexture", "save-companion-texture", { texture });
+    }
+
+    /** One save to the pusher. A 401 sends a signed-in player to sign in again (see signInAgainAfterRefusedToken). */
+    private async postAccountSave(what: string, path: string, payload: object): Promise<SaveResult> {
+        if (!hasCapability("api/save-textures") || this.authToken === undefined) {
+            // A guest: no account to save to. The device keeps it, as before.
             console.warn(
-                "saveCompanionTexture: skipped — missing auth or capability. authToken:",
+                `${what}: skipped — missing auth or capability. authToken:`,
                 !!this.authToken,
                 "capability:",
                 hasCapability("api/save-textures")
             );
-            return false;
+            return "saved";
+        }
+        try {
+            await axiosToPusher.post(
+                path,
+                { ...payload, roomUrl: this.currentRoom?.key },
+                { headers: { Authorization: this.authToken } }
+            );
+            return "saved";
+        } catch (err) {
+            if (isAxiosError(err) && err.response?.status === 401) {
+                this.signInAgainAfterRefusedToken(what);
+                return "failed";
+            }
+            console.error(`${what}: HTTP POST failed`, err);
+            return saveFailure(err);
         }
     }
 
     get currentRoom() {
         return this._currentRoom;
+    }
+
+    /**
+     * The room the player is in now. The page only picks its first room at load; moving to another map (an exit,
+     * WA.nav.goToRoom, the Explore list) does not reload the page, so each new map says where the player is. Saving a
+     * Woka, a name or a companion tells Orbit which room it was picked in.
+     */
+    setCurrentRoom(room: Room): void {
+        this._currentRoom = room;
     }
 
     get klaxoonToolActivated(): boolean {

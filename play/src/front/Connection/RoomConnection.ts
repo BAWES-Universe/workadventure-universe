@@ -10,6 +10,7 @@ import type {
     AvailabilityStatus,
     CharacterTextureMessage,
     ChatMembersAnswer,
+    ChatPersonAnswer,
     CompanionTextureMessage,
     DeleteCustomEntityMessage,
     EditMapCommandMessage,
@@ -30,6 +31,14 @@ import type {
     ModifyCustomEntityMessage,
     MoveToPositionMessage as MoveToPositionMessageProto,
     LocatePositionMessage as LocatePositionMessageProto,
+    FriendActionAnswer,
+    FriendsListAnswer,
+    FriendSearchResult,
+    FriendSettings,
+    FriendSettingsUpdate,
+    RingAnswer,
+    RingReplyAnswer,
+    FriendsUpdateMessage,
     PlayerDetailsUpdatedMessage as PlayerDetailsUpdatedMessageTsProto,
     PositionMessage as PositionMessageTsProto,
     PositionMessage_Direction,
@@ -101,7 +110,7 @@ import { chatZoneLiveStore } from "../Stores/ChatStore";
 import { errorScreenStore } from "../Stores/ErrorScreenStore";
 import { followRoleStore, followUsersStore } from "../Stores/FollowStore";
 import { isSpeakerStore, requestedMicrophoneState, requestedCameraState } from "../Stores/MediaStore";
-import { currentLiveStreamingSpaceStore } from "../Stores/MegaphoneStore";
+import { currentLiveStreamingSpaceStore, forgetMegaphoneSpace } from "../Stores/MegaphoneStore";
 import {
     inviteUserActivated,
     mapEditorActivated,
@@ -110,8 +119,8 @@ import {
     warningBannerStore,
 } from "../Stores/MenuStore";
 import { requestedScreenSharingState } from "../Stores/ScreenSharingStore";
-import { selectCompanionSceneVisibleStore } from "../Stores/SelectCompanionStore";
-import { selectCharacterSceneVisibleStore } from "../Stores/SelectCharacterStore";
+import { showWokaRefused } from "../Stores/WokaRefusedStore";
+import type { RefusedKind } from "../Stores/WokaRefusedStore";
 import { adminMessagesService } from "./AdminMessagesService";
 import { connectionManager } from "./ConnectionManager";
 import type {
@@ -227,6 +236,9 @@ export class RoomConnection implements RoomConnection {
     public readonly moveToPositionMessageStream = this._moveToPositionMessageStream.asObservable();
     private readonly _locatePositionMessageStream = new Subject<LocatePositionMessageProto>();
     public readonly locatePositionMessageStream = this._locatePositionMessageStream.asObservable();
+
+    private readonly _friendsUpdateMessageStream = new Subject<FriendsUpdateMessage>();
+    public readonly friendsUpdateMessageStream = this._friendsUpdateMessageStream.asObservable();
     private readonly _initSpaceUsersMessageStream = new Subject<InitSpaceUsersMessage>();
     public readonly initSpaceUsersMessageStream = this._initSpaceUsersMessageStream.asObservable();
     private readonly _addSpaceUserMessageStream = new Subject<AddSpaceUserMessage>();
@@ -467,6 +479,7 @@ export class RoomConnection implements RoomConnection {
 
                                         isSpeakerStore.set(false);
                                         currentLiveStreamingSpaceStore.set(undefined);
+                                        forgetMegaphoneSpace(subMessage.kickOffMessage.spaceName);
                                         const scene = gameManager.getCurrentGameScene();
                                         scene.broadcastService
                                             .leaveSpace(subMessage.kickOffMessage.spaceName)
@@ -591,18 +604,18 @@ export class RoomConnection implements RoomConnection {
                     }
                     case "invalidCharacterTextureMessage": {
                         console.warn(
-                            "One of your Woka textures is invalid for this world, you will be redirect to the Woka selection screen"
+                            "One of your Woka textures is invalid for this world, you will be asked what to wear instead"
                         );
-                        this.goToSelectYourWokaScene();
+                        this.goToWokaRefused("woka");
 
                         this.closeConnection();
                         break;
                     }
                     case "invalidCompanionTextureMessage": {
                         console.warn(
-                            "Your companion texture is invalid for this world, you will be redirect to the companion selection screen"
+                            "Your companion texture is invalid for this world, you will be asked what to do instead"
                         );
-                        this.goToSelectYourCompanionScene();
+                        this.goToWokaRefused("companion");
 
                         this.closeConnection();
                         break;
@@ -687,6 +700,10 @@ export class RoomConnection implements RoomConnection {
                         this._locatePositionMessageStream.next(message.locatePositionMessage);
                         break;
                     }
+                    case "friendsUpdateMessage": {
+                        this._friendsUpdateMessageStream.next(message.friendsUpdateMessage);
+                        break;
+                    }
                     case "answerMessage": {
                         const queryId = message.answerMessage.id;
                         const query = this.queries.get(queryId);
@@ -756,7 +773,7 @@ export class RoomConnection implements RoomConnection {
 
         this.completeStreams();
 
-        if (this._closed || connectionManager.unloading) {
+        if (this._closed) {
             return;
         }
 
@@ -765,9 +782,16 @@ export class RoomConnection implements RoomConnection {
             return;
         }
 
-        this.noteConnectionLost({ cause: "socket_closed", closeCode });
-        this._serverDisconnected.next();
-        this._serverDisconnected.complete();
+        const connectionLost = () => {
+            if (this._closed) return;
+            this.noteConnectionLost({ cause: "socket_closed", closeCode });
+            this._serverDisconnected.next();
+            this._serverDisconnected.complete();
+        };
+        // The page is being left: nothing to reconnect, unless the browser shows it again from its back cache, with
+        // this connection still gone.
+        if (connectionManager.unloading) connectionManager.whenShownAgain(connectionLost);
+        else connectionLost();
     }
 
     private _userRoomToken: string | undefined;
@@ -996,7 +1020,9 @@ export class RoomConnection implements RoomConnection {
 
     public uploadAudio(file: FormData) {
         return axios
-            .post<unknown>(`${UPLOADER_URL}/upload-audio-message`, file)
+            .post<unknown>(`${UPLOADER_URL}/upload-audio-message`, file, {
+                headers: { Authorization: localUserStore.getAuthToken() ?? "" },
+            })
             .then((res: { data: unknown }) => {
                 return res.data;
             })
@@ -1014,6 +1040,7 @@ export class RoomConnection implements RoomConnection {
                     type: message.type,
                     content: message.content,
                     broadcastToWorld: message.broadcastToWorld,
+                    broadcast: message.broadcast,
                 },
             },
         });
@@ -1638,6 +1665,74 @@ export class RoomConnection implements RoomConnection {
         return answer.roomsFromSameUniverseAnswer;
     }
 
+    public async queryFriendsList(): Promise<FriendsListAnswer> {
+        const answer = await this.query({
+            $case: "friendsListQuery",
+            friendsListQuery: {},
+        });
+        if (answer.$case !== "friendsListAnswer") {
+            throw new Error("Unexpected answer");
+        }
+        return answer.friendsListAnswer;
+    }
+
+    /** Refused actions resolve with an `error` code (not_accepting_requests, no_shared_world...), they don't throw. */
+    public async queryFriendAction(targetUuid: string, action: string): Promise<FriendActionAnswer> {
+        const answer = await this.query({
+            $case: "friendActionQuery",
+            friendActionQuery: { targetUuid, action },
+        });
+        if (answer.$case !== "friendActionAnswer") {
+            throw new Error("Unexpected answer");
+        }
+        return answer.friendActionAnswer;
+    }
+
+    public async queryFriendSearch(searchText: string): Promise<FriendSearchResult[]> {
+        const answer = await this.query({
+            $case: "friendSearchQuery",
+            friendSearchQuery: { searchText },
+        });
+        if (answer.$case !== "friendSearchAnswer") {
+            throw new Error("Unexpected answer");
+        }
+        return answer.friendSearchAnswer.results;
+    }
+
+    /** Reads the friends settings, or saves the fields `update` sets and returns them all. */
+    public async queryFriendSettings(update?: FriendSettingsUpdate): Promise<FriendSettings | undefined> {
+        const answer = await this.query({
+            $case: "friendSettingsQuery",
+            friendSettingsQuery: { update },
+        });
+        if (answer.$case !== "friendSettingsAnswer") {
+            throw new Error("Unexpected answer");
+        }
+        return answer.friendSettingsAnswer.settings;
+    }
+
+    public async queryRing(targetUuid: string): Promise<RingAnswer> {
+        const answer = await this.query({
+            $case: "ringQuery",
+            ringQuery: { targetUuid },
+        });
+        if (answer.$case !== "ringAnswer") {
+            throw new Error("Unexpected answer");
+        }
+        return answer.ringAnswer;
+    }
+
+    public async queryRingReply(ringId: string, action: "stop" | "accept" | "decline"): Promise<RingReplyAnswer> {
+        const answer = await this.query({
+            $case: "ringReplyQuery",
+            ringReplyQuery: { ringId, action },
+        });
+        if (answer.$case !== "ringReplyAnswer") {
+            throw new Error("Unexpected answer");
+        }
+        return answer.ringReplyAnswer;
+    }
+
     public async queryEmbeddableWebsite(url: string): Promise<EmbeddableWebsiteAnswer> {
         const answer = await this.query({
             $case: "embeddableWebsiteQuery",
@@ -1706,6 +1801,20 @@ export class RoomConnection implements RoomConnection {
         return answer.chatMembersAnswer;
     }
 
+    /** One person's current name and Woka by chat ID, for a direct chat with someone outside your world. */
+    public async queryChatPerson(chatId: string): Promise<ChatPersonAnswer> {
+        const answer = await this.query({
+            $case: "chatPersonQuery",
+            chatPersonQuery: {
+                chatId,
+            },
+        });
+        if (answer.$case !== "chatPersonAnswer") {
+            throw new Error("Unexpected answer");
+        }
+        return answer.chatPersonAnswer;
+    }
+
     public async getOauthRefreshToken(
         tokenToRefresh: string,
         provider?: string,
@@ -1735,14 +1844,19 @@ export class RoomConnection implements RoomConnection {
         }
     }
 
-    public emitUpdateChatId(email: string, chatId: string) {
-        if (chatId && email) {
+    /**
+     * Hands the player's Matrix access token to the server, which asks the Matrix server whose token it is and uses
+     * that answer as the player's chat ID. The chat ID is never taken from the browser.
+     */
+    public emitUpdateChatId(matrixAccessToken: string) {
+        if (matrixAccessToken) {
             this.send({
                 message: {
                     $case: "updateChatIdMessage",
                     updateChatIdMessage: {
-                        email,
-                        chatId,
+                        email: "",
+                        chatId: "",
+                        matrixAccessToken,
                     },
                 },
             });
@@ -1962,20 +2076,22 @@ export class RoomConnection implements RoomConnection {
         this._leaveSpaceRequestMessage.complete();
         this._externalModuleMessage.complete();
         this._spaceDestroyedMessage.complete();
+        this._friendsUpdateMessageStream.complete();
     }
 
-    private goToSelectYourWokaScene(): void {
+    /**
+     * The world cannot show the player's WOKA or companion: leave the room and ask them (the popup) instead of
+     * picking for them. Its buttons lead on to the picker, or join again.
+     */
+    private goToWokaRefused(kind: RefusedKind): void {
         menuVisiblilityStore.set(false);
         menuIconVisiblilityStore.set(false);
-        selectCharacterSceneVisibleStore.set(true);
-        gameManager.leaveGame(SelectCharacterSceneName, new SelectCharacterScene());
-    }
-
-    private goToSelectYourCompanionScene(): void {
-        menuVisiblilityStore.set(false);
-        menuIconVisiblilityStore.set(false);
-        selectCompanionSceneVisibleStore.set(true);
-        gameManager.leaveGame(SelectCompanionSceneName, new SelectCompanionScene());
+        showWokaRefused(kind);
+        if (kind === "woka") {
+            gameManager.leaveGame(SelectCharacterSceneName, new SelectCharacterScene());
+        } else {
+            gameManager.leaveGame(SelectCompanionSceneName, new SelectCompanionScene());
+        }
     }
 
     private send(message: ClientToServerMessageTsProto): void {

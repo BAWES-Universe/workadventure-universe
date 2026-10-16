@@ -44,6 +44,8 @@ export interface ExtensionModuleOptions {
 export interface ExtensionModuleAreaProperty {
     AreaPropertyEditor: ComponentType;
     AddAreaPropertyButton: ComponentType;
+    /** How the room editor lists this setting: the module's own name for it, one line about it, and its icon. */
+    label?: { title: string; text: string; icon: ComponentType };
     handleAreaPropertyOnEnter: (area: AreaData, signal: AbortSignal) => void;
     handleAreaPropertyOnLeave: (area?: AreaData) => void;
     shouldDisplayButton: (areaProperties: AreaDataProperties) => boolean;

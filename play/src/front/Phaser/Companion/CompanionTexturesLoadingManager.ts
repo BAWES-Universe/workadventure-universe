@@ -4,22 +4,28 @@ import { CompanionTextureCollection } from "@workadventure/messages";
 import { gameManager } from "../Game/GameManager";
 import { localUserStore } from "../../Connection/LocalUserStore";
 import type { SuperLoaderPlugin } from "../Services/SuperLoaderPlugin";
+import { wokaXhrSettings } from "../Entity/PlayerTexturesLoadingManager";
 import { ABSOLUTE_PUSHER_URL } from "../../Enum/ComputedConst";
 import type { CompanionTextureDescriptionInterface, CompanionTextures } from "./CompanionTextures";
 import LoaderPlugin = Phaser.Loader.LoaderPlugin;
 
 export function companionListMetakey() {
-    return "companion-list" + gameManager.currentStartedRoom.href;
+    return "companion-list" + gameManager.currentMapRoom.href;
 }
 
 export function lazyLoadPlayerCompanionTexture(
     superLoaderPlugin: SuperLoaderPlugin,
     texture: CompanionTextureDescriptionInterface
 ): CancelablePromise<string> {
-    const promise = superLoaderPlugin.spritesheet(texture.id, texture.url, {
-        frameWidth: 32,
-        frameHeight: 32,
-    });
+    const promise = superLoaderPlugin.spritesheet(
+        texture.id,
+        texture.url,
+        {
+            frameWidth: 32,
+            frameHeight: 32,
+        },
+        wokaXhrSettings
+    );
 
     return promise.then(() => {
         return texture.id;
@@ -34,7 +40,7 @@ export class CompanionTexturesLoadingManager {
             .json(
                 companionListMetakey(),
                 new URL(
-                    `companion/list?roomUrl=` + encodeURIComponent(gameManager.currentStartedRoom.href),
+                    `companion/list?roomUrl=` + encodeURIComponent(gameManager.currentMapRoom.href),
                     ABSOLUTE_PUSHER_URL
                 ).toString(),
                 undefined,

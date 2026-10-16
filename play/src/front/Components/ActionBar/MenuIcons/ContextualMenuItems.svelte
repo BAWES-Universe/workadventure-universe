@@ -4,7 +4,6 @@
     import { bottomActionBarVisibilityStore } from "../../../Stores/BottomActionBarStore";
     import { inLivekitStore } from "../../../Stores/MediaStore";
     import { followStateStore } from "../../../Stores/FollowStore";
-    import { requestedMegaphoneStore } from "../../../Stores/MegaphoneStore";
     import LL from "../../../../i18n/i18n-svelte";
     import { screenSharingAvailableStore } from "../../../Stores/ScreenSharingStore";
     import { isInRemoteConversation } from "../../../Stores/StreamableCollectionStore";
@@ -14,7 +13,6 @@
     import LockDiscussionMenuItem from "./LockDiscussionMenuItem.svelte";
     import MusicMenuItem from "./MusicMenuItem.svelte";
     import HeaderMenuItem from "./HeaderMenuItem.svelte";
-    import MegaphoneMenuItem from "./MegaphoneMenuItem.svelte";
     import ScreenSharingMenuItem from "./ScreenSharingMenuItem.svelte";
     import PictureInPictureMenuItem from "./PictureInPictureMenuItem.svelte";
 
@@ -49,16 +47,13 @@
 {/if}
 
 <!-- A phone's bar keeps only the chat, the microphone and camera, Orbit and the menu: sharing the screen and picture in
-     picture are here, beside Follow and Lock. -->
-{#if inProfileMenu && $mobileLayoutStore && $screenSharingAvailableStore}
+     picture are here, beside Follow and Lock. Held sideways, these items sit in the bar instead of the menu, and so do
+     these two. -->
+{#if $mobileLayoutStore && $screenSharingAvailableStore}
     <ScreenSharingMenuItem />
     {#if $isInRemoteConversation}
         <PictureInPictureMenuItem />
     {/if}
-{/if}
-
-{#if $requestedMegaphoneStore}
-    <MegaphoneMenuItem />
 {/if}
 
 {#if inProfileMenu}

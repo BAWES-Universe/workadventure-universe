@@ -4,7 +4,7 @@ import { Player } from "../Player/Player";
 import { RemotePlayer } from "../Entity/RemotePlayer";
 import type { UserInputHandlerInterface } from "../../Interfaces/UserInputHandlerInterface";
 import type { GameScene } from "../Game/GameScene";
-import { mapEditorModeStore } from "../../Stores/MapEditorStore";
+import { mapEditorModeStore, mapEditorToolbarInUseStore } from "../../Stores/MapEditorStore";
 import { isActivatable } from "../Game/ActivatableInterface";
 import { toggleMyCard } from "../../Chat/Components/UserList/PersonNavigation";
 import { localUserStore } from "../../Connection/LocalUserStore";
@@ -105,6 +105,11 @@ export class GameSceneUserInputHandler implements UserInputHandlerInterface {
     }
 
     public handlePointerUpEvent(pointer: Phaser.Input.Pointer, gameObjects: Phaser.GameObjects.GameObject[]): void {
+        // While editing the room, a tap on the map is for the editor (place, select, pan): it never walks you there.
+        // Looking around is not editing: a tap on someone still opens their card, as it always did.
+        if (get(mapEditorToolbarInUseStore)) {
+            return;
+        }
         if (pointer.wasTouch || pointer.leftButtonReleased()) {
             for (const object of gameObjects) {
                 if (isActivatable(object)) {

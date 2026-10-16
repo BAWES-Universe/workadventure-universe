@@ -22,13 +22,24 @@ export class EntitiesCollectionsManager {
     constructor() {
         this.entitiesPrefabsStore = writable([]);
         this.entitiesPrefabsVariantStore = derived(this.entitiesPrefabsStore, ($entitiesPrefabsStore) => {
-            // entityVariants ordered by collectionName+name
+            // entityVariants ordered by collectionName+name. Built-in objects group by name; an upload groups with
+            // the other sides and colours added to it (they carry its id in variantOf). A picture whose first picture
+            // is gone stands on its own.
             const entityVariants = new Map<string, EntityVariant>();
-            for (const entityPrefab of $entitiesPrefabsStore) {
-                const idOrGeneratedName =
-                    entityPrefab.type === "Custom"
-                        ? entityPrefab.id
-                        : entityPrefab.collectionName + "__" + entityPrefab.name;
+            const prefabs = [...$entitiesPrefabsStore];
+            const ids = new Set(prefabs.map((prefab) => prefab.id));
+            const groupOf = (prefab: EntityPrefab): string =>
+                prefab.type === "Custom"
+                    ? prefab.variantOf !== undefined && ids.has(prefab.variantOf)
+                        ? prefab.variantOf
+                        : prefab.id
+                    : prefab.collectionName + "__" + prefab.name;
+            // The first picture of an upload must open its group, so the added sides and colours come after it.
+            const addedLater = (prefab: EntityPrefab): number =>
+                Number(prefab.type === "Custom" && groupOf(prefab) !== prefab.id);
+            prefabs.sort((a, b) => addedLater(a) - addedLater(b));
+            for (const entityPrefab of prefabs) {
+                const idOrGeneratedName = groupOf(entityPrefab);
                 let variant = entityVariants.get(idOrGeneratedName);
                 if (variant === undefined) {
                     variant = new EntityVariant(entityPrefab);
@@ -95,6 +106,7 @@ export class EntitiesCollectionsManager {
                                 color: entity.color,
                                 collisionGrid: entity.collisionGrid,
                                 type: entity.type,
+                                variantOf: entity.variantOf,
                             });
                             entity.tags.forEach((tag: string) => tagSet.add(tag));
                         });

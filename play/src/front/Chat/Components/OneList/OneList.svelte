@@ -1,6 +1,6 @@
 <script lang="ts">
     import { onMount, setContext } from "svelte";
-    import { readable } from "svelte/store";
+    import { derived, readable } from "svelte/store";
     import type { Readable } from "svelte/store";
     import { flip } from "svelte/animate";
     import { fade } from "svelte/transition";
@@ -17,7 +17,17 @@
     import type { ProximitySession } from "../../Connection/Proximity/ProximitySessions";
     import { chatSearchBarValue } from "../../Stores/ChatStore";
     import { areaChatRooms } from "../../Stores/AreaPresenceStore";
-    import { WOKA_BY_CHAT_ID_CONTEXT, createWokaByChatIdStore } from "../../Stores/ChatUserWokaStore";
+    import {
+        PERSON_COLOUR_CONTEXT,
+        NAME_BY_CHAT_ID_CONTEXT,
+        WOKA_BY_CHAT_ID_CONTEXT,
+        createColourByChatIdStore,
+        createNameByChatIdStore,
+        createWokaByChatIdStore,
+        personColour,
+    } from "../../Stores/ChatUserWokaStore";
+    import { currentChatPeople } from "../../Stores/ChatPeopleLookup";
+    import type { PersonColourOf } from "../../Stores/ChatUserWokaStore";
     import Room from "../Room/Room.svelte";
     import RoomInvitation from "../Room/RoomInvitation.svelte";
     import RoomFolder from "../RoomFolder.svelte";
@@ -34,6 +44,8 @@
     export let extraEntries: Readable<OneListEntry[]> = readable([]);
     /** Whether an empty list says so; off while the saved chat is not connected, so guests see no empty text. */
     export let showEmpty = true;
+    /** Nothing in the list and nothing typed in the search: the parent can show its own empty state instead. */
+    export let isEmpty = false;
     /** Opens a proximity chat you had. */
     export let onOpenSession: (session: ProximitySession<ChatMessage>) => void = () => undefined;
 
@@ -55,7 +67,26 @@
     const orderFreeze = new OrderFreeze();
     setContext(ONE_LIST_FREEZE_CONTEXT, orderFreeze);
     // One lookup for every row: direct chats show the other person's woka when the room has no picture.
-    setContext(WOKA_BY_CHAT_ID_CONTEXT, createWokaByChatIdStore(gameManager.getCurrentGameScene().userProviderMerger));
+    // People outside the world (a direct chat with someone away) are asked of Orbit and fill in what the world lacks.
+    const chatPeople = currentChatPeople();
+    setContext(
+        WOKA_BY_CHAT_ID_CONTEXT,
+        createWokaByChatIdStore(gameManager.getCurrentGameScene().userProviderMerger, chatPeople?.store)
+    );
+    // The name each person goes by in Universe, so a rename in the game shows in the chat.
+    setContext(
+        NAME_BY_CHAT_ID_CONTEXT,
+        createNameByChatIdStore(gameManager.getCurrentGameScene().userProviderMerger, chatPeople?.store)
+    );
+    // A direct chat's row shows the other person's woka on their colour from People, as inside the chat.
+    setContext<Readable<PersonColourOf>>(
+        PERSON_COLOUR_CONTEXT,
+        derived(
+            createColourByChatIdStore(gameManager.getCurrentGameScene().userProviderMerger),
+            ($colourByChatId) => (chatId: string | undefined, name: string | undefined) =>
+                personColour($colourByChatId, chatId, name)
+        )
+    );
     const displayed = freezeWhileHeld(entries, orderFreeze.held);
     const pointerHolder = {};
 
@@ -111,6 +142,7 @@
     $: visibleEntries = showAll ? $displayed : $displayed.slice(0, PAGE_SIZE);
     $: hiddenCount = Math.max(0, $displayed.length - PAGE_SIZE);
     $: isSearching = $chatSearchBarValue.trim() !== "";
+    $: isEmpty = $displayed.length === 0 && !isSearching;
 </script>
 
 <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->

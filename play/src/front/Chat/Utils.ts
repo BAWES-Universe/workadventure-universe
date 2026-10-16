@@ -14,6 +14,7 @@ import { userIsConnected } from "../Stores/MenuStore";
 import { warningMessageStore } from "../Stores/ErrorStore";
 import { LL } from "../../i18n/i18n-svelte";
 import { openChat } from "./openChat";
+import { ChatsStillLoadingError } from "./Connection/ChatsStillLoadingError";
 import { navChat } from "./Stores/ChatStore";
 import { selectedRoomStore } from "./Stores/SelectRoomStore";
 import RequiresLoginForChatModal from "./Components/RequiresLoginForChatModal.svelte";
@@ -63,7 +64,7 @@ export const sendRedirectPricing = () => {
 
 export const sendLogin = () => {
     analyticsClient.login();
-    window.location.href = "/login";
+    connectionManager.goToSignIn();
 };
 
 export const openTab = (url: string) => {
@@ -79,8 +80,8 @@ export const openDirectChatRoom = async (chatID: string) => {
         // There is no chat with yourself (another of your tabs or devices has your chat id).
         if (chatID === localUserStore.getChatId()) return;
         const chatConnection = await gameManager.getChatConnection();
-        let room = chatConnection.getDirectRoomFor(chatID);
-        if (!room) room = await chatConnection.createDirectRoom(chatID);
+        // Finds the chat that exists (inviting the person back if they deleted it) and only makes one when there is none.
+        const room = await chatConnection.createDirectRoom(chatID);
         if (!room) throw new Error("Failed to create room");
         analyticsClient.createMatrixRoom();
 
@@ -92,6 +93,11 @@ export const openDirectChatRoom = async (chatID: string) => {
         navChat.switchToChat();
         openChat("person");
     } catch (error) {
+        if (error instanceof ChatsStillLoadingError) {
+            // Not a failure: the player just tries again in a moment.
+            warningMessageStore.addWarningMessage(get(LL).chat.chatsStillLoading());
+            return;
+        }
         warningMessageStore.addWarningMessage(get(LL).chat.failedToOpenRoom({ roomId: chatID }));
         console.error(error);
         Sentry.captureException(error);

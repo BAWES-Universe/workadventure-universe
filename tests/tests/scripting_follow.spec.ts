@@ -14,7 +14,7 @@ test.describe('Scripting follow functions', () => {
         await using page2 = await getPage(browser, 'Bob', publicTestMapUrl("tests/E2E/empty.json", "scripting_follow"));
         await Map.teleportToPosition(page2, 32, 32);
 
-        await expect(page.getByText('Bob')).toBeVisible();
+        await expect(page.getByTestId('cameras-container').getByText('Bob')).toBeVisible();
 
         const waitForFollowPromise = evaluateScript(page, async () => {
             return new Promise<void>((resolve) => {

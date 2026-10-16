@@ -44,6 +44,20 @@ function createPrivacyShutdownStore() {
         }
     });
 
+    // A touch, a click or a key on the page means someone is looking at it, whatever the browser last said: a phone can
+    // come back from another app without saying the page is visible again, and the game then stayed away, with the
+    // camera and mic held off, until the page was hidden and shown once more.
+    const back = () => {
+        if (!privacyEnabled) return;
+        privacyEnabled = false;
+        set(false);
+    };
+    if (typeof document !== "undefined") {
+        for (const type of ["pointerdown", "touchstart", "keydown"]) {
+            document.addEventListener(type, back, { capture: true, passive: true });
+        }
+    }
+
     return {
         subscribe,
     };

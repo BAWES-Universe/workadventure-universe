@@ -131,11 +131,19 @@ export class Player extends Character {
         });
     }
 
-    public getCurrentPathDestinationPoint(): { x: number; y: number } | undefined {
+    public getCurrentPathDestinationPoint(
+        coordinates: "sprite" | "floor" = "sprite"
+    ): { x: number; y: number } | undefined {
         if (!this.pathToFollow) {
             return undefined;
         }
-        return this.pathToFollow[this.pathToFollow.length - 1];
+        const destination = this.pathToFollow[this.pathToFollow.length - 1];
+        if (destination && coordinates === "floor") {
+            // Reverse adjustPathToFollowToColliderBounds for GameScene.moveTo.
+            const body = this.getBody();
+            return { x: destination.x, y: destination.y + body.height / 2 + body.offset.y };
+        }
+        return destination;
     }
 
     public finishFollowingPath(cancelled = false): void {

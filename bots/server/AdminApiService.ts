@@ -63,6 +63,10 @@ export interface BotConfiguration {
     
     // Chat Instructions (Sensitive - stored in Admin API only)
     chatInstructions?: string; // System prompt/instructions for AI behavior
+
+    // How long the bot waits for a tool (MCP) call to answer, in seconds ("Patience").
+    // Null or missing means the bot server's default (REQUEST_TIMEOUT, 90 s).
+    toolTimeoutSeconds?: number | null;
     
     // Assigned space defines where the bot operates (center + radius)
     // Required: All bots must have an assigned space
@@ -74,6 +78,9 @@ export interface BotConfiguration {
     };
     enabled?: boolean; // Whether bot is active (defaults to true if not specified)
     characterTextureIds?: string[]; // Character texture IDs for bot appearance
+    // The companion (pet) that walks with the bot: a companion texture id from the room's companion list.
+    // Null or missing means none.
+    companionTextureId?: string | null;
     position?: { x: number; y: number }; // Teleport position (runtime-only, not persisted)
     createdAt: Date;
     updatedAt: Date;
@@ -562,6 +569,47 @@ export class AdminApiService {
                 console.error('[AdminApiService] Admin API rejected Orbit session');
             }
             return null;
+        }
+    }
+
+    /**
+     * Ask the Admin API whether the person behind an Orbit session may manage a bot. The Admin API answers a bot's
+     * configuration only to people who can manage bots in that bot's room (or super admins), so a 200 means yes and
+     * anything else means no. Fails closed.
+     */
+    async canSessionManageBot(sessionToken: string, botId: string): Promise<boolean> {
+        if (!this.adminApiUrl || !/^orb_sess_v2_[0-9a-f]{64}$/.test(sessionToken) || !botId) {
+            return false;
+        }
+
+        let adminApiUrl: URL;
+        try {
+            adminApiUrl = new URL(this.adminApiUrl);
+        } catch {
+            return false;
+        }
+        if (!canSendSessionTo(adminApiUrl)) {
+            return false;
+        }
+
+        try {
+            const response: AxiosResponse = await axios.get(
+                resolveAdminApiEndpoint(adminApiUrl, `api/bots/configuration/${encodeURIComponent(botId)}`),
+                {
+                    headers: {
+                        Authorization: `Bearer ${sessionToken}`,
+                        'Cache-Control': 'no-store',
+                    },
+                    timeout: 5_000,
+                    validateStatus: () => true,
+                }
+            );
+            return response.status === 200;
+        } catch (error) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.error('[AdminApiService] Bot permission check failed');
+            }
+            return false;
         }
     }
 

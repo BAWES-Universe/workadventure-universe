@@ -6,7 +6,9 @@ import { ADMIN_API_URL } from "../../pusher/enums/EnvironmentVariable";
 import { GuardError } from "../types/GuardError";
 import type { AuthenticatorInterface } from "./AuthenticatorInterface";
 
-const client = setupCache(axios);
+// Its own axios: setupCache changes the instance it is given, and the shared one is also what the pusher asks Orbit
+// with, whose answers (your Woka, Recent, room access) must never be replayed for minutes after they change.
+const client = setupCache(axios.create());
 
 const authorizationSuccessResponse = z.object({
     success: z.literal(true),

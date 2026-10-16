@@ -48,14 +48,13 @@ const editionLocks = new LockByKey<string>();
  * List of commands that can be executed even if the user does not have edit rights on the map
  * (but have local edit rights on a given area).
  */
+// Players who can't edit the map may still place, move and delete objects inside an area that gives them write access
+// (e.g. their personal area); each of these commands checks that below. Everything else needs edit rights, including
+// custom assets, which are shared by the whole world.
 const COMMANDS_ACCESSIBLE_WITHOUT_CAN_EDIT = new Set<string>([
     "modifyEntityMessage",
     "createEntityMessage",
     "deleteEntityMessage",
-    "uploadEntityMessage",
-    "modifyCustomEntityMessage",
-    "deleteCustomEntityMessage",
-    "uploadFileMessage",
 ]);
 
 /**
@@ -172,6 +171,14 @@ const mapStorageServer: MapStorageServer = {
                 const entityCommandPermissions = gameMapAreas
                     ? new EntityPermissions(gameMapAreas, connectedUserTags, userCanEdit, userUUID)
                     : undefined;
+                // Editors may edit objects anywhere; other players only inside an area that gives them write access.
+                // With a size, the whole object must fit inside that area, as the map editor checks when placing it.
+                const canEditEntityAt = (coordinates: EntityCoordinates, width = 0, height = 0): boolean =>
+                    userCanEdit || (entityCommandPermissions?.canEdit(coordinates, width, height) ?? false);
+                // Placing or moving: the size comes from the player's browser, so it has to be a real one.
+                const canPlaceEntityAt = (coordinates: EntityCoordinates, width: number, height: number): boolean =>
+                    userCanEdit ||
+                    (isUsableFootprint(coordinates, width, height) && canEditEntityAt(coordinates, width, height));
 
                 const commandId = editMapCommandMessage.id;
 
@@ -286,14 +293,18 @@ const mapStorageServer: MapStorageServer = {
                         const entity = gameMap.getGameMapEntities()?.getEntity(message.id);
                         if (entity) {
                             const { x, y, width, height } = message;
+                            // Both where the object is now and where it is going
                             if (
-                                entityCommandPermissions &&
-                                !entityCommandPermissions.canEdit(
-                                    getEntityCenterCoordinates({ x, y }, { width, height })
+                                !canEditEntityAt({ x: entity.x, y: entity.y }) ||
+                                !canPlaceEntityAt(
+                                    getEntityCenterCoordinates({ x, y }, { width, height }),
+                                    width,
+                                    height
                                 )
                             ) {
-                                Sentry.captureException("User is not allowed to modify the entity on map");
-                                break;
+                                throw new Error(
+                                    `User ${userUUID} is not allowed to modify entity ${message.id} on map ${mapUrl}`
+                                );
                             }
                             await mapsManager.executeCommand(
                                 mapKey,
@@ -316,12 +327,8 @@ const mapStorageServer: MapStorageServer = {
                     case "createEntityMessage": {
                         const message = editMapMessage.createEntityMessage;
                         const { x, y, width, height } = message;
-                        if (
-                            entityCommandPermissions &&
-                            !entityCommandPermissions.canEdit(getEntityCenterCoordinates({ x, y }, { width, height }))
-                        ) {
-                            Sentry.captureException("User is not allowed to create entity on map");
-                            break;
+                        if (!canPlaceEntityAt(getEntityCenterCoordinates({ x, y }, { width, height }), width, height)) {
+                            throw new Error(`User ${userUUID} is not allowed to create an entity on map ${mapUrl}`);
                         }
                         await mapsManager.executeCommand(
                             mapKey,
@@ -346,6 +353,14 @@ const mapStorageServer: MapStorageServer = {
                     }
                     case "deleteEntityMessage": {
                         const message = editMapMessage.deleteEntityMessage;
+                        const entity = gameMap.getGameMapEntities()?.getEntity(message.id);
+                        // An object's x/y is its top-left corner. Map-storage doesn't know object sizes, but placing and
+                        // moving require the whole object inside the area, so its top-left corner is in there too.
+                        if (!userCanEdit && (!entity || !canEditEntityAt({ x: entity.x, y: entity.y }))) {
+                            throw new Error(
+                                `User ${userUUID} is not allowed to delete entity ${message.id} on map ${mapUrl}`
+                            );
+                        }
                         await mapsManager.executeCommand(
                             mapKey,
                             mapUrl.host,
@@ -461,6 +476,24 @@ function getMessageFromError(error: unknown): string {
     } else {
         return "Unknown error";
     }
+}
+
+// The size of an object comes from the player's browser. A size that is missing, zero, negative or not a number
+// would make the "whole object inside the area" check pass for any spot, so players who are not editors must send
+// a real one. A positive size is still the browser's word: reading it from the object's picture on the server is
+// the stronger fix.
+const MAX_ENTITY_SIDE = 8192;
+function isUsableFootprint(centre: EntityCoordinates, width: number, height: number): boolean {
+    return (
+        Number.isFinite(centre.x) &&
+        Number.isFinite(centre.y) &&
+        Number.isFinite(width) &&
+        Number.isFinite(height) &&
+        width >= 1 &&
+        height >= 1 &&
+        width <= MAX_ENTITY_SIDE &&
+        height <= MAX_ENTITY_SIDE
+    );
 }
 
 function getEntityCenterCoordinates(entityCoordinates: EntityCoordinates, entityDimensions: EntityDimensions) {

@@ -1,4 +1,3 @@
-import type OutlinePipelinePlugin from "phaser3-rex-plugins/plugins/outlinepipeline-plugin.js";
 import type { Unsubscriber, Readable } from "svelte/store";
 import { get, readable } from "svelte/store";
 import type CancelablePromise from "cancelable-promise";
@@ -6,33 +5,35 @@ import { Deferred } from "ts-deferred";
 import type { AvailabilityStatus as AvailabilityStatusType } from "@workadventure/messages";
 import { SayMessageType, AvailabilityStatus, PositionMessage_Direction } from "@workadventure/messages";
 import { defaultWoka } from "@workadventure/shared-utils";
-import { currentPlayerWokaStore } from "../../Stores/CurrentPlayerWokaStore";
-import { PlayerStatusDot } from "../Components/PlayerStatusDot";
-import { TalkIcon } from "../Components/TalkIcon";
+import { currentPlayerWokaLayersStore, currentPlayerWokaStore } from "../../Stores/CurrentPlayerWokaStore";
+import { UsernameDisplay } from "../Components/UsernameDisplay";
+import { PLAYER_NAME_HEIGHT, PLAYER_NAME_OFFSET_Y } from "../Components/UsernameDisplaySizes";
 import type { OutlineableInterface } from "../Game/OutlineableInterface";
 import { createColorStore } from "../../Stores/OutlineColorStore";
 import type { PictureStore } from "../../Stores/PictureStore";
 import { TexturesHelper } from "../Helpers/TexturesHelper";
-import { DEPTH_INGAME_TEXT_INDEX } from "../Game/DepthIndexes";
 import type { GameScene } from "../Game/GameScene";
 import { Companion } from "../Companion/Companion";
 import { CharacterTextureError } from "../../Exception/CharacterTextureError";
+import { DEPTH_EMOTE_INDEX } from "../Game/DepthIndexes";
 import { getPlayerAnimations, PlayerAnimationTypes } from "../Player/Animation";
 import { ProtobufClientUtils } from "../../Network/ProtobufClientUtils";
 import { SpeakerIcon } from "../Components/SpeakerIcon";
-import { MegaphoneIcon } from "../Components/MegaphoneIcon";
-import { StringUtils } from "../../Utils/StringUtils";
+import { RaisedHandBadge } from "../Components/RaisedHandBadge";
 
 import { lazyLoadPlayerCharacterTextures } from "./PlayerTexturesLoadingManager";
 import { SpeechDomElement } from "./SpeechDomElement";
 import { SayStack } from "./SayStack";
 import { SayStackDomView } from "./SayStackView";
-import Text = Phaser.GameObjects.Text;
 import Container = Phaser.GameObjects.Container;
 import Sprite = Phaser.GameObjects.Sprite;
 import DOMElement = Phaser.GameObjects.DOMElement;
 
-const playerNameY = -25;
+const playerNameY = PLAYER_NAME_OFFSET_Y;
+/** Space between the name pill (or the talk bubble) and the badge above it, in game pixels. */
+const ABOVE_NAME_GAP = 2;
+/** Height of the raised hand badge, see RaisedHandBadge. */
+const RAISED_HAND_BADGE_HEIGHT = 13;
 const interactiveRadius = 25;
 
 export const CHARACTER_BODY_WIDTH = 16;
@@ -51,11 +52,20 @@ export abstract class Character extends Container implements OutlineableInterfac
     private sayStack: SayStack | undefined;
     private sayStackView: SayStackDomView | undefined;
     private sayStackElement: DOMElement | undefined;
-    private playerNameText: Text | undefined;
-    private readonly talkIcon: TalkIcon;
-    protected readonly statusDot: PlayerStatusDot;
+    private usernameDisplay: UsernameDisplay | undefined;
+    /** The pointer is over this player. */
+    private pointedByPointer = false;
+    /** The current player walked up to this one. */
+    private pointedByCharacter = false;
+    private availabilityStatus: AvailabilityStatusType = AvailabilityStatus.ONLINE;
+    private talking = false;
+    private readonly syncUsernameDisplay = (): void => {
+        // The physics moves the player without telling the container: the name follows it every frame.
+        this.usernameDisplay?.setPlayerDepth(this.depth);
+        this.usernameDisplay?.setPosition(this.x, this.y + playerNameY);
+    };
     protected readonly speakerIcon: SpeakerIcon;
-    protected readonly megaphoneIcon: MegaphoneIcon;
+    private readonly raisedHandBadge: RaisedHandBadge;
     public readonly playerName: string;
     public sprites: Map<string, Sprite>;
     protected _lastDirection: PositionMessage_Direction = PositionMessage_Direction.DOWN;
@@ -119,6 +129,8 @@ export abstract class Character extends Container implements OutlineableInterfac
         if (userId != undefined) {
             this.waitAndGetSnapshot()
                 .then((htmlImageElementSrc) => {
+                    // The layers in the snapshot: the chosen woka's, or the fallback's when those failed to load.
+                    currentPlayerWokaLayersStore.set(Array.from(this.sprites.keys()));
                     currentPlayerWokaStore.set(htmlImageElementSrc);
                 })
                 .catch((e) => {
@@ -165,7 +177,7 @@ export abstract class Character extends Container implements OutlineableInterfac
             this.addCompanion(companionTexturePromise);
         }
 
-        // We delay the assignment of the text because it can take up to 16ms.
+        // We delay the creation of the name because it can take up to 16ms.
         // If we enter a zone with 100 people, that is a 1.6s freeze.
         // requestAnimationFrame has the priority over setTimeout so the game will keep running smoothly.
         setTimeout(() => {
@@ -174,46 +186,33 @@ export abstract class Character extends Container implements OutlineableInterfac
                 return;
             }
 
-            // Todo: Replace the font family with a better one
-            // Use larger font size for non-Latin characters (Arabic, CJK, etc.) for better readability
-            const fontSize = StringUtils.containsNonLatinCharacters(name) ? "11px" : "8px";
-            this.playerNameText = new Text(scene, 0, playerNameY, name, {
-                fontFamily: '"Press Start 2P"',
-                fontSize,
-                strokeThickness: 2,
-                stroke: "#14304C",
-                metrics: {
-                    ascent: 20,
-                    descent: 10,
-                    fontSize: 35,
-                },
-            });
-
-            this.playerNameText.setOrigin(0.5).setDepth(DEPTH_INGAME_TEXT_INDEX);
-            this.add([this.playerNameText]);
-
-            // Reposition status dot and megaphone icon
-            this.statusDot.x = (this.playerNameText.getLeftCenter().x ?? 0) - 6;
-            this.megaphoneIcon.setX((this.playerNameText.getRightCenter().x ?? 0) + 8);
-            this.statusDot.visible = true;
-            this.megaphoneIcon.visible = true;
-
-            scene.getOutlineManager().add(this.playerNameText, () => {
-                return this.getCurrentOutline();
-            });
+            this.usernameDisplay = new UsernameDisplay(
+                scene.usernameDomLayer,
+                this.x,
+                this.y + playerNameY,
+                this.playerName,
+                () => this.placeAboveName()
+            );
+            this.usernameDisplay.setAvailabilityStatus(this.availabilityStatus, true);
+            this.usernameDisplay.setMegaphone(this.availabilityStatus === AvailabilityStatus.SPEAKER, true);
+            this.usernameDisplay.setPlayerDepth(this.depth);
+            this.usernameDisplay.setHighlighted(this.pointedByPointer || this.pointedByCharacter);
+            this.usernameDisplay.setCustomColor(get(this.outlineColorStore));
+            this.usernameDisplay.setTalking(this.talking, true);
+            this.placeAboveName();
 
             this.outlineColorStoreUnsubscribe = this.outlineColorStore.subscribe((color) => {
-                this.setOutline(color);
+                this.usernameDisplay?.setCustomColor(color);
+                this.scene.markDirty();
             });
+            this.scene.markDirty();
         }, 0);
 
-        this.statusDot = new PlayerStatusDot(scene, 0, playerNameY - 1);
-        this.megaphoneIcon = new MegaphoneIcon(scene, 0, playerNameY - 1);
-        this.statusDot.visible = false;
-        this.megaphoneIcon.visible = false;
-        this.talkIcon = new TalkIcon(scene, 0, -45);
+        scene.events.on(Phaser.Scenes.Events.POST_UPDATE, this.syncUsernameDisplay);
         this.speakerIcon = new SpeakerIcon(scene, 0, -45);
-        this.add([this.talkIcon, this.speakerIcon, this.statusDot, this.megaphoneIcon]);
+        this.raisedHandBadge = new RaisedHandBadge(scene, 0, playerNameY - 1);
+        this.add([this.speakerIcon, this.raisedHandBadge]);
+        this.placeAboveName();
 
         if (isClickable) {
             this.setInteractive({
@@ -332,25 +331,69 @@ export abstract class Character extends Container implements OutlineableInterfac
 
     public toggleTalk(show = true, forceClose = false): void {
         if (this.getAvailabilityStatus() === AvailabilityStatus.SPEAKER) {
-            this.talkIcon.show(false, forceClose);
+            this.talking = false;
+            this.usernameDisplay?.setTalking(false, forceClose);
             this.speakerIcon.show(show, forceClose);
         } else {
-            this.talkIcon.show(show, forceClose);
+            this.talking = show;
+            this.usernameDisplay?.setTalking(show, forceClose);
             this.speakerIcon.show(false, forceClose);
         }
+        this.placeAboveName();
+        this.scene?.markDirty();
     }
 
     public setAvailabilityStatus(availabilityStatus: AvailabilityStatusType, instant = false): void {
-        this.statusDot.setAvailabilityStatus(availabilityStatus, instant);
-        if (this.getAvailabilityStatus() === AvailabilityStatus.SPEAKER) {
-            this.megaphoneIcon.show(true, false);
-        } else {
-            this.megaphoneIcon.show(false, false);
+        if (availabilityStatus !== AvailabilityStatus.UNCHANGED) {
+            this.availabilityStatus = availabilityStatus;
         }
+        this.usernameDisplay?.setAvailabilityStatus(availabilityStatus, instant);
+        if (availabilityStatus !== AvailabilityStatus.UNCHANGED) {
+            this.usernameDisplay?.setMegaphone(availabilityStatus === AvailabilityStatus.SPEAKER);
+        }
+        this.placeAboveName();
+        this.scene?.markDirty();
+    }
+
+    /** A gold hand with the number in line above the name, or none (undefined) when the hand is down. */
+    public setRaisedHand(position: number | undefined): void {
+        this.raisedHandBadge.showPlace(position);
+        this.placeAboveName();
+        this.scene.markDirty();
+    }
+
+    /**
+     * The speaker icon and the raised hand badge stand above the name pill, and above the talk bubble while it shows.
+     * The pill changes size with the zoom, so this runs again whenever it does.
+     */
+    private placeAboveName(): void {
+        const pillTop = playerNameY - (this.usernameDisplay?.getPillHeight() ?? PLAYER_NAME_HEIGHT);
+        let top = pillTop;
+        if (this.usernameDisplay?.isTalking()) {
+            top = pillTop - this.usernameDisplay.getBubbleExtent();
+        }
+        this.speakerIcon.setBaseY(pillTop - ABOVE_NAME_GAP - this.speakerIcon.restingHeight / 2);
+        if (this.speakerIcon.isShown()) {
+            top = pillTop - ABOVE_NAME_GAP * 2 - this.speakerIcon.restingHeight;
+        }
+        // Centred above the name, so a woka standing close by never covers it.
+        this.raisedHandBadge.x = 0;
+        this.raisedHandBadge.y = top - ABOVE_NAME_GAP - RAISED_HAND_BADGE_HEIGHT / 2;
+    }
+
+    /**
+     * Faded: the game is getting back in after the connection dropped, and this player may have moved meanwhile.
+     * The picture of the room shown until then is taken with it (#958).
+     */
+    public setFaded(faded: boolean): void {
+        const alpha = faded ? 0.45 : 1;
+        this.setAlpha(alpha);
+        this.companion?.setAlpha(alpha);
+        this.usernameDisplay?.setFaded(faded);
     }
 
     public getAvailabilityStatus() {
-        return this.statusDot.availabilityStatus;
+        return this.usernameDisplay?.getAvailabilityStatus() ?? this.availabilityStatus;
     }
 
     public addCompanion(texturePromise: CancelablePromise<string>): void {
@@ -384,10 +427,6 @@ export abstract class Character extends Container implements OutlineableInterfac
             }
             this.sprites.set(texture, sprite);
         }
-    }
-
-    private getOutlinePlugin(): OutlinePipelinePlugin | undefined {
-        return this.scene.plugins.get("rexOutlinePipeline") as unknown as OutlinePipelinePlugin | undefined;
     }
 
     protected playAnimation(direction: PositionMessage_Direction, moving: boolean): void {
@@ -471,11 +510,13 @@ export abstract class Character extends Container implements OutlineableInterfac
     }
 
     destroy(): void {
+        this.usernameDisplay?.destroy();
         for (const sprite of this.sprites.values()) {
             if (this.scene) {
                 this.scene.sys.updateList.remove(sprite);
             }
         }
+        this.scene?.events.off(Phaser.Scenes.Events.POST_UPDATE, this.syncUsernameDisplay);
         this.texturePromise?.cancel();
         this.destroySayStack();
         this.list.forEach((objectContaining) => objectContaining.destroy());
@@ -491,8 +532,11 @@ export abstract class Character extends Container implements OutlineableInterfac
         const emoteY =
             stackHeight > 0 ? Math.min(EMOTE_Y, SAY_STACK_BOTTOM_Y - stackHeight - EMOTE_ABOVE_STACK_GAP) : EMOTE_Y;
         const span = document.createElement("span");
-        span.innerHTML = emote;
+        // Remote players control this value. Display it as text even if the server is older or compromised.
+        span.textContent = emote;
         this.emote = new DOMElement(this.scene, -1, emoteY - EMOTE_Y, span, "z-index:10;");
+        // Phaser writes the depth as the z-index, so this keeps the emote in front of every player name.
+        this.emote.setDepth(DEPTH_EMOTE_INDEX);
         this.emote.setAlpha(0);
         this.add(this.emote);
         this.createStartTransition(emoteY);
@@ -504,12 +548,13 @@ export abstract class Character extends Container implements OutlineableInterfac
         duration = 10000,
         callback = () => this.destroyText(id),
         createStackAnimation = true,
-        type: "warning" | "message" = "message"
+        type: "warning" | "message" = "message",
+        icon?: "sound"
     ) {
         if (this.texts.has(id)) {
             this.destroyText(id);
         }
-        this.textsToBuild.set(id, { text, duration, callback, type });
+        this.textsToBuild.set(id, { text, duration, callback, type, icon });
 
         // If there is already one text created, we don't need to create a stack animation
         if (this.texts.size == 1 && createStackAnimation) {
@@ -524,7 +569,8 @@ export abstract class Character extends Container implements OutlineableInterfac
             -1,
             -30 + this.texts.size * 2,
             callback,
-            type
+            type,
+            icon
         );
         this.add(speechDomElement);
         this.texts.set(id, speechDomElement);
@@ -582,24 +628,6 @@ export abstract class Character extends Container implements OutlineableInterfac
         });
     }
 
-    private setOutline(color: number | undefined) {
-        if (!this.playerNameText) {
-            throw new Error("Player name text is not defined when setOuline is called");
-        }
-        if (color === undefined) {
-            this.getOutlinePlugin()?.remove(this.playerNameText);
-        } else {
-            this.getOutlinePlugin()?.remove(this.playerNameText);
-            this.getOutlinePlugin()?.add(this.playerNameText, {
-                thickness: 2,
-                outlineColor: color,
-            });
-        }
-
-        //Using outline quickfix
-        this.scene.refreshSceneForOutline();
-    }
-
     private cancelPreviousEmote() {
         if (!this.emote) return;
 
@@ -636,8 +664,8 @@ export abstract class Character extends Container implements OutlineableInterfac
         // Recreate all texts in the correct order (from the biggest length to the smallest)
         Array.from(this.textsToBuild.entries())
             .sort((a, b) => a[1].text.length - b[1].text.length)
-            .forEach(([id, { text, duration, callback }]) => {
-                this.playText(id, text, duration, callback, false);
+            .forEach(([id, { text, duration, callback, type, icon }]) => {
+                this.playText(id, text, duration, callback, false, type, icon);
             });
     }
 
@@ -662,23 +690,33 @@ export abstract class Character extends Container implements OutlineableInterfac
     }
 
     public pointerOverOutline(color: number): void {
+        this.pointedByPointer = true;
         this.outlineColorStore.pointerOver(color);
+        this.refreshNameHighlight();
     }
 
     public pointerOutOutline(): void {
+        this.pointedByPointer = false;
         this.outlineColorStore.pointerOut();
+        this.refreshNameHighlight();
     }
 
     public characterCloseByOutline(color: number): void {
+        this.pointedByCharacter = true;
         this.outlineColorStore.characterCloseBy(color);
+        this.refreshNameHighlight();
     }
 
     public characterFarAwayOutline(): void {
+        this.pointedByCharacter = false;
         this.outlineColorStore.characterFarAway();
+        this.refreshNameHighlight();
     }
 
-    private getCurrentOutline(): { thickness: number; color?: number } {
-        return { thickness: 2, color: get(this.outlineColorStore) };
+    /** The lighter name pill, with the full name, while the pointer is over the player or the current player is next to them. */
+    private refreshNameHighlight(): void {
+        this.usernameDisplay?.setHighlighted(this.pointedByPointer || this.pointedByCharacter);
+        this.scene?.markDirty();
     }
 
     /**

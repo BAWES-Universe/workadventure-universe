@@ -10,6 +10,7 @@ export function mapExtendedSpaceUserToChatUser(user: SpaceUserExtended): AdminUs
         roomName: user.roomName,
         playUri: user.playUri,
         username: user.name,
+        gameName: user.name || undefined,
         isAdmin: user.tags.includes("admin"),
         isMember: user.tags.includes("member"),
         isBot: isBotUser(user),

@@ -1,16 +1,18 @@
 import type { BaseTranslation } from "../i18n-types";
 
 const trigger: BaseTranslation = {
-    cowebsite: `[SPACE] to open web site 👀`,
-    jitsiRoom: "[SPACE] to enter Jitsi 👀",
-    newTab: "[SPACE] to open new tab 👀",
-    object: "[SPACE] to interact with it 👀",
+    cowebsite: "Press [SPACE] to open the website",
+    jitsiRoom: "Press [SPACE] to enter Jitsi",
+    newTab: "Press [SPACE] to open a new tab",
+    object: "Press [SPACE] to interact with it",
     spaceKeyboard: "[SPACE]",
+    keySpace: "Space",
+    keyTap: "Tap",
     mobile: {
-        cowebsite: "👆 to open web site 👀",
-        jitsiRoom: "👆 to enter Jitsi 👀",
-        newTab: "👆 to open web new tab 👀",
-        object: "👆 to interact with it 👀",
+        cowebsite: "Tap to open the website",
+        jitsiRoom: "Tap to enter Jitsi",
+        newTab: "Tap to open a new tab",
+        object: "Tap to interact with it",
     },
 };
 

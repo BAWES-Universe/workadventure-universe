@@ -22,6 +22,15 @@ vi.mock("../../../UserList/PersonNavigation", () => ({ goToPersonRoom: vi.fn(), 
 vi.mock("../../../../../Administration/AnalyticsClient", () => ({
     analyticsClient: new Proxy({}, { get: () => () => {} }),
 }));
+vi.mock("../../../../../Connection/LocalUserStore", () => ({
+    localUserStore: { getLocalUser: () => ({ uuid: "uuid-me" }) },
+}));
+const friendsHolder = vi.hoisted(() => ({ runFriendAction: vi.fn(() => Promise.resolve(true)) }));
+vi.mock("../../../../Stores/FriendsStore", async () => {
+    const { writable: store } = await import("svelte/store");
+    return { friendsEnabledStore: store(true), relationshipsStore: store(new Map([["uuid-sara", "friends"]])) };
+});
+vi.mock("../../../UserList/FriendActions", () => ({ runFriendAction: friendsHolder.runFriendAction }));
 vi.mock("../../../../../../i18n/i18n-svelte", () => {
     const fn: unknown = new Proxy(() => "x", { get: () => fn, apply: () => "x" });
     return { default: readable(fn), LL: readable(fn) };
@@ -76,6 +85,45 @@ describe("ProximityEndedFooter", () => {
         await tick();
 
         expect(target.querySelector('[data-kind="find"]')).not.toBeNull();
+    });
+
+    it("lists who you were with, with Add friend for signed-in people who aren't friends yet", async () => {
+        sceneHolder.scene = {
+            allUsersInWorldStore: readable(
+                new Map([
+                    ["space-noura", { uuid: "uuid-noura", name: "Noura", chatID: "@noura:chat", playUri: "x" }],
+                    ["space-sara", { uuid: "uuid-sara", name: "Sara", chatID: "@sara:chat", playUri: "x" }],
+                    ["space-guest", { uuid: "uuid-guest", name: "Guest", playUri: "x" }],
+                    ["space-me", { uuid: "uuid-me", name: "Me", chatID: "@me:chat", playUri: "x" }],
+                ])
+            ),
+            roomUrl: "https://play.example.test/room",
+            room: { isChatOnlineListEnabled: true, isChatDisconnectedListEnabled: false },
+            userProviderMerger: Promise.resolve({ usersByRoomStore: readable(new Map()) }),
+        };
+        const target = document.createElement("div");
+        document.body.append(target);
+        component = new ProximityEndedFooter({
+            target,
+            props: {
+                session: {
+                    ...endedWithBot,
+                    participants: ["Noura", "Sara", "Guest", "Me"],
+                    participantIds: ["space-noura", "space-sara", "space-guest", "space-me"],
+                },
+            },
+        });
+        await tick();
+
+        const met = target.querySelector('[data-testid="proximityMetPeople"]');
+        expect(met?.textContent).toContain("Noura");
+        expect(met?.textContent).toContain("Sara");
+        expect(met?.textContent).not.toContain("Guest");
+        expect(met?.textContent).not.toContain("Me");
+        const add = target.querySelectorAll<HTMLButtonElement>('[data-testid="proximityAddFriend"]');
+        expect(add).toHaveLength(1);
+        add[0].click();
+        expect(friendsHolder.runFriendAction).toHaveBeenCalledWith("uuid-noura", "Noura", "request");
     });
 
     it("shows while the map is being swapped, instead of breaking the chat", async () => {

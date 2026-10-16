@@ -1,7 +1,7 @@
 <script lang="ts">
     import { IconChevronRight } from "@wa-icons";
 
-    /** A row that opens a page inside the settings window (Map credits, Contact, Report a problem). */
+    /** A row that opens a page inside the settings window (Map credits, Report a problem). */
     export let label: string;
     export let onClick: () => void;
     export let testId: string | undefined = undefined;

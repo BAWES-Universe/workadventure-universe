@@ -24,6 +24,16 @@ export class EntityVariant {
         return [...this.variants.keys()];
     }
 
+    /** Every picture of this object, in the order they were added. */
+    public get prefabs(): EntityPrefab[] {
+        return [...this.variants.values()].flatMap((sides) => [...sides.values()]);
+    }
+
+    /** The picture of one side in one colour, if the object has it. */
+    public getPrefab(color: string, direction: EntityPrefab["direction"]): EntityPrefab | undefined {
+        return this.variants.get(color)?.get(direction);
+    }
+
     public getEntityPrefabsPositions(color: string): EntityPrefab[] {
         const entityPrefabsPositions = this.variants.get(color);
         if (!entityPrefabsPositions) {
@@ -31,6 +41,16 @@ export class EntityVariant {
             throw new Error("Could not find color for variant");
         }
         return [...entityPrefabsPositions.values()];
+    }
+
+    /** Whether one of this object's colours or sides is the prefab with this id. */
+    public hasPrefab(id: string): boolean {
+        for (const sides of this.variants.values()) {
+            for (const prefab of sides.values()) {
+                if (prefab.id === id) return true;
+            }
+        }
+        return false;
     }
 
     public addPrefab(prefab: EntityPrefab) {

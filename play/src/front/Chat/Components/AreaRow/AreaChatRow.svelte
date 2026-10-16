@@ -117,7 +117,7 @@
                 <div class="flex shrink-0 items-center justify-center min-w-7 h-7 relative">
                     {#if $unreadCount > 0}
                         <span
-                            class="min-w-5 h-5 px-1.5 rounded-full bg-secondary text-white text-[11px] font-bold flex items-center justify-center"
+                            class="u-badge min-w-5 h-5 px-1.5 rounded-full text-white text-[11px] font-bold flex items-center justify-center"
                             aria-hidden="true">{$unreadCount > 99 ? "99+" : $unreadCount}</span
                         >
                     {:else}

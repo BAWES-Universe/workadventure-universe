@@ -41,6 +41,12 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
     private _nbUsers = 0;
     // If there is at least one publishers, nbWatchers = nbUsers. Otherwise nbWatchers = 0
     private _nbWatchers = 0;
+    // On a podium (a live stream with an audience): who was invited to speak and has not answered yet, who spoke
+    // because they were invited (a guest, not a host), and who a speaker moved back to the audience. The browsers
+    // keep the same lists for their buttons, but this one decides.
+    private invitedToSpeak = new Set<string>();
+    private guestSpeakers = new Set<string>();
+    private movedToAudience = new Set<string>();
 
     constructor(
         name: string,
@@ -72,7 +78,7 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
             }
             this._spaceUpdatedSubject.next(this);
 
-            if (!this.filterOneUser(spaceUser)) {
+            if (!this.isListed(spaceUser)) {
                 return;
             }
 
@@ -86,10 +92,12 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
                 },
             });
 
-            this.communicationManager.handleUserAdded(spaceUser).catch((e) => {
-                Sentry.captureException(e);
-                console.error(e);
-            });
+            if (this.filterOneUser(spaceUser)) {
+                this.communicationManager.handleUserAdded(spaceUser).catch((e) => {
+                    Sentry.captureException(e);
+                    console.error(e);
+                });
+            }
             debug(`${this.name} : user => added ${spaceUser.spaceUserId}`);
         } catch (e) {
             console.error("Error while adding user", e);
@@ -102,8 +110,9 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
         }
     }
 
-    public updateUser(sourceWatcher: SpacesWatcher, spaceUser: SpaceUser, updateMask: string[]) {
+    public updateUser(sourceWatcher: SpacesWatcher, spaceUser: SpaceUser, requestedUpdateMask: string[]) {
         try {
+            let updateMask = requestedUpdateMask;
             const usersList = this.usersList(sourceWatcher);
             const user = usersList.get(spaceUser.spaceUserId);
             if (!user) {
@@ -111,16 +120,25 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
                 return;
             }
 
+            if (updateMask.includes("megaphoneState")) {
+                updateMask = this.applyPodiumGoLive(user, spaceUser, updateMask);
+                if (updateMask.length === 0) {
+                    return;
+                }
+            }
+
             if (this.isPublishing(user)) {
                 this._nbPublishers--;
             }
 
-            const oldFilter = this.filterOneUser(user);
+            const oldFilter = this.isListed(user);
+            const oldStreaming = this.filterOneUser(user);
 
             const updateValues = applyFieldMask(spaceUser, updateMask);
             merge(user, updateValues);
 
-            const newFilter = this.filterOneUser(user);
+            const newFilter = this.isListed(user);
+            const newStreaming = this.filterOneUser(user);
 
             usersList.set(spaceUser.spaceUserId, user);
 
@@ -145,20 +163,10 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
                         }),
                     },
                 });
-
-                this.communicationManager.handleUserAdded(user).catch((e) => {
-                    Sentry.captureException(e);
-                    console.error(e);
-                });
             } else if (oldFilter && !newFilter) {
                 debug(
                     `${this.name} : user updated => removed ${user.spaceUserId} updateMask : ${updateMask.join(", ")}`
                 );
-
-                this.communicationManager.handleUserDeleted(user).catch((e) => {
-                    Sentry.captureException(e);
-                    console.error(e);
-                });
 
                 this.notifyWatchers({
                     message: {
@@ -185,7 +193,20 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
                         },
                     },
                 });
+            }
 
+            // Media goes to the people who stream: a raised hand in the audience is listed, not connected.
+            if (!oldStreaming && newStreaming) {
+                this.communicationManager.handleUserAdded(user).catch((e) => {
+                    Sentry.captureException(e);
+                    console.error(e);
+                });
+            } else if (oldStreaming && !newStreaming) {
+                this.communicationManager.handleUserDeleted(user).catch((e) => {
+                    Sentry.captureException(e);
+                    console.error(e);
+                });
+            } else if (oldStreaming && newStreaming) {
                 this.communicationManager.handleUserUpdated(user).catch((e) => {
                     Sentry.captureException(e);
                     console.error(e);
@@ -216,6 +237,7 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
             }
 
             usersList.delete(spaceUserId);
+            this.forgetPodiumState(spaceUserId);
 
             if (this.isPublishing(user)) {
                 this._nbPublishers--;
@@ -245,7 +267,8 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
                     Sentry.captureException(e);
                     console.error(e);
                 });
-
+            }
+            if (user && this.isListed(user)) {
                 this.notifyWatchers({
                     message: {
                         $case: "removeSpaceUserMessage",
@@ -291,6 +314,17 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
         return false;
     }
 
+    /**
+     * Who the watchers see: the people who stream, and in the audience of a live stream, the people with a raised
+     * hand, so the speakers know who wants to talk. Only filterOneUser decides who gets connected for media.
+     */
+    private isListed(user: SpaceUser): boolean {
+        return (
+            this.filterOneUser(user) ||
+            (this._filterType === FilterType.LIVE_STREAMING_USERS && (user.handRaisedAt ?? 0) > 0)
+        );
+    }
+
     public addWatcher(watcher: SpacesWatcher) {
         this.users.set(watcher, new Map<string, SpaceUser>());
         this.usersToNotify.set(watcher, new Map<string, SpaceUser>());
@@ -298,7 +332,7 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
 
         const allSpaceUsers: SpaceUser[] = [];
         for (const spaceUsers of this.users.values()) {
-            const filteredSpaceUsers = Array.from(spaceUsers.values()).filter((user) => this.filterOneUser(user));
+            const filteredSpaceUsers = Array.from(spaceUsers.values()).filter((user) => this.isListed(user));
             allSpaceUsers.push(...filteredSpaceUsers);
         }
 
@@ -353,7 +387,7 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
         this.usersToNotify.delete(watcher);
         // In case was not empty when it was removed, we need to notify the other watchers
         for (const spaceUser of spaceUsers?.values() || []) {
-            if (!this.filterOneUser(spaceUser)) {
+            if (!this.isListed(spaceUser)) {
                 continue;
             }
 
@@ -504,6 +538,8 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
             return;
         }
 
+        this.checkPodiumEvent(privateEvent.spaceEvent.event.$case, sender, privateEvent.receiverUserId);
+
         // Process the event
         const processedEvent = this.eventProcessor.processPrivateEvent(
             privateEvent.spaceEvent.event,
@@ -533,6 +569,93 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
                 });
             }
         }
+    }
+
+    /**
+     * Who may bring people on stage and send them back: an admin, or somebody streaming who is not themselves a guest
+     * (a guest speaks because a speaker invited them: that does not make them a host).
+     */
+    private canHostPodium(user: SpaceUser): boolean {
+        return user.tags.includes("admin") || (user.megaphoneState && !this.guestSpeakers.has(user.spaceUserId));
+    }
+
+    private findUser(spaceUserId: string): { watcher: SpacesWatcher; user: SpaceUser } | undefined {
+        for (const [watcher, users] of this.users.entries()) {
+            const user = users.get(spaceUserId);
+            if (user) {
+                return { watcher, user };
+            }
+        }
+        return undefined;
+    }
+
+    private forgetPodiumState(spaceUserId: string): void {
+        this.invitedToSpeak.delete(spaceUserId);
+        this.guestSpeakers.delete(spaceUserId);
+        this.movedToAudience.delete(spaceUserId);
+    }
+
+    /**
+     * Keeps the podium's lists in step with the private events people send each other (invite to speak, decline,
+     * move back to the audience), and refuses the ones their sender may not send.
+     */
+    private checkPodiumEvent(eventCase: string, sender: SpaceUser, receiverUserId: string): void {
+        switch (eventCase) {
+            case "inviteToSpeak": {
+                if (!this.canHostPodium(sender)) {
+                    throw new Error("Only speakers and admins can invite someone to speak");
+                }
+                this.invitedToSpeak.add(receiverUserId);
+                this.movedToAudience.delete(receiverUserId);
+                break;
+            }
+            case "declineToSpeak": {
+                // The answer to an invitation comes from the person who was invited
+                this.invitedToSpeak.delete(sender.spaceUserId);
+                break;
+            }
+            case "moveToAudience": {
+                if (!this.canHostPodium(sender)) {
+                    throw new Error("Only speakers and admins can move someone to the audience");
+                }
+                const wasGuest = this.guestSpeakers.has(receiverUserId);
+                const wasInvited = this.invitedToSpeak.delete(receiverUserId);
+                if (!wasGuest && !wasInvited) {
+                    // Somebody who speaks from a speaker zone is not on stage by invitation: leave them be.
+                    break;
+                }
+                this.guestSpeakers.delete(receiverUserId);
+                this.movedToAudience.add(receiverUserId);
+                const receiver = this.findUser(receiverUserId);
+                if (receiver?.user.megaphoneState) {
+                    // Whether or not their browser obeys the event, they stop streaming
+                    this.updateUser(receiver.watcher, { ...receiver.user, megaphoneState: false }, ["megaphoneState"]);
+                }
+                break;
+            }
+            default:
+                break;
+        }
+    }
+
+    /**
+     * A person starting or stopping to stream. Somebody who was invited and starts streaming is a guest speaker;
+     * somebody a speaker moved back cannot go live again until invited again (or until they leave the space).
+     * Returns the update mask to apply.
+     */
+    private applyPodiumGoLive(current: SpaceUser, update: SpaceUser, updateMask: string[]): string[] {
+        const id = current.spaceUserId;
+        if (!update.megaphoneState) {
+            this.guestSpeakers.delete(id);
+            return updateMask;
+        }
+        if (this.movedToAudience.has(id)) {
+            return updateMask.filter((field) => field !== "megaphoneState");
+        }
+        if (this.invitedToSpeak.delete(id)) {
+            this.guestSpeakers.add(id);
+        }
+        return updateMask;
     }
 
     public syncUsersFromPusher(watcher: SpacesWatcher, users: SpaceUser[]) {

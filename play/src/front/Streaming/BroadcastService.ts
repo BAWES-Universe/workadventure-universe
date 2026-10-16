@@ -56,13 +56,13 @@ export class BroadcastService {
         const spaceNameSlugify = slugify(spaceName);
         const space = this.broadcastSpaces.find((space) => space.getName() === spaceNameSlugify);
 
-        if (space) {
-            //await space.destroy();
-            await this.spaceRegistry.leaveSpace(space);
-            this.broadcastSpaces = this.broadcastSpaces.filter((space) => space.getName() !== spaceNameSlugify);
-            broadcastServiceLogger("leaveSpace", spaceNameSlugify);
+        if (!space) {
             return;
         }
+        // Taken off the list before the registry is asked, so a destroy() during that wait doesn't leave it twice.
+        this.broadcastSpaces = this.broadcastSpaces.filter((candidate) => candidate !== space);
+        await this.spaceRegistry.leaveSpace(space);
+        broadcastServiceLogger("leaveSpace", spaceNameSlugify);
     }
 
     /**
@@ -70,6 +70,8 @@ export class BroadcastService {
      */
     public async destroy(): Promise<void> {
         this.unsubscribes.forEach((unsubscribe) => unsubscribe.unsubscribe());
-        await Promise.all(this.broadcastSpaces.map((space) => this.spaceRegistry.leaveSpace(space)));
+        const spaces = this.broadcastSpaces;
+        this.broadcastSpaces = [];
+        await Promise.all(spaces.map((space) => this.spaceRegistry.leaveSpace(space)));
     }
 }

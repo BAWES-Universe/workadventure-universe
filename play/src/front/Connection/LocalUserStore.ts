@@ -8,6 +8,7 @@ import type { RequestedStatus } from "../Rules/StatusRules/statusRules";
 import { requestedStatusFactory } from "../Rules/StatusRules/StatusFactory/RequestedStatusFactory";
 import { INITIAL_SIDEBAR_WIDTH } from "../Stores/ChatStore";
 import { isAndroid, isIOS } from "../WebRtc/DeviceUtils";
+import type { InstallCardRecord } from "../Install/InstallApp";
 import type { LocalUser } from "./LocalUser";
 import { areCharacterTexturesValid, isUserNameValid } from "./LocalUserUtils";
 
@@ -59,8 +60,22 @@ const foldersOpened = "foldersOpened";
 const cameraContainerHeightKey = "cameraContainerHeight";
 const chatSideBarWidthKey = "chatSideBarWidth";
 const mapEditorSideBarWidthKey = "mapEditorSideBarWidthKey";
+const lookAroundHintSeenKey = "lookAroundHintSeen";
+const editHintSeenKey = "editHintSeen";
+const recentEditObjectsKey = "recentEditObjects";
 const bubbleSound = "bubbleSound";
 const knownMediaDevices = "knownMediaDevices";
+// The old flag "the card was shown once": only read to move it to the record (installCard).
+const installCardSeenKey = "installCardSeen";
+const installCardKey = "installCard";
+const installReportedKey = "installReported";
+const ignoredNewMediaDevices = "ignoredNewMediaDevices";
+
+const isInstallCardRecord = z.object({
+    lastShownAt: z.number().finite(),
+    closeStreak: z.number().int().min(0),
+    lastClosed: z.boolean(),
+}) satisfies z.ZodType<InstallCardRecord>;
 
 const INITIAL_MAP_EDITOR_SIDEBAR_WIDTH = 448;
 
@@ -281,6 +296,87 @@ class LocalUserStore {
         }
     }
 
+    // The install reads and writes never throw: a browser that blocks storage must still start the game.
+    /** What the install card remembers: when it last showed and how it was closed. A malformed record counts as none. */
+    readInstallCard(): InstallCardRecord | undefined {
+        try {
+            const record = this.parseInstallCard(localStorage.getItem(installCardKey));
+            if (record !== undefined) return record;
+            // The card used to show once, ever (a flag): that last showing counts as now, so it waits the gap.
+            if (localStorage.getItem(installCardSeenKey) !== "true") return undefined;
+            const migrated: InstallCardRecord = { lastShownAt: Date.now(), closeStreak: 0, lastClosed: false };
+            localStorage.setItem(installCardKey, JSON.stringify(migrated));
+            localStorage.removeItem(installCardSeenKey);
+            return migrated;
+        } catch (e) {
+            console.warn("Could not read the install state from the browser storage", e);
+            return undefined;
+        }
+    }
+    writeInstallCard(record: InstallCardRecord): void {
+        try {
+            localStorage.setItem(installCardKey, JSON.stringify(record));
+        } catch (e) {
+            console.warn("Could not save the install state in the browser storage", e);
+        }
+    }
+    clearInstallCard(): void {
+        try {
+            localStorage.removeItem(installCardKey);
+            localStorage.removeItem(installCardSeenKey);
+        } catch (e) {
+            console.warn("Could not save the install state in the browser storage", e);
+        }
+    }
+
+    private parseInstallCard(raw: string | null): InstallCardRecord | undefined {
+        if (raw === null) return undefined;
+        try {
+            const parsed = isInstallCardRecord.safeParse(JSON.parse(raw));
+            return parsed.success ? parsed.data : undefined;
+        } catch {
+            return undefined;
+        }
+    }
+
+    /** The install of the app was already counted on this device. */
+    isInstallReported(): boolean {
+        return this.readInstallFlag(installReportedKey);
+    }
+    markInstallReported(): void {
+        this.writeInstallFlag(installReportedKey, true);
+    }
+    /** The browser offers the install again: the app was removed, so a new install counts again. */
+    clearInstallReported(): void {
+        this.writeInstallFlag(installReportedKey, false);
+    }
+
+    private readInstallFlag(key: string): boolean {
+        try {
+            return localStorage.getItem(key) === "true";
+        } catch (e) {
+            console.warn("Could not read the install state from the browser storage", e);
+            return false;
+        }
+    }
+
+    private writeInstallFlag(key: string, value: boolean): void {
+        try {
+            if (value) {
+                localStorage.setItem(key, "true");
+            } else {
+                localStorage.removeItem(key);
+            }
+        } catch (e) {
+            console.warn("Could not save the install state in the browser storage", e);
+        }
+    }
+
+    /** Whether a last room was ever saved here (otherwise getLastRoomUrl gives the start page). */
+    hasLastRoomUrl(): boolean {
+        return localStorage.getItem(lastRoomUrl) !== null;
+    }
+
     getLastRoomUrl(): string {
         return localStorage.getItem(lastRoomUrl) ?? window.location.protocol + "//" + window.location.host + "/";
     }
@@ -416,6 +512,33 @@ class LocalUserStore {
         }
     }
 
+    /**
+     * Device names the player asked never to be offered again ("Don't ask for this device"), see NewMediaDevices.ts.
+     */
+    getIgnoredNewMediaDevices(): string[] {
+        const stored = localStorage.getItem(ignoredNewMediaDevices);
+        if (!stored) {
+            return [];
+        }
+        try {
+            return KnownMediaDevicesSchema.parse(JSON.parse(stored));
+        } catch (e) {
+            console.warn("Error parsing ignored media devices from localStorage:", e);
+            localStorage.removeItem(ignoredNewMediaDevices);
+            return [];
+        }
+    }
+
+    addIgnoredNewMediaDevices(keys: string[]) {
+        // Most recent last, and bounded like the known devices.
+        const kept = this.getIgnoredNewMediaDevices().filter((key) => !keys.includes(key));
+        try {
+            localStorage.setItem(ignoredNewMediaDevices, JSON.stringify([...kept, ...keys].slice(-100)));
+        } catch (e) {
+            console.warn("Error saving ignored media devices to localStorage:", e);
+        }
+    }
+
     setPreferredVideoInputDevice(deviceId?: string) {
         if (deviceId === undefined) {
             localStorage.removeItem(preferredVideoInputDevice);
@@ -452,6 +575,38 @@ class LocalUserStore {
         }
 
         return deviceId;
+    }
+
+    /** The "Drag to look around" hint has been seen: it goes after the first real drag. */
+    setLookAroundHintSeen(value: boolean): void {
+        localStorage.setItem(lookAroundHintSeenKey, value.toString());
+    }
+
+    getLookAroundHintSeen(): boolean {
+        return localStorage.getItem(lookAroundHintSeenKey) === "true";
+    }
+
+    /** The "Pick a tool on the right" hint of the room editor has been seen (a tool was picked once). */
+    setEditHintSeen(value: boolean): void {
+        localStorage.setItem(editHintSeenKey, value.toString());
+    }
+
+    getEditHintSeen(): boolean {
+        return localStorage.getItem(editHintSeenKey) === "true";
+    }
+
+    /** The objects placed most recently in the room editor, newest first, by prefab id. */
+    setRecentEditObjects(ids: string[]): void {
+        localStorage.setItem(recentEditObjectsKey, JSON.stringify(ids));
+    }
+
+    getRecentEditObjects(): string[] {
+        try {
+            const parsed: unknown = JSON.parse(localStorage.getItem(recentEditObjectsKey) ?? "[]");
+            return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
+        } catch {
+            return [];
+        }
     }
 
     setCameraPrivacySettings(option: boolean) {
@@ -657,6 +812,15 @@ class LocalUserStore {
         return parseInt(value);
     }
 
+    // Microphone noise filter: "standard" (browser), "strong" (on-device model) or "voiceOnly" (browser voice isolation)
+    setNoiseFilter(value: string) {
+        localStorage.setItem("noiseFilter", value);
+    }
+
+    getNoiseFilter(): string | null {
+        return localStorage.getItem("noiseFilter");
+    }
+
     // Background transformation settings
     setBackgroundMode(value: string) {
         localStorage.setItem("backgroundMode", value);
@@ -681,14 +845,6 @@ class LocalUserStore {
 
     getBackgroundImage(): string | null {
         return localStorage.getItem("backgroundImage");
-    }
-
-    setBackgroundVideo(value: string) {
-        localStorage.setItem("backgroundVideo", value);
-    }
-
-    getBackgroundVideo(): string | null {
-        return localStorage.getItem("backgroundVideo");
     }
 
     getRequestedStatus(): RequestedStatus | null {

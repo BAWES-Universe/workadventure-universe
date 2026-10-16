@@ -7,6 +7,7 @@ import type {
     RoomRedirect,
     Capabilities,
     IceServer,
+    WokaMine as WokaMineType,
 } from "@workadventure/messages";
 import {
     isOauthRefreshToken,
@@ -20,6 +21,7 @@ import {
     isMapDetailsData,
     isRoomRedirect,
     WokaDetail,
+    wokaMine,
 } from "@workadventure/messages";
 import { z } from "zod";
 import { extendApi } from "@anatine/zod-openapi";
@@ -38,8 +40,10 @@ import type { AuthTokenData } from "./JWTTokenManager";
 import { jwtTokenManager } from "./JWTTokenManager";
 import { ShortMapDescriptionList } from "./ShortMapDescription";
 import { UniverseRoomsData } from "./UniverseRooms";
-import { WorldChatMembersData } from "./WorldChatMembersData";
+import { ChatPersonData, WorldChatMembersData } from "./WorldChatMembersData";
 import { iceServersService } from "./IceServersService";
+import type { BanAppealResult } from "./BanDetails";
+import { BanDetailsData } from "./BanDetails";
 
 export const AdminBannedData = z.object({
     is_banned: z.boolean(),
@@ -81,6 +85,10 @@ export const isFetchMemberDataByUuidSuccessResponse = z.object({
     characterTextures: extendApi(z.array(WokaDetail), {
         description:
             "This data represents the textures (WOKA) that will be available to users. If an empty array is returned, the user is redirected to the Woka selection page.",
+    }),
+    characterTextureIds: extendApi(z.array(z.string()).optional(), {
+        description:
+            "The ids of the Woka the player's account wears, even when this world cannot show it. The game keeps them on the device. Omitted by admins that do not know.",
     }),
     isCompanionTextureValid: extendApi(z.boolean(), {
         description:
@@ -362,7 +370,8 @@ class AdminApi implements AdminInterface {
         companionTextureId?: string,
         locale?: string,
         tags?: string[],
-        chatID?: string
+        chatID?: string,
+        guestName?: string
     ): Promise<FetchMemberDataByUuidResponse> {
         try {
             /**
@@ -413,6 +422,11 @@ class AdminApi implements AdminInterface {
              *        in: "query"
              *        type: "string"
              *        example: "dog1"
+             *      - name: "name"
+             *        in: "query"
+             *        description: "The name a guest (not logged in) typed. Only sent for guests."
+             *        type: "string"
+             *        example: "Nova"
              *     responses:
              *       200:
              *         description: The details of the member
@@ -429,6 +443,7 @@ class AdminApi implements AdminInterface {
                     accessToken,
                     isLogged: accessToken ? "1" : "0", // deprecated, use accessToken instead,
                     chatID,
+                    name: guestName,
                 },
                 headers: { Authorization: `${ADMIN_API_TOKEN}`, "Accept-Language": locale ?? "en" },
             });
@@ -1036,6 +1051,56 @@ class AdminApi implements AdminInterface {
         return;
     }
 
+    async getWokaMine(userIdentifier: string, roomUrl: string): Promise<WokaMineType | undefined> {
+        if (this.capabilities["api/woka/mine"] === undefined) {
+            // The admin does not tell what a player wears. Nothing to answer.
+            return undefined;
+        }
+
+        /**
+         * @openapi
+         * /api/woka/mine:
+         *   get:
+         *     tags: ["AdminAPI"]
+         *     description: What the player wears and wore lately, as seen from the room (a signed-in player only).
+         *     security:
+         *      - Bearer: []
+         *     produces:
+         *      - "application/json"
+         *     parameters:
+         *      - name: "roomUrl"
+         *        in: "query"
+         *        description: "The room URL"
+         *        type: "string"
+         *        required: true
+         *        example: "https://play.workadventu.re/@/teamSlug/worldSlug/roomSlug"
+         *      - name: "uuid"
+         *        in: "query"
+         *        description: "The uuid of the user \n It can be an uuid or an email"
+         *        type: "string"
+         *        required: true
+         *        example: "998ce839-3dea-4698-8b41-ebbdf7688ad8"
+         *     responses:
+         *       200:
+         *         description: The current Woka, a suggestion, the recent Wokas and the companion
+         *       404:
+         *         description: Guest or unknown user
+         */
+        try {
+            const res = await axios.get<unknown, AxiosResponse<unknown>>(ADMIN_API_URL + "/api/woka/mine", {
+                headers: { Authorization: `${ADMIN_API_TOKEN}` },
+                params: { roomUrl, uuid: userIdentifier },
+                timeout: 10_000,
+            });
+            return wokaMine.parse(res.data);
+        } catch (err) {
+            if (isAxiosError(err) && err.response?.status === 404) {
+                return undefined;
+            }
+            throw err;
+        }
+    }
+
     async getWorldChatMembers(playUri: string, searchText = ""): Promise<WorldChatMembersData> {
         /**
          * @openapi
@@ -1078,6 +1143,50 @@ class AdminApi implements AdminInterface {
         });
 
         return WorldChatMembersData.parse(response.data);
+    }
+
+    /**
+     * @openapi
+     * /api/chat/person:
+     *   get:
+     *     tags: ["AdminAPI"]
+     *     description: One person's current name and Woka by chat ID, for a direct chat with someone outside the asker's world. Never an email address or an id.
+     *     security:
+     *      - Bearer: []
+     *     produces:
+     *      - "application/json"
+     *     parameters:
+     *      - name: "chatId"
+     *        in: "query"
+     *        description: "The person's chat ID (Matrix user ID)"
+     *        type: "string"
+     *        required: true
+     *        example: "@john.doe:matrix.org"
+     *      - name: "playUri"
+     *        in: "query"
+     *        description: "The room the asker is in; its world decides which Woka is sent"
+     *        type: "string"
+     *        example: "https://play.workadventu.re/@/teamSlug/worldSlug/roomSlug"
+     *     responses:
+     *       200:
+     *         description: The person's name and Woka (bottom layer first; empty when there is none to show)
+     *       404:
+     *         description: No one has this chat ID
+     */
+    async getChatPerson(chatId: string, playUri: string): Promise<ChatPersonData | undefined> {
+        try {
+            const response = await axios.get<unknown>(`${ADMIN_API_URL}/api/chat/person`, {
+                headers: { Authorization: `${ADMIN_API_TOKEN}` },
+                params: { chatId, playUri },
+                // Fail fast when the admin is slow: the chat asks again later.
+                timeout: 10_000,
+            });
+            return ChatPersonData.parse(response.data);
+        } catch (e) {
+            // No one has this chat ID (or an older admin has no such lookup): the chat keeps what it has.
+            if (isAxiosError(e) && e.response?.status === 404) return undefined;
+            throw e;
+        }
     }
 
     /**
@@ -1147,8 +1256,9 @@ class AdminApi implements AdminInterface {
      *       404:
      *        description: No member found.
      */
-    async getMember(memberUUID: string): Promise<MemberData> {
+    async getMember(memberUUID: string, playUri?: string): Promise<MemberData> {
         const response = await axios.get<MemberData>(`${ADMIN_API_URL}/api/members/${memberUUID}`, {
+            params: playUri ? { playUri } : undefined,
             headers: { Authorization: `${ADMIN_API_TOKEN}` },
         });
         return response.data;
@@ -1192,7 +1302,7 @@ class AdminApi implements AdminInterface {
      */
     updateChatId(userIdentifier: string, chatId: string, roomUrl: string): Promise<void> {
         return axios.put(
-            `${ADMIN_API_URL}/api/members/${userIdentifier}/chatId`,
+            `${ADMIN_API_URL}/api/members/${encodeURIComponent(userIdentifier)}/chatId`,
             {
                 chatId,
                 userIdentifier,
@@ -1308,6 +1418,92 @@ class AdminApi implements AdminInterface {
         });
 
         return IceServerSchema.array().parse(response.data);
+    }
+
+    async getBanDetails(userIdentifier: string, playUri: string): Promise<BanDetailsData> {
+        /**
+         * @openapi
+         * /api/ban/details:
+         *   get:
+         *     tags: ["AdminAPI"]
+         *     description: The player's ban from the world of a room, for the ban screen
+         *     security:
+         *      - Bearer: []
+         *     produces:
+         *      - "application/json"
+         *     parameters:
+         *      - name: "userIdentifier"
+         *        in: "query"
+         *        description: "The identifier of the player \n It can be an uuid or an email"
+         *        type: "string"
+         *        required: true
+         *        example: "998ce839-3dea-4698-8b41-ebbdf7688ad9"
+         *      - name: "playUri"
+         *        in: "query"
+         *        description: "The full URL of the room"
+         *        type: "string"
+         *        required: true
+         *        example: "https://play.workadventu.re/@/teamSlug/worldSlug/roomSlug"
+         *     responses:
+         *       200:
+         *         description: Whether the player is banned, until when, why, and their appeal if any
+         */
+        const response = await axios.get<unknown>(`${ADMIN_API_URL}/api/ban/details`, {
+            headers: { Authorization: `${ADMIN_API_TOKEN}` },
+            params: {
+                userIdentifier,
+                playUri,
+            },
+        });
+
+        return BanDetailsData.parse(response.data);
+    }
+
+    async sendBanAppeal(userIdentifier: string, playUri: string, text: string): Promise<BanAppealResult> {
+        /**
+         * @openapi
+         * /api/ban/appeal:
+         *   post:
+         *     tags: ["AdminAPI"]
+         *     description: Sends the player's one appeal against their ban from the world of a room
+         *     security:
+         *      - Bearer: []
+         *     requestBody:
+         *       required: true
+         *       content:
+         *         application/json:
+         *           schema:
+         *             type: "object"
+         *             properties:
+         *               userIdentifier:
+         *                 type: string
+         *                 required: true
+         *               playUri:
+         *                 type: string
+         *                 required: true
+         *               text:
+         *                 type: string
+         *                 required: true
+         *     responses:
+         *       200:
+         *         description: The appeal was saved
+         *       404:
+         *         description: The player is not banned from this world
+         *       409:
+         *         description: The player already sent an appeal about this ban
+         */
+        try {
+            await axios.post(
+                `${ADMIN_API_URL}/api/ban/appeal`,
+                { userIdentifier, playUri, text },
+                { headers: { Authorization: `${ADMIN_API_TOKEN}` } }
+            );
+            return "ok";
+        } catch (err) {
+            if (isAxiosError(err) && err.response?.status === 409) return "already_appealed";
+            if (isAxiosError(err) && err.response?.status === 404) return "not_banned";
+            throw err;
+        }
     }
 }
 

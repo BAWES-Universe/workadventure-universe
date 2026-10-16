@@ -116,7 +116,7 @@ describe("AdminAuthenticator", () => {
                 isAxiosError: (error: unknown) => {
                     return error !== null && error !== undefined && typeof error === "object" && "response" in error;
                 },
-                default: {},
+                default: { create: () => ({}) },
             };
         });
     });

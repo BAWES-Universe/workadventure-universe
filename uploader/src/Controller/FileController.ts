@@ -2,8 +2,9 @@ import { v4 } from "uuid";
 //import {HttpRequest, HttpResponse} from "uWebSockets.js";
 //import {Readable} from 'stream'
 import { AxiosError } from "axios";
-import { Express } from "express";
+import { Express, NextFunction, Request, Response } from "express";
 import multer from "multer";
+import * as Sentry from "@sentry/node";
 import { uploaderService, CdnNotConfiguredError } from "../Service/UploaderService";
 import { getCdnProvider, isCdnConfigured } from "../Service/StorageProviderService";
 import { ByteLenghtBufferException } from "../Exception/ByteLenghtBufferException";
@@ -15,14 +16,46 @@ import {
   S3_CDN_USER_REFS_BUCKET,
   S3_CDN_BOT_GENS_BUCKET,
   BOT_SERVICE_TOKEN,
+  SECRET_KEY,
   UPLOAD_MAX_FILESIZE,
   UPLOADER_URL,
 } from "../Enum/EnvironmentVariable";
+import {
+  AUDIO_MESSAGE_ID_REGEX,
+  AUDIO_MESSAGE_MAX_FILE_SIZE,
+  getAudioContentType,
+  getAudioExtension,
+  validateAudioMessage,
+} from "../Service/AudioMessageValidator";
+import {
+  isValidPlayAuthToken,
+  isValidPlayGameSession,
+} from "../Service/PlayAuthToken";
 import { HttpResponseDevice } from "./HttpResponseDevice";
+
+// Files a person may drop in chat at once, and the size of each (the front applies the same limits). multer stops
+// reading a body that is over them, so a refused upload is never held in memory or stored.
+const MAX_FILES_PER_UPLOAD = 10;
+const maxFileSize = parseInt(UPLOAD_MAX_FILESIZE);
 
 const upload = multer({
   storage: multer.memoryStorage(),
-});
+  limits: {
+    files: MAX_FILES_PER_UPLOAD,
+    fileSize: maxFileSize,
+  },
+}).any();
+
+/** True when the request carries the bot server's service token (our own services). */
+function isFromBotService(request: Request): boolean {
+  const botServiceToken = request.headers["x-bot-service-token"];
+  return !!BOT_SERVICE_TOKEN && botServiceToken === BOT_SERVICE_TOKEN;
+}
+
+const uploadAudio = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: AUDIO_MESSAGE_MAX_FILE_SIZE, files: 1 },
+}).single("file");
 
 class DisabledChat extends Error {}
 class NotLoggedUser extends Error {}
@@ -31,6 +64,11 @@ export class FileController {
   constructor(private App: Express) {
     this.App = App;
 
+    if (!SECRET_KEY) {
+      console.warn(
+        "SECRET_KEY is not set: uploads from players are refused. Set it to the same value as play's SECRET_KEY."
+      );
+    }
     this.uploadAudioMessage();
     this.downloadAudioMessage();
     this.downloadFile();
@@ -41,47 +79,103 @@ export class FileController {
   }
 
   uploadAudioMessage() {
-    /*this.App.options("/upload-audio-message", (req: Request, res: Response) => {
-            res.status(200).send("");
-        });*/
-
-    this.App.post(
-      "/upload-audio-message",
-      upload.single("file"),
-      async (request, response) => {
-        if (!request.file) {
-          return response.status(400).send("No files were uploaded.");
-        }
-
-        const audioMessageId = v4();
-
-        await uploaderService.uploadTempFile(
-          audioMessageId,
-          request.file.buffer,
-          60
-        );
-
-        return response.status(200).json({
-          id: audioMessageId,
-          path: `/download-audio-message/${audioMessageId}`,
-        });
+    this.App.post("/upload-audio-message", (request, response) => {
+      // Checked before multer so that unauthenticated bodies are never buffered. Without a key there is nothing to
+      // check a session against, so nobody gets in.
+      if (!SECRET_KEY) {
+        response.status(503).json({ message: "uploads-not-configured" });
+        return;
       }
-    );
+      if (!isValidPlayAuthToken(request.header("authorization"), SECRET_KEY)) {
+        response.status(401).json({ message: "not-logged" });
+        return;
+      }
+
+      uploadAudio(request, response, (err: unknown) => {
+        (async () => {
+          if (err instanceof multer.MulterError) {
+            if (err.code === "LIMIT_FILE_SIZE") {
+              return response.status(413).json({
+                message: "file-too-big",
+                maxFileSize: AUDIO_MESSAGE_MAX_FILE_SIZE,
+              });
+            }
+            return response.status(400).send("Invalid upload.");
+          }
+          if (err) {
+            throw err;
+          }
+          if (!request.file) {
+            return response.status(400).send("No files were uploaded.");
+          }
+
+          const extension = validateAudioMessage(
+            request.file.originalname,
+            request.file.mimetype,
+            request.file.buffer
+          );
+          if (extension === undefined) {
+            return response
+              .status(415)
+              .json({ message: "unsupported-audio-file" });
+          }
+
+          // The extension is part of the id so that the download serves an audio Content-Type.
+          const audioMessageId = `${v4()}.${extension}`;
+
+          await uploaderService.uploadTempFile(
+            audioMessageId,
+            request.file.buffer,
+            60
+          );
+
+          return response.status(200).json({
+            id: audioMessageId,
+            path: `/download-audio-message/${audioMessageId}`,
+          });
+        })().catch((e) => {
+          console.error(e);
+          Sentry.captureException(e);
+          if (!response.headersSent) {
+            response.status(500).send("Internal server error");
+          }
+        });
+      });
+    });
   }
 
   downloadAudioMessage() {
     this.App.get("/download-audio-message/:id", (request, response) => {
-      const id = request.params["id"];
-      uploaderService
-        .getTemp(id)
-        .then((buffer) => {
-          const targetDevice = new HttpResponseDevice(id, response);
-          return targetDevice.copyFromBuffer(buffer);
-        })
-        .catch((e) => {
-          console.error(e);
-          return response.status(500).send("Internal server error");
-        });
+      (async () => {
+        const id = request.params["id"];
+        const extension = getAudioExtension(id);
+        if (!AUDIO_MESSAGE_ID_REGEX.test(id) || extension === undefined) {
+          return response.status(404).send("Cannot find file");
+        }
+
+        const buffer = await uploaderService.getTemp(id);
+        if (buffer == undefined) {
+          return response.status(404).send("Cannot find file");
+        }
+
+        response.setHeader("X-Content-Type-Options", "nosniff");
+        response.setHeader(
+          "Content-Disposition",
+          `inline; filename="audio.${extension}"`
+        );
+        response.setHeader(
+          "Content-Security-Policy",
+          "default-src 'none'; sandbox"
+        );
+        response.type(getAudioContentType(extension));
+        return response.status(200).send(buffer);
+      })().catch((e) => {
+        console.error(e);
+        Sentry.captureException(e);
+        if (!response.headersSent) {
+          response.status(500).send("Internal server error");
+        }
+      });
     });
   }
 
@@ -97,7 +191,57 @@ export class FileController {
   }
 
   uploadFile() {
-    this.App.post("/upload-file", upload.any(), async (request, response) => {
+    // Checked before multer so that a body from somebody who never opened the game is never buffered.
+    const requireGameSession = (
+      request: Request,
+      response: Response,
+      next: NextFunction
+    ) => {
+      if (isFromBotService(request)) {
+        next();
+        return;
+      }
+      // Without a key there is nothing to check a session against, so nobody gets in (it used to let everyone in).
+      if (!SECRET_KEY) {
+        response.status(503).json({ message: "uploads-not-configured" });
+        return;
+      }
+      if (isValidPlayGameSession(request.header("authorization"), SECRET_KEY)) {
+        next();
+        return;
+      }
+      response.status(401).json({ message: "not-logged" });
+    };
+
+    const readFiles = (
+      request: Request,
+      response: Response,
+      next: NextFunction
+    ) => {
+      upload(request, response, (err: unknown) => {
+        if (err instanceof multer.MulterError) {
+          if (err.code === "LIMIT_FILE_SIZE") {
+            response
+              .status(413)
+              .json({ message: "file-too-big", maxFileSize: UPLOAD_MAX_FILESIZE });
+            return;
+          }
+          if (err.code === "LIMIT_FILE_COUNT") {
+            response.status(400).json({ message: "too-many-files" });
+            return;
+          }
+          response.status(400).send("Invalid upload.");
+          return;
+        }
+        if (err) {
+          next(err);
+          return;
+        }
+        next();
+      });
+    };
+
+    this.App.post("/upload-file", requireGameSession, readFiles, async (request, response) => {
       if (!request.files) {
         return response.status(400).send("No files were uploaded.");
       }
@@ -153,10 +297,7 @@ export class FileController {
           if (!ENABLE_CHAT_UPLOAD) {
             throw new DisabledChat("Upload is disabled");
           }
-          if (
-            UPLOAD_MAX_FILESIZE &&
-            file.buffer.byteLength > parseInt(UPLOAD_MAX_FILESIZE)
-          ) {
+          if (file.buffer.byteLength > maxFileSize) {
             throw new ByteLenghtBufferException(`file-too-big`);
           }
           const fileUuid = await uploaderService.uploadFile(
@@ -218,6 +359,9 @@ export class FileController {
               maxFileSize: err.response?.data.maxFileSize,
             });
           }
+          console.error(err);
+          response.status(500);
+          return response.json({ message: "Internal server error" });
         } else if (err instanceof DisabledChat) {
           response.status(401);
           return response.json({ message: "disabled" });
@@ -239,12 +383,22 @@ export class FileController {
   }
 
   deleteUploadedFile() {
+    // Nothing in the game deletes uploads: only our own services (the bot server) may, with their service token.
     this.App.delete("/upload-file/:fileId", (request, response) => {
+      if (!isFromBotService(request)) {
+        response.status(401).json({ message: "not-allowed" });
+        return;
+      }
       (async () => {
         const fileId = decodeURI(request.params["fileId"]);
         await uploaderService.deleteFileById(fileId);
         return response.json({ message: "ok", id: fileId });
-      })().catch((e) => console.error(e));
+      })().catch((e) => {
+        console.error(e);
+        if (!response.headersSent) {
+          response.status(500).json({ message: "Internal server error" });
+        }
+      });
     });
   }
 

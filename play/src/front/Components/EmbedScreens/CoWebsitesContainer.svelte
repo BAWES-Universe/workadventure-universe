@@ -1,7 +1,8 @@
 <script lang="ts">
     import { onDestroy, onMount } from "svelte";
-    import type { Unsubscriber } from "svelte/store";
-    import { coWebsiteRatio, coWebsites, fullScreenCowebsite } from "../../Stores/CoWebsiteStore";
+    import { get, type Unsubscriber } from "svelte/store";
+    import { titleBarHeightStore } from "../../TitleBar/WindowControlsOverlay";
+    import { coWebsiteRatio, coWebsites, fullScreenCowebsite, windowSize } from "../../Stores/CoWebsiteStore";
     import JitsiCowebsiteComponent from "../Cowebsites/JistiCowebsiteComponent.svelte";
     import SimpleCowebsiteComponent from "../Cowebsites/SimpleCowebsiteComponent.svelte";
     import { JitsiCoWebsite } from "../../WebRtc/CoWebsite/JitsiCoWebsite";
@@ -61,15 +62,19 @@
                 coWebsiteRatio.set((window.innerWidth - clientX) / window.innerWidth);
             }
         } else {
+            // The page sits under the desktop title bar strip, so the pointer is measured from the page's top edge
+            clientY -= get(titleBarHeightStore);
             // 8 is the number of pixels of the resize bar
             if (clientY < 8) {
                 clientY = 8;
             }
-            if (clientY > window.innerHeight) {
-                clientY = window.innerHeight;
+            // The height the split is drawn over: the browser window, less the strip.
+            const height = $windowSize.height;
+            if (clientY > height) {
+                clientY = height;
             }
 
-            coWebsiteRatio.set(clientY / window.innerHeight);
+            coWebsiteRatio.set(clientY / height);
         }
     };
 
@@ -205,7 +210,10 @@
     style="transition: background-color 0.2s ease-in-out, backdrop-filter 0.2s ease-in-out;"
 >
     <div class="h-full w-full flex flex-col">
-        <div class="flex py-2 ms-3 items-center height-tab overflow-hidden flex-none">
+        <!-- The tabs lead the page on a phone held upright, where the installed app's status bar is see-through (#969). -->
+        <div
+            class="flex pb-2 pt-[calc(8px+env(safe-area-inset-top))] ms-3 items-center height-tab overflow-hidden flex-none"
+        >
             {#if tabsOverflowing && tabsScrollX > 0}
                 <div class="flex-0 w-10">
                     <button
