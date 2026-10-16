@@ -4,6 +4,8 @@
     export let label: string;
     export let disabled = false;
     export let testId: string | undefined = undefined;
+    /** Lets a label around the switch point at it, so the whole row toggles it. */
+    export let id: string | undefined = undefined;
     export let onChange: (checked: boolean) => void;
 </script>
 
@@ -11,6 +13,7 @@
     type="checkbox"
     role="switch"
     class="bp-switch"
+    {id}
     aria-label={label}
     title={label}
     {checked}

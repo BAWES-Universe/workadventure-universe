@@ -6,7 +6,9 @@ import {
     botModel,
     noticeRange,
     routeStops,
+    showsToolCalls,
     withModel,
+    withShowToolCalls,
 } from "./behaviorModel";
 
 function bot(behaviorType: BotData["behaviorType"], config: Partial<BotData["behaviorConfig"]> = {}): BotData {
@@ -69,5 +71,33 @@ describe("routeStops", () => {
     it("reads either key and drops broken stops", () => {
         expect(routeStops(bot("patrol", { waypoints: [{ x: 1, y: 1 }, null, { x: "2" }] }))).toEqual([{ x: 1, y: 1 }]);
         expect(routeStops(bot("patrol"))).toEqual([]);
+    });
+});
+
+describe("Show tool calls", () => {
+    it("is off for a bot that never had the setting, and for anything but true", () => {
+        expect(showsToolCalls(bot("idle"))).toBe(false);
+        expect(showsToolCalls(bot("idle", { showToolCalls: false }))).toBe(false);
+        expect(showsToolCalls(undefined)).toBe(false);
+        expect(showsToolCalls(bot("idle", { showToolCalls: "yes" as unknown as boolean }))).toBe(false);
+        expect(showsToolCalls(bot("idle", { showToolCalls: true }))).toBe(true);
+    });
+
+    it("turns on and off without touching the rest of the behavior", () => {
+        const before = bot("patrol", { patrolWaypoints: [{ x: 1, y: 2 }], conversationRadius: 96 });
+        const on = withShowToolCalls(before, true);
+        expect(showsToolCalls(on)).toBe(true);
+        expect(on.behaviorConfig).toEqual({ ...before.behaviorConfig, showToolCalls: true });
+        expect(on.behaviorType).toBe("patrol");
+        expect(before.behaviorConfig.showToolCalls).toBeUndefined();
+
+        const off = withShowToolCalls(on, false);
+        expect(showsToolCalls(off)).toBe(false);
+        expect(off.behaviorConfig).toEqual({ ...before.behaviorConfig, showToolCalls: false });
+    });
+
+    it("stays saved when the bot's behavior changes", () => {
+        const on = withShowToolCalls(bot("idle"), true);
+        expect(showsToolCalls(withModel(on, { moves: "wander", goesToPeople: true }))).toBe(true);
     });
 });

@@ -28,6 +28,7 @@ export interface BotData {
         conversationRadius?: number; // For social bots: detection range for players
         patrolWaypoints?: Array<{ x: number; y: number }>; // For patrol bots
         minTimeBetweenConversations?: number; // For social bots
+        showToolCalls?: boolean; // Show a 🔍 bubble when the bot uses an outside (MCP) tool; off when missing
         [key: string]: unknown;
     };
     chatInstructions?: string;
