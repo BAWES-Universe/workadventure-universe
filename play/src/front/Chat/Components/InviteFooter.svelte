@@ -171,6 +171,8 @@
     }
 
     function copy() {
+        // "Next to me" means where the player stands now, so read the position again at the moment of copying.
+        link = buildLink();
         analyticsClient.inviteCopyLink();
         if (arriveNextToMe) analyticsClient.inviteCopyLinkWalk(link);
         navigator.clipboard
@@ -189,6 +191,7 @@
     }
 
     function share() {
+        link = buildLink();
         analyticsClient.inviteCopyLink();
         navigator.share({ url: link }).catch((error: unknown) => {
             // Closing the share sheet is not a failure: do not copy behind the person's back.

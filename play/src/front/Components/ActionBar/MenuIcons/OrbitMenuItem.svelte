@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { adminDashboardActivatedStore } from "../../../Stores/MenuStore";
+    import { adminDashboardActivatedStore, adminDashboardPendingStore } from "../../../Stores/MenuStore";
     import { modalIframeStore, modalVisibilityStore } from "../../../Stores/ModalStore";
     import ActionBarButton from "../ActionBarButton.svelte";
     import { openAdminModalFromMenu } from "../../../external-modules/admin-api/index";
@@ -20,12 +20,16 @@
     // Orbit is the side window titled "Orbit" (external-modules/admin-api): while it shows, the button shows it is open.
     $: orbitOpen = $modalVisibilityStore && $modalIframeStore?.title === "Orbit";
 
+    // Orbit is on its way back (after a reconnect): the button holds its place but cannot be used yet.
+    $: pending = $adminDashboardPendingStore && !$adminDashboardActivatedStore;
+
     // Things in Orbit waiting for an answer (invitations for now), counted like chat's unread messages.
     $: attention = $orbitAttentionCountStore;
     $: attentionLabel = attention > 99 ? "99+" : String(attention);
 
     // The button toggles, like Explore: pressed again while Orbit shows, it closes Orbit the way its close button does.
     function toggleOrbit() {
+        if (pending) return;
         if (!orbitOpen) {
             openAdminModalFromMenu();
             return;
@@ -37,14 +41,14 @@
     }
 </script>
 
-{#if $adminDashboardActivatedStore}
+{#if $adminDashboardActivatedStore || $adminDashboardPendingStore}
     <ActionBarButton
         label="Orbit"
         tooltipTitle="Explore the universe and what's in orbit"
         boldLabel={true}
         chevron
         hideIconInActionBar={false}
-        state={orbitOpen ? "open" : "normal"}
+        state={pending ? "disabled" : orbitOpen ? "open" : "normal"}
         on:click={toggleOrbit}
         {first}
         {last}
