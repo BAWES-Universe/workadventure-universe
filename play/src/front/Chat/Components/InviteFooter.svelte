@@ -193,7 +193,11 @@
     function share() {
         link = buildLink();
         analyticsClient.inviteCopyLink();
-        navigator.share({ url: link }).catch(() => copy());
+        navigator.share({ url: link }).catch((error: unknown) => {
+            // Closing the share sheet is not a failure: do not copy behind the person's back.
+            if (error instanceof DOMException && error.name === "AbortError") return;
+            copy();
+        });
     }
 
     function onKeyDown(event: KeyboardEvent) {

@@ -381,25 +381,28 @@ describe("GifPicker", () => {
 
         it("asks Klipy for the tiles again once five minutes have passed", async () => {
             const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
-            const categories = vi.fn().mockResolvedValue([{ name: "lol", query: "lol" }]);
-            const client = fakeClient({ categories });
-            mount(client);
-            await settle();
-            closePicker();
+            try {
+                const categories = vi.fn().mockResolvedValue([{ name: "lol", query: "lol" }]);
+                const client = fakeClient({ categories });
+                mount(client);
+                await settle();
+                closePicker();
 
-            now.mockReturnValue(1_000_000 + GIF_HOME_TTL_MS - 1000);
-            mount(client);
-            await settle();
-            expect(categories).toHaveBeenCalledTimes(1);
-            closePicker();
+                now.mockReturnValue(1_000_000 + GIF_HOME_TTL_MS - 1000);
+                mount(client);
+                await settle();
+                expect(categories).toHaveBeenCalledTimes(1);
+                closePicker();
 
-            now.mockReturnValue(1_000_000 + GIF_HOME_TTL_MS);
-            mount(client);
-            expect(target.querySelector('[data-testid="gifPickerTilesLoading"]')).not.toBeNull();
-            await settle();
-            expect(categories).toHaveBeenCalledTimes(2);
-            expect(client.trending).toHaveBeenCalledTimes(2);
-            now.mockRestore();
+                now.mockReturnValue(1_000_000 + GIF_HOME_TTL_MS);
+                mount(client);
+                expect(target.querySelector('[data-testid="gifPickerTilesLoading"]')).not.toBeNull();
+                await settle();
+                expect(categories).toHaveBeenCalledTimes(2);
+                expect(client.trending).toHaveBeenCalledTimes(2);
+            } finally {
+                now.mockRestore();
+            }
         });
 
         it("does not keep search results: each search asks Klipy", async () => {

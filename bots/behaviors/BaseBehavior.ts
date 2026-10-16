@@ -85,6 +85,7 @@ export interface QueuedMessage {
 
 export interface BehaviorConfig {
     type: string;
+    showToolCalls?: boolean;
     assignedSpace?: {
         center: PositionInterface;
         radius: number; // Maximum distance from center
@@ -142,7 +143,12 @@ export abstract class BaseBehavior {
     protected pendingSpaceUserIdToUserId: Map<string, number> = new Map();
     protected readonly PROXIMITY_RADIUS = 64; // Pixels - react when player is inside bubble
     protected readonly DISENGAGE_RADIUS = 80; // Slightly larger to prevent flickering at edge
+    /** A bot standing still turns to look at someone walking by within 4 tiles. Looking never stops it or starts a chat. */
+    protected readonly LOOK_RADIUS = 128;
+    /** It stops following them with its eyes once they are 5 tiles away. */
+    protected readonly LOOK_AWAY_RADIUS = 160;
     protected closestPlayerId: number | null = null;
+    protected lookingAtPlayerId: number | null = null;
     
     // Track previous bot position (for position updates)
     private previousBotPosition: PositionInterface | null = null;
@@ -346,6 +352,8 @@ export abstract class BaseBehavior {
             this.nearbyPlayers.set(playerId, position);
             this.updateProximityEngagement();
         }
+
+        this.lookAtPassersBy();
         // Log current state for debugging
         if (this.nearbyPlayers.size > 0 || this.isEngaged) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -365,6 +373,49 @@ export abstract class BaseBehavior {
         }
     }
     
+    /**
+     * Turn to look at the closest person within LOOK_RADIUS, and keep looking at them until they are past
+     * LOOK_AWAY_RADIUS. Only while the bot stands still (no path, no step in the last half second) and isn't
+     * already facing someone it is engaged with, since facing someone stops the bot.
+     */
+    protected lookAtPassersBy(): void {
+        if (!this.bot) return;
+        if (this.isEngaged || this.isSummoned || this.isLeading || this.isReturning) {
+            this.lookingAtPlayerId = null;
+            return;
+        }
+        const state = this.bot.getState();
+        // The moving flag stays set after a path ends, so ask when the bot last took a step instead
+        if (this.bot.getIsFollowingPath() || Date.now() - (state.getLastMovedAt?.() ?? 0) < 500) return;
+
+        const botPos = state.getPosition();
+        const distanceTo = (p: PositionInterface) => Math.hypot(p.x - botPos.x, p.y - botPos.y);
+
+        let target: PositionInterface | null = null;
+        if (this.lookingAtPlayerId !== null) {
+            const current = this.bot.getPlayerInfo(this.lookingAtPlayerId);
+            if (current && distanceTo(current.position) <= this.LOOK_AWAY_RADIUS) {
+                target = current.position;
+            } else {
+                this.lookingAtPlayerId = null;
+            }
+        }
+        if (!target) {
+            let closest = Infinity;
+            for (const player of this.bot.getNearbyPlayers(this.LOOK_RADIUS)) {
+                const d = distanceTo(player.position);
+                if (d < closest) {
+                    closest = d;
+                    target = player.position;
+                    this.lookingAtPlayerId = player.userId;
+                }
+            }
+        }
+        if (target) {
+            this.facePosition(target);
+        }
+    }
+
     /**
      * Called when bot position updates - track bot movement to distinguish from player movement
      */
@@ -1358,6 +1409,18 @@ export abstract class BaseBehavior {
         this.config = { ...this.config, ...config };
     }
 
+    /** Read only when tools are used, so Orbit edits apply without idle work or polling. */
+    protected async shouldShowToolCalls(botId: string): Promise<boolean> {
+        if (!this.adminApiService) return this.config.showToolCalls === true;
+        try {
+            const botConfig = await this.adminApiService.getBotConfiguration(botId, 2000);
+            return botConfig?.behaviorConfig?.showToolCalls === true;
+        } catch {
+            // A settings outage must not interrupt the reply or expose tool details.
+            return false;
+        }
+    }
+
     /**
      * Mark a player as currently having an active AI generation stream.
      * Increments the generation counter so stale .finally() calls from old
@@ -1490,6 +1553,8 @@ export abstract class BaseBehavior {
                     images
                 )) {
                     if (chunk.reset) {
+                        const showToolCalls = chunk.toolNames?.length ? await this.shouldShowToolCalls(botId) : false;
+                        if (abortSignal?.aborted) break;
                         // Tool calls overrode the streamed ack — finalize the current
                         // bubble with the accumulated ack instead of wiping it, then
                         // rotate to a fresh responseId for the follow-up content.
@@ -1502,7 +1567,7 @@ export abstract class BaseBehavior {
                         this.trackActiveResponseId(playerId, responseId);
                         // Show tool names as separate bubbles — one per tool call invocation
                         if (chunk.toolNames?.length) {
-                            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                            if (showToolCalls) {
                                 for (let ti = 0; ti < chunk.toolNames.length; ti++) {
                                     const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
                                     const toolResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
