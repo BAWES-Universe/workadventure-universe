@@ -101,4 +101,26 @@ describe("SuperLoaderPlugin", () => {
         load.emit("complete");
         await expect(unreadable).rejects.toMatchObject({ reason: "not-decoded", resourceKey: "eyes" });
     });
+
+    describe("isSceneDestroyed", () => {
+        it("is false while the room runs", async () => {
+            const { plugin } = await createPlugin();
+
+            expect(plugin.isSceneDestroyed()).toBe(false);
+        });
+
+        it("is true for a destroyed scene, whose plugin settings Phaser has emptied, without throwing", async () => {
+            const { SuperLoaderPlugin } = await import("../SuperLoaderPlugin");
+            const destroyed = {
+                load: new FakeLoader(),
+                events: new EventEmitter(),
+                sys: { settings: { status: 9 } },
+                scene: { settings: null },
+            };
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const plugin = new SuperLoaderPlugin(destroyed as any);
+
+            expect(plugin.isSceneDestroyed()).toBe(true);
+        });
+    });
 });

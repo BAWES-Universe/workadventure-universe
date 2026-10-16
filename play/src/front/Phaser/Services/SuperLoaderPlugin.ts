@@ -35,7 +35,9 @@ export class SuperLoaderPlugin {
 
     /** A destroyed scene (a room rebuilt) never finishes the loads it had started: those are not stalls. */
     public isSceneDestroyed(): boolean {
-        return this.scene.scene.settings.status === Phaser.Scenes.DESTROYED;
+        // Phaser empties the scene plugin's `settings` when the scene is destroyed, but keeps `sys.settings`.
+        const settings = this.scene.sys?.settings ?? this.scene.scene?.settings;
+        return !settings || settings.status === Phaser.Scenes.DESTROYED;
     }
 
     /**
