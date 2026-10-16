@@ -12,7 +12,7 @@
         proximityMeetingStore,
     } from "../../Stores/MyMediaStore";
     import type { RightMenuItem } from "../../Stores/MenuStore";
-    import { rightActionBarMenuItems } from "../../Stores/MenuStore";
+    import { closeMenuOfHiddenBarItem, rightActionBarMenuItems } from "../../Stores/MenuStore";
     import { IconChevronUp } from "../Icons";
     import { LL } from "../../../i18n/i18n-svelte";
     import { hideActionBarStoreBecauseOfChatBar } from "../../Chat/ChatSidebarWidthStore";
@@ -59,6 +59,7 @@
 
     function onMenuItemVisibilityChange(isVisible: boolean, button: RightMenuItem<SvelteComponentTyped>) {
         button.fallsInBurgerMenuStore.set(!isVisible);
+        if (!isVisible) closeMenuOfHiddenBarItem(button.id);
 
         // Let's recompute the first visible item index
         for (let i = 0; i < $rightActionBarMenuItems.length; i++) {

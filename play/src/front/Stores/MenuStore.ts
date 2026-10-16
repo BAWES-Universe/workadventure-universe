@@ -495,6 +495,19 @@ function createOpenedMenuStore() {
 
 export const openedMenuStore = createOpenedMenuStore();
 
+/**
+ * The menu a right-hand bar button opens. When the button no longer fits and leaves the bar, its menu leaves with it:
+ * a menu left open behind a hidden button keeps its box and arrow on screen, and keeps the bar in front of Orbit.
+ */
+const menuOfBarItem: Record<string, Menus> = { maps: "mapMenu" };
+
+export function closeMenuOfHiddenBarItem(itemId: string) {
+    const menu = menuOfBarItem[itemId];
+    if (menu !== undefined) {
+        openedMenuStore.close(menu);
+    }
+}
+
 export function showMenuItem(key: MenuKeys | string) {
     const menuItem = subMenusStore.findByKey(key);
     if (get(menuVisiblilityStore)) {

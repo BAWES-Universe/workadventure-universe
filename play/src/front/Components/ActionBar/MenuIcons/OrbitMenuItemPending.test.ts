@@ -12,6 +12,7 @@ vi.mock("../../../Administration/AnalyticsClient", () => ({ analyticsClient: new
 vi.mock("../../../Stores/MenuStore", () => ({
     adminDashboardActivatedStore: writable(false),
     adminDashboardPendingStore: writable(true),
+    openedMenuStore: { closeAll: vi.fn() },
     helpTextDisabledStore: writable(false),
 }));
 vi.mock("../../../external-modules/admin-api/index", () => ({ openAdminModalFromMenu }));

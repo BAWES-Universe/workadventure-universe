@@ -1,5 +1,9 @@
 <script lang="ts">
-    import { adminDashboardActivatedStore, adminDashboardPendingStore } from "../../../Stores/MenuStore";
+    import {
+        adminDashboardActivatedStore,
+        adminDashboardPendingStore,
+        openedMenuStore,
+    } from "../../../Stores/MenuStore";
     import { modalIframeStore, modalVisibilityStore } from "../../../Stores/ModalStore";
     import ActionBarButton from "../ActionBarButton.svelte";
     import { openAdminModalFromMenu } from "../../../external-modules/admin-api/index";
@@ -31,6 +35,8 @@
     function toggleOrbit() {
         if (pending) return;
         if (!orbitOpen) {
+            // A menu opened before Orbit would keep the bar in front of it: the window opened last is the one in front.
+            openedMenuStore.closeAll();
             openAdminModalFromMenu();
             return;
         }
