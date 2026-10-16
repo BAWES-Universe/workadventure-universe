@@ -47,6 +47,7 @@ abstract class BaseBehavior {
 - Bots continuously face the closest player during engagement
 - Uses `facePosition()` which only sends updates when direction actually changes
 - Real-time facing updates as players move
+- A bot standing still also turns to look at the closest person within 128 px (4 tiles) and follows them until 160 px (5 tiles), see `lookAtPassersBy()`. Looking never stops a walking bot, engages, or opens a bubble
 
 ## Behavior Model
 
