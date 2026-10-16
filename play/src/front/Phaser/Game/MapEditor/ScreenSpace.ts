@@ -13,6 +13,8 @@ export interface ScreenRect {
 export interface ScreenSpace {
     /** CSS pixels per world unit. */
     scale: number;
+    /** How far the game canvas reaches above the overlay (behind the top bar on a computer; 0 on a phone). */
+    lift: number;
     toScreen(worldX: number, worldY: number): { x: number; y: number };
     rect(worldX: number, worldY: number, worldWidth: number, worldHeight: number): ScreenRect;
 }
@@ -34,6 +36,7 @@ export function screenSpace(scene: Phaser.Scene): ScreenSpace {
     });
     return {
         scale,
+        lift: Math.max(0, Math.round(-offsetY)),
         toScreen,
         rect: (worldX, worldY, worldWidth, worldHeight) => {
             const { x, y } = toScreen(worldX, worldY);
