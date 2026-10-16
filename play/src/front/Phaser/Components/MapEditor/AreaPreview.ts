@@ -5,6 +5,7 @@ import type {
     AreaDescriptionPropertyData,
     AtLeast,
 } from "@workadventure/map-editor";
+import { isAreaPropertyActive } from "@workadventure/map-editor";
 import _ from "lodash";
 import { GameObjects } from "phaser";
 import { get } from "svelte/store";
@@ -230,6 +231,9 @@ export class AreaPreview extends Phaser.GameObjects.Rectangle {
                 }
                 return;
             });
+            // A merge cannot drop a key: `disabled: false` switches a setting back on by removing the flag, so the
+            // stored setting looks exactly as it did before it was ever switched off.
+            if (changes.disabled === false) delete property.disabled;
         }
         this.emit(AreaPreviewEvent.Updated, this.areaData, oldAreaData, removeAreaEntities);
     }
@@ -604,8 +608,10 @@ export class AreaPreview extends Phaser.GameObjects.Rectangle {
 
     get nameFromProperties(): string {
         if (this.areaData.properties.length === 0) return get(LL).mapEditor.properties.noProperties();
-        // Get the first property that has a label (skip areaDescriptionProperties)
-        const property = this.areaData.properties.find((p) => p.type !== "areaDescriptionProperties");
+        // Get the first property that has a label (skip areaDescriptionProperties and settings that are switched off)
+        const property = this.areaData.properties.find(
+            (p) => p.type !== "areaDescriptionProperties" && isAreaPropertyActive(p)
+        );
         if (!property) return get(LL).mapEditor.properties.noProperties();
 
         const properties = get(LL).mapEditor.properties;
@@ -632,7 +638,9 @@ export class AreaPreview extends Phaser.GameObjects.Rectangle {
 
     get actionButtonLabel(): string {
         if (this.areaData.properties.length === 0) return get(LL).mapEditor.explorer.details.moveToArea({ name: "" });
-        const property = this.areaData.properties.find((p) => p.type !== "areaDescriptionProperties");
+        const property = this.areaData.properties.find(
+            (p) => p.type !== "areaDescriptionProperties" && isAreaPropertyActive(p)
+        );
         if (!property) return get(LL).mapEditor.explorer.details.moveToArea({ name: "" });
 
         const properties = get(LL).mapEditor.properties;

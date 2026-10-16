@@ -1,5 +1,6 @@
 import type { ComponentType } from "svelte";
 import type { AreaDataProperty, EntityDataProperty } from "@workadventure/map-editor";
+import { isAreaPropertyActive } from "@workadventure/map-editor";
 import type { TranslationFunctions } from "../../../i18n/i18n-types";
 import { Entity } from "../../Phaser/ECS/Entity";
 import { AreaPreview } from "../../Phaser/Components/MapEditor/AreaPreview";
@@ -34,10 +35,16 @@ export interface PlaceMainProperty {
     subtype?: string;
 }
 
-/** The property a place is known by: its first one that is not the description. */
-export function getPlaceMainProperty(place: Place): PlaceMainProperty | undefined {
+/** The settings of a place that are switched on: one that is switched off in the editor does not make a place what it is. */
+function activePropertiesOf(place: Place): ReadonlyArray<EntityDataProperty | AreaDataProperty> {
     const properties: ReadonlyArray<EntityDataProperty | AreaDataProperty> =
         place instanceof AreaPreview ? place.getAreaData().properties : place.getProperties();
+    return properties.filter(isAreaPropertyActive);
+}
+
+/** The property a place is known by: its first one that is not the description. */
+export function getPlaceMainProperty(place: Place): PlaceMainProperty | undefined {
+    const properties = activePropertiesOf(place);
     const property = properties.find((p) => p.type !== "areaDescriptionProperties");
     if (!property) return undefined;
     const application = "application" in property ? (property as { application?: string }).application : undefined;
@@ -116,8 +123,7 @@ export function getPlacePropertyLabel(place: Place, ll: TranslationFunctions): s
 
 /** True if the place matches a property filter (a property type, or an application name for websites). */
 export function placeHasProperty(place: Place, filter: string): boolean {
-    const properties: ReadonlyArray<EntityDataProperty | AreaDataProperty> =
-        place instanceof AreaPreview ? place.getAreaData().properties : place.getProperties();
+    const properties = activePropertiesOf(place);
     return properties.some(
         (p) =>
             p.type === filter ||

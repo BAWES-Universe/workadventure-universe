@@ -1,5 +1,5 @@
 import type { AreaData } from "@workadventure/map-editor";
-import { GameMapProperties } from "@workadventure/map-editor";
+import { GameMapProperties, isAreaPropertyActive } from "@workadventure/map-editor";
 import { MathUtils } from "@workadventure/math-utils";
 import type { ITiledMap, ITiledMapLayer, ITiledMapObject } from "@workadventure/tiled-map-type-guard";
 import type { PositionInterface } from "../../Connection/ConnexionModels";
@@ -48,7 +48,10 @@ export class StartPositionCalculator {
 
         if (areas) {
             for (const area of Array.from(areas.values())) {
-                if (area.name === "start" || area.properties.find((property) => property.type === "start")) {
+                if (
+                    area.name === "start" ||
+                    area.properties.find((property) => property.type === "start" && isAreaPropertyActive(property))
+                ) {
                     names.push(area.name);
                 }
             }
@@ -169,7 +172,7 @@ export class StartPositionCalculator {
     private getStartPositionFromArea(startPositionName: string): PositionInterface | undefined {
         const area = this.gameMapFrontWrapper.getAreaByName(startPositionName);
         if (area) {
-            if (!area.properties.find((property) => property.type === "start")) {
+            if (!area.properties.find((property) => property.type === "start" && isAreaPropertyActive(property))) {
                 return undefined;
             }
             return MathUtils.randomPositionFromRect(area, 16);
@@ -184,7 +187,7 @@ export class StartPositionCalculator {
 
         for (const area of areas?.values() ?? []) {
             for (const properties of area.properties) {
-                if (properties.type === "start" && properties.isDefault === true) {
+                if (properties.type === "start" && isAreaPropertyActive(properties) && properties.isDefault === true) {
                     defaultStartAreas.push(area);
                 }
             }

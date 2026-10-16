@@ -1,4 +1,5 @@
 import type { AreaData, AreaDataProperties } from "@workadventure/map-editor";
+import { isAreaPropertyActive } from "@workadventure/map-editor";
 import type {
     ExtensionModule,
     ExtensionModuleOptions,
@@ -35,7 +36,10 @@ const teleportExtensionModule: ExtensionModule = {
             },
             handleAreaPropertyOnEnter(area: AreaData, signal: AbortSignal) {
                 const property = area.properties.find(
-                    (prop) => prop.type === "extensionModule" && (prop as { subtype?: string }).subtype === "teleport"
+                    (prop) =>
+                        prop.type === "extensionModule" &&
+                        (prop as { subtype?: string }).subtype === "teleport" &&
+                        isAreaPropertyActive(prop)
                 );
 
                 if (!property) {

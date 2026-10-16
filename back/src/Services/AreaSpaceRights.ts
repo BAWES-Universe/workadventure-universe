@@ -1,4 +1,5 @@
 import type { AreaData } from "@workadventure/map-editor";
+import { isAreaPropertyActive } from "@workadventure/map-editor";
 import { areaSpaceName } from "@workadventure/shared-utils/src/Space/areaSpaceName";
 
 interface WamLike {
@@ -70,7 +71,7 @@ export function listenOnlyAreaSpaces(
     for (const area of areas) {
         const open = canEnter(area, user.tags);
         for (const property of area.properties) {
-            if (property.type === "speakerMegaphone" && property.name !== undefined) {
+            if (property.type === "speakerMegaphone" && isAreaPropertyActive(property) && property.name !== undefined) {
                 (open ? openToSpeak : closedToSpeak).add(areaSpaceName(property.name, roomUrl));
             }
         }
@@ -83,7 +84,10 @@ function isBot(user: { tags: string[]; uuid: string }): boolean {
 }
 
 function canEnter(area: AreaData, userTags: string[]): boolean {
-    const rights = area.properties.find((property) => property.type === "restrictedRightsPropertyData");
+    // A rule that is switched off in the editor is no restriction (the wam is read raw: `disabled` is plain JSON here).
+    const rights = area.properties
+        .filter(isAreaPropertyActive)
+        .find((property) => property.type === "restrictedRightsPropertyData");
     if (rights === undefined) {
         return true;
     }
@@ -100,6 +104,8 @@ function canEnter(area: AreaData, userTags: string[]): boolean {
 function spaceNamesOf(area: AreaData, byId: Map<string, AreaData>, roomUrl: string): string[] {
     const names: string[] = [];
     for (const property of area.properties) {
+        // A setting that is switched off in the editor does nothing: its space is not joined.
+        if (!isAreaPropertyActive(property)) continue;
         switch (property.type) {
             case "livekitRoomProperty": {
                 const roomName = property.roomName.trim().length === 0 ? property.id : property.roomName;
@@ -115,7 +121,9 @@ function spaceNamesOf(area: AreaData, byId: Map<string, AreaData>, roomUrl: stri
             case "listenerMegaphone": {
                 // The listener names the stage by its area id
                 const stage = byId.get(property.speakerZoneName);
-                const stageName = stage?.properties.find((candidate) => candidate.type === "speakerMegaphone");
+                const stageName = stage?.properties
+                    .filter(isAreaPropertyActive)
+                    .find((candidate) => candidate.type === "speakerMegaphone");
                 if (stageName !== undefined && stageName.type === "speakerMegaphone" && stageName.name !== undefined) {
                     names.push(areaSpaceName(stageName.name, roomUrl));
                 }

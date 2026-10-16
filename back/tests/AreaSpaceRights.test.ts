@@ -124,6 +124,48 @@ describe("refusedAreaSpaces", () => {
     });
 });
 
+describe("settings switched off in the editor", () => {
+    const off = (property: Property): Property => ({ ...property, disabled: true } as Property);
+
+    it("ignores a role limit that is switched off", () => {
+        const refused = refusedAreaSpaces(wam(area("a1", [meeting("Board"), off(onlyStaff)])), ROOM, player);
+        expect(refused).toEqual([]);
+    });
+
+    it("still applies a role limit that has the flag set to false", () => {
+        const limit = { ...onlyStaff, disabled: false } as Property;
+        expect(refusedAreaSpaces(wam(area("a1", [meeting("Board"), limit])), ROOM, player)).toEqual([room("Board")]);
+    });
+
+    it("does not refuse the space of a meeting room that is switched off", () => {
+        const refused = refusedAreaSpaces(wam(area("a1", [off(meeting("Board")), onlyStaff])), ROOM, player);
+        expect(refused).toEqual([]);
+    });
+
+    it("does not refuse a stage that is switched off, nor the audience that names it", () => {
+        const map = wam(
+            area("stage1", [off(stage("Keynote")), onlyStaff]),
+            area("aud1", [audienceOf("stage1"), onlyStaff])
+        );
+        expect(refusedAreaSpaces(map, ROOM, player)).toEqual([]);
+    });
+
+    it("does not tie an audience to a stage that is switched off", () => {
+        const map = wam(area("stage1", [off(stage("Keynote"))]), area("aud1", [audienceOf("stage1"), onlyStaff]));
+        expect(refusedAreaSpaces(map, ROOM, player)).toEqual([]);
+    });
+
+    it("lists no listen-only stage for a stage that is switched off", () => {
+        const map = wam(area("stage1", [off(stage("Keynote")), onlyStaff]));
+        expect(listenOnlyAreaSpaces(map, ROOM, player)).toEqual([]);
+    });
+
+    it("lists no listen-only stage when its role limit is switched off", () => {
+        const map = wam(area("stage1", [stage("Keynote"), off(onlyStaff)]));
+        expect(listenOnlyAreaSpaces(map, ROOM, player)).toEqual([]);
+    });
+});
+
 describe("listenOnlyAreaSpaces", () => {
     it("lists a stage whose speaker area is closed to the player, even when the audience is open", () => {
         const map = wam(area("stage1", [stage("Keynote"), onlyStaff]), area("crowd", [audienceOf("stage1")]));
