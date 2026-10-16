@@ -76,7 +76,7 @@ function setup(zoom: number, scroll = { x: 0, y: 0 }) {
     /** Finger down at a screen point, then a small jitter that makes Phaser report pointerover on the base. */
     function touch(x: number, y: number, jitter = 2) {
         moveTo(x, y);
-        joystick.showAt(x, y);
+        joystick.showAt(x, y, pointer);
         moveTo(x + jitter, y + jitter);
         joystick.base.emit("pointerover", pointer);
     }

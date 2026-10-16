@@ -15,7 +15,7 @@ const radius = 17.5;
 export class MobileJoystick extends VirtualJoystick {
     private resizeCallback: () => void;
 
-    private setimeout: NodeJS.Timeout | null = null;
+    private hideTimeout: NodeJS.Timeout | null = null;
     private destroyed: boolean = false;
 
     constructor(scene: Phaser.Scene) {
@@ -57,7 +57,8 @@ export class MobileJoystick extends VirtualJoystick {
         this.scene.scale.on(Phaser.Scale.Events.RESIZE, this.resizeCallback);
     }
 
-    public showAt(x: number, y: number): void {
+    public showAt(x: number, y: number, pointer: Phaser.Input.Pointer): void {
+        this.clearHideTimeout();
         // Show the joystick under the finger at the given screen position. The base does not scroll, but the camera
         // zoom still applies to it, so the screen point is not the base position when the map is zoomed out (#1060).
         // Rex measures from `base + scroll` to the pointer's world point: put the base where both agree.
@@ -69,20 +70,32 @@ export class MobileJoystick extends VirtualJoystick {
         // The joystick is used by the player
         this.enable = true;
         this.visible = true;
+
+        // Phaser already hit-tested the old base position before the scene's pointerdown handler.
+        // Capture this accepted touch now; waiting for pointerover loses a fast first movement.
+        this.base.emit(Phaser.Input.Events.GAMEOBJECT_POINTER_DOWN, pointer);
     }
 
     public hide(delay: number): void {
         // The joystick is not used by the player
         this.enable = false;
 
-        // After 30 seconds, disable the joystick
-        if (this.setimeout) clearTimeout(this.setimeout);
-        this.setimeout = setTimeout(() => {
+        // Keep the idle joystick visible briefly after release.
+        this.clearHideTimeout();
+        this.hideTimeout = setTimeout(() => {
+            this.hideTimeout = null;
             if (this.destroyed) {
                 return;
             }
             this.visible = false;
         }, delay);
+    }
+
+    private clearHideTimeout(): void {
+        if (this.hideTimeout !== null) {
+            clearTimeout(this.hideTimeout);
+            this.hideTimeout = null;
+        }
     }
 
     public resize() {
@@ -105,6 +118,7 @@ export class MobileJoystick extends VirtualJoystick {
     }
 
     public destroy() {
+        this.clearHideTimeout();
         this.scene?.scale.removeListener(Phaser.Scale.Events.RESIZE, this.resizeCallback);
         super.destroy();
         this.destroyed = true;
