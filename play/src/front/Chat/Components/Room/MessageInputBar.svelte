@@ -176,7 +176,7 @@
 
     function isEmptyMessage(value: string | undefined): boolean {
         // The input only allows <br> tags (new lines), so a message made of line breaks and spaces is empty.
-        return value == undefined || value.replace(/<br\s*\/?>/gi, "").trim().length === 0;
+        return value == undefined || value.replace(/<br\s*\/?>|&nbsp;|[\u200B-\u200D\uFEFF]/gi, "").trim().length === 0;
     }
 
     function stopTypingNow() {
@@ -538,7 +538,8 @@
             ? composerDraftStore.load(draftRoomId, spaceGenerationOf(room))
             : await draftMessageService.loadDraft(draftId);
         if (draft) {
-            message = draft.message ?? "";
+            // A draft saved as a lone <br> counts as empty: the hint shows again.
+            message = isEmptyMessage(draft.message) ? "" : draft.message;
             if (draft.replyingToMessageId) {
                 if (room instanceof MatrixChatRoom) {
                     let loadReplyMessage = await room.getMessageById(draft.replyingToMessageId);
