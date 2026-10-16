@@ -187,7 +187,7 @@ export class AdminApiService {
     /**
      * Get bot configuration from admin API
      */
-    async getBotConfiguration(botId: string): Promise<BotConfiguration | null> {
+    async getBotConfiguration(botId: string, timeoutMs?: number): Promise<BotConfiguration | null> {
         if (!this.isConfigured()) {
             return null;
         }
@@ -196,6 +196,7 @@ export class AdminApiService {
             const response: AxiosResponse<BotConfiguration> = await axios.get(
                 `${this.adminApiUrl}/api/bots/configuration/${botId}`,
                 {
+                    timeout: timeoutMs,
                     headers: {
                         Authorization: `Bearer ${this.adminApiToken}`,
                     },

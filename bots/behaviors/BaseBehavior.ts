@@ -85,6 +85,7 @@ export interface QueuedMessage {
 
 export interface BehaviorConfig {
     type: string;
+    showToolCalls?: boolean;
     assignedSpace?: {
         center: PositionInterface;
         radius: number; // Maximum distance from center
@@ -1408,6 +1409,18 @@ export abstract class BaseBehavior {
         this.config = { ...this.config, ...config };
     }
 
+    /** Read only when tools are used, so Orbit edits apply without idle work or polling. */
+    protected async shouldShowToolCalls(botId: string): Promise<boolean> {
+        if (!this.adminApiService) return this.config.showToolCalls === true;
+        try {
+            const botConfig = await this.adminApiService.getBotConfiguration(botId, 2000);
+            return botConfig?.behaviorConfig?.showToolCalls === true;
+        } catch {
+            // A settings outage must not interrupt the reply or expose tool details.
+            return false;
+        }
+    }
+
     /**
      * Mark a player as currently having an active AI generation stream.
      * Increments the generation counter so stale .finally() calls from old
@@ -1540,6 +1553,8 @@ export abstract class BaseBehavior {
                     images
                 )) {
                     if (chunk.reset) {
+                        const showToolCalls = chunk.toolNames?.length ? await this.shouldShowToolCalls(botId) : false;
+                        if (abortSignal?.aborted) break;
                         // Tool calls overrode the streamed ack — finalize the current
                         // bubble with the accumulated ack instead of wiping it, then
                         // rotate to a fresh responseId for the follow-up content.
@@ -1552,7 +1567,7 @@ export abstract class BaseBehavior {
                         this.trackActiveResponseId(playerId, responseId);
                         // Show tool names as separate bubbles — one per tool call invocation
                         if (chunk.toolNames?.length) {
-                            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                            if (showToolCalls) {
                                 for (let ti = 0; ti < chunk.toolNames.length; ti++) {
                                     const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
                                     const toolResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
