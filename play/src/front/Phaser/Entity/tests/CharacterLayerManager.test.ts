@@ -13,6 +13,8 @@ vi.mock("../../Game/GameManager", () => ({
     },
 }));
 vi.mock("../PlayerTexturesLoadingManager", () => ({ lazyLoadPlayerCharacterTextures: lazyLoad }));
+const reportFailure = vi.hoisted(() => vi.fn());
+vi.mock("../WokaLoadReporter", () => ({ reportWokaLoadFailure: reportFailure }));
 
 import { gameSceneIsLoadedStore } from "../../../Stores/GameSceneStore";
 import { CharacterLayerManager } from "../CharacterLayerManager";
@@ -70,5 +72,35 @@ describe("CharacterLayerManager.wokaBase64 when the pictures can't be loaded", (
             { id: "color_22", url: "resources/customisation/character_color/character_color21.png" },
             { id: "eyes_23", url: "resources/customisation/character_eyes/character_eyes23.png" },
         ]);
+    });
+
+    it("reports to Sentry that nothing could be drawn when the stand-in fails too", async () => {
+        const first = new Error("Failed loading");
+        const second = new Error("stand-in gone");
+        lazyLoad.mockReset();
+        reportFailure.mockReset();
+        lazyLoad.mockImplementationOnce(() => Promise.reject(first));
+        lazyLoad.mockImplementationOnce(() => Promise.reject(second));
+        sceneHolder.scene = { superLoad: {} };
+        gameSceneIsLoadedStore.set(true);
+
+        await expect(CharacterLayerManager.wokaBase64([{ id: "melon", url: "melon.png" }])).rejects.toBe(second);
+        expect(reportFailure).toHaveBeenCalledWith("snapshot", first, {
+            textures: [{ id: "melon", url: "melon.png" }],
+            standInError: second,
+        });
+    });
+
+    it("reports nothing when the Woka's own pictures load, or when no stand-in was asked for", async () => {
+        lazyLoad.mockReset();
+        reportFailure.mockReset();
+        lazyLoad.mockImplementation(() => Promise.reject(new Error("Failed loading")));
+        sceneHolder.scene = { superLoad: {} };
+        gameSceneIsLoadedStore.set(true);
+
+        await expect(
+            CharacterLayerManager.wokaBase64([{ id: "melon", url: "melon.png" }], { standIn: false })
+        ).rejects.toThrow();
+        expect(reportFailure).not.toHaveBeenCalled();
     });
 });

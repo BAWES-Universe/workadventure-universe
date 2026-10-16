@@ -4,6 +4,7 @@ import { TexturesHelper } from "../Helpers/TexturesHelper";
 import { CharacterTextureError } from "../../Exception/CharacterTextureError";
 import { waitForGameScene } from "../Game/WhenGameScene";
 import { lazyLoadPlayerCharacterTextures } from "./PlayerTexturesLoadingManager";
+import { reportWokaLoadFailure } from "./WokaLoadReporter";
 
 /**
  * Class that let you generate a base64 image from a CharacterLayer[]
@@ -27,10 +28,8 @@ export class CharacterLayerManager {
         characterTextures: CharacterTextureMessage[],
         standIn: boolean
     ): Promise<string> {
-        return lazyLoadPlayerCharacterTextures(
-            scene.superLoad,
-            characterTextures.map((texture) => ({ id: texture.id, url: texture.url }))
-        )
+        const textureRefs = characterTextures.map((texture) => ({ id: texture.id, url: texture.url }));
+        return lazyLoadPlayerCharacterTextures(scene.superLoad, textureRefs)
             .then(async (textures) => {
                 // Wait 0 seconds to force the promise to be async and let Phaser frames update
                 await new Promise((resolve) => {
@@ -41,6 +40,7 @@ export class CharacterLayerManager {
                 });
             })
             .catch((error) => {
+                // Without a stand-in the caller has its own plan B (the chat picture): nothing to report here.
                 if (!standIn) throw error;
                 return lazyLoadPlayerCharacterTextures(scene.superLoad, [
                     {
@@ -54,10 +54,12 @@ export class CharacterLayerManager {
                 ])
                     .then((textures) => {
                         return this.getSnapshot(scene, this.getSprites(scene, textures)).then((htmlImageElementSrc) => {
+                            reportWokaLoadFailure("snapshot", error, { textures: textureRefs });
                             return htmlImageElementSrc;
                         });
                     })
                     .catch((e) => {
+                        reportWokaLoadFailure("snapshot", error, { textures: textureRefs, standInError: e });
                         throw e;
                     });
             });
