@@ -90,6 +90,7 @@ import FilePopup from "../../../Components/PopUp/FilePopup.svelte";
 import type { SpaceInterface } from "../../../Space/SpaceInterface";
 import { areaChatRooms, areaPresenceStore } from "../../../Chat/Stores/AreaPresenceStore";
 import { resolveMeetingAreaName } from "../../../Chat/Components/TopRow/TopRowSummary";
+import { leaveAreaSpaceIfJoined } from "./leaveAreaSpace";
 
 export class AreasPropertiesListener {
     private scene: GameScene;
@@ -356,8 +357,8 @@ export class AreasPropertiesListener {
             case "speakerMegaphone": {
                 newProperty = newProperty as typeof oldProperty;
                 this.handleSpeakerMegaphonePropertyOnLeave(oldProperty).catch((e) => {
-                    console.error("Error while leaving space");
-                    Sentry.captureException(new Error("Error while leaving space"));
+                    console.error("Error while leaving space", e);
+                    Sentry.captureException(e);
                 });
                 this.handleSpeakerMegaphonePropertyOnEnter(newProperty, newAbortController.signal).catch((e) => {
                     console.error(e);
@@ -462,8 +463,8 @@ export class AreasPropertiesListener {
             }
             case "speakerMegaphone": {
                 this.handleSpeakerMegaphonePropertyOnLeave(property).catch((e) => {
-                    console.error("Error while leaving space");
-                    Sentry.captureException(new Error("Error while leaving space"));
+                    console.error("Error while leaving space", e);
+                    Sentry.captureException(e);
                 });
                 break;
             }
@@ -1409,17 +1410,12 @@ export class AreasPropertiesListener {
             const uniqRoomName = areaSpaceName(property.name, this.scene.roomUrl);
             currentLiveStreamingSpaceStore.set(undefined);
 
-            const spaceRegistry = this.scene.spaceRegistry;
-            let space: SpaceInterface | undefined;
             if (property.chatEnabled) {
                 const proximityRoom = this.scene.proximityChatRoom;
                 proximityRoom.setDisplayName(get(LL).chat.proximity());
                 await proximityRoom.leaveSpace(uniqRoomName, true);
             } else {
-                space = spaceRegistry.get(uniqRoomName);
-                if (space) {
-                    await spaceRegistry.leaveSpace(space);
-                }
+                await leaveAreaSpaceIfJoined(this.scene.spaceRegistry, uniqRoomName);
             }
         }
     }
@@ -1477,11 +1473,7 @@ export class AreasPropertiesListener {
                     proximityRoom.setDisplayName(get(LL).chat.proximity());
                     await proximityRoom.leaveSpace(uniqRoomName, true);
                 } else {
-                    const spaceRegistry = this.scene.spaceRegistry;
-                    const space = spaceRegistry.get(uniqRoomName);
-                    if (space) {
-                        await spaceRegistry.leaveSpace(space);
-                    }
+                    await leaveAreaSpaceIfJoined(this.scene.spaceRegistry, uniqRoomName);
                 }
                 currentLiveStreamingSpaceStore.set(undefined);
                 isListenerStore.set(false);

@@ -6,6 +6,24 @@ import Texture = Phaser.Textures.Texture;
 const debug = Debug("SuperLoad");
 
 /**
+ * Why a resource did not arrive: the request failed or timed out ("load-error"), or the loader finished without it
+ * and without an error, which is a file that arrived but could not be read ("not-decoded").
+ */
+export type ResourceLoadFailure = "load-error" | "not-decoded";
+
+export class ResourceLoadError extends Error {
+    constructor(
+        message: string,
+        public readonly resourceKey: string,
+        public readonly url: string,
+        public readonly reason: ResourceLoadFailure
+    ) {
+        super(message);
+        this.name = "ResourceLoadError";
+    }
+}
+
+/**
  * A wrapper around Phaser LoaderPlugin. Each method returns a (cancelable) Promise that resolves as soon as
  * the file is loaded.
  *
@@ -14,6 +32,13 @@ const debug = Debug("SuperLoad");
  */
 export class SuperLoaderPlugin {
     constructor(private scene: Scene) {}
+
+    /** A destroyed scene (a room rebuilt) never finishes the loads it had started: those are not stalls. */
+    public isSceneDestroyed(): boolean {
+        // Phaser empties the scene plugin's `settings` when the scene is destroyed, but keeps `sys.settings`.
+        const settings = this.scene.sys?.settings ?? this.scene.scene?.settings;
+        return !settings || settings.status === Phaser.Scenes.DESTROYED;
+    }
 
     /**
      * Add any promise to the loader.
@@ -152,13 +177,13 @@ export class SuperLoaderPlugin {
                     return res(resource);
                 }
                 console.error(`Failed loading "${type}": "${url}"`);
-                rej(new Error(`Failed loading "${type}": "${url}"`));
+                rej(new ResourceLoadError(`Failed loading "${type}": "${url}"`, key, url, "not-decoded"));
             };
 
             const errorCallback = (file: { src: string }) => {
                 if (file.src !== url) return;
                 console.error(`Failed loading "${type}": "${url}"`);
-                rej(new Error(`Failed loading "${type}": "${url}"`));
+                rej(new ResourceLoadError(`Failed loading "${type}": "${url}"`, key, url, "load-error"));
                 unloadCallbacks();
             };
 

@@ -317,6 +317,11 @@ const loginMenuItem: RightMenuItem<LoginMenuItem> = {
 
 // Store to track if Orbit (admin dashboard) should be shown
 export const adminDashboardActivatedStore = writable(false);
+/**
+ * Orbit is on its way back (the room was rebuilt by a reconnect, or the game has just opened): its button keeps its
+ * place, greyed out, so the bar does not show Tools there for a second and then swap it for Orbit.
+ */
+export const adminDashboardPendingStore = writable(false);
 
 const orbitMenuItem: RightMenuItem<OrbitMenuItem> = {
     id: "orbit",
@@ -335,9 +340,25 @@ const exploreMenuItem: RightMenuItem<ExploreMenuItem> = {
 };
 
 export const rightActionBarMenuItems: Readable<RightMenuItem<SvelteComponentTyped>[]> = derived(
-    [additionalRightButtonsMenu, userIsConnected, adminDashboardActivatedStore, roomListActivated, mobileLayoutStore],
-    ([$additionalButtonsMenu, $userIsConnected, $adminDashboardActivated, $roomListActivated, $mobileLayout]) => {
+    [
+        additionalRightButtonsMenu,
+        userIsConnected,
+        adminDashboardActivatedStore,
+        adminDashboardPendingStore,
+        roomListActivated,
+        mobileLayoutStore,
+    ],
+    ([
+        $additionalButtonsMenu,
+        $userIsConnected,
+        $adminDashboardActive,
+        $adminDashboardPending,
+        $roomListActivated,
+        $mobileLayout,
+    ]) => {
         const menuItems: RightMenuItem<SvelteComponentTyped>[] = [];
+        // Orbit's button is there while Orbit is ready and while it is on its way.
+        const $adminDashboardActivated = $adminDashboardActive || $adminDashboardPending;
 
         // Add additional buttons from "top" location first
         const additionalButtons = [...$additionalButtonsMenu.values()];
@@ -473,6 +494,19 @@ function createOpenedMenuStore() {
 }
 
 export const openedMenuStore = createOpenedMenuStore();
+
+/**
+ * The menu a right-hand bar button opens. When the button no longer fits and leaves the bar, its menu leaves with it:
+ * a menu left open behind a hidden button keeps its box and arrow on screen, and keeps the bar in front of Orbit.
+ */
+const menuOfBarItem: Record<string, Menus> = { maps: "mapMenu" };
+
+export function closeMenuOfHiddenBarItem(itemId: string) {
+    const menu = menuOfBarItem[itemId];
+    if (menu !== undefined) {
+        openedMenuStore.close(menu);
+    }
+}
 
 export function showMenuItem(key: MenuKeys | string) {
     const menuItem = subMenusStore.findByKey(key);

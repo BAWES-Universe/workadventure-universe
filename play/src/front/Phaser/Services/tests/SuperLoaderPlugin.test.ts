@@ -83,4 +83,44 @@ describe("SuperLoaderPlugin", () => {
         await expect(promise).rejects.toThrow("Failed loading");
         expect(load.listenerCount("complete")).toBe(0);
     });
+
+    it("says why a picture failed: the request failed, or it arrived but could not be read", async () => {
+        const { ResourceLoadError } = await import("../SuperLoaderPlugin");
+        const { load, plugin } = await createPlugin();
+
+        const failed = plugin.spritesheet("body", "https://example.test/body.png");
+        load.emit("loaderror", { src: "https://example.test/body.png" });
+        await expect(failed).rejects.toMatchObject({
+            reason: "load-error",
+            resourceKey: "body",
+            url: "https://example.test/body.png",
+        });
+        await expect(failed).rejects.toBeInstanceOf(ResourceLoadError);
+
+        const unreadable = plugin.spritesheet("eyes", "https://example.test/eyes.png");
+        load.emit("complete");
+        await expect(unreadable).rejects.toMatchObject({ reason: "not-decoded", resourceKey: "eyes" });
+    });
+
+    describe("isSceneDestroyed", () => {
+        it("is false while the room runs", async () => {
+            const { plugin } = await createPlugin();
+
+            expect(plugin.isSceneDestroyed()).toBe(false);
+        });
+
+        it("is true for a destroyed scene, whose plugin settings Phaser has emptied, without throwing", async () => {
+            const { SuperLoaderPlugin } = await import("../SuperLoaderPlugin");
+            const destroyed = {
+                load: new FakeLoader(),
+                events: new EventEmitter(),
+                sys: { settings: { status: 9 } },
+                scene: { settings: null },
+            };
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const plugin = new SuperLoaderPlugin(destroyed as any);
+
+            expect(plugin.isSceneDestroyed()).toBe(true);
+        });
+    });
 });

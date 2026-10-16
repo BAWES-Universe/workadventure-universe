@@ -20,6 +20,27 @@
         pasteFiles: FileList;
     }>();
 
+    // Deleting the last character can leave a lone <br> (or a zero-width space) behind on iPhones. The field is then
+    // no longer :empty, so its "Enter your message..." hint never comes back. Such a field is emptied again.
+    function isBlank(html: string): boolean {
+        return html.replace(/<br\s*\/?>|&nbsp;|[\s\u200B-\u200D\uFEFF]/gi, "") === "";
+    }
+
+    function emptyIfBlank(event: Event) {
+        const inputType = event instanceof InputEvent ? event.inputType : "";
+        if (inputType.startsWith("delete") && messageInput && messageInput.innerHTML !== "") {
+            if (isBlank(messageInput.innerHTML)) {
+                // The innerHTML binding empties the field itself.
+                message = "";
+            }
+        }
+    }
+
+    const handleInput = (event: Event) => {
+        emptyIfBlank(event);
+        onInput();
+    };
+
     const handleKeyDown = (event: KeyboardEvent) => {
         if (onKeyDown) {
             onKeyDown(event);
@@ -80,7 +101,7 @@
         contenteditable="true"
         bind:this={messageInput}
         on:keydown={handleKeyDown}
-        on:input={onInput}
+        on:input={handleInput}
         on:paste={onPasteHandler}
         on:focusin={focusin}
         on:focusout={focusout}

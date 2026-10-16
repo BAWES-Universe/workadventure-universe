@@ -1,14 +1,16 @@
 <script lang="ts">
-    // Tools: the bot's MCP servers, and its Patience, how long it waits for a tool to answer before giving up.
+    // Tools: the bot's MCP servers, its Patience (how long it waits for a tool to answer before giving up), and
+    // whether people near it see which tool it calls.
     import { onMount } from "svelte";
     import LL from "../../../../../i18n/i18n-svelte";
     import type { BotData } from "../../types";
     import { botApiService, type McpServer } from "../../services/BotApiService";
-    import { DEFAULT_TOOL_TIMEOUT_SECONDS } from "../../behaviorModel";
+    import { DEFAULT_TOOL_TIMEOUT_SECONDS, showsToolCalls, withShowToolCalls } from "../../behaviorModel";
     import BotMcpServersEditor from "../BotMcpServersEditor.svelte";
     import PageGroup from "./PageGroup.svelte";
     import PageField from "./PageField.svelte";
     import PageChips from "./PageChips.svelte";
+    import PageSwitch from "./PageSwitch.svelte";
     import { durationChips, durationLabel } from "./duration";
     import { IconTool } from "@wa-icons";
 
@@ -35,6 +37,7 @@
 
     $: page = $LL.mapEditor.edit.bots.page;
     $: patience = typeof bot.toolTimeoutSeconds === "number" ? bot.toolTimeoutSeconds : DEFAULT_TOOL_TIMEOUT_SECONDS;
+    $: toolCalls = showsToolCalls(bot);
     $: choices = wide ? [15, 30, 90, 180, 600] : [15, 30, 90, 180];
     $: names =
         servers === undefined
@@ -62,4 +65,43 @@
                 })}
         />
     </PageField>
+    <label class="bp-set" for="bot-show-tool-calls-{bot.id}">
+        <span class="bp-tx">
+            <span class="bp-t">{page.tools.showToolCalls()}</span>
+            <span class="bp-m">{toolCalls ? page.tools.showToolCallsOn() : page.tools.showToolCallsOff()}</span>
+        </span>
+        <PageSwitch
+            checked={toolCalls}
+            label={page.tools.showToolCalls()}
+            id="bot-show-tool-calls-{bot.id}"
+            testId="bot-show-tool-calls"
+            onChange={(show) => onChange(withShowToolCalls(bot, show))}
+        />
+    </label>
 </PageGroup>
+
+<style>
+    /* A setting with a switch: the whole row is the tap area, 44 px tall like the bot page's other rows */
+    .bp-set {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-height: 44px;
+        cursor: pointer;
+    }
+    .bp-tx {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        min-width: 0;
+    }
+    .bp-t {
+        font-size: 13px;
+        font-weight: 600;
+    }
+    .bp-m {
+        font-size: 12.5px;
+        line-height: 1.3;
+        color: rgba(244, 242, 250, 0.64);
+    }
+</style>
