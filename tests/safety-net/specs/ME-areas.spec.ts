@@ -435,7 +435,7 @@ test("ME-039 Add to this area: the plain rows, apps row and coral Delete", async
     await expect(panel.locator(".em-scroll > .em-danger-zone:last-child").getByTestId("area-delete")).toBeVisible();
 });
 
-test("ME-040 Turned on: the setting shows with a switch, its row opens its page with Remove, the switch off removes it", async ({
+test("ME-040 In this area: the setting shows with a switch, off keeps it, on brings it back, Remove from area takes it out", async ({
     page,
 }, testInfo) => {
     const url = await areasOpen(page, testInfo);
@@ -445,31 +445,60 @@ test("ME-040 Turned on: the setting shows with a switch, its row opens its page 
     await expect(pg).toBeVisible();
     await expect(settings(page).locator(".em-title").first()).toHaveText("Highlight");
     await expect(settings(page)).toContainText("Glow");
-    await expect(pg.getByTestId("area-property-turn-off")).toHaveText("Turn off “Highlight”");
+    await expect(pg.getByTestId("area-property-remove")).toHaveText("Remove from area");
+    // On, with the same switch as the list.
+    await expect(pg.getByTestId("area-property-switch")).toBeChecked();
     await page.getByTestId("edit-panel-back").click();
     await expect(pg).toBeHidden();
-    await expect(settings(page)).toContainText("Turned on");
+    await expect(settings(page)).toContainText("In this area");
     const row = settings(page).locator(".em-row.on", { hasText: "Highlight" });
     await expect(row.locator(".em-switch")).toBeChecked();
     await row.locator(".em-row-main").click();
     await expect(pg).toBeVisible();
     await page.getByTestId("edit-panel-back").click();
     await expect.poll(async () => (await areaProps(url, id)).some((p) => p.type === "highlight")).toBe(true);
+    // Off keeps the setting, flagged; the row stays in place and says Off.
     await row.locator(".em-switch").click();
-    await expect(row).toHaveCount(0);
+    await expect(row).toContainText("Off");
+    await expect(row.locator(".em-switch")).not.toBeChecked();
     await expect
-        .poll(async () => (await areaProps(url, id)).some((p) => p.type === "highlight"), {
-            message: "switch off removes it",
+        .poll(async () => (await areaProps(url, id)).find((p) => p.type === "highlight")?.disabled, {
+            message: "switch off keeps it, flagged",
         })
-        .toBe(false);
+        .toBe(true);
+    // The page shows Off, the note, and the form stays editable (dimmed).
+    await row.locator(".em-row-main").click();
+    await expect(pg.getByTestId("area-property-switch")).not.toBeChecked();
+    await expect(pg.getByTestId("area-property-off-note")).toHaveText("Off. Your settings are kept.");
+    await page.getByTestId("edit-panel-back").click();
+    // On drops the flag: the setting looks exactly as before.
+    await row.locator(".em-switch").click();
+    await expect(row).not.toContainText("Off");
+    await expect
+        .poll(
+            async () => {
+                const property = (await areaProps(url, id)).find((p) => p.type === "highlight");
+                return property !== undefined && !("disabled" in property);
+            },
+            { message: "switch on removes the flag" }
+        )
+        .toBe(true);
+    // Remove from area takes it out, and the toast brings it back.
     await page.getByTestId("highlight").click();
-    await pg.getByTestId("area-property-turn-off").click();
+    await pg.getByTestId("area-property-remove").click();
     await expect(pg).toBeHidden();
     await expect
         .poll(async () => (await areaProps(url, id)).some((p) => p.type === "highlight"), {
-            message: "Turn off removes it",
+            message: "Remove from area removes it",
         })
         .toBe(false);
+    await expect(page.getByTestId("edit-undo-toast")).toContainText("Highlight removed");
+    await page.getByTestId("edit-undo-toast-undo").click();
+    await expect
+        .poll(async () => (await areaProps(url, id)).some((p) => p.type === "highlight"), {
+            message: "Undo brings it back",
+        })
+        .toBe(true);
 });
 
 test("ME-041 Video call: room name and more options, Highlight added by itself, Stage and Audience still offered", async ({
@@ -495,7 +524,7 @@ test("ME-041 Video call: room name and more options, Highlight added by itself, 
     await expect(settings(page).getByTestId("listenerMegaphone"), "Audience stays offered").toBeVisible();
 });
 
-test("ME-043 Quiet zone: added without a page, listed under Turned on", async ({ page }, testInfo) => {
+test("ME-043 Quiet zone: added without a page, listed under In this area", async ({ page }, testInfo) => {
     const url = await areasOpen(page, testInfo);
     const id = await newArea(page, testInfo, url, "Library");
     await page.getByTestId("addSilentProperty").click();
@@ -815,7 +844,7 @@ test("ME-055 Jitsi call: no longer offered; an area that already has one keeps i
     await expect(row.locator(".em-switch")).toBeChecked();
     await row.locator(".em-row-main").click();
     await expect(propertyPage(page).locator("#roomName")).toHaveValue("standup");
-    await propertyPage(page).getByTestId("area-property-turn-off").click();
+    await propertyPage(page).getByTestId("area-property-remove").click();
     await expect
         .poll(async () => (await areaProps(url, "old-jitsi-area")).some((p) => p.type === "jitsiRoomProperty"))
         .toBe(false);

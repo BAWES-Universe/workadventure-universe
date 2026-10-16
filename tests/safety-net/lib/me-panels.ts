@@ -125,7 +125,7 @@ export async function roomWithPlaces(
         )
         .toBe(true);
     if (opts.quiet) {
-        // "Quiet zone" has no page of its own: it shows under "Turned on" at once.
+        // "Quiet zone" has no page of its own: it shows under "In this area" at once.
         await page.getByTestId("addSilentProperty").click();
         await expect
             .poll(async () => (await readWam(url)).areas[0].properties.some((p) => p.type === "silent"))

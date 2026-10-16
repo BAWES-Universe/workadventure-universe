@@ -17,6 +17,7 @@
         editAreaNamingStore,
         editAreaSettingPageOpenStore,
         editAreaSettingsRequestStore,
+        showUndoToast,
     } from "../../../Stores/EditModeStore";
     import type { AreaPreview } from "../../../Phaser/Components/MapEditor/AreaPreview";
     import { extensionModuleStore } from "../../../Stores/GameSceneStore";
@@ -58,8 +59,9 @@
         createAreaProperty,
         describeAreaProperty,
         flagsOf,
+        summarizeAreaProperty,
     } from "./areaProperties";
-    import { IconLink, IconPencil, IconPlus, IconSearch, IconTrash } from "@wa-icons";
+    import { IconChevronRight, IconLink, IconPencil, IconPlus, IconSearch, IconTrash } from "@wa-icons";
 
     let properties: AreaDataProperties = [];
     let areaName = "";
@@ -232,20 +234,42 @@
         openProperty = properties.find((p) => p.id === property.id);
     }
 
+    // Only the setting's own page removes a setting (the switches turn it off, they never delete it).
     function remove(id: string, removeAreaEntities?: boolean) {
         if (!preview) return;
-        analyticsClient.removeMapEditorProperty("area", properties.find((p) => p.id === id)?.type || "unknown");
-        preview.deleteProperty(id, removeAreaEntities);
+        const removedProperty = properties.find((p) => p.id === id);
+        analyticsClient.removeMapEditorProperty("area", removedProperty?.type || "unknown");
+        const removed = preview.deleteProperty(id, removeAreaEntities);
         refresh();
         if (openProperty?.id === id) openProperty = undefined;
+        // "… removed · Undo": the toast follows the removal, so a removal that did not happen (a personal desk with
+        // objects in it asks first, and may be cancelled) shows none.
+        if (removed && removedProperty) {
+            const name = describeAreaProperty($LL, removedProperty, extensionRows).title;
+            showUndoToast($LL.mapEditor.edit.areas.removedFromArea({ name }));
+        }
+    }
+
+    // The switches: Off keeps the setting with all its choices, the game just acts as if it were not there.
+    function setEnabled(property: AreaDataProperty, enabled: boolean) {
+        if (!preview) return;
+        // A copy, never the live property: updateProperty snapshots the old state for undo before it applies the
+        // change. `disabled: false` is how an update says "drop the flag" (a merge cannot delete a key): the stored
+        // setting then has no `disabled` at all, exactly as before the switch existed.
+        update({ ...property, disabled: !enabled });
+        refresh();
+        if (openProperty?.id === property.id) {
+            const openId = property.id;
+            openProperty = properties.find((p) => p.id === openId);
+        }
     }
 
     // The page has one title and one Remove; the property form's own header (a second title and ✕) is hidden.
     // Remove still goes through that form's own ✕, so anything it asked before removing (a personal area with
     // objects in it asks what to do with them) is still asked.
-    let propertyPage: HTMLElement | undefined;
+    let propertyForm: HTMLElement | undefined;
     function removeOpenProperty(id: string) {
-        const formClose = propertyPage?.querySelector<HTMLButtonElement>(
+        const formClose = propertyForm?.querySelector<HTMLButtonElement>(
             ":scope > .property-settings-container > .header button"
         );
         if (formClose) formClose.click();
@@ -316,147 +340,174 @@
     {#if openProperty}
         {@const property = openProperty}
         {@const described = describeAreaProperty($LL, property, extensionRows)}
+        {@const off = property.disabled === true}
         <PanelHeader
             title={described.title}
             subtitle={areaName || $LL.mapEditor.edit.areas.unnamed()}
             onBack={back}
             backLabel={$LL.mapEditor.edit.areas.back()}
         />
-        <div
-            bind:this={propertyPage}
-            class="em-scroll properties-container em-prop-page"
-            data-testid="area-property-page"
-        >
-            {#if property.type === "focusable"}
-                <FocusablePropertyEditor
-                    {property}
-                    on:close={() => remove(property.id)}
-                    on:change={() => update(property)}
-                />
-            {:else if property.type === "highlight"}
-                <HighlightPropertyEditor
-                    {property}
-                    on:close={() => remove(property.id)}
-                    on:change={() => update(property)}
-                />
-            {:else if property.type === "silent"}
-                <SilentPropertyEditor on:close={() => remove(property.id)} on:change={() => update(property)} />
-            {:else if property.type === "jitsiRoomProperty"}
-                <JitsiRoomPropertyEditor
-                    {property}
-                    isArea={true}
-                    on:close={() => remove(property.id)}
-                    on:change={() => update(property)}
-                />
-            {:else if property.type === "playAudio"}
-                <PlayAudioPropertyEditor
-                    property={{ ...property, hideButtonLabel: true }}
-                    isArea={true}
-                    on:close={() => remove(property.id)}
-                    on:audioLink={onUpdateAudioProperty}
-                />
-            {:else if property.type === "openWebsite"}
-                <OpenWebsitePropertyEditor
-                    {property}
-                    isArea={true}
-                    on:close={() => remove(property.id)}
-                    on:change={() => update(property)}
-                />
-            {:else if property.type === "speakerMegaphone"}
-                <SpeakerMegaphonePropertyEditor
-                    {property}
-                    on:close={() => remove(property.id)}
-                    on:change={() => update(property)}
-                />
-            {:else if property.type === "listenerMegaphone"}
-                <ListenerMegaphonePropertyEditor
-                    {property}
-                    on:close={() => remove(property.id)}
-                    on:change={() => update(property)}
-                />
-            {:else if property.type === "start"}
-                <StartPropertyEditor
-                    {property}
-                    startAreaName={areaName}
-                    updateStartAreaNameCallback={(name) => {
-                        setTimeout(() => {
-                            if (name === areaName) return;
-                            areaName = name;
-                            saveName();
-                        }, 100);
-                    }}
-                    on:close={() => remove(property.id)}
-                    on:change={() => update(property)}
-                />
-            {:else if property.type === "exit"}
-                <ExitPropertyEditor
-                    {property}
-                    on:close={() => remove(property.id)}
-                    on:change={() => update(property)}
-                />
-            {:else if property.type === "restrictedRightsPropertyData"}
-                <RightsPropertyEditor
-                    restrictedRightsPropertyData={property}
-                    on:close={() => remove(property.id)}
-                    on:change={() => update(property)}
-                />
-            {:else if property.type === "personalAreaPropertyData"}
-                <PersonalAreaPropertyEditor
-                    personalAreaPropertyData={property}
-                    on:close={({ detail }) => remove(property.id, detail)}
-                    on:change={({ detail }) => update(property, detail)}
-                />
-            {:else if property.type === "extensionModule"}
-                {#each extensionRows as extensionRow, index (`extension-${index}`)}
-                    {#if extensionRow[property.subtype] != undefined}
-                        <svelte:component
-                            this={extensionRow[property.subtype].AreaPropertyEditor}
-                            extensionModuleAreaMapEditor={extensionRow}
-                            {property}
-                            on:close={() => remove(property.id)}
-                            on:change={() => update(property)}
-                        />
-                    {/if}
-                {/each}
-            {:else if property.type === "matrixRoomPropertyData"}
-                <MatrixRoomPropertyEditor
-                    {property}
-                    on:close={({ detail }) => remove(property.id, detail)}
-                    on:change={() => update(property)}
-                />
-            {:else if property.type === "tooltipPropertyData"}
-                <TooltipPropertyButton
-                    {property}
-                    on:close={() => remove(property.id)}
-                    on:change={() => update(property)}
-                />
-            {:else if property.type === "openFile"}
-                <OpenFilePropertyEditor
-                    {property}
-                    isArea={true}
-                    on:close={() => remove(property.id)}
-                    on:change={() => update(property)}
-                />
-            {:else if property.type === "livekitRoomProperty"}
-                <LivekitRoomPropertyEditor
-                    {property}
-                    hasHighlightProperty={!!flags.highlight}
-                    shouldDisableDisableChatButton={!!flags.matrixRoomPropertyData}
-                    on:close={() => remove(property.id)}
-                    on:change={() => update(property)}
-                    on:highlightAreaOnEnter={() => add("highlight", undefined, false)}
-                />
+        <div class="em-scroll properties-container em-prop-page" data-testid="area-property-page">
+            <!-- On or Off, with the same switch as the list: Off keeps every choice made below. -->
+            <div class="em-master">
+                <span class="em-tile g"><svelte:component this={described.icon} font-size="18" /></span>
+                <span class="em-tx">
+                    <span class="em-master-t"
+                        >{off ? $LL.mapEditor.edit.areas.off() : $LL.mapEditor.edit.areas.on()}</span
+                    >
+                    <span class="em-m"
+                        >{off
+                            ? $LL.mapEditor.edit.areas.offHint()
+                            : summarizeAreaProperty($LL, property, described.text)}</span
+                    >
+                </span>
+                <label class="em-switch-area">
+                    <input
+                        type="checkbox"
+                        class="em-switch"
+                        data-testid="area-property-switch"
+                        checked={!off}
+                        aria-label={described.title}
+                        on:change={(e) => setEnabled(property, e.currentTarget.checked)}
+                    />
+                </label>
+            </div>
+            {#if off}
+                <p class="em-off-note" data-testid="area-property-off-note">{$LL.mapEditor.edit.areas.offNote()}</p>
             {/if}
-            <!-- Last, alone under a line, and saying what it does: it turns this setting off (as its switch in the
-                 list does); the area stays. -->
+            <!-- Off: the form is dimmed, not locked; the choices can still be changed. -->
+            <div class="em-prop-form" class:em-dim={off} bind:this={propertyForm}>
+                {#if property.type === "focusable"}
+                    <FocusablePropertyEditor
+                        {property}
+                        on:close={() => remove(property.id)}
+                        on:change={() => update(property)}
+                    />
+                {:else if property.type === "highlight"}
+                    <HighlightPropertyEditor
+                        {property}
+                        on:close={() => remove(property.id)}
+                        on:change={() => update(property)}
+                    />
+                {:else if property.type === "silent"}
+                    <SilentPropertyEditor on:close={() => remove(property.id)} on:change={() => update(property)} />
+                {:else if property.type === "jitsiRoomProperty"}
+                    <JitsiRoomPropertyEditor
+                        {property}
+                        isArea={true}
+                        on:close={() => remove(property.id)}
+                        on:change={() => update(property)}
+                    />
+                {:else if property.type === "playAudio"}
+                    <PlayAudioPropertyEditor
+                        property={{ ...property, hideButtonLabel: true }}
+                        isArea={true}
+                        on:close={() => remove(property.id)}
+                        on:audioLink={onUpdateAudioProperty}
+                    />
+                {:else if property.type === "openWebsite"}
+                    <OpenWebsitePropertyEditor
+                        {property}
+                        isArea={true}
+                        on:close={() => remove(property.id)}
+                        on:change={() => update(property)}
+                    />
+                {:else if property.type === "speakerMegaphone"}
+                    <SpeakerMegaphonePropertyEditor
+                        {property}
+                        on:close={() => remove(property.id)}
+                        on:change={() => update(property)}
+                    />
+                {:else if property.type === "listenerMegaphone"}
+                    <ListenerMegaphonePropertyEditor
+                        {property}
+                        on:close={() => remove(property.id)}
+                        on:change={() => update(property)}
+                    />
+                {:else if property.type === "start"}
+                    <StartPropertyEditor
+                        {property}
+                        startAreaName={areaName}
+                        updateStartAreaNameCallback={(name) => {
+                            setTimeout(() => {
+                                if (name === areaName) return;
+                                areaName = name;
+                                saveName();
+                            }, 100);
+                        }}
+                        on:close={() => remove(property.id)}
+                        on:change={() => update(property)}
+                    />
+                {:else if property.type === "exit"}
+                    <ExitPropertyEditor
+                        {property}
+                        on:close={() => remove(property.id)}
+                        on:change={() => update(property)}
+                    />
+                {:else if property.type === "restrictedRightsPropertyData"}
+                    <RightsPropertyEditor
+                        restrictedRightsPropertyData={property}
+                        on:close={() => remove(property.id)}
+                        on:change={() => update(property)}
+                    />
+                {:else if property.type === "personalAreaPropertyData"}
+                    <PersonalAreaPropertyEditor
+                        personalAreaPropertyData={property}
+                        on:close={({ detail }) => remove(property.id, detail)}
+                        on:change={({ detail }) => update(property, detail)}
+                    />
+                {:else if property.type === "extensionModule"}
+                    {#each extensionRows as extensionRow, index (`extension-${index}`)}
+                        {#if extensionRow[property.subtype] != undefined}
+                            <svelte:component
+                                this={extensionRow[property.subtype].AreaPropertyEditor}
+                                extensionModuleAreaMapEditor={extensionRow}
+                                {property}
+                                on:close={() => remove(property.id)}
+                                on:change={() => update(property)}
+                            />
+                        {/if}
+                    {/each}
+                {:else if property.type === "matrixRoomPropertyData"}
+                    <MatrixRoomPropertyEditor
+                        {property}
+                        on:close={({ detail }) => remove(property.id, detail)}
+                        on:change={() => update(property)}
+                    />
+                {:else if property.type === "tooltipPropertyData"}
+                    <TooltipPropertyButton
+                        {property}
+                        on:close={() => remove(property.id)}
+                        on:change={() => update(property)}
+                    />
+                {:else if property.type === "openFile"}
+                    <OpenFilePropertyEditor
+                        {property}
+                        isArea={true}
+                        on:close={() => remove(property.id)}
+                        on:change={() => update(property)}
+                    />
+                {:else if property.type === "livekitRoomProperty"}
+                    <LivekitRoomPropertyEditor
+                        {property}
+                        hasHighlightProperty={!!flags.highlight}
+                        shouldDisableDisableChatButton={!!flags.matrixRoomPropertyData}
+                        on:close={() => remove(property.id)}
+                        on:change={() => update(property)}
+                        on:highlightAreaOnEnter={() => add("highlight", undefined, false)}
+                    />
+                {/if}
+            </div>
+            <!-- Last, alone under a line, and saying what it does: it takes this setting out of the area, with its
+                 choices (the switch above only turns it off); the area stays. -->
             <div class="em-danger-zone">
                 <button
                     type="button"
                     class="em-remove"
-                    data-testid="area-property-turn-off"
+                    data-testid="area-property-remove"
                     on:click={() => removeOpenProperty(property.id)}
                 >
-                    <IconTrash font-size="16" />{$LL.mapEditor.edit.areas.turnOff({ name: described.title })}
+                    <IconTrash font-size="16" />{$LL.mapEditor.edit.areas.removeFromArea()}
                 </button>
             </div>
         </div>
@@ -505,24 +556,35 @@
                 <span class="em-hint">{$LL.mapEditor.edit.areas.descriptionHint()}</span>
             </label>
             {#if turnedOn.length > 0}
-                <div class="em-ebi">{$LL.mapEditor.edit.areas.turnedOn()}</div>
+                <div class="em-ebi">{$LL.mapEditor.edit.areas.inThisArea()}</div>
                 {#each turnedOn as property (property.id)}
                     {@const described = describeAreaProperty($LL, property, extensionRows)}
-                    <div class="em-row on">
+                    {@const off = property.disabled === true}
+                    <div class="em-row on" class:em-row-switched-off={off}>
+                        <!-- The row opens the setting's page; the switch beside it turns the setting on or off. -->
                         <button type="button" class="em-row-main" on:click={() => (openProperty = property)}>
-                            <span class="em-tile g"><svelte:component this={described.icon} font-size="18" /></span>
-                            <span class="em-tx">
-                                <span class="em-t">{described.title}</span>
-                                <span class="em-m">{described.text}</span>
+                            <span class="em-tile g em-dimmable"
+                                ><svelte:component this={described.icon} font-size="18" /></span
+                            >
+                            <span class="em-tx em-dimmable">
+                                <span class="em-th">
+                                    <span class="em-t">{described.title}</span>
+                                    {#if off}<span class="em-off-pill">{$LL.mapEditor.edit.areas.off()}</span>{/if}
+                                </span>
+                                <span class="em-m">{summarizeAreaProperty($LL, property, described.text)}</span>
                             </span>
+                            <span class="em-chev"><IconChevronRight font-size="16" /></span>
                         </button>
-                        <input
-                            type="checkbox"
-                            class="em-switch"
-                            checked
-                            aria-label={described.title}
-                            on:change={() => remove(property.id)}
-                        />
+                        <span class="em-row-divider" />
+                        <label class="em-switch-area">
+                            <input
+                                type="checkbox"
+                                class="em-switch"
+                                checked={!off}
+                                aria-label={described.title}
+                                on:change={(e) => setEnabled(property, e.currentTarget.checked)}
+                            />
+                        </label>
                     </div>
                 {/each}
             {/if}
@@ -672,20 +734,108 @@
     button.em-row {
         cursor: pointer;
     }
+    .em-row.on {
+        gap: 0;
+        padding: 0;
+    }
     .em-row-main {
         display: flex;
         align-items: center;
         gap: 11px;
         flex: 1;
         min-width: 0;
+        min-height: 48px;
         margin: 0;
-        padding: 0;
+        padding: 4px 8px;
         border: 0;
+        border-radius: 12px;
         background: transparent;
         font: inherit;
         color: #fff;
         text-align: left;
         cursor: pointer;
+    }
+    @media (hover: hover) {
+        .em-row-main:hover {
+            background: rgba(255, 255, 255, 0.08);
+        }
+    }
+    .em-row-main:focus-visible {
+        outline: 2px solid rgba(196, 181, 253, 0.9);
+        outline-offset: -2px;
+    }
+    .em-chev {
+        display: grid;
+        place-items: center;
+        flex: none;
+        color: rgba(244, 242, 250, 0.64);
+    }
+    .em-row-divider {
+        flex: none;
+        width: 1px;
+        height: 28px;
+        margin: 0 2px;
+        background: rgba(255, 255, 255, 0.14);
+    }
+    /* The tap area of a switch: 52 by 48, the switch itself stays 42 by 26 in the middle. */
+    .em-switch-area {
+        display: grid;
+        place-items: center;
+        flex: none;
+        width: 52px;
+        min-height: 48px;
+        margin: 0;
+        cursor: pointer;
+    }
+    /* A setting that is switched off stays in its place: its icon and words are faded, and it says "Off". */
+    .em-row-switched-off .em-dimmable {
+        opacity: 0.45;
+    }
+    .em-th {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+    }
+    .em-off-pill {
+        flex: none;
+        padding: 1px 7px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.1);
+        font-size: 10.5px;
+        font-weight: 700;
+        line-height: 1.4;
+        color: rgba(244, 242, 250, 0.64);
+    }
+    .em-master {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        min-height: 56px;
+        padding: 10px 6px 10px 14px;
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.05);
+        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.18);
+    }
+    .em-master-t {
+        font-size: 15px;
+        font-weight: 700;
+    }
+    .em-off-note {
+        margin: 0;
+        padding: 8px 12px;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.05);
+        font-size: 12.5px;
+        line-height: 1.35;
+        color: rgba(244, 242, 250, 0.64);
+    }
+    .em-prop-form {
+        display: flex;
+        flex-direction: column;
+    }
+    .em-prop-form.em-dim {
+        opacity: 0.45;
     }
     .em-row.on .em-t {
         font-weight: 700;
@@ -897,7 +1047,7 @@
         opacity: 0.45;
         cursor: not-allowed;
     }
-    .em-prop-page > :global(.property-settings-container > .header) {
+    .em-prop-form > :global(.property-settings-container > .header) {
         display: none;
     }
     .em-prop-page :global(.property-settings-container) {
