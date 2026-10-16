@@ -17,7 +17,7 @@
     } from "./GifLayout";
     import type { GridMove } from "./GifLayout";
     import { outsideClick } from "./GifOutsideClick";
-    import { gifSessionOf, sharedKlipyClient } from "./GifSession";
+    import { gifSessionOf, holdGifPicture, markGifSessionLoaded, sharedKlipyClient } from "./GifSession";
     import { IconArrowLeft, IconSearch, IconTrendingUp, IconWifiOff, IconX } from "@wa-icons";
 
     /** Called with the link of the GIF the player tapped. */
@@ -30,7 +30,8 @@
     export let anchor: HTMLElement | undefined = undefined;
 
     const klipy: KlipyClient | undefined = client ?? (KLIPY_API_KEY ? sharedKlipyClient(KLIPY_API_KEY) : undefined);
-    // What was learnt the last time the picker opened: the tiles and the Trending tile's picture.
+    // What was learnt the last time the picker opened, if that was in the last five minutes: the tiles and the
+    // Trending tile's picture.
     const session = klipy ? gifSessionOf(klipy) : undefined;
 
     // The tiles of the first screen: undefined until Klipy has answered, the first time only.
@@ -269,7 +270,11 @@
             klipy
                 .categories()
                 .then((found) => {
-                    if (found.length > 0) session.categories = found.slice(0, 12);
+                    if (found.length > 0) {
+                        session.categories = found.slice(0, 12);
+                        markGifSessionLoaded(session);
+                        for (const category of session.categories) holdGifPicture(session, category.previewUrl);
+                    }
                     categories = session.categories ?? fallbackCategories();
                 })
                 .catch((error) => {
@@ -283,6 +288,8 @@
                 .then((first) => {
                     trendingPreview = first.items[0]?.previewUrl;
                     session.trendingPreview = trendingPreview;
+                    if (trendingPreview) markGifSessionLoaded(session);
+                    holdGifPicture(session, trendingPreview);
                 })
                 .catch((error) => console.error("Klipy trending failed", error));
         }
@@ -420,13 +427,7 @@
                         on:click={openTrending}
                     >
                         {#if trendingPreview}
-                            <img
-                                src={trendingPreview}
-                                alt=""
-                                loading="lazy"
-                                draggable="false"
-                                referrerpolicy="no-referrer"
-                            />
+                            <img src={trendingPreview} alt="" draggable="false" referrerpolicy="no-referrer" />
                         {/if}
                         <span class="tile-label"><IconTrendingUp font-size={18} />{$LL.chat.gifPicker.trending()}</span>
                     </button>
@@ -439,13 +440,7 @@
                             on:click={() => openCategory(category)}
                         >
                             {#if category.previewUrl}
-                                <img
-                                    src={category.previewUrl}
-                                    alt=""
-                                    loading="lazy"
-                                    draggable="false"
-                                    referrerpolicy="no-referrer"
-                                />
+                                <img src={category.previewUrl} alt="" draggable="false" referrerpolicy="no-referrer" />
                             {/if}
                             <span class="tile-label">{category.name}</span>
                         </button>

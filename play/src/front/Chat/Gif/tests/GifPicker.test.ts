@@ -39,6 +39,7 @@ vi.mock("../../../../i18n/i18n-svelte", async () => {
 
 import { chatInputFocusStore } from "../../../Stores/ChatStore";
 import GifPicker from "../GifPicker.svelte";
+import { GIF_HOME_TTL_MS, gifSessionOf } from "../GifSession";
 import type { GifItem, GifPage, KlipyClient } from "../KlipyClient";
 
 function gif(id: string, width = 220, height = 165): GifItem {
@@ -102,6 +103,12 @@ describe("GifPicker", () => {
         target.remove();
         vi.useRealTimers();
     });
+
+    function closePicker() {
+        picker?.$destroy();
+        picker = undefined;
+        target.innerHTML = "";
+    }
 
     function mount(client: KlipyClient, onPick = vi.fn(), extra: Record<string, unknown> = {}) {
         picker = new GifPicker({ target, props: { client, onPick, onClose, ...extra } });
@@ -339,9 +346,7 @@ describe("GifPicker", () => {
             expect(target.querySelector('[data-testid="gifPickerTilesLoading"]')).toBeNull();
             expect(target.querySelectorAll('[data-testid="gifPickerTile"]')).toHaveLength(2);
 
-            picker?.$destroy();
-            picker = undefined;
-            target.innerHTML = "";
+            closePicker();
             mount(client);
             // No waiting: what the first opening learnt is there at once.
             expect(target.querySelector('[data-testid="gifPickerTilesLoading"]')).toBeNull();
@@ -349,6 +354,68 @@ describe("GifPicker", () => {
             expect(target.querySelector('[data-testid="gifPickerTrending"] img')).not.toBeNull();
             expect(categories).toHaveBeenCalledTimes(1);
             expect(client.trending).toHaveBeenCalledTimes(1);
+        });
+
+        it("loads the tile pictures at once and keeps them for the next opening", async () => {
+            const client = fakeClient({
+                categories: vi.fn().mockResolvedValue([
+                    { name: "lol", query: "lol", previewUrl: "https://static.klipy.com/lol.webp" },
+                    { name: "love", query: "love", previewUrl: "https://static.klipy.com/love.webp" },
+                ]),
+            });
+            mount(client);
+            await settle();
+            // Not lazy: a tile built again must not wait to scroll into view before its picture starts.
+            for (const image of target.querySelectorAll(
+                '[data-testid="gifPickerTile"] img, [data-testid="gifPickerTrending"] img'
+            )) {
+                expect(image.getAttribute("loading")).toBeNull();
+            }
+            const held = gifSessionOf(client).pictures;
+            expect([...(held?.keys() ?? [])].sort()).toEqual([
+                "https://static.klipy.com/lol.webp",
+                "https://static.klipy.com/love.webp",
+                "https://static.klipy.com/t-sm.webp",
+            ]);
+        });
+
+        it("asks Klipy for the tiles again once five minutes have passed", async () => {
+            const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+            const categories = vi.fn().mockResolvedValue([{ name: "lol", query: "lol" }]);
+            const client = fakeClient({ categories });
+            mount(client);
+            await settle();
+            closePicker();
+
+            now.mockReturnValue(1_000_000 + GIF_HOME_TTL_MS - 1000);
+            mount(client);
+            await settle();
+            expect(categories).toHaveBeenCalledTimes(1);
+            closePicker();
+
+            now.mockReturnValue(1_000_000 + GIF_HOME_TTL_MS);
+            mount(client);
+            expect(target.querySelector('[data-testid="gifPickerTilesLoading"]')).not.toBeNull();
+            await settle();
+            expect(categories).toHaveBeenCalledTimes(2);
+            expect(client.trending).toHaveBeenCalledTimes(2);
+            now.mockRestore();
+        });
+
+        it("does not keep search results: each search asks Klipy", async () => {
+            const client = fakeClient();
+            mount(client);
+            await settle();
+            type("cat");
+            await vi.advanceTimersByTimeAsync(350);
+            await settle();
+            closePicker();
+            mount(client);
+            await settle();
+            type("cat");
+            await vi.advanceTimersByTimeAsync(350);
+            await settle();
+            expect(client.search).toHaveBeenCalledTimes(2);
         });
 
         it("falls back to plain tiles when Klipy does not send categories", async () => {
