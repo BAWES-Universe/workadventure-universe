@@ -731,6 +731,9 @@ const mapEditor: BaseTranslation = {
                     waits: "waits {patience:string}",
                     patience: "Patience",
                     patienceHint: "How long it waits for a tool to answer",
+                    showToolCalls: "Show tool calls",
+                    showToolCallsOff: "Tool calls stay hidden",
+                    showToolCallsOn: "Shows tool names in chat",
                 },
                 identity: {
                     title: "Identity",

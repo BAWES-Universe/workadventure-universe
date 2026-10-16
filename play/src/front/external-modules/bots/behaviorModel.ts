@@ -64,6 +64,16 @@ export function legacyTypeFor(model: BotModel): LegacyBehaviorType {
     return "idle";
 }
 
+/** Whether the bot shows a 🔍 bubble when it uses an outside tool. Off for a bot that never had the setting. */
+export function showsToolCalls(bot: Pick<BotData, "behaviorConfig"> | undefined | null): boolean {
+    return bot?.behaviorConfig?.showToolCalls === true;
+}
+
+/** The bot with Show tool calls turned on or off. The rest of its behavior settings stay as they are. */
+export function withShowToolCalls(bot: BotData, showToolCalls: boolean): BotData {
+    return { ...bot, behaviorConfig: { ...bot.behaviorConfig, showToolCalls } };
+}
+
 /** Whether the bot walks a route (shows and edits stops). */
 export function walksRoute(bot: Pick<BotData, "behaviorType" | "behaviorConfig"> | undefined | null): boolean {
     return botModel(bot).moves === "route";
