@@ -12,6 +12,7 @@ const openAdminModalFromMenu = vi.hoisted(() => vi.fn());
 vi.mock("../../../Administration/AnalyticsClient", () => ({ analyticsClient: new Proxy({}, { get: () => () => {} }) }));
 vi.mock("../../../Stores/MenuStore", () => ({
     adminDashboardActivatedStore: writable(true),
+    adminDashboardPendingStore: writable(false),
     openedMenuStore: { closeAll },
     helpTextDisabledStore: writable(false),
 }));

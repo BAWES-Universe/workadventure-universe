@@ -176,7 +176,7 @@
 
     function isEmptyMessage(value: string | undefined): boolean {
         // The input only allows <br> tags (new lines), so a message made of line breaks and spaces is empty.
-        return value == undefined || value.replace(/<br\s*\/?>/gi, "").trim().length === 0;
+        return value == undefined || value.replace(/<br\s*\/?>|&nbsp;|[\u200B-\u200D\uFEFF]/gi, "").trim().length === 0;
     }
 
     function stopTypingNow() {
@@ -208,7 +208,7 @@
             keyDownEvent.preventDefault();
         }
 
-        if (keyDownEvent.key === "Enter" && !isUploading && (message.trim().length !== 0 || files.length !== 0)) {
+        if (keyDownEvent.key === "Enter" && !isUploading && (!isEmptyMessage(message) || files.length !== 0)) {
             // message contains HTML tags. Actually, the only tags we allow are for the new line, ie. <br> tags.
             // We can turn those back into carriage returns.
             const messageToSend = message.replace(/<br>/g, "\n");
@@ -538,7 +538,8 @@
             ? composerDraftStore.load(draftRoomId, spaceGenerationOf(room))
             : await draftMessageService.loadDraft(draftId);
         if (draft) {
-            message = draft.message ?? "";
+            // A draft saved as a lone <br> counts as empty: the hint shows again.
+            message = isEmptyMessage(draft.message) ? "" : draft.message;
             if (draft.replyingToMessageId) {
                 if (room instanceof MatrixChatRoom) {
                     let loadReplyMessage = await room.getMessageById(draft.replyingToMessageId);
