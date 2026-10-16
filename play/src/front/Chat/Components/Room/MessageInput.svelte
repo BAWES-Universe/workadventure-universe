@@ -30,7 +30,7 @@
         const inputType = event instanceof InputEvent ? event.inputType : "";
         if (inputType.startsWith("delete") && messageInput && messageInput.innerHTML !== "") {
             if (isBlank(messageInput.innerHTML)) {
-                messageInput.innerHTML = "";
+                // The innerHTML binding empties the field itself.
                 message = "";
             }
         }
