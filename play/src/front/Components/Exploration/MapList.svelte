@@ -240,6 +240,10 @@
         border-color: rgba(167, 139, 250, 0.6);
         box-shadow: 0 0 0 3px rgba(134, 41, 252, 0.18);
     }
+    /* Tailwind's forms styles ring a focused field in blue with a box-shadow: the pill shows the focus instead. */
+    .explore-search-input:focus {
+        box-shadow: none;
+    }
     /* The field has its own clear button; hide the browser's. */
     .explore-search-input::-webkit-search-cancel-button,
     .explore-search-input::-webkit-search-decoration {
