@@ -1683,13 +1683,15 @@ body .u-close:focus {
     flex-direction: column;
     gap: 8px;
 }
-/* With max-content as the basis, two short labels sit side by side and a long one wraps to its own full row. */
+/* Two short labels share the row in equal halves. A button never gets narrower than its label (up to the full
+   width), so when the two don't fit side by side the second wraps to its own full row. */
 .u-map-popup-actions.is-pair {
     flex-direction: row;
     flex-wrap: wrap;
 }
 .u-map-popup-actions.is-pair > * {
-    flex: 1 1 max-content;
+    flex: 1 1 0;
+    min-width: fit-content;
 }
 .u-map-popup-btn {
     margin: 0;
