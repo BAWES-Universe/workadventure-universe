@@ -1,12 +1,13 @@
 <script lang="ts">
     import { analyticsClient } from "../../Administration/AnalyticsClient";
+    import { connectionManager } from "../../Connection/ConnectionManager";
     import LL from "../../../i18n/i18n-svelte";
     import { popupStore } from "../../Stores/PopupStore";
     import PopUpContainer from "./PopUpContainer.svelte";
 
     function goToLogin() {
         analyticsClient.login();
-        window.location.href = "/login";
+        connectionManager.goToSignIn();
         popupStore.removePopup("popupConnect");
     }
 </script>

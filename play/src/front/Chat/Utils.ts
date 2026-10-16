@@ -64,7 +64,7 @@ export const sendRedirectPricing = () => {
 
 export const sendLogin = () => {
     analyticsClient.login();
-    window.location.href = "/login";
+    connectionManager.goToSignIn();
 };
 
 export const openTab = (url: string) => {

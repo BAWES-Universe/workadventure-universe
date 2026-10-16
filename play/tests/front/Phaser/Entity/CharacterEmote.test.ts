@@ -1,9 +1,19 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { Character as CharacterType } from "../../../../src/front/Phaser/Entity/Character";
+import {
+    DEPTH_EMOTE_INDEX,
+    DEPTH_INGAME_TEXT_INDEX,
+    DEPTH_UI_INDEX,
+} from "../../../../src/front/Phaser/Game/DepthIndexes";
 
 class DOMElement {
     constructor(_scene: unknown, _x: number, _y: number, public node: HTMLElement) {}
+    depth = 0;
     setAlpha() {}
+    setDepth(depth: number) {
+        this.depth = depth;
+        return this;
+    }
 }
 
 let Character: typeof CharacterType;
@@ -60,4 +70,19 @@ describe("Character emote rendering", () => {
             expect(character.createStartTransition).toHaveBeenCalledWith(-45);
         }
     );
+
+    it("draws the emote in front of the player name layer but behind the UI", () => {
+        const add = vi.fn();
+        const character = {
+            scene: {},
+            cancelPreviousEmote: vi.fn(),
+            createStartTransition: vi.fn(),
+            add,
+        };
+        Character.prototype.playEmote.call(character as unknown as InstanceType<typeof Character>, "👍");
+        const { depth } = add.mock.calls[0][0] as DOMElement;
+        expect(depth).toBe(DEPTH_EMOTE_INDEX);
+        expect(depth).toBeGreaterThan(DEPTH_INGAME_TEXT_INDEX);
+        expect(depth).toBeLessThan(DEPTH_UI_INDEX);
+    });
 });

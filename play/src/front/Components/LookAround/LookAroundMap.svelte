@@ -17,6 +17,7 @@
     import { mobileLayoutStore } from "../../Stores/MobileLayoutStore";
     import { LL } from "../../../i18n/i18n-svelte";
     import type { ExplorerTool } from "../../Phaser/Game/MapEditor/Tools/ExplorerTool";
+    import { labelLayerLift, youTabPlacement, type YouTabPlacement } from "./labelLayer";
     import { getPlaceMainProperty, getPlaceName, getPlaceRect, type Place } from "./placeInfo";
     import { IconChevronLeft, IconChevronRight, IconChevronUp, IconChevronDown } from "@wa-icons";
 
@@ -45,18 +46,18 @@
     export let peopleByArea: Map<string, number> = new Map();
 
     let overlay: HTMLElement;
+    // How far the game canvas reaches above the Look around layer's parent (behind the top bar), in pixels.
+    let lift = 0;
     let pin = { x: 0, y: 0 };
     // The pin has no place until the first frame has measured the map: showing it before would flash it in the corner.
     let pinPlaced = false;
-    let youTab: { side: "left" | "right" | "top" | "bottom"; x: number; y: number } | undefined;
+    let youTab: YouTabPlacement | undefined;
     let frames: AreaFrame[] = [];
     let tags: ObjectTag[] = [];
     // How much of the bottom of this layer the sheet covers (0 when it is not up).
     let coveredBottom = 0;
     let frame: number | undefined;
     let lastPeopleCount = 0;
-
-    const EDGE_MARGIN = 24;
 
     function countPeopleIn(rect: { x: number; y: number; width: number; height: number }): number {
         const scene = gameManager.tryGetCurrentGameScene();
@@ -77,8 +78,13 @@
         const camera = scene.cameras.main;
         const view = camera.worldView;
         if (view.width === 0 || view.height === 0) return;
-        const bounds = overlay.getBoundingClientRect();
+        const parent = overlay.parentElement?.getBoundingClientRect() ?? overlay.getBoundingClientRect();
         const canvas = scene.game.canvas.getBoundingClientRect();
+        // This layer reaches up to the top of the game canvas, behind the top bar (#998). What counts as on screen
+        // is still the part below the bar: `lift` is how far the layer sticks out above it. The layer's box is worked
+        // out from the parent here, not measured, so a frame never uses the box of the frame before.
+        lift = labelLayerLift(parent.top, canvas.top);
+        const bounds = { left: parent.left, top: parent.top - lift, width: parent.width, height: parent.height + lift };
         const scale = canvas.width / view.width;
         const toScreen = (wx: number, wy: number) => ({
             x: (wx - view.x) * scale + canvas.left - bounds.left,
@@ -91,34 +97,13 @@
         pinPlaced = true;
         // On a phone the sheet covers the bottom of the map: "off-screen" is measured above it.
         const cover = $lookAroundBottomCoverStore;
+        const belowBar = bounds.height - lift;
         const visibleHeight =
-            cover > 0 ? Math.min(bounds.height, window.innerHeight - cover - bounds.top) : bounds.height;
-        coveredBottom = bounds.height - visibleHeight;
+            cover > 0 ? Math.min(belowBar, window.innerHeight - cover - (bounds.top + lift)) : belowBar;
+        coveredBottom = belowBar - visibleHeight;
 
         // The "You" tab: on the edge nearest to you, once you are off-screen.
-        if (
-            centre.x < -EDGE_MARGIN ||
-            centre.x > bounds.width + EDGE_MARGIN ||
-            centre.y < -EDGE_MARGIN ||
-            centre.y > visibleHeight + EDGE_MARGIN
-        ) {
-            const clampedX = Math.min(Math.max(centre.x, 80), bounds.width - 80);
-            const clampedY = Math.min(Math.max(centre.y, 120), visibleHeight - 160);
-            // Off-screen in two directions at once (far above, a little to the left): the tab goes on the edge you
-            // are furthest beyond, which is the direction the tab's arrow should point.
-            const beyond = {
-                left: -centre.x,
-                right: centre.x - bounds.width,
-                top: -centre.y,
-                bottom: centre.y - visibleHeight,
-            };
-            const side = (Object.keys(beyond) as (keyof typeof beyond)[]).reduce((best, each) =>
-                beyond[each] > beyond[best] ? each : best
-            );
-            youTab = side === "left" || side === "right" ? { side, x: 0, y: clampedY } : { side, x: clampedX, y: 0 };
-        } else {
-            youTab = undefined;
-        }
+        youTab = youTabPlacement(centre, bounds.width, visibleHeight, lift);
 
         // Frames and tags on the named places, counted a few times a second, positioned every frame.
         const areas = $mapExplorationAreasStore;
@@ -186,7 +171,12 @@
     });
 </script>
 
-<div class="absolute inset-0 overflow-hidden pointer-events-none" class:phone={$mobileLayoutStore} bind:this={overlay}>
+<div
+    class="absolute inset-x-0 bottom-0 overflow-hidden pointer-events-none"
+    class:phone={$mobileLayoutStore}
+    bind:this={overlay}
+    style="top:{-lift}px; --la-lift:{lift}px"
+>
     {#each frames as f (f.id)}
         <div
             class="la-frame"
@@ -323,12 +313,12 @@
     }
     /* The top tab hangs from the top edge; on a phone the bottom one sits above the bar (above the sheet while it is up). */
     .you-tab-top {
-        top: calc(var(--tiles-clear, 0px) + 12px);
+        top: calc(var(--la-lift, 0px) + var(--tiles-clear, 0px) + 12px);
         border-radius: 0 0 26px 26px;
         transform: translateX(-50%);
     }
     .phone .you-tab-top {
-        top: calc(max(var(--tiles-clear, 0px), env(safe-area-inset-top, 0px)) + 12px);
+        top: calc(var(--la-lift, 0px) + max(var(--tiles-clear, 0px), env(safe-area-inset-top, 0px)) + 12px);
     }
     .you-tab-bottom {
         bottom: 0;

@@ -12,6 +12,7 @@
     import ButtonClose from "../Input/ButtonClose.svelte";
     import { userIsConnected } from "../../Stores/MenuStore";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
+    import { connectionManager } from "../../Connection/ConnectionManager";
     import { externalSvelteComponentService } from "../../Stores/Utils/externalSvelteComponentService";
     import ExternalComponents from "../ExternalModules/ExternalComponents.svelte";
 
@@ -50,7 +51,7 @@
 
     function goToLoginPage() {
         analyticsClient.login();
-        window.location.href = "/login";
+        connectionManager.goToSignIn();
     }
 </script>
 
