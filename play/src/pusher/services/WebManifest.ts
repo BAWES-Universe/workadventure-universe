@@ -24,6 +24,19 @@ export function roomPathOfPage(pageUrl: string): string | undefined {
 }
 
 /**
+ * Whether the page is the installed app's own start page ("/?installRoom=<path>", see the manifest below).
+ * Orbit answers a bare "/" with a redirect to the start room, which would send the app there before the game can
+ * open the last room this device was in; the start page of an installed app is served as it is instead.
+ */
+export function isInstalledAppStart(pageUrl: string): boolean {
+    try {
+        return new URL(pageUrl).pathname === "/" && roomPathOfPage(pageUrl) !== undefined;
+    } catch {
+        return false;
+    }
+}
+
+/**
  * The web app manifest of Universe.
  *
  * One app for every room: the id is fixed and the name is "Universe", never the room's title. Opening it starts at

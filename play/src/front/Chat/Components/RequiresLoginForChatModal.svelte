@@ -3,12 +3,13 @@
     import Popup from "../../Components/Modal/Popup.svelte";
     import LL from "../../../i18n/i18n-svelte";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
+    import { connectionManager } from "../../Connection/ConnectionManager";
 
     export let isOpen: boolean;
 
     const goToLoginPage = () => {
         analyticsClient.login();
-        window.location.href = "/login";
+        connectionManager.goToSignIn();
     };
 </script>
 

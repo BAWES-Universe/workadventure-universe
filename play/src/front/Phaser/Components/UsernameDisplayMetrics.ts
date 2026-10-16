@@ -9,7 +9,8 @@ import {
  * How much the pill is magnified compared to its base size, in game pixels.
  *
  * Zoomed out, one game pixel is smaller than one screen pixel and the name would shrink until it is unreadable: it
- * stops shrinking at CORRECTION_RATE (upstream's rule). Zoomed in, it would grow with the map: it stops at
+ * stops shrinking at CORRECTION_RATE of the size it has at the default zoom (upstream's rule, but counted from the
+ * size actually shown, which is at most MAX_FONT_SIZE_ON_SCREEN). Zoomed in, it would grow with the map: it stops at
  * MAX_FONT_SIZE_ON_SCREEN.
  *
  * @param zoomModifier the player's zoom
@@ -17,10 +18,14 @@ import {
  */
 export function getDisplayScale(zoomModifier: number, ancestorScale: number): number {
     const upstreamScale = Math.max(zoomModifier > 0 ? CORRECTION_RATE / zoomModifier : 1, 1);
-    if (!(ancestorScale > 0)) {
+    if (!(ancestorScale > 0) || !(zoomModifier > 0)) {
         return upstreamScale;
     }
-    return Math.min(upstreamScale, MAX_FONT_SIZE_ON_SCREEN / (PLAYER_NAME_FONT_SIZE * ancestorScale));
+    // Size on screen if the name simply followed the map, and the size it has at the default zoom once capped.
+    const followsMap = PLAYER_NAME_FONT_SIZE * ancestorScale;
+    const atDefaultZoom = Math.min(followsMap / zoomModifier, MAX_FONT_SIZE_ON_SCREEN);
+    const onScreen = Math.min(Math.max(followsMap, CORRECTION_RATE * atDefaultZoom), MAX_FONT_SIZE_ON_SCREEN);
+    return onScreen / followsMap;
 }
 
 /** The name as written in the pill: long names are cut, unless the pill is highlighted. */

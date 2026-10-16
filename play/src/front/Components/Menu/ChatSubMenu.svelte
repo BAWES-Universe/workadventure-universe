@@ -4,6 +4,7 @@
     import { localUserStore } from "../../Connection/LocalUserStore";
     import { LL } from "../../../i18n/i18n-svelte";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
+    import { connectionManager } from "../../Connection/ConnectionManager";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import SettingSwitch from "./Settings/SettingSwitch.svelte";
     import resetKeyStorageConfirmationModal from "./ResetKeyStorageConfirmationModal.svelte";
@@ -45,7 +46,14 @@
             <div class="u-set-row" style="cursor: default">
                 <span class="u-set-text"><span class="u-set-hint">{$LL.chat.requiresLoginForChat()}</span></span>
             </div>
-            <a class="u-set-row u-set-link" href="/login" on:click={() => analyticsClient.login()}>
+            <a
+                class="u-set-row u-set-link"
+                href="/login"
+                on:click|preventDefault={() => {
+                    analyticsClient.login();
+                    connectionManager.goToSignIn();
+                }}
+            >
                 <span class="u-set-text"><span class="u-set-label">{$LL.menu.profile.login()}</span></span>
             </a>
         {/if}

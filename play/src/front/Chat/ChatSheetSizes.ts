@@ -50,6 +50,21 @@ export function chatSheetFitHeight(
     return Math.min(Math.max(current, current + missing), Math.max(current, full));
 }
 
+/** The sliver of the dimmed list the sheet keeps above the Invite panel, so it still reads as laid over the list. */
+export const CHAT_SHEET_INVITE_PEEK = 56;
+
+/**
+ * The Invite panel takes the footer's place at the bottom of the list and must show whole: the sheet borrows the
+ * height it needs, never past "full", and never lowers it. `current` is the height it would have without the panel;
+ * `neededHeight` is the whole sheet's height that shows the panel (the panel plus everything else in the sheet, as
+ * measured by the footer), 0 while the panel is closed, so the sheet is back where it was.
+ */
+export function chatSheetInviteHeight(current: number, neededHeight: number, viewportHeight: number): number {
+    if (neededHeight <= 0) return current;
+    const { full } = getSnapHeights(viewportHeight, CHAT_SHEET_SIZES);
+    return Math.min(Math.max(current, neededHeight), Math.max(current, full));
+}
+
 /**
  * Reads where the sheet was left on this device (kept in the browser), or undefined when nothing usable is kept.
  * "peek" is never kept: only the video layout lowers the sheet that far, and the chat should open readable.

@@ -7,9 +7,9 @@
 
     /**
      * The invite card: the link to this room, one-tap copy or share, and two options (arrive next to me, pick an
-     * entry point). Same link rules as the menu's invite page. One card for every button that opens it: chat's
-     * "Invite someone to join" (InviteFooter.svelte) and the one in the installed app's title bar (TitleBar.svelte).
-     * It is built each time it opens, so the link is where you stand now; the one showing it closes it on "close".
+     * entry point). Same link rules as the menu's invite page. The installed app's title bar opens it (TitleBar.svelte);
+     * chat's "Invite someone to join" has its own panel (InviteFooter.svelte). The link is built again when Copy or
+     * Share is tapped, so with "next to me" on it is where you stand then; the one showing it closes it on "close".
      */
     /** Distinguishes the title's id when two cards could ever be on one page. */
     export let titleId = "chatInviteTitle";
@@ -57,6 +57,7 @@
     });
 
     function copy() {
+        link = buildLink();
         analyticsClient.inviteCopyLink();
         if (arriveNextToMe) analyticsClient.inviteCopyLinkWalk(link);
         navigator.clipboard
@@ -73,6 +74,7 @@
     }
 
     function share() {
+        link = buildLink();
         analyticsClient.inviteCopyLink();
         navigator.share({ url: link }).catch((error: unknown) => {
             // Closing the share sheet is not a failure: only copy when sharing really could not happen.

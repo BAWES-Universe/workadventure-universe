@@ -252,7 +252,7 @@
     }
 </script>
 
-<div class="flex flex-col h-full">
+<div class="relative flex flex-col h-full">
     {#if $friendsEnabledStore}
         <PeopleChips
             friendsCount={friendsList?.friends.length ?? 0}

@@ -239,7 +239,7 @@ test("CH-051 Search people highlights matches, says No matching people., and cle
     if (hasElsewhere) await expect(elsewhere).toHaveAttribute("aria-expanded", "false");
 });
 
-test("CH-053 CH-055 The invite card opens above the button and closes by outside click, Escape and X", async ({
+test("CH-053 CH-055 The invite panel takes the footer's place over the dimmed list and closes by outside click, Escape and X", async ({
     player,
 }) => {
     await openChat(player);
@@ -254,19 +254,22 @@ test("CH-053 CH-055 The invite card opens above the button and closes by outside
     );
     const link = player.getByTestId("chatInviteLink");
     const pageUrl = new URL(player.url());
-    await expect(link).toHaveValue(`${pageUrl.origin}${pageUrl.pathname}`);
-    expect(
-        await link.evaluate((el: HTMLInputElement) => el.selectionStart === 0 && el.selectionEnd === el.value.length)
-    ).toBe(true);
+    await expect(link).toHaveAttribute("data-link", `${pageUrl.origin}${pageUrl.pathname}`);
+    // Plain text, not selected: an iPhone would show selection handles over it.
+    await expect(link).toHaveText(`${pageUrl.host}${pageUrl.pathname}`);
+    expect(await player.evaluate(() => window.getSelection()?.toString() ?? "")).toBe("");
     await expect(player.getByTestId("chatInviteCopy")).toHaveText(/Copy/);
     await expect(player.getByTestId("chatInviteNextToMe")).toBeAttached();
     await expect(card).toContainText("Arrive next to me");
     const canShare = await player.evaluate(() => typeof navigator.share === "function");
     await expect(player.getByTestId("chatInviteShare")).toHaveCount(canShare ? 1 : 0);
+    // The button, search and + step aside (they keep their place), and the panel sits at the bottom of the chat.
+    await expect(button).toBeHidden();
     const cardBox = (await card.boundingBox())!;
-    const btnBox = (await button.boundingBox())!;
-    expect(cardBox.y + cardBox.height).toBeLessThanOrEqual(btnBox.y);
-    expect(await card.evaluate((el) => getComputedStyle(el).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)");
+    const chatBox = (await player.getByTestId("chat").boundingBox())!;
+    expect(cardBox.y).toBeGreaterThanOrEqual(chatBox.y);
+    expect(cardBox.y + cardBox.height).toBeLessThanOrEqual(chatBox.y + chatBox.height + 1);
+    expect(await card.evaluate((el) => getComputedStyle(el).backgroundImage)).not.toBe("none");
     expect(await isOnTop(card)).toBe(true);
 
     await player.getByTestId("chatTabChats").click();
@@ -278,6 +281,12 @@ test("CH-053 CH-055 The invite card opens above the button and closes by outside
     await button.click();
     await expect(card).toBeVisible();
     await card.getByRole("button", { name: "Close" }).click();
+    await expect(card).toBeHidden();
+    await expect(button).toBeVisible();
+    // A tap on the dimmed list closes it too.
+    await button.click();
+    await expect(card).toBeVisible();
+    await player.getByTestId("chatInviteDim").click({ position: { x: 8, y: 8 } });
     await expect(card).toBeHidden();
 
     await player.getByTestId("chatTabPeople").click();
@@ -293,13 +302,13 @@ test("CH-054 Copy says Copied and fills the clipboard; Arrive next to me adds #m
     const copy = player.getByTestId("chatInviteCopy");
     await copy.click();
     await expect(copy).toHaveText(/Copied/);
-    expect(await clipboardText(player)).toBe(await link.inputValue());
+    expect(await clipboardText(player)).toBe((await link.getAttribute("data-link"))!);
     await expect(copy).toHaveText(/Copy/, { timeout: 5_000 });
     await expect(copy).not.toHaveText(/Copied/);
 
     await player.getByTestId("chatInviteNextToMe").check({ force: true });
-    await expect(link).toHaveValue(/#moveTo=\d+,\d+$/);
-    const [, x, y] = (await link.inputValue()).match(/#moveTo=(\d+),(\d+)$/)!;
+    await expect(link).toHaveAttribute("data-link", /#moveTo=\d+,\d+$/);
+    const [, x, y] = (await link.getAttribute("data-link"))!.match(/#moveTo=(\d+),(\d+)$/)!;
     const p = await position(player);
     expect(Math.abs(Number(x) - p.x)).toBeLessThanOrEqual(2);
     expect(Math.abs(Number(y) - p.y)).toBeLessThanOrEqual(2);
@@ -314,7 +323,7 @@ test("CH-054 The entry point picker adds #<name> on a map with several entry poi
     const select = page.getByTestId("chatInviteEntryPoint");
     await expect(select).toBeVisible();
     await select.selectOption("from_exit2");
-    await expect(page.getByTestId("chatInviteLink")).toHaveValue(/#from_exit2$/);
+    await expect(page.getByTestId("chatInviteLink")).toHaveAttribute("data-link", /#from_exit2$/);
 });
 
 test("CH-063 Tapping Bob on the map opens his card with Walk to and Block or report…, nothing for signed-in only @local", async ({

@@ -268,8 +268,8 @@ export class LiveKitRoom implements LiveKitRoomInterface {
         }
 
         // Are we trying to publish the same track again?
-        // Note: in practice, we never reach this point with the same track, because we get a new track
-        // each time we stop and restart the microphone.
+        // This happens when unmuting during a conversation: the muted microphone track is kept (see keepAudioWarm
+        // in MediaStore).
         if (this.localMicrophoneTrack && this.localMicrophoneTrack.mediaStreamTrack.id === audioTrack.id) {
             if (this.localMicrophoneTrack.isUpstreamPaused) {
                 this.localMicrophoneTrack.resumeUpstream().catch((err) => {

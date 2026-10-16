@@ -122,14 +122,15 @@ describe("UsernameDisplay", () => {
         }
     });
 
-    it("cuts long names and shows them whole when highlighted", () => {
-        const long = new UsernameDisplay(layer, 0, 0, "Juanma Gaviria Restrepo");
+    it("cuts names over 32 letters and shows them whole when highlighted", () => {
+        const name = "Juanma Gaviria Restrepo Hernandez Lopez";
+        const long = new UsernameDisplay(layer, 0, 0, name);
         const longPill = layer.container.querySelectorAll<HTMLElement>(".username-display")[1];
-        expect(longPill.textContent).toBe("Juanma Gaviria…");
+        expect(longPill.textContent).toBe("Juanma Gaviria Restrepo Hernand…");
         long.setHighlighted(true);
-        expect(longPill.textContent).toBe("Juanma Gaviria Restrepo");
+        expect(longPill.textContent).toBe(name);
         long.setHighlighted(false);
-        expect(longPill.textContent).toBe("Juanma Gaviria…");
+        expect(longPill.textContent).toBe("Juanma Gaviria Restrepo Hernand…");
         long.destroy();
     });
 
