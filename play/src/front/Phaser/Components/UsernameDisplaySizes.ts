@@ -45,5 +45,5 @@ export const CORRECTION_RATE = 0.65;
 /** The name never grows beyond this font size on screen (CSS pixels), however far the map is zoomed in. */
 export const MAX_FONT_SIZE_ON_SCREEN = 13;
 
-/** Names longer than this show their first MAX_NAME_LENGTH - 1 letters and "…", until hovered. */
-export const MAX_NAME_LENGTH = 16;
+/** Safety cut: names longer than this show their first MAX_NAME_LENGTH - 1 letters and "…", until hovered. */
+export const MAX_NAME_LENGTH = 32;

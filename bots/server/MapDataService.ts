@@ -10,6 +10,7 @@ export interface MapArea {
     y: number;
     width: number;
     height: number;
+    description?: string;
     properties?: Record<string, any>;
 }
 
@@ -365,12 +366,20 @@ export class MapDataService {
             }
             
             const properties = this.parseWamProperties(area.properties || []);
+            const descriptionProperty = (area.properties || []).find(
+                (prop: any) => prop.type === 'areaDescriptionProperties'
+            );
+            // Bound map-authored text before it enters the cache or an AI prompt.
+            const description = typeof descriptionProperty?.description === 'string'
+                ? descriptionProperty.description.trim().slice(0, 500)
+                : '';
             areas.push({
                 name: area.name.trim(),
                 x: area.x || 0,
                 y: area.y || 0,
                 width: area.width || 0,
                 height: area.height || 0,
+                ...(description ? { description } : {}),
                 properties,
             });
         }

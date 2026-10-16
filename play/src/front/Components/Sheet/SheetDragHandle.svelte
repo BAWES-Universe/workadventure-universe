@@ -77,3 +77,12 @@
 >
     <slot />
 </button>
+
+<style>
+    /* The handle is a full-width strip: without this, iOS paints its own dark press highlight across the whole
+       strip under the finger, and leaves it behind when the sheet moves away. The grabber is the only feedback. */
+    button {
+        -webkit-tap-highlight-color: transparent;
+        -webkit-touch-callout: none;
+    }
+</style>

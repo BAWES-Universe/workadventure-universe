@@ -52,6 +52,7 @@
     import { oneLineStreamableCollectionStore } from "../../Stores/OneLineStreamableCollectionStore";
     import { chatSheetHeightStore, chatSheetLayoutStore, chatSheetSnapStore } from "../../Chat/ChatSheetStore";
     import { windowSize } from "../../Stores/CoWebsiteStore";
+    import { titleBarHeightStore } from "../../TitleBar/WindowControlsOverlay";
     import { mobileLayoutStore } from "../../Stores/MobileLayoutStore";
     import { LL } from "../../../i18n/i18n-svelte";
     import RaisedHandsPill from "../Video/RaisedHandsPill.svelte";
@@ -96,9 +97,16 @@
         (streamables) => streamables.some((streamable) => streamable?.videoType.endsWith("screenSharing") ?? false)
     );
     let cameraBlock: HTMLDivElement | undefined;
-    // Room above the sheet: from the top of the videos to the top of the sheet, less a gap.
+    // Room above the sheet: from the top of the videos to the top of the sheet, less a gap. The rectangle is measured
+    // from the window's top, while the page (and so the window size) starts under the desktop title bar strip, if any.
     $: spaceAboveSheet = sheetOpen
-        ? Math.max(0, $windowSize.height - $chatSheetHeightStore - (cameraBlock?.getBoundingClientRect().top ?? 0) - 8)
+        ? Math.max(
+              0,
+              $windowSize.height -
+                  $chatSheetHeightStore -
+                  ((cameraBlock?.getBoundingClientRect().top ?? 0) - $titleBarHeightStore) -
+                  8
+          )
         : 0;
     // Nobody is shown big while the sheet is open (VideoBox.svelte): the videos get all the room above it.
     $: phoneHeight = sheetOpen ? spaceAboveSheet : containerHeight;

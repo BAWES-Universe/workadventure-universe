@@ -560,7 +560,7 @@ class IframeListener {
                         this._openInviteMenuStream.next();
                     } else if (iframeEvent.type == "login") {
                         analyticsClient.login();
-                        window.location.href = "/login";
+                        connectionManager.goToSignIn();
                     } else if (iframeEvent.type == "redirectPricing") {
                         if (connectionManager.currentRoom && connectionManager.currentRoom.pricingUrl) {
                             window.location.href = connectionManager.currentRoom.pricingUrl;

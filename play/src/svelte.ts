@@ -3,6 +3,7 @@ import "./front/style/index.scss";
 
 import * as Sentry from "@sentry/svelte";
 import App from "./front/Components/App.svelte";
+import TitleBar from "./front/Components/TitleBar/TitleBar.svelte";
 import { HtmlUtils } from "./front/WebRtc/HtmlUtils";
 import { e2eHooks } from "./front/Utils/E2EHooks";
 import { installViewportGuard, isTouchScreen } from "./front/Utils/ViewportGuard";
@@ -12,6 +13,7 @@ import { analyticsClient } from "./front/Administration/AnalyticsClient";
 import { startStoreFreezeWatchdog } from "./front/Utils/StoreFreezeWatchdog";
 import { browserWatchdogStorage } from "./front/Connection/ReconnectWatchdog";
 import { startInstallApp } from "./front/Install/InstallWiring";
+import { startTitleBar } from "./front/TitleBar/WindowControlsOverlay";
 
 // Initialize E2E hooks
 declare global {
@@ -60,6 +62,15 @@ startStoreFreezeWatchdog({
 
 // The browser sends its install event once, early: listen before anything else loads.
 startInstallApp();
+
+// The installed computer app draws its own title bar when the browser hands it the strip (#1019). It is started before
+// the game so the page is laid out below the strip from the first frame; the strip lives beside <body>, not in it.
+if ("windowControlsOverlay" in navigator) {
+    startTitleBar();
+    const titleBarHost = document.createElement("div");
+    document.documentElement.appendChild(titleBarHost);
+    new TitleBar({ target: titleBarHost });
+}
 
 const app = new App({
     target: HtmlUtils.getElementByIdOrFail("app"),
