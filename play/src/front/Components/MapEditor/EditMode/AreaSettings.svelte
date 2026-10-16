@@ -746,7 +746,8 @@
         min-width: 0;
         min-height: 48px;
         margin: 0;
-        padding: 4px 8px;
+        /* No left padding: the icon lines up with the rows below (Listed in Places, Add to this area). */
+        padding: 4px 6px 4px 0;
         border: 0;
         border-radius: 12px;
         background: transparent;
