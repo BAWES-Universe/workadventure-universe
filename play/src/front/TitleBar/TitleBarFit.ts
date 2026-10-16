@@ -3,7 +3,7 @@
  *  1. the room name shortens, down to a short stub (CSS does it: ellipsis, minimum width);
  *  2. "Invite someone to join" and "Full screen" become icons only;
  *  3. the faces beside "N here" go.
- * Level 0 shows everything; each level keeps what the one before it dropped dropped.
+ * Level 0 shows everything; each level keeps what the one before it dropped.
  */
 export type FitLevel = 0 | 1 | 2;
 
