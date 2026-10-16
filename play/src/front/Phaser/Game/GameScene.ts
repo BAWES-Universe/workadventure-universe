@@ -3726,13 +3726,6 @@ export class GameScene extends DirtyScene {
                 setTimeout(() => popupStore.removePopup("mapEditorNotEnabled"), 6_000);
             } else {
                 switch (toolEditorParam) {
-                    case "wamSettingsEditorTool": {
-                        // Configure my room holds the room's settings, which only admins may change.
-                        if (!get(userIsAdminStore)) break;
-                        mapEditorModeStore.switchMode(true);
-                        mapEditorSelectedToolStore.set(EditorToolName.WAMSettingsEditor);
-                        break;
-                    }
                     case "floor": {
                         mapEditorModeStore.switchMode(true);
                         mapEditorSelectedToolStore.set(EditorToolName.FloorEditor);

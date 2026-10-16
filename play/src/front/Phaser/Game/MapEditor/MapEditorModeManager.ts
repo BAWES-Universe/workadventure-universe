@@ -17,7 +17,6 @@ import {
 import { mapEditorActivated, mapEditorActivatedForThematics } from "../../../Stores/MenuStore";
 import { editPillStore, editUndoRedoStore, turnPlacingPreview } from "../../../Stores/EditModeStore";
 import { localUserStore } from "../../../Connection/LocalUserStore";
-import { userIsAdminStore } from "../../../Stores/GameStore";
 import { warningMessageStore } from "../../../Stores/ErrorStore";
 import LL from "../../../../i18n/i18n-svelte";
 import { gameManager } from "../GameManager";
@@ -25,19 +24,18 @@ import { AreaEditorTool } from "./Tools/AreaEditorTool";
 import type { MapEditorTool } from "./Tools/MapEditorTool";
 import { FloorEditorTool } from "./Tools/FloorEditorTool";
 import { EntityEditorTool } from "./Tools/EntityEditorTool";
-import { WAMSettingsEditorTool } from "./Tools/WAMSettingsEditorTool";
 import type { FrontCommandInterface } from "./Commands/FrontCommandInterface";
 import type { FrontCommand } from "./Commands/FrontCommand";
 import { TrashEditorTool } from "./Tools/TrashEditorTool";
 import { ExplorerTool } from "./Tools/ExplorerTool";
 import { CloseTool } from "./Tools/CloseTool";
 import { UpdateAreaFrontCommand } from "./Commands/Area/UpdateAreaFrontCommand";
+import { UpdateWAMSettingFrontCommand } from "./Commands/WAM/UpdateWAMSettingFrontCommand";
 
 export enum EditorToolName {
     AreaEditor = "AreaEditor",
     FloorEditor = "FloorEditor",
     EntityEditor = "EntityEditor",
-    WAMSettingsEditor = "WAMSettingsEditor",
     TrashEditor = "TrashEditor",
     ExploreTheRoom = "ExploreTheRoom",
     CloseMapEditor = "CloseMapEditor",
@@ -100,7 +98,6 @@ export class MapEditorModeManager {
             [EditorToolName.AreaEditor]: areaEditorTool,
             [EditorToolName.EntityEditor]: new EntityEditorTool(this),
             [EditorToolName.FloorEditor]: new FloorEditorTool(this),
-            [EditorToolName.WAMSettingsEditor]: new WAMSettingsEditorTool(this),
             [EditorToolName.TrashEditor]: new TrashEditorTool(this, areaEditorTool),
             [EditorToolName.ExploreTheRoom]: new ExplorerTool(this, this.scene),
             [EditorToolName.CloseMapEditor]: new CloseTool(),
@@ -266,6 +263,8 @@ export class MapEditorModeManager {
                     //eslint-disable-next-line no-await-in-loop
                     await tool.handleIncomingCommandMessage(command);
                 }
+                // eslint-disable-next-line no-await-in-loop
+                await this.handleIncomingWamSettings(command);
             }
         }
     }
@@ -310,12 +309,6 @@ export class MapEditorModeManager {
             case "3": {
                 if (!mapEditorModeActivated) break;
                 this.equipTool(EditorToolName.EntityEditor);
-                break;
-            }
-            case "4": {
-                // Configure my room holds the room's settings, which only admins may change.
-                if (!mapEditorModeActivated || !get(userIsAdminStore)) break;
-                this.equipTool(EditorToolName.WAMSettingsEditor);
                 break;
             }
             case "5": {
@@ -429,8 +422,27 @@ export class MapEditorModeManager {
                     //eslint-disable-next-line no-await-in-loop
                     await tool.handleIncomingCommandMessage(editMapCommandMessage);
                 }
+                await this.handleIncomingWamSettings(editMapCommandMessage);
             }).catch((e) => console.error(e));
         });
+    }
+
+    /**
+     * Room settings (such as the broadcast ones) changed by someone else, or missed while we were away.
+     * They belong to no editor tool, so the manager applies them itself.
+     */
+    private async handleIncomingWamSettings(editMapCommandMessage: EditMapCommandMessage): Promise<void> {
+        const message = editMapCommandMessage.editMapMessage?.message;
+        if (message?.$case !== "updateWAMSettingsMessage") return;
+
+        const wam = this.scene.getGameMap().getWam();
+        if (wam === undefined) {
+            throw new Error("WAM file is undefined");
+        }
+
+        await this.executeLocalCommand(
+            new UpdateWAMSettingFrontCommand(wam, message.updateWAMSettingsMessage, editMapCommandMessage.id)
+        );
     }
 
     private async revertPendingCommands(): Promise<void> {
@@ -529,8 +541,7 @@ export class MapEditorModeManager {
         const wanted =
             this.activeTool !== undefined &&
             this.activeTool !== EditorToolName.ExploreTheRoom &&
-            this.activeTool !== EditorToolName.CloseMapEditor &&
-            this.activeTool !== EditorToolName.WAMSettingsEditor;
+            this.activeTool !== EditorToolName.CloseMapEditor;
         if (wanted && !this.dragPanBound) {
             this.scene.input.on(Phaser.Input.Events.POINTER_DOWN, this.dragPanDownHandler);
             this.scene.input.on(Phaser.Input.Events.POINTER_MOVE, this.dragPanMoveHandler);

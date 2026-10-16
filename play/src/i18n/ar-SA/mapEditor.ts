@@ -9,7 +9,6 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
         areaEditor: "تحرير المنطقة", // Fläche bearbeiten
         entityEditor: "تحرير الكيان", // Entität bearbeiten
         tileEditor: "تحرير البلاطة", // Kachel bearbeiten
-        configureMyRoom: "تكوين غرفتي", // Mein Zimmer konfigurieren
         trashEditor: "سلة المهملات", // Papierkorb
         exploreTheRoom: "استكشاف الغرفة", // Raum erkunden
         closeMapEditor: "إغلاق محرر الخريطة", // Karteneditor schließen
@@ -19,7 +18,6 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
         areaEditorActivated: "تم تفعيل تحرير المنطقة", // Fläche bearbeiten aktiviert
         entityEditorActivated: "تم تفعيل تحرير الكيان", // Entität bearbeiten aktiviert
         trashEditorActivated: "تم تفعيل سلة المهملات", // Papierkorb aktiviert
-        configureMyRoomActivated: "تم تفعيل تكوين غرفتي", // Mein Zimmer konfigurieren aktiviert
     },
     properties: {
         silent: {

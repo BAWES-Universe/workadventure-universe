@@ -9,7 +9,6 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
         areaEditor: "Strumento di modifica dell'area",
         entityEditor: "Strumento di modifica dell'entità",
         tileEditor: "Strumento di modifica delle tessere",
-        configureMyRoom: "Configura la mia stanza",
         trashEditor: "Cestino",
         exploreTheRoom: "Esplora la stanza",
         closeMapEditor: "Chiudi l'editor della mappa",
@@ -19,7 +18,6 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
         areaEditorActivated: "Editor dell'area attivato",
         entityEditorActivated: "Editor dell'entità attivato",
         trashEditorActivated: "Editor del cestino attivato",
-        configureMyRoomActivated: "Configura la mia stanza attivata",
     },
     properties: {
         silent: {

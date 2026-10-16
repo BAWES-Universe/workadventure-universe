@@ -9,7 +9,6 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
         areaEditor: "Gebied editor tool",
         entityEditor: "Entiteit editor tool",
         tileEditor: "Tegel editor tool",
-        configureMyRoom: "Configureer mijn kamer",
         trashEditor: "Prullenbak",
         exploreTheRoom: "Verken de kamer",
         closeMapEditor: "Sluit kaart editor",
@@ -19,7 +18,6 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
         areaEditorActivated: "Gebied editor geactiveerd",
         entityEditorActivated: "Entiteit editor geactiveerd",
         trashEditorActivated: "Prullenbak editor geactiveerd",
-        configureMyRoomActivated: "Configureer mijn kamer geactiveerd",
     },
     properties: {
         silent: {

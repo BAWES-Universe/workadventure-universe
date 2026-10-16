@@ -68,15 +68,6 @@ export const mapEditorDeleteCustomEntityEventStore = writable<DeleteCustomEntity
 
 export const mapEditorEntityFileDroppedStore = writable<boolean>(false);
 
-export enum WAM_SETTINGS_EDITOR_TOOL_MENU_ITEM {
-    RoomSettings = "Room Settings",
-    MatrixRoomList = "Matrix Room List",
-}
-
-export const mapEditorWamSettingsEditorToolCurrentMenuItemStore = writable<
-    WAM_SETTINGS_EDITOR_TOOL_MENU_ITEM | undefined
->(undefined);
-
 export const mapExplorationModeStore = writable<boolean>(false);
 /**
  * True while the editor's toolbar is in use: the map editor mode is on and the tool is not "Look around the map".

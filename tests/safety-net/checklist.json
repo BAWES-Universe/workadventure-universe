@@ -3862,14 +3862,14 @@
     {
       "id": "ME-006",
       "area": "Map editor and Look around",
-      "topic": "Edit mode: Configure my room",
-      "action": "Desktop, admin, editor open: press 4. Switch to \"Room settings\", change Description, Save, Confirm; close.",
-      "expected": "The old \"Configure my room\" window opens (no rail button for it any more). Room settings: name, description, tags, thumbnail, copyright, Save, then a confirm that reloads the map for everyone, toast \"Room settings saved\". No Megaphone tab: Room settings is the only item (the old Megaphone is replaced by Broadcast settings, owned by BC).",
+      "topic": "Edit mode: Configure my room (removed)",
+      "action": "Desktop, admin, editor open: press 4, or open a link ending in `#mapEditor=wamSettingsEditorTool`.",
+      "expected": "Nothing opens: the old \"Configure my room\" window is gone (game #740). Room name and description are set in Orbit; who can go live is in Broadcast settings.",
       "source": "prod + approved B2p1 frame 1 (gear off the rail; sweep \"not regression\") + approved Broadcast settings mock 10-06 (#627): old Megaphone removed",
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "key \"4\" MapEditorModeManager.ts:309-312; EditMode.svelte:75-80; WAMSettingsEditor.svelte:61-94; e2e `li:has-text(\"Megaphone\")` tests/tests/utils/map-editor/areaEditor.ts:8, close `.configure-my-room button.close-window` utils/menu.ts:237"
+      "hooks": "no `.configure-my-room` in the page; key \"4\" has no case in MapEditorModeManager.ts"
     },
     {
       "id": "ME-007",
@@ -5988,12 +5988,12 @@
       "area": "Broadcasting",
       "topic": "Settings",
       "action": "Desktop, admin, in edit mode: press key 4 (or open `#mapEditor=wamSettingsEditorTool&menuItem=megaphone`)",
-      "expected": "The \"Configure my room\" window opens with \"Room settings\" only. The old Megaphone item (switch, Space name, Scope, Rights) is gone: Broadcast settings is the only place to set who can go live and how far",
+      "expected": "Replaced by game #740: the \"Configure my room\" window is gone, so nothing opens. Broadcast settings is the only place to set who can go live and how far",
       "source": "approved Broadcast settings mock 10-06 (#627) + old Megaphone removed (Khalid's card, #627 handover)",
-      "runs": "yes",
-      "runsNote": "yes (prime admin)",
+      "runs": "replaced",
+      "runsNote": "replaced",
       "knownGap": false,
-      "hooks": "`.configure-my-room` (F/Components/MapEditor/WAMSettingsEditor.svelte:49-80, one `li` for admins :62-76); key 4 admins only F/Phaser/Game/MapEditor/MapEditorModeManager.ts:310-314; deep link F/Phaser/Game/GameScene.ts:3631-3637"
+      "hooks": "covered by ME-006 (key 4 opens nothing)"
     },
     {
       "id": "BC-092",

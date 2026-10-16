@@ -9,7 +9,6 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
         areaEditor: "エリアエディターツール",
         entityEditor: "エンティティエディターツール",
         tileEditor: "タイルエディターツール",
-        configureMyRoom: "マイルームの設定",
         trashEditor: "ごみ箱エディター",
         exploreTheRoom: "ルームの探索",
         closeMapEditor: "マップエディターの終了",
@@ -19,7 +18,6 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
         areaEditorActivated: "エリアエディターの起動",
         entityEditorActivated: "エンティティエディターの起動",
         trashEditorActivated: "ごみ箱エディターの起動",
-        configureMyRoomActivated: "マイルームの設定",
     },
     properties: {
         silent: {
