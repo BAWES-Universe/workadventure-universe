@@ -1,7 +1,7 @@
 import { get } from "svelte/store";
 import type { ExtensionModule, ExtensionModuleOptions } from "../../ExternalModule/ExtensionModule";
 import { localUserStore } from "../../Connection/LocalUserStore";
-import { userIsConnected, adminDashboardActivatedStore } from "../../Stores/MenuStore";
+import { userIsConnected, adminDashboardActivatedStore, adminDashboardPendingStore } from "../../Stores/MenuStore";
 import {
     modalFullScreenStore,
     modalIframeStore,
@@ -48,6 +48,26 @@ let adminOrigin: string | null = null;
 /** A name you saved in your Orbit profile, shown in the game once Orbit closes. */
 let pendingPlayerName: string | null = null;
 const pendingTimers = new Set<ReturnType<typeof setTimeout>>();
+
+/**
+ * Orbit's button in the bar goes away with the room (a reconnect rebuilds it) and comes back about a second after the
+ * new one is joined. Meanwhile it keeps its place, greyed out, so the bar does not show Tools there and then swap it.
+ * A world with no Orbit gives up waiting after this long.
+ */
+const ORBIT_BUTTON_WAIT_MS = 6_000;
+let orbitButtonWait: ReturnType<typeof setTimeout> | null = null;
+
+function holdOrbitButton() {
+    adminDashboardPendingStore.set(true);
+    if (orbitButtonWait !== null) clearTimeout(orbitButtonWait);
+    orbitButtonWait = setTimeout(releaseOrbitButton, ORBIT_BUTTON_WAIT_MS);
+}
+
+function releaseOrbitButton() {
+    if (orbitButtonWait !== null) clearTimeout(orbitButtonWait);
+    orbitButtonWait = null;
+    adminDashboardPendingStore.set(false);
+}
 
 function schedulePending(callback: () => void, delay: number) {
     const timer = setTimeout(() => {
@@ -370,12 +390,14 @@ function initializeAdminIntegration(options: ExtensionModuleOptions) {
     const accessToken = getAccessTokenFromJwt(options.userAccessToken);
     if (!accessToken) {
         console.warn("No access token available for admin integration");
+        releaseOrbitButton();
         return;
     }
 
     const adminUrl = options.adminUrl;
     if (!adminUrl) {
         console.error("Admin URL not configured. Set ADMIN_URL environment variable.");
+        releaseOrbitButton();
         return;
     }
 
@@ -384,6 +406,7 @@ function initializeAdminIntegration(options: ExtensionModuleOptions) {
         adminOrigin = resolveCredentialUrl(adminUrl, window.location.href).origin;
     } catch (error) {
         console.error("Refusing insecure Admin URL:", error);
+        releaseOrbitButton();
         return;
     }
     extensionOptions = options;
@@ -414,6 +437,7 @@ function initializeAdminIntegration(options: ExtensionModuleOptions) {
     // Activate the Orbit button in the action bar (highest priority). Orbit opens only when asked: this runs on every
     // room join and reconnect, so opening here would bring Orbit back each time.
     adminDashboardActivatedStore.set(true);
+    releaseOrbitButton();
 }
 
 const adminExtensionModule: ExtensionModule = {
@@ -423,6 +447,9 @@ const adminExtensionModule: ExtensionModule = {
 
     init(roomMetadata: unknown, options: ExtensionModuleOptions) {
         console.log("Admin API Extension Module initialized");
+
+        // The button holds its place until Orbit is ready, so the bar never shows something else there for a moment.
+        if (localUserStore.isLogged()) holdOrbitButton();
 
         // Wait for user to be connected, then initialize
         unsubscribeUserConnected = userIsConnected.subscribe((connected) => {
@@ -465,6 +492,8 @@ const adminExtensionModule: ExtensionModule = {
         }
         // Deactivate the Orbit button
         adminDashboardActivatedStore.set(false);
+        // The room is being rebuilt: Orbit comes back with the next one.
+        if (localUserStore.isLogged()) holdOrbitButton();
         window.removeEventListener("message", handleAdminAuthMessage);
         window.removeEventListener("popstate", handlePopState);
         unsubscribeFullScreen?.();

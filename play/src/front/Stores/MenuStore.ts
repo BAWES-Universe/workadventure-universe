@@ -317,6 +317,11 @@ const loginMenuItem: RightMenuItem<LoginMenuItem> = {
 
 // Store to track if Orbit (admin dashboard) should be shown
 export const adminDashboardActivatedStore = writable(false);
+/**
+ * Orbit is on its way back (the room was rebuilt by a reconnect, or the game has just opened): its button keeps its
+ * place, greyed out, so the bar does not show Tools there for a second and then swap it for Orbit.
+ */
+export const adminDashboardPendingStore = writable(false);
 
 const orbitMenuItem: RightMenuItem<OrbitMenuItem> = {
     id: "orbit",
@@ -335,9 +340,25 @@ const exploreMenuItem: RightMenuItem<ExploreMenuItem> = {
 };
 
 export const rightActionBarMenuItems: Readable<RightMenuItem<SvelteComponentTyped>[]> = derived(
-    [additionalRightButtonsMenu, userIsConnected, adminDashboardActivatedStore, roomListActivated, mobileLayoutStore],
-    ([$additionalButtonsMenu, $userIsConnected, $adminDashboardActivated, $roomListActivated, $mobileLayout]) => {
+    [
+        additionalRightButtonsMenu,
+        userIsConnected,
+        adminDashboardActivatedStore,
+        adminDashboardPendingStore,
+        roomListActivated,
+        mobileLayoutStore,
+    ],
+    ([
+        $additionalButtonsMenu,
+        $userIsConnected,
+        $adminDashboardActive,
+        $adminDashboardPending,
+        $roomListActivated,
+        $mobileLayout,
+    ]) => {
         const menuItems: RightMenuItem<SvelteComponentTyped>[] = [];
+        // Orbit's button is there while Orbit is ready and while it is on its way.
+        const $adminDashboardActivated = $adminDashboardActive || $adminDashboardPending;
 
         // Add additional buttons from "top" location first
         const additionalButtons = [...$additionalButtonsMenu.values()];
