@@ -21,6 +21,15 @@
     let savedName = property.name;
     let nameError: string | null = null;
 
+    // The area panel hands in a fresh copy of the property after every change to the area (a save, an undo, another
+    // editor's change): that copy holds the saved name, and a refused name it replaced is dropped.
+    let shownProperty = property;
+    $: if (property !== shownProperty) {
+        shownProperty = property;
+        savedName = property.name;
+        nameError = null;
+    }
+
     // Two Stages of a room with names that only differ by capitals or spaces read the same to players, and
     // names that end up with the same space would share one voice and chat: both count as taken.
     function compact(name: string): string {

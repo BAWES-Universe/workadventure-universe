@@ -117,4 +117,14 @@ describe("the Stage name field", () => {
         expect(target.textContent).not.toContain("already exists");
         expect(changes).toBe(1);
     });
+
+    it("takes the saved name from a new copy of the property (an undo while the page is open)", async () => {
+        await type("Keynote");
+        editor?.$set({ property: { ...property, name: "After Undo" } });
+        await tick();
+        const input = await type("main stage");
+        target.querySelector<HTMLInputElement>("input#chatEnabled")?.click();
+        await tick();
+        expect(input.value).toBe("After Undo");
+    });
 });
