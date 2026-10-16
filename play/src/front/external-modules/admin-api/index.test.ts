@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
         return vi.fn();
     }),
     adminDashboardActivatedSet: vi.fn(),
+    adminDashboardPendingSet: vi.fn(),
     modalIframeSet: vi.fn(),
     modalIframeWindowSet: vi.fn(),
     modalVisibilitySet: vi.fn(),
@@ -113,6 +114,7 @@ vi.mock("../../Connection/LocalUserUtils", () => ({
 vi.mock("../../Stores/MenuStore", () => ({
     userIsConnected: { subscribe: mocks.userIsConnectedSubscribe },
     adminDashboardActivatedStore: { set: mocks.adminDashboardActivatedSet },
+    adminDashboardPendingStore: { set: mocks.adminDashboardPendingSet },
 }));
 
 vi.mock("../../Phaser/Game/GameManager", () => ({
@@ -277,6 +279,59 @@ describe("Admin integration lifecycle", () => {
         );
         // destroy() itself deactivates the dashboard flag
         expect(mocks.adminDashboardActivatedSet).toHaveBeenCalledWith(false);
+    });
+
+    it("holds Orbit's button in its place from init until Orbit is ready", async () => {
+        const mod = await freshModule();
+        mod.init({}, makeOptions());
+
+        expect(mocks.adminDashboardPendingSet).toHaveBeenLastCalledWith(true);
+        expect(mocks.adminDashboardActivatedSet).not.toHaveBeenCalledWith(true);
+
+        vi.advanceTimersByTime(1000);
+        expect(mocks.adminDashboardActivatedSet).toHaveBeenCalledWith(true);
+        expect(mocks.adminDashboardPendingSet).toHaveBeenLastCalledWith(false);
+    });
+
+    it("holds the button again when the room is rebuilt (destroy, then init)", async () => {
+        const mod = await freshModule();
+        mod.init({}, makeOptions());
+        vi.advanceTimersByTime(3000);
+        mocks.adminDashboardPendingSet.mockClear();
+
+        mod.destroy();
+        expect(mocks.adminDashboardActivatedSet).toHaveBeenLastCalledWith(false);
+        expect(mocks.adminDashboardPendingSet).toHaveBeenLastCalledWith(true);
+    });
+
+    it("gives the place up after a few seconds when no Orbit comes (a world without it)", async () => {
+        const mod = await freshModule();
+        mod.init({}, makeOptions());
+        mod.destroy();
+        mocks.adminDashboardPendingSet.mockClear();
+
+        vi.advanceTimersByTime(5000);
+        expect(mocks.adminDashboardPendingSet).not.toHaveBeenCalledWith(false);
+        vi.advanceTimersByTime(2000);
+        expect(mocks.adminDashboardPendingSet).toHaveBeenLastCalledWith(false);
+    });
+
+    it("holds nothing for a player who is not signed in", async () => {
+        mocks.isLogged.mockReturnValue(false);
+        const mod = await freshModule();
+        mod.init({}, makeOptions());
+        mod.destroy();
+
+        expect(mocks.adminDashboardPendingSet).not.toHaveBeenCalledWith(true);
+    });
+
+    it("lets the place go when Orbit cannot start (no access token)", async () => {
+        const mod = await freshModule();
+        mod.init({}, makeOptions("header.payload.signature"));
+        vi.advanceTimersByTime(1000);
+
+        expect(mocks.adminDashboardPendingSet).toHaveBeenLastCalledWith(false);
+        expect(mocks.adminDashboardActivatedSet).not.toHaveBeenCalledWith(true);
     });
 
     it("treats a malformed access token as a no-op with no side effects", async () => {
