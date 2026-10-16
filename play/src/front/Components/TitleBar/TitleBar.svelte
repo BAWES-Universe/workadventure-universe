@@ -199,7 +199,8 @@
     let fitRun = 0;
 
     function overflows(): boolean {
-        return left !== undefined && left.scrollWidth > left.clientWidth + 1;
+        // Svelte sets a bound element to null (not undefined) when the strip goes away mid-measure.
+        return !!left && left.scrollWidth > left.clientWidth + 1;
     }
 
     // Always starts from the full layout, so a window that grew gets its words back. A newer call replaces one that
