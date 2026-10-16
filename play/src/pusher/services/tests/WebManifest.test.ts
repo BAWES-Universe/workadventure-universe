@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RequiredMetaTagsData } from "@workadventure/messages";
-import { buildWebManifest, manifestUrlOfPage, roomPathOfPage } from "../WebManifest";
+import { buildWebManifest, isInstalledAppStart, manifestUrlOfPage, roomPathOfPage } from "../WebManifest";
 
 const meta: RequiredMetaTagsData = {
     title: "Universe | Bawes > Lobby > Main",
@@ -14,6 +14,30 @@ const meta: RequiredMetaTagsData = {
     themeColor: "#14121E",
     cardImage: "/card.png",
 };
+
+describe("isInstalledAppStart", () => {
+    it("is the installed app's own start page", () => {
+        expect(isInstalledAppStart("https://play.test/?installRoom=%2F%40%2Fbawes%2Flobby%2Fmain")).toBe(true);
+    });
+
+    it("is not a bare visit of the site, which still goes to the start room", () => {
+        expect(isInstalledAppStart("https://play.test/")).toBe(false);
+        expect(isInstalledAppStart("https://play.test/?token=abc")).toBe(false);
+    });
+
+    it("is not a room page, even with the parameter", () => {
+        expect(isInstalledAppStart("https://play.test/@/bawes/lobby/main?installRoom=%2F%40%2Fx%2Fy%2Fz")).toBe(false);
+    });
+
+    it("is not a start page with a room that would leave the site", () => {
+        expect(isInstalledAppStart("https://play.test/?installRoom=%2F%2Fevil.test%2Fx")).toBe(false);
+        expect(isInstalledAppStart("https://play.test/?installRoom=")).toBe(false);
+    });
+
+    it("is not an address that is not one", () => {
+        expect(isInstalledAppStart("not a url")).toBe(false);
+    });
+});
 
 describe("roomPathOfPage", () => {
     it("keeps the path of a room and nothing after it", () => {

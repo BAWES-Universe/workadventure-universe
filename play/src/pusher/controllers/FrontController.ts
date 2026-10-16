@@ -8,7 +8,7 @@ import Debug from "debug";
 import { MetaTagsBuilder } from "../services/MetaTagsBuilder";
 import { absoluteUrl, requestProtocol } from "../services/AbsoluteUrl";
 import { adminService } from "../services/AdminService";
-import { buildWebManifest, manifestUrlOfPage } from "../services/WebManifest";
+import { buildWebManifest, isInstalledAppStart, manifestUrlOfPage } from "../services/WebManifest";
 import { getStringPalette, wrapWithStyleTag } from "../services/GenerateCustomColors";
 import { notWaHost } from "../middlewares/NotWaHost";
 import { version } from "../../../package.json";
@@ -318,10 +318,13 @@ export class FrontController extends BaseHttpController {
 
         let redirectUrl: string | undefined;
 
-        try {
-            redirectUrl = await builder.getRedirectUrl();
-        } catch (e) {
-            console.info(`Cannot get redirect URL "%s"`, url, e);
+        // The installed app opens "/?installRoom=...": no redirect to the start room, so the game opens the last room.
+        if (!isInstalledAppStart(url)) {
+            try {
+                redirectUrl = await builder.getRedirectUrl();
+            } catch (e) {
+                console.info(`Cannot get redirect URL "%s"`, url, e);
+            }
         }
 
         if (redirectUrl) {
