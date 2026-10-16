@@ -15,7 +15,7 @@ vi.mock("../Services/WaScaleManager", () => ({ waScaleManager: { zoomModifier: 1
 
 function setup() {
     const input = new Phaser.Events.EventEmitter();
-    const camera = { scrollX: 0, scrollY: 0 };
+    const camera = { scrollX: 0, scrollY: 0, getWorldPoint: (x: number, y: number) => ({ x, y }) };
     const scene = {
         input,
         sys: { cameras: { main: camera } },
