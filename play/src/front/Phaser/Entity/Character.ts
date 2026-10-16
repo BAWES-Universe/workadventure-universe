@@ -22,6 +22,7 @@ import { SpeakerIcon } from "../Components/SpeakerIcon";
 import { RaisedHandBadge } from "../Components/RaisedHandBadge";
 
 import { lazyLoadPlayerCharacterTextures } from "./PlayerTexturesLoadingManager";
+import { reportWokaLoadFailure } from "./WokaLoadReporter";
 import { SpeechDomElement } from "./SpeechDomElement";
 import { SayStack } from "./SayStack";
 import { SayStackDomView } from "./SayStackView";
@@ -147,7 +148,7 @@ export abstract class Character extends Container implements OutlineableInterfac
                 this.playAnimation(direction, moving);
                 this.textureLoadedDeferred.resolve();
             })
-            .catch(() => {
+            .catch((error) => {
                 return lazyLoadPlayerCharacterTextures(scene.superLoad, [
                     {
                         id: "color_22",
@@ -163,9 +164,11 @@ export abstract class Character extends Container implements OutlineableInterfac
                         this.invisible = false;
                         this.playAnimation(direction, moving);
                         this.textureLoadedDeferred.resolve();
+                        reportWokaLoadFailure("character", error, { userId });
                     })
                     .catch((e) => {
                         this.textureLoadedDeferred.reject(e);
+                        reportWokaLoadFailure("character", error, { userId, standInError: e });
                         throw e;
                     });
             })

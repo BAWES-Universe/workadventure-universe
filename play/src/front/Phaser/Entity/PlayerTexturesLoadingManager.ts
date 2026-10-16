@@ -1,6 +1,7 @@
 import CancelablePromise from "cancelable-promise";
 import type { SuperLoaderPlugin } from "../Services/SuperLoaderPlugin";
 import { PlayerTexturesKey } from "./PlayerTextures";
+import { reportWokaLoadStalled, WOKA_STALL_REPORT_MS } from "./WokaLoadReporter";
 import type { WokaTextureDescriptionInterface, PlayerTextures } from "./PlayerTextures";
 import Texture = Phaser.Textures.Texture;
 import LoaderPlugin = Phaser.Loader.LoaderPlugin;
@@ -87,6 +88,16 @@ export const lazyLoadPlayerCharacterTextures = (
         );
     }
     const returnPromise: CancelablePromise<Texture[]> = CancelablePromise.all(promisesList);
+
+    // The loader can also go silent (a phone coming back to the app, a room rebuilt mid-load): no answer, no error.
+    // Say so once, unless the room was simply closed meanwhile.
+    const stallTimer = setTimeout(() => {
+        if (!returnPromise.isCanceled() && !superLoaderPlugin.isSceneDestroyed()) {
+            reportWokaLoadStalled(textures.map((texture) => ({ id: texture.id, url: texture.url })));
+        }
+    }, WOKA_STALL_REPORT_MS);
+    const stopStallTimer = () => clearTimeout(stallTimer);
+    returnPromise.then(stopStallTimer, stopStallTimer);
 
     return returnPromise.then(() =>
         textures.map((key) => {
