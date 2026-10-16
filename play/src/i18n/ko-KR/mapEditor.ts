@@ -9,7 +9,6 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
         areaEditor: "영역 편집 도구",
         entityEditor: "오브젝트 편집 도구",
         tileEditor: "타일 편집 도구",
-        configureMyRoom: "내 방 설정",
         trashEditor: "휴지통",
         exploreTheRoom: "방 탐색",
         closeMapEditor: "지도 편집기 닫기",
@@ -19,7 +18,6 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
         areaEditorActivated: "영역 편집 모드로 전환되었습니다",
         entityEditorActivated: "오브젝트 편집 모드로 전환되었습니다",
         trashEditorActivated: "휴지통 편집 모드로 전환되었습니다",
-        configureMyRoomActivated: "내 방 설정 모드로 전환되었습니다",
     },
     properties: {
         silent: {

@@ -1,17 +1,6 @@
 import { expect, type Page } from "@playwright/test";
-import { expectInViewport } from "./viewport";
 
 class MapEditor {
-  async openConfigureMyRoom(page: Page) {
-    // Room settings left the rail: the "4" key still opens it.
-    await page
-      .locator("canvas")
-      .first()
-      .click({ position: { x: 10, y: 10 } });
-    await page.keyboard.press("4");
-    await expectInViewport(".configure-my-room", page);
-  }
-
   async openAreaEditor(page: Page) {
     await this.pickTool(page, "AreaEditor");
     await expect(page.getByTestId("edit-panel")).toBeVisible();

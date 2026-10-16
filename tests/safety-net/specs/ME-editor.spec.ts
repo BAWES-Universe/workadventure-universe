@@ -133,7 +133,7 @@ test("ME-005 Desktop: backtick closes; 2 Areas, 3 Objects, 5 Delete, 6 closes, 1
     await expect(page.getByTestId("edit-pill")).toBeHidden();
 });
 
-test("ME-006 @local Desktop: 4 opens Configure my room; Room settings save; no Megaphone tab", async ({
+test("ME-006 @local Desktop: key 4 opens nothing (the Configure my room window is gone)", async ({
     page,
 }, testInfo) => {
     test.skip(isPhone(testInfo), "desktop only");
@@ -141,24 +141,9 @@ test("ME-006 @local Desktop: 4 opens Configure my room; Room settings save; no M
     await module(page, "/src/front/Stores/GameStore.ts", (m) => m.userIsAdminStore.set(true));
     await openEditor(page, testInfo);
     await page.keyboard.press("4");
-    const win = page.locator(".configure-my-room");
-    await expect(win).toBeVisible();
+    await expect(page.locator(".configure-my-room")).toHaveCount(0);
     await expect(page.getByTestId("edit-rail")).not.toContainText(/settings/i);
-    await expect(win.locator("li", { hasText: "Megaphone" })).toHaveCount(0);
-    await win.locator("li", { hasText: "Room settings" }).click();
-    const description = win.getByRole("textbox", { name: "Room description" });
-    await expect(description).toBeVisible();
-    await expect(win.getByRole("textbox", { name: "Room name" })).toBeVisible();
-    await expect(win.getByText("Tags", { exact: true })).toBeVisible();
-    await expect(win.getByRole("textbox", { name: "Room license" })).toBeVisible();
-    // Saving needs a room name; local test maps have none.
-    const roomName = win.getByRole("textbox", { name: "Room name" });
-    if ((await roomName.inputValue()) === "") await roomName.fill("Safety net");
-    await description.fill("Safety net room");
-    await win.getByText(/^Confirm that you want to save the changes/).click();
-    await expect(win.getByRole("checkbox", { name: /Confirm that you want to save the changes/ })).toBeChecked();
-    await win.getByRole("button", { name: "Save", exact: true }).click();
-    await expect(page.getByText("Room settings saved")).toBeVisible();
+    await expect(page.getByTestId("edit-pill")).toBeVisible();
 });
 
 test("ME-007 @local Rail: tapping lit Objects tucks the panel, but placed objects can still be picked", async ({

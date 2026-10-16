@@ -13,7 +13,6 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
         areaEditorActivated: "Płoninu wobdźěłać",
         entityEditorActivated: "Entita wobdźěłać",
         trashEditorActivated: "Papjernik wužiwać",
-        configureMyRoomActivated: "Mój rum wobdźěłać",
     },
     properties: {
         silent: {
