@@ -25,6 +25,22 @@ describe("areaSpaceName", () => {
         expect(slugify(name)).toBe(name);
     });
 
+    it("keeps the name it always had for plain names, capitals and spaces included", () => {
+        expect(areaSpaceName("Main Stage", ROOM)).toBe(areaSpaceName("main stage", ROOM));
+        expect(areaSpaceName("mainstage", ROOM).endsWith("-mainstage")).toBe(true);
+        expect(areaSpaceName("Café", ROOM)).toBe(areaSpaceName("cafe", ROOM));
+    });
+
+    it("keeps names slugify can't spell apart, and slug safe", () => {
+        const arabic = areaSpaceName("مسرح", ROOM);
+        const otherArabic = areaSpaceName("قاعة", ROOM);
+        expect(arabic).not.toBe(otherArabic);
+        expect(arabic).toBe(areaSpaceName(" مسرح ", ROOM));
+        expect(slugify(arabic)).toBe(arabic);
+        expect(areaSpaceName("Stage!", ROOM)).not.toBe(areaSpaceName("Stage", ROOM));
+        expect(areaSpaceName("مسرح 1", ROOM)).not.toBe(areaSpaceName("قاعة 1", ROOM));
+    });
+
     it("does not treat map script spaces as area spaces", () => {
         expect(isAreaSpaceName("my-script-space")).toBe(false);
         expect(isAreaSpaceName("allWorldUser")).toBe(false);

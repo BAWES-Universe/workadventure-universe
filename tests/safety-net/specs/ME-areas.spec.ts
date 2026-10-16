@@ -576,7 +576,9 @@ test("ME-044 Stage and Audience pages: stage name and chat, audience picks the s
     await page.getByTestId("listenerMegaphone").click();
     const select = pg.locator("select#speakerZoneSelector");
     await expect(select).toBeVisible();
-    await select.selectOption({ label: "keynote" });
+    // Older builds lowercase the Stage name, newer ones keep it as typed.
+    const keynote = select.locator("option", { hasText: /^\s*keynote\s*$/i });
+    await select.selectOption((await keynote.getAttribute("value")) ?? "");
     await expect
         .poll(async () => (await areaProps(url, audience)).find((p) => p.type === "listenerMegaphone")?.speakerZoneName)
         .toBeTruthy();
