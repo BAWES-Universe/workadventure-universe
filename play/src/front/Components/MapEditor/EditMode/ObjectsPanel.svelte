@@ -332,6 +332,13 @@
         color: #fff;
         outline: none;
     }
+    /* Tailwind's forms styles ring a focused field in blue with a box-shadow: the pill shows the focus instead. */
+    .em-search input:focus {
+        box-shadow: none;
+    }
+    .em-search:focus-within {
+        box-shadow: inset 0 0 0 1px rgba(196, 181, 253, 0.7);
+    }
     .em-search input::placeholder {
         color: rgba(244, 242, 250, 0.45);
     }
