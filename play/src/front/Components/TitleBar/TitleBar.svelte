@@ -179,6 +179,8 @@
         if (invitePopover?.contains(event.target) || inviteButton?.contains(event.target)) return;
         inviteOpen = false;
     }
+    // Capture phase: on window, stopPropagation in the bubble phase would not stop the Modal / Menu window listeners,
+    // so Escape would close those as well as the card.
     function onWindowKeyDown(event: KeyboardEvent) {
         if (event.key === "Escape" && inviteOpen) {
             event.stopPropagation();
@@ -238,7 +240,7 @@
     onDestroy(() => document.removeEventListener("fullscreenchange", onFullscreenChange));
 </script>
 
-<svelte:window on:click={onWindowClick} on:keydown={onWindowKeyDown} />
+<svelte:window on:click={onWindowClick} on:keydown|capture={onWindowKeyDown} />
 
 {#if $titleBarGeometryStore}
     <div
