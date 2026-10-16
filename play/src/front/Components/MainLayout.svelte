@@ -68,6 +68,7 @@
     import HelpPopUpBlocked from "./HelpSettings/HelpPopUpBlocked.svelte";
     import Notification from "./UI/Notification.svelte";
     import LookAround from "./LookAround/LookAround.svelte";
+    import { isExploringTheRoom, leaveExploreTheRoom } from "../Phaser/Game/MapEditor/ExploreTheRoom";
     import MapList from "./Exploration/MapList.svelte";
     import WarningToast from "./WarningContainer/WarningToast.svelte";
     import ClaimPersonalAreaDialogBox from "./MapEditor/ClaimPersonalAreaDialogBox.svelte";
@@ -124,6 +125,9 @@
     // buttons keep their place and size, and a window simply covers what is behind it. The chat and Orbit start under
     // the bar. Phones and small windows keep their layout: what is beside the chat starts where it ends.
     $: desktop = $windowSize.width >= DESKTOP_LAYOUT_MIN_WIDTH;
+    // "Look around the map" draws its card, area frames and pills over the game, above the Explore list: opening the
+    // list ends it, as "Back to me" does. (Opening Look around while the list is open closes the list, in ExplorerTool.)
+    $: if ($roomListVisibilityStore && isExploringTheRoom()) leaveExploreTheRoom();
     // On a phone held upright the chat is a sheet over the bottom of the screen: it takes no width either.
     $: marginLeft =
         $chatVisibilityStore && !desktop && !$chatSheetLayoutStore ? $chatSidebarWidthStore + $chatFloatInsetStore : 0;

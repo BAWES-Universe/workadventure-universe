@@ -13,6 +13,7 @@ import {
     mapExplorationObjectSelectedStore,
 } from "../../../../Stores/MapEditorStore";
 import { lookAroundDraggedStore } from "../../../../Stores/LookAroundStore";
+import { roomListVisibilityStore } from "../../../../Stores/ModalStore";
 import { clearLookAroundStores, EXPLORE_GLIDE_OUT_TO, leaveExploreTheRoom } from "../ExploreTheRoom";
 import { gameManager } from "../../GameManager";
 import type { GameScene } from "../../GameScene";
@@ -252,6 +253,8 @@ export class ExplorerTool implements MapEditorTool {
         // Put analytics for exploration mode
         analyticsClient.openExplorationMode();
 
+        // Looking around draws over the Explore list (and the other way round is the same mess): the list goes.
+        roomListVisibilityStore.set(false);
         // Active store of map exploration mode
         mapExplorationModeStore.set(true);
         // Looking around has its own overlay (LookAround.svelte): the editor's side bar and panel stay hidden.
