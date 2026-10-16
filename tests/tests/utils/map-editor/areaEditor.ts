@@ -100,7 +100,7 @@ class AreaEditor {
       .locator(
         ".map-editor .sidebar .properties-container select#speakerZoneSelector"
       )
-      .selectOption({ label: name.toLowerCase() });
+      .selectOption({ label: name });
     if (enableChat) {
       await page.getByTestId("chatEnabled").click();
     }

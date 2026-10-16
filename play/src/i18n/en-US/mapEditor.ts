@@ -124,6 +124,8 @@ const mapEditor: BaseTranslation = {
             namePlaceholder: "MainStage",
             disabled: "Podium is disabled for this room ❌",
             actionButtonLabel: "Join podium",
+            nameTaken: "A Stage called {name} already exists. Pick a different name.",
+            nameEmpty: "Give this Stage a name.",
         },
         listenerMegaphone: {
             label: "Audience",

@@ -72,7 +72,7 @@ test.describe("Map editor @oidc @nomobile @nowebkit", () => {
         await AreaEditor.setPodiumNameProperty(page, `${browser.browserType().name()}SpeakerZone`);
         await AreaEditor.drawArea(page, { x: 1 * 32 * 1.5, y: 6 * 32 * 1.5 }, { x: 9 * 32 * 1.5, y: 9 * 32 * 1.5 });
         await AreaEditor.addProperty(page, "listenerMegaphone");
-        await AreaEditor.setMatchingPodiumZoneProperty(page, `${browser.browserType().name()}SpeakerZone`.toLowerCase());
+        await AreaEditor.setMatchingPodiumZoneProperty(page, `${browser.browserType().name()}SpeakerZone`);
         await Menu.closeMapEditor(page);
         await Map.teleportToPosition(page, 4 * 32, 3 * 32);
 
@@ -125,7 +125,7 @@ test.describe("Map editor @oidc @nomobile @nowebkit", () => {
         await AreaEditor.setPodiumNameProperty(page, `${browser.browserType().name()}SpeakerZone`,true);
         await AreaEditor.drawArea(page, { x: 1 * 32 * 1.5, y: 6 * 32 * 1.5 }, { x: 9 * 32 * 1.5, y: 9 * 32 * 1.5 });
         await AreaEditor.addProperty(page, "listenerMegaphone");
-        await AreaEditor.setMatchingPodiumZoneProperty(page, `${browser.browserType().name()}SpeakerZone`.toLowerCase(),true);
+        await AreaEditor.setMatchingPodiumZoneProperty(page, `${browser.browserType().name()}SpeakerZone`,true);
         await Menu.closeMapEditor(page);
         await Map.teleportToPosition(page, 4 * 32, 3 * 32);
 

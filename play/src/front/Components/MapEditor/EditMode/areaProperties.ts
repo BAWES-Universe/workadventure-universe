@@ -367,9 +367,12 @@ export function createAreaProperty(
         case "playAudio":
             return { id, type, hideButtonLabel: true, audioLink: "", volume: 1 };
         case "speakerMegaphone": {
-            const count = countSpeakerZones();
+            // The first free "MySpeakerZone<n>": two Stages of a room may not share a name.
+            const taken = new Set([...speakerZones().values()].map((name) => name.toLowerCase()));
+            let number = 1;
+            while (taken.has(`myspeakerzone${number}`)) number++;
             addHighlightLater();
-            return { id, type, name: count > 0 ? `MySpeakerZone${count + 1}` : "MySpeakerZone1", chatEnabled: false };
+            return { id, type, name: `MySpeakerZone${number}`, chatEnabled: false };
         }
         case "listenerMegaphone": {
             const zones = speakerZones();
@@ -457,7 +460,4 @@ function speakerZones(): Map<string, string> {
             if (parsed.success) zones.set(area.id, parsed.data.name);
         });
     return zones;
-}
-function countSpeakerZones(): number {
-    return speakerZones().size;
 }
