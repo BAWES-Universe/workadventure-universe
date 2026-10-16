@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../Touch/TouchScreenManager", () => ({ touchScreenManager: { supportTouchScreen: false } }));
 vi.mock("../Components/MobileJoystick", () => ({ MobileJoystick: class {} }));
@@ -72,5 +72,86 @@ describe("UserInputManager", () => {
         expect(hide).toHaveBeenCalledWith(0);
         expect(inputManager.getEventListForGameTick().any()).toBe(false);
         visibility.mockRestore();
+    });
+});
+
+/** Bind the real scene callbacks without booting Phaser's renderer or keyboard. */
+function wiredManager() {
+    const { inputManager } = manager();
+    type PointerHandler = (pointer: Phaser.Input.Pointer, objects: Phaser.GameObjects.GameObject[]) => void;
+    const handlers = new Map<string, PointerHandler>();
+    vi.stubGlobal("Phaser", {
+        Input: {
+            Events: {
+                POINTER_DOWN: "pointerdown",
+                POINTER_UP: "pointerup",
+                POINTER_MOVE: "pointermove",
+                POINTER_WHEEL: "wheel",
+            },
+        },
+    });
+    const joystick = { showAt: vi.fn(), hide: vi.fn() };
+    const userInputHandler = {
+        handlePointerDownEvent: vi.fn(),
+        handlePointerUpEvent: vi.fn(),
+        handlePointerMoveEvent: vi.fn(),
+    };
+    Object.assign(inputManager, {
+        scene: { input: { on: (name: string, handler: PointerHandler) => handlers.set(name, handler) } },
+        joystick,
+        userInputHandler,
+    });
+    (inputManager as unknown as { bindInputEventHandlers(): void }).bindInputEventHandlers();
+    const dispatch = (name: string, pointer: Phaser.Input.Pointer) => handlers.get(name)?.(pointer, []);
+    const touch = (count = 1) =>
+        ({
+            x: 100,
+            y: 100,
+            wasTouch: true,
+            event: new TouchEvent("touchstart", {
+                touches: Array.from({ length: count }, () => ({ clientX: 100, clientY: 100 } as Touch)),
+            }),
+        } as Phaser.Input.Pointer);
+    return { inputManager, joystick, userInputHandler, dispatch, touch };
+}
+
+describe("joystick input routing", () => {
+    afterEach(() => vi.unstubAllGlobals());
+    it("passes the accepted single touch to the joystick for immediate capture", () => {
+        const { joystick, dispatch, touch } = wiredManager();
+        const pointer = touch();
+        dispatch("pointerdown", pointer);
+        expect(joystick.showAt).toHaveBeenCalledWith(100, 100, pointer);
+    });
+
+    it("keeps mouse click handlers without starting a touch joystick", () => {
+        const { joystick, userInputHandler, dispatch } = wiredManager();
+        const pointer = { wasTouch: false, event: new MouseEvent("mousedown") } as Phaser.Input.Pointer;
+        dispatch("pointerdown", pointer);
+        dispatch("pointerup", pointer);
+        expect(userInputHandler.handlePointerDownEvent).toHaveBeenCalledWith(pointer, []);
+        expect(userInputHandler.handlePointerUpEvent).toHaveBeenCalledWith(pointer, []);
+        expect(joystick.showAt).not.toHaveBeenCalled();
+    });
+
+    it("does not start the joystick for multitouch or disabled controls", () => {
+        const { inputManager, joystick, dispatch, touch } = wiredManager();
+        dispatch("pointerdown", touch(2));
+        expect(joystick.hide).toHaveBeenCalledWith(30_000);
+        Object.assign(inputManager, { isInputDisabled: true });
+        dispatch("pointerdown", touch());
+        expect(joystick.showAt).not.toHaveBeenCalled();
+    });
+
+    it("keeps editor gestures out of the joystick", async () => {
+        const { mapEditorModeStore } = await import("../../Stores/MapEditorStore");
+        const { joystick, dispatch, touch } = wiredManager();
+        mapEditorModeStore.set(true);
+        try {
+            dispatch("pointerdown", touch());
+            expect(joystick.showAt).not.toHaveBeenCalled();
+        } finally {
+            mapEditorModeStore.set(false);
+        }
     });
 });

@@ -438,7 +438,7 @@ export class UserInputManager {
 
                 // Let's only display the joystick if there is one finger on the screen
                 if (pointer.event instanceof TouchEvent && pointer.event.touches.length === 1) {
-                    this.joystick?.showAt(pointer.x, pointer.y);
+                    this.joystick?.showAt(pointer.x, pointer.y, pointer);
                 } else {
                     this.joystick?.hide(30_000);
                 }
