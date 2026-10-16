@@ -43,6 +43,7 @@
     import { incomingRingStore } from "../Chat/Stores/RingStore";
     import { streamableCollectionStore } from "../Stores/StreamableCollectionStore";
     import { inputFormFocusStore } from "../Stores/UserInputStore";
+    import { isExploringTheRoom, leaveExploreTheRoom } from "../Phaser/Game/MapEditor/ExploreTheRoom";
     import RingOverlay from "../Chat/Components/UserList/RingOverlay.svelte";
     import ActionBar from "./ActionBar/ActionBar.svelte";
     import EditMode from "./MapEditor/EditMode/EditMode.svelte";
@@ -68,7 +69,6 @@
     import HelpPopUpBlocked from "./HelpSettings/HelpPopUpBlocked.svelte";
     import Notification from "./UI/Notification.svelte";
     import LookAround from "./LookAround/LookAround.svelte";
-    import { isExploringTheRoom, leaveExploreTheRoom } from "../Phaser/Game/MapEditor/ExploreTheRoom";
     import MapList from "./Exploration/MapList.svelte";
     import WarningToast from "./WarningContainer/WarningToast.svelte";
     import ClaimPersonalAreaDialogBox from "./MapEditor/ClaimPersonalAreaDialogBox.svelte";
