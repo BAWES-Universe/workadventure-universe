@@ -130,6 +130,16 @@ jobs:
           DOCKER_TAG: ${{ steps.docker-tag.outputs.tag }}
         working-directory: contrib/docker
 
+      - name: DEBUG resolved images
+        run: |
+          env | grep -i "owner" || true
+          grep -i "owner" .env || true
+          docker compose -f docker-compose.prod.yaml -f docker-compose.universe.yaml -f tests/docker-compose.test.yaml config --images 2>/dev/null || true
+        env:
+          DOCKER_TAG: ${{ steps.docker-tag.outputs.tag }}
+          GITHUB_REPOSITORY_OWNER: ${{ steps.owner.outputs.lower }}
+        working-directory: contrib/docker
+
       - name: Start WorkAdventure with Universe images
         run: |
           docker compose -f docker-compose.prod.yaml -f docker-compose.universe.yaml -f tests/docker-compose.test.yaml up -d
