@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { adminDashboardActivatedStore } from "../../../Stores/MenuStore";
+    import { adminDashboardActivatedStore, openedMenuStore } from "../../../Stores/MenuStore";
     import { modalIframeStore, modalVisibilityStore } from "../../../Stores/ModalStore";
     import ActionBarButton from "../ActionBarButton.svelte";
     import { openAdminModalFromMenu } from "../../../external-modules/admin-api/index";
@@ -27,6 +27,8 @@
     // The button toggles, like Explore: pressed again while Orbit shows, it closes Orbit the way its close button does.
     function toggleOrbit() {
         if (!orbitOpen) {
+            // A menu opened before Orbit would keep the bar in front of it: the window opened last is the one in front.
+            openedMenuStore.closeAll();
             openAdminModalFromMenu();
             return;
         }
