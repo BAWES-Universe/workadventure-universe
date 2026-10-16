@@ -21,7 +21,6 @@ import {
     FilterType,
     PositionMessage_Direction,
 } from "@workadventure/messages";
-import { z } from "zod";
 import type { ITiledMap, ITiledMapLayer, ITiledMapObject, ITiledMapTileset } from "@workadventure/tiled-map-type-guard";
 import type { AreaData, EntityPrefabType } from "@workadventure/map-editor";
 import {
@@ -64,7 +63,6 @@ import { CharacterTextureError } from "../../Exception/CharacterTextureError";
 import { localUserStore } from "../../Connection/LocalUserStore";
 import { myHandRaisedStore, raisedHandsStore } from "../../Space/RaiseHand/RaiseHandStore";
 import { bindPodiumToRaiseHand } from "../../Space/RaiseHand/PodiumStore";
-import { HtmlUtils } from "../../WebRtc/HtmlUtils";
 import { Loader } from "../Components/Loader";
 import { RemotePlayer } from "../Entity/RemotePlayer";
 import { SelectCharacterScene, SelectCharacterSceneName } from "../Login/SelectCharacterScene";
@@ -256,6 +254,7 @@ import { DEPTH_BUBBLE_CHAT_SPRITE, DEPTH_WHITE_MASK } from "./DepthIndexes";
 import { ScriptingEventsManager } from "./ScriptingEventsManager";
 import { FollowManager } from "./FollowManager";
 import { LocateManager } from "./LocateManager";
+import { buildMapScriptPopup } from "./MapScriptPopup";
 import { uiWebsiteManager } from "./UI/UIWebsiteManager";
 import { ScriptingVideoManager } from "./ScriptingVideoManager";
 import EVENT_TYPE = Phaser.Scenes.Events;
@@ -2920,29 +2919,13 @@ export class GameScene extends DirtyScene {
                     );
                     return;
                 }
-                const escapedMessage = HtmlUtils.escapeHtml(openPopupEvent.message);
-                let html =
-                    '<div id="container" class="relative bg-contrast/80 backdrop-blur pt-4 overflow-hidden rounded-lg text-white" hidden>';
-                if (escapedMessage) {
-                    html += `<div class="text-xxs text-center px-2">
-${escapedMessage}
- </div> `;
-                }
+                const { element, container, buttons } = buildMapScriptPopup(
+                    openPopupEvent.popupId,
+                    openPopupEvent.message,
+                    openPopupEvent.buttons
+                );
+                const domElement = this.add.dom(objectLayerSquare.x, objectLayerSquare.y, element);
 
-                const buttonContainer =
-                    '<div class="buttonContainer flex flex-wrap gap-2 bg-contrast py-2 px-2 mt-2"</div>';
-                html += buttonContainer;
-                let id = 0;
-                for (const button of openPopupEvent.buttons) {
-                    html += `<div class="flex w-full"><button type="button" class="btn btn-xs hover:bg-contrast-600/50 justify-center w-full pb-4 ${HtmlUtils.escapeHtml(
-                        button.className ?? ""
-                    )}" id="popup-${openPopupEvent.popupId}-${id}">${HtmlUtils.escapeHtml(button.label)}</button>`;
-                    id++;
-                }
-                html += "</div></div>";
-                const domElement = this.add.dom(objectLayerSquare.x, objectLayerSquare.y).createFromHTML(html);
-
-                const container = z.instanceof(HTMLDivElement).parse(domElement.getChildByID("container"));
                 container.style.width = objectLayerSquare.width + "px";
                 domElement.scale = 0;
                 domElement.setClassName("popUpElement");
@@ -2951,23 +2934,18 @@ ${escapedMessage}
                     container.hidden = false;
                 }, 100);
 
-                id = 0;
-                // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                for (const button of openPopupEvent.buttons) {
-                    const button = HtmlUtils.getElementByIdOrFail<HTMLButtonElement>(
-                        `popup-${openPopupEvent.popupId}-${id}`
-                    );
-                    const btnId = id;
+                buttons.forEach((button, btnId) => {
+                    // A button the script created as disabled stays disabled, it must never be re-enabled here.
+                    const createdDisabled = button.disabled;
                     button.onclick = () => {
                         iframeListener.sendButtonClickedEvent(openPopupEvent.popupId, btnId);
                         // Disable for a short amount of time to let time to the script to remove the popup
                         button.disabled = true;
                         setTimeout(() => {
-                            button.disabled = false;
+                            button.disabled = createdDisabled;
                         }, 100);
                     };
-                    id++;
-                }
+                });
                 this.tweens.add({
                     targets: domElement,
                     scale: 1,
