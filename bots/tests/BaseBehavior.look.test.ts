@@ -10,7 +10,7 @@ import { PatrolBehavior } from '../behaviors/PatrolBehavior';
 
 type Point = { x: number; y: number };
 
-function createBot(options: { moving?: boolean; followingPath?: boolean } = {}) {
+function createBot(options: { moving?: boolean; followingPath?: boolean; lastMovedAt?: number } = {}) {
     let direction = PositionMessage_Direction.DOWN;
     const players = new Map<number, { userId: number; position: Point }>();
     const state = {
@@ -21,6 +21,7 @@ function createBot(options: { moving?: boolean; followingPath?: boolean } = {}) 
         }),
         setMoving: vi.fn(),
         isMoving: () => options.moving ?? false,
+        getLastMovedAt: () => options.lastMovedAt ?? 0,
     };
     const bot = {
         movePlayer(userId: number, position: Point) {
@@ -90,6 +91,25 @@ describe('bots look at people walking by', () => {
         walk(behavior, bot, { x: 110, y: 0 });
         expect(bot.direction()).toBe(PositionMessage_Direction.DOWN);
         expect(bot.stopAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('looks while paused at a stop, though the moving flag is still set from walking there', () => {
+        const bot = createBot({ moving: true, lastMovedAt: Date.now() - 2000 });
+        const behavior = new PatrolBehavior({ type: 'patrol', waypoints: [], loop: true, pauseAtWaypoints: 5, speed: 50, respondToPlayers: true } as any);
+        behavior.setBot(bot as any);
+
+        walk(behavior, bot, { x: 0, y: 120 });
+        expect(bot.direction()).toBe(PositionMessage_Direction.DOWN);
+        walk(behavior, bot, { x: -120, y: 0 });
+        expect(bot.direction()).toBe(PositionMessage_Direction.LEFT);
+    });
+
+    it('does not turn to look right after a step without a path (walking straight to a spot)', () => {
+        const bot = createBot({ moving: true, lastMovedAt: Date.now() - 100 });
+        const behavior = idleBehavior(bot);
+
+        walk(behavior, bot, { x: 110, y: 0 });
+        expect(bot.direction()).toBe(PositionMessage_Direction.DOWN);
     });
 
     it('lets a route bot keep walking when someone passes 4 tiles away', () => {

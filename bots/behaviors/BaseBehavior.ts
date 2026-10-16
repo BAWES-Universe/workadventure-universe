@@ -374,8 +374,8 @@ export abstract class BaseBehavior {
     
     /**
      * Turn to look at the closest person within LOOK_RADIUS, and keep looking at them until they are past
-     * LOOK_AWAY_RADIUS. Only while the bot stands still and isn't already facing someone it is engaged with,
-     * since facing someone stops the bot.
+     * LOOK_AWAY_RADIUS. Only while the bot stands still (no path, no step in the last half second) and isn't
+     * already facing someone it is engaged with, since facing someone stops the bot.
      */
     protected lookAtPassersBy(): void {
         if (!this.bot) return;
@@ -384,7 +384,8 @@ export abstract class BaseBehavior {
             return;
         }
         const state = this.bot.getState();
-        if (state.isMoving() || this.bot.getIsFollowingPath()) return;
+        // The moving flag stays set after a path ends, so ask when the bot last took a step instead
+        if (this.bot.getIsFollowingPath() || Date.now() - (state.getLastMovedAt?.() ?? 0) < 500) return;
 
         const botPos = state.getPosition();
         const distanceTo = (p: PositionInterface) => Math.hypot(p.x - botPos.x, p.y - botPos.y);
