@@ -76,9 +76,6 @@ export class AIService {
     }
 
     /**
-     * Get available AI providers (for bot editor UI)
-     */
-    /**
      * What each area is for, in one line for the room context. Map authors write this text, so the
      * total is capped and the caller frames it as a description, not an instruction.
      */
@@ -96,6 +93,9 @@ export class AIService {
         return parts.join('; ');
     }
 
+    /**
+     * Get available AI providers (for bot editor UI)
+     */
     async getAvailableProviders(): Promise<Array<{ providerId: string; name: string }>> {
         try {
             const providers = await this.adminApiService.getAvailableAIProviders(true);
