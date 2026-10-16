@@ -4169,7 +4169,7 @@
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "`area-new` AreasPanel.svelte:33 (computer) / AreaSheet.svelte:74 (phone); `area-sheet` :43; `area-all` :81; `area-row` AreaRows.svelte:79; texts mapEditor.ts:592-624"
+      "hooks": "`area-new` AreasPanel.svelte:33 (computer) / AreaSheet.svelte:74 (phone); `area-sheet` :43; `area-all` :81; `area-row` AreaRows.svelte:81; texts mapEditor.ts:592-624"
     },
     {
       "id": "ME-032",
@@ -4205,7 +4205,7 @@
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "AreaRows.svelte:79 (glideToArea AreaEditorTool.ts:741); `area-frame.af-pick` AreaFrames.svelte:165; `area-actions-settings` AreaActions.svelte:113; AreaEditorTool.ts:477-540"
+      "hooks": "AreaRows.svelte:81 (glideToArea AreaEditorTool.ts:741); `area-frame.af-pick` AreaFrames.svelte:165; `area-actions-settings` AreaActions.svelte:113; AreaEditorTool.ts:477-540"
     },
     {
       "id": "ME-035",
