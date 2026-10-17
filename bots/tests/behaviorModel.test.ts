@@ -8,6 +8,7 @@ import {
     behaviorClassFor,
     buildBehaviorConfig,
     DEFAULT_NOTICE_RANGE,
+    facingOf,
     legacyTypeFor,
     resolveBehaviorModel,
 } from '../behaviors/behaviorModel';
@@ -30,6 +31,21 @@ describe('resolveBehaviorModel', () => {
         expect(resolveBehaviorModel('social', { moves: 'fly', goesToPeople: 'yes' })).toEqual({ moves: 'wander', goesToPeople: true });
         expect(resolveBehaviorModel(undefined, undefined)).toEqual({ moves: 'stay', goesToPeople: false });
         expect(resolveBehaviorModel('dance', {})).toEqual({ moves: 'stay', goesToPeople: false });
+    });
+});
+
+describe('facingOf', () => {
+    it('returns the saved default facing direction', () => {
+        for (const facing of ['down', 'left', 'right', 'up'] as const) {
+            expect(facingOf({ facing })).toBe(facing);
+        }
+    });
+
+    it('returns null when nothing valid is saved', () => {
+        expect(facingOf({})).toBeNull();
+        expect(facingOf(undefined)).toBeNull();
+        expect(facingOf({ facing: 'sideways' })).toBeNull();
+        expect(facingOf({ facing: 2 })).toBeNull();
     });
 });
 

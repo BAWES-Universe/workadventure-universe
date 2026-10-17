@@ -1,7 +1,10 @@
 <script lang="ts" generics="T">
-    // A row of round choices, one picked (Loop / Back & forth, 0 s / 5 s / 30 s / 1 min).
+    // A row of round choices, one picked (Loop / Back & forth, 0 s / 5 s / 30 s / 1 min, Down / Left / Right / Up).
+    import type { ComponentType } from "svelte";
+    import { IconCheck } from "@wa-icons";
+
     export let label: string;
-    export let options: Array<{ value: T; label: string }>;
+    export let options: Array<{ value: T; label: string; icon?: ComponentType }>;
     export let value: T;
     export let onPick: (value: T) => void;
 </script>
@@ -14,8 +17,12 @@
             class="bp-chip"
             class:on={option.value === value}
             aria-checked={option.value === value}
-            on:click={() => onPick(option.value)}>{option.label}</button
+            on:click={() => onPick(option.value)}
         >
+            {#if option.value === value}<span class="bp-check"><IconCheck font-size="14" stroke-width="3" /></span>{/if}
+            {#if option.icon}<span class="bp-ico"><svelte:component this={option.icon} font-size="16" /></span>{/if}
+            {option.label}
+        </button>
     {/each}
 </div>
 
@@ -28,23 +35,32 @@
     .bp-chip {
         display: inline-flex;
         align-items: center;
-        height: 28px;
+        gap: 6px;
+        box-sizing: border-box;
+        height: 44px;
         margin: 0;
-        padding: 0 11px;
-        border: 0;
+        padding: 0 14px;
+        border: 1px solid rgba(243, 241, 250, 0.15);
         border-radius: 999px;
-        background: rgba(255, 255, 255, 0.06);
-        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.18);
+        background: transparent;
         font: inherit;
-        font-size: 12.5px;
-        font-weight: 500;
+        font-size: 14px;
+        font-weight: 600;
         color: #fff;
         white-space: nowrap;
         cursor: pointer;
     }
+    .bp-check,
+    .bp-ico {
+        display: inline-flex;
+        align-items: center;
+    }
+    .bp-check {
+        color: #fff;
+    }
     @media (hover: hover) {
         .bp-chip:not(.on):hover {
-            background: rgba(255, 255, 255, 0.12);
+            background: rgba(255, 255, 255, 0.08);
         }
     }
     .bp-chip:focus-visible {
@@ -52,7 +68,8 @@
         outline-offset: 2px;
     }
     .bp-chip.on {
-        background: linear-gradient(135deg, #8629fc, #4156f6);
-        box-shadow: none;
+        background: rgba(134, 41, 252, 0.16);
+        border-color: rgba(167, 139, 250, 0.7);
+        font-weight: 700;
     }
 </style>

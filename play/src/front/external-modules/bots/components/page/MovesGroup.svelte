@@ -2,7 +2,7 @@
     // Moves: whether the bot stays on its spot, wanders inside its circle, or walks a route, and how it walks it.
     import LL from "../../../../../i18n/i18n-svelte";
     import type { BotData } from "../../types";
-    import { botModel, routeStops, withModel, type BotMoves } from "../../behaviorModel";
+    import { botFacing, botModel, routeStops, withModel, type BotMoves } from "../../behaviorModel";
     import PageGroup from "./PageGroup.svelte";
     import PageSegment from "./PageSegment.svelte";
     import PageRow from "./PageRow.svelte";
@@ -11,7 +11,15 @@
     import { durationChips } from "./duration";
     import PageButton from "./PageButton.svelte";
     import PageNote from "./PageNote.svelte";
-    import { IconCircleDashed, IconMapPin, IconRoute } from "@wa-icons";
+    import {
+        IconArrowDown,
+        IconArrowLeft,
+        IconArrowRight,
+        IconArrowUp,
+        IconCircleDashed,
+        IconMapPin,
+        IconRoute,
+    } from "@wa-icons";
 
     export let bot: BotData;
     export let open: boolean;
@@ -27,6 +35,13 @@
     $: page = $LL.mapEditor.edit.bots.page;
     $: model = botModel(bot);
     $: stops = routeStops(bot).length;
+    $: facing = botFacing(bot);
+    $: facingLabels = {
+        down: page.moves.facingDown(),
+        left: page.moves.facingLeft(),
+        right: page.moves.facingRight(),
+        up: page.moves.facingUp(),
+    };
     $: loops = bot.behaviorConfig.loop !== false;
     $: pause = typeof bot.behaviorConfig.pauseAtWaypoints === "number" ? bot.behaviorConfig.pauseAtWaypoints : 0;
     $: brief =
@@ -37,7 +52,7 @@
               })
             : model.moves === "wander"
             ? page.moves.briefWander()
-            : page.moves.briefStay();
+            : page.moves.briefStay({ direction: facingLabels[facing].toLowerCase() });
     $: icon = model.moves === "route" ? IconRoute : model.moves === "wander" ? IconCircleDashed : IconMapPin;
 
     function pickMoves(moves: BotMoves) {
@@ -88,6 +103,19 @@
         <PageNote>{page.moves.areaNote()}</PageNote>
     {:else}
         <PageRow icon={IconMapPin} on title={page.moves.spot()} hint={page.moves.spotHint()} />
+        <PageField title={page.moves.facing()} hint={page.moves.facingHint()}>
+            <PageChips
+                label={page.moves.facing()}
+                options={[
+                    { value: "down", label: facingLabels.down, icon: IconArrowDown },
+                    { value: "left", label: facingLabels.left, icon: IconArrowLeft },
+                    { value: "right", label: facingLabels.right, icon: IconArrowRight },
+                    { value: "up", label: facingLabels.up, icon: IconArrowUp },
+                ]}
+                value={facing}
+                onPick={(picked) => setConfig({ facing: picked })}
+            />
+        </PageField>
         {#if model.goesToPeople}
             <PageNote>{page.moves.spotNote()}</PageNote>
         {/if}

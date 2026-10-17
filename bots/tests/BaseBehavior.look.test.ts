@@ -7,6 +7,7 @@ import { PositionMessage_Direction } from '@workadventure/messages';
 
 import { IdleBehavior, type IdleBehaviorConfig } from '../behaviors/IdleBehavior';
 import { PatrolBehavior } from '../behaviors/PatrolBehavior';
+import { SocialBehavior } from '../behaviors/SocialBehavior';
 
 type Point = { x: number; y: number };
 
@@ -51,8 +52,8 @@ function createBot(
     return bot;
 }
 
-function idleBehavior(bot: ReturnType<typeof createBot>): IdleBehavior {
-    const config: IdleBehaviorConfig = { type: 'idle', responseRadius: 100, greetingMessages: [] };
+function idleBehavior(bot: ReturnType<typeof createBot>, extra: Record<string, unknown> = {}): IdleBehavior {
+    const config: IdleBehaviorConfig = { type: 'idle', responseRadius: 100, greetingMessages: [], ...extra };
     const behavior = new IdleBehavior(config);
     behavior.setBot(bot as any);
     return behavior;
@@ -257,5 +258,87 @@ describe('bots turn back once nobody is in sight', () => {
         vi.advanceTimersByTime(1600);
         behavior.lookAtPassersBy();
         expect(bot.direction()).toBe(PositionMessage_Direction.DOWN);
+    });
+});
+
+describe('bots with a default facing direction', () => {
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it('turns back to its facing after someone walks by, though it started facing down', () => {
+        vi.useFakeTimers();
+        const bot = createBot();
+        const behavior = idleBehavior(bot, { moves: 'stay', facing: 'left' });
+
+        walk(behavior, bot, { x: 120, y: 0 });
+        expect(bot.direction()).toBe(PositionMessage_Direction.RIGHT);
+
+        walk(behavior, bot, { x: 400, y: 0 });
+        vi.advanceTimersByTime(1600);
+        behavior.lookAtPassersBy();
+        expect(bot.direction()).toBe(PositionMessage_Direction.LEFT);
+    });
+
+    it('turns to its facing after standing nobody in sight for a moment when it faces another way', () => {
+        vi.useFakeTimers();
+        const bot = createBot({ direction: PositionMessage_Direction.UP });
+        const behavior = idleBehavior(bot, { moves: 'stay', facing: 'down' });
+
+        behavior.lookAtPassersBy();
+        expect(bot.direction()).toBe(PositionMessage_Direction.UP);
+        vi.advanceTimersByTime(1600);
+        behavior.lookAtPassersBy();
+        expect(bot.direction()).toBe(PositionMessage_Direction.DOWN);
+        expect(bot.stopAndUpdate).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not turn while it is engaged with someone', () => {
+        vi.useFakeTimers();
+        const bot = createBot();
+        const behavior = idleBehavior(bot, { moves: 'stay', facing: 'left' });
+
+        walk(behavior, bot, { x: 0, y: -60 });
+        expect((behavior as any).isEngaged).toBe(true);
+        vi.advanceTimersByTime(3000);
+        behavior.lookAtPassersBy();
+        expect(bot.direction()).toBe(PositionMessage_Direction.UP);
+    });
+
+    it('keeps the old way back when no facing is saved', () => {
+        vi.useFakeTimers();
+        const bot = createBot({ direction: PositionMessage_Direction.UP });
+        const behavior = idleBehavior(bot, { moves: 'stay' });
+
+        walk(behavior, bot, { x: 120, y: 0 });
+        walk(behavior, bot, { x: 400, y: 0 });
+        vi.advanceTimersByTime(1600);
+        behavior.lookAtPassersBy();
+        expect(bot.direction()).toBe(PositionMessage_Direction.UP);
+    });
+
+    it('ignores a facing on a bot that wanders or walks a route', () => {
+        vi.useFakeTimers();
+        const wander = new SocialBehavior({ type: 'social', moves: 'wander', facing: 'left' } as any);
+        const route = new PatrolBehavior({
+            type: 'patrol', moves: 'route', facing: 'left', waypoints: [], loop: true, pauseAtWaypoints: 0, speed: 50, respondToPlayers: true,
+        } as any);
+        for (const behavior of [wander, route]) {
+            const bot = createBot();
+            behavior.setBot(bot as any);
+            expect(behavior.getConfiguredFacing()).toBeNull();
+            vi.advanceTimersByTime(3000);
+            behavior.lookAtPassersBy();
+            behavior.lookAtPassersBy();
+            vi.advanceTimersByTime(1600);
+            behavior.lookAtPassersBy();
+            expect(bot.direction()).toBe(PositionMessage_Direction.DOWN);
+            expect(bot.stopAndUpdate).not.toHaveBeenCalled();
+        }
+    });
+
+    it('uses the facing of a stay bot that goes to people (social behaviour)', () => {
+        const behavior = new SocialBehavior({ type: 'social', moves: 'stay', goesToPeople: true, facing: 'right' } as any);
+        expect(behavior.getConfiguredFacing()).toBe(PositionMessage_Direction.RIGHT);
     });
 });

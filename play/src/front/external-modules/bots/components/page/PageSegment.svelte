@@ -31,14 +31,15 @@
         flex: 1 1 auto;
         min-width: 0;
         margin: 0;
-        padding: 7px 6px;
+        height: 44px;
+        padding: 0 6px;
         border: 0;
         border-radius: 999px;
         background: transparent;
         font: inherit;
-        font-size: 12px;
+        font-size: 13px;
         font-weight: 600;
-        color: rgba(244, 242, 250, 0.64);
+        color: rgba(255, 255, 255, 0.62);
         text-align: center;
         white-space: nowrap;
         overflow: hidden;
@@ -55,8 +56,9 @@
         outline-offset: -2px;
     }
     .bp-seg button.on {
-        background: linear-gradient(135deg, #8629fc, #4156f6);
-        box-shadow: 0 4px 12px -4px rgba(134, 41, 252, 0.8);
+        background: rgba(134, 41, 252, 0.16);
+        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.7);
         color: #fff;
+        font-weight: 700;
     }
 </style>

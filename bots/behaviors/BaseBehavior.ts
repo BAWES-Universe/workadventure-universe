@@ -6,6 +6,7 @@ import { BotClient } from '../client/BotClient';
 import type { PositionInterface } from '../../play/src/front/Connection/ConnexionModels';
 import type { SpaceUser } from '@workadventure/messages';
 import { PositionMessage_Direction } from '@workadventure/messages';
+import { facingOf, resolveBehaviorModel, type BotFacing } from './behaviorModel';
 import type { AIService, InterruptionAction } from '../ai/AIService';
 import type { AdminApiService } from '../server/AdminApiService';
 import type { ConversationStorage } from '../memory/ConversationStorage';
@@ -92,6 +93,13 @@ export interface BehaviorConfig {
     };
     [key: string]: any;
 }
+
+const FACING_DIRECTION: Record<BotFacing, PositionMessage_Direction> = {
+    down: PositionMessage_Direction.DOWN,
+    left: PositionMessage_Direction.LEFT,
+    right: PositionMessage_Direction.RIGHT,
+    up: PositionMessage_Direction.UP,
+};
 
 export abstract class BaseBehavior {
     protected bot: BotClient | null = null;
@@ -395,7 +403,7 @@ export abstract class BaseBehavior {
      * Turn to look at the closest person within LOOK_RADIUS, and keep looking at them until they are past
      * LOOK_AWAY_RADIUS. Only while the bot stands still (no path, no step in the last half second) and isn't
      * already facing someone it is engaged with, since facing someone stops the bot. Once nobody is in sight
-     * it turns back the way it faced before. Runs on every player move and every tick, so it also turns back
+     * it turns back the way it faced before (or to its configured facing). Runs on every player move and every tick, so it also turns back
      * when the person it looked at leaves the room.
      */
     lookAtPassersBy(): void {
@@ -450,16 +458,30 @@ export abstract class BaseBehavior {
         }
     }
 
-    /** Face the way the bot faced before it turned to someone, a moment after the last person went. */
+    /**
+     * The direction a bot that stays put is set to face when nobody is around, or null: no facing saved, or the
+     * bot wanders or walks a route (facing means nothing to a bot that walks).
+     */
+    getConfiguredFacing(): PositionMessage_Direction | null {
+        const config = this.config as Record<string, unknown>;
+        if (resolveBehaviorModel(config.type as string | undefined, config).moves !== 'stay') return null;
+        const facing = facingOf(config);
+        return facing === null ? null : FACING_DIRECTION[facing];
+    }
+
+    /**
+     * Face the way the bot rests, a moment after the last person went: its configured facing if it has one,
+     * else the way it faced before it turned to someone.
+     */
     private turnBack(): void {
-        if (!this.bot || this.restDirection === null) return;
+        const direction = this.getConfiguredFacing() ?? this.restDirection;
+        if (!this.bot || direction === null) return;
         const now = Date.now();
         if (this.nobodyInSightSince === 0) {
             this.nobodyInSightSince = now;
             return;
         }
         if (now - this.nobodyInSightSince < this.TURN_BACK_DELAY) return;
-        const direction = this.restDirection;
         this.restDirection = null;
         this.nobodyInSightSince = 0;
         const state = this.bot.getState();
