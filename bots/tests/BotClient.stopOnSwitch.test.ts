@@ -34,10 +34,12 @@ function joinedBotWithFakeSocket() {
 class FakeWalking {
     setBot() {}
     update() {}
+    lookAtPassersBy() {}
 }
 class FakeIdle {
     setBot() {}
     update() {}
+    lookAtPassersBy() {}
 }
 
 function fakeBehavior(kind: typeof FakeWalking | typeof FakeIdle = FakeWalking): BaseBehavior {
