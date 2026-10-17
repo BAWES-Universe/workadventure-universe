@@ -83,7 +83,7 @@ describe("SpaceToBackForwarder", () => {
                     spaceUserId: "foo_1",
                     name: "foo_1",
                     spaces: new Set<string>(),
-                    permissions: 16383n,
+                    permissions: 16383,
                 }),
             });
 
@@ -151,7 +151,7 @@ describe("SpaceToBackForwarder", () => {
                     spaceUserId: "foo_1",
                     name: "foo_1",
                     spaces: new Set<string>(),
-                    permissions: 0n,
+                    permissions: 0,
                 }),
             });
 
@@ -219,7 +219,7 @@ describe("SpaceToBackForwarder", () => {
                     spaceUserId: "foo_1",
                     name: "foo_1",
                     spaces: new Set<string>(),
-                    permissions: 0n,
+                    permissions: 0,
                 }),
             });
 

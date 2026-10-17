@@ -59,7 +59,7 @@ export function bypassesAreaSpaceRights(user: { tags: string[]; uuid: string; ca
 export function listenOnlyAreaSpaces(
     wam: WamLike | undefined,
     roomUrl: string,
-    user: { tags: string[]; uuid: string; canEdit: boolean; permissions?: bigint }
+    user: { tags: string[]; uuid: string; canEdit: boolean; permissions?: number }
 ): string[] {
     // Whoever may edit maps can always host a stage
     if (wam === undefined || bypassesAreaSpaceRights(user) || canEditMaps(user)) {
@@ -80,7 +80,7 @@ export function listenOnlyAreaSpaces(
     return [...closedToSpeak].filter((name) => !openToSpeak.has(name));
 }
 
-function canEditMaps(user: { tags: string[]; permissions?: bigint }): boolean {
+function canEditMaps(user: { tags: string[]; permissions?: number }): boolean {
     return hasPermission(user.permissions ?? permissionsFrom(undefined, user.tags), Permission.EDIT_MAPS);
 }
 

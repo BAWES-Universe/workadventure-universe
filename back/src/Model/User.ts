@@ -43,7 +43,7 @@ export class User implements Movable, CustomJsonReplacerInterface {
      */
     private followRequest: { asked: Set<User>; deadline: number } | undefined;
     /** What this player may do in the world: Orbit's number, or what their tags stand for when it sent none. */
-    public readonly permissions: bigint;
+    public readonly permissions: number;
     public disconnected = false;
     private isRoomJoinedMessage = false;
     private pendingMessages: NonNullable<ServerToClientMessage["message"]>[] = [];

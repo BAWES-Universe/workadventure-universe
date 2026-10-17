@@ -48,7 +48,7 @@ export type SocketData = {
     applications?: Array<ApplicationDefinitionInterface> | null;
     canEdit: boolean;
     // What this player may do in the world (see permissionsFrom)
-    permissions: bigint;
+    permissions: number;
     spaceUserId: string;
     emitInBatch: (payload: SubMessage) => void;
     batchedMessages: BatchMessage;

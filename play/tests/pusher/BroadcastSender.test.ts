@@ -55,7 +55,7 @@ const universe = {
 const ADMIN = permissionsFrom(undefined, ["admin"]);
 const EDITOR = permissionsFrom(undefined, ["editor"]);
 
-function makeSocket(permissions: bigint): Socket {
+function makeSocket(permissions: number): Socket {
     const data = {
         name: "Real Admin",
         permissions,
@@ -114,7 +114,7 @@ describe("a written or voice broadcast", () => {
     });
 
     it("reaches the whole universe only with the Reach all of the universe permission too", async () => {
-        const sendOnly = 1n << BigInt(Permission.SEND_MESSAGES);
+        const sendOnly = 2 ** Permission.SEND_MESSAGES;
         await expect(socketManager.emitPlayGlobalMessage(makeSocket(sendOnly), event("universe"))).rejects.toThrow(
             "Reach all of the universe"
         );

@@ -24,28 +24,36 @@ export type PermissionBit = (typeof Permission)[keyof typeof Permission];
 
 // What the "admin" and "editor" tags stand for when Orbit sends no number (an Orbit from before roles): the same
 // numbers as the built-in roles of the same name.
-const ADMIN_TAG_PERMISSIONS = 16383n;
-const EDITOR_TAG_PERMISSIONS = 8416n;
+const ADMIN_TAG_PERMISSIONS = 16383;
+const EDITOR_TAG_PERMISSIONS = 8416;
 // Administrator holds every permission: all the bits up to and including its own.
-const EVERY_PERMISSION = (1n << 31n) - 1n;
+const EVERY_PERMISSION = 2 ** 31 - 1;
+
+/*
+ * Plain numbers, not bigint: the front is built for browsers without bigint literals (Safari 12) and old iOS has no
+ * BigInt at all. Up to 15 digits is an exact whole number in JavaScript, far past the highest bit used.
+ */
 
 /**
  * The permissions of a person, from the number Orbit sent. Without a usable number (none sent, or something that is not
  * a whole number) it falls back to the tags, so the game keeps working with an Orbit that does not send roles yet.
  */
-export function permissionsFrom(permissions: string | undefined, tags: string[]): bigint {
-    if (permissions !== undefined && /^\d+$/.test(permissions)) {
-        const parsed = BigInt(permissions);
+export function permissionsFrom(permissions: string | undefined, tags: string[]): number {
+    if (permissions !== undefined && /^\d{1,15}$/.test(permissions)) {
+        const parsed = Number(permissions);
         return hasPermission(parsed, Permission.ADMINISTRATOR) ? EVERY_PERMISSION : parsed;
     }
-    let fromTags = 0n;
+    let fromTags = 0;
     if (tags.includes("admin")) fromTags |= ADMIN_TAG_PERMISSIONS;
     if (tags.includes("editor")) fromTags |= EDITOR_TAG_PERMISSIONS;
     return fromTags;
 }
 
-export function hasPermission(permissions: bigint, bit: PermissionBit): boolean {
-    return (
-        (permissions & (1n << BigInt(bit))) !== 0n || (permissions & (1n << BigInt(Permission.ADMINISTRATOR))) !== 0n
-    );
+function bitIsSet(permissions: number, bit: number): boolean {
+    // Division, not `&`: bitwise operators cut numbers to 32 bits
+    return Math.floor(permissions / 2 ** bit) % 2 === 1;
+}
+
+export function hasPermission(permissions: number, bit: PermissionBit): boolean {
+    return bitIsSet(permissions, bit) || bitIsSet(permissions, Permission.ADMINISTRATOR);
 }

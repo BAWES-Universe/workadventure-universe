@@ -49,7 +49,7 @@ export class WAMSettingsUtils {
         roomGroup: string | null | undefined,
         roomUrl: string,
         tags: string[],
-        permissions: bigint = permissionsFrom(undefined, tags)
+        permissions: number = permissionsFrom(undefined, tags)
     ): MegaphoneChannelDescription[] {
         const channels: MegaphoneChannelDescription[] = [];
         const scopes = WAMSettingsUtils.getMegaphoneScopes(wamSettings);

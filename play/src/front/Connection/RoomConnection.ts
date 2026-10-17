@@ -147,7 +147,7 @@ export class RoomConnection implements RoomConnection {
     private userId: number | null = null;
     private _closed = false;
     private tags: string[] = [];
-    private permissions = 0n;
+    private permissions = 0;
     private canEdit = false;
 
     public readonly _serverDisconnected = new Subject<void>();

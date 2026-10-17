@@ -17,7 +17,7 @@ type FakeSocketData = ReturnType<MatrixAreaSocket["getUserData"]>;
 
 class FakeSocket implements MatrixAreaSocket {
     public readonly data: FakeSocketData;
-    constructor(spaceUserId: string, chatID: string | undefined, permissions = 0n) {
+    constructor(spaceUserId: string, chatID: string | undefined, permissions = 0) {
         this.data = {
             spaceUserId,
             chatID,
@@ -281,7 +281,7 @@ describe("MatrixAreaMembership", () => {
         const back = new FakeBack();
         const { matrix } = createMatrix();
         const pusher = new FakePusher(back, matrix);
-        const admin = new FakeSocket("tab-1", ALICE, 1n << BigInt(Permission.MODERATE_AREA_CHATS));
+        const admin = new FakeSocket("tab-1", ALICE, 2 ** Permission.MODERATE_AREA_CHATS);
 
         await pusher.membership.enter(admin, ROOM);
 
@@ -294,7 +294,7 @@ describe("MatrixAreaMembership", () => {
         const { matrix } = createMatrix();
         const pusher = new FakePusher(back, matrix);
 
-        await pusher.membership.enter(new FakeSocket("tab-1", ALICE, 1n << BigInt(Permission.EDIT_MAPS)), ROOM);
+        await pusher.membership.enter(new FakeSocket("tab-1", ALICE, 2 ** Permission.EDIT_MAPS), ROOM);
 
         expect(matrix.inviteUserToRoom).toHaveBeenCalledWith(ALICE, ROOM);
         expect(matrix.promoteUserToModerator).not.toHaveBeenCalled();

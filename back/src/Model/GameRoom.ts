@@ -1289,7 +1289,7 @@ export class GameRoom implements BrothersFinder {
      * The broadcast channels this room listens to, and which of them a user carrying these tags and permissions may go
      * live on.
      */
-    public getMegaphoneSettingsFor(tags: string[], permissions?: bigint): MegaphoneSettings {
+    public getMegaphoneSettingsFor(tags: string[], permissions?: number): MegaphoneSettings {
         const channels = WAMSettingsUtils.getMegaphoneChannels(
             this._wamSettings,
             this._roomGroup,

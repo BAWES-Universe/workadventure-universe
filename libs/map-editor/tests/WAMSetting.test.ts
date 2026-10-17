@@ -126,9 +126,9 @@ describe("Megaphone channels", async () => {
 
     it("lets whoever has the Reach all of the universe permission go live on the universe channel, whatever their tags", () => {
         const settings = { megaphone: { enabled: true, scopes: ["UNIVERSE" as const], rights: [] } };
-        const reach = WAMSettingsUtils.getMegaphoneChannels(settings, "bawes/hq", roomUrl, ["member"], 1n << 10n);
+        const reach = WAMSettingsUtils.getMegaphoneChannels(settings, "bawes/hq", roomUrl, ["member"], 2 ** 10);
         expect(reach.find((channel) => channel.scope === "UNIVERSE")?.canStream).toBe(true);
-        const demoted = WAMSettingsUtils.getMegaphoneChannels(settings, "bawes/hq", roomUrl, ["admin"], 1n << 9n);
+        const demoted = WAMSettingsUtils.getMegaphoneChannels(settings, "bawes/hq", roomUrl, ["admin"], 2 ** 9);
         expect(demoted.find((channel) => channel.scope === "UNIVERSE")?.canStream).toBe(false);
     });
 
