@@ -458,6 +458,10 @@
         justify-content: flex-end;
     }
 
+    .grid-container-inverted .message {
+        justify-self: end;
+    }
+
     .messageHeader-name {
         font-size: 13px;
         font-weight: 600;
@@ -474,8 +478,10 @@
         flex-shrink: 0;
     }
 
+    /* Its own width, not the label's: a long name over a short message doesn't stretch the bubble. */
     .message {
         grid-area: message;
+        justify-self: start;
         min-width: 180px;
         overflow-wrap: anywhere;
         position: relative;
