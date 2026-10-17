@@ -1,7 +1,7 @@
 <script lang="ts">
     // The areas of the room as rows: the area's mark in its own colour, its name, and what it does. Tapping one glides
     // the map to that area and picks it, as a tap on it would.
-    import type { AreaData } from "@workadventure/map-editor";
+    import { isAreaPropertyActive, type AreaData } from "@workadventure/map-editor";
     import { LL } from "../../../../i18n/i18n-svelte";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import { areaColour } from "../../../Phaser/Components/MapEditor/AreaPreview";
@@ -59,7 +59,8 @@
 
     function whatOf(area: AreaData): string {
         const titles = area.properties
-            .filter((p) => p.type !== "areaDescriptionProperties")
+            // A setting that is switched off in the editor is left out, as it does nothing.
+            .filter((p) => p.type !== "areaDescriptionProperties" && isAreaPropertyActive(p))
             .map((p) => {
                 if (p.type === "extensionModule") return moduleSettingLabel(p.subtype)?.title ?? "";
                 const entry = ($LL.mapEditor.edit.properties as Record<string, { title?: () => string } | undefined>)[
