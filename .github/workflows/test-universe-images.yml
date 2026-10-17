@@ -94,6 +94,14 @@ jobs:
             echo "tag=latest" >> $GITHUB_OUTPUT
           fi
 
+      # Docker image references must be lowercase, and the images are pushed lowercase by
+      # docker/metadata-action, but the owner is "BAWES-Universe". The runner already sets
+      # GITHUB_REPOSITORY_OWNER (uppercase) and a step env of the same name does not replace it,
+      # so the compose steps export the lowercase value from OWNER_LC themselves.
+      - name: Lowercase repository owner
+        id: owner
+        run: echo "lower=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_OUTPUT
+
       - name: Login to GHCR
         uses: docker/login-action@v4
         with:
@@ -119,24 +127,28 @@ jobs:
           sed -i "s/LIVEKIT_API_SECRET=/LIVEKIT_API_SECRET=12345678901234567890123456789012/g" .env
           sed -i "s/MAX_PER_GROUP=4/MAX_PER_GROUP=100/g" .env
           echo "WOKA_SPEED=3" >> .env
-          echo "GITHUB_REPOSITORY_OWNER=${{ github.repository_owner }}" >> .env
+          echo "GITHUB_REPOSITORY_OWNER=${{ steps.owner.outputs.lower }}" >> .env
         env:
           DOCKER_TAG: ${{ steps.docker-tag.outputs.tag }}
         working-directory: contrib/docker
 
       - name: Start WorkAdventure with Universe images
         run: |
+          export GITHUB_REPOSITORY_OWNER="$OWNER_LC"
           docker compose -f docker-compose.prod.yaml -f docker-compose.universe.yaml -f tests/docker-compose.test.yaml up -d
         env:
           DOCKER_TAG: ${{ steps.docker-tag.outputs.tag }}
-          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          OWNER_LC: ${{ steps.owner.outputs.lower }}
         working-directory: contrib/docker
 
       - name: Wait for services to be ready
         run: |
           echo "Waiting for services to start..."
           sleep 15
+          export GITHUB_REPOSITORY_OWNER="$OWNER_LC"
           docker compose -f docker-compose.prod.yaml -f docker-compose.universe.yaml -f tests/docker-compose.test.yaml ps
+        env:
+          OWNER_LC: ${{ steps.owner.outputs.lower }}
         working-directory: contrib/docker
 
       - name: Upload test-map
@@ -156,28 +168,32 @@ jobs:
       - name: Display docker compose logs on failure
         if: failure()
         run: |
+          export GITHUB_REPOSITORY_OWNER="$OWNER_LC"
           docker compose -f docker-compose.prod.yaml -f docker-compose.universe.yaml -f tests/docker-compose.test.yaml logs
         env:
           DOCKER_TAG: ${{ steps.docker-tag.outputs.tag }}
-          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          OWNER_LC: ${{ steps.owner.outputs.lower }}
         working-directory: contrib/docker
 
       - name: Display containers state on failure
         if: failure()
         run: |
+          export GITHUB_REPOSITORY_OWNER="$OWNER_LC"
           docker compose -f docker-compose.prod.yaml -f docker-compose.universe.yaml -f tests/docker-compose.test.yaml ps
         env:
           DOCKER_TAG: ${{ steps.docker-tag.outputs.tag }}
-          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          OWNER_LC: ${{ steps.owner.outputs.lower }}
         working-directory: contrib/docker
 
       - name: Side-load docker compose logs in playwright report
         if: failure()
         run: |
+          mkdir -p ../../tests/playwright-report
+          export GITHUB_REPOSITORY_OWNER="$OWNER_LC"
           docker compose -f docker-compose.prod.yaml -f docker-compose.universe.yaml -f tests/docker-compose.test.yaml logs > ../../tests/playwright-report/docker-compose.log
         env:
           DOCKER_TAG: ${{ steps.docker-tag.outputs.tag }}
-          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          OWNER_LC: ${{ steps.owner.outputs.lower }}
         working-directory: contrib/docker
 
       - name: Upload Playwright report
