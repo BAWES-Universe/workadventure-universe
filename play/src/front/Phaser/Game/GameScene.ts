@@ -30,6 +30,7 @@ import {
     GameMap,
     GameMapProperties,
     WAMFileFormat,
+    isAreaPropertyActive,
 } from "@workadventure/map-editor";
 import { wamFileMigration } from "@workadventure/map-editor/src/Migrations/WamFileMigration";
 import { slugify } from "@workadventure/shared-utils/src/Jitsi/slugify";
@@ -3868,7 +3869,9 @@ export class GameScene extends DirtyScene {
         // Find the user's personal area
         let personalAreaData: AreaData | null = null;
         for (const area of personalAreas) {
-            const property = area.areaData.properties.find((property) => property.type === "personalAreaPropertyData");
+            const property = area.areaData.properties
+                .filter(isAreaPropertyActive)
+                .find((property) => property.type === "personalAreaPropertyData");
             if (property && property.type === "personalAreaPropertyData" && property.ownerId === userUUID) {
                 personalAreaData = area.areaData;
                 break;

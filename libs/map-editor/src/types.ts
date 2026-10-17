@@ -21,6 +21,9 @@ export const PropertyBase = z.object({
     hideButtonLabel: z.boolean().optional(),
     resourceUrl: z.string().optional(),
     serverData: z.unknown().optional(),
+    // An area setting switched off in the editor: it is kept with all its choices,
+    // but the game acts as if it were not there.
+    disabled: z.boolean().optional(),
 });
 
 export const FocusablePropertyData = PropertyBase.extend({

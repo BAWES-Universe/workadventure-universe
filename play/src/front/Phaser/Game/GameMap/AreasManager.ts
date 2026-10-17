@@ -1,5 +1,5 @@
 import type { AreaData, AtLeast, GameMapAreas } from "@workadventure/map-editor";
-import { AreaPermissions } from "@workadventure/map-editor";
+import { AreaPermissions, isAreaPropertyActive } from "@workadventure/map-editor";
 import { Area } from "../../Entity/Area";
 import type { GameScene } from "../GameScene";
 import { mapEditorActivatedForThematics } from "../../../Stores/MenuStore";
@@ -83,9 +83,15 @@ export class AreasManager {
         return this.areas.find((area) => area.areaData.id === areaId);
     }
 
-    public getAreasByPropertyType(propertyType: string): Area[] {
+    /**
+     * Areas that have a setting of this type. A setting that is switched off in the editor does not count, unless
+     * `includeDisabled` is set (for code that has to update the setting, not apply it).
+     */
+    public getAreasByPropertyType(propertyType: string, includeDisabled = false): Area[] {
         return this.areas.reduce((areas, area) => {
-            const areaFound = area.areaData.properties.find((property) => property.type === propertyType);
+            const areaFound = area.areaData.properties.find(
+                (property) => property.type === propertyType && (includeDisabled || isAreaPropertyActive(property))
+            );
             if (areaFound) {
                 areas.push(area);
             }

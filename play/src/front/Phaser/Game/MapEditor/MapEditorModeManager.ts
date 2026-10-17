@@ -643,9 +643,11 @@ export class MapEditorModeManager {
             return;
         }
 
-        // Get and revoke the personal area of the user if it exists
+        // Get and revoke the personal area of the user if it exists (even a desk that is switched off: this
+        // updates who owns it, it does not offer it)
         const gameMapFrontWrapper = gameManager.getCurrentGameScene().getGameMapFrontWrapper();
-        for (const area of gameMapFrontWrapper.areasManager?.getAreasByPropertyType("personalAreaPropertyData") ?? []) {
+        for (const area of gameMapFrontWrapper.areasManager?.getAreasByPropertyType("personalAreaPropertyData", true) ??
+            []) {
             const property = area.areaData.properties.find((property) => property.type === "personalAreaPropertyData");
             if (!property || (property.type === "personalAreaPropertyData" && property?.ownerId !== userUUID)) continue;
 

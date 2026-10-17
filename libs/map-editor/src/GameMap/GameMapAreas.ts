@@ -3,6 +3,7 @@ import { errorHandler } from "@workadventure/shared-utils/src/ErrorHandler";
 import * as _ from "lodash";
 import type { AreaData, AreaDataProperty, AtLeast, EntityCoordinates, WAMFileFormat } from "../types";
 import { AreaDataProperties, PersonalAreaPropertyData, RestrictedRightsPropertyData } from "../types";
+import { isAreaPropertyActive } from "../Utils";
 
 export type AreaChangeCallback = (
     areasChangedByAction: Array<AreaData>,
@@ -362,7 +363,9 @@ export class GameMapAreas {
     public isPersonalArea(areaId: string): boolean {
         const area = this.getArea(areaId);
         if (area) {
-            const personalAreaData = this.getPersonalAreaRightPropertyData(area);
+            // Used by the editor (deleting a desk that has an owner asks what to do with its objects):
+            // a desk that is switched off is still a desk, so it is looked up even when it is off.
+            const personalAreaData = this.getPersonalAreaRightPropertyData(area, true);
             if (personalAreaData !== undefined && personalAreaData.ownerId !== null) {
                 {
                     return true;
@@ -374,7 +377,7 @@ export class GameMapAreas {
 
     private getAreaRightPropertyData(area: AreaData): RestrictedRightsPropertyData | undefined {
         const areaRightPropertyData = area.properties.find(
-            (property) => property.type === "restrictedRightsPropertyData"
+            (property) => property.type === "restrictedRightsPropertyData" && isAreaPropertyActive(property)
         );
         const areaRights = areaRightPropertyData
             ? RestrictedRightsPropertyData.parse(areaRightPropertyData)
@@ -389,9 +392,13 @@ export class GameMapAreas {
         return;
     }
 
-    private getPersonalAreaRightPropertyData(area: AreaData): PersonalAreaPropertyData | undefined {
+    private getPersonalAreaRightPropertyData(
+        area: AreaData,
+        includeDisabled = false
+    ): PersonalAreaPropertyData | undefined {
         const personalAreaPropertyData = area.properties.find(
-            (property) => property.type === "personalAreaPropertyData"
+            (property) =>
+                property.type === "personalAreaPropertyData" && (includeDisabled || isAreaPropertyActive(property))
         );
         if (personalAreaPropertyData !== undefined) {
             return PersonalAreaPropertyData.parse(personalAreaPropertyData);

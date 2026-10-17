@@ -252,6 +252,94 @@ export function describeAreaProperty(
     return { title: property.type, text: "", icon: IconLink };
 }
 
+/** The last part of a path or URL, without its query, hash and extension, as people read it ("Lobby" for ".../Lobby.wam"). */
+function lastSegmentName(path: string): string {
+    const clean = path.split("#")[0].split("?")[0].replace(/\/+$/, "");
+    const segment = clean.slice(clean.lastIndexOf("/") + 1);
+    let decoded = segment;
+    try {
+        decoded = decodeURIComponent(segment);
+    } catch {
+        // A malformed escape: the raw text is still the best name there is.
+    }
+    return decoded.replace(/\.(wam|tmj|json)$/i, "").trim();
+}
+
+/** The host of a link without "www.", or undefined when it is not a link. */
+function hostOf(link: string): string | undefined {
+    try {
+        const host = new URL(link).hostname.replace(/^www\./i, "");
+        return host === "" ? undefined : host;
+    } catch {
+        return undefined;
+    }
+}
+
+const SUMMARY_TOOLTIP_LENGTH = 40;
+
+/**
+ * The line under a setting's title: what is actually set on it ("To Lobby · at Front door", "Only: admin, staff").
+ * Falls back to the setting's fixed line (`fallbackText`) when nothing useful is set. `stages` maps a Stage's area
+ * id to its name (the listener names its Stage by area id).
+ */
+export function summarizeAreaProperty(
+    LL: TranslationFunctions,
+    property: AreaDataProperty,
+    fallbackText: string,
+    stages?: Map<string, string>
+): string {
+    const t = LL.mapEditor.edit.areas.summary;
+    switch (property.type) {
+        case "exit": {
+            const room = lastSegmentName(property.url ?? "");
+            if (room === "") return fallbackText;
+            const area = property.areaName?.trim();
+            return area ? t.toRoomAt({ room, area }) : t.toRoom({ room });
+        }
+        case "speakerMegaphone": {
+            const name = property.name?.trim();
+            if (!name) return fallbackText;
+            return property.chatEnabled ? t.chatOn({ name }) : name;
+        }
+        case "listenerMegaphone": {
+            const stage = (stages ?? speakerZones()).get(property.speakerZoneName)?.trim();
+            return stage ? t.hears({ stage }) : fallbackText;
+        }
+        case "restrictedRightsPropertyData": {
+            const tags = [...new Set([...(property.readTags ?? []), ...(property.writeTags ?? [])])].filter(
+                (tag) => tag.trim() !== ""
+            );
+            return tags.length > 0 ? t.onlyTags({ tags: tags.join(", ") }) : fallbackText;
+        }
+        case "openWebsite": {
+            return (property.link ? hostOf(property.link) : undefined) ?? fallbackText;
+        }
+        case "openFile": {
+            return property.name?.trim() || fallbackText;
+        }
+        case "playAudio": {
+            const file = lastSegmentName(property.audioLink ?? "");
+            if (file === "") return fallbackText;
+            const volume = property.volume ?? 1;
+            return volume !== 1 ? `${file} · ${Math.round(volume * 100)}%` : file;
+        }
+        case "tooltipPropertyData": {
+            const content = (property.content ?? "").replace(/\s+/g, " ").trim();
+            if (content === "") return fallbackText;
+            const shown =
+                content.length > SUMMARY_TOOLTIP_LENGTH
+                    ? `${content.slice(0, SUMMARY_TOOLTIP_LENGTH).trimEnd()}…`
+                    : content;
+            return `“${shown}”`;
+        }
+        case "matrixRoomPropertyData": {
+            return property.displayName?.trim() || fallbackText;
+        }
+        default:
+            return fallbackText;
+    }
+}
+
 /** The web apps that can open in an area (YouTube, Google Docs...), each as an "Open a website" with a preset. */
 export const WEB_APP_SUBTYPES = [
     "youtube",

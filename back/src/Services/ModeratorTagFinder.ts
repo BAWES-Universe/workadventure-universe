@@ -1,4 +1,5 @@
 import type { JitsiRoomPropertyData, WAMFileFormat } from "@workadventure/map-editor";
+import { isAreaPropertyActive } from "@workadventure/map-editor";
 import { slugifyJitsiRoomName } from "@workadventure/shared-utils/src/Jitsi/slugify";
 import type {
     ITiledMap,
@@ -74,7 +75,9 @@ export class ModeratorTagFinder {
         const jitsiRooms: JitsiRoomPropertyData[] = [];
         // Get Area properties with type "jitsiRoomProperty"
         for (const area of Object.values(this.wamFileProperties.areas)) {
-            const property = area.properties?.find((prop) => prop.type === "jitsiRoomProperty");
+            const property = area.properties
+                ?.filter(isAreaPropertyActive)
+                .find((prop) => prop.type === "jitsiRoomProperty");
             if (property != undefined && property.jitsiRoomAdminTag != undefined) jitsiRooms.push(property);
         }
         // Get Entity properties with type "jitsiRoomProperty"
