@@ -150,14 +150,18 @@
     $: timelineEntries = shownSession
         ? (shownSession.entries as TimelineEntry<ChatMessage & { session?: ProximitySessionMarker }>[])
         : buildTimelineEntries($messages as (ChatMessage & { session?: ProximitySessionMarker })[], $spaceJoinedAt);
-    // Runs and day labels. Dividers and notices (someone joining) end a run.
+    function isNoticeEntry(entry: TimelineEntry<ChatMessage & { session?: ProximitySessionMarker }>): boolean {
+        return (
+            ((entry.role === "start" || entry.role === "resume") && entry.message.session !== undefined) ||
+            entry.message.type === "outcoming" ||
+            entry.message.type === "incoming"
+        );
+    }
+    // Runs. Dividers and notices (someone joining) end a run.
     $: runs = messageRuns(
         timelineEntries.map((entry) => {
             const message = entry.message;
-            const isNotice =
-                ((entry.role === "start" || entry.role === "resume") && message.session !== undefined) ||
-                message.type === "outcoming" ||
-                message.type === "incoming";
+            const isNotice = isNoticeEntry(entry);
             return {
                 id: message.id,
                 date: message.date,
@@ -165,6 +169,16 @@
                 isReply: message.quotedMessage !== undefined,
             };
         })
+    );
+    // Notices right after a message keep the room they had before the run labels (the message row used to end with
+    // its own spacing).
+    $: noticesAfterMessage = new Set(
+        timelineEntries
+            .filter((entry, index) => {
+                const previous = timelineEntries[index - 1];
+                return previous !== undefined && isNoticeEntry(entry) && !isNoticeEntry(previous);
+            })
+            .map((entry) => entry.message.id)
     );
     $: endedTitle = shownSession
         ? isRoomMessages
@@ -725,14 +739,12 @@
                 {/if}
                 {#each timelineEntries as entry (entry.message.id)}
                     {@const place = runs.get(entry.message.id)}
-                    {@const isNotice =
-                        ((entry.role === "start" || entry.role === "resume") && !!entry.message.session) ||
-                        entry.message.type === "outcoming" ||
-                        entry.message.type === "incoming"}
+                    {@const isNotice = isNoticeEntry(entry)}
                     <li
                         class="last:pb-3"
                         class:run-start={!isNotice && (place?.runStart ?? true)}
                         class:run-continued={!isNotice && place !== undefined && !place.runStart}
+                        class:notice-after-message={noticesAfterMessage.has(entry.message.id)}
                         data-event-id={entry.message.id}
                     >
                         {#if (entry.role === "start" || entry.role === "resume") && entry.message.session}
@@ -788,6 +800,10 @@
 
     li.run-continued {
         padding-top: 2px;
+    }
+
+    li.notice-after-message {
+        padding-top: 8px;
     }
 
     /* Over the whole conversation while a file is dragged anywhere in the window. */
