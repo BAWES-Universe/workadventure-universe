@@ -37,6 +37,18 @@ export function isInstalledAppStart(pageUrl: string): boolean {
 }
 
 /**
+ * The room an installed app's start page was installed from, as a full address, or undefined for any other page.
+ * The start page shows no room of its own, so the page takes this room's colours and tags: Orbit answers "/" with a
+ * redirect, which carries none.
+ */
+export function installRoomUrlOfPage(pageUrl: string): string | undefined {
+    if (!isInstalledAppStart(pageUrl)) {
+        return undefined;
+    }
+    return new URL(pageUrl).origin + roomPathOfPage(pageUrl);
+}
+
+/**
  * The web app manifest of Universe.
  *
  * One app for every room: the id is fixed and the name is "Universe", never the room's title. Opening it starts at
