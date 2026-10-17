@@ -67,6 +67,15 @@ describe("runSenderKey", () => {
             runSenderKey({ chatId: "@sara:chat", username: "Sara" })
         );
     });
+
+    it("never merges messages whose writer isn't loaded yet", () => {
+        expect(runSenderKey(undefined)).toBeUndefined();
+        const runs = messageRuns([
+            msg("a", runSenderKey(undefined), at(10, 0)),
+            msg("b", runSenderKey(undefined), at(10, 1)),
+        ]);
+        expect(runs.get("b")?.runStart).toBe(true);
+    });
 });
 
 describe("dayLabel", () => {

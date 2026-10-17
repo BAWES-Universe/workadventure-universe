@@ -9,7 +9,10 @@ export const RUN_GAP_MS = 7 * 60 * 1000;
 export interface RunItem {
     id: string;
     date: Date | null;
-    /** Who wrote it ("me" for your own), or undefined for a notice (a divider, someone joining): it ends a run. */
+    /**
+     * Who wrote it ("me" for your own). Undefined for a notice (a divider, someone joining), or when the writer isn't
+     * known yet: it stands alone, with its own label.
+     */
     senderKey: string | undefined;
     /** A reply starts a new run, so the quote never sits under someone else's label. */
     isReply: boolean;
@@ -24,10 +27,11 @@ export interface RunPlace {
 
 /**
  * Who wrote a message, for runs. The name is part of it: scripted messages and unknown people all share the
- * placeholder chat id "0", so two of them must not merge into one run.
+ * placeholder chat id "0", so two of them must not merge into one run. A writer not loaded yet has no key: two such
+ * messages may be from different people.
  */
-export function runSenderKey(sender: { chatId?: string; username?: string } | undefined): string {
-    return `${sender?.chatId ?? ""}|${sender?.username ?? ""}`;
+export function runSenderKey(sender: { chatId?: string; username?: string } | undefined): string | undefined {
+    return sender ? `${sender.chatId ?? ""}|${sender.username ?? ""}` : undefined;
 }
 
 function dayKey(date: Date | null): string | undefined {
