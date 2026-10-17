@@ -2500,6 +2500,7 @@ export class BotClient {
 
             case 'userLeftMessage':
                 this.players.delete(message.userLeftMessage.userId);
+                this.behavior?.onPlayerLeft(message.userLeftMessage.userId);
                 break;
 
             case 'groupUpdateMessage':

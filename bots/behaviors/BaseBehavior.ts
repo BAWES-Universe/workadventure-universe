@@ -368,6 +368,19 @@ export abstract class BaseBehavior {
     }
     
     /**
+     * Called when a player leaves the room. They send no last move, so forget them here: otherwise the bot
+     * stays engaged with nobody, never turns back, and a route bot never walks on.
+     */
+    onPlayerLeft(playerId: number): void {
+        if (this.lookingAtPlayerId === playerId) {
+            this.lookingAtPlayerId = null;
+        }
+        if (this.nearbyPlayers.delete(playerId)) {
+            this.updateProximityEngagement();
+        }
+    }
+
+    /**
      * Called every frame to update engagement state (for continuous facing updates)
      * This ensures bots face players even when players stop moving
      */

@@ -240,4 +240,22 @@ describe('bots turn back once nobody is in sight', () => {
         behavior.lookAtPassersBy();
         expect(bot.direction()).toBe(PositionMessage_Direction.LEFT);
     });
+
+    it('turns back when the person it was chatting with leaves the room', () => {
+        vi.useFakeTimers();
+        const bot = createBot();
+        const behavior = idleBehavior(bot);
+
+        walk(behavior, bot, { x: 60, y: 0 });
+        expect((behavior as any).isEngaged).toBe(true);
+        expect(bot.direction()).toBe(PositionMessage_Direction.RIGHT);
+
+        bot.removePlayer(1);
+        behavior.onPlayerLeft(1);
+        expect((behavior as any).isEngaged).toBe(false);
+        behavior.lookAtPassersBy();
+        vi.advanceTimersByTime(1600);
+        behavior.lookAtPassersBy();
+        expect(bot.direction()).toBe(PositionMessage_Direction.DOWN);
+    });
 });
