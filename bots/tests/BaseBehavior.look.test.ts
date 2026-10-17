@@ -2,7 +2,7 @@
  * Tests for a bot turning to look at people who walk by: from 4 tiles away while it stands still,
  * following them until 5 tiles, without stopping or engaging.
  */
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PositionMessage_Direction } from '@workadventure/messages';
 
 import { IdleBehavior, type IdleBehaviorConfig } from '../behaviors/IdleBehavior';
@@ -10,8 +10,11 @@ import { PatrolBehavior } from '../behaviors/PatrolBehavior';
 
 type Point = { x: number; y: number };
 
-function createBot(options: { moving?: boolean; followingPath?: boolean; lastMovedAt?: number } = {}) {
-    let direction = PositionMessage_Direction.DOWN;
+function createBot(
+    options: { moving?: boolean; followingPath?: boolean; lastMovedAt?: number; direction?: PositionMessage_Direction } = {}
+) {
+    let direction = options.direction ?? PositionMessage_Direction.DOWN;
+    let moving = options.moving ?? false;
     const players = new Map<number, { userId: number; position: Point }>();
     const state = {
         getPosition: () => ({ x: 0, y: 0 }),
@@ -19,13 +22,18 @@ function createBot(options: { moving?: boolean; followingPath?: boolean; lastMov
         setDirection: vi.fn((d: PositionMessage_Direction) => {
             direction = d;
         }),
-        setMoving: vi.fn(),
-        isMoving: () => options.moving ?? false,
+        setMoving: vi.fn((m: boolean) => {
+            moving = m;
+        }),
+        isMoving: () => moving,
         getLastMovedAt: () => options.lastMovedAt ?? 0,
     };
     const bot = {
         movePlayer(userId: number, position: Point) {
             players.set(userId, { userId, position });
+        },
+        removePlayer(userId: number) {
+            players.delete(userId);
         },
         direction: () => direction,
         isOtherBot: vi.fn(() => false),
@@ -120,5 +128,134 @@ describe('bots look at people walking by', () => {
         walk(behavior, bot, { x: 120, y: 0 });
         expect(bot.cancelPathfinding).not.toHaveBeenCalled();
         expect(bot.stop).not.toHaveBeenCalled();
+    });
+});
+
+describe('bots turn back once nobody is in sight', () => {
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it('turns back the way it faced a moment after the person walks past 5 tiles', () => {
+        vi.useFakeTimers();
+        const bot = createBot();
+        const behavior = idleBehavior(bot);
+
+        walk(behavior, bot, { x: 120, y: 0 });
+        expect(bot.direction()).toBe(PositionMessage_Direction.RIGHT);
+
+        walk(behavior, bot, { x: 200, y: 0 });
+        expect(bot.direction()).toBe(PositionMessage_Direction.RIGHT);
+
+        vi.advanceTimersByTime(1000);
+        behavior.lookAtPassersBy();
+        expect(bot.direction()).toBe(PositionMessage_Direction.RIGHT);
+
+        vi.advanceTimersByTime(600);
+        behavior.lookAtPassersBy();
+        expect(bot.direction()).toBe(PositionMessage_Direction.DOWN);
+    });
+
+    it('turns back when the person it looked at leaves the room', () => {
+        vi.useFakeTimers();
+        const bot = createBot();
+        const behavior = idleBehavior(bot);
+
+        walk(behavior, bot, { x: -120, y: 0 });
+        expect(bot.direction()).toBe(PositionMessage_Direction.LEFT);
+
+        bot.removePlayer(1);
+        behavior.lookAtPassersBy();
+        vi.advanceTimersByTime(1600);
+        behavior.lookAtPassersBy();
+        expect(bot.direction()).toBe(PositionMessage_Direction.DOWN);
+    });
+
+    it('does not turn back if the person comes back in sight before the delay', () => {
+        vi.useFakeTimers();
+        const bot = createBot();
+        const behavior = idleBehavior(bot);
+
+        walk(behavior, bot, { x: 120, y: 0 });
+        walk(behavior, bot, { x: 200, y: 0 });
+        vi.advanceTimersByTime(1000);
+        walk(behavior, bot, { x: 120, y: 0 });
+        vi.advanceTimersByTime(1000);
+        behavior.lookAtPassersBy();
+        expect(bot.direction()).toBe(PositionMessage_Direction.RIGHT);
+    });
+
+    it('turns back after a chat, once the person walks away', () => {
+        vi.useFakeTimers();
+        const bot = createBot();
+        const behavior = idleBehavior(bot);
+
+        walk(behavior, bot, { x: 0, y: -60 });
+        expect((behavior as any).isEngaged).toBe(true);
+        expect(bot.direction()).toBe(PositionMessage_Direction.UP);
+
+        walk(behavior, bot, { x: 0, y: -400 });
+        expect((behavior as any).isEngaged).toBe(false);
+        vi.advanceTimersByTime(1600);
+        behavior.lookAtPassersBy();
+        expect(bot.direction()).toBe(PositionMessage_Direction.DOWN);
+    });
+
+    it('keeps facing the way it walks once it has walked on', () => {
+        vi.useFakeTimers();
+        const options = { followingPath: false };
+        const bot = createBot(options);
+        const behavior = idleBehavior(bot);
+
+        walk(behavior, bot, { x: 120, y: 0 });
+        expect(bot.direction()).toBe(PositionMessage_Direction.RIGHT);
+
+        // It walks off (and its walk sets its direction), then the person leaves
+        options.followingPath = true;
+        bot.getState().setDirection(PositionMessage_Direction.UP);
+        behavior.lookAtPassersBy();
+        options.followingPath = false;
+        bot.removePlayer(1);
+        behavior.lookAtPassersBy();
+        vi.advanceTimersByTime(1600);
+        behavior.lookAtPassersBy();
+        expect(bot.direction()).toBe(PositionMessage_Direction.UP);
+    });
+
+    it('turns back the way it was walking after it stopped to face someone', () => {
+        vi.useFakeTimers();
+        const bot = createBot({ moving: true, lastMovedAt: Date.now(), direction: PositionMessage_Direction.LEFT });
+        const behavior = idleBehavior(bot);
+
+        // It just took a step left when someone walks up above it
+        walk(behavior, bot, { x: 0, y: -60 });
+        expect(bot.direction()).toBe(PositionMessage_Direction.UP);
+
+        vi.advanceTimersByTime(600);
+        walk(behavior, bot, { x: 60, y: 0 });
+        expect(bot.direction()).toBe(PositionMessage_Direction.RIGHT);
+
+        walk(behavior, bot, { x: 400, y: 0 });
+        vi.advanceTimersByTime(1600);
+        behavior.lookAtPassersBy();
+        expect(bot.direction()).toBe(PositionMessage_Direction.LEFT);
+    });
+
+    it('turns back when the person it was chatting with leaves the room', () => {
+        vi.useFakeTimers();
+        const bot = createBot();
+        const behavior = idleBehavior(bot);
+
+        walk(behavior, bot, { x: 60, y: 0 });
+        expect((behavior as any).isEngaged).toBe(true);
+        expect(bot.direction()).toBe(PositionMessage_Direction.RIGHT);
+
+        bot.removePlayer(1);
+        behavior.onPlayerLeft(1);
+        expect((behavior as any).isEngaged).toBe(false);
+        behavior.lookAtPassersBy();
+        vi.advanceTimersByTime(1600);
+        behavior.lookAtPassersBy();
+        expect(bot.direction()).toBe(PositionMessage_Direction.DOWN);
     });
 });
