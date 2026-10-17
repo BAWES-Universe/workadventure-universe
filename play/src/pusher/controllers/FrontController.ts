@@ -8,7 +8,7 @@ import Debug from "debug";
 import { MetaTagsBuilder } from "../services/MetaTagsBuilder";
 import { absoluteUrl, requestProtocol } from "../services/AbsoluteUrl";
 import { adminService } from "../services/AdminService";
-import { buildWebManifest, isInstalledAppStart, manifestUrlOfPage } from "../services/WebManifest";
+import { buildWebManifest, installRoomUrlOfPage, manifestUrlOfPage } from "../services/WebManifest";
 import { getStringPalette, wrapWithStyleTag } from "../services/GenerateCustomColors";
 import { notWaHost } from "../middlewares/NotWaHost";
 import { version } from "../../../package.json";
@@ -313,13 +313,15 @@ export class FrontController extends BaseHttpController {
     }
 
     private async displayFront(req: Request, res: Response, url: string) {
-        const builder = new MetaTagsBuilder(url);
+        // The installed app opens "/?installRoom=...": no redirect to the start room, so the game opens the last room.
+        // Its colours and tags come from the room it was installed from (the page's colours are only set here).
+        const installRoomUrl = installRoomUrlOfPage(url);
+        const builder = new MetaTagsBuilder(installRoomUrl ?? url);
         let html = this.indexFile;
 
         let redirectUrl: string | undefined;
 
-        // The installed app opens "/?installRoom=...": no redirect to the start room, so the game opens the last room.
-        if (!isInstalledAppStart(url)) {
+        if (!installRoomUrl) {
             try {
                 redirectUrl = await builder.getRedirectUrl();
             } catch (e) {
