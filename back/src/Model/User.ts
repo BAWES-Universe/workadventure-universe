@@ -13,6 +13,7 @@ import type {
 } from "@workadventure/messages";
 import { AvailabilityStatus, SetPlayerVariableMessage_Scope } from "@workadventure/messages";
 import { FOLLOW_REQUEST_TIMEOUT_MS } from "@workadventure/shared-utils";
+import { permissionsFrom } from "@workadventure/shared-utils/src/Permissions/permissions";
 import type { Movable } from "../Model/Movable";
 import type { PositionNotifier } from "../Model/PositionNotifier";
 import type { Zone } from "../Model/Zone";
@@ -41,6 +42,8 @@ export class User implements Movable, CustomJsonReplacerInterface {
      * when an answer counts.
      */
     private followRequest: { asked: Set<User>; deadline: number } | undefined;
+    /** What this player may do in the world: Orbit's number, or what their tags stand for when it sent none. */
+    public readonly permissions: number;
     public disconnected = false;
     private isRoomJoinedMessage = false;
     private pendingMessages: NonNullable<ServerToClientMessage["message"]>[] = [];
@@ -71,8 +74,10 @@ export class User implements Movable, CustomJsonReplacerInterface {
         public readonly activatedInviteUser?: boolean,
         public readonly applications?: ApplicationMessage[],
         public readonly chatID?: string,
-        private sayMessage?: SayMessage
+        private sayMessage?: SayMessage,
+        permissions?: string
     ) {
+        this.permissions = permissionsFrom(permissions, tags);
         this.listenedZones = new Set<Zone>();
 
         this.positionNotifier.enter(this);
@@ -101,7 +106,8 @@ export class User implements Movable, CustomJsonReplacerInterface {
         activatedInviteUser?: boolean,
         applications?: ApplicationMessage[],
         chatID?: string,
-        sayMessage?: SayMessage
+        sayMessage?: SayMessage,
+        permissions?: string
     ): Promise<User> {
         const playersVariablesRepository = await getPlayersVariablesRepository();
         const variables = new PlayerVariables(uuid, roomUrl, roomGroup, playersVariablesRepository, isLogged);
@@ -129,7 +135,8 @@ export class User implements Movable, CustomJsonReplacerInterface {
             activatedInviteUser,
             applications,
             chatID,
-            sayMessage
+            sayMessage,
+            permissions
         );
     }
 

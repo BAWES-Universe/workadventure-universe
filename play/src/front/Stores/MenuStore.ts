@@ -17,7 +17,7 @@ import OrbitMenuItem from "../Components/ActionBar/MenuIcons/OrbitMenuItem.svelt
 import ExploreMenuItem from "../Components/ActionBar/MenuIcons/ExploreMenuItem.svelte";
 import CustomActionBarButton from "../Components/ActionBar/MenuIcons/CustomActionBarButton.svelte";
 import { analyticsClient } from "../Administration/AnalyticsClient";
-import { userIsAdminStore } from "./GameStore";
+import { userCanSendMessagesStore } from "./GameStore";
 import { megaphoneCanBeUsedStore } from "./MegaphoneStore";
 import { chatVisibilityStore, isMatrixChatEnabledStore } from "./ChatStore";
 import { gameSceneStore } from "./GameSceneStore";
@@ -446,12 +446,12 @@ export const mapEditorMenuVisibleStore = derived(
         return ($mapEditorActivated || $mapEditorActivatedForThematics) && $mapManagerActivated;
     }
 );
-/** Broadcast is in the menu for whoever may go live here, for admins (who can also send messages and voice notes),
+/** Broadcast is in the menu for whoever may go live here, for whoever may send messages and voice notes,
  * and for whoever may edit the room (to set who can go live here, even while broadcasting is off). */
 export const globalMessageVisibleStore = derived(
-    [megaphoneCanBeUsedStore, userIsAdminStore, mapEditorActivated],
-    ([$megaphoneCanBeUsedStore, $userIsAdminStore, $mapEditorActivated]) => {
-        return $megaphoneCanBeUsedStore || $userIsAdminStore || $mapEditorActivated;
+    [megaphoneCanBeUsedStore, userCanSendMessagesStore, mapEditorActivated],
+    ([$megaphoneCanBeUsedStore, $userCanSendMessagesStore, $mapEditorActivated]) => {
+        return $megaphoneCanBeUsedStore || $userCanSendMessagesStore || $mapEditorActivated;
     }
 );
 export const mapMenuVisibleStore = derived(

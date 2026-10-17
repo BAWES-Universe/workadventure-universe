@@ -1102,6 +1102,8 @@ message RoomJoinedMessage {
   bool canEdit = 16;
   MegaphoneSettings megaphoneSettings = 17;
   CompanionTextureMessage companionTexture = 18;
+  // What this player may do in the world, as a decimal number (see permissionsFrom); empty when Orbit sent none.
+  string permissions = 19;
 }
 
 message MegaphoneSettings{
@@ -1222,11 +1224,11 @@ message MuteVideoForEverybodyPublicMessage {
 message KickOffUserPrivateMessage {
 }
 
-// A moderator lowers someone's raised hand (only admins, checked by the pusher).
+// A moderator lowers someone's raised hand (needs the Moderate calls permission, checked by the pusher).
 message LowerHandPrivateMessage {
 }
 
-// A moderator lowers every raised hand in the space (only admins, checked by the pusher).
+// A moderator lowers every raised hand in the space (needs the Moderate calls permission, checked by the pusher).
 message LowerAllHandsPublicMessage {
 }
 
@@ -1475,6 +1477,8 @@ message JoinRoomMessage {
   google.protobuf.StringValue lastCommandId = 16;
   bool canEdit = 17;
   google.protobuf.StringValue chatID = 18;
+  // What this player may do in the world, as a decimal number (see permissionsFrom); empty when Orbit sent none.
+  string permissions = 19;
 }
 
 message UserJoinedZoneMessage {
@@ -1774,6 +1778,8 @@ message SpaceUser{
   bool showVoiceIndicator = 18;
   // When the user raised their hand, in ms since the epoch, stamped by the pusher; 0 (or unset) when it is down.
   optional double handRaisedAt = 19;
+  // What this user may do in the world, as a decimal number (see permissionsFrom); unset when Orbit sent none.
+  optional string permissions = 20;
 }
 
 /*message PartialSpaceUser{

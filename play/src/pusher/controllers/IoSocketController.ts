@@ -14,6 +14,7 @@ import { asError } from "catch-unknown";
 import Debug from "debug";
 import { AxiosError } from "axios";
 import { AbortError } from "@workadventure/shared-utils/src/Abort/AbortError";
+import { permissionsFrom } from "@workadventure/shared-utils/src/Permissions/permissions";
 import type { FetchMemberDataByUuidResponse } from "../services/AdminApi";
 import type { AdminSocketTokenData } from "../services/JWTTokenManager";
 import { jwtTokenManager, tokenInvalidException } from "../services/JWTTokenManager";
@@ -499,6 +500,7 @@ export class IoSocketController {
                             activatedInviteUser: userData.activatedInviteUser ?? undefined,
                             applications: userData.applications,
                             canEdit: userData.canEdit ?? false,
+                            permissions: permissionsFrom(userData.permissions ?? undefined, memberTags),
                             spaceUserId: "",
                             emitInBatch: (payload: SubMessage): void => {},
                             batchedMessages: {

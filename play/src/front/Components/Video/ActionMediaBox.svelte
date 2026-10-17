@@ -4,7 +4,7 @@
     import banUserSvg from "../images/ban-user.svg";
     import NoVideoSvg from "../images/no-video.svg";
     import { LL } from "../../../i18n/i18n-svelte";
-    import { requestVisitCardsStore, userIsAdminStore } from "../../Stores/GameStore";
+    import { requestVisitCardsStore, userCanModerateCallsStore } from "../../Stores/GameStore";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
     import type { SpaceUserExtended } from "../../Space/SpaceInterface";
     import { showReportScreenStore } from "../../Stores/ShowReportScreenStore";
@@ -177,8 +177,8 @@
         </button>
     {/if}
 
-    <!-- Lower hand (moderators: the pusher only lets admins do it) -->
-    {#if $userIsAdminStore && !isScreenSharing && ($handRaisedAt ?? 0) > 0}
+    <!-- Lower hand (the pusher only lets people with the Moderate calls permission do it) -->
+    {#if $userCanModerateCallsStore && !isScreenSharing && ($handRaisedAt ?? 0) > 0}
         <button
             class="action-button flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded leading-4 text-left text-white"
             data-testid="lower-hand-user"
@@ -190,7 +190,7 @@
     {/if}
 
     <!-- Lower all hands -->
-    {#if $userIsAdminStore && $raisedHandsStore.length > 0}
+    {#if $userCanModerateCallsStore && $raisedHandsStore.length > 0}
         <button
             class="action-button flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded leading-4 text-left text-white"
             data-testid="lower-all-hands"
@@ -202,14 +202,14 @@
     {/if}
 
     <!-- Mute audio user -->
-    {#if ($userIsAdminStore || !$isListenerStore) && !isScreenSharing}
+    {#if ($userCanModerateCallsStore || !$isListenerStore) && !isScreenSharing}
         <button
             class="action-button mute-audio-user flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded leading-4 text-left text-white disabled:opacity-50"
             on:click|preventDefault|stopPropagation={() => muteAudio(spaceUser)}
             disabled={!$isMicrophoneEnabled}
         >
             <img src={MicrophoneCloseSvg} class="w-4 h-4" alt="" draggable="false" />
-            {#if $userIsAdminStore}
+            {#if $userCanModerateCallsStore}
                 {$LL.camera.menu.muteAudioUser()}
             {:else}
                 {$LL.camera.menu.askToMuteAudioUser()}
@@ -218,7 +218,7 @@
     {/if}
 
     <!-- Mute audio every body -->
-    {#if $userIsAdminStore}
+    {#if $userCanModerateCallsStore}
         <button
             class="action-button flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded leading-4 text-left text-white"
             on:click|preventDefault|stopPropagation={() => muteAudioEveryBody(spaceUser)}
@@ -229,7 +229,7 @@
     {/if}
 
     <!-- Mute video -->
-    {#if ($userIsAdminStore || !$isListenerStore) && !isScreenSharing}
+    {#if ($userCanModerateCallsStore || !$isListenerStore) && !isScreenSharing}
         <button
             id="mute-video-user"
             class="action-button flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded leading-4 text-left text-white disabled:opacity-50"
@@ -237,7 +237,7 @@
             disabled={!$isVideoEnabled}
         >
             <img src={NoVideoSvg} class="w-4 h-4" alt="" draggable="false" />
-            {#if $userIsAdminStore}
+            {#if $userCanModerateCallsStore}
                 {$LL.camera.menu.muteVideoUser()}
             {:else}
                 {$LL.camera.menu.askToMuteVideoUser()}
@@ -246,7 +246,7 @@
     {/if}
 
     <!-- Mute video every body -->
-    {#if $userIsAdminStore}
+    {#if $userCanModerateCallsStore}
         <button
             class="action-button flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded leading-4 text-left text-white"
             on:click|preventDefault|stopPropagation={() => muteVideoEveryBody(spaceUser)}
@@ -257,7 +257,7 @@
     {/if}
 
     <!-- Kickoff user -->
-    {#if $userIsAdminStore}
+    {#if $userCanModerateCallsStore}
         <button
             id="kickoff-user"
             class="action-button flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded leading-4 text-left text-white"

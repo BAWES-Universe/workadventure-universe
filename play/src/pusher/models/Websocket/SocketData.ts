@@ -47,6 +47,8 @@ export type SocketData = {
     activatedInviteUser: boolean | undefined;
     applications?: Array<ApplicationDefinitionInterface> | null;
     canEdit: boolean;
+    // What this player may do in the world (see permissionsFrom)
+    permissions: number;
     spaceUserId: string;
     emitInBatch: (payload: SubMessage) => void;
     batchedMessages: BatchMessage;

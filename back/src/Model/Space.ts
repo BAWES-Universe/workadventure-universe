@@ -17,6 +17,7 @@ import {
 } from "@workadventure/messages";
 import Debug from "debug";
 import { asError } from "catch-unknown";
+import { hasPermission, Permission, permissionsFrom } from "@workadventure/shared-utils/src/Permissions/permissions";
 import { clientEventsEmitter } from "../Services/ClientEventsEmitter";
 import type { CustomJsonReplacerInterface } from "./CustomJsonReplacerInterface";
 import type { SpacesWatcher } from "./SpacesWatcher";
@@ -572,11 +573,14 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
     }
 
     /**
-     * Who may bring people on stage and send them back: an admin, or somebody streaming who is not themselves a guest
-     * (a guest speaks because a speaker invited them: that does not make them a host).
+     * Who may bring people on stage and send them back: someone who moderates calls, or somebody streaming who is not
+     * themselves a guest (a guest speaks because a speaker invited them: that does not make them a host).
      */
     private canHostPodium(user: SpaceUser): boolean {
-        return user.tags.includes("admin") || (user.megaphoneState && !this.guestSpeakers.has(user.spaceUserId));
+        return (
+            hasPermission(permissionsFrom(user.permissions, user.tags), Permission.MODERATE_CALLS) ||
+            (user.megaphoneState && !this.guestSpeakers.has(user.spaceUserId))
+        );
     }
 
     private findUser(spaceUserId: string): { watcher: SpacesWatcher; user: SpaceUser } | undefined {
@@ -603,7 +607,9 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
         switch (eventCase) {
             case "inviteToSpeak": {
                 if (!this.canHostPodium(sender)) {
-                    throw new Error("Only speakers and admins can invite someone to speak");
+                    throw new Error(
+                        "Needs to be speaking or to have the Moderate calls permission to invite someone to speak"
+                    );
                 }
                 this.invitedToSpeak.add(receiverUserId);
                 this.movedToAudience.delete(receiverUserId);
@@ -616,7 +622,9 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
             }
             case "moveToAudience": {
                 if (!this.canHostPodium(sender)) {
-                    throw new Error("Only speakers and admins can move someone to the audience");
+                    throw new Error(
+                        "Needs to be speaking or to have the Moderate calls permission to move someone to the audience"
+                    );
                 }
                 const wasGuest = this.guestSpeakers.has(receiverUserId);
                 const wasInvited = this.invitedToSpeak.delete(receiverUserId);
