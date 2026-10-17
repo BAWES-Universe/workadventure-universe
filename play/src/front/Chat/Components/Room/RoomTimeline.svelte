@@ -53,6 +53,7 @@
     import DirectChatTitle from "./DirectChat/DirectChatTitle.svelte";
     import PartnerProfilePanel from "./DirectChat/PartnerProfilePanel.svelte";
     import { directPartnerStore } from "./DirectChat/DirectPartnerStore";
+    import { dayLabel, messageRuns } from "./MessageRuns";
     import { IconChevronLeft, IconChevronRight, IconLoader, IconLock, IconMailBox } from "@wa-icons";
 
     export let room: ChatRoom;
@@ -149,6 +150,26 @@
     $: timelineEntries = shownSession
         ? (shownSession.entries as TimelineEntry<ChatMessage & { session?: ProximitySessionMarker }>[])
         : buildTimelineEntries($messages as (ChatMessage & { session?: ProximitySessionMarker })[], $spaceJoinedAt);
+    // Runs and day labels. Dividers and notices (someone joining) end a run.
+    $: runs = messageRuns(
+        timelineEntries.map((entry) => {
+            const message = entry.message;
+            const isNotice =
+                ((entry.role === "start" || entry.role === "resume") && message.session !== undefined) ||
+                message.type === "outcoming" ||
+                message.type === "incoming";
+            return {
+                id: message.id,
+                date: message.date,
+                senderKey: isNotice
+                    ? undefined
+                    : message.isMyMessage
+                    ? "me"
+                    : message.sender?.chatId || message.sender?.username || "unknown",
+                isReply: message.quotedMessage !== undefined,
+            };
+        })
+    );
     $: endedTitle = shownSession
         ? isRoomMessages
             ? $LL.chat.session.roomMessages()
@@ -707,7 +728,22 @@
                     {/if}
                 {/if}
                 {#each timelineEntries as entry (entry.message.id)}
-                    <li class="last:pb-3" data-event-id={entry.message.id}>
+                    {@const place = runs.get(entry.message.id)}
+                    <li
+                        class="last:pb-3"
+                        class:run-start={place?.runStart ?? true}
+                        class:run-continued={place !== undefined && !place.runStart}
+                        data-event-id={entry.message.id}
+                    >
+                        {#if place?.dayStart && entry.message.date}
+                            <!-- The same look as someone joining or leaving (MessageSystem). -->
+                            <div class="flex justify-center mb-3" data-testid="chatDayLabel">
+                                <span
+                                    class="px-3 py-1.5 m-0 text-xs text-center border border-solid border-white/10 rounded-2xl text-white/80"
+                                    >{dayLabel(entry.message.date, $locale)}</span
+                                >
+                            </div>
+                        {/if}
                         {#if (entry.role === "start" || entry.role === "resume") && entry.message.session}
                             <SessionDivider
                                 marker={entry.message.session}
@@ -718,7 +754,11 @@
                         {:else if entry.message.type === "outcoming" || entry.message.type === "incoming"}
                             <MessageSystem message={entry.message} />
                         {:else}
-                            <Message on:updateMessageBody={onUpdateMessageBody} message={entry.message} />
+                            <Message
+                                on:updateMessageBody={onUpdateMessageBody}
+                                message={entry.message}
+                                runStart={place?.runStart ?? true}
+                            />
                             {#if "stoppedOnLeave" in entry.message && entry.message.stoppedOnLeave}
                                 <div class="px-4 pb-2 text-xs italic text-white/45" data-testid="proximityStoppedNote">
                                     {$LL.chat.session.stopped()}
@@ -750,6 +790,15 @@
 </div>
 
 <style>
+    /* Runs sit close together; a new run gets room for its label. */
+    li.run-start {
+        padding-top: 8px;
+    }
+
+    li.run-continued {
+        padding-top: 2px;
+    }
+
     /* Over the whole conversation while a file is dragged anywhere in the window. */
     .file-drop-target {
         position: absolute;
