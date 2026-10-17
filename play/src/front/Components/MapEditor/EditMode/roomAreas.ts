@@ -1,4 +1,4 @@
-import type { AreaData } from "@workadventure/map-editor";
+import { isAreaPropertyActive, type AreaData } from "@workadventure/map-editor";
 import { readable } from "svelte/store";
 import { gameManager } from "../../../Phaser/Game/GameManager";
 import type { AreaEditorTool } from "../../../Phaser/Game/MapEditor/Tools/AreaEditorTool";
@@ -22,7 +22,7 @@ function keyOf(areas: AreaData[]): string {
             const settings = a.properties.map((p) =>
                 p.type === "areaDescriptionProperties"
                     ? `listed=${p.searchable === true},about=${p.description ?? ""}`
-                    : p.type
+                    : `${p.type}${isAreaPropertyActive(p) ? "" : ":off"}`
             );
             return `${a.id}:${a.name}:${settings.join(",")}`;
         })
