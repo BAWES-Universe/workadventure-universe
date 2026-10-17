@@ -13,6 +13,7 @@ import type { BotData } from "./types";
 
 export type BotMoves = "stay" | "wander" | "route";
 export type LegacyBehaviorType = "idle" | "patrol" | "social";
+export type BotFacing = "down" | "left" | "right" | "up";
 
 export interface BotModel {
     moves: BotMoves;
@@ -124,4 +125,10 @@ export function routeStops(bot: Pick<BotData, "behaviorConfig"> | undefined | nu
 export function noticeRange(bot: Pick<BotData, "behaviorConfig"> | undefined | null): number {
     const value = bot?.behaviorConfig?.conversationRadius;
     return typeof value === "number" && value > 0 ? value : DEFAULT_NOTICE_RANGE;
+}
+
+/** Which way a bot that stays put looks when nobody is around: the saved direction, or Down when none is saved. */
+export function botFacing(bot: Pick<BotData, "behaviorConfig"> | undefined | null): BotFacing {
+    const facing = bot?.behaviorConfig?.facing;
+    return facing === "left" || facing === "right" || facing === "up" ? facing : "down";
 }
