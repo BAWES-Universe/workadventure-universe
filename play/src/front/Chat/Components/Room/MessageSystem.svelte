@@ -3,7 +3,7 @@
 
     export let message: Pick<ChatMessage, "date" | "content">;
 
-    const { date, content } = message;
+    $: ({ date, content } = message);
 </script>
 
 <div class="message group flex flex-col justify-center items-center mb-3">

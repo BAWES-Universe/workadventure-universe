@@ -15,6 +15,8 @@
     import { requestChatPerson } from "../../../Stores/ChatPeopleLookup";
     import type { PersonColourOf } from "../../../Stores/ChatUserWokaStore";
     import TopRowAvatar from "../../TopRow/TopRowAvatar.svelte";
+    import type { BotAvailability } from "../../../Bots/BotChatStatus";
+    import BotStatusLine from "../../Bots/BotStatusLine.svelte";
     import type { DirectPartner } from "./DirectPartnerStore";
     import { isInUniverse } from "./PartnerPlace";
     import { partnerStatus } from "./PartnerStatus";
@@ -26,6 +28,9 @@
      */
     export let room: ChatRoom;
     export let partner: DirectPartner;
+    /** Set for a chat with a bot: its state replaces where a person is. Undefined state shows no line at all. */
+    export let bot = false;
+    export let botState: BotAvailability | undefined = undefined;
 
     const dispatch = createEventDispatcher<{ openProfile: void }>();
     const roomName = room.name;
@@ -79,12 +84,18 @@
                 </span>
             {/if}
         </span>
-        <span class="flex min-w-0 items-center gap-1.5 text-xs text-white/60" data-testid="partnerStatus">
-            <span
-                class="h-1.5 w-1.5 shrink-0 rounded-full"
-                style:background-color={status.color ?? "rgb(255 255 255 / 0.35)"}
-            />
-            <span class="truncate">{status.label}</span>
-        </span>
+        {#if bot}
+            {#if botState}
+                <BotStatusLine state={botState} />
+            {/if}
+        {:else}
+            <span class="flex min-w-0 items-center gap-1.5 text-xs text-white/60" data-testid="partnerStatus">
+                <span
+                    class="h-1.5 w-1.5 shrink-0 rounded-full"
+                    style:background-color={status.color ?? "rgb(255 255 255 / 0.35)"}
+                />
+                <span class="truncate">{status.label}</span>
+            </span>
+        {/if}
     </span>
 </button>
