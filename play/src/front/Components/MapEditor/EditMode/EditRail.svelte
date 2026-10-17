@@ -39,8 +39,14 @@
         manager.equipTool(tool);
     }
 
-    function pickExternal(onSelect: () => void) {
+    function pickExternal(id: string, onSelect: () => void) {
         editHintSeenStore.set(true);
+        // An added tool (Bots) tapped again tucks its panel away and brings it back, as Objects and Areas do. The
+        // tool stays in your hand, so its things stay on the map to drag or tap.
+        if ($mapEditorSelectedToolStore === id) {
+            mapEditorVisibilityStore.set(!$mapEditorVisibilityStore);
+            return;
+        }
         onSelect();
     }
 </script>
@@ -82,7 +88,7 @@
                     id={tool.id}
                     class="em-circ"
                     aria-pressed={$mapEditorSelectedToolStore === tool.id}
-                    on:click|preventDefault={() => pickExternal(tool.onSelect)}
+                    on:click|preventDefault={() => pickExternal(tool.id, tool.onSelect)}
                 >
                     <svelte:component this={tool.icon} font-size="22" />
                 </button>
