@@ -488,9 +488,9 @@
         align-self: start;
     }
 
+    /* Not overflow: hidden, which would let the column shrink below the face's width in a narrow chat. */
     .sender-avatar.run-continued {
         visibility: hidden;
         height: 0;
-        overflow: hidden;
     }
 </style>

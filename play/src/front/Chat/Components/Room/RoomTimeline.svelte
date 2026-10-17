@@ -53,7 +53,7 @@
     import DirectChatTitle from "./DirectChat/DirectChatTitle.svelte";
     import PartnerProfilePanel from "./DirectChat/PartnerProfilePanel.svelte";
     import { directPartnerStore } from "./DirectChat/DirectPartnerStore";
-    import { dayLabel, messageRuns } from "./MessageRuns";
+    import { dayLabel, messageRuns, runSenderKey } from "./MessageRuns";
     import { IconChevronLeft, IconChevronRight, IconLoader, IconLock, IconMailBox } from "@wa-icons";
 
     export let room: ChatRoom;
@@ -161,11 +161,7 @@
             return {
                 id: message.id,
                 date: message.date,
-                senderKey: isNotice
-                    ? undefined
-                    : message.isMyMessage
-                    ? "me"
-                    : message.sender?.chatId || message.sender?.username || "unknown",
+                senderKey: isNotice ? undefined : message.isMyMessage ? "me" : runSenderKey(message.sender),
                 isReply: message.quotedMessage !== undefined,
             };
         })

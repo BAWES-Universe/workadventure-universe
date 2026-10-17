@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { RUN_GAP_MS, dayLabel, messageRuns } from "../MessageRuns";
+import { RUN_GAP_MS, dayLabel, messageRuns, runSenderKey } from "../MessageRuns";
 import type { RunItem } from "../MessageRuns";
 
 const at = (hours: number, minutes: number, day = 17) => new Date(2026, 9, day, hours, minutes);
@@ -55,6 +55,17 @@ describe("messageRuns", () => {
         ]);
         expect([...runs.values()].map((place) => place.dayStart)).toEqual([true, false, true]);
         expect(runs.get("c")?.runStart).toBe(true);
+    });
+});
+
+describe("runSenderKey", () => {
+    it("tells apart two scripted authors that share the placeholder chat id", () => {
+        expect(runSenderKey({ chatId: "0", username: "Test machine" })).not.toBe(
+            runSenderKey({ chatId: "0", username: "Eve" })
+        );
+        expect(runSenderKey({ chatId: "@sara:chat", username: "Sara" })).toBe(
+            runSenderKey({ chatId: "@sara:chat", username: "Sara" })
+        );
     });
 });
 

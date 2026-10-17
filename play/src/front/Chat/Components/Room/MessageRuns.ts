@@ -22,6 +22,14 @@ export interface RunPlace {
     dayStart: boolean;
 }
 
+/**
+ * Who wrote a message, for runs. The name is part of it: scripted messages and unknown people all share the
+ * placeholder chat id "0", so two of them must not merge into one run.
+ */
+export function runSenderKey(sender: { chatId?: string; username?: string } | undefined): string {
+    return `${sender?.chatId ?? ""}|${sender?.username ?? ""}`;
+}
+
 function dayKey(date: Date | null): string | undefined {
     return date ? `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}` : undefined;
 }
