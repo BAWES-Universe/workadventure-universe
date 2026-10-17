@@ -34,6 +34,7 @@ import {
 } from "@workadventure/map-editor";
 import { wamFileMigration } from "@workadventure/map-editor/src/Migrations/WamFileMigration";
 import { slugify } from "@workadventure/shared-utils/src/Jitsi/slugify";
+import { Permission } from "@workadventure/shared-utils/src/Permissions/permissions";
 import Debug from "debug";
 import { userMessageManager } from "../../Administration/UserMessageManager";
 import { connectionManager } from "../../Connection/ConnectionManager";
@@ -92,6 +93,8 @@ import {
     jitsiParticipantsCountStore,
     userIsAdminStore,
     userIsEditorStore,
+    userCanModerateCallsStore,
+    userCanSendMessagesStore,
     userIsJitsiDominantSpeakerStore,
 } from "../../Stores/GameStore";
 import {
@@ -2230,7 +2233,9 @@ export class GameScene extends DirtyScene {
 
                 playersStore.connectToRoomConnection(this.connection);
                 userIsAdminStore.set(this.connection.hasTag("admin"));
-                userIsEditorStore.set(this.connection.hasTag("editor"));
+                userIsEditorStore.set(this.connection.hasPermission(Permission.EDIT_MAPS));
+                userCanModerateCallsStore.set(this.connection.hasPermission(Permission.MODERATE_CALLS));
+                userCanSendMessagesStore.set(this.connection.hasPermission(Permission.SEND_MESSAGES));
 
                 // The userJoinedMessageStream stream is completed in the RoomConnection. No need to unsubscribe.
                 //eslint-disable-next-line rxjs/no-ignored-subscription, svelte/no-ignored-unsubscribe

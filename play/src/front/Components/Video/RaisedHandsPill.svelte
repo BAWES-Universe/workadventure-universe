@@ -3,7 +3,7 @@
     import LL from "../../../i18n/i18n-svelte";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
     import { localUserStore } from "../../Connection/LocalUserStore";
-    import { userIsAdminStore } from "../../Stores/GameStore";
+    import { userCanModerateCallsStore } from "../../Stores/GameStore";
     import { lowerHand, raisedHandsStore, type RaisedHand } from "../../Space/RaiseHand/RaiseHandStore";
     import type { SpaceUserExtended } from "../../Space/SpaceInterface";
     import {
@@ -116,7 +116,7 @@
                                     >
                                 {/if}
                             {/if}
-                            {#if hand.uuid === myUuid || $userIsAdminStore}
+                            {#if hand.uuid === myUuid || $userCanModerateCallsStore}
                                 <!-- Next to Invite to speak there is only room for the icon. -->
                                 <button
                                     type="button"
@@ -135,7 +135,7 @@
                         </li>
                     {/each}
                 </ol>
-                {#if $userIsAdminStore && hands.length > 1}
+                {#if $userCanModerateCallsStore && hands.length > 1}
                     <button
                         type="button"
                         class="raised-lower-all"

@@ -57,6 +57,7 @@ export class SpaceToBackForwarder implements SpaceToBackForwarderInterface {
                 isLogged: socketData.isLogged,
                 color: Color.getColorByString(socketData.name),
                 tags: socketData.tags,
+                permissions: socketData.permissions.toString(),
                 cameraState: false,
                 screenSharingState: false,
                 microphoneState: false,

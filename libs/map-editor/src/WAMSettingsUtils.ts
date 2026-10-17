@@ -1,3 +1,4 @@
+import { hasPermission, Permission, permissionsFrom } from "@workadventure/shared-utils/src/Permissions/permissions";
 import type { WAMFileFormat } from "./types";
 
 /** How far a live broadcast reaches: the room, every room of the world, or every room of the universe. */
@@ -39,14 +40,16 @@ export class WAMSettingsUtils {
      * Every broadcast channel this room listens to, and whether a user carrying these tags may go live on each:
      * - ROOM and WORLD follow the room's settings (which reaches are on, and who may use them);
      * - UNIVERSE exists for every room of an Orbit universe (its group is "universe/world"), so a universe-wide
-     *   broadcast from anywhere arrives here; going live on it needs the room's switch on, and admins only.
+     *   broadcast from anywhere arrives here; going live on it needs the room's switch on, and the "Reach all of the
+     *   universe" permission (the permissions default to what the tags stand for).
      * Listeners join every channel; a speaker streams on the one they picked.
      */
     static getMegaphoneChannels(
         wamSettings: WAMFileFormat["settings"],
         roomGroup: string | null | undefined,
         roomUrl: string,
-        tags: string[]
+        tags: string[],
+        permissions: bigint = permissionsFrom(undefined, tags)
     ): MegaphoneChannelDescription[] {
         const channels: MegaphoneChannelDescription[] = [];
         const scopes = WAMSettingsUtils.getMegaphoneScopes(wamSettings);
@@ -72,7 +75,7 @@ export class WAMSettingsUtils {
             channels.push({
                 scope: "UNIVERSE",
                 url: WAMSettingsUtils.getUniverseMegaphoneSpaceName(universeSlug),
-                canStream: scopes.includes("UNIVERSE") && tags.includes("admin"),
+                canStream: scopes.includes("UNIVERSE") && hasPermission(permissions, Permission.REACH_UNIVERSE),
             });
         }
         return channels;

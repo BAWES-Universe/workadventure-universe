@@ -1,6 +1,7 @@
 import type { PlayGlobalMessage } from "@workadventure/messages";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mock } from "vitest-mock-extended";
+import { Permission, permissionsFrom } from "@workadventure/shared-utils/src/Permissions/permissions";
 import type { Socket } from "../../src/pusher/services/SocketManager";
 import { SocketManager } from "../../src/pusher/services/SocketManager";
 import type { SpaceConnection } from "../../src/pusher/models/SpaceConnection";
@@ -50,10 +51,14 @@ const universe = {
     ],
 };
 
-function makeSocket(tags: string[]): Socket {
+// What the built-in roles hold (see permissionsFrom)
+const ADMIN = permissionsFrom(undefined, ["admin"]);
+const EDITOR = permissionsFrom(undefined, ["editor"]);
+
+function makeSocket(permissions: bigint): Socket {
     const data = {
         name: "Real Admin",
-        tags,
+        permissions,
         roomId: HERE,
         roomName: "Lobby",
         userUuid: "admin-1",
@@ -93,7 +98,7 @@ describe("a written or voice broadcast", () => {
         ["world", "Office", [HERE, GARDEN]],
         ["universe", "Acme", [HERE, GARDEN, LAB]],
     ] as const)("shows the real sender and the real %s name, and reaches %s", async (reach, label, rooms) => {
-        await socketManager.emitPlayGlobalMessage(makeSocket(["admin"]), event(reach));
+        await socketManager.emitPlayGlobalMessage(makeSocket(ADMIN), event(reach));
 
         expect(sent.map((message) => message.roomId)).toEqual(rooms);
         for (const message of sent) {
@@ -101,19 +106,30 @@ describe("a written or voice broadcast", () => {
         }
     });
 
-    it("is still refused to someone who is not an admin", async () => {
-        await expect(socketManager.emitPlayGlobalMessage(makeSocket(["editor"]), event("room"))).rejects.toThrow(
-            "not an admin"
+    it("is still refused to someone without the Send messages and voice notes permission", async () => {
+        await expect(socketManager.emitPlayGlobalMessage(makeSocket(EDITOR), event("room"))).rejects.toThrow(
+            "Send messages and voice notes"
         );
         expect(sent).toEqual([]);
+    });
+
+    it("reaches the whole universe only with the Reach all of the universe permission too", async () => {
+        const sendOnly = 1n << BigInt(Permission.SEND_MESSAGES);
+        await expect(socketManager.emitPlayGlobalMessage(makeSocket(sendOnly), event("universe"))).rejects.toThrow(
+            "Reach all of the universe"
+        );
+        expect(sent).toEqual([]);
+
+        await socketManager.emitPlayGlobalMessage(makeSocket(sendOnly), event("world"));
+        expect(sent.map((message) => message.roomId)).toEqual([HERE, GARDEN]);
     });
 
     it("is still sent when the admin cannot name the place, with no place named (the room keeps its own name)", async () => {
         getRoomsFromSameUniverse.mockRejectedValue(new Error("admin down"));
         const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
-        await socketManager.emitPlayGlobalMessage(makeSocket(["admin"]), event("world"));
-        await socketManager.emitPlayGlobalMessage(makeSocket(["admin"]), event("room"));
+        await socketManager.emitPlayGlobalMessage(makeSocket(ADMIN), event("world"));
+        await socketManager.emitPlayGlobalMessage(makeSocket(ADMIN), event("room"));
 
         expect(sent.map((message) => message.broadcast.reachLabel)).toEqual([undefined, undefined, "Lobby"]); // the world reaches two rooms
         expect(sent.every((message) => message.broadcast.senderName === "Real Admin")).toBe(true);

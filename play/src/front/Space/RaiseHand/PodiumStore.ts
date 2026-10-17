@@ -1,7 +1,7 @@
 import type { Readable, Unsubscriber } from "svelte/store";
 import { derived, get, writable } from "svelte/store";
 import type { Subscription } from "rxjs";
-import { userIsAdminStore } from "../../Stores/GameStore";
+import { userCanModerateCallsStore } from "../../Stores/GameStore";
 import { isListenerStore, isSpeakerStore } from "../../Stores/MediaStore";
 import { currentLiveStreamingSpaceStore } from "../../Stores/MegaphoneStore";
 import type { SpaceInterface, SpaceUserExtended } from "../SpaceInterface";
@@ -27,9 +27,9 @@ export const pendingInvitesStore = writable<ReadonlySet<string>>(new Set());
 /** The people we brought on stage from the audience, by uuid: we can move them back. */
 export const broughtOnStageStore = writable<ReadonlySet<string>>(new Set());
 
-/** Who may invite to speak and move people back to the audience: the speakers on the podium, and admins. */
+/** Who may invite to speak and move people back to the audience: the speakers on the podium, and those who moderate calls. */
 export const canInviteToSpeakStore = derived(
-    [currentLiveStreamingSpaceStore, isSpeakerStore, speakingFromAudienceStore, userIsAdminStore],
+    [currentLiveStreamingSpaceStore, isSpeakerStore, speakingFromAudienceStore, userCanModerateCallsStore],
     ([$space, $isSpeaker, $speakingFromAudience, $isAdmin]) =>
         $space !== undefined && (($isSpeaker && $speakingFromAudience === undefined) || $isAdmin)
 );

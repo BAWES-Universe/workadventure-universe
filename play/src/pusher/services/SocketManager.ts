@@ -61,6 +61,7 @@ import type { AxiosResponse } from "axios";
 import axios, { isAxiosError } from "axios";
 import type { WebSocket } from "uWebSockets.js";
 import { AbortError } from "@workadventure/shared-utils/src/Abort/AbortError";
+import { hasPermission, Permission } from "@workadventure/shared-utils/src/Permissions/permissions";
 import { PusherRoom } from "../models/PusherRoom";
 import type { SocketData, BackConnection } from "../models/Websocket/SocketData";
 
@@ -302,6 +303,7 @@ export class SocketManager implements ZoneEventListener {
                 activatedInviteUser:
                     socketData.activatedInviteUser != undefined ? socketData.activatedInviteUser : true,
                 canEdit: socketData.canEdit,
+                permissions: socketData.permissions.toString(),
                 characterTextures: socketData.characterTextures,
                 applications: socketData.applications ? socketData.applications : [],
                 visitCardUrl: socketData.visitCardUrl ?? "", // TODO: turn this into an optional field
@@ -752,8 +754,8 @@ export class SocketManager implements ZoneEventListener {
 
     async handleBanPlayerMessage(client: Socket, banPlayerMessage: BanPlayerMessage): Promise<void> {
         const socketData = client.getUserData();
-        // Ban player only if the user is admin
-        if (!socketData.tags.includes("admin")) return;
+        // Ban a player only with the "Ban and answer appeals" permission
+        if (!hasPermission(socketData.permissions, Permission.BAN_AND_APPEALS)) return;
         try {
             await adminService.banUserByUuid(
                 banPlayerMessage.banUserUuid,
@@ -1104,13 +1106,14 @@ export class SocketManager implements ZoneEventListener {
     }
 
     /**
-     * A written notice or a voice note from an admin, sent to everyone in this room, in every room of the world, or
-     * in every room of the universe. Who sent it and the reach travel with it, so receivers see them.
+     * A written notice or a voice note from someone with the "Send messages and voice notes" permission, sent to
+     * everyone in this room, in every room of the world, or in every room of the universe (which also needs "Reach all
+     * of the universe"). Who sent it and the reach travel with it, so receivers see them.
      */
     public async emitPlayGlobalMessage(client: Socket, playGlobalMessageEvent: PlayGlobalMessage): Promise<void> {
         const socketData = client.getUserData();
-        if (!socketData.tags.includes("admin")) {
-            throw new Error("Client is not an admin!");
+        if (!hasPermission(socketData.permissions, Permission.SEND_MESSAGES)) {
+            throw new Error("Needs the Send messages and voice notes permission");
         }
 
         const clientRoomUrl = socketData.roomId;
@@ -1126,6 +1129,9 @@ export class SocketManager implements ZoneEventListener {
         let universe: UniverseRoomsData | undefined;
 
         if (reach === "universe") {
+            if (!hasPermission(socketData.permissions, Permission.REACH_UNIVERSE)) {
+                throw new Error("Needs the Reach all of the universe permission");
+            }
             universe = await adminService.getRoomsFromSameUniverse(clientRoomUrl, socketData.userUuid, "en");
             tabUrlRooms = universe.worlds.flatMap((world) => world.rooms.map((room) => room.roomUrl));
             if (!tabUrlRooms.includes(clientRoomUrl)) {

@@ -253,7 +253,8 @@ export class GameRoom implements BrothersFinder {
             joinRoomMessage.activatedInviteUser,
             joinRoomMessage.applications,
             joinRoomMessage.chatID,
-            undefined
+            undefined,
+            joinRoomMessage.permissions
         );
 
         this.users.set(user.id, user);
@@ -1285,10 +1286,17 @@ export class GameRoom implements BrothersFinder {
     }
 
     /**
-     * The broadcast channels this room listens to, and which of them a user carrying these tags may go live on.
+     * The broadcast channels this room listens to, and which of them a user carrying these tags and permissions may go
+     * live on.
      */
-    public getMegaphoneSettingsFor(tags: string[]): MegaphoneSettings {
-        const channels = WAMSettingsUtils.getMegaphoneChannels(this._wamSettings, this._roomGroup, this._roomUrl, tags);
+    public getMegaphoneSettingsFor(tags: string[], permissions?: bigint): MegaphoneSettings {
+        const channels = WAMSettingsUtils.getMegaphoneChannels(
+            this._wamSettings,
+            this._roomGroup,
+            this._roomUrl,
+            tags,
+            permissions
+        );
         const firstStreamable = channels.find((channel) => channel.canStream);
         return {
             enabled: firstStreamable !== undefined,
@@ -1310,7 +1318,7 @@ export class GameRoom implements BrothersFinder {
      * the pusher then refuses the meeting rooms and speaker zones until the back can say (it asks again shortly).
      */
     public async getAreaSpacePolicyFor(
-        user: Pick<User, "tags" | "uuid" | "canEdit">
+        user: Pick<User, "tags" | "uuid" | "canEdit"> & Partial<Pick<User, "permissions">>
     ): Promise<{ refusedAreaSpaces: string[]; listenOnlyAreaSpaces: string[]; areaSpacesUnknown: boolean }> {
         const compute = (wam: WAMFileFormat | undefined) => ({
             refusedAreaSpaces: refusedAreaSpaces(wam, this._roomUrl, user),
@@ -1382,7 +1390,7 @@ export class GameRoom implements BrothersFinder {
                                     message: {
                                         $case: "megaphoneSettingsMessage",
                                         megaphoneSettingsMessage: {
-                                            ...this.getMegaphoneSettingsFor(user.tags),
+                                            ...this.getMegaphoneSettingsFor(user.tags, user.permissions),
                                             ...policy,
                                         },
                                     },

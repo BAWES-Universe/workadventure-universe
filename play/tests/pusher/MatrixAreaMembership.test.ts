@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SpaceUser } from "@workadventure/messages";
+import { Permission } from "@workadventure/shared-utils/src/Permissions/permissions";
 import type {
     MatrixAreaRoomClient,
     MatrixAreaSocket,
@@ -16,11 +17,11 @@ type FakeSocketData = ReturnType<MatrixAreaSocket["getUserData"]>;
 
 class FakeSocket implements MatrixAreaSocket {
     public readonly data: FakeSocketData;
-    constructor(spaceUserId: string, chatID: string | undefined, tags: string[] = []) {
+    constructor(spaceUserId: string, chatID: string | undefined, permissions = 0n) {
         this.data = {
             spaceUserId,
             chatID,
-            tags,
+            permissions,
             currentChatRoomArea: [],
             spaces: new Set<string>(),
             disconnecting: false,
@@ -280,12 +281,23 @@ describe("MatrixAreaMembership", () => {
         const back = new FakeBack();
         const { matrix } = createMatrix();
         const pusher = new FakePusher(back, matrix);
-        const admin = new FakeSocket("tab-1", ALICE, ["admin"]);
+        const admin = new FakeSocket("tab-1", ALICE, 1n << BigInt(Permission.MODERATE_AREA_CHATS));
 
         await pusher.membership.enter(admin, ROOM);
 
         expect(matrix.inviteUserToRoom).toHaveBeenCalledWith(ALICE, ROOM);
         expect(matrix.promoteUserToModerator).toHaveBeenCalledWith(ALICE, ROOM);
+    });
+
+    it("does not promote someone without the Moderate area chats permission", async () => {
+        const back = new FakeBack();
+        const { matrix } = createMatrix();
+        const pusher = new FakePusher(back, matrix);
+
+        await pusher.membership.enter(new FakeSocket("tab-1", ALICE, 1n << BigInt(Permission.EDIT_MAPS)), ROOM);
+
+        expect(matrix.inviteUserToRoom).toHaveBeenCalledWith(ALICE, ROOM);
+        expect(matrix.promoteUserToModerator).not.toHaveBeenCalled();
     });
 
     it("rejects enter without a chat id", async () => {

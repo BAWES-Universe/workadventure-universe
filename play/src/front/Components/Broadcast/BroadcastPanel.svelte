@@ -10,7 +10,7 @@
     } from "../../Stores/BroadcastStore";
     import { megaphoneChannelsStore } from "../../Stores/MegaphoneStore";
     import { exploreStore } from "../../Stores/ExploreStore";
-    import { userIsAdminStore } from "../../Stores/GameStore";
+    import { userCanSendMessagesStore, userIsAdminStore } from "../../Stores/GameStore";
     import { displayedMegaphoneScreenStore } from "../../Stores/MediaStore";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
@@ -31,8 +31,9 @@
 
     // Admins set who can go live here and how far they reach.
     $: canConfigure = $userIsAdminStore;
-    // Written and voice notes are sent by the server to whole rooms: admins only.
-    $: canMessage = $userIsAdminStore;
+    // Written and voice notes are sent by the server to whole rooms: they need the Send messages and voice notes
+    // permission.
+    $: canMessage = $userCanSendMessagesStore;
 
     // The room belongs to a world (and a universe) only when Orbit knows it.
     const roomGroup = gameManager.currentStartedRoom?.group ?? null;

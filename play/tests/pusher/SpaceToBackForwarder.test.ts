@@ -83,6 +83,7 @@ describe("SpaceToBackForwarder", () => {
                     spaceUserId: "foo_1",
                     name: "foo_1",
                     spaces: new Set<string>(),
+                    permissions: 16383n,
                 }),
             });
 
@@ -122,6 +123,7 @@ describe("SpaceToBackForwarder", () => {
                             spaceUserId: "foo_1",
                             name: "foo_1",
                             color: "#f87ed1",
+                            permissions: "16383",
                         }),
                         lowercaseName: "foo_1",
                     },
@@ -149,6 +151,7 @@ describe("SpaceToBackForwarder", () => {
                     spaceUserId: "foo_1",
                     name: "foo_1",
                     spaces: new Set<string>(),
+                    permissions: 0n,
                 }),
             });
 
@@ -216,6 +219,7 @@ describe("SpaceToBackForwarder", () => {
                     spaceUserId: "foo_1",
                     name: "foo_1",
                     spaces: new Set<string>(),
+                    permissions: 0n,
                 }),
             });
 
