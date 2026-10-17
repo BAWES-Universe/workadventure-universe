@@ -53,7 +53,7 @@
     import DirectChatTitle from "./DirectChat/DirectChatTitle.svelte";
     import PartnerProfilePanel from "./DirectChat/PartnerProfilePanel.svelte";
     import { directPartnerStore } from "./DirectChat/DirectPartnerStore";
-    import { dayLabel, messageRuns, runSenderKey } from "./MessageRuns";
+    import { messageRuns, runSenderKey } from "./MessageRuns";
     import { IconChevronLeft, IconChevronRight, IconLoader, IconLock, IconMailBox } from "@wa-icons";
 
     export let room: ChatRoom;
@@ -725,21 +725,16 @@
                 {/if}
                 {#each timelineEntries as entry (entry.message.id)}
                     {@const place = runs.get(entry.message.id)}
+                    {@const isNotice =
+                        ((entry.role === "start" || entry.role === "resume") && !!entry.message.session) ||
+                        entry.message.type === "outcoming" ||
+                        entry.message.type === "incoming"}
                     <li
                         class="last:pb-3"
-                        class:run-start={place?.runStart ?? true}
-                        class:run-continued={place !== undefined && !place.runStart}
+                        class:run-start={!isNotice && (place?.runStart ?? true)}
+                        class:run-continued={!isNotice && place !== undefined && !place.runStart}
                         data-event-id={entry.message.id}
                     >
-                        {#if place?.dayStart && entry.message.date}
-                            <!-- The same look as someone joining or leaving (MessageSystem). -->
-                            <div class="flex justify-center mb-3" data-testid="chatDayLabel">
-                                <span
-                                    class="px-3 py-1.5 m-0 text-xs text-center border border-solid border-white/10 rounded-2xl text-white/80"
-                                    >{dayLabel(entry.message.date, $locale)}</span
-                                >
-                            </div>
-                        {/if}
                         {#if (entry.role === "start" || entry.role === "resume") && entry.message.session}
                             <SessionDivider
                                 marker={entry.message.session}
@@ -786,7 +781,7 @@
 </div>
 
 <style>
-    /* Runs sit close together; a new run gets room for its label. */
+    /* Runs sit close together; a new run gets room for its label. Notices ("With …", joining, leaving) keep their own spacing. */
     li.run-start {
         padding-top: 8px;
     }
