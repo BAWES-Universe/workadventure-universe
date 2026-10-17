@@ -226,6 +226,8 @@ test("ME-010 @local Editing: dragging pans, zooming works, the WOKA never walks,
     await editRoom(page, testInfo);
     await openEditor(page, testInfo);
     await expect(rail(page, "EntityEditor")).toHaveAttribute("aria-pressed", "true");
+    // A phone opens with the Objects panel over most of the map: tuck it to reach the map.
+    if (isPhone(testInfo)) await page.getByTestId("edit-panel-hide").click();
     const me = await playerPosition(page);
     const cam0 = await camera(page);
     const empty = await toScreen(page, SPOT_A.x, SPOT_A.y);
