@@ -297,8 +297,14 @@ export class BotClient {
             if (!this.behavior) {
                 // First spawn: the first update loop tick tells players where the bot stands and which way it faces
                 this.state.setDirection(facing);
-            } else if (!this.isFollowingPath && !this.state.isMoving() && this.state.getDirection() !== facing) {
-                // A config change rebuilt the behavior: turn right away, unless the bot is mid-walk
+            } else if (
+                !this.isFollowingPath &&
+                !this.state.isMoving() &&
+                this.state.getDirection() !== facing &&
+                this.getNearbyPlayers(behavior.LOOK_AWAY_RADIUS).length === 0
+            ) {
+                // A config change rebuilt the behavior: turn right away, unless the bot is mid-walk or someone is
+                // in sight (it may be looking at or talking to them; it turns back once they've gone)
                 this.state.setDirection(facing);
                 this.sendStoppedPosition();
             }

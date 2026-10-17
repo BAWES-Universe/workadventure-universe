@@ -154,7 +154,7 @@ export abstract class BaseBehavior {
     /** A bot standing still turns to look at someone walking by within 4 tiles. Looking never stops it or starts a chat. */
     protected readonly LOOK_RADIUS = 128;
     /** It stops following them with its eyes once they are 5 tiles away. */
-    protected readonly LOOK_AWAY_RADIUS = 160;
+    readonly LOOK_AWAY_RADIUS = 160;
     protected closestPlayerId: number | null = null;
     protected lookingAtPlayerId: number | null = null;
     /** The way a standing bot faced before it turned to someone. It turns back once nobody is in sight. */
@@ -459,14 +459,13 @@ export abstract class BaseBehavior {
     }
 
     /**
-     * The direction a bot that stays put is set to face when nobody is around, or null: no facing saved, or the
-     * bot wanders or walks a route (facing means nothing to a bot that walks).
+     * The direction a bot that stays put faces when nobody is around: its saved facing, else down (what the editor
+     * shows). Null for a bot that wanders or walks a route: it faces the way it walks.
      */
     getConfiguredFacing(): PositionMessage_Direction | null {
         const config = this.config as Record<string, unknown>;
         if (resolveBehaviorModel(config.type as string | undefined, config).moves !== 'stay') return null;
-        const facing = facingOf(config);
-        return facing === null ? null : FACING_DIRECTION[facing];
+        return FACING_DIRECTION[facingOf(config) ?? 'down'];
     }
 
     /**

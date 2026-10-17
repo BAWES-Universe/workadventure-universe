@@ -133,14 +133,26 @@ describe('BotClient faces its default direction', () => {
         expect(moves(sent)).toEqual([expect.objectContaining({ direction: PositionMessage_Direction.RIGHT })]);
     });
 
-    it('leaves a stay bot without a facing, and a bot that is still walking, as they were', () => {
-        const { bot, sent } = joinedBotWithFakeSocket();
+    it('faces down when a stay bot has no facing saved, as the editor shows', () => {
+        const { bot } = joinedBotWithFakeSocket();
         bot.setBehavior(stayBehavior());
         bot.getState().setDirection(PositionMessage_Direction.UP);
         bot.setBehavior(stayBehavior());
-        expect(bot.getState().getDirection()).toBe(PositionMessage_Direction.UP);
+        expect(bot.getState().getDirection()).toBe(PositionMessage_Direction.DOWN);
+    });
+
+    it('leaves a bot that is still walking, or has someone in sight, as it was', () => {
+        const { bot, sent } = joinedBotWithFakeSocket();
+        bot.setBehavior(stayBehavior('up'));
+        bot.getState().setDirection(PositionMessage_Direction.UP);
 
         bot.getState().setMoving(true);
+        bot.setBehavior(stayBehavior('left'));
+        expect(bot.getState().getDirection()).toBe(PositionMessage_Direction.UP);
+
+        // Someone 4.5 tiles away, who it may be looking at
+        bot.getState().setMoving(false);
+        (bot as unknown as { players: Map<number, unknown> }).players.set(2, { userId: 2, position: { x: 244, y: 100 } });
         bot.setBehavior(stayBehavior('left'));
         expect(bot.getState().getDirection()).toBe(PositionMessage_Direction.UP);
         expect(moves(sent)).toEqual([]);

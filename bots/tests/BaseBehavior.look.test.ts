@@ -59,6 +59,14 @@ function idleBehavior(bot: ReturnType<typeof createBot>, extra: Record<string, u
     return behavior;
 }
 
+function routeBehavior(bot: ReturnType<typeof createBot>): PatrolBehavior {
+    const behavior = new PatrolBehavior({
+        type: 'patrol', waypoints: [], loop: true, pauseAtWaypoints: 5, speed: 50, respondToPlayers: true,
+    } as any);
+    behavior.setBot(bot as any);
+    return behavior;
+}
+
 function walk(behavior: { onPlayerMoved(id: number, p: Point): void }, bot: ReturnType<typeof createBot>, p: Point) {
     bot.movePlayer(1, p);
     behavior.onPlayerMoved(1, p);
@@ -206,7 +214,7 @@ describe('bots turn back once nobody is in sight', () => {
         vi.useFakeTimers();
         const options = { followingPath: false };
         const bot = createBot(options);
-        const behavior = idleBehavior(bot);
+        const behavior = routeBehavior(bot);
 
         walk(behavior, bot, { x: 120, y: 0 });
         expect(bot.direction()).toBe(PositionMessage_Direction.RIGHT);
@@ -226,7 +234,7 @@ describe('bots turn back once nobody is in sight', () => {
     it('turns back the way it was walking after it stopped to face someone', () => {
         vi.useFakeTimers();
         const bot = createBot({ moving: true, lastMovedAt: Date.now(), direction: PositionMessage_Direction.LEFT });
-        const behavior = idleBehavior(bot);
+        const behavior = routeBehavior(bot);
 
         // It just took a step left when someone walks up above it
         walk(behavior, bot, { x: 0, y: -60 });
@@ -305,7 +313,7 @@ describe('bots with a default facing direction', () => {
         expect(bot.direction()).toBe(PositionMessage_Direction.UP);
     });
 
-    it('keeps the old way back when no facing is saved', () => {
+    it('faces down when no facing is saved, as the editor shows', () => {
         vi.useFakeTimers();
         const bot = createBot({ direction: PositionMessage_Direction.UP });
         const behavior = idleBehavior(bot, { moves: 'stay' });
@@ -314,7 +322,7 @@ describe('bots with a default facing direction', () => {
         walk(behavior, bot, { x: 400, y: 0 });
         vi.advanceTimersByTime(1600);
         behavior.lookAtPassersBy();
-        expect(bot.direction()).toBe(PositionMessage_Direction.UP);
+        expect(bot.direction()).toBe(PositionMessage_Direction.DOWN);
     });
 
     it('ignores a facing on a bot that wanders or walks a route', () => {
