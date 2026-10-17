@@ -393,8 +393,10 @@ export abstract class BaseBehavior {
         const state = this.bot.getState();
         // The moving flag stays set after a path ends, so ask when the bot last took a step instead
         const walking = this.bot.getIsFollowingPath() || Date.now() - (state.getLastMovedAt?.() ?? 0) < 500;
-        // A walking bot faces the way it walks, so there is nothing to turn back to
-        if (walking || this.isSummoned || this.isLeading || this.isReturning) {
+        // A bot that walks (on) faces the way it walks, so there is nothing to turn back to. Ask the moving
+        // flag here, not the last step: a bot that just stopped to face someone has cleared it, and keeps
+        // the way it was walking as the way to turn back to.
+        if (this.bot.getIsFollowingPath() || state.isMoving() || this.isSummoned || this.isLeading || this.isReturning) {
             this.restDirection = null;
         }
         if (this.isEngaged || this.isSummoned || this.isLeading || this.isReturning) {

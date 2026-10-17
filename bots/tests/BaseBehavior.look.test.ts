@@ -10,8 +10,11 @@ import { PatrolBehavior } from '../behaviors/PatrolBehavior';
 
 type Point = { x: number; y: number };
 
-function createBot(options: { moving?: boolean; followingPath?: boolean; lastMovedAt?: number } = {}) {
-    let direction = PositionMessage_Direction.DOWN;
+function createBot(
+    options: { moving?: boolean; followingPath?: boolean; lastMovedAt?: number; direction?: PositionMessage_Direction } = {}
+) {
+    let direction = options.direction ?? PositionMessage_Direction.DOWN;
+    let moving = options.moving ?? false;
     const players = new Map<number, { userId: number; position: Point }>();
     const state = {
         getPosition: () => ({ x: 0, y: 0 }),
@@ -19,8 +22,10 @@ function createBot(options: { moving?: boolean; followingPath?: boolean; lastMov
         setDirection: vi.fn((d: PositionMessage_Direction) => {
             direction = d;
         }),
-        setMoving: vi.fn(),
-        isMoving: () => options.moving ?? false,
+        setMoving: vi.fn((m: boolean) => {
+            moving = m;
+        }),
+        isMoving: () => moving,
         getLastMovedAt: () => options.lastMovedAt ?? 0,
     };
     const bot = {
@@ -215,5 +220,24 @@ describe('bots turn back once nobody is in sight', () => {
         vi.advanceTimersByTime(1600);
         behavior.lookAtPassersBy();
         expect(bot.direction()).toBe(PositionMessage_Direction.UP);
+    });
+
+    it('turns back the way it was walking after it stopped to face someone', () => {
+        vi.useFakeTimers();
+        const bot = createBot({ moving: true, lastMovedAt: Date.now(), direction: PositionMessage_Direction.LEFT });
+        const behavior = idleBehavior(bot);
+
+        // It just took a step left when someone walks up above it
+        walk(behavior, bot, { x: 0, y: -60 });
+        expect(bot.direction()).toBe(PositionMessage_Direction.UP);
+
+        vi.advanceTimersByTime(600);
+        walk(behavior, bot, { x: 60, y: 0 });
+        expect(bot.direction()).toBe(PositionMessage_Direction.RIGHT);
+
+        walk(behavior, bot, { x: 400, y: 0 });
+        vi.advanceTimersByTime(1600);
+        behavior.lookAtPassersBy();
+        expect(bot.direction()).toBe(PositionMessage_Direction.LEFT);
     });
 });
