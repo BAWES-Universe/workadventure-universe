@@ -288,6 +288,29 @@ describe('bots with a default facing direction', () => {
         expect(bot.direction()).toBe(PositionMessage_Direction.LEFT);
     });
 
+    it('keeps looking at someone 4-5 tiles away when a settings save rebuilds it', () => {
+        vi.useFakeTimers();
+        const bot = createBot();
+        const before = idleBehavior(bot, { moves: 'stay', facing: 'left' });
+
+        walk(before, bot, { x: 120, y: 0 });
+        walk(before, bot, { x: 145, y: 0 });
+        expect(bot.direction()).toBe(PositionMessage_Direction.RIGHT);
+
+        const after = new IdleBehavior({ type: 'idle', moves: 'stay', facing: 'left', responseRadius: 100, greetingMessages: [] } as any);
+        after.carryLookFrom(before);
+        after.setBot(bot as any);
+        after.lookAtPassersBy();
+        vi.advanceTimersByTime(1600);
+        after.lookAtPassersBy();
+        expect(bot.direction()).toBe(PositionMessage_Direction.RIGHT);
+
+        walk(after, bot, { x: 400, y: 0 });
+        vi.advanceTimersByTime(1600);
+        after.lookAtPassersBy();
+        expect(bot.direction()).toBe(PositionMessage_Direction.LEFT);
+    });
+
     it('turns to its facing after standing nobody in sight for a moment when it faces another way', () => {
         vi.useFakeTimers();
         const bot = createBot({ direction: PositionMessage_Direction.UP });

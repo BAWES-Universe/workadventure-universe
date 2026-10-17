@@ -459,6 +459,16 @@ export abstract class BaseBehavior {
     }
 
     /**
+     * Keep watching whoever the previous behavior watched when a settings save rebuilds it. The new one only
+     * notices people within LOOK_RADIUS, so it would turn away from someone 4-5 tiles off. Keeps the way to
+     * turn back to as well.
+     */
+    carryLookFrom(previous: BaseBehavior): void {
+        this.lookingAtPlayerId = previous.lookingAtPlayerId;
+        this.restDirection = previous.restDirection;
+    }
+
+    /**
      * The direction a bot that stays put faces when nobody is around: its saved facing, else down (what the editor
      * shows). Null for a bot that wanders or walks a route: it faces the way it walks.
      */
