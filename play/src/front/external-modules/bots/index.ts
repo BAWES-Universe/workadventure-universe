@@ -579,15 +579,8 @@ function injectBotEditorTool(sidebar: HTMLElement, options: ExtensionModuleOptio
         }
     });
 
-    // Insert into tools container - place between EntityEditor and WAMSettingsEditor (configure my room)
-    const configureMyRoomButton = toolsContainer.querySelector("button#WAMSettingsEditor");
-    if (configureMyRoomButton && configureMyRoomButton.parentElement) {
-        // Insert before the Configure My Room button
-        configureMyRoomButton.parentElement.insertBefore(toolButton, configureMyRoomButton);
-    } else {
-        // Fallback: if WAMSettingsEditor button not found, append at end
-        toolsContainer.appendChild(toolButton);
-    }
+    // Insert into tools container
+    toolsContainer.appendChild(toolButton);
     toolButtonElement = toolButton;
 }
 

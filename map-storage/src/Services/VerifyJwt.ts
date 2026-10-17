@@ -4,7 +4,7 @@ import type { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import z from "zod";
 import type { AreaData } from "@workadventure/map-editor";
-import { WAMFileFormat } from "@workadventure/map-editor";
+import { WAMFileFormat, isAreaPropertyActive } from "@workadventure/map-editor";
 import { fileSystem } from "../fileSystem";
 import { SECRET_KEY } from "../Enum/EnvironmentVariable";
 import { mapPathUsingDomain } from "./PathMapper";
@@ -56,7 +56,10 @@ async function verifyWam(jwt: AuthTokenData, url: string): Promise<void> {
         return;
     }
 
-    const restrictionProperty = test.properties?.find((prop) => prop.type === "restrictedRightsPropertyData");
+    // A rule that is switched off in the editor is no restriction.
+    const restrictionProperty = test.properties?.find(
+        (prop) => prop.type === "restrictedRightsPropertyData" && isAreaPropertyActive(prop)
+    );
 
     if (!restrictionProperty) {
         return; // No restrictions, access granted

@@ -47,6 +47,8 @@
     let pickedLabel: HTMLElement | undefined;
     let dotLook = "";
     let frame: number | undefined;
+    // How far the game canvas reaches above this layer, behind the top bar (#1092).
+    let lift = 0;
 
     function tool(): AreaEditorTool | undefined {
         return gameManager.tryGetCurrentGameScene()?.getMapEditorModeManager()?.currentlyActiveTool as
@@ -57,6 +59,7 @@
     function update() {
         frame = requestAnimationFrame(update);
         const scene = gameManager.tryGetCurrentGameScene();
+        if (scene) lift = screenSpace(scene).lift;
         if (quiet && scene) {
             const space = screenSpace(scene);
             const unnamed = get(LL).mapEditor.edit.areas.unnamed();
@@ -152,7 +155,12 @@
     });
 </script>
 
-<div class="af-root" class:af-quiet={quiet} data-testid={quiet ? "area-frames-quiet" : "area-frames"}>
+<div
+    class="af-root"
+    class:af-quiet={quiet}
+    style="--af-lift: {lift}px"
+    data-testid={quiet ? "area-frames-quiet" : "area-frames"}
+>
     {#if ghost}
         <i
             class="af-was"
@@ -191,7 +199,9 @@
     .af-root {
         position: absolute;
         inset: 0;
-        overflow: hidden;
+        /* Clips at the layer's own edges but not at the top: the layer sits under the top bar, the map reaches up
+           behind it, and frames and handles draw there too (#1092). */
+        clip-path: inset(calc(var(--af-lift, 0px) * -1) 0 0 0);
         pointer-events: none;
         /* Under the panel, the bars and the actions: the map's own layer. */
         z-index: 0;

@@ -20,7 +20,9 @@ export class UpdateAreaMapStorageCommand extends UpdateAreaCommand {
     public async execute(): Promise<void> {
         const patch = jsonpatch.compare(this.oldConfig, this.newConfig);
         const promises = patch.reduce((acc: Promise<void>[], operation) => {
-            if (operation.op === "add" && operation.path.match(new RegExp("^/properties/*"))) {
+            // Only whole-property paths fire the add/remove hooks: nested fields of a property
+            // (for instance `/properties/2/disabled`) are not an added or removed property.
+            if (operation.op === "add" && operation.path.match(/^\/properties\/\d+$/)) {
                 const value = AreaDataProperty.safeParse(operation.value);
 
                 if (!value.success) {
@@ -34,7 +36,7 @@ export class UpdateAreaMapStorageCommand extends UpdateAreaCommand {
                 );
             }
 
-            if (operation.op === "remove" && operation.path.match(new RegExp("^/properties/*"))) {
+            if (operation.op === "remove" && operation.path.match(/^\/properties\/\d+$/)) {
                 const value = jsonpatch.getValueByPointer(this.oldConfig, operation.path) as AreaDataProperty;
                 if (!value) return acc;
                 acc.push(

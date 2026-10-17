@@ -184,25 +184,6 @@ test("BC-090 Saved settings come back after a reload", async ({ page }, testInfo
     await expectFar(page, "WORLD");
 });
 
-test("BC-091 @local Desktop edit mode: key 4 opens Configure my room with Room settings only, no Megaphone", async ({
-    page,
-}, testInfo) => {
-    test.skip(isPhone(testInfo), "desktop only");
-    await join(page, await wamRoom(testInfo, "empty"), "Alice");
-    await primeAdmin(page);
-    await page.getByTestId("map-menu").click();
-    await page.getByRole("button", { name: "Map editor", exact: true }).click();
-    await expect(page.getByTestId("edit-pill")).toBeVisible();
-    await page.mouse.click(400, 300);
-    await page.keyboard.press("4");
-    const window = page.locator(".configure-my-room");
-    await expect(window).toBeVisible();
-    await expect(window.locator("li", { hasText: "Room settings" })).toBeVisible();
-    await expect(window.locator("li")).toHaveCount(1);
-    await expect(window.getByText("Megaphone")).toHaveCount(0);
-    await expect(window.locator("#megaphone-switch")).toHaveCount(0);
-});
-
 test("BC-092 A video-call area still offers Stage and Audience (KNOWN GAP)", async ({ page }, testInfo) => {
     await join(page, await wamRoom(testInfo, "empty"), "Alice");
     await openAreas(page);

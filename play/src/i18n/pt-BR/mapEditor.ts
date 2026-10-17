@@ -8,7 +8,6 @@ const mapEditor: BaseTranslation = {
         areaEditor: "Ferramenta de editor de área",
         entityEditor: "Ferramenta de editor de entidade",
         tileEditor: "Ferramenta de editor de tiles",
-        configureMyRoom: "Configurar minha sala",
         trashEditor: "Lixeira",
         exploreTheRoom: "Explorar a sala",
         closeMapEditor: "Fechar editor de mapa",
@@ -18,7 +17,6 @@ const mapEditor: BaseTranslation = {
         areaEditorActivated: "Editor de área ativado",
         entityEditorActivated: "Editor de entidade ativado",
         trashEditorActivated: "Editor de lixeira ativado",
-        configureMyRoomActivated: "Configurar minha sala ativado",
     },
     properties: {
         silent: {

@@ -3862,14 +3862,14 @@
     {
       "id": "ME-006",
       "area": "Map editor and Look around",
-      "topic": "Edit mode: Configure my room",
-      "action": "Desktop, admin, editor open: press 4. Switch to \"Room settings\", change Description, Save, Confirm; close.",
-      "expected": "The old \"Configure my room\" window opens (no rail button for it any more). Room settings: name, description, tags, thumbnail, copyright, Save, then a confirm that reloads the map for everyone, toast \"Room settings saved\". No Megaphone tab: Room settings is the only item (the old Megaphone is replaced by Broadcast settings, owned by BC).",
+      "topic": "Edit mode: Configure my room (removed)",
+      "action": "Desktop, admin, editor open: press 4, or open a link ending in `#mapEditor=wamSettingsEditorTool`.",
+      "expected": "Nothing opens: the old \"Configure my room\" window is gone (game #740). Room name and description are set in Orbit; who can go live is in Broadcast settings.",
       "source": "prod + approved B2p1 frame 1 (gear off the rail; sweep \"not regression\") + approved Broadcast settings mock 10-06 (#627): old Megaphone removed",
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "key \"4\" MapEditorModeManager.ts:309-312; EditMode.svelte:75-80; WAMSettingsEditor.svelte:61-94; e2e `li:has-text(\"Megaphone\")` tests/tests/utils/map-editor/areaEditor.ts:8, close `.configure-my-room button.close-window` utils/menu.ts:237"
+      "hooks": "no `.configure-my-room` in the page; key \"4\" has no case in MapEditorModeManager.ts"
     },
     {
       "id": "ME-007",
@@ -4169,7 +4169,7 @@
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "`area-new` AreasPanel.svelte:33 (computer) / AreaSheet.svelte:74 (phone); `area-sheet` :43; `area-all` :81; `area-row` AreaRows.svelte:79; texts mapEditor.ts:592-624"
+      "hooks": "`area-new` AreasPanel.svelte:33 (computer) / AreaSheet.svelte:74 (phone); `area-sheet` :43; `area-all` :81; `area-row` AreaRows.svelte:81; texts mapEditor.ts:592-624"
     },
     {
       "id": "ME-032",
@@ -4205,7 +4205,7 @@
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "AreaRows.svelte:79 (glideToArea AreaEditorTool.ts:741); `area-frame.af-pick` AreaFrames.svelte:165; `area-actions-settings` AreaActions.svelte:113; AreaEditorTool.ts:477-540"
+      "hooks": "AreaRows.svelte:81 (glideToArea AreaEditorTool.ts:741); `area-frame.af-pick` AreaFrames.svelte:165; `area-actions-settings` AreaActions.svelte:113; AreaEditorTool.ts:477-540"
     },
     {
       "id": "ME-035",
@@ -4270,14 +4270,14 @@
     {
       "id": "ME-040",
       "area": "Map editor and Look around",
-      "topic": "Area settings: turned on",
-      "action": "Add any setting, press back to the area, then tap its row under \"Turned on\", then turn its switch off.",
-      "expected": "The setting shows under \"Turned on\" with a switch; tapping the row opens its page (title, area name, back, and a coral \"Turn off “<setting>”\" at the bottom); the switch off removes it. (GPT R1: off deletes its values: see Questions.)",
+      "topic": "Area settings: in this area",
+      "action": "Add any setting, press back to the area, then tap its row under \"In this area\", then turn its switch off and on again, then press \"Remove from area\".",
+      "expected": "The setting shows under \"In this area\" with a summary of what is set, a chevron and a switch; tapping the row opens its page (a card that says On or Off with the same switch, the form, and a coral \"Remove from area\" at the bottom); the switch off keeps the setting (the row stays, faded, with an \"Off\" pill; the page says \"Off. Your settings are kept.\" and the form is dimmed but editable) and the game acts as if it were not there; the switch on brings it back; \"Remove from area\" takes it out and shows \"<setting> removed · Undo\".",
       "source": "approved B2p1 frame 6",
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "`area-property-page` AreaSettings.svelte:328; `.em-row-main`, `.em-switch` (Turned on rows); `area-property-turn-off` :456; `edit-panel-back`"
+      "hooks": "`area-property-page` AreaSettings.svelte:328; `.em-row-main`, `.em-switch` (In this area rows); `area-property-switch`, `area-property-off-note`, `area-property-remove`; `edit-panel-back`, `edit-undo-toast`"
     },
     {
       "id": "ME-041",
@@ -4308,7 +4308,7 @@
       "area": "Map editor and Look around",
       "topic": "Area: quiet zone",
       "action": "Add \"Quiet zone\" (no page opens); two players stand inside next to each other.",
-      "expected": "Setting shows under Turned on; inside, no bubble forms (silent zone behaviour itself is AV's).",
+      "expected": "Setting shows under In this area; inside, no bubble forms (silent zone behaviour itself is AV's).",
       "source": "prod + approved B2p1",
       "runs": "yes",
       "runsNote": "yes",
@@ -4452,7 +4452,7 @@
       "area": "Map editor and Look around",
       "topic": "Area: Jitsi call",
       "action": "Look for \"Jitsi call\" in \"Add to this area\" (empty area, and one with a video call). Open an area that already has a Jitsi call.",
-      "expected": "Jitsi call is not offered any more (Jitsi is discontinued: dev hides it everywhere). An area that already has one keeps it under \"Turned on\": its page shows the room name and \"Turn off “Jitsi call”\" removes it. (Runs: the editor part is yes; play not local.)",
+      "expected": "Jitsi call is not offered any more (Jitsi is discontinued: dev hides it everywhere). An area that already has one keeps it under \"In this area\": its page shows the room name and \"Remove from area\" removes it. (Runs: the editor part is yes; play not local.)",
       "source": "prod",
       "runs": "yes",
       "runsNote": "yes",
@@ -5988,12 +5988,12 @@
       "area": "Broadcasting",
       "topic": "Settings",
       "action": "Desktop, admin, in edit mode: press key 4 (or open `#mapEditor=wamSettingsEditorTool&menuItem=megaphone`)",
-      "expected": "The \"Configure my room\" window opens with \"Room settings\" only. The old Megaphone item (switch, Space name, Scope, Rights) is gone: Broadcast settings is the only place to set who can go live and how far",
+      "expected": "Replaced by game #740: the \"Configure my room\" window is gone, so nothing opens. Broadcast settings is the only place to set who can go live and how far",
       "source": "approved Broadcast settings mock 10-06 (#627) + old Megaphone removed (Khalid's card, #627 handover)",
-      "runs": "yes",
-      "runsNote": "yes (prime admin)",
+      "runs": "replaced",
+      "runsNote": "replaced",
       "knownGap": false,
-      "hooks": "`.configure-my-room` (F/Components/MapEditor/WAMSettingsEditor.svelte:49-80, one `li` for admins :62-76); key 4 admins only F/Phaser/Game/MapEditor/MapEditorModeManager.ts:310-314; deep link F/Phaser/Game/GameScene.ts:3631-3637"
+      "hooks": "covered by ME-006 (key 4 opens nothing)"
     },
     {
       "id": "BC-092",

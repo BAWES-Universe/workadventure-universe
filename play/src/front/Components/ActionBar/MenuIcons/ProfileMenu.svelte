@@ -7,6 +7,7 @@
     import type { Readable } from "svelte/store";
     import { derived, get } from "svelte/store";
     import type { AreaData } from "@workadventure/map-editor";
+    import { isAreaPropertyActive } from "@workadventure/map-editor";
     import { availabilityStatusStore, enableCameraSceneVisibilityStore } from "../../../Stores/MediaStore";
 
     import { gameManager } from "../../../Phaser/Game/GameManager";
@@ -95,7 +96,9 @@
 
         // Find the user's personal area
         for (const area of personalAreas) {
-            const property = area.areaData.properties.find((property) => property.type === "personalAreaPropertyData");
+            const property = area.areaData.properties
+                .filter(isAreaPropertyActive)
+                .find((property) => property.type === "personalAreaPropertyData");
             if (property && property.ownerId === userUUID) {
                 hasPersonalDesk = true;
                 personalAreaData = area.areaData;

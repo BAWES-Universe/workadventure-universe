@@ -16,7 +16,7 @@ import type {
     LivekitRoomPropertyData,
     HighlightPropertyData,
 } from "@workadventure/map-editor";
-import { PersonalAreaAccessClaimMode } from "@workadventure/map-editor";
+import { PersonalAreaAccessClaimMode, isAreaPropertyActive } from "@workadventure/map-editor";
 import * as Sentry from "@sentry/svelte";
 import { getSpeakerMegaphoneAreaName } from "@workadventure/map-editor/src/Utils";
 import { Jitsi } from "@workadventure/shared-utils";
@@ -133,6 +133,10 @@ export class AreasPropertiesListener {
             const area = areas?.find((area) => area.areaData.id === areaData.id);
 
             for (const property of areaData.properties) {
+                // A setting that is switched off in the editor does nothing.
+                if (!isAreaPropertyActive(property)) {
+                    continue;
+                }
                 this.addPropertyFilter(property, areaData, area);
             }
         }
@@ -148,6 +152,11 @@ export class AreasPropertiesListener {
         if (newProperties === undefined) {
             return;
         }
+
+        // Only the settings that are switched on count: switching one off runs the "removed" path (its effects
+        // stop), switching it back on runs the "added" path.
+        oldProperties = oldProperties?.filter(isAreaPropertyActive);
+        newProperties = newProperties.filter(isAreaPropertyActive);
 
         if (oldProperties !== undefined) {
             for (const oldProperty of oldProperties) {
@@ -195,6 +204,10 @@ export class AreasPropertiesListener {
             const area = areas?.find((area) => area.areaData.id === areaData.id);
 
             for (const property of areaData.properties) {
+                // A setting that is switched off in the editor was not applied on enter, so there is nothing to undo.
+                if (!isAreaPropertyActive(property)) {
+                    continue;
+                }
                 this.removePropertyFilter(property, area, areaData);
             }
 
@@ -703,7 +716,9 @@ export class AreasPropertiesListener {
         // Rules, if there is a listener zone property attached with another Speaker zone, We could imagine highlight two zone, with the speakers and attendees
         // Check if there is "listenerMegaphone"
         const speakerZone = areaData.properties.find(
-            (property) => property.type === "listenerMegaphone" || property.type === "speakerMegaphone"
+            (property) =>
+                (property.type === "listenerMegaphone" || property.type === "speakerMegaphone") &&
+                isAreaPropertyActive(property)
         );
         if (speakerZone == undefined) return;
 
@@ -717,7 +732,12 @@ export class AreasPropertiesListener {
                 .getGameMapAreas()
                 ?.getAreas()
                 .get(speakerZone.speakerZoneName);
-            if (speakerZoneArea != undefined) speakerZoneAreas.push(speakerZoneArea);
+            // A Stage that is switched off is not a Stage any more.
+            if (
+                speakerZoneArea != undefined &&
+                speakerZoneArea.properties.some((c) => c.type === "speakerMegaphone" && isAreaPropertyActive(c))
+            )
+                speakerZoneAreas.push(speakerZoneArea);
         }
         if (speakerZone.type === "speakerMegaphone") {
             // If "speakerZone", get all listners zone attached
@@ -729,7 +749,10 @@ export class AreasPropertiesListener {
                 .forEach((area) => {
                     if (
                         area.properties.find(
-                            (c) => c.type === "listenerMegaphone" && c.speakerZoneName == areaData.id
+                            (c) =>
+                                c.type === "listenerMegaphone" &&
+                                isAreaPropertyActive(c) &&
+                                c.speakerZoneName == areaData.id
                         ) == undefined
                     )
                         return;

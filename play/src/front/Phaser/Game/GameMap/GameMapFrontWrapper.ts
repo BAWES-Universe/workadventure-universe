@@ -6,7 +6,7 @@ import type {
     AreaDataProperties,
     AreaUpdateCallback,
 } from "@workadventure/map-editor";
-import { AreaCoordinates, GameMapProperties } from "@workadventure/map-editor";
+import { AreaCoordinates, GameMapProperties, isAreaPropertyActive } from "@workadventure/map-editor";
 import { MathUtils } from "@workadventure/math-utils";
 import type {
     ITiledMap,
@@ -501,7 +501,9 @@ export class GameMapFrontWrapper {
         }
 
         const areas = this.gameMap.getGameMapAreas()?.getAreasOnPlayerPosition(position) ?? [];
-        return areas.some((area) => area.properties.some((property) => property.type === "silent"));
+        return areas.some((area) =>
+            area.properties.some((property) => property.type === "silent" && isAreaPropertyActive(property))
+        );
     }
 
     public getCurrentProperties(): Map<string, string | boolean | number> {
@@ -1053,7 +1055,7 @@ export class GameMapFrontWrapper {
             y: areaData.y,
             width: areaData.width,
             height: areaData.height,
-            properties: this.mapAreaPropertiesToTiledProperties(areaData.properties),
+            properties: this.mapAreaPropertiesToTiledProperties(areaData.properties.filter(isAreaPropertyActive)),
         };
     }
 

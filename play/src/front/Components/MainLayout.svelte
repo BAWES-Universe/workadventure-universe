@@ -43,6 +43,7 @@
     import { incomingRingStore } from "../Chat/Stores/RingStore";
     import { streamableCollectionStore } from "../Stores/StreamableCollectionStore";
     import { inputFormFocusStore } from "../Stores/UserInputStore";
+    import { isExploringTheRoom, leaveExploreTheRoom } from "../Phaser/Game/MapEditor/ExploreTheRoom";
     import RingOverlay from "../Chat/Components/UserList/RingOverlay.svelte";
     import ActionBar from "./ActionBar/ActionBar.svelte";
     import EditMode from "./MapEditor/EditMode/EditMode.svelte";
@@ -124,6 +125,9 @@
     // buttons keep their place and size, and a window simply covers what is behind it. The chat and Orbit start under
     // the bar. Phones and small windows keep their layout: what is beside the chat starts where it ends.
     $: desktop = $windowSize.width >= DESKTOP_LAYOUT_MIN_WIDTH;
+    // "Look around the map" draws its card, area frames and pills over the game, above the Explore list: opening the
+    // list ends it, as "Back to me" does. (Opening Look around while the list is open closes the list, in ExplorerTool.)
+    $: if ($roomListVisibilityStore && isExploringTheRoom()) leaveExploreTheRoom();
     // On a phone held upright the chat is a sheet over the bottom of the screen: it takes no width either.
     $: marginLeft =
         $chatVisibilityStore && !desktop && !$chatSheetLayoutStore ? $chatSidebarWidthStore + $chatFloatInsetStore : 0;

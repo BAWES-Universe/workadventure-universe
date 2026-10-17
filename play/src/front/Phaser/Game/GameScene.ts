@@ -30,6 +30,7 @@ import {
     GameMap,
     GameMapProperties,
     WAMFileFormat,
+    isAreaPropertyActive,
 } from "@workadventure/map-editor";
 import { wamFileMigration } from "@workadventure/map-editor/src/Migrations/WamFileMigration";
 import { slugify } from "@workadventure/shared-utils/src/Jitsi/slugify";
@@ -3726,13 +3727,6 @@ export class GameScene extends DirtyScene {
                 setTimeout(() => popupStore.removePopup("mapEditorNotEnabled"), 6_000);
             } else {
                 switch (toolEditorParam) {
-                    case "wamSettingsEditorTool": {
-                        // Configure my room holds the room's settings, which only admins may change.
-                        if (!get(userIsAdminStore)) break;
-                        mapEditorModeStore.switchMode(true);
-                        mapEditorSelectedToolStore.set(EditorToolName.WAMSettingsEditor);
-                        break;
-                    }
                     case "floor": {
                         mapEditorModeStore.switchMode(true);
                         mapEditorSelectedToolStore.set(EditorToolName.FloorEditor);
@@ -3875,7 +3869,9 @@ export class GameScene extends DirtyScene {
         // Find the user's personal area
         let personalAreaData: AreaData | null = null;
         for (const area of personalAreas) {
-            const property = area.areaData.properties.find((property) => property.type === "personalAreaPropertyData");
+            const property = area.areaData.properties
+                .filter(isAreaPropertyActive)
+                .find((property) => property.type === "personalAreaPropertyData");
             if (property && property.type === "personalAreaPropertyData" && property.ownerId === userUUID) {
                 personalAreaData = area.areaData;
                 break;

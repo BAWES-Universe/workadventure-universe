@@ -9,7 +9,6 @@ const mapEditor: BaseTranslation = {
         areaEditor: "Area editor tool",
         entityEditor: "Entity editor tool",
         tileEditor: "Tile editor tool",
-        configureMyRoom: "Configure my room",
         trashEditor: "Trash",
         exploreTheRoom: "Look around the map",
         closeMapEditor: "Close map editor",
@@ -19,7 +18,6 @@ const mapEditor: BaseTranslation = {
         areaEditorActivated: "Area editor activated",
         entityEditorActivated: "Entity editor activated",
         trashEditorActivated: "Trash editor activated",
-        configureMyRoomActivated: "Configure my room activated",
     },
     properties: {
         silent: {
@@ -124,6 +122,8 @@ const mapEditor: BaseTranslation = {
             namePlaceholder: "MainStage",
             disabled: "Podium is disabled for this room ❌",
             actionButtonLabel: "Join podium",
+            nameTaken: "A Stage called {name} already exists. Pick a different name.",
+            nameEmpty: "Give this Stage a name.",
         },
         listenerMegaphone: {
             label: "Audience",
@@ -611,7 +611,7 @@ const mapEditor: BaseTranslation = {
             unnamed: "Unnamed area",
             rename: "tap to rename",
             namePlaceholder: "Name this area",
-            turnedOn: "Turned on",
+            inThisArea: "In this area",
             addToArea: "Add to this area",
             searchable: "Listed in Places",
             searchableText: "People find it when they look around, and bots can walk them here once it has a name",
@@ -622,7 +622,20 @@ const mapEditor: BaseTranslation = {
             descriptionHint: "Shown when someone taps this area in Look around.",
             back: "Back",
             remove: "Remove",
-            turnOff: "Turn off “{name}”",
+            removeFromArea: "Remove from area",
+            removedFromArea: "{name} removed",
+            on: "On",
+            off: "Off",
+            offHint: "Nobody sees it until you turn it back on",
+            offNote: "Off. Your settings are kept.",
+            // The line under a setting's title: what is actually set (the setting's fixed line when nothing is).
+            summary: {
+                toRoom: "To {room}",
+                toRoomAt: "To {room} · at {area}",
+                chatOn: "{name} · chat on",
+                hears: "Hears {stage}",
+                onlyTags: "Only: {tags}",
+            },
             deleteArea: "Delete area",
         },
         properties: {

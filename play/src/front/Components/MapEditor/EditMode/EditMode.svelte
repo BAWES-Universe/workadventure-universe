@@ -29,7 +29,6 @@
     } from "../../../Stores/EditModeStore";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import type { Entity } from "../../../Phaser/ECS/Entity";
-    import ConfigureMyRoom from "../WAMSettingsEditor.svelte";
     import { cameraTilesClearStore } from "../../../Stores/CameraTilesClearStore";
     import EditPill from "./EditPill.svelte";
     import EditRail from "./EditRail.svelte";
@@ -63,12 +62,11 @@
         tool === EditorToolName.AreaEditor &&
         !areaSelected &&
         !drawingArea;
-    // The panel is not for every tool: Delete only needs the map, and Room settings is a window of its own.
+    // The panel is not for every tool: Delete only needs the map.
     $: panelShown =
         $mapEditorVisibilityStore &&
         tool !== undefined &&
         tool !== EditorToolName.TrashEditor &&
-        tool !== EditorToolName.WAMSettingsEditor &&
         tool !== EditorToolName.CloseMapEditor &&
         !($mobileLayoutStore && tool === EditorToolName.AreaEditor && !areaSelected);
     $: objectSelected =
@@ -113,12 +111,6 @@
     }
 </script>
 
-{#if tool === EditorToolName.WAMSettingsEditor}
-    <!-- The main layout takes no pointer events itself; the window must. -->
-    <div class="contents pointer-events-auto">
-        <ConfigureMyRoom />
-    </div>
-{/if}
 <div
     id="map-editor-container"
     class="em-root absolute inset-0 z-[100] pointer-events-none text-white"
