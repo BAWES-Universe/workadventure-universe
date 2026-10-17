@@ -281,15 +281,33 @@ export class BotClient {
      * Set behavior for this bot
      */
     setBehavior(behavior: BaseBehavior): void {
+        // A bot that stays put can be set to face a direction (the editor's "Default facing direction")
+        const facing = behavior.getConfiguredFacing();
         if (this.behavior && this.behavior.constructor !== behavior.constructor) {
             // Switching to another kind of behavior (e.g. from the bot editor). The old behavior may have
             // left the bot mid-walk: idle never moves, so it never calls stop(), and players would keep seeing
-            // it walking in place. Drop the old path and stand still, facing down, before the new one starts.
+            // it walking in place. Drop the old path and stand still, facing down (or the way it is set to
+            // face), before the new one starts.
             // A config change rebuilds the same kind of behavior; that one keeps walking where it was going.
             // End any leading too: the old behavior's followers would otherwise keep following a bot that stopped
             this.cancelPathfinding(true);
-            this.state.setDirection(PositionMessage_Direction.DOWN);
+            this.state.setDirection(facing ?? PositionMessage_Direction.DOWN);
             this.sendStoppedPosition();
+        } else if (facing !== null) {
+            if (!this.behavior) {
+                // First spawn: the first update loop tick tells players where the bot stands and which way it faces
+                this.state.setDirection(facing);
+            } else if (
+                !this.isFollowingPath &&
+                !this.state.isMoving() &&
+                this.state.getDirection() !== facing &&
+                this.getNearbyPlayers(behavior.LOOK_AWAY_RADIUS).length === 0
+            ) {
+                // A config change rebuilt the behavior: turn right away, unless the bot is mid-walk or someone is
+                // in sight (it may be looking at or talking to them; it turns back once they've gone)
+                this.state.setDirection(facing);
+                this.sendStoppedPosition();
+            }
         }
         this.behavior = behavior;
         behavior.setBot(this);

@@ -14,6 +14,7 @@
 
 export type BehaviorMoves = 'stay' | 'wander' | 'route';
 export type LegacyBehaviorType = 'idle' | 'patrol' | 'social';
+export type BotFacing = 'down' | 'left' | 'right' | 'up';
 
 export interface BehaviorModel {
     moves: BehaviorMoves;
@@ -47,6 +48,15 @@ export function resolveBehaviorModel(type: string | undefined, cfg: Record<strin
         moves: isMoves(cfg?.moves) ? cfg.moves : legacy.moves,
         goesToPeople: typeof cfg?.goesToPeople === 'boolean' ? cfg.goesToPeople : legacy.goesToPeople,
     };
+}
+
+/**
+ * The default facing direction saved in behaviorConfig, or null when none is saved (or it is junk).
+ * Only bots that stay put use it; the caller checks `resolveBehaviorModel(...).moves === 'stay'`.
+ */
+export function facingOf(cfg: Record<string, unknown> | undefined): BotFacing | null {
+    const facing = cfg?.facing;
+    return facing === 'down' || facing === 'left' || facing === 'right' || facing === 'up' ? facing : null;
 }
 
 /**

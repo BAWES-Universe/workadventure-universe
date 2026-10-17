@@ -20,6 +20,7 @@ function botThatSees(players: { userId: number; uuid: string; x: number; y: numb
     bot.setBehavior({
         setBot() {},
         update() {},
+        getConfiguredFacing: () => null,
         getUserIdForUuid: (uuid: string) => [...uuids].find(([, value]) => value === uuid)?.[0],
     } as unknown as BaseBehavior);
     const known = (bot as unknown as { players: Map<number, unknown> }).players;
