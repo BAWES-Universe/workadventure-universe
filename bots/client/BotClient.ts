@@ -323,6 +323,8 @@ export class BotClient {
         // The behavior checks nearbyPlayers.size and calls stop() if needed
         // Bots should "ghost through" idle players (nearbyPlayers.size === 0)
         this.behavior.update(deltaTime);
+        // Keep looking at people standing nearby, and turn back once they leave (even by leaving the room)
+        this.behavior.lookAtPassersBy();
 
         // If bot is summoned, always allow movement (override normal stopping logic)
         const isSummoned = (this.behavior as any)?.isSummoned || false;

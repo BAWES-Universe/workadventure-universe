@@ -149,6 +149,11 @@ export abstract class BaseBehavior {
     protected readonly LOOK_AWAY_RADIUS = 160;
     protected closestPlayerId: number | null = null;
     protected lookingAtPlayerId: number | null = null;
+    /** The way a standing bot faced before it turned to someone. It turns back once nobody is in sight. */
+    protected restDirection: PositionMessage_Direction | null = null;
+    /** It waits this long after the last person goes, so someone stepping in and out doesn't make it spin. */
+    protected readonly TURN_BACK_DELAY = 1500;
+    private nobodyInSightSince = 0;
     
     // Track previous bot position (for position updates)
     private previousBotPosition: PositionInterface | null = null;
@@ -376,17 +381,28 @@ export abstract class BaseBehavior {
     /**
      * Turn to look at the closest person within LOOK_RADIUS, and keep looking at them until they are past
      * LOOK_AWAY_RADIUS. Only while the bot stands still (no path, no step in the last half second) and isn't
-     * already facing someone it is engaged with, since facing someone stops the bot.
+     * already facing someone it is engaged with, since facing someone stops the bot. Once nobody is in sight
+     * it turns back the way it faced before. Runs on every player move and every tick, so it also turns back
+     * when the person it looked at leaves the room.
      */
-    protected lookAtPassersBy(): void {
+    lookAtPassersBy(): void {
         if (!this.bot) return;
-        if (this.isEngaged || this.isSummoned || this.isLeading || this.isReturning) {
-            this.lookingAtPlayerId = null;
-            return;
-        }
+        const config = this.config as any;
+        // Ghost route bots don't notice people
+        if (config.type === 'patrol' && config.respondToPlayers === false) return;
         const state = this.bot.getState();
         // The moving flag stays set after a path ends, so ask when the bot last took a step instead
-        if (this.bot.getIsFollowingPath() || Date.now() - (state.getLastMovedAt?.() ?? 0) < 500) return;
+        const walking = this.bot.getIsFollowingPath() || Date.now() - (state.getLastMovedAt?.() ?? 0) < 500;
+        // A walking bot faces the way it walks, so there is nothing to turn back to
+        if (walking || this.isSummoned || this.isLeading || this.isReturning) {
+            this.restDirection = null;
+        }
+        if (this.isEngaged || this.isSummoned || this.isLeading || this.isReturning) {
+            this.lookingAtPlayerId = null;
+            this.nobodyInSightSince = 0;
+            return;
+        }
+        if (walking) return;
 
         const botPos = state.getPosition();
         const distanceTo = (p: PositionInterface) => Math.hypot(p.x - botPos.x, p.y - botPos.y);
@@ -412,7 +428,30 @@ export abstract class BaseBehavior {
             }
         }
         if (target) {
+            this.nobodyInSightSince = 0;
             this.facePosition(target);
+        } else {
+            this.turnBack();
+        }
+    }
+
+    /** Face the way the bot faced before it turned to someone, a moment after the last person went. */
+    private turnBack(): void {
+        if (!this.bot || this.restDirection === null) return;
+        const now = Date.now();
+        if (this.nobodyInSightSince === 0) {
+            this.nobodyInSightSince = now;
+            return;
+        }
+        if (now - this.nobodyInSightSince < this.TURN_BACK_DELAY) return;
+        const direction = this.restDirection;
+        this.restDirection = null;
+        this.nobodyInSightSince = 0;
+        const state = this.bot.getState();
+        if (state.getDirection() !== direction) {
+            state.setDirection(direction);
+            state.setMoving(false);
+            this.bot.stopAndUpdate();
         }
     }
 
@@ -1349,6 +1388,10 @@ export abstract class BaseBehavior {
         const oldDirection = this.bot.getState().getDirection();
         // Only update if direction actually changed
         if (oldDirection !== direction) {
+            // Remember which way a standing bot faced, to turn back to it later (cleared again once it walks)
+            if (this.restDirection === null && !this.isLeading && !this.isSummoned && !this.isReturning) {
+                this.restDirection = oldDirection;
+            }
             this.bot.getState().setDirection(direction);
             // If bot is leading, don't stop - just update direction while continuing to move
             if (this.isLeading) {
