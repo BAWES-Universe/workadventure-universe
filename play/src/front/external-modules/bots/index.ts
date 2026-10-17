@@ -723,11 +723,10 @@ function setupBotEditor(options: ExtensionModuleOptions) {
                     tryInjectBotTool();
                 }, 300);
 
-                // If bot editor is selected and was open, re-inject the component
+                // If bot editor is selected and was open, put its page back in the panel straight away (the attach
+                // waits for the panel to render), so the panel coming back never shows empty
                 if (get(mapEditorSelectedToolStore) === BOT_EDITOR_TOOL_NAME && botEditorOpen) {
-                    setTimeout(() => {
-                        injectBotEditorComponent();
-                    }, 200);
+                    injectBotEditorComponent();
                 }
             } else {
                 // Sidebar is collapsed - don't remove component, just mark that it might need re-injection
