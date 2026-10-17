@@ -6,6 +6,7 @@
  */
 
 import WebSocket from 'ws';
+import { readMatrixConfig, botMatrixId } from '../matrix/MatrixConfig';
 import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
 import {
@@ -180,7 +181,9 @@ export class BotClient {
             // ONLINE (1). This used to send 0, which is UNCHANGED: people saw the bot as offline in the People list
             params.set('availabilityStatus', '1');
             params.set('version', apiVersionHash); // Imported from @workadventure/messages
-            params.set('chatID', '');
+            // With Matrix direct messages on, the bot shows its Matrix ID so people get the Message button for it.
+            const matrixConfig = readMatrixConfig();
+            params.set('chatID', (matrixConfig && botMatrixId(matrixConfig.domain, this.config.botId)) || '');
             params.set('roomName', '');
             params.set('cameraState', 'false');
             params.set('microphoneState', 'false');
