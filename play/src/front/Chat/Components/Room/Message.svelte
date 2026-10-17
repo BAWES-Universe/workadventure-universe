@@ -442,6 +442,15 @@
         grid-template-areas: "avatar label" "avatar message" ". response";
     }
 
+    /*
+     * Their label (name and time) also spans a spare column, so a long name never widens the bubble's column: a short
+     * message keeps a short bubble, and the hover bar, placed on that column, stays beside it. Mine shows the time only.
+     */
+    .container-grid:not(.grid-container-inverted) {
+        grid-template-columns: auto auto 1fr;
+        grid-template-areas: "avatar label label" "avatar message ." ". response .";
+    }
+
     /* Outside the bubble. The name is a little smaller than the text but heavier, so it reads as a label. */
     .messageHeader {
         grid-area: label;
@@ -456,10 +465,6 @@
 
     .messageHeader.mine {
         justify-content: flex-end;
-    }
-
-    .grid-container-inverted .message {
-        justify-self: end;
     }
 
     .messageHeader-name {
@@ -478,10 +483,8 @@
         flex-shrink: 0;
     }
 
-    /* Its own width, not the label's: a long name over a short message doesn't stretch the bubble. */
     .message {
         grid-area: message;
-        justify-self: start;
         min-width: 180px;
         overflow-wrap: anywhere;
         position: relative;
