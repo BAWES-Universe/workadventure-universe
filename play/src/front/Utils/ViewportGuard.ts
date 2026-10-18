@@ -25,8 +25,10 @@
 const KEYBOARD_CLOSED_TOLERANCE = 2;
 /** After the keyboard opens or focus moves, how long iOS may move the page to reveal the field. */
 export const REVEAL_WINDOW_MS = 1_000;
-/** After a finger lifts, how long a pan still counts as the user's (the page may glide on). */
+/** After a finger lifts from a drag, how long a pan still counts as the user's (the page may glide on). */
 export const MOMENTUM_MS = 800;
+/** How far (in CSS px) a finger may wobble and still be a tap: a tap glides nothing on. */
+const TAP_SLOP = 10;
 /** A page zoom further from 1 than this is a zoom, not rounding. */
 const ZOOM_TOLERANCE = 0.01;
 /** After the keyboard closes or the app comes back, when to check the page is in place (ms), while iOS settles. */
@@ -199,6 +201,9 @@ export function installViewportGuard(
     let fingersDown = 0;
     let userPanUntil = 0;
     let lastTouch: { x: number; y: number } | undefined;
+    // Where the finger went down, and whether it has since moved far enough to be a drag rather than a tap.
+    let touchStart: { x: number; y: number } | undefined;
+    let dragged = false;
     let wasKeyboardOpen = keyboardOpen();
 
     const allowReveal = () => {
@@ -312,6 +317,10 @@ export function installViewportGuard(
         fingersDown = touches?.length ?? 1;
         const touch = touches?.[0];
         lastTouch = touch ? { x: touch.clientX, y: touch.clientY } : undefined;
+        if (fingersDown === 1) {
+            touchStart = lastTouch;
+            dragged = false;
+        }
     };
 
     const onTouchMove = (event: Event) => {
@@ -328,6 +337,9 @@ export function installViewportGuard(
         const dx = lastTouch ? touch.clientX - lastTouch.x : 0;
         const dy = lastTouch ? touch.clientY - lastTouch.y : 0;
         lastTouch = { x: touch.clientX, y: touch.clientY };
+        if (touchStart && Math.hypot(touch.clientX - touchStart.x, touch.clientY - touchStart.y) > TAP_SLOP) {
+            dragged = true;
+        }
         if (!keyboardOpen() || (dx === 0 && dy === 0)) return;
         // With the keyboard up, a drag that moves nothing on the page would drag the page itself.
         if (!dragMovesSomethingInside(event, dx, dy, doc) && event.cancelable) event.preventDefault();
@@ -337,7 +349,11 @@ export function installViewportGuard(
         fingersDown = (event as TouchEvent).touches?.length ?? 0;
         if (fingersDown === 0) {
             lastTouch = undefined;
-            userPanUntil = now() + MOMENTUM_MS;
+            touchStart = undefined;
+            // Only a drag can glide on. A tap (on a text field, to type) must leave iOS free to reveal that field:
+            // counting it as a pan held the page where it was, with the field under the keyboard (#1142).
+            if (dragged) userPanUntil = now() + MOMENTUM_MS;
+            dragged = false;
         }
     };
 
