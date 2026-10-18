@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { listGrewTaller, redrawNudge, stillPinnedToBottom } from "../TimelinePin";
+import { keyboardClosed, listGrewTaller, stillPinnedToBottom } from "../TimelinePin";
 
 const view = { scrollHeight: 2000, clientHeight: 500 }; // the bottom is at scrollTop 1500
 
@@ -43,16 +43,13 @@ describe("listGrewTaller", () => {
     });
 });
 
-describe("redrawNudge", () => {
-    it("moves a pixel up from the bottom", () => {
-        expect(redrawNudge({ ...view, scrollTop: 1500 })).toBe(1499);
+describe("keyboardClosed", () => {
+    it("sees the keyboard closing on an iPhone (466 to 879)", () => {
+        expect(keyboardClosed(466, 879)).toBe(true);
     });
 
-    it("moves a pixel down at the very top", () => {
-        expect(redrawNudge({ ...view, scrollTop: 0 })).toBe(1);
-    });
-
-    it("leaves a list with nothing to scroll alone", () => {
-        expect(redrawNudge({ scrollHeight: 300, clientHeight: 300, scrollTop: 0 })).toBeUndefined();
+    it("ignores the keyboard opening and small changes", () => {
+        expect(keyboardClosed(879, 466)).toBe(false);
+        expect(keyboardClosed(879, 926)).toBe(false);
     });
 });

@@ -26,11 +26,10 @@ export function listGrewTaller(previousHeight: number, height: number): boolean 
     return previousHeight > 0 && height > previousHeight + GROWTH_TOLERANCE;
 }
 
-/**
- * Where to move the list for one frame so the browser draws it where it really is: a pixel up, or a pixel down at the
- * very top. Nothing when the list has nothing to scroll.
- */
-export function redrawNudge(scroll: TimelineScroll): number | undefined {
-    if (scroll.scrollHeight - scroll.clientHeight < 1) return undefined;
-    return scroll.scrollTop >= 1 ? scroll.scrollTop - 1 : scroll.scrollTop + 1;
+/** Taller than this (CSS px) at once is the on-screen keyboard closing, not a rounding or a bar showing. */
+const KEYBOARD_MIN_HEIGHT = 100;
+
+/** Whether the window got its height back from the on-screen keyboard (an iPhone gives it back when it closes). */
+export function keyboardClosed(previousHeight: number, height: number): boolean {
+    return height - previousHeight >= KEYBOARD_MIN_HEIGHT;
 }
