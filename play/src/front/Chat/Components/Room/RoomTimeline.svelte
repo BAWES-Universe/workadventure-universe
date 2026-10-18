@@ -54,7 +54,7 @@
     import DirectChatTitle from "./DirectChat/DirectChatTitle.svelte";
     import PartnerProfilePanel from "./DirectChat/PartnerProfilePanel.svelte";
     import { directPartnerStore } from "./DirectChat/DirectPartnerStore";
-    import { dayLabel, messageRuns, runSenderKey } from "./MessageRuns";
+    import { messageRuns, runSenderKey } from "./MessageRuns";
     import { IconChevronLeft, IconChevronRight, IconLoader, IconLock, IconMailBox } from "@wa-icons";
 
     export let room: ChatRoom;
@@ -159,14 +159,18 @@
     $: timelineEntries = shownSession
         ? (shownSession.entries as TimelineEntry<ChatMessage & { session?: ProximitySessionMarker }>[])
         : buildTimelineEntries($messages as (ChatMessage & { session?: ProximitySessionMarker })[], $spaceJoinedAt);
-    // Runs and day labels. Dividers and notices (someone joining) end a run.
+    function isNoticeEntry(entry: TimelineEntry<ChatMessage & { session?: ProximitySessionMarker }>): boolean {
+        return (
+            ((entry.role === "start" || entry.role === "resume") && entry.message.session !== undefined) ||
+            entry.message.type === "outcoming" ||
+            entry.message.type === "incoming"
+        );
+    }
+    // Runs. Dividers and notices (someone joining) end a run.
     $: runs = messageRuns(
         timelineEntries.map((entry) => {
             const message = entry.message;
-            const isNotice =
-                ((entry.role === "start" || entry.role === "resume") && message.session !== undefined) ||
-                message.type === "outcoming" ||
-                message.type === "incoming";
+            const isNotice = isNoticeEntry(entry);
             return {
                 id: message.id,
                 date: message.date,
@@ -175,6 +179,9 @@
             };
         })
     );
+    // Notices keep the spacing they had before the run labels: room above them after a message (the message row used
+    // to end with its own), and nothing added below them.
+    $: noticeFlags = timelineEntries.map(isNoticeEntry);
     $: endedTitle = shownSession
         ? isRoomMessages
             ? $LL.chat.session.roomMessages()
@@ -763,23 +770,17 @@
                         </li>
                     {/if}
                 {/if}
-                {#each timelineEntries as entry (entry.message.id)}
+                {#each timelineEntries as entry, index (entry.message.id)}
                     {@const place = runs.get(entry.message.id)}
+                    {@const isNotice = noticeFlags[index]}
+                    {@const afterNotice = index > 0 && noticeFlags[index - 1]}
                     <li
                         class="last:pb-3"
-                        class:run-start={place?.runStart ?? true}
-                        class:run-continued={place !== undefined && !place.runStart}
+                        class:run-start={!isNotice && !afterNotice && (place?.runStart ?? true)}
+                        class:run-continued={!isNotice && place !== undefined && !place.runStart}
+                        class:notice-after-message={isNotice && index > 0 && !afterNotice}
                         data-event-id={entry.message.id}
                     >
-                        {#if place?.dayStart && entry.message.date}
-                            <!-- The same look as someone joining or leaving (MessageSystem). -->
-                            <div class="flex justify-center mb-3" data-testid="chatDayLabel">
-                                <span
-                                    class="px-3 py-1.5 m-0 text-xs text-center border border-solid border-white/10 rounded-2xl text-white/80"
-                                    >{dayLabel(entry.message.date, $locale)}</span
-                                >
-                            </div>
-                        {/if}
                         {#if (entry.role === "start" || entry.role === "resume") && entry.message.session}
                             <SessionDivider
                                 marker={entry.message.session}
@@ -826,13 +827,17 @@
 </div>
 
 <style>
-    /* Runs sit close together; a new run gets room for its label. */
+    /* Runs sit close together; a new run gets room for its label. Notices ("With …", joining, leaving) keep their own spacing. */
     li.run-start {
         padding-top: 8px;
     }
 
     li.run-continued {
         padding-top: 2px;
+    }
+
+    li.notice-after-message {
+        padding-top: 8px;
     }
 
     /* Over the whole conversation while a file is dragged anywhere in the window. */
