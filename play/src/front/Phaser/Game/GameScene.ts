@@ -1224,6 +1224,11 @@ export class GameScene extends DirtyScene {
                         if (softReconnect.finish()) {
                             softReconnectGeneration.next();
                         }
+                        // Back in after a drop: this scene measured what covers the map when it was created, while
+                        // the picture of the room was still up, and a window open then (Orbit) still counted though the
+                        // reconnect closed it. The room is on screen now with what really covers it: measure again
+                        // (#1152).
+                        if (this.isReconnecting) this.reposition(true);
                         this.sceneReadyToStartDeferred.resolve();
                         this.initializeAreaManager();
                     })
