@@ -26,5 +26,7 @@ describe("withoutBlankEdges", () => {
 
     it("leaves nothing when the message is only blank", () => {
         expect(withoutBlankEdges("<br>&nbsp;\n")).toBe("");
+        // An iPhone Return in the empty box: the box counts as empty, so there is no Send button for it.
+        expect(withoutBlankEdges("<div><br></div><div><br></div>")).toBe("");
     });
 });

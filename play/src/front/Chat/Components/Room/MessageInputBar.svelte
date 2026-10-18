@@ -176,8 +176,9 @@
     });
 
     function isEmptyMessage(value: string | undefined): boolean {
-        // The input only allows <br> tags (new lines), so a message made of line breaks and spaces is empty.
-        return value == undefined || value.replace(/<br\s*\/?>|&nbsp;|[\u200B-\u200D\uFEFF]/gi, "").trim().length === 0;
+        // A message made only of line breaks and spaces is empty: the same blanks sending drops (#1139), so the Send
+        // button never shows for a message that would send nothing.
+        return value == undefined || withoutBlankEdges(value) === "";
     }
 
     function stopTypingNow() {
