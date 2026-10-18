@@ -58,7 +58,6 @@
             ? "pointer-events-auto flex-none mx-auto mt-5 mb-2 w-[380px] max-w-[calc(100%-24px)] mobile:mt-0 mobile:mx-3 mobile:w-auto mobile:max-w-none"
             : "fixed z-[1100] pointer-events-auto inset-x-3 top-[calc(12px+env(safe-area-inset-top))] md:inset-x-auto md:left-4 md:top-20 md:w-[380px]"}
         in:fly={{ y: -12, duration: 180 }}
-        out:fly={{ y: -12, duration: inline || $liveBarInLayoutStore === 0 ? 180 : 0 }}
         data-testid="broadcast-live-pill"
     >
         <div class="u-surface rounded-2xl text-white flex items-center gap-3 ps-4 pe-2 py-2">
