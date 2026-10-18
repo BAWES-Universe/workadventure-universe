@@ -21,7 +21,7 @@
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
     import { showFloatingUi } from "../../../Utils/svelte-floatingui-show";
     import LazyEmote from "../../EmoteMenu/LazyEmote.svelte";
-    import { availabilityStatusStore } from "../../../Stores/MediaStore";
+    import { availabilityStatusStore, requestedStatusStore } from "../../../Stores/MediaStore";
     import { inputFormFocusStore } from "../../../Stores/UserInputStore";
     import { popupJustClosed } from "../../../Phaser/Game/Say/SayManager";
     import type { SayType } from "../../../Phaser/Game/Say/sendSay";
@@ -38,7 +38,7 @@
     let text = "";
     let input: HTMLInputElement | undefined;
 
-    $: forcedType = sayTypeForcedByStatus($availabilityStatusStore);
+    $: forcedType = sayTypeForcedByStatus($availabilityStatusStore, $requestedStatusStore);
     $: effectiveType = forcedType ?? chosenType;
     $: remaining = SAY_MAX_LENGTH - text.length;
     $: canSend = text.trim().length > 0;

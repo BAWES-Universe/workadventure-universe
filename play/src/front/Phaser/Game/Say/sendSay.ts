@@ -13,18 +13,24 @@ export const SAY_MAX_LENGTH = 100;
 
 /**
  * Some statuses force the bubble type: in a meeting you can only speak out loud,
- * and when you're away, busy or silent you can only think.
+ * and when you're away or busy you can only think.
+ * A silent zone only stops calls, and a bubble starts none: there the status the player picked decides
+ * (it is hidden under SILENT while in the zone), and with none picked the player chooses.
  * Returns undefined when the player is free to choose.
  */
-export function sayTypeForcedByStatus(status: AvailabilityStatus): SayType | undefined {
+export function sayTypeForcedByStatus(
+    status: AvailabilityStatus,
+    requestedStatus?: AvailabilityStatus | null
+): SayType | undefined {
     switch (status) {
+        case AvailabilityStatus.SILENT:
+            return requestedStatus ? sayTypeForcedByStatus(requestedStatus) : undefined;
         case AvailabilityStatus.JITSI:
         case AvailabilityStatus.BBB:
         case AvailabilityStatus.LIVEKIT:
         case AvailabilityStatus.DENY_PROXIMITY_MEETING:
         case AvailabilityStatus.SPEAKER:
             return "say";
-        case AvailabilityStatus.SILENT:
         case AvailabilityStatus.AWAY:
         case AvailabilityStatus.DO_NOT_DISTURB:
         case AvailabilityStatus.BACK_IN_A_MOMENT:

@@ -45,6 +45,7 @@
     import { inputFormFocusStore } from "../Stores/UserInputStore";
     import { isExploringTheRoom, leaveExploreTheRoom } from "../Phaser/Game/MapEditor/ExploreTheRoom";
     import RingOverlay from "../Chat/Components/UserList/RingOverlay.svelte";
+    import { expressTrayStore } from "../Stores/ExpressStore";
     import ActionBar from "./ActionBar/ActionBar.svelte";
     import EditMode from "./MapEditor/EditMode/EditMode.svelte";
     import HelpWebRtcSettingsPopup from "./HelpSettings/HelpWebRtcSettingsPopup.svelte";
@@ -115,7 +116,23 @@
         document.addEventListener("focusout", handleFocusOutEvent);
     });
 
+    // While Express is open its column sits above the bar's layer, so the tray covers the Silent zone card. It stays
+    // there until the tray has folded away (its 260ms outro), so the card never flashes over the closing tray.
+    const EXPRESS_OUTRO_MS = 300;
+    let expressRaised = false;
+    let expressLowerTimer: ReturnType<typeof setTimeout> | undefined;
+    const unsubscribeExpressTray = expressTrayStore.subscribe((state) => {
+        clearTimeout(expressLowerTimer);
+        if (state !== "closed") {
+            expressRaised = true;
+        } else {
+            expressLowerTimer = setTimeout(() => (expressRaised = false), EXPRESS_OUTRO_MS);
+        }
+    });
+
     onDestroy(() => {
+        unsubscribeExpressTray();
+        clearTimeout(expressLowerTimer);
         document.removeEventListener("focusin", handleFocusInEvent);
         document.removeEventListener("focusout", handleFocusOutEvent);
         inputFormFocusStore.set(false);
@@ -274,8 +291,11 @@
             {#if !($chatVisibilityStore && $hideActionBarStoreBecauseOfChatBar) && !($mapEditorToolbarInUseStore && !desktop)}
                 <!-- Held inside the game's area: a room website opened beside or above the game covers the column as
                      it grows, instead of the column floating over the website. Above "Look around the map", so its
-                     Places panel never covers the column. -->
-                <div class="absolute inset-0 overflow-hidden pointer-events-none z-[22]">
+                     Places panel never covers the column. While Express is open it comes above the bar's layer
+                     (z-301), so the tray is drawn over the Silent zone card, which stays visible behind it. -->
+                <div
+                    class="absolute inset-0 overflow-hidden pointer-events-none {expressRaised ? 'z-[302]' : 'z-[22]'}"
+                >
                     <div
                         class="absolute bottom-2 right-1 md:right-2 xl:right-4 flex flex-col items-end gap-2 pointer-events-none"
                     >

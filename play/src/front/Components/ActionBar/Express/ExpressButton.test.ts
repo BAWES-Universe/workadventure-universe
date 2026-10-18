@@ -20,7 +20,10 @@ vi.mock("../../../Connection/ConnectionManager", () => ({
 }));
 vi.mock("../../../Administration/AnalyticsClient", () => ({ analyticsClient: new Proxy({}, { get: () => () => {} }) }));
 vi.mock("../../../Utils/svelte-floatingui-show", () => ({ showFloatingUi: () => () => {} }));
-vi.mock("../../../Stores/MediaStore", () => ({ availabilityStatusStore: writable(1) }));
+vi.mock("../../../Stores/MediaStore", () => ({
+    availabilityStatusStore: writable(1),
+    requestedStatusStore: writable(null),
+}));
 vi.mock("../../../Phaser/Game/Say/SayManager", () => ({ popupJustClosed: () => {} }));
 vi.mock("../../../Phaser/Game/Say/sendSay", () => ({
     SAY_MAX_LENGTH: 64,
