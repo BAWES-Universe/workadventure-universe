@@ -12,11 +12,15 @@
     /** In the camera area, above the tiles (PresentationLayout), instead of over the map. */
     export let inline = false;
 
+    // Right away, not after the first tick: the bar in the camera area is built again when the layout is (a picture in
+    // picture window, a full screen share), long after the broadcast began.
     let seconds = 0;
-    const ticker = setInterval(() => {
+    function updateSeconds() {
         const live = $liveBroadcastStore;
         seconds = live ? Math.floor((Date.now() - live.startedAt) / 1000) : 0;
-    }, 500);
+    }
+    updateSeconds();
+    const ticker = setInterval(updateSeconds, 500);
     onDestroy(() => clearInterval(ticker));
 
     // The camera area takes the bar as long as it is on screen (it is not with a room website or a call in an
