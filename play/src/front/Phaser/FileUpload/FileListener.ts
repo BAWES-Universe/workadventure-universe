@@ -1,5 +1,6 @@
 import { FILE_UPLOAD_SUPPORTED_FORMATS_FRONT } from "@workadventure/map-editor";
 import type { EntityPrefab, OpenFilePropertyData } from "@workadventure/map-editor";
+import { Permission } from "@workadventure/shared-utils/src/Permissions/permissions";
 import { get } from "svelte/store";
 import { v4 as uuidv4 } from "uuid";
 import { draggingFile, draggingFilePosition } from "../../Stores/FileUploadStore";
@@ -88,8 +89,7 @@ export class FileListener {
 
         const gameScene = gameManager.getCurrentGameScene();
 
-        const userIsAdmin = gameScene.connection?.isAdmin();
-        const userIsEditor = gameScene.connection?.hasTag("editor");
+        const userCanEditMaps = gameScene.connection?.hasPermission(Permission.EDIT_MAPS);
 
         const gameMapAreas = gameScene.getGameMap().getGameMapAreas();
         const userId = gameScene.connection?.getUserId();
@@ -100,11 +100,7 @@ export class FileListener {
             return;
         }
 
-        if (
-            !userIsAdmin &&
-            !userIsEditor &&
-            !gameMapAreas?.isGameMapContainsSpecificAreas(userId?.toString(), userTags)
-        ) {
+        if (!userCanEditMaps && !gameMapAreas?.isGameMapContainsSpecificAreas(userId?.toString(), userTags)) {
             warningMessageStore.addWarningMessage(get(LL).mapEditor.entityEditor.errors.dragNotAllowed(), {
                 closable: true,
             });

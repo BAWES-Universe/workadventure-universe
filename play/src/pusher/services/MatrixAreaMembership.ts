@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/node";
 import type { SpaceUser } from "@workadventure/messages";
+import { hasPermission, Permission } from "@workadventure/shared-utils/src/Permissions/permissions";
 import type { SocketData } from "../models/Websocket/SocketData";
 
 /**
@@ -39,7 +40,7 @@ export interface MatrixAreaSpaceView {
 
 type MatrixAreaSocketData = Pick<
     SocketData,
-    "chatID" | "spaceUserId" | "tags" | "currentChatRoomArea" | "spaces" | "disconnecting"
+    "chatID" | "spaceUserId" | "permissions" | "currentChatRoomArea" | "spaces" | "disconnecting"
 >;
 
 export interface MatrixAreaSocket {
@@ -99,7 +100,7 @@ export class MatrixAreaMembership<S extends MatrixAreaSocket> {
 
             await this.deps.matrix.inviteUserToRoom(chatID, roomID).catch((e) => console.error(e));
 
-            if (socketData.tags.includes("admin")) {
+            if (hasPermission(socketData.permissions, Permission.MODERATE_AREA_CHATS)) {
                 await this.deps.matrix.promoteUserToModerator(chatID, roomID).catch((e) => console.error(e));
             }
         });

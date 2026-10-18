@@ -1,9 +1,16 @@
 import { describe, it, expect } from "vitest";
+import { Permission } from "@workadventure/shared-utils/src/Permissions/permissions";
 import type { SpaceUserExtended } from "../../src/pusher/models/Space";
 import { eventProcessor } from "../../src/pusher/models/eventProcessorInit";
 
-function spaceUser(spaceUserId: string, tags: string[]): SpaceUserExtended {
-    return { spaceUserId, name: spaceUserId, lowercaseName: spaceUserId, tags } as unknown as SpaceUserExtended;
+function spaceUser(spaceUserId: string, tags: string[], permissions?: string): SpaceUserExtended {
+    return {
+        spaceUserId,
+        name: spaceUserId,
+        lowercaseName: spaceUserId,
+        tags,
+        permissions,
+    } as unknown as SpaceUserExtended;
 }
 
 describe("eventProcessorInit", () => {
@@ -20,7 +27,17 @@ describe("eventProcessorInit", () => {
         it("refuses a kick from a player who is not an admin", () => {
             expect(() =>
                 eventProcessor.processPrivateEvent(kickOffUser, spaceUser("player", ["member", "editor"]), speaker)
-            ).toThrow("Only admins can kick off a user");
+            ).toThrow("Needs the Moderate calls permission to kick someone off a call");
+        });
+
+        it("follows the permissions Orbit sent over the tags", () => {
+            const moderate = String(1 << Permission.MODERATE_CALLS);
+            expect(
+                eventProcessor.processPrivateEvent(kickOffUser, spaceUser("moderator", ["member"], moderate), speaker)
+            ).toEqual(kickOffUser);
+            expect(() =>
+                eventProcessor.processPrivateEvent(kickOffUser, spaceUser("demoted", ["admin"], "0"), speaker)
+            ).toThrow("Needs the Moderate calls permission");
         });
     });
 

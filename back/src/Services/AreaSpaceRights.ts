@@ -1,5 +1,6 @@
 import type { AreaData } from "@workadventure/map-editor";
 import { isAreaPropertyActive } from "@workadventure/map-editor";
+import { hasPermission, Permission, permissionsFrom } from "@workadventure/shared-utils/src/Permissions/permissions";
 import { areaSpaceName } from "@workadventure/shared-utils/src/Space/areaSpaceName";
 
 interface WamLike {
@@ -58,10 +59,10 @@ export function bypassesAreaSpaceRights(user: { tags: string[]; uuid: string; ca
 export function listenOnlyAreaSpaces(
     wam: WamLike | undefined,
     roomUrl: string,
-    user: { tags: string[]; uuid: string; canEdit: boolean }
+    user: { tags: string[]; uuid: string; canEdit: boolean; permissions?: number }
 ): string[] {
-    // Admins can always host a stage
-    if (wam === undefined || bypassesAreaSpaceRights(user) || user.tags.includes("admin")) {
+    // Whoever may edit maps can always host a stage
+    if (wam === undefined || bypassesAreaSpaceRights(user) || canEditMaps(user)) {
         return [];
     }
     const areas = Array.isArray(wam.areas) ? wam.areas : Object.values(wam.areas);
@@ -77,6 +78,10 @@ export function listenOnlyAreaSpaces(
         }
     }
     return [...closedToSpeak].filter((name) => !openToSpeak.has(name));
+}
+
+function canEditMaps(user: { tags: string[]; permissions?: number }): boolean {
+    return hasPermission(user.permissions ?? permissionsFrom(undefined, user.tags), Permission.EDIT_MAPS);
 }
 
 function isBot(user: { tags: string[]; uuid: string }): boolean {
