@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { stillPinnedToBottom } from "../TimelinePin";
+import { listGrewTaller, redrawNudge, stillPinnedToBottom } from "../TimelinePin";
 
 const view = { scrollHeight: 2000, clientHeight: 500 }; // the bottom is at scrollTop 1500
 
@@ -28,5 +28,31 @@ describe("stillPinnedToBottom", () => {
 
     it("does not pin again while the reader scrolls back down but is still reading", () => {
         expect(stillPinnedToBottom(false, 900, { ...view, scrollTop: 1100 })).toBe(false);
+    });
+});
+
+describe("listGrewTaller", () => {
+    it("sees the list getting taller when the keyboard closes", () => {
+        expect(listGrewTaller(180, 420)).toBe(true);
+    });
+
+    it("ignores the list getting shorter, rounding, and the first size", () => {
+        expect(listGrewTaller(420, 180)).toBe(false);
+        expect(listGrewTaller(420, 420.5)).toBe(false);
+        expect(listGrewTaller(0, 420)).toBe(false);
+    });
+});
+
+describe("redrawNudge", () => {
+    it("moves a pixel up from the bottom", () => {
+        expect(redrawNudge({ ...view, scrollTop: 1500 })).toBe(1499);
+    });
+
+    it("moves a pixel down at the very top", () => {
+        expect(redrawNudge({ ...view, scrollTop: 0 })).toBe(1);
+    });
+
+    it("leaves a list with nothing to scroll alone", () => {
+        expect(redrawNudge({ scrollHeight: 300, clientHeight: 300, scrollTop: 0 })).toBeUndefined();
     });
 });

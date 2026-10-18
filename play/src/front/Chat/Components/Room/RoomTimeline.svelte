@@ -40,8 +40,9 @@
     import { chatCarriesItsCloseStore } from "../../ChatSidebarWidthStore";
     import { installStrayFileDropGuard, isFileDrag } from "../../../Utils/strayFileDropGuard";
     import { mapEditorToolbarInUseStore } from "../../../Stores/MapEditorStore";
+    import { isTouchScreen, SETTLE_CHECKS_MS } from "../../../Utils/ViewportGuard";
     import Message from "./Message.svelte";
-    import { stillPinnedToBottom } from "./TimelinePin";
+    import { listGrewTaller, redrawNudge, stillPinnedToBottom } from "./TimelinePin";
     import MessageInputBar from "./MessageInputBar.svelte";
     import MessageSystem from "./MessageSystem.svelte";
     import TypingUsers from "./TypingUsers.svelte";
@@ -105,6 +106,14 @@
     let newestMessageId: string | undefined;
     let childListObserver: MutationObserver | undefined;
     let onScrollTop = false;
+    // The list's own height at the last size change, to see it grow (see redrawScrollPosition).
+    let lastListHeight = 0;
+    let redrawFrame: number | undefined;
+    let redrawTimer: ReturnType<typeof setTimeout> | undefined;
+    // Where the list was put back after the last redraw: if it has moved since, a scroll has drawn it again already.
+    let placeAfterRedraw: number | undefined;
+    // After the keyboard closes, once the page is back in place (ViewportGuard's last check), with a little margin.
+    const REDRAW_AFTER_SETTLE_MS = SETTLE_CHECKS_MS[SETTLE_CHECKS_MS.length - 1] + 100;
 
     let oldScrollHeight = 0;
 
@@ -315,9 +324,21 @@
 
     function watchSizes() {
         if (typeof ResizeObserver === "undefined" || !messageListRef || !messageListContentRef) return;
+        const touchScreen = isTouchScreen(window);
         resizeObserver = new ResizeObserver(() => {
+            const sliding = performance.now() < smoothScrollUntil;
             // A new message slides in: aim that slide at the new bottom instead of cutting it short.
-            if (pinnedToBottom) scrollToMessageListBottom(performance.now() < smoothScrollUntil);
+            if (pinnedToBottom) scrollToMessageListBottom(sliding);
+            const height = messageListRef?.clientHeight ?? 0;
+            if (touchScreen && !sliding && listGrewTaller(lastListHeight, height)) {
+                redrawScrollPosition();
+                clearTimeout(redrawTimer);
+                redrawTimer = setTimeout(() => {
+                    // Not under a finger scrolling it: that scroll has drawn it again already.
+                    if (messageListRef?.scrollTop === placeAfterRedraw) redrawScrollPosition();
+                }, REDRAW_AFTER_SETTLE_MS);
+            }
+            lastListHeight = height;
         });
         // The list itself (the sheet changes height) and each message in it.
         resizeObserver.observe(messageListRef);
@@ -333,6 +354,23 @@
             }
         });
         childListObserver.observe(messageListContentRef, { childList: true });
+    }
+
+    // iPhone: when the list gets taller (the keyboard closing gives the sheet its height back), the list is moved to
+    // its new end but can stay drawn where it was: the messages cut off at the top over an empty band where the
+    // keyboard was, until a finger scrolls it. Moving it a pixel for one frame and back makes it drawn where it is.
+    function redrawScrollPosition() {
+        if (!messageListRef || redrawFrame !== undefined) return;
+        const nudge = redrawNudge(messageListRef);
+        if (nudge === undefined) return;
+        const place = messageListRef.scrollTop;
+        messageListRef.scrollTop = nudge;
+        redrawFrame = requestAnimationFrame(() => {
+            redrawFrame = undefined;
+            if (!messageListRef) return;
+            messageListRef.scrollTop = pinnedToBottom ? messageListRef.scrollHeight : place;
+            placeAfterRedraw = messageListRef.scrollTop;
+        });
     }
 
     function updatePinnedToBottom() {
@@ -521,6 +559,8 @@
     onDestroy(() => {
         resizeObserver?.disconnect();
         childListObserver?.disconnect();
+        clearTimeout(redrawTimer);
+        if (redrawFrame !== undefined) cancelAnimationFrame(redrawFrame);
         clearTimeout(fileDragTimer);
         document.removeEventListener("dragenter", onMapFileDragCapture, true);
         document.removeEventListener("dragover", onMapFileDragCapture, true);
