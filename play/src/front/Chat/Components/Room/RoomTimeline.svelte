@@ -170,16 +170,9 @@
             };
         })
     );
-    // Notices right after a message keep the room they had before the run labels (the message row used to end with
-    // its own spacing).
-    $: noticesAfterMessage = new Set(
-        timelineEntries
-            .filter((entry, index) => {
-                const previous = timelineEntries[index - 1];
-                return previous !== undefined && isNoticeEntry(entry) && !isNoticeEntry(previous);
-            })
-            .map((entry) => entry.message.id)
-    );
+    // Notices keep the spacing they had before the run labels: room above them after a message (the message row used
+    // to end with its own), and nothing added below them.
+    $: noticeFlags = timelineEntries.map(isNoticeEntry);
     $: endedTitle = shownSession
         ? isRoomMessages
             ? $LL.chat.session.roomMessages()
@@ -737,14 +730,15 @@
                         </li>
                     {/if}
                 {/if}
-                {#each timelineEntries as entry (entry.message.id)}
+                {#each timelineEntries as entry, index (entry.message.id)}
                     {@const place = runs.get(entry.message.id)}
-                    {@const isNotice = isNoticeEntry(entry)}
+                    {@const isNotice = noticeFlags[index]}
+                    {@const afterNotice = index > 0 && noticeFlags[index - 1]}
                     <li
                         class="last:pb-3"
-                        class:run-start={!isNotice && (place?.runStart ?? true)}
+                        class:run-start={!isNotice && !afterNotice && (place?.runStart ?? true)}
                         class:run-continued={!isNotice && place !== undefined && !place.runStart}
-                        class:notice-after-message={noticesAfterMessage.has(entry.message.id)}
+                        class:notice-after-message={isNotice && index > 0 && !afterNotice}
                         data-event-id={entry.message.id}
                     >
                         {#if (entry.role === "start" || entry.role === "resume") && entry.message.session}

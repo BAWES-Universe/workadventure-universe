@@ -28,6 +28,7 @@
     import QuotedMessage from "./MessageActions/QuotedMessage.svelte";
     import { messageGestures } from "./MessageActions/messageGestures";
     import { availableActions, hasAnyAction, replyTo } from "./MessageActions/availableActions";
+    import { chatTime } from "./MessageTime";
     import { IconArrowBackUp, IconInfoCircle, IconPaperclip, IconTrash } from "@wa-icons";
 
     export let message: ChatMessage;
@@ -83,7 +84,7 @@
     $: senderColour = $colourOf(sender?.chatId, sender?.username);
     // The label over a run: the name for others, the time for everyone. The full date shows on hover.
     $: showLabel = runStart && replyDepth === 0 && !isQuotedMessage && !messageFromSystem;
-    $: shownTime = date?.toLocaleTimeString($locale, { hour: "numeric", minute: "2-digit" }) ?? "";
+    $: shownTime = date ? chatTime(date, $locale) : "";
     $: fullDate =
         date?.toLocaleString($locale, {
             weekday: "long",
