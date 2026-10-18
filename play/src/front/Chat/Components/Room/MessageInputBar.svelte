@@ -35,6 +35,7 @@
     import GifPicker from "../../Gif/GifPicker.svelte";
     import { withoutPreview } from "../../LinkPreview/ChatLinks";
     import { appendEmoji } from "./AppendEmoji";
+    import { withoutBlankEdges } from "./BlankEdges";
     import { canHover } from "./FocusAfterSend";
     import MessageInput from "./MessageInput.svelte";
     import ReplyPreview from "./MessageActions/ReplyPreview.svelte";
@@ -219,8 +220,9 @@
     async function sendMessage(typedMessage: string) {
         // Every send path (Enter, the Send button, files) ends the typing status.
         stopTypingNow();
-        let messageToSend =
-            closedLinkPreviews.length > 0 ? withoutPreview(typedMessage, closedLinkPreviews) : typedMessage;
+        let messageToSend = withoutBlankEdges(
+            closedLinkPreviews.length > 0 ? withoutPreview(typedMessage, closedLinkPreviews) : typedMessage
+        );
 
         // Where this message is meant to go, captured now: an upload may finish after the bubble has changed.
         const destination = captureSendDestination(room);
