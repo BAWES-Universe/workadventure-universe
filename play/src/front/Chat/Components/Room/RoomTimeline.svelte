@@ -1,5 +1,11 @@
+<script lang="ts" context="module">
+    // One report a page load of how the chat stands once the keyboard has closed (see reportAfterKeyboard).
+    let keyboardCloseReported = false;
+</script>
+
 <script lang="ts">
     import { afterUpdate, beforeUpdate, hasContext, onDestroy, onMount, setContext, tick } from "svelte";
+    import * as Sentry from "@sentry/svelte";
     import { derived, get, readable, writable } from "svelte/store";
     import type { Readable } from "svelte/store";
     import { gameManager } from "../../../Phaser/Game/GameManager";
@@ -42,7 +48,7 @@
     import { mapEditorToolbarInUseStore } from "../../../Stores/MapEditorStore";
     import { isTouchScreen, SETTLE_CHECKS_MS } from "../../../Utils/ViewportGuard";
     import Message from "./Message.svelte";
-    import { listGrewTaller, redrawNudge, stillPinnedToBottom } from "./TimelinePin";
+    import { keyboardClosed, listGrewTaller, stillPinnedToBottom } from "./TimelinePin";
     import MessageInputBar from "./MessageInputBar.svelte";
     import MessageSystem from "./MessageSystem.svelte";
     import TypingUsers from "./TypingUsers.svelte";
@@ -106,8 +112,12 @@
     let newestMessageId: string | undefined;
     let childListObserver: MutationObserver | undefined;
     let onScrollTop = false;
-    // The list's own height at the last size change, to see it grow (see redrawScrollPosition).
+    // The list's own height at its last size change and the window's at its last resize, to see them grow (see
+    // redrawList).
     let lastListHeight = 0;
+    let lastWindowHeight = window.innerHeight;
+    const touchScreen = isTouchScreen(window);
+    let reportAfterRedraw = false;
     let redrawFrame: number | undefined;
     let redrawTimer: ReturnType<typeof setTimeout> | undefined;
     // Where the list was put back after the last redraw: if it has moved since, a scroll has drawn it again already.
@@ -331,20 +341,12 @@
 
     function watchSizes() {
         if (typeof ResizeObserver === "undefined" || !messageListRef || !messageListContentRef) return;
-        const touchScreen = isTouchScreen(window);
         resizeObserver = new ResizeObserver(() => {
             const sliding = performance.now() < smoothScrollUntil;
             // A new message slides in: aim that slide at the new bottom instead of cutting it short.
             if (pinnedToBottom) scrollToMessageListBottom(sliding);
             const height = messageListRef?.clientHeight ?? 0;
-            if (touchScreen && !sliding && listGrewTaller(lastListHeight, height)) {
-                redrawScrollPosition();
-                clearTimeout(redrawTimer);
-                redrawTimer = setTimeout(() => {
-                    // Not under a finger scrolling it: that scroll has drawn it again already.
-                    if (messageListRef?.scrollTop === placeAfterRedraw) redrawScrollPosition();
-                }, REDRAW_AFTER_SETTLE_MS);
-            }
+            if (touchScreen && !sliding && listGrewTaller(lastListHeight, height)) redrawAfterGrowing();
             lastListHeight = height;
         });
         // The list itself (the sheet changes height) and each message in it.
@@ -363,20 +365,70 @@
         childListObserver.observe(messageListContentRef, { childList: true });
     }
 
-    // iPhone: when the list gets taller (the keyboard closing gives the sheet its height back), the list is moved to
-    // its new end but can stay drawn where it was: the messages cut off at the top over an empty band where the
-    // keyboard was, until a finger scrolls it. Moving it a pixel for one frame and back makes it drawn where it is.
-    function redrawScrollPosition() {
+    // The keyboard closing gives the window its height back (the app resizes itself: ViewportResync).
+    function onWindowResize() {
+        const height = window.innerHeight;
+        const closed = keyboardClosed(lastWindowHeight, height);
+        lastWindowHeight = height;
+        if (!touchScreen || !closed) return;
+        if (!keyboardCloseReported) reportAfterRedraw = true;
+        redrawAfterGrowing();
+    }
+
+    // Now, and once more after the page has settled from the keyboard.
+    function redrawAfterGrowing() {
+        redrawList();
+        clearTimeout(redrawTimer);
+        redrawTimer = setTimeout(() => {
+            if (reportAfterRedraw) reportAfterKeyboard();
+            // Not under a finger scrolling it: that scroll has drawn it again already.
+            if (messageListRef?.scrollTop === placeAfterRedraw) redrawList();
+        }, REDRAW_AFTER_SETTLE_MS);
+    }
+
+    // iPhone: when the keyboard closes and the sheet gets its height back, the list can stay drawn where it was with
+    // the keyboard up: the newest message cut off at the top over an empty band, until a finger scrolls it. Taking
+    // its scrolling away for one frame and giving it back makes the phone lay it out and draw it again where it is.
+    function redrawList() {
         if (!messageListRef || redrawFrame !== undefined) return;
-        const nudge = redrawNudge(messageListRef);
-        if (nudge === undefined) return;
-        const place = messageListRef.scrollTop;
-        messageListRef.scrollTop = nudge;
+        const list = messageListRef;
+        const place = list.scrollTop;
+        list.style.overflow = "hidden";
         redrawFrame = requestAnimationFrame(() => {
             redrawFrame = undefined;
-            if (!messageListRef) return;
-            messageListRef.scrollTop = pinnedToBottom ? messageListRef.scrollHeight : place;
-            placeAfterRedraw = messageListRef.scrollTop;
+            list.style.overflow = "";
+            list.scrollTop = pinnedToBottom ? list.scrollHeight : place;
+            placeAfterRedraw = list.scrollTop;
+        });
+    }
+
+    // Logging over asking for console lines: the real sizes on a phone once the keyboard has closed, so a gap left
+    // after it can be told apart (the list laid out too short, or laid out right and drawn at its old place).
+    function reportAfterKeyboard() {
+        reportAfterRedraw = false;
+        if (keyboardCloseReported || !messageListRef) return;
+        keyboardCloseReported = true;
+        const list = messageListRef.getBoundingClientRect();
+        const viewport = window.visualViewport;
+        Sentry.captureMessage("Chat sizes after the phone keyboard closed (#1128)", {
+            level: "info",
+            extra: {
+                innerHeight: window.innerHeight,
+                viewportHeight: viewport?.height,
+                viewportOffsetTop: viewport?.offsetTop,
+                pageTop: viewport?.pageTop,
+                scrollY: window.scrollY,
+                sheetHeight: document.getElementById("chat")?.getBoundingClientRect().height,
+                timelineHeight: timelineRef?.getBoundingClientRect().height,
+                listTop: list.top,
+                listBottom: list.bottom,
+                listClientHeight: messageListRef.clientHeight,
+                listScrollHeight: messageListRef.scrollHeight,
+                listScrollTop: messageListRef.scrollTop,
+                messagesBottom: messageListContentRef?.getBoundingClientRect().bottom,
+                composerTop: timelineRef?.lastElementChild?.getBoundingClientRect().top,
+                pinnedToBottom,
+            },
         });
     }
 
@@ -575,6 +627,7 @@
     });
 </script>
 
+<svelte:window on:resize={onWindowResize} />
 <svelte:document on:dragover={onDocumentDragOver} on:dragleave={onDocumentDragLeave} on:drop={onDocumentDrop} />
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
@@ -702,7 +755,7 @@
         </div>
         <div
             bind:this={messageListRef}
-            class="flex overflow-auto h-full justify-center items-end relative"
+            class="flex overflow-auto grow shrink basis-0 min-h-0 justify-center items-end relative"
             on:scroll={handleScroll}
         >
             {#if showLoading}
