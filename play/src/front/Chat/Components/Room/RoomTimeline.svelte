@@ -60,7 +60,7 @@
     import DirectChatTitle from "./DirectChat/DirectChatTitle.svelte";
     import PartnerProfilePanel from "./DirectChat/PartnerProfilePanel.svelte";
     import { directPartnerStore } from "./DirectChat/DirectPartnerStore";
-    import { messageRuns, runSenderKey } from "./MessageRuns";
+    import { dayLabel, messageRuns, runSenderKey } from "./MessageRuns";
     import { IconChevronLeft, IconChevronRight, IconLoader, IconLock, IconMailBox } from "@wa-icons";
 
     export let room: ChatRoom;
@@ -834,6 +834,15 @@
                         class:notice-after-message={isNotice && index > 0 && !afterNotice}
                         data-event-id={entry.message.id}
                     >
+                        {#if place?.dayStart && entry.message.date}
+                            <!-- The same look as someone joining or leaving (MessageSystem). -->
+                            <div class="flex justify-center mb-3" data-testid="chatDayLabel">
+                                <span
+                                    class="px-3 py-1.5 m-0 text-xs text-center border border-solid border-white/10 rounded-2xl text-white/80"
+                                    >{dayLabel(entry.message.date, $locale)}</span
+                                >
+                            </div>
+                        {/if}
                         {#if (entry.role === "start" || entry.role === "resume") && entry.message.session}
                             <SessionDivider
                                 marker={entry.message.session}
