@@ -309,6 +309,9 @@ export class BotClient {
                 this.sendStoppedPosition();
             }
         }
+        if (this.behavior && this.behavior.constructor === behavior.constructor) {
+            behavior.carryLookFrom(this.behavior);
+        }
         this.behavior = behavior;
         behavior.setBot(this);
     }

@@ -36,6 +36,7 @@ class FakeWalking {
     setBot() {}
     update() {}
     lookAtPassersBy() {}
+    carryLookFrom() {}
     getConfiguredFacing() {
         return null;
     }
@@ -44,6 +45,7 @@ class FakeIdle {
     setBot() {}
     update() {}
     lookAtPassersBy() {}
+    carryLookFrom() {}
     getConfiguredFacing() {
         return null;
     }
@@ -156,5 +158,16 @@ describe('BotClient faces its default direction', () => {
         bot.setBehavior(stayBehavior('left'));
         expect(bot.getState().getDirection()).toBe(PositionMessage_Direction.UP);
         expect(moves(sent)).toEqual([]);
+    });
+
+    it('keeps watching the person the old behavior watched when a config change rebuilds it', () => {
+        const { bot } = joinedBotWithFakeSocket();
+        const before = stayBehavior('up');
+        bot.setBehavior(before);
+        (before as unknown as { lookingAtPlayerId: number }).lookingAtPlayerId = 2;
+
+        const after = stayBehavior('left');
+        bot.setBehavior(after);
+        expect((after as unknown as { lookingAtPlayerId: number }).lookingAtPlayerId).toBe(2);
     });
 });
