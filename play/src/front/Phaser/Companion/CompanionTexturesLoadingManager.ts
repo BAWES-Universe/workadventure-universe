@@ -4,7 +4,7 @@ import { CompanionTextureCollection } from "@workadventure/messages";
 import { gameManager } from "../Game/GameManager";
 import { localUserStore } from "../../Connection/LocalUserStore";
 import type { SuperLoaderPlugin } from "../Services/SuperLoaderPlugin";
-import { wokaXhrSettings } from "../Entity/PlayerTexturesLoadingManager";
+import { loadWokaSpritesheet } from "../Entity/PlayerTexturesLoadingManager";
 import { ABSOLUTE_PUSHER_URL } from "../../Enum/ComputedConst";
 import type { CompanionTextureDescriptionInterface, CompanionTextures } from "./CompanionTextures";
 import LoaderPlugin = Phaser.Loader.LoaderPlugin;
@@ -17,15 +17,7 @@ export function lazyLoadPlayerCompanionTexture(
     superLoaderPlugin: SuperLoaderPlugin,
     texture: CompanionTextureDescriptionInterface
 ): CancelablePromise<string> {
-    const promise = superLoaderPlugin.spritesheet(
-        texture.id,
-        texture.url,
-        {
-            frameWidth: 32,
-            frameHeight: 32,
-        },
-        wokaXhrSettings
-    );
+    const promise = loadWokaSpritesheet(superLoaderPlugin, texture.id, texture.url);
 
     return promise.then(() => {
         return texture.id;

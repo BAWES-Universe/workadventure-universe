@@ -86,8 +86,16 @@
     style="padding-top: 7px;"
     lang=""
 >
-    {@html sanitizeHTML(html)}
+    <!-- One box around the text, so its first and last block can drop the browser's outer margins. -->
+    <div class="message-body">{@html sanitizeHTML(html)}</div>
     <style>
+        /* A message of several paragraphs (or one starting with a list) kept 14px above its first line. */
+        .message-body > :first-child {
+            margin-top: 0;
+        }
+        .message-body > :last-child {
+            margin-bottom: 0;
+        }
         .response .message-bubble p:last-of-type {
             text-overflow: ellipsis;
             overflow: hidden;

@@ -35,6 +35,7 @@
     import GifPicker from "../../Gif/GifPicker.svelte";
     import { withoutPreview } from "../../LinkPreview/ChatLinks";
     import { appendEmoji } from "./AppendEmoji";
+    import { withoutBlankEdges } from "./BlankEdges";
     import { canHover } from "./FocusAfterSend";
     import MessageInput from "./MessageInput.svelte";
     import ReplyPreview from "./MessageActions/ReplyPreview.svelte";
@@ -175,8 +176,9 @@
     });
 
     function isEmptyMessage(value: string | undefined): boolean {
-        // The input only allows <br> tags (new lines), so a message made of line breaks and spaces is empty.
-        return value == undefined || value.replace(/<br\s*\/?>|&nbsp;|[\u200B-\u200D\uFEFF]/gi, "").trim().length === 0;
+        // A message made only of line breaks and spaces is empty: the same blanks sending drops (#1139), so the Send
+        // button never shows for a message that would send nothing.
+        return value == undefined || withoutBlankEdges(value) === "";
     }
 
     function stopTypingNow() {
@@ -219,8 +221,9 @@
     async function sendMessage(typedMessage: string) {
         // Every send path (Enter, the Send button, files) ends the typing status.
         stopTypingNow();
-        let messageToSend =
-            closedLinkPreviews.length > 0 ? withoutPreview(typedMessage, closedLinkPreviews) : typedMessage;
+        let messageToSend = withoutBlankEdges(
+            closedLinkPreviews.length > 0 ? withoutPreview(typedMessage, closedLinkPreviews) : typedMessage
+        );
 
         // Where this message is meant to go, captured now: an upload may finish after the bubble has changed.
         const destination = captureSendDestination(room);
@@ -1008,6 +1011,14 @@
         border: 1px solid rgba(255, 255, 255, 0.12);
         border-radius: 9999px;
         background: rgba(255, 255, 255, 0.05);
+    }
+    /* Typing in the phone's chat sheet (#1136): the keyboard is up, so the field sits closer to it. With the keyboard
+       down the 16px stays: in the installed app the sheet reaches the screen's bottom edge and the field must clear the
+       home line. */
+    @media (pointer: coarse) {
+        :global(.chat-sheet) .message-bar:has(.message-input:focus) {
+            margin-bottom: 4px;
+        }
     }
     .message-bar > button {
         width: 40px;

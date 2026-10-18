@@ -96,6 +96,18 @@ function fakeIosWindow(options: { scale?: number } = {}) {
             fire(viewportListeners, "resize");
         },
         pan,
+        /** A tap on this element (the finger may wobble a few pixels): no drag, so nothing for the page to glide on. */
+        tap(target: Element, wobble = 0) {
+            fire(windowListeners, "touchstart", fakeEvent({ target, touches: [{ clientX: 100, clientY: 400 }] }));
+            if (wobble) {
+                fire(
+                    windowListeners,
+                    "touchmove",
+                    fakeEvent({ target, touches: [{ clientX: 100, clientY: 400 + wobble }] })
+                );
+            }
+            fire(windowListeners, "touchend", fakeEvent({ target, touches: [] }));
+        },
         focusChange() {
             fire(windowListeners, "focusout");
         },
@@ -218,6 +230,22 @@ describe("ViewportGuard", () => {
         ios.focusChange();
         ios.pan(0, 250);
         expect(ios.viewport.pageTop).toBe(250);
+    });
+
+    it("lets iOS reveal a field right after it was tapped (#1142)", () => {
+        const ios = fakeIosWindow();
+        stop = installViewportGuard(ios.win, { now: ios.now });
+        // A field low on the screen (the Express tray): tapped, it takes the keyboard and iOS pans up to show it.
+        ios.tap(input, 3);
+        input.focus();
+        ios.focusChange();
+        ios.openKeyboard(300);
+        expect(ios.viewport.pageTop).toBe(300);
+
+        // Then held there while typing.
+        ios.wait(REVEAL_WINDOW_MS);
+        ios.pan(0, 0);
+        expect(ios.viewport.pageTop).toBe(300);
     });
 
     it("keeps lists scrolling while the keyboard is up", () => {

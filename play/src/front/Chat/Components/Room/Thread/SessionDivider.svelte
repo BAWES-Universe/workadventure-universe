@@ -2,6 +2,7 @@
     import LL, { locale } from "../../../../../i18n/i18n-svelte";
     import type { ProximitySessionMarker } from "../../../Connection/Proximity/ProximitySessions";
     import { formatSessionDivider } from "../../../Connection/Proximity/ProximitySessions";
+    import { chatTime } from "../MessageTime";
     import { IconArrowBackUp, IconMapPin, IconUsers } from "@wa-icons";
 
     export let marker: ProximitySessionMarker;
@@ -17,7 +18,7 @@
             ? $LL.chat.thread.backIn({ name: marker.label })
             : $LL.chat.thread.backWith({ names: marker.label })
         : formatSessionDivider(marker, { withPeople: $LL.chat.thread.withPeople });
-    $: time = date?.toLocaleTimeString($locale, { hour: "2-digit", minute: "2-digit" });
+    $: time = date ? chatTime(date, $locale) : undefined;
 </script>
 
 <div

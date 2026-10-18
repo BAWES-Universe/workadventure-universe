@@ -1,5 +1,11 @@
+<script lang="ts" context="module">
+    // One report a page load of how the chat stands once the keyboard has closed (see reportAfterKeyboard).
+    let keyboardCloseReported = false;
+</script>
+
 <script lang="ts">
     import { afterUpdate, beforeUpdate, hasContext, onDestroy, onMount, setContext, tick } from "svelte";
+    import * as Sentry from "@sentry/svelte";
     import { derived, get, readable, writable } from "svelte/store";
     import type { Readable } from "svelte/store";
     import { gameManager } from "../../../Phaser/Game/GameManager";
@@ -40,8 +46,9 @@
     import { chatCarriesItsCloseStore } from "../../ChatSidebarWidthStore";
     import { installStrayFileDropGuard, isFileDrag } from "../../../Utils/strayFileDropGuard";
     import { mapEditorToolbarInUseStore } from "../../../Stores/MapEditorStore";
+    import { isTouchScreen, SETTLE_CHECKS_MS } from "../../../Utils/ViewportGuard";
     import Message from "./Message.svelte";
-    import { stillPinnedToBottom } from "./TimelinePin";
+    import { keyboardClosed, listGrewTaller, stillPinnedToBottom } from "./TimelinePin";
     import MessageInputBar from "./MessageInputBar.svelte";
     import MessageSystem from "./MessageSystem.svelte";
     import TypingUsers from "./TypingUsers.svelte";
@@ -53,6 +60,7 @@
     import DirectChatTitle from "./DirectChat/DirectChatTitle.svelte";
     import PartnerProfilePanel from "./DirectChat/PartnerProfilePanel.svelte";
     import { directPartnerStore } from "./DirectChat/DirectPartnerStore";
+    import { dayLabel, messageRuns, runSenderKey } from "./MessageRuns";
     import { IconChevronLeft, IconChevronRight, IconLoader, IconLock, IconMailBox } from "@wa-icons";
 
     export let room: ChatRoom;
@@ -104,6 +112,18 @@
     let newestMessageId: string | undefined;
     let childListObserver: MutationObserver | undefined;
     let onScrollTop = false;
+    // The list's own height at its last size change and the window's at its last resize, to see them grow (see
+    // redrawList).
+    let lastListHeight = 0;
+    let lastWindowHeight = window.innerHeight;
+    const touchScreen = isTouchScreen(window);
+    let reportAfterRedraw = false;
+    let redrawFrame: number | undefined;
+    let redrawTimer: ReturnType<typeof setTimeout> | undefined;
+    // Where the list was put back after the last redraw: if it has moved since, a scroll has drawn it again already.
+    let placeAfterRedraw: number | undefined;
+    // After the keyboard closes, once the page is back in place (ViewportGuard's last check), with a little margin.
+    const REDRAW_AFTER_SETTLE_MS = SETTLE_CHECKS_MS[SETTLE_CHECKS_MS.length - 1] + 100;
 
     let oldScrollHeight = 0;
 
@@ -149,6 +169,29 @@
     $: timelineEntries = shownSession
         ? (shownSession.entries as TimelineEntry<ChatMessage & { session?: ProximitySessionMarker }>[])
         : buildTimelineEntries($messages as (ChatMessage & { session?: ProximitySessionMarker })[], $spaceJoinedAt);
+    function isNoticeEntry(entry: TimelineEntry<ChatMessage & { session?: ProximitySessionMarker }>): boolean {
+        return (
+            ((entry.role === "start" || entry.role === "resume") && entry.message.session !== undefined) ||
+            entry.message.type === "outcoming" ||
+            entry.message.type === "incoming"
+        );
+    }
+    // Runs. Dividers and notices (someone joining) end a run.
+    $: runs = messageRuns(
+        timelineEntries.map((entry) => {
+            const message = entry.message;
+            const isNotice = isNoticeEntry(entry);
+            return {
+                id: message.id,
+                date: message.date,
+                senderKey: isNotice ? undefined : message.isMyMessage ? "me" : runSenderKey(message.sender),
+                isReply: message.quotedMessage !== undefined,
+            };
+        })
+    );
+    // Notices keep the spacing they had before the run labels: room above them after a message (the message row used
+    // to end with its own), and nothing added below them.
+    $: noticeFlags = timelineEntries.map(isNoticeEntry);
     $: endedTitle = shownSession
         ? isRoomMessages
             ? $LL.chat.session.roomMessages()
@@ -299,8 +342,12 @@
     function watchSizes() {
         if (typeof ResizeObserver === "undefined" || !messageListRef || !messageListContentRef) return;
         resizeObserver = new ResizeObserver(() => {
+            const sliding = performance.now() < smoothScrollUntil;
             // A new message slides in: aim that slide at the new bottom instead of cutting it short.
-            if (pinnedToBottom) scrollToMessageListBottom(performance.now() < smoothScrollUntil);
+            if (pinnedToBottom) scrollToMessageListBottom(sliding);
+            const height = messageListRef?.clientHeight ?? 0;
+            if (touchScreen && !sliding && listGrewTaller(lastListHeight, height)) redrawAfterGrowing();
+            lastListHeight = height;
         });
         // The list itself (the sheet changes height) and each message in it.
         resizeObserver.observe(messageListRef);
@@ -316,6 +363,73 @@
             }
         });
         childListObserver.observe(messageListContentRef, { childList: true });
+    }
+
+    // The keyboard closing gives the window its height back (the app resizes itself: ViewportResync).
+    function onWindowResize() {
+        const height = window.innerHeight;
+        const closed = keyboardClosed(lastWindowHeight, height);
+        lastWindowHeight = height;
+        if (!touchScreen || !closed) return;
+        if (!keyboardCloseReported) reportAfterRedraw = true;
+        redrawAfterGrowing();
+    }
+
+    // Now, and once more after the page has settled from the keyboard.
+    function redrawAfterGrowing() {
+        redrawList();
+        clearTimeout(redrawTimer);
+        redrawTimer = setTimeout(() => {
+            if (reportAfterRedraw) reportAfterKeyboard();
+            // Not under a finger scrolling it: that scroll has drawn it again already.
+            if (messageListRef?.scrollTop === placeAfterRedraw) redrawList();
+        }, REDRAW_AFTER_SETTLE_MS);
+    }
+
+    // iPhone: when the keyboard closes and the sheet gets its height back, the list can stay drawn where it was with
+    // the keyboard up: the newest message cut off at the top over an empty band, until a finger scrolls it. Taking
+    // its scrolling away for one frame and giving it back makes the phone lay it out and draw it again where it is.
+    function redrawList() {
+        if (!messageListRef || redrawFrame !== undefined) return;
+        const list = messageListRef;
+        const place = list.scrollTop;
+        list.style.overflow = "hidden";
+        redrawFrame = requestAnimationFrame(() => {
+            redrawFrame = undefined;
+            list.style.overflow = "";
+            list.scrollTop = pinnedToBottom ? list.scrollHeight : place;
+            placeAfterRedraw = list.scrollTop;
+        });
+    }
+
+    // Logging over asking for console lines: the real sizes on a phone once the keyboard has closed, so a gap left
+    // after it can be told apart (the list laid out too short, or laid out right and drawn at its old place).
+    function reportAfterKeyboard() {
+        reportAfterRedraw = false;
+        if (keyboardCloseReported || !messageListRef) return;
+        keyboardCloseReported = true;
+        const list = messageListRef.getBoundingClientRect();
+        const viewport = window.visualViewport;
+        Sentry.captureMessage("Chat sizes after the phone keyboard closed (#1128)", {
+            level: "info",
+            extra: {
+                innerHeight: window.innerHeight,
+                viewportHeight: viewport?.height,
+                viewportOffsetTop: viewport?.offsetTop,
+                pageTop: viewport?.pageTop,
+                scrollY: window.scrollY,
+                sheetHeight: document.getElementById("chat")?.getBoundingClientRect().height,
+                timelineHeight: timelineRef?.getBoundingClientRect().height,
+                listTop: list.top,
+                listBottom: list.bottom,
+                listClientHeight: messageListRef.clientHeight,
+                listScrollHeight: messageListRef.scrollHeight,
+                listScrollTop: messageListRef.scrollTop,
+                messagesBottom: messageListContentRef?.getBoundingClientRect().bottom,
+                composerTop: timelineRef?.lastElementChild?.getBoundingClientRect().top,
+                pinnedToBottom,
+            },
+        });
     }
 
     function updatePinnedToBottom() {
@@ -504,6 +618,8 @@
     onDestroy(() => {
         resizeObserver?.disconnect();
         childListObserver?.disconnect();
+        clearTimeout(redrawTimer);
+        if (redrawFrame !== undefined) cancelAnimationFrame(redrawFrame);
         clearTimeout(fileDragTimer);
         document.removeEventListener("dragenter", onMapFileDragCapture, true);
         document.removeEventListener("dragover", onMapFileDragCapture, true);
@@ -511,6 +627,7 @@
     });
 </script>
 
+<svelte:window on:resize={onWindowResize} />
 <svelte:document on:dragover={onDocumentDragOver} on:dragleave={onDocumentDragLeave} on:drop={onDocumentDrop} />
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
@@ -638,7 +755,7 @@
         </div>
         <div
             bind:this={messageListRef}
-            class="flex overflow-auto h-full justify-center items-end relative"
+            class="flex overflow-auto grow shrink basis-0 min-h-0 justify-center items-end relative"
             on:scroll={handleScroll}
         >
             {#if showLoading}
@@ -706,8 +823,26 @@
                         </li>
                     {/if}
                 {/if}
-                {#each timelineEntries as entry (entry.message.id)}
-                    <li class="last:pb-3" data-event-id={entry.message.id}>
+                {#each timelineEntries as entry, index (entry.message.id)}
+                    {@const place = runs.get(entry.message.id)}
+                    {@const isNotice = noticeFlags[index]}
+                    {@const afterNotice = index > 0 && noticeFlags[index - 1]}
+                    <li
+                        class="last:pb-3"
+                        class:run-start={!isNotice && !afterNotice && (place?.runStart ?? true)}
+                        class:run-continued={!isNotice && place !== undefined && !place.runStart}
+                        class:notice-after-message={isNotice && index > 0 && !afterNotice}
+                        data-event-id={entry.message.id}
+                    >
+                        {#if place?.dayStart && entry.message.date}
+                            <!-- The same look as someone joining or leaving (MessageSystem). -->
+                            <div class="flex justify-center mb-3" data-testid="chatDayLabel">
+                                <span
+                                    class="px-3 py-1.5 m-0 text-xs text-center border border-solid border-white/10 rounded-2xl text-white/80"
+                                    >{dayLabel(entry.message.date, $locale)}</span
+                                >
+                            </div>
+                        {/if}
                         {#if (entry.role === "start" || entry.role === "resume") && entry.message.session}
                             <SessionDivider
                                 marker={entry.message.session}
@@ -718,7 +853,11 @@
                         {:else if entry.message.type === "outcoming" || entry.message.type === "incoming"}
                             <MessageSystem message={entry.message} />
                         {:else}
-                            <Message on:updateMessageBody={onUpdateMessageBody} message={entry.message} />
+                            <Message
+                                on:updateMessageBody={onUpdateMessageBody}
+                                message={entry.message}
+                                runStart={place?.runStart ?? true}
+                            />
                             {#if "stoppedOnLeave" in entry.message && entry.message.stoppedOnLeave}
                                 <div class="px-4 pb-2 text-xs italic text-white/45" data-testid="proximityStoppedNote">
                                     {$LL.chat.session.stopped()}
@@ -750,6 +889,19 @@
 </div>
 
 <style>
+    /* Runs sit close together; a new run gets room for its label. Notices ("With …", joining, leaving) keep their own spacing. */
+    li.run-start {
+        padding-top: 8px;
+    }
+
+    li.run-continued {
+        padding-top: 2px;
+    }
+
+    li.notice-after-message {
+        padding-top: 8px;
+    }
+
     /* Over the whole conversation while a file is dragged anywhere in the window. */
     .file-drop-target {
         position: absolute;

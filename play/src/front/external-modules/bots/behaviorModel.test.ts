@@ -3,6 +3,7 @@ import type { BotData } from "./types";
 import {
     DEFAULT_NOTICE_RANGE,
     DEFAULT_WANDER_RADIUS,
+    botFacing,
     botModel,
     noticeRange,
     routeStops,
@@ -99,5 +100,20 @@ describe("Show tool calls", () => {
     it("stays saved when the bot's behavior changes", () => {
         const on = withShowToolCalls(bot("idle"), true);
         expect(showsToolCalls(withModel(on, { moves: "wander", goesToPeople: true }))).toBe(true);
+    });
+});
+
+describe("botFacing", () => {
+    it("is Down for a bot that never had the setting, or a junk value", () => {
+        expect(botFacing(bot("idle"))).toBe("down");
+        expect(botFacing(bot("idle", { facing: "sideways" }))).toBe("down");
+        expect(botFacing(undefined)).toBe("down");
+    });
+
+    it("reads the saved direction, and keeps it when the bot's behavior changes", () => {
+        for (const facing of ["down", "left", "right", "up"] as const) {
+            expect(botFacing(bot("idle", { facing }))).toBe(facing);
+        }
+        expect(botFacing(withModel(bot("idle", { facing: "up" }), { moves: "wander" }))).toBe("up");
     });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { stillPinnedToBottom } from "../TimelinePin";
+import { keyboardClosed, listGrewTaller, stillPinnedToBottom } from "../TimelinePin";
 
 const view = { scrollHeight: 2000, clientHeight: 500 }; // the bottom is at scrollTop 1500
 
@@ -28,5 +28,28 @@ describe("stillPinnedToBottom", () => {
 
     it("does not pin again while the reader scrolls back down but is still reading", () => {
         expect(stillPinnedToBottom(false, 900, { ...view, scrollTop: 1100 })).toBe(false);
+    });
+});
+
+describe("listGrewTaller", () => {
+    it("sees the list getting taller when the keyboard closes", () => {
+        expect(listGrewTaller(180, 420)).toBe(true);
+    });
+
+    it("ignores the list getting shorter, rounding, and the first size", () => {
+        expect(listGrewTaller(420, 180)).toBe(false);
+        expect(listGrewTaller(420, 420.5)).toBe(false);
+        expect(listGrewTaller(0, 420)).toBe(false);
+    });
+});
+
+describe("keyboardClosed", () => {
+    it("sees the keyboard closing on an iPhone (466 to 879)", () => {
+        expect(keyboardClosed(466, 879)).toBe(true);
+    });
+
+    it("ignores the keyboard opening and small changes", () => {
+        expect(keyboardClosed(879, 466)).toBe(false);
+        expect(keyboardClosed(879, 926)).toBe(false);
     });
 });
