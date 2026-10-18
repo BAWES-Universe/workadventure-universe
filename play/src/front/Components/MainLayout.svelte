@@ -45,6 +45,7 @@
     import { inputFormFocusStore } from "../Stores/UserInputStore";
     import { isExploringTheRoom, leaveExploreTheRoom } from "../Phaser/Game/MapEditor/ExploreTheRoom";
     import RingOverlay from "../Chat/Components/UserList/RingOverlay.svelte";
+    import { expressTrayStore } from "../Stores/ExpressStore";
     import ActionBar from "./ActionBar/ActionBar.svelte";
     import EditMode from "./MapEditor/EditMode/EditMode.svelte";
     import HelpWebRtcSettingsPopup from "./HelpSettings/HelpWebRtcSettingsPopup.svelte";
@@ -274,8 +275,13 @@
             {#if !($chatVisibilityStore && $hideActionBarStoreBecauseOfChatBar) && !($mapEditorToolbarInUseStore && !desktop)}
                 <!-- Held inside the game's area: a room website opened beside or above the game covers the column as
                      it grows, instead of the column floating over the website. Above "Look around the map", so its
-                     Places panel never covers the column. -->
-                <div class="absolute inset-0 overflow-hidden pointer-events-none z-[22]">
+                     Places panel never covers the column. While Express is open it comes above the bar's layer
+                     (z-301), so the tray is drawn over the Silent zone card, which stays visible behind it. -->
+                <div
+                    class="absolute inset-0 overflow-hidden pointer-events-none {$expressTrayStore === 'closed'
+                        ? 'z-[22]'
+                        : 'z-[302]'}"
+                >
                     <div
                         class="absolute bottom-2 right-1 md:right-2 xl:right-4 flex flex-col items-end gap-2 pointer-events-none"
                     >

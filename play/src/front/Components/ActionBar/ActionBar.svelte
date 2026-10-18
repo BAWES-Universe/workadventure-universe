@@ -19,7 +19,6 @@
     import { screenSharingAvailableStore } from "../../Stores/ScreenSharingStore";
     import { isInRemoteConversation } from "../../Stores/StreamableCollectionStore";
     import { mobileLayoutStore } from "../../Stores/MobileLayoutStore";
-    import { expressTrayStore } from "../../Stores/ExpressStore";
     import { chatSheetLayoutStore } from "../../Chat/ChatSheetStore";
     import { deviceListOpenRequestStore } from "../../Stores/NewDeviceStore";
     import MediaSettingsList from "./MediaSettingsList.svelte";
@@ -154,17 +153,15 @@
                     </div>
                 </div>
             </div>
-            <!-- NAV : SILENT BLOCK (bar at the top: under the microphone and camera, as before).
-                 It steps aside while Express is open, so it never covers the tray, and comes back when it closes. -->
-            {#if $silentStore && !$mobileLayoutStore && $expressTrayStore === "closed"}
+            <!-- NAV : SILENT BLOCK (bar at the top: under the microphone and camera, as before) -->
+            {#if $silentStore && !$mobileLayoutStore}
                 <SilentBlock placement="below" />
             {/if}
         </div>
 
-        <!-- NAV : SILENT BLOCK (phones, bar at the bottom: above the whole bar, centred on the screen).
-             The Express tray opens over the same spot: the block steps aside while it is open. -->
+        <!-- NAV : SILENT BLOCK (phones, bar at the bottom: above the whole bar, centred on the screen) -->
         <svelte:fragment slot="overlay">
-            {#if $silentStore && $mobileLayoutStore && $expressTrayStore === "closed"}
+            {#if $silentStore && $mobileLayoutStore}
                 <SilentBlock placement="above" />
             {/if}
         </svelte:fragment>
