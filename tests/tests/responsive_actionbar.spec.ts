@@ -56,6 +56,17 @@ test.describe('Action bar responsiveness @nomobile', () => {
             await expect(page.getByText('Download')).toBeHidden({ timeout: 1_000 });
         }).toPass({ intervals: [0], timeout: 40_000 });
 
+        // One 25px step can pass more than one button's edge (the bar's gaps and padding change at some widths), so
+        // when Inventory went into the menu with Download, widen a little at a time until it is back. Buttons leave
+        // one by one, so there is a width where Download is in the menu and Inventory is still in the bar.
+        await expect(async () => {
+            if (!(await page.getByText('Inventory').isVisible())) {
+                width += 5;
+                await page.setViewportSize({ width, height: 600 });
+            }
+            await expect(page.getByText('Inventory')).toBeVisible({ timeout: 1_000 });
+        }).toPass({ intervals: [0], timeout: 20_000 });
+
         await expect(page.getByText('Register')).toBeHidden();
         await expect(page.getByText('Download')).toBeHidden();
         await expect(page.getByText('Inventory')).toBeVisible();
