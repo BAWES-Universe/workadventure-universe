@@ -49,11 +49,12 @@
     <!-- Received broadcasts stack at the top of the screen, the newest first, each until its Got it. While you are live
          yourself they start under your Live pill, which holds the same top strip on a phone (a desktop has the pill on
          the left and the cards on the right). The top strip starts under the see-through status bar (#969), on a wide
-         screen too, where an installed iPad pads the top bar down by it (#1032). -->
+         screen too, where an installed iPad pads the top bar down by it (#1032). On a tablet or a desktop the Live
+         pill sits above your tile in the middle (#1155): the cards start under it, so they never cover End. -->
     <div
         class="fixed {settingsOverCards ? 'z-[890]' : 'z-[1090]'} pointer-events-none inset-x-3 {$liveBroadcastStore
-            ? 'top-[calc(80px+env(safe-area-inset-top))]'
-            : 'top-[calc(12px+env(safe-area-inset-top))]'} flex flex-col gap-2 lg:inset-x-auto lg:right-4 lg:top-[calc(96px+env(safe-area-inset-top))] lg:w-[380px]"
+            ? 'top-[calc(80px+env(safe-area-inset-top))] md:top-[calc(184px+env(safe-area-inset-top))]'
+            : 'top-[calc(12px+env(safe-area-inset-top))] lg:top-[calc(96px+env(safe-area-inset-top))]'} flex flex-col gap-2 lg:inset-x-auto lg:right-4 lg:w-[380px]"
         data-testid="broadcast-inbox"
     >
         {#each $broadcastInboxStore as card (card.id)}

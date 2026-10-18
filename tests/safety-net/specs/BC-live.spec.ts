@@ -213,15 +213,44 @@ test("BC-060 Go live closes the card and shows the Live pill with timer, reach a
     await expect(page.getByTestId("broadcast-end-live")).toHaveClass(/u-cta-coral/);
     const box = await pill.boundingBox();
     if (!box) throw new Error("no pill box");
+    // The End button is a full 44 px tap, whatever the screen.
+    const endBox = await page.getByTestId("broadcast-end-live").boundingBox();
+    expect(Math.round(endBox?.height ?? 0)).toBe(44);
     if (isPhone(testInfo)) {
         expect(Math.round(box.x)).toBe(12);
         expect(Math.round(box.y)).toBe(12);
         expect(Math.round(box.width)).toBe(428 - 24);
     } else {
-        expect(Math.round(box.x)).toBe(16);
-        expect(Math.round(box.y)).toBe(80);
         expect(Math.round(box.width)).toBe(380);
     }
+});
+
+test("BC-060b The Live bar sits right above your own tile, which moves down: nothing is covered (#1155)", async ({
+    page,
+}, testInfo) => {
+    await join(page, await wamRoom(testInfo, "empty"), "Alice");
+    await setBar(page, "camera-button", true);
+    await openBroadcast(page);
+    await turnOnBroadcast(page);
+    await goLive(page);
+    const pill = await page.getByTestId("broadcast-live-pill").boundingBox();
+    const tile = await page.locator(".u-live-tile").first().boundingBox();
+    if (!pill || !tile) throw new Error("missing boxes");
+    // Above the tile, not over it, and centred on it
+    expect(pill.y + pill.height).toBeLessThanOrEqual(tile.y);
+    expect(tile.y - (pill.y + pill.height)).toBeLessThanOrEqual(16);
+    if (!isPhone(testInfo)) {
+        expect(Math.abs(pill.x + pill.width / 2 - (tile.x + tile.width / 2))).toBeLessThanOrEqual(2);
+        // Under the top bar, covering none of its buttons
+        for (const id of ["microphone-button", "camera-button"] as const) {
+            const button = await page.getByTestId(id).boundingBox();
+            if (!button) throw new Error(`no ${id} box`);
+            expect(pill.y).toBeGreaterThanOrEqual(button.y + button.height);
+        }
+    }
+    // No Announcement for the person going live: the Live bar already says it
+    await page.waitForTimeout(1_500);
+    await expect(page.locator(".notification-playing")).toHaveCount(0);
 });
 
 test("BC-061 While live: own tile with the violet ring and LIVE tag, bar mic and camera ringed", async ({
