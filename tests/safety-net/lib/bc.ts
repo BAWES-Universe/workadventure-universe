@@ -44,7 +44,11 @@ export async function openBroadcast(page: Page): Promise<void> {
 }
 
 export async function primeAdmin(page: Page): Promise<void> {
-    await withFrontModule(page, "src/front/Stores/GameStore.ts", "m => m.userIsAdminStore.set(true)");
+    await withFrontModule(
+        page,
+        "src/front/Stores/GameStore.ts",
+        "m => { m.userIsAdminStore.set(true); m.userCanSendMessagesStore.set(true); }"
+    );
 }
 
 export interface PrimedCard {
@@ -85,7 +89,11 @@ export async function isPrimedAdmin(page: Page): Promise<boolean> {
 }
 
 export async function setPrimedAdmin(page: Page, admin: boolean): Promise<void> {
-    await withFrontModule(page, "src/front/Stores/GameStore.ts", `m => m.userIsAdminStore.set(${admin})`);
+    await withFrontModule(
+        page,
+        "src/front/Stores/GameStore.ts",
+        `m => { m.userIsAdminStore.set(${admin}); m.userCanSendMessagesStore.set(${admin}); }`
+    );
 }
 
 /**

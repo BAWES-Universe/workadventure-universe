@@ -116,6 +116,11 @@ export const isFetchMemberDataByUuidSuccessResponse = z.object({
     canEdit: extendApi(z.boolean().nullable().optional(), {
         description: "True if the user can edit the map",
     }),
+    permissions: extendApi(z.string().nullable().optional(), {
+        description:
+            "What the user may do in this world, as a decimal number (the sum of the permission bits). When it is missing, the game decides from the tags.",
+        example: "16383",
+    }),
     world: extendApi(z.string(), {
         description: "name of the world",
     }),

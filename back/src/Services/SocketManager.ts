@@ -53,6 +53,7 @@ import {
     FilterType,
     AskPositionMessage_AskType,
 } from "@workadventure/messages";
+import { hasPermission, Permission } from "@workadventure/shared-utils/src/Permissions/permissions";
 import Jwt from "jsonwebtoken";
 import BigbluebuttonJs from "bigbluebutton-js";
 import Debug from "debug";
@@ -219,6 +220,7 @@ export class SocketManager {
             characterTextures: joinRoomMessage.characterTextures,
             companionTexture: joinRoomMessage.companionTexture,
             canEdit: joinRoomMessage.canEdit,
+            permissions: user.permissions.toString(),
             editMapCommandsArrayMessage,
             item: itemStateMessage,
             variable: variablesMessage,
@@ -227,7 +229,7 @@ export class SocketManager {
             applications: user.applications ?? [],
             playerVariable: playerVariablesMessage,
             megaphoneSettings: {
-                ...room.getMegaphoneSettingsFor(user.tags),
+                ...room.getMegaphoneSettingsFor(user.tags, user.permissions),
                 ...(await room.getAreaSpacePolicyFor(user)),
             },
         };
@@ -755,7 +757,7 @@ export class SocketManager {
 
         // Let's see if the current client has moderator rights
         let isAdmin = false;
-        if (user.tags.includes("admin")) {
+        if (hasPermission(user.permissions, Permission.MODERATE_CALLS)) {
             isAdmin = true;
         } else {
             const moderatorTag = await gameRoom.getModeratorTagForJitsiRoom(jitsiRoom);
@@ -818,7 +820,7 @@ export class SocketManager {
 
         // Let's see if the current client has moderator rights
         let isAdmin = false;
-        if (user.tags.includes("admin")) {
+        if (hasPermission(user.permissions, Permission.MODERATE_CALLS)) {
             isAdmin = true;
         } else {
             const moderatorTag = await gameRoom.getModeratorTagForBbbMeeting(localMeetingId);
@@ -1511,7 +1513,7 @@ export class SocketManager {
         if (!group) {
             return;
         }
-        if (!user.tags.includes("admin")) {
+        if (!hasPermission(user.permissions, Permission.MODERATE_CALLS)) {
             return;
         }
         const usersKiked = group.getUsers().filter((user) => user.uuid === userKickedUuid);

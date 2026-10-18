@@ -74,11 +74,27 @@ describe("Space: who runs a podium", () => {
         expect(state("guest")?.megaphoneState).toBe(false);
     });
 
+    it("follows the permissions Orbit sent over the tags", () => {
+        const { invite, state } = setup([
+            person("moderator", { permissions: String(1 << 11) }),
+            person("demoted", { tags: ["admin"], permissions: "0" }),
+            guest(),
+        ]);
+
+        invite("moderator", "guest");
+        expect(state("guest")?.megaphoneState).toBe(false);
+        expect(() => invite("demoted", "guest")).toThrow("Moderate calls permission");
+    });
+
     it("refuses an invitation or a move from someone in the audience, even if their browser says otherwise", () => {
         const { invite, moveBack, state } = setup([host(), guest(), outsider()]);
 
-        expect(() => invite("outsider", "guest")).toThrow("Only speakers and admins can invite someone to speak");
-        expect(() => moveBack("outsider", "host")).toThrow("Only speakers and admins can move someone to the audience");
+        expect(() => invite("outsider", "guest")).toThrow(
+            "Needs to be speaking or to have the Moderate calls permission to invite someone to speak"
+        );
+        expect(() => moveBack("outsider", "host")).toThrow(
+            "Needs to be speaking or to have the Moderate calls permission to move someone to the audience"
+        );
         expect(state("host")?.megaphoneState).toBe(true);
     });
 
@@ -88,8 +104,12 @@ describe("Space: who runs a podium", () => {
         invite("host", "guest");
         goLive("guest");
 
-        expect(() => invite("guest", "outsider")).toThrow("Only speakers and admins can invite someone to speak");
-        expect(() => moveBack("guest", "host")).toThrow("Only speakers and admins can move someone to the audience");
+        expect(() => invite("guest", "outsider")).toThrow(
+            "Needs to be speaking or to have the Moderate calls permission to invite someone to speak"
+        );
+        expect(() => moveBack("guest", "host")).toThrow(
+            "Needs to be speaking or to have the Moderate calls permission to move someone to the audience"
+        );
         expect(state("host")?.megaphoneState).toBe(true);
     });
 

@@ -7,8 +7,12 @@ export const userMovingStore = writable(false);
 export const canRequestVisitCardsStore = writable(false);
 export const requestVisitCardsStore = writable<string | null>(null);
 
+// The "admin" tag (what the admin chip and the upgrade warning follow)
 export const userIsAdminStore = writable(false);
-export const userIsEditorStore = writable(false);
+// Each of these follows one of the player's permissions
+export const userIsEditorStore = writable(false); // Edit maps
+export const userCanModerateCallsStore = writable(false); // Moderate calls
+export const userCanSendMessagesStore = writable(false); // Send messages and voice notes
 
 export const userIsJitsiDominantSpeakerStore = writable(false);
 
