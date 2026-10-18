@@ -7,6 +7,8 @@ describe("withoutBlankEdges", () => {
         expect(withoutBlankEdges("send test<br><br><br>")).toBe("send test");
         expect(withoutBlankEdges("send test<div><br></div><div><br></div>")).toBe("send test");
         expect(withoutBlankEdges("send test\n\n")).toBe("send test");
+        // Enter turns <br> into \n before sending, so the iPhone's empty <div> arrives as <div>\n</div>.
+        expect(withoutBlankEdges("send test<div>\n</div><div>\n</div>")).toBe("send test");
     });
 
     it("drops blank lines, spaces and zero-width characters before the text", () => {
