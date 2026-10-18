@@ -1009,6 +1009,14 @@
         border-radius: 9999px;
         background: rgba(255, 255, 255, 0.05);
     }
+    /* Typing in the phone's chat sheet (#1136): the keyboard is up, so the field sits closer to it. With the keyboard
+       down the 16px stays: in the installed app the sheet reaches the screen's bottom edge and the field must clear the
+       home line. */
+    @media (pointer: coarse) {
+        :global(.chat-sheet) .message-bar:has(.message-input:focus) {
+            margin-bottom: 4px;
+        }
+    }
     .message-bar > button {
         width: 40px;
         height: 40px;

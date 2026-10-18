@@ -28,10 +28,13 @@
     import QuotedMessage from "./MessageActions/QuotedMessage.svelte";
     import { messageGestures } from "./MessageActions/messageGestures";
     import { availableActions, hasAnyAction, replyTo } from "./MessageActions/availableActions";
+    import { chatTime } from "./MessageTime";
     import { IconArrowBackUp, IconInfoCircle, IconPaperclip, IconTrash } from "@wa-icons";
 
     export let message: ChatMessage;
     export let replyDepth = 0;
+    /** First message of its run (see MessageRuns): it shows the name, the time and the face. */
+    export let runStart = true;
 
     let messageRef: HTMLDivElement | undefined;
     let bubbleRef: HTMLDivElement | undefined;
@@ -79,6 +82,18 @@
 
     $: senderPicture = personPicture($wokaByChatId, sender?.chatId, sender?.pictureStore) ?? readable(undefined);
     $: senderColour = $colourOf(sender?.chatId, sender?.username);
+    // The label over a run: the name for others, the time for everyone. The full date shows on hover.
+    $: showLabel = runStart && replyDepth === 0 && !isQuotedMessage && !messageFromSystem;
+    $: shownTime = date ? chatTime(date, $locale) : "";
+    $: fullDate =
+        date?.toLocaleString($locale, {
+            weekday: "long",
+            day: "numeric",
+            month: "long",
+            year: "numeric",
+            hour: "numeric",
+            minute: "2-digit",
+        }) ?? "";
 
     const updateMessageBody = () => {
         dispatch("updateMessageBody", {
@@ -175,13 +190,21 @@
         style={replyDepth === 0 ? "max-width: calc( 100% - 50px );" : "padding-left: 0"}
         class="message-grid container-grid justify-start overflow-visible relative {replyDepth === 0
             ? 'max-w-[calc(100% - 100px)]'
-            : ''} {!$isDeleted ? 'group-hover/message:pb-4' : ''} {isMyMessage
-            ? 'justify-end grid-container-inverted pr-4'
-            : 'justify-start pl-3'}"
+            : ''} {isMyMessage ? 'justify-end grid-container-inverted pr-4' : 'justify-start pl-3'}"
     >
+        {#if showLabel}
+            <div class="messageHeader" class:mine={isMyMessage} data-testid="messageLabel">
+                {#if !isMyMessage}
+                    <span class="messageHeader-name">{sender?.username ?? ""}</span>
+                {/if}
+                <time class="messageHeader-time" datetime={date?.toISOString()} title={fullDate}>{shownTime}</time>
+            </div>
+        {/if}
+
         {#if (!isMyMessage || isQuotedMessage) && sender !== undefined && replyDepth === 0}
             <!-- Not "avatar": that design-system class paints a grey 40px square behind the round woka. -->
-            <div class="sender-avatar pt-1.5">
+            <!-- Once per run: later messages keep its width so they line up. -->
+            <div class="sender-avatar" class:run-continued={!runStart}>
                 <TopRowAvatar
                     pictureStore={senderPicture}
                     name={sender?.username ?? ""}
@@ -283,32 +306,6 @@
                 {/if}
             {/if}
         </div>
-        {#if replyDepth <= 0}
-            <div
-                class="messageHeader w-full absolute bottom-0 h-fit group-hover/message:translate-y-[2px] opacity-0 group-hover/message:opacity-100 left-0 text-gray-500 text-xxs px-2 flex justify-between items-end gap-2 overflow-x-hidden"
-                class:flex-row-reverse={isMyMessage}
-                hidden={isQuotedMessage || messageFromSystem}
-            >
-                <span
-                    hidden={messageFromSystem}
-                    class="text-white text-nowrap {!isMyMessage ? 'text-white font-bold' : ''}"
-                    >{isMyMessage ? "You" : sender?.username}</span
-                >
-                <span class={`text-xxs text-nowrap ${isMyMessage ? "mr-1" : "ml-1"}`}
-                    >{date?.toLocaleTimeString($locale, {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                    })}</span
-                >
-                <span class={`text-xxs text-nowrap ${isMyMessage ? "mr-1" : "ml-1"}`}
-                    >{date?.toLocaleDateString($locale, {
-                        year: "numeric",
-                        month: "short",
-                        day: "numeric",
-                    })}</span
-                >
-            </div>
-        {/if}
         {#if actionable && !menuOpen}
             <div
                 bind:this={barRef}
@@ -339,10 +336,6 @@
 
     #message.menu-open {
         z-index: 60;
-    }
-
-    #message.menu-open .messageHeader {
-        visibility: hidden;
     }
 
     /*
@@ -446,13 +439,49 @@
     .container-grid {
         overflow: visible;
         display: grid;
-        grid-gap: 4px;
-        grid-template-areas: "avatar message" ". response" ". messageHeader";
+        grid-gap: 0;
+        grid-template-areas: "avatar label" "avatar message" ". response";
     }
 
+    /*
+     * Their label (name and time) also spans a spare column, so a long name never widens the bubble's column: a short
+     * message keeps a short bubble, and the hover bar, placed on that column, stays beside it. Mine shows the time only.
+     */
+    .container-grid:not(.grid-container-inverted) {
+        grid-template-columns: auto auto 1fr;
+        grid-template-areas: "avatar label label" "avatar message ." ". response .";
+    }
+
+    /* Outside the bubble. The name is a little smaller than the text but heavier, so it reads as a label. */
     .messageHeader {
-        grid-area: messageHeader;
-        transition: all 0.2s ease-in-out 0s;
+        grid-area: label;
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+        min-width: 0;
+        padding: 0 2px 3px;
+        line-height: 18px;
+        white-space: nowrap;
+    }
+
+    .messageHeader.mine {
+        justify-content: flex-end;
+    }
+
+    .messageHeader-name {
+        font-size: 13px;
+        font-weight: 600;
+        color: rgb(255 255 255 / 0.9);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        min-width: 0;
+    }
+
+    /* A long name gives way: the time always shows. */
+    .messageHeader-time {
+        font-size: 11px;
+        color: rgb(255 255 255 / 0.5);
+        flex-shrink: 0;
     }
 
     .message {
@@ -463,13 +492,15 @@
         transition: transform 160ms ease, box-shadow 160ms ease;
     }
 
-    .message.my:hover + .messageHeader {
-        opacity: 1;
-    }
-
     .sender-avatar {
         grid-area: avatar;
         display: flex;
-        /*align-items: flex-end;*/
+        align-self: start;
+    }
+
+    /* Not overflow: hidden, which would let the column shrink below the face's width in a narrow chat. */
+    .sender-avatar.run-continued {
+        visibility: hidden;
+        height: 0;
     }
 </style>

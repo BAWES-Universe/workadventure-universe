@@ -17,3 +17,19 @@ export function stillPinnedToBottom(pinned: boolean, lastScrollTop: number, scro
     if (scroll.scrollTop < lastScrollTop) return false;
     return pinned;
 }
+
+/** Taller than this (CSS px) since the last size is the list growing, not rounding. */
+const GROWTH_TOLERANCE = 1;
+
+/** Whether the list itself got taller (the keyboard closed and gave the sheet its height back). */
+export function listGrewTaller(previousHeight: number, height: number): boolean {
+    return previousHeight > 0 && height > previousHeight + GROWTH_TOLERANCE;
+}
+
+/** Taller than this (CSS px) at once is the on-screen keyboard closing, not a rounding or a bar showing. */
+const KEYBOARD_MIN_HEIGHT = 100;
+
+/** Whether the window got its height back from the on-screen keyboard (an iPhone gives it back when it closes). */
+export function keyboardClosed(previousHeight: number, height: number): boolean {
+    return height - previousHeight >= KEYBOARD_MIN_HEIGHT;
+}

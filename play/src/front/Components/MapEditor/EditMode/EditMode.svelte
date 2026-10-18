@@ -3,7 +3,7 @@
     // it, and the bar at the bottom while something is being placed or drawn. The map stays in view; on phones the
     // action bar is hidden until Done. The editor engine (MapEditorModeManager and its tools) is unchanged.
     import { fade, fly } from "svelte/transition";
-    import { onDestroy, onMount, tick } from "svelte";
+    import { onDestroy, tick } from "svelte";
     import { LL } from "../../../../i18n/i18n-svelte";
     import { mobileLayoutStore } from "../../../Stores/MobileLayoutStore";
     import { EditorToolName } from "../../../Phaser/Game/MapEditor/MapEditorModeManager";
@@ -42,11 +42,6 @@
     import { IconArrowBackUp, IconArrowsMove, IconHandMove, IconTrash } from "@wa-icons";
 
     let rootWidth = 0;
-
-    // On a phone, edit mode opens on the whole map: the panel comes out when a tool on the rail is tapped.
-    onMount(() => {
-        if ($mobileLayoutStore) mapEditorVisibilityStore.set(false);
-    });
 
     $: tool = $mapEditorSelectedToolStore;
     $: placingObject = tool === EditorToolName.EntityEditor && $mapEditorSelectedEntityPrefabStore !== undefined;

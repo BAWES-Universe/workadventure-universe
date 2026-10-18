@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { RequiredMetaTagsData } from "@workadventure/messages";
-import { buildWebManifest, isInstalledAppStart, manifestUrlOfPage, roomPathOfPage } from "../WebManifest";
+import {
+    buildWebManifest,
+    installRoomUrlOfPage,
+    isInstalledAppStart,
+    manifestUrlOfPage,
+    roomPathOfPage,
+} from "../WebManifest";
 
 const meta: RequiredMetaTagsData = {
     title: "Universe | Bawes > Lobby > Main",
@@ -14,6 +20,21 @@ const meta: RequiredMetaTagsData = {
     themeColor: "#14121E",
     cardImage: "/card.png",
 };
+
+describe("installRoomUrlOfPage", () => {
+    it("is the room the installed app came from, so its start page gets that room's colours", () => {
+        expect(installRoomUrlOfPage("https://play.test/?installRoom=%2F%40%2Fbawes%2Flobby%2Fmain")).toBe(
+            "https://play.test/@/bawes/lobby/main"
+        );
+    });
+
+    it("is nothing for any other page", () => {
+        expect(installRoomUrlOfPage("https://play.test/")).toBeUndefined();
+        expect(installRoomUrlOfPage("https://play.test/@/bawes/lobby/main")).toBeUndefined();
+        expect(installRoomUrlOfPage("https://play.test/?installRoom=%2F%2Fevil.test%2Fx")).toBeUndefined();
+        expect(installRoomUrlOfPage("not a url")).toBeUndefined();
+    });
+});
 
 describe("isInstalledAppStart", () => {
     it("is the installed app's own start page", () => {

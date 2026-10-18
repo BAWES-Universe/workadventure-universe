@@ -102,8 +102,12 @@
     let displayNoVideoWarning = false;
 </script>
 
+<!-- The background fills the space around a video that doesn't cover the box. Without a video, the overlay below
+     paints the box; a second layer here (videoRatio keeps the last camera's shape) would make it darker than others. -->
 <div
-    class="h-full w-full relative {(!cover || videoRatio < 1) && withBackground ? 'bg-contrast/80 rounded-lg' : ''}"
+    class="h-full w-full relative {videoEnabled && (!cover || videoRatio < 1) && withBackground
+        ? 'bg-contrast/80 rounded-lg'
+        : ''}"
     bind:clientWidth={containerWidth}
     bind:clientHeight={containerHeight}
 >

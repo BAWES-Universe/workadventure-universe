@@ -50,7 +50,7 @@ test("ME-001 Desktop: Tools > Map editor opens the edit pill, rail and Objects p
     await expect(page.getByTestId("map-menu")).toBeVisible();
 });
 
-test("ME-002 Phone: menu > Tools > Map editor shows the whole map, pill and rail, play UI hidden", async ({
+test("ME-002 Phone: menu > Tools > Map editor shows the pill, the rail and the Objects panel, play UI hidden", async ({
     page,
 }, testInfo) => {
     test.skip(!isPhone(testInfo), "phone only");
@@ -68,10 +68,15 @@ test("ME-002 Phone: menu > Tools > Map editor shows the whole map, pill and rail
     const pillBox = (await pill.boundingBox())!;
     expect(pillBox.width).toBeGreaterThan(428 - 40);
     await expect(page.getByTestId("edit-rail")).toBeVisible();
-    await expect(page.getByTestId("edit-panel")).toBeHidden();
+    await expect(rail(page, "EntityEditor")).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByTestId("edit-panel")).toBeVisible();
+    await expect(page.getByTestId("edit-panel")).toContainText("Objects");
     await expect(page.getByTestId("microphone-button")).toBeHidden();
     await expect(page.getByTestId("map-overview-button")).toBeHidden();
     await expect(page.getByRole("button", { name: "Express yourself" })).toBeHidden();
+    // The panel's hide arrow tucks it: the whole map, with the hint on how to use it (until a tool is picked once).
+    await page.getByTestId("edit-panel-hide").click();
+    await expect(page.getByTestId("edit-panel")).toBeHidden();
     await expect(page.getByText("Pick a tool on the right. Drag to move around, pinch to zoom.")).toBeVisible();
 });
 
@@ -221,6 +226,8 @@ test("ME-010 @local Editing: dragging pans, zooming works, the WOKA never walks,
     await editRoom(page, testInfo);
     await openEditor(page, testInfo);
     await expect(rail(page, "EntityEditor")).toHaveAttribute("aria-pressed", "true");
+    // A phone opens with the Objects panel over most of the map: tuck it to reach the map.
+    if (isPhone(testInfo)) await page.getByTestId("edit-panel-hide").click();
     const me = await playerPosition(page);
     const cam0 = await camera(page);
     const empty = await toScreen(page, SPOT_A.x, SPOT_A.y);

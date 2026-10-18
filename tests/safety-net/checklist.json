@@ -3816,12 +3816,12 @@
       "area": "Map editor and Look around",
       "topic": "Edit mode: open",
       "action": "Phone: tap the Tools pill in the bar (or the Tools section of the menu when the bar is full), tap \"Map editor\".",
-      "expected": "Menu closes. Whole map visible, no panel. Edit pill spans the top (Done, Editing + room, Undo, Redo); rail on the right edge. Action bar, zoom column, Express and joystick are hidden. Bottom hint: \"Pick a tool on the right. Drag to move around, pinch to zoom.\"",
-      "source": "approved B2p1 frame 1 10-03",
+      "expected": "Menu closes. Objects is lit and its panel is open (as on a computer). Edit pill spans the top (Done, Editing + room, Undo, Redo); rail on the right edge. Action bar, zoom column, Express and joystick are hidden. The panel's hide arrow tucks it; until a tool has been picked on the rail once, the bottom hint then says \"Pick a tool on the right. Drag to move around, pinch to zoom.\"",
+      "source": "approved B2p1 frame 1 10-03, changed by issue #1115 (Khalid 10-17)",
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "ProfileMenu.svelte:312 aria-label \"Open menu\" (i18n menu.ts:7); header \"Tools\" MapSubMenu.svelte:88; \"Map editor\" button; hint text i18n/en-US/mapEditor.ts:470; EditMode.svelte:41 (panel hidden on phone), :164-168; MainLayout.svelte:263 (column hidden while editing on phone)"
+      "hooks": "ProfileMenu.svelte:312 aria-label \"Open menu\" (i18n menu.ts:7); header \"Tools\" MapSubMenu.svelte:88; \"Map editor\" button; hint text i18n/en-US/mapEditor.ts:470; EditMode.svelte phoneHint; MainLayout.svelte:263 (column hidden while editing on phone)"
     },
     {
       "id": "ME-003",

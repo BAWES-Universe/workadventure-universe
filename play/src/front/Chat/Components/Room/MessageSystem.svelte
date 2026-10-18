@@ -1,5 +1,7 @@
 <script lang="ts">
+    import { locale } from "../../../../i18n/i18n-svelte";
     import type { ChatMessage } from "../../Connection/ChatConnection";
+    import { chatTime } from "./MessageTime";
 
     export let message: Pick<ChatMessage, "date" | "content">;
 
@@ -11,9 +13,7 @@
         <span class="messageTextBody text-white/80 group-hover:text-white/100">
             {$content.body}
         </span>
-        {#if date}<span class="text-white/40"
-                >{("0" + date.getHours().toString()).slice(-2)}:{("0" + date.getMinutes().toString()).slice(-2)}</span
-            >{/if}
+        {#if date}<span class="text-white/40">{chatTime(date, $locale)}</span>{/if}
     </span>
 </div>
 

@@ -23,7 +23,6 @@
     import { defaultColor, defaultWoka } from "../../Chat/Connection/Matrix/MatrixChatConnection";
     import type { ChatUser } from "../../Chat/Connection/ChatConnection";
     import { openAdminModalFromMenu } from "../../external-modules/admin-api/index";
-    import { iframeListener } from "../../Api/IframeListener";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
     import { localUserStore } from "../../Connection/LocalUserStore";
     import { titleBarGeometryStore } from "../../TitleBar/WindowControlsOverlay";
@@ -117,17 +116,11 @@
     $: inConversation = $inConversationStore;
     $: conversationTime = $conversationTimeStore;
 
-    // The room opens Orbit, like the Orbit button of the bar (OrbitMenuItem.svelte): pressed again, it closes it.
-    $: orbitOpen = $modalVisibilityStore && $modalIframeStore?.title === "Orbit";
-    function toggleOrbit() {
-        if (!orbitOpen) {
-            openAdminModalFromMenu();
-            return;
-        }
-        modalVisibilityStore.set(false);
-        if ($modalIframeStore != undefined) {
-            iframeListener.sendModalCloseTriggered($modalIframeStore);
-        }
+    // The room opens Orbit. Only the Orbit button of the bar (OrbitMenuItem.svelte) shows Orbit is open and closes it,
+    // so the room never looks pressed and pressing it again leaves Orbit open.
+    function openOrbit() {
+        if ($modalVisibilityStore && $modalIframeStore?.title === "Orbit") return;
+        openAdminModalFromMenu();
     }
 
     // "N here" opens the chat on its People tab, like the People button of the bar (UserListMenuItem.svelte).
@@ -282,9 +275,8 @@
                             class="u-title-bar-item u-title-bar-room"
                             style:min-width="{roomMinWidth}px"
                             aria-label={$LL.titleBar.roomLabel({ room: roomName })}
-                            aria-pressed={orbitOpen}
                             data-testid="titleBarRoom"
-                            on:click={toggleOrbit}
+                            on:click={openOrbit}
                         >
                             <span class="u-title-bar-ellipsis">{roomName}</span>
                         </button>
@@ -533,9 +525,6 @@
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
-    }
-    .u-title-bar-room[aria-pressed="true"] {
-        background: rgba(255, 255, 255, 0.1);
     }
 
     .u-title-bar-here {
