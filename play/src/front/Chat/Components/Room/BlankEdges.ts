@@ -1,6 +1,7 @@
-// Empty lines, spaces and zero-width characters: line breaks as the message box writes them (<br>, an empty <div> on
-// iPhones), as Enter turns them into (\n, also inside that <div>), and &nbsp;.
-const BLANK = "(?:<br\\s*/?>|<div>(?:<br\\s*/?>|\\s)*</div>|&nbsp;|[\\s\\u200B-\\u200D\\uFEFF])+";
+// Empty lines, spaces and zero-width characters: line breaks as the message box writes them (<br>), as Enter turns
+// them into (\n), and &nbsp;. An iPhone puts each new line in a <div>, which is blank when it holds only these.
+const BLANK_CHAR = "<br\\s*/?>|&nbsp;|[\\s\\u200B-\\u200D\\uFEFF]";
+const BLANK = `(?:${BLANK_CHAR}|<div>(?:${BLANK_CHAR})*</div>)+`;
 const LEADING_BLANK = new RegExp(`^${BLANK}`, "i");
 const TRAILING_BLANK = new RegExp(`${BLANK}$`, "i");
 
