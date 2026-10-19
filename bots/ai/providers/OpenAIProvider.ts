@@ -485,7 +485,9 @@ export class OpenAIProvider implements AIProvider {
                     const refusesTemperature = this.rejectsTemperature(response.status, errorData, errorText, requestBody);
                     if (refusesTemperature || this.rejectsThinking(response.status, errorText, requestBody)) {
                         if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                            console.log(`[OpenAIProvider] Retrying without temperature parameter for model: ${config.model}`);
+                            console.log(
+                                `[OpenAIProvider] Retrying ${refusesTemperature ? 'without temperature' : 'with thinking off'} for model: ${config.model}`
+                            );
                         }
                         const retryBody = { ...requestBody };
                         if (refusesTemperature) delete retryBody.temperature;
