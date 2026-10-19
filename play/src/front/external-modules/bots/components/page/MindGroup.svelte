@@ -26,7 +26,7 @@
      */
     let options: BotAiOptions | null = null;
 
-    let loadedFor: { id: string | undefined } | null = null;
+    let loadedFor: string | undefined | null = null;
     let loadCount = 0;
 
     async function load(botId: string | undefined) {
@@ -57,12 +57,15 @@
         }
     }
 
-    // On first show, and again whenever the panel moves to another bot (it stays mounted when the bot changes)
-    $: if (!loadedFor || loadedFor.id !== bot.id) {
-        loadedFor = { id: bot.id };
+    function showFor(botId: string | undefined) {
+        if (loadedFor === botId) return;
+        loadedFor = botId;
         options = null;
-        void load(bot.id);
+        void load(botId);
     }
+
+    // On first show, and again whenever the panel moves to another bot (it stays mounted when the bot changes)
+    $: showFor(bot.id);
 
     // A provider can see pictures when its model can (by its setting or its model's name), or when it has a
     // separate model for pictures.
