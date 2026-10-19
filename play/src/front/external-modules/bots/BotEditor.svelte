@@ -81,7 +81,11 @@
      */
     function revertRefused(botId: string, kind: SaveKind, saved: string | null): void {
         const current = get(botPreviewsStore).get(botId);
-        if (current) upsertBot(withoutRefused(current, kind, saved));
+        if (!current) return;
+        const reverted = withoutRefused(current, kind, saved);
+        // Only when something was really put back: that is what lets the next save through. A refusal that is about something
+        // else changes nothing here, so it can't set off a save that is refused again, and again.
+        if (JSON.stringify(reverted) !== JSON.stringify(current)) upsertBot(reverted);
     }
 
     /** Debounce a save (wait 1 second after the last change), replacing the pending save of the same kind */
