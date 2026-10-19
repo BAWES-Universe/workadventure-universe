@@ -69,18 +69,20 @@
     }
 
     // The line refused people hear: saved once typing stops, when the box is left, and when the page moves on
-    let replyDraft: string | undefined;
+    // The draft belongs to the bot it was typed for: when the page moves to another bot meanwhile, it is still saved
+    // to the first one and never shown or sent to the second
+    let reply: { botId: string; text: string } | undefined;
     let replyTimeout: ReturnType<typeof setTimeout> | null = null;
-    $: replyShown = replyDraft ?? data?.refusalReply ?? "";
+    $: replyShown = (reply?.botId === bot.id ? reply.text : undefined) ?? data?.refusalReply ?? "";
 
     function typeReply(event: Event) {
-        replyDraft = (event.currentTarget as HTMLTextAreaElement).value;
+        reply = { botId: bot.id, text: (event.currentTarget as HTMLTextAreaElement).value };
         if (replyTimeout) clearTimeout(replyTimeout);
         replyTimeout = setTimeout(saveReply, 800);
     }
 
     // What is being saved right now, so the timer and the box being left do not send the same words twice
-    let replySaving: string | undefined;
+    let replySaving: { botId: string; text: string } | undefined;
 
     // The words stay in the box until Orbit has them: if it refuses, they are still there to try again
     function saveReply() {
@@ -88,20 +90,20 @@
             clearTimeout(replyTimeout);
             replyTimeout = null;
         }
-        if (replyDraft === undefined || !data) return;
-        const text = replyDraft;
-        if (text.trim() === (data.refusalReply ?? "")) {
-            replyDraft = undefined;
+        const draft = reply;
+        if (draft === undefined) return;
+        if (draft.botId === bot.id && data && draft.text.trim() === (data.refusalReply ?? "")) {
+            reply = undefined;
             return;
         }
-        if (replySaving === text) return;
-        replySaving = text;
-        void setRefusalReply(bot.id, text)
+        if (replySaving?.botId === draft.botId && replySaving.text === draft.text) return;
+        replySaving = draft;
+        void setRefusalReply(draft.botId, draft.text)
             .then((saved) => {
-                if (saved && replyDraft === text) replyDraft = undefined;
+                if (saved && reply === draft) reply = undefined;
             })
             .finally(() => {
-                if (replySaving === text) replySaving = undefined;
+                if (replySaving === draft) replySaving = undefined;
             });
     }
 

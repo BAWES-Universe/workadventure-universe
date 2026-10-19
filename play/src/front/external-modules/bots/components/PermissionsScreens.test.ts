@@ -173,6 +173,30 @@ describe("the Permissions screens", () => {
         expect(text()).toContain("Private bot");
     });
 
+    it("keeps a typed refusal line with the bot it was typed for when the page moves to another bot", async () => {
+        await open(permissions());
+        mocks.saveBotPermissions.mockResolvedValue(permissions({ refusalReply: "Only the team" }));
+        const component = new PermissionsGroup({
+            target,
+            props: { bot, open: true, onToggle: vi.fn(), onOpenRule: vi.fn(), onAdd: vi.fn() },
+        });
+        destroy = () => component.$destroy();
+        await settle();
+        const box = byTestId("bot-access-reply")[0] as HTMLTextAreaElement;
+        box.value = "Only the team";
+        box.dispatchEvent(new Event("input"));
+
+        mocks.getBotPermissions.mockResolvedValue(permissions());
+        component.$set({ bot: { ...bot, id: "b2" } });
+        await settle();
+        expect((byTestId("bot-access-reply")[0] as HTMLTextAreaElement).value).toBe("");
+
+        byTestId("bot-access-reply")[0].dispatchEvent(new Event("blur"));
+        await settle();
+        expect(mocks.saveBotPermissions).toHaveBeenCalledWith("b1", { refusalReply: "Only the team" });
+        expect(mocks.saveBotPermissions).not.toHaveBeenCalledWith("b2", expect.anything());
+    });
+
     it("shows No / Default / Yes with what Default comes to, and saves a tap", async () => {
         await open(permissions({ rules: [rule()] }));
         mocks.saveBotRule.mockResolvedValue(rule({ summon: "no" }));
