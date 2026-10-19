@@ -175,7 +175,8 @@
                                     behaviorConfig: bot.behaviorConfig,
                                 })
                             );
-                            lastSavedBotConfig = currentConfig;
+                            // Only for the bot that is open: these values are shared, and another bot's page has its own
+                            if (selectedBot?.id === bot.id) lastSavedBotConfig = currentConfig;
                         } catch (e) {
                             console.error("[BotEditor] Failed to auto-save bot:", e);
                             if ((e as Error & { isRefusal?: boolean })?.isRefusal === true) {
@@ -241,7 +242,7 @@
                             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                                 console.log("[BotEditor] AI config update successful");
                             }
-                            lastSavedAIConfig = currentAIConfig;
+                            if (selectedBot?.id === bot.id) lastSavedAIConfig = currentAIConfig;
                         } catch (e) {
                             console.error("[BotEditor] Failed to auto-save bot AI config:", e);
                             if ((e as Error & { isRefusal?: boolean })?.isRefusal === true) {
