@@ -360,8 +360,8 @@ describe('BaseBehavior interruption routing', () => {
         expect(result.processedMessage).toBe('Let me look at this from a completely different angle.');
         // The repetition cycle was cleared so the next turn starts fresh.
         expect(mockResponseProcessor.clearRecentResponses).toHaveBeenCalledWith('bot-1', SENDER);
-        // quickGenerate received the persona chat instructions as its system prompt.
-        expect(ai.quickGenerate).toHaveBeenCalledWith('provider-1', 'You are a test bot.', expect.any(String));
+        // quickGenerate received the persona chat instructions as its system prompt, and the bot id so Orbit can say whose AI runs it (#374).
+        expect(ai.quickGenerate).toHaveBeenCalledWith('provider-1', 'You are a test bot.', expect.any(String), 'bot-1');
     });
 
     it('regenerateOnRepetition: stays silent (empty message) when the LLM fallback also fails', async () => {
