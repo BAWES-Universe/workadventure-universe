@@ -326,6 +326,13 @@ export class AIService {
         return this.getProviderCredentials(selected.providerId);
     }
 
+    /** The fixed lines resting bots have said (#374): the same line twice in a row is not a repetition to fix. */
+    private readonly restingLines = new Set<string>();
+
+    isRestingLine(text: string): boolean {
+        return this.restingLines.has(text.trim());
+    }
+
     /**
      * Generate streaming bot response with function calling support
      */
@@ -356,6 +363,7 @@ export class AIService {
             const resolved = await this.resolveProvider(providerId, botId);
             if (resolved.resting) {
                 // The key is down and its owner chose Stop replying: say the one fixed line, call no AI, track nothing
+                this.restingLines.add(resolved.line.trim());
                 yield { content: resolved.line, done: false };
                 yield { content: '', done: true, metadata: { tokensUsed: 0, latency: Date.now() - startTime } };
                 return;

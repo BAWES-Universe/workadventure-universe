@@ -12,6 +12,7 @@ class TestBehavior extends BaseBehavior {
             typeof this.adminApiService
         >;
         this.aiService = {
+            isRestingLine: () => false,
             generateBotResponseStream: async function* () {
                 yield await Promise.resolve({ reset: true, toolNames: ['get_areas'] });
                 yield { content: 'Here is a new answer.', done: true };

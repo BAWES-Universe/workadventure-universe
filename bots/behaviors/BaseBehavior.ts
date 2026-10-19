@@ -1598,6 +1598,12 @@ export abstract class BaseBehavior {
             return { processed: initialProcessed, processedMessage: initialProcessedMessage, responseId: initialResponseId };
         }
 
+        // A resting bot (its key is down and its owner chose Stop replying) says one fixed line. Asking again could only
+        // bring the same line back, and the failed retries would end with no reply at all (#374).
+        if (this.aiService.isRestingLine(fullMessage)) {
+            return { processed: initialProcessed, processedMessage: initialProcessedMessage, responseId: initialResponseId };
+        }
+
         // If high repetition detected (score >= 0.85), block and regenerate (up to 3 attempts)
         // Lower threshold catches near-duplicates like "*snorts* response" vs "*grunts* response"
         let regenerationAttempts = 0;

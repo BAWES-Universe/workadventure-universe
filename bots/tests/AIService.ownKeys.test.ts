@@ -324,6 +324,17 @@ describe("AIService – finding a bot's AI by bot id", () => {
             expect(admin.reportAiHealth).not.toHaveBeenCalled();
         });
 
+        it("remembers the resting line, so a repeat of it is not treated as a repetition to regenerate", async () => {
+            const { admin, memory } = buildMocks();
+            admin.getBotAiCredentials.mockResolvedValue(resting);
+            const service = new AIService(memory, admin, "http://admin.local");
+            expect(service.isRestingLine("I’m resting right now. Try me again later.")).toBe(false);
+            await reply(service, "key-abc");
+            expect(service.isRestingLine("I’m resting right now. Try me again later.")).toBe(true);
+            expect(service.isRestingLine("  I’m resting right now. Try me again later. ")).toBe(true);
+            expect(service.isRestingLine("Something else the bot said")).toBe(false);
+        });
+
         it("makes the quick helper calls come back empty instead of reaching another AI", async () => {
             const { admin, memory } = buildMocks();
             admin.getBotAiCredentials.mockResolvedValue(resting);

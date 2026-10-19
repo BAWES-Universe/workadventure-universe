@@ -91,6 +91,7 @@ function createAiMock() {
         quickClassify: vi.fn(),
         quickGenerate: vi.fn(),
         generateBotResponseStream: vi.fn(),
+        isRestingLine: vi.fn((_text: string) => false),
     };
 }
 
@@ -313,6 +314,31 @@ describe('BaseBehavior interruption routing', () => {
         expect(blankResetAfterAck).toBe(false);
         // 3) The responseId rotated after the reset — follow-up content landed in a fresh bubble
         expect(result.responseId).not.toBe('resp-orig');
+    });
+
+    it('regenerateOnRepetition: leaves a resting bot’s fixed line alone, so the second message still gets its reply', async () => {
+        const line = 'I’m resting right now. Try me again later.';
+        ai.isRestingLine.mockImplementation((text: string) => text === line);
+        behavior.setServices(ai as any, {} as any);
+        const processed = { cleaned: line, metrics: { repetitionScore: 1 } };
+        const result = await behavior.testRegenerateOnRepetition({
+            botId: 'bot-1',
+            playerId: SENDER,
+            playerMessage: 'hello again',
+            chatInstructions: 'You are a test bot.',
+            aiProviderRef: 'key-abc',
+            spaceName: SPACE,
+            context: '',
+            processed,
+            processedMessage: line,
+            fullMessage: line,
+            responseId: 'resp-orig',
+            debugLabel: 'TestBehavior',
+        });
+        expect(result).toEqual({ processed, processedMessage: line, responseId: 'resp-orig' });
+        expect(ai.generateBotResponseStream).not.toHaveBeenCalled();
+        expect(ai.quickGenerate).not.toHaveBeenCalled();
+        expect(bot.sendStreamMessage).not.toHaveBeenCalled();
     });
 
     it('regenerateOnRepetition: generates the exhausted-attempts fallback via LLM (no hardcoded strings)', async () => {
