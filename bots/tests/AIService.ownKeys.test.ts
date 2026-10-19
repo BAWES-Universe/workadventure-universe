@@ -335,6 +335,35 @@ describe("AIService – finding a bot's AI by bot id", () => {
             expect(service.isRestingLine("Something else the bot said")).toBe(false);
         });
 
+        describe("a slow credential lookup on the quick helper calls", () => {
+            beforeEach(() => vi.useFakeTimers());
+            afterEach(() => vi.useRealTimers());
+
+            const slowLookup = (ms: number) => {
+                const { admin, memory } = buildMocks();
+                admin.getBotAiCredentials.mockImplementation(() => new Promise((resolve) => setTimeout(() => resolve(provider({ providerId: "key-abc" })), ms)));
+                const generate = vi.fn(async (_system: string, _prompt: string, _config: unknown, _history?: unknown, signal?: AbortSignal) => ({ content: `ok:${signal?.aborted}` }));
+                mockGetOrCreateProvider.mockReturnValue({ generate });
+                return { service: new AIService(memory, admin, "http://admin.local"), generate };
+            };
+
+            it("still gives the provider call its full time, instead of starting it already aborted", async () => {
+                const { service, generate } = slowLookup(2500);
+                const pending = service.quickGenerate("key-abc", "sys", "prompt", "bot-1");
+                await vi.advanceTimersByTimeAsync(2500);
+                expect(await pending).toBe("ok:false");
+                expect(generate).toHaveBeenCalledTimes(1);
+            });
+
+            it("gives up on a lookup that takes longer than the quick deadline, without calling the provider", async () => {
+                const { service, generate } = slowLookup(10000);
+                const pending = service.quickGenerate("key-abc", "sys", "prompt", "bot-1");
+                await vi.advanceTimersByTimeAsync(3500);
+                expect(await pending).toBe("");
+                expect(generate).not.toHaveBeenCalled();
+            });
+        });
+
         it("makes the quick helper calls come back empty instead of reaching another AI", async () => {
             const { admin, memory } = buildMocks();
             admin.getBotAiCredentials.mockResolvedValue(resting);
