@@ -248,9 +248,9 @@ describe("AIService – finding a bot's AI by bot id", () => {
             mockGenerateStream.mockImplementationOnce(() => failed(403));
             await reply(service, "key-abc");
             expect(admin.reportAiHealth.mock.calls.map((call: any[]) => call[1])).toEqual([
-                { ok: false, rejected: false },
-                { ok: false, rejected: true },
-                { ok: false, rejected: true },
+                { ok: false, rejected: false, status: 500 },
+                { ok: false, rejected: true, status: 401 },
+                { ok: false, rejected: true, status: 403 },
             ]);
         });
 
@@ -263,8 +263,8 @@ describe("AIService – finding a bot's AI by bot id", () => {
             mockGenerateStream.mockImplementationOnce(toolCall).mockImplementationOnce(() => failed(401));
             await reply(service, "key-abc");
             expect(admin.reportAiHealth.mock.calls.map((call: any[]) => call[1])).toEqual([
-                { ok: false, rejected: false },
-                { ok: false, rejected: true },
+                { ok: false, rejected: false, status: 500 },
+                { ok: false, rejected: true, status: 401 },
             ]);
         });
 
@@ -275,6 +275,23 @@ describe("AIService – finding a bot's AI by bot id", () => {
             mockGenerateStream.mockImplementationOnce(toolCall).mockImplementationOnce(answer);
             await reply(service, "key-abc");
             expect(admin.reportAiHealth.mock.calls.map((call: any[]) => call[1])).toEqual([{ ok: true }]);
+        });
+
+        it("sends no status when the provider gave none (a dropped connection), and the provider's own status otherwise", async () => {
+            const { admin, memory } = buildMocks();
+            admin.getBotAiCredentials.mockResolvedValue(ownKey());
+            const service = new AIService(memory, admin, "http://admin.local");
+            mockGenerateStream.mockImplementationOnce(() => failed(undefined));
+            await reply(service, "key-abc");
+            mockGenerateStream.mockImplementationOnce(() => failed(429));
+            await reply(service, "key-abc");
+            mockGenerateStream.mockImplementationOnce(() => failed(400));
+            await reply(service, "key-abc");
+            expect(admin.reportAiHealth.mock.calls.map((call: any[]) => call[1])).toEqual([
+                { ok: false, rejected: false },
+                { ok: false, rejected: false, status: 429 },
+                { ok: false, rejected: false, status: 400 },
+            ]);
         });
 
         it("tells Orbit nothing when the reply was cancelled", async () => {

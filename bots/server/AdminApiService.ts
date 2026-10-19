@@ -535,9 +535,11 @@ export class AdminApiService {
 
     /**
      * Tells Orbit how a reply through a person's own key went (#374), so it can mark the key Down after two failed
-     * replies in a row or a rejected key. Fire-and-forget: a report never slows or breaks a reply.
+     * replies in a row or a rejected key. `status` is the HTTP status the provider answered with, when it did: Orbit decides
+     * which statuses count against the key (a 400 or a 429 says nothing about the key). Fire-and-forget: a report never
+     * slows or breaks a reply.
      */
-    async reportAiHealth(botId: string, outcome: { ok: true } | { ok: false; rejected: boolean }): Promise<void> {
+    async reportAiHealth(botId: string, outcome: { ok: true } | { ok: false; rejected: boolean; status?: number }): Promise<void> {
         if (!this.isConfigured()) return;
         const botServiceToken = process.env.BOT_SERVICE_TOKEN;
         if (!botServiceToken) return;

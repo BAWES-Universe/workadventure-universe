@@ -1894,7 +1894,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     const failed = error || followUpFailedForHealth;
                     const status = errorStatus ?? followUpErrorStatus;
                     this.adminApiService
-                        .reportAiHealth(botId, failed ? { ok: false, rejected: status === 401 || status === 403 } : { ok: true })
+                        .reportAiHealth(botId, failed ? { ok: false, rejected: status === 401 || status === 403, ...(status ? { status } : {}) } : { ok: true })
                         .catch(() => {});
                 }
 
