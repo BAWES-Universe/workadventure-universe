@@ -9,6 +9,8 @@ import type { AIProvider } from '../AIProvider';
 import type { AIProviderConfig, AIStreamChunk, AIResponse } from '../types';
 import { linkExternalAbort } from './abortUtils';
 import { resolveVisionSupport } from './visionModels';
+import { decryptApiKey } from '../encryption';
+import { fetchFor, statusFromError } from './ownKeyHttp';
 import * as Sentry from '@sentry/node';
 
 export class LMStudioProvider implements AIProvider {
@@ -16,6 +18,19 @@ export class LMStudioProvider implements AIProvider {
 
     getName(): string {
         return 'LMStudio';
+    }
+
+    /**
+     * The server's own LM Studio sends no key, as it always has. A person's own key (#374) may have one, for a
+     * server that asks for it: only then is an Authorization header sent.
+     */
+    private headers(config: AIProviderConfig): Record<string, string> {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (config.ownKey && config.apiKeyEncrypted) {
+            const key = decryptApiKey(config.apiKeyEncrypted);
+            if (key) headers.Authorization = `Bearer ${key}`;
+        }
+        return headers;
     }
 
     isReady(): boolean {
@@ -86,11 +101,9 @@ export class LMStudioProvider implements AIProvider {
             cleanupExternalAbort = linkExternalAbort(externalSignal, controller);
             timeoutId = setTimeout(() => controller.abort(), timeout);
 
-            const response = await fetch(endpoint, {
+            const response = await fetchFor(config)(endpoint, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
+                headers: this.headers(config),
                 body: JSON.stringify({
                     model: config.model,
                     messages: [
@@ -235,6 +248,7 @@ export class LMStudioProvider implements AIProvider {
                     tokensUsed: 0,
                     latency,
                     error: !externallyCancelled,
+                    errorStatus: statusFromError(error),
                 },
             };
         } finally {
@@ -270,11 +284,9 @@ export class LMStudioProvider implements AIProvider {
             try {
                 const endpoint = `${config.endpoint}/v1/chat/completions`;
 
-                const response = await fetch(endpoint, {
+                const response = await fetchFor(config)(endpoint, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
+                    headers: this.headers(config),
                     body: JSON.stringify({
                         model: config.model,
                         messages: [
