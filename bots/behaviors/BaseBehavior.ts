@@ -14,6 +14,7 @@ import type { ConversationMemory } from '../memory/ConversationMemory';
 import type { ResponseProcessor, ProcessedResponse } from '../ai/ResponseProcessor';
 import { parseEmotionsFromResponse, appendStreamedChunk, detectEmotionPrefixAtEnd } from '../ai/EmotionParser';
 import type { BotMetricsCollector } from '../metrics/BotMetricsCollector';
+import { BotBusyError } from '../utils/summonErrors';
 
 /**
  * Per-player conversation state for mid-stream interruption handling.
@@ -769,7 +770,11 @@ export abstract class BaseBehavior {
             // Only check the actual size, not the stale isEngaged flag
             if (actualEngagedCount > 0) {
                 console.log(`[Behavior] Bot cannot be summoned - currently engaged with ${actualEngagedCount} user(s)`);
-                throw new Error('Bot is currently engaged with another player and cannot be summoned');
+                // Only the player asking? Then the bot is already with them.
+                const summonerId = this.getUserIdForUuid(playerUuid);
+                throw new BotBusyError(
+                    summonerId !== undefined && actualEngagedCount === 1 && this.engagedWithUsers.has(summonerId)
+                );
             }
             // If we get here, bot is not engaged - ensure isEngaged is false
             this.isEngaged = false;

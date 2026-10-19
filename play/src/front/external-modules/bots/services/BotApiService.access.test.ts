@@ -66,14 +66,14 @@ describe("summoning a bot the owner limits", () => {
         vi.restoreAllMocks();
     });
 
-    it("hands back the owner's line as it is, marked as a refusal", async () => {
+    it("hands back the owner's line as it is, as a not_allowed failure", async () => {
         vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
             json({ summoned: false, error: "Nora's owner limits who can call it over", code: "not_allowed" }, 403)
         );
         await expect(service().summonBot("b1", "u1", 1, 2)).resolves.toEqual({
             summoned: false,
+            failure: "not_allowed",
             reason: "Nora's owner limits who can call it over",
-            refused: true,
         });
     });
 
@@ -84,16 +84,16 @@ describe("summoning a bot the owner limits", () => {
                 503
             )
         );
-        const result = await service().summonBot("b1", "u1", 1, 2);
-        expect(result.refused).toBe(true);
-        expect(result.reason).toBe("Nora can't check that right now. Try again soon.");
+        await expect(service().summonBot("b1", "u1", 1, 2)).resolves.toEqual({
+            summoned: false,
+            failure: "cannot_check",
+            reason: "Nora can't check that right now. Try again soon.",
+        });
     });
 
-    it("leaves every other failure as it was, not marked as a refusal", async () => {
+    it("leaves every other failure as it was, with no owner line", async () => {
         vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(json({ error: "Bot not found or not spawned" }, 404));
-        const result = await service().summonBot("b1", "u1", 1, 2);
-        expect(result.summoned).toBe(false);
-        expect(result.refused).toBeUndefined();
+        await expect(service().summonBot("b1", "u1", 1, 2)).resolves.toEqual({ summoned: false, failure: "not_here" });
     });
 });
 

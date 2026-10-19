@@ -24,6 +24,7 @@ import { SelfImprovementLoop } from '../improvement/SelfImprovementLoop';
 import type { AutoPilotImprovement } from '../services/AutoPilotImprovement';
 import * as Sentry from '@sentry/node';
 import { resolveWsUrl } from '../utils/resolveWsUrl';
+import { BotUnavailableError } from '../utils/summonErrors';
 import { hasPlayersInRoom } from './roomOccupancy';
 import {
     buildBehaviorConfig,
@@ -816,12 +817,12 @@ export class BotManager {
     ): Promise<{ x: number; y: number } | undefined> {
         const instance = this.bots.get(botId);
         if (!instance) {
-            throw new Error(`Bot ${botId} not found or not spawned`);
+            throw new BotUnavailableError(`Bot ${botId} not found or not spawned`);
         }
 
         const bot = instance.client;
         if (!bot.isConnected()) {
-            throw new Error(`Bot ${botId} is not connected`);
+            throw new BotUnavailableError(`Bot ${botId} is not connected`);
         }
 
         // The bot goes where it sees the player, never to a spot the caller names. A player the bot cannot see in

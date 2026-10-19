@@ -12,6 +12,7 @@ import { wokaMenuStore, type WokaMenuData, type WokaMenuAction } from "../../Sto
 import { warningMessageStore } from "../../Stores/ErrorStore";
 import { BOT_SERVER_URL } from "../../Enum/EnvironmentVariable";
 import { botApiService } from "./services/BotApiService";
+import { summonFailureLine, type SummonFailure } from "./services/summonFailure";
 import { destroyBotEditorTool } from "./phaser/BotEditorTool";
 import { IconMapPin, IconRobot } from "@wa-icons";
 
@@ -1155,6 +1156,7 @@ function registerSummonButtonsForBots() {
                             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                                 console.warn(`[Bot Extension] Cannot summon - scene not available`);
                             }
+                            showSummonFailure("failed", playerData.name);
                             return;
                         }
 
@@ -1165,6 +1167,7 @@ function registerSummonButtonsForBots() {
                             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                                 console.warn(`[Bot Extension] Cannot summon - current player not available`);
                             }
+                            showSummonFailure("failed", playerData.name);
                             return;
                         }
 
@@ -1187,32 +1190,29 @@ function registerSummonButtonsForBots() {
                         // than do nothing
                         const access = await botApiService.getBotAccess(botId, "summon");
                         if (access.allowed === false) {
-                            warningMessageStore.addWarningMessage(
-                                access.reason ||
-                                    get(LL).mapEditor.edit.bots.page.access.summonRefused({ name: playerData.name }),
-                                { closable: true }
-                            );
+                            showSummonFailure("not_allowed", playerData.name, access.reason);
                             return;
                         }
                         // Call summon API - it will validate if this is a bot
-                        const summoned = await botApiService.summonBot(
+                        const result = await botApiService.summonBot(
                             botId, // Use botId (without "bot-" prefix)
                             currentUuid,
                             currentPosition.x,
                             currentPosition.y
                         );
-                        if (!summoned.summoned && summoned.refused && summoned.reason) {
-                            warningMessageStore.addWarningMessage(summoned.reason, { closable: true });
+                        if (!result.summoned) {
+                            showSummonFailure(result.failure, playerData.name, result.reason);
                             return;
                         }
                         if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                             console.log(`[Bot Extension] Summon request sent successfully`);
                         }
                     } catch (error) {
-                        // Silently fail if it's not a bot (API will return 404)
+                        // Anything unexpected still tells the player: nothing fails silently.
                         if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                             console.warn(`[Bot Extension] Summon failed for ${botUuid}:`, error);
                         }
+                        showSummonFailure("failed", playerData.name);
                     }
                 },
             };
@@ -1233,6 +1233,18 @@ function registerSummonButtonsForBots() {
     } catch (error) {
         console.error("[Bot Extension] Error registering summon buttons:", error);
     }
+}
+
+/** Tell the player why a Summon did not happen, in a short line. Every failure goes through here. */
+function showSummonFailure(failure: SummonFailure, botName: string | undefined, reason?: string): void {
+    const name = botName || "The bot";
+    // The owner's limits come in the bot server's own words (the owner's line when one is set); without them, plain ones
+    const text =
+        reason ||
+        (failure === "not_allowed"
+            ? get(LL).mapEditor.edit.bots.page.access.summonRefused({ name })
+            : get(LL).woka.summon[summonFailureLine(failure, localUserStore.isLogged())]({ name }));
+    warningMessageStore.addWarningMessage(text, { closable: true });
 }
 
 // Function to initialize the bot editor integration

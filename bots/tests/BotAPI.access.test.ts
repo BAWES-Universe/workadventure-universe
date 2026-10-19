@@ -93,6 +93,37 @@ describe('Summon', () => {
         expect(botManager.summonBot).not.toHaveBeenCalled();
     });
 
+    it('asks about a guest as a guest, and calls the bot over for one Orbit allows', async () => {
+        const response = await post(
+            '/api/bots/b1/summon',
+            { playerUuid: 'guest-uuid', playerX: 1, playerY: 2 },
+            { 'X-WA-Auth': GAME_TOKEN }
+        );
+
+        expect(response.status).toBe(200);
+        expect(gate.check).toHaveBeenCalledWith('b1', 'summon', { signedIn: false, identifier: undefined }, 'Nora');
+        expect(botManager.summonBot).toHaveBeenCalledWith('b1', { playerUuid: 'guest-uuid' });
+    });
+
+    it("refuses a guest the owner limited, with the owner's line, and the bot does not move", async () => {
+        gate.check.mockResolvedValue({
+            allowed: false,
+            kind: 'refused',
+            code: 'not_allowed',
+            line: "Nora's owner limits who can call it over.",
+        });
+
+        const response = await post(
+            '/api/bots/b1/summon',
+            { playerUuid: 'guest-uuid', playerX: 1, playerY: 2 },
+            { 'X-WA-Auth': GAME_TOKEN }
+        );
+
+        expect(response.status).toBe(403);
+        expect(await response.json()).toMatchObject({ summoned: false, code: 'not_allowed' });
+        expect(botManager.summonBot).not.toHaveBeenCalled();
+    });
+
     it('says it cannot check, and the bot does not move, when Orbit cannot answer', async () => {
         gate.check.mockResolvedValue({
             allowed: false,

@@ -9,10 +9,12 @@ import {
 } from "../accessModel";
 import { resolveCredentialUrl } from "../../admin-api/iframeAuth";
 import { freshOrbitAccessToken, type GameTokenHolder } from "../../admin-api/orbitAccessToken";
+import { classifySummonFailure, type SummonResult } from "./summonFailure";
 
 interface AuthError extends Error {
     isAuthError: boolean;
     isSessionExpired: boolean;
+    status?: number;
 }
 
 const SESSION_KEY = "orbit_admin_session_v2";
@@ -529,7 +531,11 @@ export class BotApiService {
             "Content-Type": "application/json",
             ...(options.headers as Record<string, string>),
         };
-        const isPublicRoomLifecycle = endpoint === "/api/bots/room-enter" || endpoint === "/api/bots/room-leave";
+        // Room enter/leave, Summon and "may I?" are for every player, guests included: the game token is enough for them.
+        const isPublicRoomLifecycle =
+            endpoint === "/api/bots/room-enter" ||
+            endpoint === "/api/bots/room-leave" ||
+            /^\/api\/bots\/[^/]+\/(summon|access)$/.test(endpoint);
         const gameToken = this.getGameToken();
         if (gameToken) {
             headers["X-WA-Auth"] = gameToken;
@@ -555,7 +561,7 @@ export class BotApiService {
             try {
                 const errorJson = JSON.parse(errorText);
                 errorMessage = errorJson.message || errorJson.error || errorMessage;
-                if (typeof errorJson.code === "string") errorCode = errorJson.code;
+                errorCode = typeof errorJson.code === "string" ? errorJson.code : undefined;
                 // Check if it's a session expiration error
                 if (
                     errorMessage.toLowerCase().includes("session expired") ||
@@ -606,10 +612,14 @@ export class BotApiService {
                 ) as AuthError;
                 authError.isAuthError = true;
                 authError.isSessionExpired = isSessionExpired;
+                authError.status = response.status;
                 throw authError;
             }
 
-            throw Object.assign(new Error(errorMessage), { code: errorCode });
+            const failure = new Error(errorMessage) as Error & { status?: number; code?: string };
+            failure.status = response.status;
+            failure.code = errorCode;
+            throw failure;
         }
 
         return response;
@@ -738,13 +748,9 @@ export class BotApiService {
      * Summon a bot to the player's position
      * The bot will pathfind to the player, stop at their position, and initiate a bubble
      * When the player leaves, the bot will return to its original position
+     * Never throws: a refusal comes back as `failure`, so the caller can tell the player why.
      */
-    async summonBot(
-        botId: string,
-        playerUuid: string,
-        playerX: number,
-        playerY: number
-    ): Promise<{ summoned: boolean; reason?: string; refused?: boolean }> {
+    async summonBot(botId: string, playerUuid: string, playerX: number, playerY: number): Promise<SummonResult> {
         try {
             const response = await this.fetchBotServer(`/api/bots/${botId}/summon`, {
                 method: "POST",
@@ -754,17 +760,18 @@ export class BotApiService {
                     playerY,
                 }),
             });
-            return response.json();
+            const body = (await response.json()) as { summoned?: boolean } | null;
+            return body?.summoned === false ? { summoned: false, failure: "failed" } : { summoned: true };
         } catch (error) {
             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                 console.error("[BotApiService] Error summoning bot:", error);
             }
             // The owner's limits (or Orbit not answering) come back as a line meant for the person: pass it on as it is
-            const code = (error as { code?: unknown }).code;
-            if (error instanceof Error && (code === "not_allowed" || code === "cannot_check")) {
-                return { summoned: false, reason: error.message, refused: true };
+            const failure = classifySummonFailure(error);
+            if ((failure === "not_allowed" || failure === "cannot_check") && error instanceof Error) {
+                return { summoned: false, failure, reason: error.message };
             }
-            return { summoned: false, reason: String(error) };
+            return { summoned: false, failure };
         }
     }
 
