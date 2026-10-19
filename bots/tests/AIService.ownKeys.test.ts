@@ -361,6 +361,19 @@ describe("AIService – finding a bot's AI by bot id", () => {
             ]);
         });
 
+        it("counts a reply as failed when the first call broke off after its tool calls, even if the follow-up worked", async () => {
+            const { admin, memory } = buildMocks();
+            admin.getBotAiCredentials.mockResolvedValue(ownKey());
+            const service = new AIService(memory, admin, "http://admin.local");
+            async function* brokenOffAfterToolCall() {
+                yield { content: "", done: false, toolCalls: [{ id: "call_1", name: "get_bot_position", arguments: "{}" }] };
+                yield { content: "", done: true, metadata: { tokensUsed: 5, latency: 10, error: true, errorStatus: 502 } };
+            }
+            mockGenerateStream.mockImplementationOnce(brokenOffAfterToolCall).mockImplementationOnce(answer);
+            await reply(service, "key-abc");
+            expect(admin.reportAiHealth.mock.calls.map((call: any[]) => call[1])).toEqual([{ ok: false, rejected: false, status: 502 }]);
+        });
+
         it("still counts a reply as worked when its tool follow-up worked", async () => {
             const { admin, memory } = buildMocks();
             admin.getBotAiCredentials.mockResolvedValue(ownKey());
