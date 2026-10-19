@@ -75,8 +75,8 @@ export function parsePublicHttpsUrl(raw: string): URL {
 
 interface Checked {
     url: URL;
-    address: string;
-    family: 4 | 6;
+    /** Every address the name resolved to, all of them checked: the connection may fall back from one to the next */
+    addresses: { address: string; family: 4 | 6 }[];
 }
 
 async function checkAddress(raw: string): Promise<Checked> {
@@ -89,7 +89,7 @@ async function checkAddress(raw: string): Promise<Checked> {
     }
     if (addresses.length === 0) throw new AddressError('unresolved');
     if (addresses.some((entry) => !isPublicAddress(entry.address))) throw new AddressError('private');
-    return { url, address: addresses[0].address, family: addresses[0].family === 6 ? 6 : 4 };
+    return { url, addresses: addresses.map((entry) => ({ address: entry.address, family: entry.family === 6 ? 6 : 4 })) };
 }
 
 /** Passes the answer through and fails it if it grows past the cap. */
@@ -107,7 +107,7 @@ function capped(limit: number): Transform {
 /** `fetch` for an address a person typed: checked first, connected to as checked, redirects handed back, never followed. */
 export async function ownComputerFetch(input: string | URL, init: RequestInit = {}): Promise<Response> {
     const checked = await checkAddress(String(input));
-    const { url, address, family } = checked;
+    const { url, addresses } = checked;
     const headers: Record<string, string> = {};
     new Headers(init.headers).forEach((value, key) => {
         headers[key] = value;
@@ -130,10 +130,10 @@ export async function ownComputerFetch(input: string | URL, init: RequestInit = 
                 port: url.port || 443,
                 path: `${url.pathname}${url.search}`,
                 headers,
-                // The name is never looked up again: the socket gets the address that was checked.
+                // The name is never looked up again: the socket gets the addresses that were checked, and can fall back between them.
                 lookup: ((_host: string, options: { all?: boolean }, callback: (...args: unknown[]) => void) => {
-                    if (options && options.all) callback(null, [{ address, family }]);
-                    else callback(null, address, family);
+                    if (options && options.all) callback(null, addresses);
+                    else callback(null, addresses[0].address, addresses[0].family);
                 }) as never,
             },
             (response) => {
