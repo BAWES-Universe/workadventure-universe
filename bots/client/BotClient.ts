@@ -378,8 +378,10 @@ export class BotClient {
                 this.sendStoppedPosition();
             }
         }
-        if (this.behavior && this.behavior.constructor === behavior.constructor) {
-            behavior.carryLookFrom(this.behavior);
+        if (this.behavior) {
+            // Whoever is around stays known, whether the config changed or the kind of behavior did
+            behavior.carryPeopleFrom(this.behavior);
+            if (this.behavior.constructor === behavior.constructor) behavior.carryLookFrom(this.behavior);
         }
         this.behavior = behavior;
         behavior.setBot(this);

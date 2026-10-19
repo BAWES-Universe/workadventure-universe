@@ -484,6 +484,15 @@ export abstract class BaseBehavior {
     }
 
     /**
+     * Who is around, as the game told this bot. A rebuilt behavior is not told about people already there, so without
+     * this a signed-in person already chatting would be asked about as a stranger (and could be refused).
+     */
+    carryPeopleFrom(previous: BaseBehavior): void {
+        for (const [userId, uuid] of previous.userIdToUuid) this.userIdToUuid.set(userId, uuid);
+        for (const [userId, isLogged] of previous.userIdToIsLogged) this.userIdToIsLogged.set(userId, isLogged);
+    }
+
+    /**
      * The direction a bot that stays put faces when nobody is around: its saved facing, else down (what the editor
      * shows). Null for a bot that wanders or walks a route: it faces the way it walks.
      */
