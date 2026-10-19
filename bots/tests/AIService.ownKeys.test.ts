@@ -273,10 +273,10 @@ describe("AIService – finding a bot's AI by bot id", () => {
             expect(mockGenerateStream.mock.calls[0][3].ownKey).toEqual({ addressTyped: true });
         });
 
-        describe("pictures", () => {
-            const picture = ["https://cdn.example.com/cat.png"];
-            const replyWithPicture = (service: any) =>
-                drain(service.generateBotResponseStream("bot-1", 42, "what is this?", "You are a bot.", "key-abc", "space-1", "", undefined, undefined, undefined, picture));
+        describe("images", () => {
+            const images = ["https://cdn.example.com/cat.png"];
+            const replyWithImages = (service: any) =>
+                drain(service.generateBotResponseStream("bot-1", 42, "what is this?", "You are a bot.", "key-abc", "space-1", "", undefined, undefined, undefined, images));
 
             beforeEach(() => {
                 mockSupportsVision.mockReset();
@@ -290,11 +290,11 @@ describe("AIService – finding a bot's AI by bot id", () => {
                 admin.getAvailableAIProviders.mockResolvedValue([provider({ defaultVision: true, supportsVision: true })]);
                 mockGenerateStream.mockImplementation(answer);
                 const service = new AIService(memory, admin, "http://admin.local");
-                await replyWithPicture(service);
+                await replyWithImages(service);
                 expect(admin.getAvailableAIProviders).not.toHaveBeenCalled();
                 expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
                 expect(mockGenerateStream.mock.calls[0][0]).not.toContain("Description from a vision model");
-                expect(mockGenerateStream.mock.calls[0].slice(4)).not.toContainEqual(picture);
+                expect(mockGenerateStream.mock.calls[0].slice(4)).not.toContainEqual(images);
             });
 
             it("go to the key's own model when it has Vision", async () => {
@@ -303,8 +303,8 @@ describe("AIService – finding a bot's AI by bot id", () => {
                 mockSupportsVision.mockReturnValue(true);
                 mockGenerateStream.mockImplementation(answer);
                 const service = new AIService(memory, admin, "http://admin.local");
-                await replyWithPicture(service);
-                expect(mockGenerateStream.mock.calls[0]).toContainEqual(picture);
+                await replyWithImages(service);
+                expect(mockGenerateStream.mock.calls[0]).toContainEqual(images);
                 expect(admin.getAvailableAIProviders).not.toHaveBeenCalled();
             });
 
@@ -316,7 +316,7 @@ describe("AIService – finding a bot's AI by bot id", () => {
                 mockGetOrCreateProvider.mockReturnValue(describer);
                 mockGenerateStream.mockImplementation(answer);
                 const service = new AIService(memory, admin, "http://admin.local");
-                await replyWithPicture(service);
+                await replyWithImages(service);
                 expect(describer.generate).toHaveBeenCalledTimes(1);
             });
         });
