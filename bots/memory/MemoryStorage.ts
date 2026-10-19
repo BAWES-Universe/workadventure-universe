@@ -7,6 +7,9 @@
 
 import type { BotPlayerMemory } from './ConversationMemory';
 import axios from 'axios';
+import { parseForgetNotice, type MemoryForgetHandler } from './ForgetNotice';
+
+export type { MemoryForgetNotice, MemoryForgetHandler } from './ForgetNotice';
 
 export interface MemoryStorageConfig {
     adminApiUrl?: string;
@@ -15,17 +18,6 @@ export interface MemoryStorageConfig {
     saveInterval: number; // Save interval in milliseconds (default: 5 minutes)
     maxRetries: number;
 }
-
-/**
- * Who Orbit asked the bot server to forget (Hide bot conversations, #435: a manager pressed Forget on a private bot).
- * Orbit skipped these people in the save it answers, so the bot server must drop them too or it would save them again.
- */
-export interface MemoryForgetNotice {
-    everyone: boolean;
-    userUuids: string[];
-}
-
-export type MemoryForgetHandler = (botId: string, notice: MemoryForgetNotice) => void;
 
 export class MemoryStorage {
     private adminApiUrl?: string;
@@ -168,17 +160,11 @@ export class MemoryStorage {
     }
 
     /**
-     * Pass on who Orbit asked us to forget. A missing or malformed answer is no answer (how every save went before);
-     * a handler that fails must never turn a save that worked into a retry.
+     * Pass on who Orbit asked us to forget. A handler that fails must never turn a save that worked into a retry.
      */
     private applyForgetNotice(botId: string, forget: unknown): void {
-        if (!this.forgetHandler || !forget || typeof forget !== 'object') return;
-        const { everyone, userUuids } = forget as { everyone?: unknown; userUuids?: unknown };
-        const notice: MemoryForgetNotice = {
-            everyone: everyone === true,
-            userUuids: Array.isArray(userUuids) ? userUuids.filter((uuid): uuid is string => typeof uuid === 'string') : [],
-        };
-        if (!notice.everyone && notice.userUuids.length === 0) return;
+        const notice = parseForgetNotice(forget);
+        if (!this.forgetHandler || !notice) return;
         try {
             this.forgetHandler(botId, notice);
         } catch (error) {

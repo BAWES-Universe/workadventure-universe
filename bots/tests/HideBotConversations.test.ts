@@ -240,6 +240,60 @@ describe("AdminApiService.isBotPrivate", () => {
         expect(hoisted.axios.get).not.toHaveBeenCalled();
     });
 
+    it("hands the people Orbit says to forget to the forget handler, and answers as usual", async () => {
+        const forgotten: unknown[] = [];
+        service.setForgetHandler((botId: string, notice: unknown) => forgotten.push([botId, notice]));
+        hoisted.axios.get.mockResolvedValue({ data: { hidden: true, forget: { everyone: false, userUuids: ["uuid-bob", 7] } } });
+        expect(await service.isBotPrivate("bot-1")).toBe(true);
+        expect(forgotten).toEqual([["bot-1", { everyone: false, userUuids: ["uuid-bob"] }]]);
+    });
+
+    it("ignores an answer with nobody to forget, a malformed one, and a handler that fails", async () => {
+        const handler = vi.fn(() => { throw new Error("boom"); });
+        service.setForgetHandler(handler);
+        for (const forget of [undefined, null, "bob", [], { everyone: false, userUuids: [] }]) {
+            hoisted.axios.get.mockResolvedValueOnce({ data: { hidden: false, forget } });
+            expect(await service.isBotPrivate("bot-1", { fresh: true })).toBe(false);
+        }
+        expect(handler).not.toHaveBeenCalled();
+        vi.spyOn(console, "error").mockImplementation(() => undefined);
+        hoisted.axios.get.mockResolvedValueOnce({ data: { hidden: true, forget: { everyone: true } } });
+        expect(await service.isBotPrivate("bot-1", { fresh: true })).toBe(true);
+        expect(handler).toHaveBeenCalledTimes(1);
+    });
+
+    it("asks again straight away when told to (the 30-second check), instead of waiting for the cache", async () => {
+        hoisted.axios.get.mockResolvedValue(answer(false));
+        await service.isBotPrivate("bot-1");
+        await service.isBotPrivate("bot-1", { fresh: true });
+        expect(hoisted.axios.get).toHaveBeenCalledTimes(2);
+    });
+
+    it("checks every running bot every 30 seconds, and stops when told", async () => {
+        hoisted.axios.get.mockResolvedValue(answer(false));
+        const running = new Map([["bot-1", 1], ["bot-2", 2]]);
+        service.startPrivacySync(() => running.keys());
+        service.startPrivacySync(() => running.keys()); // a second start does not double it
+        await vi.advanceTimersByTimeAsync(30_000);
+        expect(hoisted.axios.get.mock.calls.map((call) => call[0]).sort()).toEqual(["http://orbit.local/api/bots/bot-1/privacy", "http://orbit.local/api/bots/bot-2/privacy"]);
+        running.delete("bot-1");
+        hoisted.axios.get.mockClear();
+        await vi.advanceTimersByTimeAsync(30_000);
+        expect(hoisted.axios.get).toHaveBeenCalledTimes(1);
+        service.stopPrivacySync();
+        hoisted.axios.get.mockClear();
+        await vi.advanceTimersByTimeAsync(120_000);
+        expect(hoisted.axios.get).not.toHaveBeenCalled();
+    });
+
+    it("does not check anything when the bot server is not connected to Orbit", async () => {
+        const { AdminApiService } = await import("../server/AdminApiService");
+        const unconnected = new AdminApiService("", "");
+        unconnected.startPrivacySync(() => ["bot-1"]);
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(hoisted.axios.get).not.toHaveBeenCalled();
+    });
+
     it("is not private, and asks nobody, when the bot server is not connected to Orbit", async () => {
         const { AdminApiService } = await import("../server/AdminApiService");
         const unconnected = new AdminApiService("", "");
@@ -426,6 +480,18 @@ describe("memory: always kept, and forgotten when Orbit says so", () => {
         expect([...memory.memories.keys()]).toEqual(["bot-2_7"]);
         expect([...memory.loadedMemoriesByUuid.keys()]).toEqual(["bot-2_uuid-bob"]);
         expect(memory.pendingSaves.size).toBe(0);
+    });
+
+    it("drops a forgotten person when told by the 30-second privacy check, the same way", async () => {
+        const memory: any = await newMemory();
+        seed(memory, "uuid-bob", 7);
+        const { AdminApiService } = await import("../server/AdminApiService");
+        const admin = new AdminApiService("http://orbit.local", "admin-secret");
+        admin.setForgetHandler((botId, notice) => memory.forget(botId, notice));
+        hoisted.axios.get.mockResolvedValue({ data: { hidden: true, forget: { everyone: false, userUuids: ["uuid-bob"] } } });
+        await admin.isBotPrivate("bot-1", { fresh: true });
+        expect(memory.memories.has("bot-1_7")).toBe(false);
+        expect(memory.loadedMemoriesByUuid.has("bot-1_uuid-bob")).toBe(false);
     });
 
     it("ignores a forget list that is not one, and never turns a good save into a retry", async () => {

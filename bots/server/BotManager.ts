@@ -152,6 +152,8 @@ export class BotManager {
                 immediateSaveEnabled: true,
             });
             this.conversationMemory = persistentMemory;
+            // Orbit tells the bot server who a manager asked a private bot to forget (#435)
+            this.adminApiService.setForgetHandler?.((botId, notice) => persistentMemory.forget(botId, notice));
             
             // Initialize AI service
             const adminApiUrl = process.env.ADMIN_API_URL || '';
@@ -257,6 +259,8 @@ export class BotManager {
 
         // Start room occupancy verification
         this.startRoomVerification();
+        // Hide bot conversations (#1166): a Forget reaches bots nobody is talking to
+        this.adminApiService.startPrivacySync?.(() => this.bots.keys());
 
         // TODO: Load bots from storage (WAM files + Admin API)
         // This will be called on server startup
@@ -1283,6 +1287,7 @@ export class BotManager {
 
         // Stop verification interval
         this.stopRoomVerification();
+        this.adminApiService.stopPrivacySync?.();
 
         const shutdownPromises = Array.from(this.bots.keys()).map(botId => this.despawnBot(botId));
         await Promise.all(shutdownPromises);

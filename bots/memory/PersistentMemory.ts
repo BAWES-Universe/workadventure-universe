@@ -9,7 +9,8 @@
  */
 
 import { ConversationMemory, type BotPlayerMemory, type EmotionalState } from './ConversationMemory';
-import { MemoryStorage, type MemoryForgetNotice } from './MemoryStorage';
+import { MemoryStorage } from './MemoryStorage';
+import type { MemoryForgetNotice } from './ForgetNotice';
 
 export type ConversationPurpose = 'navigation' | 'information' | 'social' | 'support' | 'entertainment' | 'unknown';
 
@@ -57,7 +58,7 @@ export class PersistentMemory extends ConversationMemory {
      * after this the bot does not remember them and nothing saves them again. Someone who is still talking to the
      * bot starts fresh from their next message.
      */
-    private forget(botId: string, notice: MemoryForgetNotice): void {
+    forget(botId: string, notice: MemoryForgetNotice): void {
         const prefix = `${botId}_`;
         const forgotten = new Set(notice.userUuids);
         const isForgotten = (userUuid: string | undefined) => notice.everyone || (!!userUuid && forgotten.has(userUuid));

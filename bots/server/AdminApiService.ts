@@ -5,6 +5,7 @@
  */
 
 import axios, { type AxiosResponse } from 'axios';
+import { parseForgetNotice, type MemoryForgetHandler } from '../memory/ForgetNotice';
 
 // Optional Sentry integration (uncomment if @sentry/node is installed)
 // import * as Sentry from '@sentry/node';
@@ -122,6 +123,8 @@ export class AdminApiService {
     private botPrivacyCache: Map<string, { hidden: boolean; cachedAt: number }> = new Map();
     private botPrivacyRequests: Map<string, Promise<boolean>> = new Map();
     private readonly BOT_PRIVACY_CACHE_TTL = 30 * 1000;
+    private forgetHandler: MemoryForgetHandler | null = null;
+    private privacySyncTimer: NodeJS.Timeout | null = null;
 
     constructor(adminApiUrl?: string, adminApiToken?: string) {
         this.adminApiUrl = adminApiUrl || process.env.ADMIN_API_URL || '';
@@ -527,11 +530,13 @@ export class AdminApiService {
      *
      * Orbit is asked at most every 30 seconds per bot. If it cannot answer (down, no such endpoint yet, bot not
      * found), the last answer is kept; with none yet the answer is "not private", which is how every bot behaved
-     * before this setting existed. Never throws.
+     * before this setting existed. Never throws. `fresh` skips the 30 second wait (the bot server's own check).
+     *
+     * Orbit's answer also carries the people a manager asked the bot to forget; those go to the forget handler.
      */
-    async isBotPrivate(botId: string): Promise<boolean> {
+    async isBotPrivate(botId: string, options: { fresh?: boolean } = {}): Promise<boolean> {
         const cached = this.botPrivacyCache.get(botId);
-        if (cached && Date.now() - cached.cachedAt < this.BOT_PRIVACY_CACHE_TTL) {
+        if (!options.fresh && cached && Date.now() - cached.cachedAt < this.BOT_PRIVACY_CACHE_TTL) {
             return cached.hidden;
         }
         if (!this.isConfigured()) {
@@ -547,6 +552,45 @@ export class AdminApiService {
         return request;
     }
 
+    /**
+     * Ask Orbit about each running bot every 30 seconds. The answer keeps the privacy setting fresh and carries the
+     * people a manager asked the bot to forget, so a Forget lands even while nobody is talking to the bot.
+     */
+    startPrivacySync(getBotIds: () => Iterable<string>): void {
+        if (this.privacySyncTimer || !this.isConfigured()) {
+            return;
+        }
+        this.privacySyncTimer = setInterval(() => {
+            for (const botId of getBotIds()) {
+                void this.isBotPrivate(botId, { fresh: true });
+            }
+        }, this.BOT_PRIVACY_CACHE_TTL);
+        // Never keep the process alive for this
+        this.privacySyncTimer.unref?.();
+    }
+
+    stopPrivacySync(): void {
+        if (this.privacySyncTimer) {
+            clearInterval(this.privacySyncTimer);
+            this.privacySyncTimer = null;
+        }
+    }
+
+    /** Called with the people Orbit asks the bot server to forget. */
+    setForgetHandler(handler: MemoryForgetHandler | null): void {
+        this.forgetHandler = handler;
+    }
+
+    private applyForgetNotice(botId: string, forget: unknown): void {
+        const notice = parseForgetNotice(forget);
+        if (!this.forgetHandler || !notice) return;
+        try {
+            this.forgetHandler(botId, notice);
+        } catch (error) {
+            console.error('[AdminApiService] Could not drop forgotten memories:', error);
+        }
+    }
+
     private async fetchBotPrivacy(botId: string, lastKnown: boolean): Promise<boolean> {
         // BOT_SERVICE_TOKEN is preferred, the admin token is the fallback (same as the memory endpoints)
         const token = process.env.BOT_SERVICE_TOKEN || this.adminApiToken;
@@ -560,6 +604,7 @@ export class AdminApiService {
             );
             const hidden = response.data?.hidden === true;
             this.botPrivacyCache.set(botId, { hidden, cachedAt: Date.now() });
+            this.applyForgetNotice(botId, response.data?.forget);
             return hidden;
         } catch (error) {
             // Not found (or an Orbit without the setting yet) is a plain "not private"; anything else keeps what we knew.
