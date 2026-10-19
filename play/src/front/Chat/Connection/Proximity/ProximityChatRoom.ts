@@ -1185,6 +1185,8 @@ export class ProximityChatRoom implements ChatRoom {
 
         // TODO: we need to move that elsewhere.
         // Set up manager of audio streams received by the scripting API (useful for bots)
+        // A join that failed earlier may have left its managers registered: close them first.
+        this.closeScriptingAudioStreamManagers();
         this.scriptingOutputAudioStreamManager = new ScriptingOutputAudioStreamManager(this._space);
         this.scriptingInputAudioStreamManager = new ScriptingInputAudioStreamManager(this._space);
 
@@ -1472,6 +1474,7 @@ export class ProximityChatRoom implements ChatRoom {
                 this.spaceMessageReactionSubscription?.unsubscribe();
                 this.spaceStreamMessageSubscription?.unsubscribe();
                 this.streamMessages.clear();
+                this.closeScriptingAudioStreamManagers();
                 if (this._space) {
                     this.spaceRegistry.leaveSpace(this._space).catch((error) => {
                         console.error("Error leaving space: ", error);
@@ -1694,10 +1697,7 @@ export class ProximityChatRoom implements ChatRoom {
         this.spaceStreamMessageSubscription?.unsubscribe();
         this.streamMessages.clear();
 
-        this.scriptingOutputAudioStreamManager?.close();
-        this.scriptingInputAudioStreamManager?.close();
-        this.scriptingOutputAudioStreamManager = undefined;
-        this.scriptingInputAudioStreamManager = undefined;
+        this.closeScriptingAudioStreamManagers();
 
         try {
             await this.spaceRegistry.leaveSpace(space);
@@ -1706,6 +1706,13 @@ export class ProximityChatRoom implements ChatRoom {
             Sentry.captureException(error);
         }
         return undefined;
+    }
+
+    private closeScriptingAudioStreamManagers(): void {
+        this.scriptingOutputAudioStreamManager?.close();
+        this.scriptingInputAudioStreamManager?.close();
+        this.scriptingOutputAudioStreamManager = undefined;
+        this.scriptingInputAudioStreamManager = undefined;
     }
 
     private restoreChatState() {
