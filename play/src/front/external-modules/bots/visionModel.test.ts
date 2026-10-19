@@ -169,6 +169,26 @@ describe("visionState: nothing picked", () => {
         expect(state.picked).toBe(false);
     });
 
+    it("a text model on a key that is Down goes to Universe AI, not to that key", () => {
+        const down = options({ keys: [key("key-1", { status: "down" }), gemini, lmStudio] });
+        expect(visionState(down, "key-1", bot())!.effective).toEqual({ choice: "universe-ai" });
+        const current = options({
+            keys: [],
+            currentKey: {
+                id: "key-9",
+                name: "Someone's key",
+                ownerName: "Sara",
+                mine: false,
+                status: "down",
+                ifDown: "universe-ai",
+                model: "deepseek-v4-flash",
+                supportsVision: false,
+                visionModels: ["deepseek-v4-flash-vision-exp"],
+            },
+        });
+        expect(visionState(current, "key-9", bot())!.effective).toEqual({ choice: "universe-ai" });
+    });
+
     it("a text model on a key with none goes to Universe AI", () => {
         expect(visionState(options(), "key-l", bot())!.effective).toEqual({ choice: "universe-ai" });
     });
@@ -281,6 +301,14 @@ describe("visionState: picked", () => {
             bot(pick)
         )!;
         expect(down.problem).toBe(true);
+    });
+});
+
+describe("visionState: Runs on moved to the picked model", () => {
+    it("Another model picked, then Runs on moved to that very key and model: images go to it, so it reads This model", () => {
+        const pick = { choice: "another", keyId: "key-g", model: "gemini-3-flash" } as const;
+        const state = visionState(options(), "key-g", bot(pick))!;
+        expect(state).toMatchObject({ problem: false, picked: true, effective: { choice: "this" } });
     });
 });
 

@@ -39,7 +39,7 @@ export interface VisionMain {
     /** Set when the bot runs on a person's own key. */
     keyId: string | null;
     group: "own-computer" | "hosted" | null;
-    /** Models with Vision the same key could use for images, other than the one the bot runs. */
+    /** Models with Vision the same key could use for images, other than the one the bot runs (none while the key is Down: it isn't offered or defaulted to). */
     sameKeyModels: string[];
 }
 
@@ -67,7 +67,7 @@ export function visionMain(options: BotAiOptions, ref: string | null | undefined
                   model: key.model,
                   supportsVision: key.supportsVision,
                   group: key.group,
-                  visionModels: key.visionModels,
+                  visionModels: key.status === "down" ? [] : key.visionModels,
               }
             : options.currentKey && options.currentKey.id === current && options.currentKey.model !== undefined
             ? {
@@ -75,7 +75,7 @@ export function visionMain(options: BotAiOptions, ref: string | null | undefined
                   model: options.currentKey.model,
                   supportsVision: options.currentKey.supportsVision,
                   group: options.currentKey.group ?? null,
-                  visionModels: options.currentKey.visionModels,
+                  visionModels: options.currentKey.status === "down" ? [] : options.currentKey.visionModels,
               }
             : null;
     if (!found) return null;
@@ -144,6 +144,10 @@ export function visionState(
         return { main, effective: pick, picked: true, problem: false, candidates };
     }
     if (pick) {
+        // Picked the very model the bot now runs on (it was "another" until "Runs on" moved to it): images go to it, so it is "This model"
+        if (pick.keyId === main.keyId && pick.model === main.model) {
+            return { main, effective: { choice: "this" }, picked: true, problem: false, candidates };
+        }
         const offered = candidates.find((entry) => entry.keyId === pick.keyId && entry.model === pick.model);
         if (offered) {
             return {
