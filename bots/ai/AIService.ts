@@ -73,8 +73,11 @@ export class AIService {
      * What Orbit says for a bot on Universe AI or a person's own key is kept only briefly: the Default can change, a
      * key can go down or be pulled, and each of those must reach the bot's next reply, not the next hour.
      */
-    private botCredentialCache: Map<string, { resolved: ResolvedProvider; expiresAt: number }> = new Map();
+    private botCredentialCache: Map<string, { resolved: ResolvedProvider; expiresAt: number; staleUntil: number }> = new Map();
     private readonly BOT_CREDENTIAL_TTL = 30 * 1000;
+    /** How long the last answer is still used while Orbit cannot be reached, and how soon Orbit is tried again meanwhile */
+    private readonly BOT_CREDENTIAL_STALE_GRACE = 10 * 60 * 1000;
+    private readonly BOT_CREDENTIAL_RETRY = 15 * 1000;
     /** The latest config Orbit gave for each provider id on the bot route, so usage can still be priced. */
     private botRoutePricing: Map<string, AIProviderConfig> = new Map();
     private providerRegistry: AIProviderRegistry;
@@ -153,10 +156,25 @@ export class AIService {
             if (cached && Date.now() < cached.expiresAt) {
                 return cached.resolved;
             }
-            const answer = await this.adminApiService.getBotAiCredentials(botId);
+            let answer: BotAiCredentialsAnswer | null;
+            try {
+                answer = await this.adminApiService.getBotAiCredentials(botId);
+            } catch (error) {
+                // Orbit could not be reached: carry on with its last answer for a while, trying again soon, rather than
+                // failing every reply (and waiting out its timeout each time) for as long as the outage lasts
+                if (cached && Date.now() < cached.staleUntil) {
+                    cached.expiresAt = Date.now() + this.BOT_CREDENTIAL_RETRY;
+                    return cached.resolved;
+                }
+                throw error;
+            }
             if (answer) {
                 const resolved = this.resolvedFromAnswer(answer);
-                this.botCredentialCache.set(cacheKey, { resolved, expiresAt: Date.now() + this.BOT_CREDENTIAL_TTL });
+                this.botCredentialCache.set(cacheKey, {
+                    resolved,
+                    expiresAt: Date.now() + this.BOT_CREDENTIAL_TTL,
+                    staleUntil: Date.now() + this.BOT_CREDENTIAL_TTL + this.BOT_CREDENTIAL_STALE_GRACE,
+                });
                 if (!resolved.resting) {
                     // Usage is priced by the provider that answered, and by the ref the bot is on ("universe-ai", "key-…")
                     this.botRoutePricing.set(resolved.config.providerId, resolved.config);

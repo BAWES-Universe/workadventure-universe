@@ -181,6 +181,47 @@ describe("AIService – finding a bot's AI by bot id", () => {
             }
         });
 
+        describe("when Orbit cannot be reached", () => {
+            beforeEach(() => vi.useFakeTimers());
+            afterEach(() => vi.useRealTimers());
+
+            it("keeps replying on the last answer for a while, and tries Orbit again soon", async () => {
+                const { admin, memory } = buildMocks();
+                admin.getBotAiCredentials.mockResolvedValueOnce({ ...provider(), source: "universe-ai" });
+                mockGenerateStream.mockImplementation(answer);
+                const service = new AIService(memory, admin, "http://admin.local");
+                await reply(service, "universe-ai");
+                admin.getBotAiCredentials.mockRejectedValue(new Error("Orbit is down"));
+                vi.advanceTimersByTime(31_000);
+                const chunks = await reply(service, "universe-ai");
+                expect(chunks.some((chunk) => chunk.content === "Hi!")).toBe(true);
+                expect(admin.getBotAiCredentials).toHaveBeenCalledTimes(2);
+                // not asked again on every reply while it is down
+                await reply(service, "universe-ai");
+                expect(admin.getBotAiCredentials).toHaveBeenCalledTimes(2);
+                vi.advanceTimersByTime(16_000);
+                await reply(service, "universe-ai");
+                expect(admin.getBotAiCredentials).toHaveBeenCalledTimes(3);
+            });
+
+            it("stops using the last answer after ten minutes, and fails as before when there never was one", async () => {
+                const { admin, memory } = buildMocks();
+                admin.getBotAiCredentials.mockResolvedValueOnce({ ...provider(), source: "universe-ai" });
+                mockGenerateStream.mockImplementation(answer);
+                const service = new AIService(memory, admin, "http://admin.local");
+                await reply(service, "universe-ai");
+                admin.getBotAiCredentials.mockRejectedValue(new Error("Orbit is down"));
+                vi.advanceTimersByTime(11 * 60 * 1000);
+                const expired = await reply(service, "universe-ai");
+                expect(expired.some((chunk) => chunk.content === "Hi!")).toBe(false);
+                expect(expired[expired.length - 1].metadata?.error).toBe(true);
+                const fresh = new AIService(memory, admin, "http://admin.local");
+                const never = await reply(fresh, "universe-ai");
+                expect(never.some((chunk) => chunk.content === "Hi!")).toBe(false);
+                expect(never[never.length - 1].metadata?.error).toBe(true);
+            });
+        });
+
         it("falls back to the by-provider route when Orbit does not know the bot (or is older)", async () => {
             const { admin, memory } = buildMocks();
             admin.getBotAiCredentials.mockResolvedValue(null);
