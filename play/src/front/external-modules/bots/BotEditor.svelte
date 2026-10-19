@@ -152,14 +152,18 @@
                         } catch (e) {
                             console.error("[BotEditor] Failed to auto-save bot:", e);
 
-                            // Check if it's an authentication error - show error for auth issues
+                            // Show auth errors, and a refusal (Orbit said why it can't be saved): the person must hear it
                             const isAuthError = (e as Error & { isAuthError?: boolean })?.isAuthError === true;
-                            if (isAuthError) {
+                            const isRefusal = (e as Error & { isRefusal?: boolean })?.isRefusal === true;
+                            if (isAuthError || isRefusal) {
                                 error = (e as Error).message;
-                                // Clear error after 5 seconds
-                                setTimeout(() => {
-                                    error = null;
-                                }, 5000);
+                                // Clear error after 5 seconds (a refusal is longer to read)
+                                setTimeout(
+                                    () => {
+                                        error = null;
+                                    },
+                                    isRefusal ? 10000 : 5000
+                                );
                             }
                             // For other errors, just log (don't show for auto-saves)
                         }
@@ -207,14 +211,18 @@
                         } catch (e) {
                             console.error("[BotEditor] Failed to auto-save bot AI config:", e);
 
-                            // Check if it's an authentication error - show error for auth issues
+                            // Show auth errors, and a refusal (Orbit said why it can't be saved): the person must hear it
                             const isAuthError = (e as Error & { isAuthError?: boolean })?.isAuthError === true;
-                            if (isAuthError) {
+                            const isRefusal = (e as Error & { isRefusal?: boolean })?.isRefusal === true;
+                            if (isAuthError || isRefusal) {
                                 error = (e as Error).message;
-                                // Clear error after 5 seconds
-                                setTimeout(() => {
-                                    error = null;
-                                }, 5000);
+                                // Clear error after 5 seconds (a refusal is longer to read)
+                                setTimeout(
+                                    () => {
+                                        error = null;
+                                    },
+                                    isRefusal ? 10000 : 5000
+                                );
                             }
                             // For other errors, just log (don't show for auto-saves)
                         }

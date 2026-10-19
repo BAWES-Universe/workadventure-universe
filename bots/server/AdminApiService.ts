@@ -131,6 +131,16 @@ export interface AIProviderCredentials {
 }
 
 /**
+ * Where a bot's images go (#374, the Vision row): "this" is its own model (when that can't see, only the link stays in the
+ * text; `problem: 'key'` says the key picked for images can't be used now), "universe-ai" is Universe AI's default vision
+ * provider, "another" is a Vision model on the maker's own key, with that key's credentials.
+ */
+export type BotVisionPlan =
+    | { choice: 'this'; problem?: 'key' }
+    | { choice: 'universe-ai' }
+    | { choice: 'another'; credentials: AIProviderCredentials & { keyOwnerId?: string; keyAddressTyped?: boolean } };
+
+/**
  * Orbit's answer for a bot (#374): a provider and where it came from, or "resting". `own-key` is a person's own key
  * (`keyAddressTyped` says the person typed its address, so the address guard applies); `universe-ai` may stand in for
  * a key that is down (`standingInFor`); `resting` means the owner chose Stop replying: say the line, call nothing.
@@ -142,8 +152,18 @@ export type BotAiCredentialsAnswer =
           keyAddressTyped?: boolean;
           standingInFor?: string;
           movedFromKey?: string;
+          /** Where the bot's images go, when that isn't left to its own model (the Vision row). Missing: as it always was. */
+          vision?: BotVisionPlan;
       })
     | { source: 'resting'; keyOwnerId: string; restingLine: string };
+
+/** Orbit turned a bot save down and said why, in words meant for the person who made it. */
+export class BotConfigRefused extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'BotConfigRefused';
+    }
+}
 
 export class AdminApiService {
     private adminApiUrl: string;
@@ -165,9 +185,11 @@ export class AdminApiService {
     }
 
     /**
-     * Save bot configuration to admin API
+     * Save bot configuration to admin API. With the Admin API token, Orbit knows no person is saving; a change that only a
+     * person may make (putting a bot on their own key, picking their key for its images) carries that person's own Orbit
+     * session instead, so Orbit checks it is their key and their bot.
      */
-    async saveBotConfiguration(config: BotConfiguration): Promise<void> {
+    async saveBotConfiguration(config: BotConfiguration, actingSession?: string): Promise<void> {
         if (!this.isConfigured()) {
             console.warn('[AdminApiService] Admin API not configured, skipping bot configuration save');
             return;
@@ -197,7 +219,7 @@ export class AdminApiService {
                 payload,
                 {
                     headers: {
-                        Authorization: `Bearer ${this.adminApiToken}`,
+                        Authorization: `Bearer ${actingSession ?? this.adminApiToken}`,
                         'Content-Type': 'application/json',
                     },
                 }
@@ -207,6 +229,11 @@ export class AdminApiService {
                 console.log(`[AdminApiService] Successfully saved bot config for ${config.botId}`);
             }
         } catch (error) {
+            // Orbit refused the save and said why (a key that isn't theirs, a model that can't see images): that is an answer for the
+            // person, not a crash, so it travels on as a BotConfigRefused.
+            if (axios.isAxiosError(error) && error.response?.status === 400 && typeof error.response.data?.error === 'string') {
+                throw new BotConfigRefused(error.response.data.error);
+            }
             console.error('[AdminApiService] Error saving bot configuration:', error);
             if ((process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') && axios.isAxiosError(error) && error.response) {
                 console.error('[AdminApiService] Response status:', error.response.status);

@@ -622,7 +622,11 @@ export class BotApiService {
                 throw authError;
             }
 
-            throw new Error(errorMessage);
+            // A 400 is the bot server passing on why a save was turned down (a key that isn't theirs, a model that can't see
+            // images): `isRefusal` lets the page show it to the person instead of only logging it
+            const failure = new Error(errorMessage) as Error & { isRefusal?: boolean };
+            if (response.status === 400) failure.isRefusal = true;
+            throw failure;
         }
 
         return response;

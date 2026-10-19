@@ -29,6 +29,7 @@
     import PageGroup from "./page/PageGroup.svelte";
     import BehaviorGroup from "./page/BehaviorGroup.svelte";
     import MindGroup from "./page/MindGroup.svelte";
+    import VisionGroup from "./page/VisionGroup.svelte";
     import SayGroup from "./page/SayGroup.svelte";
     import ToolsGroup from "./page/ToolsGroup.svelte";
     import BotFooter from "./page/BotFooter.svelte";
@@ -518,6 +519,12 @@
             <MindGroup
                 bot={currentBot}
                 open={openGroup === "mind"}
+                onToggle={toggleGroup}
+                onChange={(next) => apply(next)}
+            />
+            <VisionGroup
+                bot={currentBot}
+                open={openGroup === "vision"}
                 onToggle={toggleGroup}
                 onChange={(next) => apply(next)}
             />
