@@ -229,6 +229,8 @@ describe("AIService – finding a bot's AI by bot id", () => {
             const service = new AIService(memory, admin, "http://admin.local");
             await reply(service, "universe-ai");
             expect(admin.getAIProviderCredentials).toHaveBeenCalledWith("universe-ai");
+            // usage on this route is priced by the provider that answered, not left at 0
+            expect(service.calculateCost("deepseek-flash", { promptTokens: 1000, completionTokens: 1000 })).toBeGreaterThan(0);
         });
     });
 
