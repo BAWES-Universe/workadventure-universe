@@ -148,6 +148,11 @@
                 });
             }
 
+            // What was saved for this bot when the change was made: if the person moves to another bot before Orbit answers, the
+            // shared last-saved values are that other bot's, so a refusal puts back this one
+            const savedConfigThen = lastSavedBotConfig;
+            const savedAIConfigThen = lastSavedAIConfig;
+
             // Only save if config actually changed
             if (currentConfig !== lastSavedBotConfig) {
                 scheduleSave("config", () => {
@@ -166,7 +171,11 @@
                         } catch (e) {
                             console.error("[BotEditor] Failed to auto-save bot:", e);
                             if ((e as Error & { isRefusal?: boolean })?.isRefusal === true) {
-                                revertRefused(bot.id, "config", lastSavedBotConfig);
+                                revertRefused(
+                                    bot.id,
+                                    "config",
+                                    selectedBot?.id === bot.id ? lastSavedBotConfig : savedConfigThen
+                                );
                             }
 
                             // Show auth errors, and a refusal (Orbit said why it can't be saved): the person must hear it
@@ -228,7 +237,11 @@
                         } catch (e) {
                             console.error("[BotEditor] Failed to auto-save bot AI config:", e);
                             if ((e as Error & { isRefusal?: boolean })?.isRefusal === true) {
-                                revertRefused(bot.id, "ai", lastSavedAIConfig);
+                                revertRefused(
+                                    bot.id,
+                                    "ai",
+                                    selectedBot?.id === bot.id ? lastSavedAIConfig : savedAIConfigThen
+                                );
                             }
 
                             // Show auth errors, and a refusal (Orbit said why it can't be saved): the person must hear it
