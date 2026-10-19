@@ -146,6 +146,15 @@ export abstract class BaseBehavior {
     }
     // Authentication tracking - map userId (number) to isLogged (boolean)
     protected userIdToIsLogged: Map<number, boolean> = new Map();
+
+    /**
+     * Who someone in the room is, for Orbit's bot access check: signed in only when the game says so and their uuid is
+     * known (Orbit looks a signed-in person up by it). Anyone else is asked about as a guest.
+     */
+    getPersonForAccess(userId: number): { signedIn: boolean; identifier: string | null } {
+        const identifier = this.userIdToUuid.get(userId) ?? null;
+        return { signedIn: !!identifier && this.userIdToIsLogged.get(userId) === true, identifier };
+    }
     // Pending UUID tracking - map spaceUserId (string) to userId (number) for users we've seen but don't have UUID yet
     // This helps match addSpaceUserMessage when it arrives after a chat message
     protected pendingSpaceUserIdToUserId: Map<string, number> = new Map();

@@ -9,6 +9,7 @@ import LL from "../../../i18n/i18n-svelte";
 import { EditorToolName } from "../../Phaser/Game/MapEditor/MapEditorModeManager";
 import { gameManager } from "../../Phaser/Game/GameManager";
 import { wokaMenuStore, type WokaMenuData, type WokaMenuAction } from "../../Stores/WokaMenuStore";
+import { warningMessageStore } from "../../Stores/ErrorStore";
 import { BOT_SERVER_URL } from "../../Enum/EnvironmentVariable";
 import { botApiService } from "./services/BotApiService";
 import { destroyBotEditorTool } from "./phaser/BotEditorTool";
@@ -1053,7 +1054,13 @@ function setupWokaMenuHook() {
                 if (!hasSummon) {
                     // Use microtask to add actions after current execution completes
                     // This prevents the subscription from firing again in the same tick
-                    void Promise.resolve().then(() => {
+                    void Promise.resolve().then(async () => {
+                        // A person the owner has refused does not get a Summon button. When it cannot be found out
+                        // (a guest, Orbit not answering) the button shows, and the real answer comes when it is used.
+                        if (menuData.userUuid.startsWith("bot-")) {
+                            const access = await botApiService.getBotAccess(menuData.userUuid.substring(4), "summon");
+                            if (access.allowed === false) return;
+                        }
                         actions.forEach((action: WokaMenuAction) => {
                             // Double-check menu is still valid before adding
                             const currentMenu = get(wokaMenuStore);
@@ -1170,13 +1177,28 @@ function registerSummonButtonsForBots() {
                         // Bot userUuid is in format "bot-{botId}", but BotManager stores by botId
                         // Strip the "bot-" prefix to get the actual botId
                         const botId = botUuid.startsWith("bot-") ? botUuid.substring(4) : botUuid;
+                        // The owner may have limited who can call the bot over since the menu opened: say so, rather
+                        // than do nothing
+                        const access = await botApiService.getBotAccess(botId, "summon");
+                        if (access.allowed === false) {
+                            warningMessageStore.addWarningMessage(
+                                access.reason ||
+                                    get(LL).mapEditor.edit.bots.page.access.summonRefused({ name: playerData.name }),
+                                { closable: true }
+                            );
+                            return;
+                        }
                         // Call summon API - it will validate if this is a bot
-                        await botApiService.summonBot(
+                        const summoned = await botApiService.summonBot(
                             botId, // Use botId (without "bot-" prefix)
                             currentUuid,
                             currentPosition.x,
                             currentPosition.y
                         );
+                        if (!summoned.summoned && summoned.refused && summoned.reason) {
+                            warningMessageStore.addWarningMessage(summoned.reason, { closable: true });
+                            return;
+                        }
                         if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                             console.log(`[Bot Extension] Summon request sent successfully`);
                         }
