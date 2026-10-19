@@ -3691,19 +3691,30 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         call: (provider: AIProvider, config: AIProviderConfig, signal: AbortSignal) => Promise<T>,
         botId?: string
     ): Promise<T | undefined> {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), QUICK_LLM_TIMEOUT_MS);
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        let lookupTimeoutId: ReturnType<typeof setTimeout> | undefined;
 
         try {
-            const config = await this.getProviderCredentials(providerId, botId);
+            // The credential lookup can go to Orbit (up to its own 15s limit), so it gets its
+            // own deadline: the provider call below then still has its full time, instead of
+            // starting already aborted after a slow lookup.
+            const config = await Promise.race([
+                this.getProviderCredentials(providerId, botId),
+                new Promise<never>((_resolve, reject) => {
+                    lookupTimeoutId = setTimeout(() => reject(new Error("credential lookup timed out")), QUICK_LLM_TIMEOUT_MS);
+                }),
+            ]);
             const provider = this.providerRegistry.getOrCreateProvider(config);
             if (!provider) return undefined;
+            const controller = new AbortController();
+            timeoutId = setTimeout(() => controller.abort(), QUICK_LLM_TIMEOUT_MS);
             return await call(provider, config, controller.signal);
         } catch {
             // Timeout abort or provider error — the caller decides the fallback.
             // The abort already cancelled the upstream call.
             return undefined;
         } finally {
+            clearTimeout(lookupTimeoutId);
             clearTimeout(timeoutId);
         }
     }
