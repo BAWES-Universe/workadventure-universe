@@ -110,6 +110,15 @@ export class OpenAIProvider implements AIProvider {
     }
 
     /**
+     * Open-source Qwen3 models on Alibaba's service answer a non-streaming call with 400 unless thinking is turned off
+     * (the message names `enable_thinking`). Streamed replies are not affected. A request that already says it is not
+     * asked again.
+     */
+    private rejectsThinking(status: number, errorText: string, requestBody: Record<string, any>): boolean {
+        return status === 400 && requestBody.enable_thinking === undefined && /enable_thinking/i.test(errorText);
+    }
+
+    /**
      * Build request body with correct token limit parameter
      */
     private buildRequestBody(
@@ -473,12 +482,14 @@ export class OpenAIProvider implements AIProvider {
                     }
 
                     // If error is about temperature, retry without temperature (use default)
-                    if (this.rejectsTemperature(response.status, errorData, errorText, requestBody)) {
+                    const refusesTemperature = this.rejectsTemperature(response.status, errorData, errorText, requestBody);
+                    if (refusesTemperature || this.rejectsThinking(response.status, errorText, requestBody)) {
                         if (process.env.ENABLE_BOT_DEBUG === 'true') {
                             console.log(`[OpenAIProvider] Retrying without temperature parameter for model: ${config.model}`);
                         }
                         const retryBody = { ...requestBody };
-                        delete retryBody.temperature;
+                        if (refusesTemperature) delete retryBody.temperature;
+                        else retryBody.enable_thinking = false;
 
                         const retryController = new AbortController();
                         externalAbortCleanups.push(linkExternalAbort(externalSignal, retryController));
