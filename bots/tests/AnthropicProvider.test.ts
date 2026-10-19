@@ -200,6 +200,22 @@ describe("AnthropicProvider", () => {
             expect(done).toMatchObject({ done: true, metadata: { tokensUsed: 34, promptTokens: 25, completionTokens: 9, error: false, truncated: false } });
         });
 
+        it("does not trip on a null token count in the usage", async () => {
+            fetchMock.mockImplementationOnce(async () =>
+                events([
+                    { type: "message_start", message: { usage: { input_tokens: null, output_tokens: null } } },
+                    { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+                    { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hi" } },
+                    { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { input_tokens: null, output_tokens: null } },
+                    { type: "message_stop" },
+                ])
+            );
+            const chunks = await drain(new AnthropicProvider().generateStream("s", "hi", config()));
+            const done = chunks[chunks.length - 1];
+            expect(done).toMatchObject({ done: true, metadata: { error: false } });
+            expect(done.metadata?.tokensUsed).toBe(0);
+        });
+
         it("hands a tool call over whole, with its arguments joined, once its block closes", async () => {
             fetchMock.mockImplementationOnce(async () =>
                 events([

@@ -60,7 +60,7 @@ interface ClaudeUsage {
 
 /** Input tokens as Anthropic bills them: the fresh ones plus what was written to or read from the cache. */
 function promptTokensOf(usage: ClaudeUsage | undefined): number | undefined {
-    if (!usage || usage.input_tokens === undefined) return undefined;
+    if (!usage || typeof usage.input_tokens !== 'number') return undefined;
     return usage.input_tokens + (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0);
 }
 
@@ -327,7 +327,7 @@ export class AnthropicProvider implements AIProvider {
                             if (event.delta?.stop_reason) stopReason = event.delta.stop_reason;
                             const prompt = promptTokensOf(event.usage);
                             if (prompt !== undefined) promptTokens = prompt;
-                            if (event.usage?.output_tokens !== undefined) completionTokens = event.usage.output_tokens;
+                            if (typeof event.usage?.output_tokens === 'number') completionTokens = event.usage.output_tokens;
                             break;
                         }
                         case 'message_stop':
