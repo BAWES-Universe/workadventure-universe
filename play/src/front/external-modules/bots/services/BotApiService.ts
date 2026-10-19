@@ -1,4 +1,4 @@
-import type { BotData } from "../types";
+import type { BotAiOptions, BotData } from "../types";
 import { resolveCredentialUrl } from "../../admin-api/iframeAuth";
 import { freshOrbitAccessToken, type GameTokenHolder } from "../../admin-api/orbitAccessToken";
 
@@ -407,6 +407,29 @@ export class BotApiService {
             const response = await this.fetch("/api/me/attention");
             const data = (await response.json()) as { count?: unknown };
             return typeof data.count === "number" && Number.isFinite(data.count) ? Math.max(0, data.count) : null;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * What the bot page offers under "Runs on" (#374): Universe AI and the viewer's own keys lent to this universe.
+     * Pass the bot's id, or nothing (this room) for a bot not made yet. Null when Orbit can't say (an older Orbit, no
+     * permission, offline): the page then keeps the provider list it always had.
+     */
+    async getBotAiOptions(target: { botId?: string; roomId?: string } = {}): Promise<BotAiOptions | null> {
+        const roomId = target.roomId ?? this.roomId;
+        const query = target.botId
+            ? `botId=${encodeURIComponent(target.botId)}`
+            : roomId
+            ? `roomId=${encodeURIComponent(roomId)}`
+            : null;
+        if (!query) return null;
+        try {
+            const response = await this.fetch(`/api/me/bot-ai?${query}`);
+            const data: unknown = await response.json();
+            if (typeof data !== "object" || data === null || !Array.isArray((data as BotAiOptions).keys)) return null;
+            return data as BotAiOptions;
         } catch {
             return null;
         }

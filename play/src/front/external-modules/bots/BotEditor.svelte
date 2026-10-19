@@ -38,6 +38,7 @@
         type BotEditorMode,
     } from "./stores/BotEditorStore";
     import { routeStops } from "./behaviorModel";
+    import { newBotRef } from "./mindModel";
     import { getBotEditorTool } from "./phaser/BotEditorTool";
     import { botApiService } from "./services/BotApiService";
     import { IconMapPin } from "@wa-icons";
@@ -413,10 +414,11 @@
         error = null;
 
         try {
-            // Get first available AI provider to auto-select
-            let aiProviderRef: string | undefined = undefined;
+            // A new bot starts on Universe AI when Orbit says it is ready (#374). If Orbit can't say (an older Orbit), or
+            // Universe AI isn't set up, it gets the first available provider, as it always did.
+            let aiProviderRef: string | undefined = newBotRef(await botApiService.getBotAiOptions());
             try {
-                const providers = await botApiService.getAvailableAIProviders(true);
+                const providers = aiProviderRef ? [] : await botApiService.getAvailableAIProviders(true);
                 if (providers.length > 0) {
                     // Select first available provider (prefer enabled, but allow disabled if that's all we have)
                     const enabledProvider = providers.find((p) => p.enabled);

@@ -2,12 +2,14 @@
     // Mind: which AI the bot thinks with. A provider whose model has vision (can look at pictures) says so.
     import { onMount } from "svelte";
     import LL from "../../../../../i18n/i18n-svelte";
-    import type { BotData } from "../../types";
+    import type { BotAiOptions, BotData } from "../../types";
     import { botApiService } from "../../services/BotApiService";
     import { resolveVisionSupport } from "../../visionModels";
+    import { canOpenOrbit, openOrbitPage } from "../../../admin-api/index";
+    import { canPick, mindBriefName, runsOnCards, type RunsOnCard } from "../../mindModel";
     import PageGroup from "./PageGroup.svelte";
     import PageButton from "./PageButton.svelte";
-    import { IconChevronDown, IconSparkles } from "@wa-icons";
+    import { IconChevronDown, IconExternalLink, IconKey, IconSparkles } from "@wa-icons";
 
     export let bot: BotData;
     export let open: boolean;
@@ -19,6 +21,11 @@
     let providers: Provider[] = [];
     let loading = true;
     let failed = false;
+    /**
+     * What Orbit offers this bot under "Runs on" (Universe AI and the viewer's own keys lent here). Null when Orbit can't
+     * say (an older Orbit, offline): the page then keeps the provider list it always had.
+     */
+    let options: BotAiOptions | null = null;
 
     async function load() {
         loading = true;
@@ -29,7 +36,11 @@
             return;
         }
         try {
-            providers = await botApiService.getAvailableAIProviders(true);
+            // The provider names (to show what a pinned bot is on) and what Orbit offers, together
+            [providers, options] = await Promise.all([
+                botApiService.getAvailableAIProviders(true),
+                botApiService.getBotAiOptions(bot.id ? { botId: bot.id } : {}),
+            ]);
         } catch (e) {
             console.error("[MindGroup] Failed to load AI providers:", e);
             failed = true;
@@ -54,7 +65,26 @@
     $: page = $LL.mapEditor.edit.bots.page;
     $: ref = bot.aiProviderRef ?? "";
     $: current = providers.find((p) => p.providerId.toLowerCase() === ref.toLowerCase());
-    $: brief = !ref
+    $: names = new Map(providers.map((p) => [p.providerId.toLowerCase(), p.name]));
+    $: cards = options ? runsOnCards(options, ref || null, names) : [];
+    $: runsOnBrief = options ? mindBriefName(options, ref || null, names) : null;
+    $: brief = options
+        ? runsOnBrief?.kind === "universe-ai"
+            ? page.mind.universeAi()
+            : runsOnBrief?.kind === "key"
+            ? runsOnBrief.name
+            : runsOnBrief?.kind === "provider" && current
+            ? [
+                  current.enabled ? current.name : `${current.name} ${$LL.actionbar.botEditorModule.providerDisabled()}`,
+                  current.model,
+                  seesPictures(current) ? page.mind.seesPictures() : "",
+              ]
+                  .filter(Boolean)
+                  .join(" · ")
+            : runsOnBrief?.kind === "provider"
+            ? runsOnBrief.name ?? runsOnBrief.ref
+            : page.mind.none()
+        : !ref
         ? page.mind.none()
         : current
         ? [
@@ -66,6 +96,40 @@
               .join(" · ")
         : ref;
 
+    function chooseCard(card: RunsOnCard) {
+        if (!options || !canPick(options, card)) return;
+        onChange({ ...bot, aiProviderRef: card.id });
+    }
+
+    function noteOf(card: RunsOnCard): string {
+        switch (card.kind) {
+            case "universe-ai":
+                return card.available ? page.mind.universeAiNote() : page.mind.universeAiMissing();
+            case "mine":
+                return card.group === "own-computer"
+                    ? page.mind.keyComputer({ universe: card.universe })
+                    : page.mind.keyHosted({ universe: card.universe });
+            case "theirs":
+                return card.owner
+                    ? page.mind.othersKey({ owner: card.owner, bot: bot.name ?? "" })
+                    : card.title && options?.currentKey?.mine
+                    ? page.mind.keyUnlent()
+                    : page.mind.othersKeyUnknown({ bot: bot.name ?? "" });
+            case "pinned":
+                return page.mind.pinned();
+        }
+    }
+
+    function downNoteOf(card: RunsOnCard): string | null {
+        if ((card.kind !== "mine" && card.kind !== "theirs") || card.status !== "down") return null;
+        return card.kind === "mine" && card.ifDown === "stop" ? page.mind.downStops() : page.mind.downUseUniverseAi();
+    }
+
+    function pinProvider(event: Event) {
+        const value = (event.currentTarget as HTMLSelectElement).value;
+        if (value) onChange({ ...bot, aiProviderRef: value });
+    }
+
     function pick(event: Event) {
         const value = (event.currentTarget as HTMLSelectElement).value;
         onChange({ ...bot, aiProviderRef: value || undefined });
@@ -75,6 +139,61 @@
 <PageGroup id="mind" icon={IconSparkles} title={page.mind.title()} {brief} {open} {onToggle}>
     {#if loading}
         <p class="bp-m">{$LL.actionbar.botEditorModule.loadingProviders()}</p>
+    {:else if options}
+        <div class="bp-cap" id="bot-runs-on-label">{page.mind.runsOn()}</div>
+        <div class="bp-cards" role="radiogroup" aria-labelledby="bot-runs-on-label" data-testid="bot-runs-on">
+            {#each cards as card (card.kind + card.id)}
+                <button
+                    type="button"
+                    role="radio"
+                    class="bp-card"
+                    class:picked={card.picked}
+                    aria-checked={card.picked}
+                    disabled={!card.picked && !canPick(options, card)}
+                    data-testid="bot-runs-on-{card.kind}"
+                    on:click={() => chooseCard(card)}
+                >
+                    <span class="bp-cico">
+                        {#if card.kind === "universe-ai"}<IconSparkles font-size="20" />{:else}<IconKey font-size="20" />{/if}
+                    </span>
+                    <span class="bp-ctx">
+                        <span class="bp-ct">{card.kind === "universe-ai" ? page.mind.universeAi() : card.title}</span>
+                        <span class="bp-cn">
+                            {noteOf(card)}
+                            {#if downNoteOf(card)}
+                                <span class="bp-down">{page.mind.downNow()}</span>{downNoteOf(card)}
+                            {/if}
+                        </span>
+                    </span>
+                    <span class="bp-radio" class:on={card.picked} aria-hidden="true"></span>
+                </button>
+            {/each}
+        </div>
+        {#if options.viewerIsMaker && canOpenOrbit()}
+            <div class="bp-line">
+                <PageButton testId="bot-runs-on-ai-keys" on:click={() => openOrbitPage("/admin/you/ai-keys")}>
+                    {page.mind.aiKeys()}
+                    <IconExternalLink font-size="14" />
+                </PageButton>
+            </div>
+        {/if}
+        {#if options.providers && options.providers.length > 0}
+            <label class="bp-select">
+                <span class="sr-only">{page.mind.pinTo()}</span>
+                <select value="" on:change={pinProvider} data-testid="bot-mind-provider">
+                    <option value="">{page.mind.pinTo()}</option>
+                    {#each options.providers as provider (provider.id)}
+                        <option value={provider.id}>
+                            {provider.name}{provider.enabled ? "" : ` ${$LL.actionbar.botEditorModule.providerDisabled()}`}
+                        </option>
+                    {/each}
+                </select>
+                <IconChevronDown font-size="16" />
+            </label>
+        {/if}
+        <p class="bp-m">
+            {options.viewerIsMaker ? page.mind.makerHint() : page.mind.managerHint({ bot: bot.name ?? "" })}
+        </p>
     {:else if failed}
         <div class="bp-line">
             <p class="bp-m">{$LL.actionbar.botEditorModule.errorLoadFailed()}</p>
@@ -104,6 +223,83 @@
 </PageGroup>
 
 <style>
+    .bp-cap {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: rgba(244, 242, 250, 0.64);
+    }
+    .bp-cards {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+    .bp-card {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        width: 100%;
+        min-height: 56px;
+        margin: 0;
+        padding: 12px;
+        border: 0;
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.05);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+        font: inherit;
+        color: #fff;
+        text-align: left;
+        cursor: pointer;
+    }
+    .bp-card.picked {
+        background: rgba(134, 41, 252, 0.16);
+        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.7);
+    }
+    .bp-card:disabled:not(.picked) {
+        opacity: 0.55;
+        cursor: default;
+    }
+    .bp-card:focus-visible {
+        outline: 2px solid #a78bfa;
+        outline-offset: 2px;
+    }
+    .bp-cico {
+        flex: none;
+        display: inline-flex;
+        color: #fff;
+    }
+    .bp-ctx {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+    .bp-ct {
+        font-size: 15px;
+        font-weight: 700;
+        overflow-wrap: anywhere;
+    }
+    .bp-cn {
+        font-size: 12.5px;
+        line-height: 1.35;
+        color: rgba(244, 242, 250, 0.64);
+    }
+    .bp-down {
+        color: #f5c451;
+    }
+    .bp-radio {
+        flex: none;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.35);
+    }
+    .bp-radio.on {
+        background: radial-gradient(circle, #fff 0 4px, #6d4aff 5px);
+        box-shadow: none;
+    }
     .bp-m {
         margin: 0;
         font-size: 12.5px;
