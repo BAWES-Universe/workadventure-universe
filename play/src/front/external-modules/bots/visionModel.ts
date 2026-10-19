@@ -222,7 +222,9 @@ export function withVisionChoice(
 ): BotData {
     let vision: VisionPick;
     if (choice === "another") {
-        const use = candidate ?? state.candidates[0];
+        // Tapping what is already shown (the default) keeps that very key and model, not the first one on offer
+        const shown = state.effective.choice === "another" ? state.effective : undefined;
+        const use = candidate ?? shown ?? state.candidates[0];
         if (!use) return bot;
         vision = { choice: "another", keyId: use.keyId, model: use.model };
     } else {

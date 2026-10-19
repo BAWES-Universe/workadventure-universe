@@ -323,6 +323,23 @@ describe("tapping a choice", () => {
         expect(withVisionChoice(base, none, "another")).toBe(base);
     });
 
+    it("Another model, tapped while it is already shown, keeps that very key and model, not the first on offer", () => {
+        const base: BotData = { id: "b", behaviorConfig: { assignedSpace: { center: { x: 0, y: 0 }, radius: 0 } } };
+        const state = visionState(options(), "key-1", base)!;
+        const shown = {
+            choice: "another" as const,
+            keyId: "key-g",
+            keyName: "My OpenRouter",
+            model: "gemini-3-flash",
+            sameKey: false,
+        };
+        expect(withVisionChoice(base, { ...state, effective: shown }, "another").behaviorConfig.vision).toEqual({
+            choice: "another",
+            keyId: "key-g",
+            model: "gemini-3-flash",
+        });
+    });
+
     it("says what can be tapped", () => {
         const state = visionState(options(), "key-l", bot())!;
         expect(canPickVision(options(), state, "this")).toBe(true);
