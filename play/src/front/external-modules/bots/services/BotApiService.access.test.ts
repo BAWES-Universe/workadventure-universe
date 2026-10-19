@@ -49,6 +49,22 @@ describe("asking whether the player may use a bot", () => {
         });
     });
 
+    it("says who is asking, and tells a signed-in player whose login did not come along to sign in again", async () => {
+        const fetchMock = vi.spyOn(globalThis, "fetch");
+        fetchMock.mockResolvedValueOnce(json({ allowed: true }));
+        await service().getBotAccess("b1", "summon", "uuid-1");
+        expect(fetchMock).toHaveBeenCalledWith(
+            `${BOTS}/api/bots/b1/access`,
+            expect.objectContaining({ body: JSON.stringify({ action: "summon", playerUuid: "uuid-1" }) })
+        );
+
+        fetchMock.mockResolvedValueOnce(json({ error: "You can only ask for yourself", code: "not_you" }, 403));
+        await expect(service().getBotAccess("b1", "summon", "uuid-1")).resolves.toEqual({
+            allowed: null,
+            signIn: true,
+        });
+    });
+
     it("does not know when it cannot find out, so the caller keeps showing the button", async () => {
         const fetchMock = vi.spyOn(globalThis, "fetch");
         fetchMock.mockResolvedValueOnce(json({ error: "x", code: "cannot_check" }, 503));

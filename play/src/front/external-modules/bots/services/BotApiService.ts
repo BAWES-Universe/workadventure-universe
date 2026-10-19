@@ -55,6 +55,9 @@ export interface UpdateBotDto extends Partial<CreateBotDto> {
     id: string;
 }
 
+/** What the bot server says to "may I?": yes, no with the owner's line, or not known (`signIn`: sign in again first) */
+type BotAccessAnswer = { allowed: true } | { allowed: false; reason: string } | { allowed: null; signIn?: true };
+
 export class BotApiService {
     private accessToken: string | null = null;
     /** The game's token this service signs in with; renewed in place when its OIDC access token runs out. */
@@ -812,11 +815,10 @@ export class BotApiService {
      * Whether the local player may do this with a bot, asked of the bot server (which asks Orbit): the game uses it to
      * hide Summon from people the owner has refused. `allowed: null` means it could not be found out (a guest with no
      * Orbit session, Orbit not answering): the caller shows the button, and the real answer comes when it is used.
+     * `playerUuid` is who is asking. A signed-in player whose Orbit session did not come along is then told so
+     * (`signIn`) instead of being asked about as a guest.
      */
-    async getBotAccess(
-        botId: string,
-        action: "summon" | "chat"
-    ): Promise<{ allowed: true } | { allowed: false; reason: string } | { allowed: null }> {
+    async getBotAccess(botId: string, action: "summon" | "chat", playerUuid?: string): Promise<BotAccessAnswer> {
         // A bot server or sign-in that stalls must not hold the Summon button back: after a few seconds it is "unknown"
         const stop = new AbortController();
         let timer: ReturnType<typeof setTimeout> | undefined;
@@ -826,7 +828,7 @@ export class BotApiService {
                 resolve({ allowed: null });
             }, ACCESS_CHECK_TIMEOUT_MS);
         });
-        return Promise.race([this.askBotAccess(botId, action, stop.signal), unknown]).finally(() => {
+        return Promise.race([this.askBotAccess(botId, action, playerUuid, stop.signal), unknown]).finally(() => {
             clearTimeout(timer);
         });
     }
@@ -834,12 +836,13 @@ export class BotApiService {
     private async askBotAccess(
         botId: string,
         action: "summon" | "chat",
+        playerUuid: string | undefined,
         signal: AbortSignal
-    ): Promise<{ allowed: true } | { allowed: false; reason: string } | { allowed: null }> {
+    ): Promise<BotAccessAnswer> {
         try {
             const response = await this.fetchBotServer(`/api/bots/${encodeURIComponent(botId)}/access`, {
                 method: "POST",
-                body: JSON.stringify({ action }),
+                body: JSON.stringify(playerUuid ? { action, playerUuid } : { action }),
                 signal,
             });
             const body = (await response.json()) as { allowed?: unknown; reason?: unknown };
@@ -852,6 +855,8 @@ export class BotApiService {
             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                 console.warn("[BotApiService] Could not check bot access:", error);
             }
+            // The server could not tell who this is without their Orbit session: they need to sign in again
+            if ((error as { code?: unknown } | undefined)?.code === "not_you") return { allowed: null, signIn: true };
             return { allowed: null };
         }
     }

@@ -385,6 +385,20 @@ export class BotAPI {
                     return;
                 }
 
+                // The game says who it is asking for. A signed-in member whose Orbit session did not come with the
+                // request would otherwise be asked about as a guest (guest rules can differ from a member's): they
+                // are told to sign in again, as Summon does, rather than shown an answer meant for someone else.
+                const { playerUuid } = req.body ?? {};
+                if (
+                    typeof playerUuid === 'string' &&
+                    playerUuid &&
+                    req.sessionUuid !== playerUuid &&
+                    req.gameIdentifier !== playerUuid
+                ) {
+                    res.status(403).json({ error: 'You can only ask for yourself', code: 'not_you' });
+                    return;
+                }
+
                 const verdict = await this.botManager.getAccessGate().check(
                     botId,
                     action,
