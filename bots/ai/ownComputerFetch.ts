@@ -140,6 +140,8 @@ export async function ownComputerFetch(input: string | URL, init: RequestInit = 
                 clearTimeout(connectTimer);
                 const stream = response.pipe(capped(MAX_RESPONSE_BYTES));
                 response.on('error', (error) => stream.destroy(error));
+                // A reader that cancels, or an answer past the cap, ends the stream: close the connection too, instead of leaving it open until the other side hangs up
+                stream.on('close', () => response.destroy());
                 const noBody = [101, 204, 205, 304].includes(response.statusCode ?? 0);
                 const responseHeaders = new Headers();
                 for (const [key, value] of Object.entries(response.headers)) {

@@ -179,6 +179,31 @@ describe("ownComputerFetch", () => {
         expect(MAX_RESPONSE_BYTES).toBe(20_000_000);
     });
 
+    it("closes the connection when the reader cancels, instead of leaving it open", async () => {
+        lookupMock.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
+        let res: any;
+        requestSpy = vi.spyOn(https, "request").mockImplementation(((_options: any, callback: (res: any) => void) => {
+            return Object.assign(new EventEmitter(), {
+                destroy: vi.fn(),
+                write: vi.fn(),
+                end: () => {
+                    res = new PassThrough();
+                    res.statusCode = 200;
+                    res.statusMessage = "OK";
+                    res.headers = {};
+                    callback(res);
+                    res.write("data: one\n\n");
+                },
+            });
+        }) as never);
+        const response = await ownComputerFetch("https://lm.example.com/v1/chat/completions", { method: "POST", body: "{}" });
+        const reader = response.body!.getReader();
+        await reader.read();
+        await reader.cancel();
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(res.destroyed).toBe(true);
+    });
+
     it("only limits getting connected: a model that is slow to start answering is not cut off", async () => {
         vi.useFakeTimers();
         try {
