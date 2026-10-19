@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BotApiService } from "./BotApiService";
 
 vi.mock("../../../Connection/LocalUserStore", () => ({
@@ -57,6 +57,34 @@ describe("asking whether the player may use a bot", () => {
         await expect(service().getBotAccess("b1", "summon")).resolves.toEqual({ allowed: null });
         fetchMock.mockResolvedValueOnce(json({ nonsense: true }));
         await expect(service().getBotAccess("b1", "summon")).resolves.toEqual({ allowed: null });
+    });
+});
+
+describe("a bot server that does not answer", () => {
+    beforeEach(() => {
+        sessionStorage.clear();
+        vi.restoreAllMocks();
+        vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it("is 'unknown' after a few seconds, so the Summon button is not held back, and the request is cancelled", async () => {
+        let signal: AbortSignal | undefined;
+        vi.spyOn(globalThis, "fetch").mockImplementation((_url, init) => {
+            signal = init?.signal ?? undefined;
+            return new Promise<Response>(() => {
+                // never answers
+            });
+        });
+
+        const asked = service().getBotAccess("b1", "summon");
+        await vi.advanceTimersByTimeAsync(3000);
+
+        await expect(asked).resolves.toEqual({ allowed: null });
+        expect(signal?.aborted).toBe(true);
     });
 });
 

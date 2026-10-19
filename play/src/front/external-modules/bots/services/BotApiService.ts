@@ -20,6 +20,8 @@ interface AuthError extends Error {
 const SESSION_KEY = "orbit_admin_session_v2";
 const SESSION_EXPIRES_KEY = "orbit_admin_session_v2_expires";
 const OPAQUE_SESSION_PATTERN = /^orb_sess_v2_[0-9a-f]{64}$/;
+/** How long the game waits to learn whether Summon is allowed before it shows the button anyway */
+const ACCESS_CHECK_TIMEOUT_MS = 3000;
 
 export function isOrbitSessionResponse(value: unknown): value is { version: 2; sessionId: string; expiresAt: number } {
     if (!value || typeof value !== "object") return false;
@@ -815,10 +817,30 @@ export class BotApiService {
         botId: string,
         action: "summon" | "chat"
     ): Promise<{ allowed: true } | { allowed: false; reason: string } | { allowed: null }> {
+        // A bot server or sign-in that stalls must not hold the Summon button back: after a few seconds it is "unknown"
+        const stop = new AbortController();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const unknown = new Promise<{ allowed: null }>((resolve) => {
+            timer = setTimeout(() => {
+                stop.abort();
+                resolve({ allowed: null });
+            }, ACCESS_CHECK_TIMEOUT_MS);
+        });
+        return Promise.race([this.askBotAccess(botId, action, stop.signal), unknown]).finally(() => {
+            clearTimeout(timer);
+        });
+    }
+
+    private async askBotAccess(
+        botId: string,
+        action: "summon" | "chat",
+        signal: AbortSignal
+    ): Promise<{ allowed: true } | { allowed: false; reason: string } | { allowed: null }> {
         try {
             const response = await this.fetchBotServer(`/api/bots/${encodeURIComponent(botId)}/access`, {
                 method: "POST",
                 body: JSON.stringify({ action }),
+                signal,
             });
             const body = (await response.json()) as { allowed?: unknown; reason?: unknown };
             if (body.allowed === true) return { allowed: true };
