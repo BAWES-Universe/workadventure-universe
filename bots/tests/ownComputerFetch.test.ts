@@ -118,6 +118,24 @@ describe("ownComputerFetch", () => {
         expect(all).toHaveBeenCalledWith(null, [{ address: "93.184.216.34", family: 4 }]);
     });
 
+    it("hands the connection every address that was checked, so one that cannot be reached does not stop it", async () => {
+        lookupMock.mockResolvedValue([
+            { address: "2606:2800:220:1:248:1893:25c8:1946", family: 6 },
+            { address: "93.184.216.34", family: 4 },
+        ]);
+        fakeServer(200, "ok");
+        await ownComputerFetch("https://lm.example.com/v1/models");
+        const all = vi.fn();
+        seen.lookup("lm.example.com", { all: true }, all);
+        expect(all).toHaveBeenCalledWith(null, [
+            { address: "2606:2800:220:1:248:1893:25c8:1946", family: 6 },
+            { address: "93.184.216.34", family: 4 },
+        ]);
+        const single = vi.fn();
+        seen.lookup("lm.example.com", {}, single);
+        expect(single).toHaveBeenCalledWith(null, "2606:2800:220:1:248:1893:25c8:1946", 6);
+    });
+
     it("refuses a name that resolves to a private address, even when only one of its addresses is", async () => {
         fakeServer(200, "");
         for (const addresses of [
