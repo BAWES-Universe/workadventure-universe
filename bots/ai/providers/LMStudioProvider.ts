@@ -95,7 +95,7 @@ export class LMStudioProvider implements AIProvider {
         let cleanupExternalAbort: (() => void) | undefined;
 
         try {
-            const endpoint = `${config.endpoint}/v1/chat/completions`;
+            const endpoint = `${config.endpoint.replace(/\/+$/, '')}/v1/chat/completions`;
 
             const controller = new AbortController();
             cleanupExternalAbort = linkExternalAbort(externalSignal, controller);
@@ -282,7 +282,7 @@ export class LMStudioProvider implements AIProvider {
             const cleanupExternalAbort = linkExternalAbort(externalSignal, controller);
             const timeoutId = setTimeout(() => controller.abort(), timeout);
             try {
-                const endpoint = `${config.endpoint}/v1/chat/completions`;
+                const endpoint = `${config.endpoint.replace(/\/+$/, '')}/v1/chat/completions`;
 
                 const response = await fetchFor(config)(endpoint, {
                     method: 'POST',
