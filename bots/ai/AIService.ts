@@ -678,7 +678,15 @@ Everything above is technical guidance. Follow your personality as defined in th
             // span attribute is missing from the root gen_ai.agent span and
             // Conversations can't group spans by conversation.
             const conversationId = `conversation-${botId}-player-${playerId}`;
-            Sentry.getCurrentScope().setConversationId(conversationId);
+            // Hide bot conversations (#1166): a private bot sends no conversation or player ids to Sentry and no
+            // text to PostHog. Anything else (usage counts, memory, errors) is unchanged.
+            const privateBot = await this.isPrivateBot(botId);
+            if (privateBot) {
+                // Clear it too: the scope can still hold the id of another bot's last conversation
+                Sentry.getCurrentScope().setConversationId(null);
+            } else {
+                Sentry.getCurrentScope().setConversationId(conversationId);
+            }
 
             // Create a parent Sentry span for this conversation turn.
             // Use startSpanManual instead of startInactiveSpan because
@@ -719,13 +727,17 @@ Everything above is technical guidance. Follow your personality as defined in th
 
             try {
                 // Set attributes on the parent span
-                parentSpan?.setAttribute("bot.player_id", playerId);
-                parentSpan?.setAttribute("bot.universe", botUniverse || 'unknown');
-                parentSpan?.setAttribute("bot.world", botWorld || 'unknown');
-                parentSpan?.setAttribute("bot.room", botRoom || 'unknown');
+                if (!privateBot) {
+                    parentSpan?.setAttribute("bot.player_id", playerId);
+                    parentSpan?.setAttribute("bot.universe", botUniverse || 'unknown');
+                    parentSpan?.setAttribute("bot.world", botWorld || 'unknown');
+                    parentSpan?.setAttribute("bot.room", botRoom || 'unknown');
+                }
                 parentSpan?.setAttribute("bot.provider", config.type);
                 parentSpan?.setAttribute("bot.model", config.model);
-                parentSpan?.setAttribute("bot.space", spaceName || '');
+                if (!privateBot) {
+                    parentSpan?.setAttribute("bot.space", spaceName || '');
+                }
 
                 // NOTE: Pre-AI flush removed. It caused images to appear BEFORE
                 // the "New discussion with..." header. The post-stream flush
@@ -1667,7 +1679,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 // the scope restore always execute, preventing orphaned child spans.
                 try {
                     // Non-tool-call path: capture $ai_generation for the first (only) LLM call
-                    if (!initialGenCaptured && streamCompleted && firstCallContent && !hadToolCalls) {
+                    if (!privateBot && !initialGenCaptured && streamCompleted && firstCallContent && !hadToolCalls) {
                         captureAiGeneration({
                             distinctId: `bot-${botId}`,
                             traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
@@ -1693,7 +1705,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     }
                     
                     // Tool follow-up path: capture $ai_generation for the follow-up LLM call
-                    if (!followUpGenCaptured && hadToolCalls && (followUpContent || followUpError)) {
+                    if (!privateBot && !followUpGenCaptured && hadToolCalls && (followUpContent || followUpError)) {
                         captureAiGeneration({
                             distinctId: `bot-${botId}`,
                             traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
@@ -1719,7 +1731,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     }
                     
                     // Capture $ai_trace (turn-level)
-                    if (streamCompleted && (accumulatedContent || error)) {
+                    if (!privateBot && streamCompleted && (accumulatedContent || error)) {
                         const generationLatency = (Date.now() - startTime) / 1000;
                         captureAiTrace({
                             distinctId: `bot-${botId}`,
@@ -1795,9 +1807,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 });
 
                 // Flush PostHog events — pg.flush() sends queued events without destroying the singleton
-                flushPostHog().catch(err => {
-                    console.error('[AIService] Failed to flush PostHog:', err);
-                });
+                if (!privateBot) {
+                    flushPostHog().catch(err => {
+                        console.error('[AIService] Failed to flush PostHog:', err);
+                    });
+                }
             }
         } catch (error: any) {
             const latency = Date.now() - startTime;
@@ -1824,6 +1838,18 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     error: true,
                 },
             };
+        }
+    }
+
+    /**
+     * Hide bot conversations (#1166): does this bot keep its conversations out of PostHog and Sentry spans?
+     * Not private when Orbit cannot say, which is how every bot worked before the setting existed.
+     */
+    private async isPrivateBot(botId: string): Promise<boolean> {
+        try {
+            return (await this.adminApiService.isBotPrivate?.(botId)) === true;
+        } catch {
+            return false;
         }
     }
 

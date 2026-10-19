@@ -118,6 +118,10 @@ export class AdminApiService {
     private roomMetadataCache: Map<string, { data: { universeName: string; worldName: string; roomName: string }; cachedAt: number }> = new Map();
     private readonly ROOM_METADATA_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
     private adminApiToken: string;
+    // Hide bot conversations (#1166): the answer per bot, asked of Orbit at most every 30 seconds
+    private botPrivacyCache: Map<string, { hidden: boolean; cachedAt: number }> = new Map();
+    private botPrivacyRequests: Map<string, Promise<boolean>> = new Map();
+    private readonly BOT_PRIVACY_CACHE_TTL = 30 * 1000;
 
     constructor(adminApiUrl?: string, adminApiToken?: string) {
         this.adminApiUrl = adminApiUrl || process.env.ADMIN_API_URL || '';
@@ -513,6 +517,60 @@ export class AdminApiService {
             console.error('[AdminApiService] Error getting available AI providers:', error);
             captureException(error as Error);
             return [];
+        }
+    }
+
+    /**
+     * Does this bot hide its conversations (Orbit "Hide bot conversations", #435)? The universe default and the
+     * bot's own choice are resolved by Orbit; this only asks. A private bot sends nothing to PostHog or Sentry
+     * spans and saves no transcript; memory, usage counts and everything else work as always.
+     *
+     * Orbit is asked at most every 30 seconds per bot. If it cannot answer (down, no such endpoint yet, bot not
+     * found), the last answer is kept; with none yet the answer is "not private", which is how every bot behaved
+     * before this setting existed. Never throws.
+     */
+    async isBotPrivate(botId: string): Promise<boolean> {
+        const cached = this.botPrivacyCache.get(botId);
+        if (cached && Date.now() - cached.cachedAt < this.BOT_PRIVACY_CACHE_TTL) {
+            return cached.hidden;
+        }
+        if (!this.isConfigured()) {
+            return cached?.hidden ?? false;
+        }
+        const inFlight = this.botPrivacyRequests.get(botId);
+        if (inFlight) return inFlight;
+
+        const request = this.fetchBotPrivacy(botId, cached?.hidden ?? false).finally(() => {
+            this.botPrivacyRequests.delete(botId);
+        });
+        this.botPrivacyRequests.set(botId, request);
+        return request;
+    }
+
+    private async fetchBotPrivacy(botId: string, lastKnown: boolean): Promise<boolean> {
+        // BOT_SERVICE_TOKEN is preferred, the admin token is the fallback (same as the memory endpoints)
+        const token = process.env.BOT_SERVICE_TOKEN || this.adminApiToken;
+        try {
+            const response: AxiosResponse = await axios.get(
+                `${this.adminApiUrl}/api/bots/${encodeURIComponent(botId)}/privacy`,
+                {
+                    headers: { Authorization: `Bearer ${token}` },
+                    timeout: 5000,
+                }
+            );
+            const hidden = response.data?.hidden === true;
+            this.botPrivacyCache.set(botId, { hidden, cachedAt: Date.now() });
+            return hidden;
+        } catch (error) {
+            // Not found (or an Orbit without the setting yet) is a plain "not private"; anything else keeps what we knew.
+            const notFound = axios.isAxiosError(error) && (error.response?.status === 404 || error.response?.status === 405);
+            const hidden = notFound ? false : lastKnown;
+            // Retry soon, not after the full 30 seconds, when Orbit could not answer
+            this.botPrivacyCache.set(botId, { hidden, cachedAt: notFound ? Date.now() : Date.now() - this.BOT_PRIVACY_CACHE_TTL + 5000 });
+            if (!notFound) {
+                console.warn('[AdminApiService] Could not read the bot privacy setting, keeping the last answer:', axios.isAxiosError(error) ? error.message : 'unknown error');
+            }
+            return hidden;
         }
     }
 

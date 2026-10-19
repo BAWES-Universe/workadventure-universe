@@ -16,6 +16,17 @@ export interface MemoryStorageConfig {
     maxRetries: number;
 }
 
+/**
+ * Who Orbit asked the bot server to forget (Hide bot conversations, #435: a manager pressed Forget on a private bot).
+ * Orbit skipped these people in the save it answers, so the bot server must drop them too or it would save them again.
+ */
+export interface MemoryForgetNotice {
+    everyone: boolean;
+    userUuids: string[];
+}
+
+export type MemoryForgetHandler = (botId: string, notice: MemoryForgetNotice) => void;
+
 export class MemoryStorage {
     private adminApiUrl?: string;
     private adminApiToken?: string;
@@ -23,6 +34,7 @@ export class MemoryStorage {
     private saveInterval: number;
     private maxRetries: number;
     private saveTimer: NodeJS.Timeout | null = null;
+    private forgetHandler: MemoryForgetHandler | null = null;
 
     constructor(config: MemoryStorageConfig) {
         this.adminApiUrl = config.adminApiUrl || process.env.ADMIN_API_URL;
@@ -30,6 +42,11 @@ export class MemoryStorage {
         this.botServiceToken = config.botServiceToken || process.env.BOT_SERVICE_TOKEN;
         this.saveInterval = config.saveInterval || 5 * 60 * 1000; // 5 minutes
         this.maxRetries = config.maxRetries || 3;
+    }
+
+    /** Called when a save is answered with people to forget. */
+    setForgetHandler(handler: MemoryForgetHandler | null): void {
+        this.forgetHandler = handler;
     }
 
     /**
@@ -120,7 +137,7 @@ export class MemoryStorage {
                     }
                 }
                 
-                await axios.post(
+                const response = await axios.post(
                     `${this.adminApiUrl}/api/bots/memory/${botId}`,
                     {
                         memories: serializedMemories,
@@ -134,6 +151,7 @@ export class MemoryStorage {
                         },
                     }
                 );
+                this.applyForgetNotice(botId, response?.data?.forget);
                 return; // Success
             } catch (error: any) {
                 retries++;
@@ -146,6 +164,25 @@ export class MemoryStorage {
                     await new Promise(resolve => setTimeout(resolve, 1000 * retries));
                 }
             }
+        }
+    }
+
+    /**
+     * Pass on who Orbit asked us to forget. A missing or malformed answer is no answer (how every save went before);
+     * a handler that fails must never turn a save that worked into a retry.
+     */
+    private applyForgetNotice(botId: string, forget: unknown): void {
+        if (!this.forgetHandler || !forget || typeof forget !== 'object') return;
+        const { everyone, userUuids } = forget as { everyone?: unknown; userUuids?: unknown };
+        const notice: MemoryForgetNotice = {
+            everyone: everyone === true,
+            userUuids: Array.isArray(userUuids) ? userUuids.filter((uuid): uuid is string => typeof uuid === 'string') : [],
+        };
+        if (!notice.everyone && notice.userUuids.length === 0) return;
+        try {
+            this.forgetHandler(botId, notice);
+        } catch (error) {
+            console.error('[MemoryStorage] Could not drop forgotten memories:', error);
         }
     }
 
