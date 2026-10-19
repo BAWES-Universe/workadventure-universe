@@ -374,6 +374,19 @@ describe("AIService – finding a bot's AI by bot id", () => {
             expect(admin.reportAiHealth.mock.calls.map((call: any[]) => call[1])).toEqual([{ ok: false, rejected: false, status: 502 }]);
         });
 
+        it("counts a reply as failed when the second try after nameless tool calls got an error, and as rejected on a 401", async () => {
+            const { admin, memory } = buildMocks();
+            admin.getBotAiCredentials.mockResolvedValue(ownKey());
+            const service = new AIService(memory, admin, "http://admin.local");
+            async function* namelessToolCall() {
+                yield { content: "", done: false, toolCalls: [{ id: "call_1", name: "", arguments: "{}" }] };
+                yield { content: "", done: true, metadata: { tokensUsed: 5, latency: 10, error: false } };
+            }
+            mockGenerateStream.mockImplementationOnce(namelessToolCall).mockImplementationOnce(() => failed(401));
+            await reply(service, "key-abc");
+            expect(admin.reportAiHealth.mock.calls.map((call: any[]) => call[1])).toEqual([{ ok: false, rejected: true, status: 401 }]);
+        });
+
         it("still counts a reply as worked when its tool follow-up worked", async () => {
             const { admin, memory } = buildMocks();
             admin.getBotAiCredentials.mockResolvedValue(ownKey());
