@@ -122,11 +122,14 @@
 
     function downNoteOf(card: RunsOnCard): string | null {
         if ((card.kind !== "mine" && card.kind !== "theirs") || card.status !== "down") return null;
-        return card.kind === "mine" && card.ifDown === "stop" ? page.mind.downStops() : page.mind.downUseUniverseAi();
+        return card.ifDown === "stop" ? page.mind.downStops() : page.mind.downUseUniverseAi();
     }
 
     function pinProvider(event: Event) {
-        const value = (event.currentTarget as HTMLSelectElement).value;
+        const select = event.currentTarget as HTMLSelectElement;
+        const value = select.value;
+        // Back to the prompt, so the same provider can be pinned again after the bot moves off it
+        select.value = "";
         if (value) onChange({ ...bot, aiProviderRef: value });
     }
 

@@ -26,7 +26,7 @@ export type RunsOnCard =
           ifDown: "universe-ai" | "stop";
       }
     /** Someone else's key the bot is on now: shown as it is, never offered, only Universe AI can replace it. */
-    | { kind: "theirs"; id: string; title: string; owner: string | null; picked: true; selectable: false; status: "working" | "down" }
+    | { kind: "theirs"; id: string; title: string; owner: string | null; picked: true; selectable: false; status: "working" | "down"; ifDown: "universe-ai" | "stop" }
     /** A server provider the bot is pinned to (a super admin did that): shown as it is. */
     | { kind: "pinned"; id: string; title: string; picked: true; selectable: false };
 
@@ -53,6 +53,7 @@ export function runsOnCards(
                           picked: true,
                           selectable: false,
                           status: options.currentKey.status,
+                          ifDown: options.currentKey.ifDown,
                       }
                     : {
                           kind: "theirs",
@@ -62,6 +63,7 @@ export function runsOnCards(
                           picked: true,
                           selectable: false,
                           status: options.currentKey.status,
+                          ifDown: options.currentKey.ifDown,
                       }
             );
         } else {

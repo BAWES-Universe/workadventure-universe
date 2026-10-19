@@ -46,9 +46,19 @@ describe("runsOnCards", () => {
             "key-9"
         );
         expect(cards).toEqual([
-            { kind: "theirs", id: "key-9", title: "Mishari’s Claude", owner: "Mishari", picked: true, selectable: false, status: "working" },
+            { kind: "theirs", id: "key-9", title: "Mishari’s Claude", owner: "Mishari", picked: true, selectable: false, status: "working", ifDown: "universe-ai" },
             { kind: "universe-ai", id: "universe-ai", picked: false, selectable: true, available: true },
         ]);
+    });
+
+    it("a key that is down says what its bots do meanwhile, for someone else's key too", () => {
+        const down = (ifDown: "universe-ai" | "stop") =>
+            runsOnCards(
+                options({ current: "key-9", viewerIsMaker: false, currentKey: { id: "key-9", name: "Their Claude", ownerName: "Mishari", mine: false, status: "down", ifDown } }),
+                "key-9"
+            )[0];
+        expect(down("stop")).toMatchObject({ kind: "theirs", status: "down", ifDown: "stop" });
+        expect(down("universe-ai")).toMatchObject({ kind: "theirs", status: "down", ifDown: "universe-ai" });
     });
 
     it("a bot pinned to a server provider is shown by name, picked, not selectable; the pinned name falls back to the id", () => {
