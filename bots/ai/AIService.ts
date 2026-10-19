@@ -241,6 +241,8 @@ export class AIService {
             // "universe-ai" names whatever the Default is now, so it is not kept for an hour
             expiresAt: Date.now() + (providerId === UNIVERSE_AI_REF ? this.BOT_CREDENTIAL_TTL : this.CREDENTIAL_TTL),
         });
+        // Usage is priced by the provider that answered, which "universe-ai" is not
+        if (config.providerId !== providerId) this.botRoutePricing.set(config.providerId, config);
 
         return config;
     }
