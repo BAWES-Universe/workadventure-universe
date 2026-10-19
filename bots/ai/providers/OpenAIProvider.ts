@@ -94,11 +94,11 @@ export class OpenAIProvider implements AIProvider {
     }
 
     /**
-     * The status to report for a failed call. Gemini answers a wrong or revoked key with 400 ("Please pass a valid API key"),
+     * The status to report for a failed call. Gemini answers a wrong or revoked key with 400 ("Please pass a valid API key", or "API key expired" for an old one),
      * not 401, and a 400 is not counted against a key, so it is reported as the 401 it means.
      */
     private reportedStatus(status: number, errorText: string): number {
-        if (status === 400 && /valid API key|API_KEY_INVALID/i.test(errorText)) return 401;
+        if (status === 400 && /valid API key|API_KEY_INVALID|API key expired/i.test(errorText)) return 401;
         return status;
     }
 
