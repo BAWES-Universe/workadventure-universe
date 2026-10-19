@@ -270,8 +270,8 @@
                     })();
                 });
             }
-        } else {
-            // Reset when no bot selected
+        } else if (!bot) {
+            // Reset when no bot selected. A rename alone keeps them: they are what a refused save is put back to
             lastSavedBotConfig = null;
             lastSavedAIConfig = null;
         }
