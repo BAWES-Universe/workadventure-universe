@@ -1056,6 +1056,10 @@ Everything above is technical guidance. Follow your personality as defined in th
                                         retryTruncated = !!retryChunk.metadata?.truncated;
                                         retryMeta = retryChunk.metadata;
                                     }
+                                    if (retryChunk.done && retryChunk.metadata?.error) {
+                                        followUpFailedForHealth = true;
+                                        if (retryChunk.metadata.errorStatus) followUpErrorStatus = retryChunk.metadata.errorStatus;
+                                    }
                                 }
                             } catch (retryError) {
                                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -1571,6 +1575,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                         if (retryChunk.done) {
                                             retryTruncated = !!retryChunk.metadata?.truncated;
                                             retryMeta = retryChunk.metadata;
+                                        }
+                                        if (retryChunk.done && retryChunk.metadata?.error) {
+                                            followUpFailedForHealth = true;
+                                            if (retryChunk.metadata.errorStatus) followUpErrorStatus = retryChunk.metadata.errorStatus;
                                         }
                                     }
                                 } catch (retryError) {
