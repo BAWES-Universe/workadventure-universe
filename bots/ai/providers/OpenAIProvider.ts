@@ -9,6 +9,7 @@
 import type { AIProvider } from '../AIProvider';
 import type { AIProviderConfig, AIStreamChunk, AIResponse } from '../types';
 import { decryptApiKey } from '../encryption';
+import { fetchFor, statusFromError } from './ownKeyHttp';
 import { linkExternalAbort } from './abortUtils';
 import { resolveVisionSupport } from './visionModels';
 import * as Sentry from '@sentry/node';
@@ -193,7 +194,7 @@ export class OpenAIProvider implements AIProvider {
 
             const requestBody = this.buildRequestBody(systemPrompt, userMessage, config, true, tools, images);
 
-            const response = await fetch(endpoint, {
+            const response = await fetchFor(config)(endpoint, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -226,7 +227,7 @@ export class OpenAIProvider implements AIProvider {
                     externalAbortCleanups.push(linkExternalAbort(externalSignal, retryController));
                     streamController = retryController; // update for active stream
                     timeoutId = setTimeout(() => retryController.abort(), timeout);
-                    const retryResponse = await fetch(endpoint, {
+                    const retryResponse = await fetchFor(config)(endpoint, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
@@ -257,7 +258,7 @@ export class OpenAIProvider implements AIProvider {
                     externalAbortCleanups.push(linkExternalAbort(externalSignal, retryController));
                     streamController = retryController; // update for active stream
                     timeoutId = setTimeout(() => retryController.abort(), timeout);
-                    const retryResponse = await fetch(endpoint, {
+                    const retryResponse = await fetchFor(config)(endpoint, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
@@ -394,6 +395,7 @@ export class OpenAIProvider implements AIProvider {
                     tokensUsed: 0,
                     latency,
                     error: !externallyCancelled,
+                    errorStatus: statusFromError(error),
                 },
             };
         } finally {
@@ -434,7 +436,7 @@ export class OpenAIProvider implements AIProvider {
 
                 const requestBody = this.buildRequestBody(systemPrompt, userMessage, config, false, tools, images);
 
-                const response = await fetch(endpoint, {
+                const response = await fetchFor(config)(endpoint, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -471,7 +473,7 @@ export class OpenAIProvider implements AIProvider {
                         const retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
 
                         try {
-                            const retryResponse = await fetch(endpoint, {
+                            const retryResponse = await fetchFor(config)(endpoint, {
                                 method: 'POST',
                                 headers: {
                                     'Content-Type': 'application/json',
@@ -507,7 +509,7 @@ export class OpenAIProvider implements AIProvider {
                         const retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
 
                         try {
-                            const retryResponse = await fetch(endpoint, {
+                            const retryResponse = await fetchFor(config)(endpoint, {
                                 method: 'POST',
                                 headers: {
                                     'Content-Type': 'application/json',

@@ -1791,7 +1791,7 @@ export abstract class BaseBehavior {
                     `Say one short, natural line that genuinely moves the conversation forward — ` +
                     `a new thought, a question, or a fresh angle. Do NOT repeat anything you already said. ` +
                     `No emojis, no apologies for repeating.`;
-                const fallbackMessage = await this.aiService.quickGenerate(aiProviderRef, chatInstructions, fallbackPrompt);
+                const fallbackMessage = await this.aiService.quickGenerate(aiProviderRef, chatInstructions, fallbackPrompt, botId);
                 if (fallbackMessage.trim()) {
                     processedMessage = fallbackMessage.trim();
                 }
@@ -2064,7 +2064,7 @@ export abstract class BaseBehavior {
         const botConfig = this.bot?.getFullConfig();
         const providerId = botConfig?.aiProviderRef;
         if (!providerId) return { action: 'queue', message: '' };
-        return this.aiService.quickClassify(providerId, currentTask, newMessage);
+        return this.aiService.quickClassify(providerId, currentTask, newMessage, botConfig?.botId);
     }
 
     private async enqueueMessage(
@@ -2106,7 +2106,7 @@ export abstract class BaseBehavior {
         const prompt = `Current task: "${currentTask}"
 
 The person you're talking to just sent several more messages while you were still finishing a response. Acknowledge this in one short sentence, in your own voice — you've noticed and will get to them.`;
-        return this.aiService.quickGenerate(providerId, chatInstructions, prompt);
+        return this.aiService.quickGenerate(providerId, chatInstructions, prompt, botConfig?.botId);
     }
 
     /**
