@@ -27,7 +27,10 @@ const options = (over: Partial<BotAiOptions> = {}): BotAiOptions => ({
 
 describe("runsOnCards", () => {
     it("a maker's bot on Universe AI: Universe AI first and picked, then their keys", () => {
-        const cards = runsOnCards(options({ keys: [key("key-1"), key("key-2", { group: "own-computer", status: "down" })] }), "universe-ai");
+        const cards = runsOnCards(
+            options({ keys: [key("key-1"), key("key-2", { group: "own-computer", status: "down" })] }),
+            "universe-ai"
+        );
         expect(cards.map((card) => [card.kind, card.id, card.picked])).toEqual([
             ["universe-ai", "universe-ai", true],
             ["mine", "key-1", false],
@@ -42,11 +45,32 @@ describe("runsOnCards", () => {
 
     it("someone else's key is shown as what the bot is on, picked, never selectable, with Universe AI to switch to", () => {
         const cards = runsOnCards(
-            options({ current: "key-9", viewerIsMaker: false, maker: { id: "mishari", name: "Mishari" }, currentKey: { id: "key-9", name: "Mishari’s Claude", ownerName: "Mishari", mine: false, status: "working", ifDown: "universe-ai" } }),
+            options({
+                current: "key-9",
+                viewerIsMaker: false,
+                maker: { id: "mishari", name: "Mishari" },
+                currentKey: {
+                    id: "key-9",
+                    name: "Mishari’s Claude",
+                    ownerName: "Mishari",
+                    mine: false,
+                    status: "working",
+                    ifDown: "universe-ai",
+                },
+            }),
             "key-9"
         );
         expect(cards).toEqual([
-            { kind: "theirs", id: "key-9", title: "Mishari’s Claude", owner: "Mishari", picked: true, selectable: false, status: "working", ifDown: "universe-ai" },
+            {
+                kind: "theirs",
+                id: "key-9",
+                title: "Mishari’s Claude",
+                owner: "Mishari",
+                picked: true,
+                selectable: false,
+                status: "working",
+                ifDown: "universe-ai",
+            },
             { kind: "universe-ai", id: "universe-ai", picked: false, selectable: true, available: true },
         ]);
     });
@@ -54,7 +78,18 @@ describe("runsOnCards", () => {
     it("a key that is down says what its bots do meanwhile, for someone else's key too", () => {
         const down = (ifDown: "universe-ai" | "stop") =>
             runsOnCards(
-                options({ current: "key-9", viewerIsMaker: false, currentKey: { id: "key-9", name: "Their Claude", ownerName: "Mishari", mine: false, status: "down", ifDown } }),
+                options({
+                    current: "key-9",
+                    viewerIsMaker: false,
+                    currentKey: {
+                        id: "key-9",
+                        name: "Their Claude",
+                        ownerName: "Mishari",
+                        mine: false,
+                        status: "down",
+                        ifDown,
+                    },
+                }),
                 "key-9"
             )[0];
         expect(down("stop")).toMatchObject({ kind: "theirs", status: "down", ifDown: "stop" });
@@ -63,8 +98,17 @@ describe("runsOnCards", () => {
 
     it("a bot pinned to a server provider is shown by name, picked, not selectable; the pinned name falls back to the id", () => {
         const names = new Map([["deepseek-flash", "DeepSeek V4 Flash"]]);
-        expect(runsOnCards(options({ current: "deepseek-flash" }), "deepseek-flash", names)[0]).toEqual({ kind: "pinned", id: "deepseek-flash", title: "DeepSeek V4 Flash", picked: true, selectable: false });
-        expect(runsOnCards(options({ current: "mystery" }), "mystery")[0]).toMatchObject({ kind: "pinned", title: "mystery" });
+        expect(runsOnCards(options({ current: "deepseek-flash" }), "deepseek-flash", names)[0]).toEqual({
+            kind: "pinned",
+            id: "deepseek-flash",
+            title: "DeepSeek V4 Flash",
+            picked: true,
+            selectable: false,
+        });
+        expect(runsOnCards(options({ current: "mystery" }), "mystery")[0]).toMatchObject({
+            kind: "pinned",
+            title: "mystery",
+        });
     });
 
     it("a personal key Orbit no longer knows is said to be gone, never shown as its raw id; Universe AI is still the way off it", () => {
@@ -77,7 +121,9 @@ describe("runsOnCards", () => {
 
     it("matches a pinned provider's id without caring about case, as the old dropdown did", () => {
         const names = new Map([["lmstudio-local", "LM Studio Local"]]);
-        expect(runsOnCards(options({ current: "LMStudio-Local" }), "LMStudio-Local", names)[0]).toMatchObject({ title: "LM Studio Local" });
+        expect(runsOnCards(options({ current: "LMStudio-Local" }), "LMStudio-Local", names)[0]).toMatchObject({
+            title: "LM Studio Local",
+        });
     });
 
     it("Universe AI cannot be chosen when it isn't set up, but is still shown", () => {
@@ -86,12 +132,28 @@ describe("runsOnCards", () => {
     });
 
     it("the maker's own key that is no longer lent here is shown as it is", () => {
-        const [first] = runsOnCards(options({ current: "key-5", currentKey: { id: "key-5", name: "Old key", ownerName: "Mishari", mine: true, status: "working", ifDown: "universe-ai" } }), "key-5");
+        const [first] = runsOnCards(
+            options({
+                current: "key-5",
+                currentKey: {
+                    id: "key-5",
+                    name: "Old key",
+                    ownerName: "Mishari",
+                    mine: true,
+                    status: "working",
+                    ifDown: "universe-ai",
+                },
+            }),
+            "key-5"
+        );
         expect(first).toMatchObject({ kind: "theirs", title: "Old key", owner: null, selectable: false });
     });
 
     it("shows a key's Down state and what the bot does meanwhile", () => {
-        const [, , down] = runsOnCards(options({ keys: [key("key-1"), key("key-2", { status: "down", ifDown: "stop" })] }), "universe-ai");
+        const [, , down] = runsOnCards(
+            options({ keys: [key("key-1"), key("key-2", { status: "down", ifDown: "stop" })] }),
+            "universe-ai"
+        );
         expect(down).toMatchObject({ status: "down", ifDown: "stop" });
     });
 });
@@ -107,7 +169,18 @@ describe("canPick", () => {
     });
 
     it("lets a manager who isn't the maker move the bot to Universe AI only", () => {
-        const o = options({ viewerIsMaker: false, current: "key-9", currentKey: { id: "key-9", name: "Their key", ownerName: "Mishari", mine: false, status: "working", ifDown: "universe-ai" } });
+        const o = options({
+            viewerIsMaker: false,
+            current: "key-9",
+            currentKey: {
+                id: "key-9",
+                name: "Their key",
+                ownerName: "Mishari",
+                mine: false,
+                status: "working",
+                ifDown: "universe-ai",
+            },
+        });
         const [theirs, uai] = runsOnCards(o, "key-9");
         expect(canPick(o, theirs)).toBe(false);
         expect(canPick(o, uai)).toBe(true);
@@ -130,9 +203,30 @@ describe("mindBriefName", () => {
     it("says none, Universe AI, the key's name or the provider", () => {
         expect(mindBriefName(options({ current: null }), null)).toEqual({ kind: "none" });
         expect(mindBriefName(options(), "universe-ai")).toEqual({ kind: "universe-ai" });
-        expect(mindBriefName(options({ keys: [key("key-1", { name: "My DeepSeek" })] }), "key-1")).toEqual({ kind: "key", name: "My DeepSeek" });
-        expect(mindBriefName(options({ currentKey: { id: "key-9", name: "Mishari’s Claude", ownerName: "Mishari", mine: false, status: "working", ifDown: "universe-ai" } }), "key-9")).toEqual({ kind: "key", name: "Mishari’s Claude" });
-        expect(mindBriefName(options(), "deepseek-flash", new Map([["deepseek-flash", "DeepSeek V4 Flash"]]))).toEqual({ kind: "provider", ref: "deepseek-flash", name: "DeepSeek V4 Flash" });
+        expect(mindBriefName(options({ keys: [key("key-1", { name: "My DeepSeek" })] }), "key-1")).toEqual({
+            kind: "key",
+            name: "My DeepSeek",
+        });
+        expect(
+            mindBriefName(
+                options({
+                    currentKey: {
+                        id: "key-9",
+                        name: "Mishari’s Claude",
+                        ownerName: "Mishari",
+                        mine: false,
+                        status: "working",
+                        ifDown: "universe-ai",
+                    },
+                }),
+                "key-9"
+            )
+        ).toEqual({ kind: "key", name: "Mishari’s Claude" });
+        expect(mindBriefName(options(), "deepseek-flash", new Map([["deepseek-flash", "DeepSeek V4 Flash"]]))).toEqual({
+            kind: "provider",
+            ref: "deepseek-flash",
+            name: "DeepSeek V4 Flash",
+        });
         expect(mindBriefName(options(), "mystery")).toEqual({ kind: "provider", ref: "mystery", name: null });
     });
 });

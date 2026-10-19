@@ -26,7 +26,16 @@ export type RunsOnCard =
           ifDown: "universe-ai" | "stop";
       }
     /** Someone else's key the bot is on now: shown as it is, never offered, only Universe AI can replace it. */
-    | { kind: "theirs"; id: string; title: string; owner: string | null; picked: true; selectable: false; status: "working" | "down"; ifDown: "universe-ai" | "stop" }
+    | {
+          kind: "theirs";
+          id: string;
+          title: string;
+          owner: string | null;
+          picked: true;
+          selectable: false;
+          status: "working" | "down";
+          ifDown: "universe-ai" | "stop";
+      }
     /** A server provider the bot is pinned to (a super admin did that): shown as it is. */
     | { kind: "pinned"; id: string; title: string; picked: true; selectable: false }
     /** A personal key the bot points at that Orbit no longer knows (removed): said so, never shown as a raw id. Only Universe AI can replace it. */
@@ -108,7 +117,12 @@ export function mindBriefName(
     options: BotAiOptions,
     ref: string | null | undefined,
     providerNames: ReadonlyMap<string, string> = new Map()
-): { kind: "none" } | { kind: "universe-ai" } | { kind: "key"; name: string } | { kind: "gone" } | { kind: "provider"; ref: string; name: string | null } {
+):
+    | { kind: "none" }
+    | { kind: "universe-ai" }
+    | { kind: "key"; name: string }
+    | { kind: "gone" }
+    | { kind: "provider"; ref: string; name: string | null } {
     const current = ref ?? options.current ?? null;
     if (!current) return { kind: "none" };
     if (current === UNIVERSE_AI_REF) return { kind: "universe-ai" };
@@ -117,13 +131,20 @@ export function mindBriefName(
         const name = key?.name ?? (options.currentKey?.id === current ? options.currentKey.name : null);
         return name ? { kind: "key", name } : { kind: "gone" };
     }
-    const name = providerNames.get(current.toLowerCase()) ?? options.providers?.find((provider) => provider.id.toLowerCase() === current.toLowerCase())?.name ?? null;
+    const name =
+        providerNames.get(current.toLowerCase()) ??
+        options.providers?.find((provider) => provider.id.toLowerCase() === current.toLowerCase())?.name ??
+        null;
     return { kind: "provider", ref: current, name };
 }
 
 /** Who may change what a bot runs on: its maker may pick their own lent keys; anyone who manages bots may move it to Universe AI. */
 export function canPick(options: BotAiOptions, card: RunsOnCard): boolean {
-    return card.selectable && !card.picked && (card.kind === "universe-ai" || (card.kind === "mine" && options.viewerIsMaker));
+    return (
+        card.selectable &&
+        !card.picked &&
+        (card.kind === "universe-ai" || (card.kind === "mine" && options.viewerIsMaker))
+    );
 }
 
 /** What a new bot starts on: Universe AI when Orbit says it is ready, otherwise nothing is decided here (the page keeps its old choice). */

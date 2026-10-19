@@ -91,7 +91,9 @@
             ? page.mind.keyGoneTitle()
             : runsOnBrief?.kind === "provider" && current
             ? [
-                  current.enabled ? current.name : `${current.name} ${$LL.actionbar.botEditorModule.providerDisabled()}`,
+                  current.enabled
+                      ? current.name
+                      : `${current.name} ${$LL.actionbar.botEditorModule.providerDisabled()}`,
                   current.model,
                   seesPictures(current) ? page.mind.seesPictures() : "",
               ]
@@ -175,10 +177,18 @@
                     on:click={() => chooseCard(card)}
                 >
                     <span class="bp-cico">
-                        {#if card.kind === "universe-ai"}<IconSparkles font-size="20" />{:else}<IconKey font-size="20" />{/if}
+                        {#if card.kind === "universe-ai"}<IconSparkles font-size="20" />{:else}<IconKey
+                                font-size="20"
+                            />{/if}
                     </span>
                     <span class="bp-ctx">
-                        <span class="bp-ct">{card.kind === "universe-ai" ? page.mind.universeAi() : card.kind === "gone" ? page.mind.keyGoneTitle() : card.title}</span>
+                        <span class="bp-ct"
+                            >{card.kind === "universe-ai"
+                                ? page.mind.universeAi()
+                                : card.kind === "gone"
+                                ? page.mind.keyGoneTitle()
+                                : card.title}</span
+                        >
                         <span class="bp-cn">
                             {noteOf(card)}
                             {#if downNoteOf(card)}
@@ -186,7 +196,7 @@
                             {/if}
                         </span>
                     </span>
-                    <span class="bp-radio" class:on={card.picked} aria-hidden="true"></span>
+                    <span class="bp-radio" class:on={card.picked} aria-hidden="true" />
                 </button>
             {/each}
         </div>
@@ -205,7 +215,9 @@
                     <option value="">{page.mind.pinTo()}</option>
                     {#each options.providers as provider (provider.id)}
                         <option value={provider.id}>
-                            {provider.name}{provider.enabled ? "" : ` ${$LL.actionbar.botEditorModule.providerDisabled()}`}
+                            {provider.name}{provider.enabled
+                                ? ""
+                                : ` ${$LL.actionbar.botEditorModule.providerDisabled()}`}
                         </option>
                     {/each}
                 </select>
