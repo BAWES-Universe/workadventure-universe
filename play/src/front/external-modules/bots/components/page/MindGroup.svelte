@@ -1,6 +1,5 @@
 <script lang="ts">
     // Mind: which AI the bot thinks with. A provider whose model has vision (can look at pictures) says so.
-    import { onMount } from "svelte";
     import LL from "../../../../../i18n/i18n-svelte";
     import type { BotAiOptions, BotData } from "../../types";
     import { botApiService } from "../../services/BotApiService";
@@ -27,7 +26,12 @@
      */
     let options: BotAiOptions | null = null;
 
-    async function load() {
+    let loadedFor: { id: string | undefined } | null = null;
+    let loadCount = 0;
+
+    async function load(botId: string | undefined) {
+        // Only the newest load may answer: a slow reply for the bot the panel was on before must not show on this one
+        const mine = ++loadCount;
         loading = true;
         failed = false;
         if (!botApiService.isInitialized()) {
@@ -37,21 +41,28 @@
         }
         try {
             // The provider names (to show what a pinned bot is on) and what Orbit offers, together
-            [providers, options] = await Promise.all([
+            const [loadedProviders, loadedOptions] = await Promise.all([
                 botApiService.getAvailableAIProviders(true),
-                botApiService.getBotAiOptions(bot.id ? { botId: bot.id } : {}),
+                botApiService.getBotAiOptions(botId ? { botId } : {}),
             ]);
+            if (mine !== loadCount) return;
+            providers = loadedProviders;
+            options = loadedOptions;
         } catch (e) {
+            if (mine !== loadCount) return;
             console.error("[MindGroup] Failed to load AI providers:", e);
             failed = true;
         } finally {
-            loading = false;
+            if (mine === loadCount) loading = false;
         }
     }
 
-    onMount(() => {
-        void load();
-    });
+    // On first show, and again whenever the panel moves to another bot (it stays mounted when the bot changes)
+    $: if (!loadedFor || loadedFor.id !== bot.id) {
+        loadedFor = { id: bot.id };
+        options = null;
+        void load(bot.id);
+    }
 
     // A provider can see pictures when its model can (by its setting or its model's name), or when it has a
     // separate model for pictures.
@@ -204,7 +215,7 @@
     {:else if failed}
         <div class="bp-line">
             <p class="bp-m">{$LL.actionbar.botEditorModule.errorLoadFailed()}</p>
-            <PageButton on:click={() => void load()}>{$LL.actionbar.botEditorModule.retry()}</PageButton>
+            <PageButton on:click={() => void load(bot.id)}>{$LL.actionbar.botEditorModule.retry()}</PageButton>
         </div>
     {:else if providers.length === 0}
         <p class="bp-m">{$LL.actionbar.botEditorModule.noProvidersConfigured()}</p>
