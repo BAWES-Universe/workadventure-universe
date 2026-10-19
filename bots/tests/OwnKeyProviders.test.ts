@@ -80,6 +80,12 @@ describe("LMStudioProvider and keys", () => {
         expect(ownFetch.mock.calls[0][1].headers).toEqual({ "Content-Type": "application/json", Authorization: "Bearer sk-person" });
     });
 
+    it("an address saved with a trailing slash still reaches /v1/chat/completions, not //v1", async () => {
+        ownFetch.mockImplementation(async () => sse());
+        await drain(new LMStudioProvider().generateStream("sys", "hi", config({ endpoint: "https://lm.example.com/", ownKey: { addressTyped: true } })));
+        expect(ownFetch.mock.calls[0][0]).toBe("https://lm.example.com/v1/chat/completions");
+    });
+
     it("a person's own key with no key sends no Authorization", async () => {
         ownFetch.mockImplementation(async () => sse());
         await drain(new LMStudioProvider().generateStream("sys", "hi", config({ ownKey: { addressTyped: true } })));
