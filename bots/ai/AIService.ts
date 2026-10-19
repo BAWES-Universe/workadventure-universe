@@ -411,7 +411,7 @@ export class AIService {
                 // be the one answering (persona, chat instructions, tools).
                 const visionCapable = this.providerRegistry.supportsVision(config);
                 if (!visionCapable) {
-                    // A person's own key without Vision never has its pictures described by Universe AI: the picture would
+                    // A person's own key without Vision never has its images described by Universe AI: the image would
                     // leave their key (or their own computer) and Universe would pay for it. The link stays in the text.
                     const description =
                         resolved.source === 'own-key'
