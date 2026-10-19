@@ -249,7 +249,8 @@ export function withoutRefused(bot: BotData, kind: "config" | "ai", saved: strin
     if (kind === "ai") {
         return { ...bot, aiProviderRef: typeof parsed?.aiProviderRef === "string" ? parsed.aiProviderRef : undefined };
     }
-    const { vision: _refused, ...rest } = bot.behaviorConfig;
+    const rest: Record<string, unknown> = { ...bot.behaviorConfig };
+    delete rest.vision;
     const before = parsed?.vision;
     return {
         ...bot,
