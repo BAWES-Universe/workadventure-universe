@@ -438,19 +438,21 @@ export class BotAPI {
                 }
 
                 // The owner may limit who can call this bot over (Orbit decides). A refusal says so in a line the game
-                // shows as it is; when Orbit cannot answer and there is no earlier answer, that is said too.
+                // shows as it is. When Orbit cannot answer and there is no earlier answer, the bot still comes: calling a
+                // bot over is open to everyone unless an owner or role rule says otherwise, and no rule has been seen.
+                // The gate has already reported Orbit not answering.
                 const allowed = await this.botManager.getAccessGate().check(
                     botId,
                     'summon',
                     { signedIn: !!req.sessionUuid, identifier: req.sessionUuid },
                     bot.getName()
                 );
-                if (allowed.kind !== 'allowed') {
-                    res.status(allowed.kind === 'refused' ? 403 : 503).json({
+                if (allowed.kind === 'refused') {
+                    res.status(403).json({
                         summoned: false,
                         error: allowed.line,
                         reason: allowed.line,
-                        code: allowed.kind === 'refused' ? 'not_allowed' : 'cannot_check',
+                        code: 'not_allowed',
                     });
                     return;
                 }

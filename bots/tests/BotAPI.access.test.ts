@@ -124,18 +124,28 @@ describe('Summon', () => {
         expect(botManager.summonBot).not.toHaveBeenCalled();
     });
 
-    it('says it cannot check, and the bot does not move, when Orbit cannot answer', async () => {
+    it.each([
+        ['a signed-in player', () => summon()],
+        [
+            'a guest',
+            () =>
+                post(
+                    '/api/bots/b1/summon',
+                    { playerUuid: 'guest-uuid', playerX: 1, playerY: 2 },
+                    { 'X-WA-Auth': GAME_TOKEN }
+                ),
+        ],
+    ])('still calls the bot over for %s when Orbit cannot answer and no rule has been seen', async (_who, call) => {
         gate.check.mockResolvedValue({
             allowed: false,
             kind: 'cannot_check',
             line: "Nora can't check that right now. Try again soon.",
         });
 
-        const response = await summon();
+        const response = await call();
 
-        expect(response.status).toBe(503);
-        expect(await response.json()).toMatchObject({ summoned: false, code: 'cannot_check' });
-        expect(botManager.summonBot).not.toHaveBeenCalled();
+        expect(response.status).toBe(200);
+        expect(botManager.summonBot).toHaveBeenCalledTimes(1);
     });
 
     it('does not ask Orbit for a bot that is not here', async () => {
