@@ -27,10 +27,12 @@ vi.mock("../ai/PostHogClient", () => ({
 vi.mock("../ai/encryption", () => ({ decryptApiKey: vi.fn(() => "decrypted-key") }));
 const mockGenerateStream = vi.fn();
 const mockGetOrCreateProvider = vi.fn();
+const mockSupportsVision = vi.fn(() => false);
 vi.mock("../ai/AIProviderRegistry", () => ({
     AIProviderRegistry: vi.fn().mockImplementation(() => ({
         generateStream: mockGenerateStream,
         getOrCreateProvider: mockGetOrCreateProvider,
+        supportsVision: mockSupportsVision,
     })),
 }));
 vi.mock("../client/BotClient", () => ({ BotClient: vi.fn() }));
@@ -69,7 +71,7 @@ function buildMocks() {
         getRoomMetadata: vi.fn().mockResolvedValue(null),
         getAvailableAIProviders: vi.fn().mockResolvedValue([]),
     };
-    const memory: any = { getMemory: vi.fn(() => ({ userUuid: "test-uuid" })) };
+    const memory: any = { getMemory: vi.fn(() => ({ userUuid: "test-uuid" })), appendVisionDescription: vi.fn() };
     return { admin, memory };
 }
 
@@ -269,6 +271,54 @@ describe("AIService – finding a bot's AI by bot id", () => {
             const service = new AIService(memory, admin, "http://admin.local");
             await reply(service, "key-abc");
             expect(mockGenerateStream.mock.calls[0][3].ownKey).toEqual({ addressTyped: true });
+        });
+
+        describe("pictures", () => {
+            const picture = ["https://cdn.example.com/cat.png"];
+            const replyWithPicture = (service: any) =>
+                drain(service.generateBotResponseStream("bot-1", 42, "what is this?", "You are a bot.", "key-abc", "space-1", "", undefined, undefined, undefined, picture));
+
+            beforeEach(() => {
+                mockSupportsVision.mockReset();
+                mockSupportsVision.mockReturnValue(false);
+                mockGetOrCreateProvider.mockReset();
+            });
+
+            it("are never described by Universe AI when the key's model has no Vision: the link stays in the text", async () => {
+                const { admin, memory } = buildMocks();
+                admin.getBotAiCredentials.mockResolvedValue(ownKey());
+                admin.getAvailableAIProviders.mockResolvedValue([provider({ defaultVision: true, supportsVision: true })]);
+                mockGenerateStream.mockImplementation(answer);
+                const service = new AIService(memory, admin, "http://admin.local");
+                await replyWithPicture(service);
+                expect(admin.getAvailableAIProviders).not.toHaveBeenCalled();
+                expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+                expect(mockGenerateStream.mock.calls[0][0]).not.toContain("Description from a vision model");
+                expect(mockGenerateStream.mock.calls[0].slice(4)).not.toContainEqual(picture);
+            });
+
+            it("go to the key's own model when it has Vision", async () => {
+                const { admin, memory } = buildMocks();
+                admin.getBotAiCredentials.mockResolvedValue(ownKey());
+                mockSupportsVision.mockReturnValue(true);
+                mockGenerateStream.mockImplementation(answer);
+                const service = new AIService(memory, admin, "http://admin.local");
+                await replyWithPicture(service);
+                expect(mockGenerateStream.mock.calls[0]).toContainEqual(picture);
+                expect(admin.getAvailableAIProviders).not.toHaveBeenCalled();
+            });
+
+            it("are still described by the default Vision provider for a bot on Universe AI without Vision, as before", async () => {
+                const { admin, memory } = buildMocks();
+                admin.getBotAiCredentials.mockResolvedValue(ownKey({ source: "universe-ai", providerId: "universe-ai-default" }));
+                admin.getAvailableAIProviders.mockResolvedValue([provider({ defaultVision: true, supportsVision: true })]);
+                const describer = { supportsVision: () => true, generate: vi.fn().mockResolvedValue({ content: "A cat." }) };
+                mockGetOrCreateProvider.mockReturnValue(describer);
+                mockGenerateStream.mockImplementation(answer);
+                const service = new AIService(memory, admin, "http://admin.local");
+                await replyWithPicture(service);
+                expect(describer.generate).toHaveBeenCalledTimes(1);
+            });
         });
 
         it("tells Orbit a reply worked", async () => {
