@@ -207,6 +207,13 @@ describe("ownComputerFetch", () => {
         }
     });
 
+    it("answers 502 for a status code a Response cannot carry, instead of throwing", async () => {
+        lookupMock.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
+        fakeServer(99, "");
+        const response = await ownComputerFetch("https://lm.example.com/v1/models");
+        expect(response.status).toBe(502);
+    });
+
     it("rejects with an abort when the caller cancels", async () => {
         lookupMock.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
         const controller = new AbortController();

@@ -148,7 +148,8 @@ export async function ownComputerFetch(input: string | URL, init: RequestInit = 
                 }
                 resolve(
                     new Response(noBody ? null : (Readable.toWeb(stream) as unknown as ReadableStream), {
-                        status: response.statusCode ?? 502,
+                        // Response throws on anything outside 200-599, which an odd server can send
+                        status: response.statusCode && response.statusCode >= 200 && response.statusCode <= 599 ? response.statusCode : 502,
                         statusText: response.statusMessage,
                         headers: responseHeaders,
                     })

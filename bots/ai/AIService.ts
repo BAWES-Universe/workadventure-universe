@@ -157,7 +157,11 @@ export class AIService {
             if (answer) {
                 const resolved = this.resolvedFromAnswer(answer);
                 this.botCredentialCache.set(cacheKey, { resolved, expiresAt: Date.now() + this.BOT_CREDENTIAL_TTL });
-                if (!resolved.resting) this.botRoutePricing.set(resolved.config.providerId, resolved.config);
+                if (!resolved.resting) {
+                    // Usage is priced by the provider that answered, and by the ref the bot is on ("universe-ai", "key-…")
+                    this.botRoutePricing.set(resolved.config.providerId, resolved.config);
+                    this.botRoutePricing.set(providerId, resolved.config);
+                }
                 return resolved;
             }
         }
