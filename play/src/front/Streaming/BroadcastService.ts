@@ -34,7 +34,7 @@ export class BroadcastService {
 
         this.unsubscribes.push(
             space.observeUserJoined.subscribe((user) => {
-                if (user.megaphoneState) {
+                if (user.megaphoneState && user.spaceUserId !== space.mySpaceUserId) {
                     notificationPlayingStore.playNotification(get(LL).notification.announcement(), "megaphone");
                     gameManager.getCurrentGameScene().playSound("audio-megaphone");
                 }

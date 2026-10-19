@@ -2,7 +2,7 @@ import type { AreaData } from "@workadventure/map-editor";
 import type { EditMapCommandMessage } from "@workadventure/messages";
 import { get } from "svelte/store";
 import { screenSpace } from "../ScreenSpace";
-import { userIsAdminStore, userIsEditorStore } from "../../../../Stores/GameStore";
+import { userIsEditorStore } from "../../../../Stores/GameStore";
 import { mapEditorSelectedAreaPreviewStore, mapEditorVisibilityStore } from "../../../../Stores/MapEditorStore";
 import { editDeleteMarkStore, showUndoToast, type DeleteMark } from "../../../../Stores/EditModeStore";
 import { LL } from "../../../../../i18n/i18n-svelte";
@@ -378,10 +378,7 @@ export class TrashEditorTool extends EntityRelatedEditorTool {
     }
 
     private getAreaPreviewVisibileFromUserPermissions(): boolean {
-        if (get(userIsAdminStore) || get(userIsEditorStore)) {
-            return true;
-        }
-        return false;
+        return get(userIsEditorStore);
     }
 
     private isAllowedToRemoveGameObject(gameObject: Entity) {

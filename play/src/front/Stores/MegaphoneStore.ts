@@ -47,6 +47,9 @@ export interface LiveBroadcast {
 /** The live broadcast this player is sending right now (the Live pill, the ring on their own tile). */
 export const liveBroadcastStore = writable<LiveBroadcast | undefined>(undefined);
 
+/** How many Live bars sit in the camera area right now: the one over the map only shows while there is none. */
+export const liveBarInLayoutStore = writable(0);
+
 /**
  * This store is true if the user is livestreaming, i.e. if the user is a speaker or (if the user has requested the megaphone and is enabling its camera or microphone or screen)
  */

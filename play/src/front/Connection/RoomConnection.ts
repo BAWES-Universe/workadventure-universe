@@ -95,6 +95,8 @@ import { AbortError } from "@workadventure/shared-utils/src/Abort/AbortError";
 import { asError } from "catch-unknown";
 import { abortAny } from "@workadventure/shared-utils/src/Abort/AbortAny";
 import { abortTimeout } from "@workadventure/shared-utils/src/Abort/AbortTimeout";
+import type { PermissionBit } from "@workadventure/shared-utils/src/Permissions/permissions";
+import { hasPermission, permissionsFrom } from "@workadventure/shared-utils/src/Permissions/permissions";
 import { analyticsClient } from "../Administration/AnalyticsClient";
 import type { ReceiveEventEvent } from "../Api/Events/ReceiveEventEvent";
 import type { SetPlayerVariableEvent } from "../Api/Events/SetPlayerVariableEvent";
@@ -145,6 +147,7 @@ export class RoomConnection implements RoomConnection {
     private userId: number | null = null;
     private _closed = false;
     private tags: string[] = [];
+    private permissions = 0;
     private canEdit = false;
 
     public readonly _serverDisconnected = new Subject<void>();
@@ -550,6 +553,7 @@ export class RoomConnection implements RoomConnection {
 
                         this.userId = roomJoinedMessage.currentUserId;
                         this.tags = roomJoinedMessage.tag;
+                        this.permissions = permissionsFrom(roomJoinedMessage.permissions, this.tags);
                         this._userRoomToken = roomJoinedMessage.userRoomToken;
                         //define if there is invite user option activated
                         inviteUserActivated.set(
@@ -1074,8 +1078,8 @@ export class RoomConnection implements RoomConnection {
         return this.tags.includes(tag);
     }
 
-    public isAdmin(): boolean {
-        return this.hasTag("admin");
+    public hasPermission(bit: PermissionBit): boolean {
+        return hasPermission(this.permissions, bit);
     }
 
     public emitEmoteEvent(emoteName: string): void {

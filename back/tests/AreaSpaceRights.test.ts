@@ -194,4 +194,12 @@ describe("listenOnlyAreaSpaces", () => {
         expect(listenOnlyAreaSpaces(map, ROOM, { ...player, tags: ["admin"] })).toEqual([]);
         expect(listenOnlyAreaSpaces(undefined, ROOM, player)).toEqual([]);
     });
+
+    it("lets whoever has the Edit maps permission host a stage, whatever their tags", () => {
+        const map = wam(area("stage1", [stage("Keynote"), onlyStaff]));
+        expect(listenOnlyAreaSpaces(map, ROOM, { ...player, permissions: 2 ** 7 })).toEqual([]);
+        expect(listenOnlyAreaSpaces(map, ROOM, { ...player, tags: ["admin"], permissions: 0 })).toEqual([
+            room("Keynote"),
+        ]);
+    });
 });

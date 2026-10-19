@@ -3,6 +3,7 @@
     import { get } from "svelte/store";
     import CancelablePromise from "cancelable-promise";
     import Debug from "debug";
+    import { Permission } from "@workadventure/shared-utils/src/Permissions/permissions";
     import type { JitsiCoWebsite, JitsiApi, JitsiOptions } from "../../WebRtc/CoWebsite/JitsiCoWebsite";
     import { defaultInterfaceConfig, mergeConfig } from "../../WebRtc/CoWebsite/JitsiCoWebsite";
     import { jitsiExternalApiFactory } from "../../WebRtc/JitsiExternalApiFactory";
@@ -98,12 +99,13 @@
         jitsiExternalApiFactory
             .loadJitsiScript(domain)
             .then(() => {
-                const userConnectedTags = gameManager.getCurrentGameScene().connection?.getAllTags() ?? [];
+                const connection = gameManager.getCurrentGameScene().connection;
+                const userConnectedTags = connection?.getAllTags() ?? [];
 
                 const mergedConfig = mergeConfig(actualCowebsite.jitsiConfig);
 
                 if (
-                    !userConnectedTags.includes("admin") &&
+                    !connection?.hasPermission(Permission.MODERATE_CALLS) &&
                     (!actualCowebsite.jitsiRoomAdminTag ||
                         !userConnectedTags.includes(actualCowebsite.jitsiRoomAdminTag))
                 ) {

@@ -3,6 +3,8 @@
     import { writable } from "svelte/store";
     import { highlightedEmbedScreen } from "../../../Stores/HighlightedEmbedScreenStore";
     import CamerasContainer from "../CamerasContainer.svelte";
+    import BroadcastLivePill from "../../Broadcast/BroadcastLivePill.svelte";
+    import { liveBroadcastStore } from "../../../Stores/MegaphoneStore";
     import MediaBox from "../../Video/MediaBox.svelte";
     import ListenerBox from "../../Video/ListenerBox.svelte";
     import { inExternalServiceStore, proximityMeetingStore } from "../../../Stores/MyMediaStore";
@@ -96,6 +98,9 @@
         style={layoutStyle}
         bind:clientHeight={containerHeight}
     >
+        {#if $liveBroadcastStore && !inPictureInPicture}
+            <BroadcastLivePill inline />
+        {/if}
         {#if $streamableCollectionStore.size > 0}
             <div
                 class="justify-end md:justify-center w-full relative"
