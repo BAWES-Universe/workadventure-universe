@@ -64,6 +64,8 @@
     const pendingSaves = new Map<SaveKind, { timeout: ReturnType<typeof setTimeout>; save: () => void }>();
     let lastSavedBotConfig: string | null = null;
     let lastSavedAIConfig: string | null = null;
+    // What each bot last saved successfully, however often it was opened and closed since: a refused save is put back to this
+    const lastSavedByBot = new Map<string, { config?: string; ai?: string }>();
 
     /** What the "ai" save sends besides the behavior: the bot's mind, chat instructions, Patience and description */
     function aiConfigOf(bot: BotData): string {
@@ -156,8 +158,8 @@
                 });
             }
 
-            // What was saved for this bot when the change was made: if the person moves to another bot before Orbit answers, the
-            // shared last-saved values are that other bot's, so a refusal puts back this one
+            // What was saved for this bot when the change was made: used when it has not saved anything since this page opened.
+            // The shared last-saved values may be another bot's, or re-read from the page after the bot was closed and opened again
             const savedConfigThen = lastSavedBotConfig;
             const savedAIConfigThen = lastSavedAIConfig;
 
@@ -175,16 +177,13 @@
                                     behaviorConfig: bot.behaviorConfig,
                                 })
                             );
+                            lastSavedByBot.set(bot.id, { ...lastSavedByBot.get(bot.id), config: currentConfig });
                             // Only for the bot that is open: these values are shared, and another bot's page has its own
                             if (selectedBot?.id === bot.id) lastSavedBotConfig = currentConfig;
                         } catch (e) {
                             console.error("[BotEditor] Failed to auto-save bot:", e);
                             if ((e as Error & { isRefusal?: boolean })?.isRefusal === true) {
-                                revertRefused(
-                                    bot,
-                                    "config",
-                                    selectedBot?.id === bot.id ? lastSavedBotConfig : savedConfigThen
-                                );
+                                revertRefused(bot, "config", lastSavedByBot.get(bot.id)?.config ?? savedConfigThen);
                             }
 
                             // Show auth errors, and a refusal (Orbit said why it can't be saved): the person must hear it
@@ -242,15 +241,12 @@
                             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                                 console.log("[BotEditor] AI config update successful");
                             }
+                            lastSavedByBot.set(bot.id, { ...lastSavedByBot.get(bot.id), ai: currentAIConfig });
                             if (selectedBot?.id === bot.id) lastSavedAIConfig = currentAIConfig;
                         } catch (e) {
                             console.error("[BotEditor] Failed to auto-save bot AI config:", e);
                             if ((e as Error & { isRefusal?: boolean })?.isRefusal === true) {
-                                revertRefused(
-                                    bot,
-                                    "ai",
-                                    selectedBot?.id === bot.id ? lastSavedAIConfig : savedAIConfigThen
-                                );
+                                revertRefused(bot, "ai", lastSavedByBot.get(bot.id)?.ai ?? savedAIConfigThen);
                             }
 
                             // Show auth errors, and a refusal (Orbit said why it can't be saved): the person must hear it
