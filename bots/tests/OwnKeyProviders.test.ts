@@ -141,6 +141,45 @@ describe("OpenAIProvider and keys", () => {
     });
 });
 
+describe("a stream that ends without the [DONE] marker", () => {
+    const originalFetch = global.fetch;
+    let fetchMock: ReturnType<typeof vi.fn>;
+    beforeEach(() => {
+        fetchMock = vi.fn();
+        global.fetch = fetchMock as unknown as typeof fetch;
+    });
+    afterEach(() => {
+        global.fetch = originalFetch;
+    });
+
+    const streamOf = (text: string) =>
+        ({
+            ok: true,
+            status: 200,
+            text: async () => "",
+            body: new ReadableStream({
+                start(controller) {
+                    controller.enqueue(new TextEncoder().encode(text));
+                    controller.close();
+                },
+            }),
+        }) as unknown as Response;
+    const finished = 'data: {"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]}\n\n';
+    const cut = 'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n';
+
+    it.each([
+        ["OpenAIProvider", () => new OpenAIProvider(), () => config({ type: "openai", endpoint: "https://api.example.com/v1", apiKeyEncrypted: "iv:tag:data" })],
+        ["LMStudioProvider", () => new LMStudioProvider(), () => config()],
+    ])("%s: is a good reply when the provider said it finished, and an error when the stream was just cut", async (_name, make, cfg) => {
+        fetchMock.mockResolvedValueOnce(streamOf(finished));
+        let chunks = await drain(make().generateStream("s", "hi", cfg()));
+        expect(chunks[chunks.length - 1].metadata.error).toBe(false);
+        fetchMock.mockResolvedValueOnce(streamOf(cut));
+        chunks = await drain(make().generateStream("s", "hi", cfg()));
+        expect(chunks[chunks.length - 1].metadata.error).toBe(true);
+    });
+});
+
 describe("helpers", () => {
     it("fetchFor picks the guard only for an address a person typed", () => {
         expect(fetchFor(config({ ownKey: { addressTyped: true } }))).toBeTypeOf("function");
