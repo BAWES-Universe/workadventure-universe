@@ -25,6 +25,7 @@ import {
     loadBotPermissions,
     removeRule,
     setPrivateBot,
+    setRefusalReply,
     setRuleValue,
 } from "./BotPermissionsStore";
 
@@ -94,6 +95,18 @@ describe("who may use the bot, as the page holds it", () => {
         const state = get(botPermissionsStore);
         expect(state?.data?.privateBot).toBe(false);
         expect(state?.saveError).toBe("Only the owner can do that");
+    });
+
+    it("says whether the refusal line was saved, so the page keeps the words when it was not", async () => {
+        await opened(permissions());
+        mocks.saveBotPermissions.mockResolvedValueOnce(permissions({ refusalReply: "Sorry" }));
+        await expect(setRefusalReply("b1", " Sorry ")).resolves.toBe(true);
+        expect(mocks.saveBotPermissions).toHaveBeenCalledWith("b1", { refusalReply: "Sorry" });
+
+        mocks.saveBotPermissions.mockRejectedValueOnce(new Error("API error: 500"));
+        mocks.getBotPermissions.mockResolvedValueOnce(permissions({ refusalReply: "Sorry" }));
+        await expect(setRefusalReply("b1", "Other")).resolves.toBe(false);
+        expect(get(botPermissionsStore)?.saveError).toBeTruthy();
     });
 
     it("changes one choice of one row and nothing else", async () => {

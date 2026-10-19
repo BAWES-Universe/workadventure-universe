@@ -86,11 +86,13 @@ export async function setPrivateBot(botId: string, privateBot: boolean): Promise
 }
 
 /** The line refused people hear. Empty clears it, and the bot says a plain default line. */
-export async function setRefusalReply(botId: string, refusalReply: string): Promise<void> {
+export async function setRefusalReply(botId: string, refusalReply: string): Promise<boolean> {
     try {
         accept(botId, await botApiService.saveBotPermissions(botId, { refusalReply: refusalReply.trim() || null }));
+        return true;
     } catch (error) {
         await reloadAfterFailure(botId, error);
+        return false;
     }
 }
 

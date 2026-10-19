@@ -79,17 +79,30 @@
         replyTimeout = setTimeout(saveReply, 800);
     }
 
+    // What is being saved right now, so the timer and the box being left do not send the same words twice
+    let replySaving: string | undefined;
+
+    // The words stay in the box until Orbit has them: if it refuses, they are still there to try again
     function saveReply() {
         if (replyTimeout) {
             clearTimeout(replyTimeout);
             replyTimeout = null;
         }
         if (replyDraft === undefined || !data) return;
-        const botId = bot.id;
         const text = replyDraft;
-        replyDraft = undefined;
-        if (text.trim() === (data.refusalReply ?? "")) return;
-        void setRefusalReply(botId, text);
+        if (text.trim() === (data.refusalReply ?? "")) {
+            replyDraft = undefined;
+            return;
+        }
+        if (replySaving === text) return;
+        replySaving = text;
+        void setRefusalReply(bot.id, text)
+            .then((saved) => {
+                if (saved && replyDraft === text) replyDraft = undefined;
+            })
+            .finally(() => {
+                if (replySaving === text) replySaving = undefined;
+            });
     }
 
     onDestroy(saveReply);
