@@ -265,6 +265,34 @@ describe("AnthropicProvider", () => {
             expect(chunks[chunks.length - 1].metadata).toMatchObject({ error: false, completionTokens: 20 });
         });
 
+        it("sends tool names Claude accepts and hands the calls back under the names the tool servers know", async () => {
+            const long = "x".repeat(80);
+            fetchMock.mockImplementationOnce(async () =>
+                events([
+                    { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_3", name: "files_read", input: {} } },
+                    { type: "content_block_stop", index: 0 },
+                    { type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "toolu_4", name: "go_to", input: {} } },
+                    { type: "content_block_stop", index: 1 },
+                    { type: "content_block_start", index: 2, content_block: { type: "tool_use", id: "toolu_5", name: long.slice(0, 60), input: {} } },
+                    { type: "content_block_stop", index: 2 },
+                    { type: "message_stop" },
+                ])
+            );
+            const tools = [
+                { type: "function", function: { name: "files.read" } },
+                { type: "function", function: { name: "go_to" } },
+                { type: "function", function: { name: long } },
+                // would clean up to a name another tool already has: gets its own
+                { type: "function", function: { name: "go.to" } },
+            ];
+            const chunks = await drain(new AnthropicProvider().generateStream("s", "hi", config(), tools));
+            const sentNames = JSON.parse(fetchMock.mock.calls[0][1].body).tools.map((tool: any) => tool.name);
+            expect(sentNames.every((name: string) => /^[A-Za-z0-9_-]{1,64}$/.test(name))).toBe(true);
+            expect(new Set(sentNames).size).toBe(4);
+            expect(sentNames[1]).toBe("go_to");
+            expect(chunks.flatMap((chunk) => chunk.toolCalls ?? []).map((call) => call.name)).toEqual(["files.read", "go_to", long]);
+        });
+
         it("gives a tool with no arguments an empty object", async () => {
             fetchMock.mockImplementationOnce(async () =>
                 events([

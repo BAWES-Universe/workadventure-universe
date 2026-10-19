@@ -113,9 +113,37 @@ export class AnthropicProvider implements AIProvider {
         };
     }
 
+    /**
+     * Claude takes tool names of 1-64 letters, digits, underscores and hyphens. A tool server may use dots or longer
+     * names (the tool spec allows both), which Claude would refuse with a 400 that silences every reply. Each name
+     * is sent in a safe form and turned back when Claude calls it. Names that are already fine stay as they are.
+     */
+    private toolNames(tools: any[] | undefined): Map<string, string> {
+        const safeByOriginal = new Map<string, string>();
+        const taken = new Set<string>();
+        const names = (tools ?? []).map((tool) => (tool?.function ?? tool)?.name).filter((name): name is string => !!name);
+        // Names that need no change keep their spelling first, so another tool's cleaned-up name can never take it
+        for (const name of names) {
+            if (/^[A-Za-z0-9_-]{1,64}$/.test(name)) {
+                safeByOriginal.set(name, name);
+                taken.add(name);
+            }
+        }
+        for (const name of names) {
+            if (safeByOriginal.has(name)) continue;
+            const base = name.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 60) || 'tool';
+            let safe = base.slice(0, 64);
+            for (let n = 2; taken.has(safe); n++) safe = `${base}_${n}`;
+            safeByOriginal.set(name, safe);
+            taken.add(safe);
+        }
+        return safeByOriginal;
+    }
+
     /** OpenAI-shaped tool definitions (what the whole bot server builds) in Claude's shape. */
     private convertTools(tools: any[]): Array<Record<string, unknown>> {
         const converted: Array<Record<string, unknown>> = [];
+        const safeNames = this.toolNames(tools);
         for (const tool of tools) {
             const definition = tool?.function ?? tool;
             if (!definition?.name) continue;
@@ -124,7 +152,7 @@ export class AnthropicProvider implements AIProvider {
             const schema = definition.parameters ?? definition.input_schema;
             const hasObjectSchema = schema && typeof schema === 'object' && !Array.isArray(schema);
             converted.push({
-                name: definition.name,
+                name: safeNames.get(definition.name) ?? definition.name,
                 description: definition.description || '',
                 input_schema: hasObjectSchema ? { type: 'object', ...schema } : { type: 'object', properties: {} },
             });
@@ -252,6 +280,9 @@ export class AnthropicProvider implements AIProvider {
         const cleanups: Array<() => void> = [];
         // Tool calls arrive as JSON fragments per content block; they are handed on whole when their block closes
         const toolBlocks = new Map<number, { id: string; name: string; json: string }>();
+        // The names Claude was given, back to the names the tool servers know
+        const originalNames = new Map<string, string>();
+        for (const [original, safe] of this.toolNames(tools)) originalNames.set(safe, original);
 
         try {
             const endpoint = this.getEndpoint(config);
@@ -322,7 +353,7 @@ export class AnthropicProvider implements AIProvider {
                             const block = toolBlocks.get(event.index);
                             if (block) {
                                 toolBlocks.delete(event.index);
-                                const call: ToolCall = { id: block.id, name: block.name, arguments: block.json || '{}' };
+                                const call: ToolCall = { id: block.id, name: originalNames.get(block.name) ?? block.name, arguments: block.json || '{}' };
                                 yield { content: '', done: false, toolCalls: [call] };
                             }
                             break;
