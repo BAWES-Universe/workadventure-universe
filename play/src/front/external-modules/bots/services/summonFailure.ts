@@ -13,13 +13,20 @@ export type SummonFailure =
     | "not_here"
     /** The player's Orbit login ended and could not be renewed. */
     | "sign_in"
+    /** The bot's owner limits who can call it over. */
+    | "not_allowed"
+    /** The owner's limits could not be checked right now (Orbit did not answer). */
+    | "cannot_check"
     /** Anything else: the bot server could not be reached, or it failed. */
     | "failed";
 
-export type SummonResult = { summoned: true } | { summoned: false; failure: SummonFailure };
+/** `reason` is the line the bot server wrote for the person (the owner's limits), shown as it is when there is one */
+export type SummonResult = { summoned: true } | { summoned: false; failure: SummonFailure; reason?: string };
 
 export function classifySummonFailure(error: unknown): SummonFailure {
     const { status, code } = (error ?? {}) as { status?: unknown; code?: unknown };
+    if (code === "not_allowed") return "not_allowed";
+    if (code === "cannot_check") return "cannot_check";
     if (code === "busy") return "busy";
     if (code === "already_with_you") return "already_with_you";
     if (code === "cannot_see_you") return "cannot_see_you";

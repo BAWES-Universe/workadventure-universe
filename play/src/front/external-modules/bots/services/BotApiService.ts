@@ -1,4 +1,12 @@
 import type { BotData } from "../types";
+import {
+    readPermissions,
+    readRule,
+    type BotPermissions,
+    type BotRule,
+    type RuleAction,
+    type RuleValue,
+} from "../accessModel";
 import { resolveCredentialUrl } from "../../admin-api/iframeAuth";
 import { freshOrbitAccessToken, type GameTokenHolder } from "../../admin-api/orbitAccessToken";
 import { classifySummonFailure, type SummonResult } from "./summonFailure";
@@ -12,6 +20,8 @@ interface AuthError extends Error {
 const SESSION_KEY = "orbit_admin_session_v2";
 const SESSION_EXPIRES_KEY = "orbit_admin_session_v2_expires";
 const OPAQUE_SESSION_PATTERN = /^orb_sess_v2_[0-9a-f]{64}$/;
+/** How long the game waits to learn whether Summon is allowed before it shows the button anyway */
+const ACCESS_CHECK_TIMEOUT_MS = 3000;
 
 export function isOrbitSessionResponse(value: unknown): value is { version: 2; sessionId: string; expiresAt: number } {
     if (!value || typeof value !== "object") return false;
@@ -523,11 +533,11 @@ export class BotApiService {
             "Content-Type": "application/json",
             ...(options.headers as Record<string, string>),
         };
-        // Room enter/leave and Summon are for every player, guests included: the game token is enough for them.
+        // Room enter/leave, Summon and "may I?" are for every player, guests included: the game token is enough for them.
         const isPublicRoomLifecycle =
             endpoint === "/api/bots/room-enter" ||
             endpoint === "/api/bots/room-leave" ||
-            /^\/api\/bots\/[^/]+\/summon$/.test(endpoint);
+            /^\/api\/bots\/[^/]+\/(summon|access)$/.test(endpoint);
         const gameToken = this.getGameToken();
         if (gameToken) {
             headers["X-WA-Auth"] = gameToken;
@@ -758,7 +768,12 @@ export class BotApiService {
             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                 console.error("[BotApiService] Error summoning bot:", error);
             }
-            return { summoned: false, failure: classifySummonFailure(error) };
+            // The owner's limits (or Orbit not answering) come back as a line meant for the person: pass it on as it is
+            const failure = classifySummonFailure(error);
+            if ((failure === "not_allowed" || failure === "cannot_check") && error instanceof Error) {
+                return { summoned: false, failure, reason: error.message };
+            }
+            return { summoned: false, failure };
         }
     }
 
@@ -789,6 +804,101 @@ export class BotApiService {
             }
             return [];
         }
+    }
+
+    // ─── Who may use a bot ────────────────────────────────────────────────────────────
+
+    /**
+     * Whether the local player may do this with a bot, asked of the bot server (which asks Orbit): the game uses it to
+     * hide Summon from people the owner has refused. `allowed: null` means it could not be found out (a guest with no
+     * Orbit session, Orbit not answering): the caller shows the button, and the real answer comes when it is used.
+     */
+    async getBotAccess(
+        botId: string,
+        action: "summon" | "chat"
+    ): Promise<{ allowed: true } | { allowed: false; reason: string } | { allowed: null }> {
+        // A bot server or sign-in that stalls must not hold the Summon button back: after a few seconds it is "unknown"
+        const stop = new AbortController();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const unknown = new Promise<{ allowed: null }>((resolve) => {
+            timer = setTimeout(() => {
+                stop.abort();
+                resolve({ allowed: null });
+            }, ACCESS_CHECK_TIMEOUT_MS);
+        });
+        return Promise.race([this.askBotAccess(botId, action, stop.signal), unknown]).finally(() => {
+            clearTimeout(timer);
+        });
+    }
+
+    private async askBotAccess(
+        botId: string,
+        action: "summon" | "chat",
+        signal: AbortSignal
+    ): Promise<{ allowed: true } | { allowed: false; reason: string } | { allowed: null }> {
+        try {
+            const response = await this.fetchBotServer(`/api/bots/${encodeURIComponent(botId)}/access`, {
+                method: "POST",
+                body: JSON.stringify({ action }),
+                signal,
+            });
+            const body = (await response.json()) as { allowed?: unknown; reason?: unknown };
+            if (body.allowed === true) return { allowed: true };
+            if (body.allowed === false) {
+                return { allowed: false, reason: typeof body.reason === "string" ? body.reason : "" };
+            }
+            return { allowed: null };
+        } catch (error) {
+            if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                console.warn("[BotApiService] Could not check bot access:", error);
+            }
+            return { allowed: null };
+        }
+    }
+
+    /** Who may use this bot: Private bot, the line refused people hear, every rule, and the roles a rule can name */
+    async getBotPermissions(botId: string): Promise<BotPermissions> {
+        const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/permissions`);
+        return readPermissions(await response.json());
+    }
+
+    /** Private bot and the line refused people hear; only what is sent changes. Answers with all of it. */
+    async saveBotPermissions(
+        botId: string,
+        change: { privateBot?: boolean; refusalReply?: string | null }
+    ): Promise<BotPermissions> {
+        const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/permissions`, {
+            method: "PUT",
+            body: JSON.stringify(change),
+        });
+        return readPermissions(await response.json());
+    }
+
+    /**
+     * Set a role's or a person's No / Default / Yes for this bot. Only the actions named change; a row that does not
+     * exist yet is added. A person is named by their identifier (what the members search gives).
+     */
+    async saveBotRule(
+        botId: string,
+        subject: { roleId: string } | { identifier: string } | { userId: string },
+        values: Partial<Record<RuleAction, RuleValue>>
+    ): Promise<BotRule> {
+        const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/permissions/rules`, {
+            method: "PUT",
+            body: JSON.stringify({ ...subject, ...values }),
+        });
+        const rule = readRule(await response.json());
+        if (!rule) throw new Error("Orbit answered with something the game does not understand");
+        return rule;
+    }
+
+    /** Take a role's or a person's row off this bot: they follow the roles again */
+    async deleteBotRule(botId: string, subject: { roleId: string } | { userId: string }): Promise<void> {
+        const query =
+            "roleId" in subject
+                ? `roleId=${encodeURIComponent(subject.roleId)}`
+                : `userId=${encodeURIComponent(subject.userId)}`;
+        await this.fetch(`/api/bots/${encodeURIComponent(botId)}/permissions/rules?${query}`, { method: "DELETE" });
     }
 
     // ─── MCP Server management ──────────────────────────────────────────────────────

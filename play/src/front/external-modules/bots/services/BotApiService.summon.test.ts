@@ -57,6 +57,28 @@ describe("BotApiService.summonBot", () => {
         expect(JSON.parse(init.body).playerUuid).toBe("guest-uuid");
     });
 
+    it("asks a guest whether they may summon with the game token alone, so a limited bot hides Summon from them too", async () => {
+        fetchMock.mockResolvedValue(reply(200, { allowed: false, code: "not_allowed", reason: "Limited" }));
+        const result = await guestService().getBotAccess("b1", "summon");
+
+        expect(result).toEqual({ allowed: false, reason: "Limited" });
+        const [url, init] = fetchMock.mock.calls[0];
+        expect(url).toBe("https://bots.example.com/api/bots/b1/access");
+        expect(init.headers["X-WA-Auth"]).toBeTruthy();
+        expect(init.headers.Authorization).toBeUndefined();
+    });
+
+    it("tells a guest the owner limits who can call the bot over, in the owner's line", async () => {
+        fetchMock.mockResolvedValue(
+            reply(403, { summoned: false, error: "Nora's owner limits who can call it over.", code: "not_allowed" })
+        );
+        await expect(guestService().summonBot("b1", "guest-uuid", 1, 2)).resolves.toEqual({
+            summoned: false,
+            failure: "not_allowed",
+            reason: "Nora's owner limits who can call it over.",
+        });
+    });
+
     it("keeps sending the Orbit session for a signed-in player", async () => {
         const service = new BotApiService();
         service.initialize(

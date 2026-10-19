@@ -43,3 +43,10 @@ describe("summonFailureLine", () => {
         expect(summonFailureLine("sign_in", false)).toBe("failed");
     });
 });
+
+describe("the owner's limits", () => {
+    it("are told apart from a sign-in problem, although the bot server answers 403", () => {
+        expect(classifySummonFailure({ status: 403, code: "not_allowed" })).toBe("not_allowed");
+        expect(classifySummonFailure({ status: 503, code: "cannot_check" })).toBe("cannot_check");
+    });
+});

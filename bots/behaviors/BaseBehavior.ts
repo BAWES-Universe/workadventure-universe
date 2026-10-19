@@ -147,6 +147,20 @@ export abstract class BaseBehavior {
     }
     // Authentication tracking - map userId (number) to isLogged (boolean)
     protected userIdToIsLogged: Map<number, boolean> = new Map();
+
+    /** Whether the game has told this bot who the person is yet (their join can arrive just after their first message) */
+    isPersonKnown(userId: number): boolean {
+        return this.userIdToUuid.has(userId) || this.userIdToIsLogged.has(userId);
+    }
+
+    /**
+     * Who someone in the room is, for Orbit's bot access check: signed in only when the game says so and their uuid is
+     * known (Orbit looks a signed-in person up by it). Anyone else is asked about as a guest.
+     */
+    getPersonForAccess(userId: number): { signedIn: boolean; identifier: string | null } {
+        const identifier = this.userIdToUuid.get(userId) ?? null;
+        return { signedIn: !!identifier && this.userIdToIsLogged.get(userId) === true, identifier };
+    }
     // Pending UUID tracking - map spaceUserId (string) to userId (number) for users we've seen but don't have UUID yet
     // This helps match addSpaceUserMessage when it arrives after a chat message
     protected pendingSpaceUserIdToUserId: Map<string, number> = new Map();
@@ -467,6 +481,15 @@ export abstract class BaseBehavior {
     carryLookFrom(previous: BaseBehavior): void {
         this.lookingAtPlayerId = previous.lookingAtPlayerId;
         this.restDirection = previous.restDirection;
+    }
+
+    /**
+     * Who is around, as the game told this bot. A rebuilt behavior is not told about people already there, so without
+     * this a signed-in person already chatting would be asked about as a stranger (and could be refused).
+     */
+    carryPeopleFrom(previous: BaseBehavior): void {
+        for (const [userId, uuid] of previous.userIdToUuid) this.userIdToUuid.set(userId, uuid);
+        for (const [userId, isLogged] of previous.userIdToIsLogged) this.userIdToIsLogged.set(userId, isLogged);
     }
 
     /**

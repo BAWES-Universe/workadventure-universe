@@ -26,6 +26,7 @@ const botManager = {
     despawnBot: vi.fn(),
     updateBot: vi.fn(),
     summonBot: vi.fn(),
+    getAccessGate: vi.fn(),
 };
 const adminApiService = {
     validateSessionToken: vi.fn(),
@@ -57,7 +58,8 @@ beforeEach(() => {
     vi.clearAllMocks();
     adminApiService.validateSessionToken.mockResolvedValue({ userId: 'u1', uuid: 'uuid-1', email: 'a@b.c' });
     adminApiService.canSessionManageBot.mockResolvedValue(true);
-    botManager.getBot.mockReturnValue({});
+    botManager.getBot.mockReturnValue({ getName: () => 'Nora' });
+    botManager.getAccessGate.mockReturnValue({ check: vi.fn().mockResolvedValue({ allowed: true, kind: 'allowed' }) });
     botManager.hasPlayersIn.mockResolvedValue(true);
     botManager.despawnBot.mockResolvedValue(undefined);
     botManager.updateBot.mockResolvedValue({ updated: true, changes: [] });

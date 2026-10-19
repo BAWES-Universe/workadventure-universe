@@ -196,6 +196,43 @@ async function identifyPlayer(
     next();
 }
 
+/**
+ * Middleware for asking "may I?" about a bot, open to every player: a signed-in player's Orbit session names them;
+ * without one, the game token still has to be valid (a guest has only that). A session that is present but not accepted
+ * is refused, not quietly treated as a guest.
+ */
+async function identifyForAccessMiddleware(
+    req: BotAPIRequest,
+    res: Response,
+    next: NextFunction,
+    adminApiService: AdminApiService
+): Promise<void> {
+    const authHeader = req.headers.authorization;
+    const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice('Bearer '.length).trim() : '';
+    if (bearerToken) {
+        try {
+            const userInfo = /^orb_sess_v2_[0-9a-f]{64}$/.test(bearerToken)
+                ? await adminApiService.validateSessionToken(bearerToken)
+                : null;
+            if (!userInfo) {
+                res.status(401).json({ error: 'Invalid or expired Orbit session' });
+                return;
+            }
+            req.userIdentifier = userInfo.email || userInfo.uuid;
+            req.isLogged = true;
+            req.sessionToken = bearerToken;
+            req.sessionUuid = userInfo.uuid;
+        } catch {
+            res.status(401).json({ error: 'Orbit session validation failed' });
+            return;
+        }
+        next();
+        return;
+    }
+
+    requireGameToken(req, res, next);
+}
+
 /** Whether two room addresses name the same room: the same /@/universe/world/room path, whatever the host or scheme. */
 function sameRoomAddress(a: string, b: string): boolean {
     const pathOf = (address: string): string => {
@@ -268,6 +305,8 @@ export class BotAPI {
             authenticateToken(req, res, next, this.adminApiService);
         const requireManager = (req: BotAPIRequest, res: Response, next: NextFunction) =>
             requireBotManager(req, res, next, this.adminApiService);
+        const identifyForAccess = (req: BotAPIRequest, res: Response, next: NextFunction) =>
+            identifyForAccessMiddleware(req, res, next, this.adminApiService);
         const identifySummoner = (req: BotAPIRequest, res: Response, next: NextFunction) =>
             identifyPlayer(req, res, next, this.adminApiService);
         const requireOperator = (req: BotAPIRequest, res: Response, next: NextFunction) => requireServiceOperator(req, res, next);
@@ -333,6 +372,40 @@ export class BotAPI {
             }
         });
 
+        // May I do this with this bot? The game asks before it shows a bot's Summon button, so a person the owner has
+        // refused never sees it. Signed-in players prove who they are with the Orbit session, everyone else with the
+        // game token (a guest is asked about as a guest). Orbit decides; a no is a 200, and Orbit not answering with
+        // nothing earlier to go on is a 503, which the game treats as "don't know" and shows the button.
+        this.app.post('/api/bots/:botId/access', identifyForAccess, async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { botId } = req.params;
+                const action = req.body?.action;
+                if (action !== 'summon' && action !== 'chat') {
+                    res.status(400).json({ error: 'action must be "summon" or "chat"' });
+                    return;
+                }
+
+                const verdict = await this.botManager.getAccessGate().check(
+                    botId,
+                    action,
+                    { signedIn: !!req.sessionUuid, identifier: req.sessionUuid },
+                    this.botManager.getBot(botId)?.getName()
+                );
+                if (verdict.kind === 'allowed') {
+                    res.json({ allowed: true });
+                    return;
+                }
+                if (verdict.kind === 'refused') {
+                    res.json({ allowed: false, code: verdict.code, reason: verdict.line });
+                    return;
+                }
+                res.status(503).json({ error: verdict.line, code: 'cannot_check' });
+            } catch (error: any) {
+                console.error('[BotAPI] Error checking bot access:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
         // Summon bot to the player who asks. Any player may summon, guests included; it only moves the bot to them. Who
         // is asking comes from the Orbit session (signed in) or the game token (a guest's identifier is their uuid),
         // and where they stand comes from what the bot itself sees, so nobody can call a bot to another person or to
@@ -361,6 +434,26 @@ export class BotAPI {
                 const bot = this.botManager.getBot(botId);
                 if (!bot) {
                     res.status(404).json({ error: 'Bot not found or not spawned', code: 'not_here' });
+                    return;
+                }
+
+                // The owner may limit who can call this bot over (Orbit decides). A refusal says so in a line the game
+                // shows as it is. When Orbit cannot answer and there is no earlier answer, the bot still comes: calling a
+                // bot over is open to everyone unless an owner or role rule says otherwise, and no rule has been seen.
+                // The gate has already reported Orbit not answering.
+                const allowed = await this.botManager.getAccessGate().check(
+                    botId,
+                    'summon',
+                    { signedIn: !!req.sessionUuid, identifier: req.sessionUuid },
+                    bot.getName()
+                );
+                if (allowed.kind === 'refused') {
+                    res.status(403).json({
+                        summoned: false,
+                        error: allowed.line,
+                        reason: allowed.line,
+                        code: 'not_allowed',
+                    });
                     return;
                 }
 

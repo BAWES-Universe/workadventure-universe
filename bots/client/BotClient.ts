@@ -29,6 +29,7 @@ import { BotPathfindingManager } from '../utils/BotPathfindingManager';
 import { PathSmoother } from '../utils/PathSmoother';
 import { movementLogger } from '../utils/MovementLogger';
 import type { BotConfiguration } from '../server/AdminApiService';
+import { CANNOT_CHECK_CHAT_LINE, type BotAccessGate, type BotAccessVerdict } from '../server/BotAccessGate';
 import { FileParser } from '../services/FileParser';
 import { extractChatLinks } from '../utils/chatLinks';
 import { resolve4, resolve6 } from 'dns/promises';
@@ -64,6 +65,17 @@ export class BotClient {
     private ws: WebSocket | null = null;
     private state: BotState;
     private behavior: BaseBehavior | null = null;
+    /** Asks Orbit whether someone may chat with this bot, before their words reach the AI. Null: nobody is asked. */
+    private accessGate: BotAccessGate | null = null;
+    /** When each person was told that the bot's owner limits who can chat with it: once per visit (see mayChat). */
+    private readonly toldNoChat = new Map<number, number>();
+    /** How long a first message waits for the game to say who sent it, and how often it looks again (see mayChat) */
+    private static readonly PERSON_WAIT_MS = 3000;
+    private static readonly PERSON_RETRY_MS = 100;
+    /** How many times each chat message has been put off for that */
+    private chatIdentityTries = new WeakMap<object, number>();
+    /** A person who stays this long without leaving the room hears the line again. */
+    private static readonly TOLD_NO_CHAT_FOR_MS = 10 * 60 * 1000;
     private userId: number | null = null;
     private connected: boolean = false;
     /**
@@ -277,6 +289,63 @@ export class BotClient {
         return this.behavior ?? null;
     }
 
+    /** Who may chat with this bot nearby is decided by Orbit; the bot server wires the gate that asks it. */
+    setAccessGate(gate: BotAccessGate | null): void {
+        this.accessGate = gate;
+    }
+
+    /**
+     * Whether what this person just said may reach the bot's AI: Chat nearby, as Orbit answers it for them. Everything
+     * a chat leads to (leading, files, media) is part of it, so this runs before any of it starts. A person who is
+     * refused hears the owner's line once per visit (until they leave the room, or ten minutes pass) and their words
+     * go no further; when Orbit cannot answer and the bot has no earlier answer for them, they are told so each time.
+     * Never throws.
+     */
+    private async mayChat(spaceName: string, senderId: number, message: object): Promise<boolean> {
+        const gate = this.accessGate;
+        if (!gate || !this.behavior) return true;
+        // Someone's first words can arrive just before the game says who they are: asking Orbit now would take a
+        // signed-in member for a guest. Their join may be right behind it in the same batch, so the message is not
+        // waited for here (that would hold the join back too): it is handled again a moment later, and after a few
+        // seconds the person is asked about as the guest they look like.
+        if (!this.behavior.isPersonKnown(senderId)) {
+            const tries = this.chatIdentityTries.get(message) ?? 0;
+            if (tries * BotClient.PERSON_RETRY_MS < BotClient.PERSON_WAIT_MS) {
+                this.chatIdentityTries.set(message, tries + 1);
+                setTimeout(() => {
+                    this.handleSubMessage(message).catch((error) => {
+                        Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
+                    });
+                }, BotClient.PERSON_RETRY_MS);
+                return false;
+            }
+        }
+        let verdict: BotAccessVerdict;
+        try {
+            verdict = await gate.check(
+                this.config.botId,
+                'chat',
+                this.behavior.getPersonForAccess(senderId),
+                this.config.name
+            );
+        } catch (error) {
+            // The gate does not throw; if that ever changes, a failed check must not let a chat through
+            Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
+            verdict = { allowed: false, kind: 'cannot_check', line: CANNOT_CHECK_CHAT_LINE };
+        }
+        if (verdict.kind === 'allowed') {
+            this.toldNoChat.delete(senderId);
+            return true;
+        }
+        if (verdict.kind === 'refused') {
+            const toldAt = this.toldNoChat.get(senderId);
+            if (toldAt !== undefined && Date.now() - toldAt < BotClient.TOLD_NO_CHAT_FOR_MS) return false;
+            this.toldNoChat.set(senderId, Date.now());
+        }
+        this.sendChatMessage(spaceName, verdict.line);
+        return false;
+    }
+
     /**
      * Set behavior for this bot
      */
@@ -309,8 +378,10 @@ export class BotClient {
                 this.sendStoppedPosition();
             }
         }
-        if (this.behavior && this.behavior.constructor === behavior.constructor) {
-            behavior.carryLookFrom(this.behavior);
+        if (this.behavior) {
+            // Whoever is around stays known, whether the config changed or the kind of behavior did
+            behavior.carryPeopleFrom(this.behavior);
+            if (this.behavior.constructor === behavior.constructor) behavior.carryLookFrom(this.behavior);
         }
         this.behavior = behavior;
         behavior.setBot(this);
@@ -2131,6 +2202,11 @@ export class BotClient {
         return this.config.botId;
     }
 
+    /** The name people know this bot by */
+    getName(): string {
+        return this.config.name;
+    }
+
     /**
      * Set full bot configuration (called by BotManager on spawn)
      * This avoids HTTP requests to fetch config during conversations
@@ -2520,6 +2596,7 @@ export class BotClient {
                 break;
 
             case 'userLeftMessage':
+                this.toldNoChat.delete(message.userLeftMessage.userId);
                 this.players.delete(message.userLeftMessage.userId);
                 this.behavior?.onPlayerLeft(message.userLeftMessage.userId);
                 break;
@@ -2662,6 +2739,9 @@ export class BotClient {
                     const chatMessage = message.updateSpaceUserMessage.message.message;
                     if (chatMessage && this.behavior) {
                         console.log(`[Bot ${this.config.botId}] Received chat via updateSpaceUserMessage: "${chatMessage}" from user ${message.updateSpaceUserMessage.userId}`);
+                        if (!(await this.mayChat(message.updateSpaceUserMessage.spaceName, message.updateSpaceUserMessage.userId ?? 0, message))) {
+                            break;
+                        }
                         // Extract ALL URLs (not just the first) so multi-link
                         // messages get each link parsed as an attachment.
                         const textUrls = this.extractUrlsFromText(chatMessage);
@@ -2756,6 +2836,10 @@ export class BotClient {
                     if (senderId > 0 && !BotClient.isBot(senderId)) {
                         if (!this.behavior) {
                             console.warn(`[Bot ${this.config.botId}] Behavior is null, cannot handle chat message`);
+                            break;
+                        }
+                        // Before anything is done with the message (links looked up, files read, the AI asked)
+                        if (!(await this.mayChat(spaceName, senderId, message))) {
                             break;
                         }
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
