@@ -94,6 +94,22 @@ export class OpenAIProvider implements AIProvider {
     }
 
     /**
+     * Whether the provider refused the request because of the temperature we sent, so it is worth asking again without
+     * one. OpenAI names it by code; other OpenAI-format providers (Kimi's fixed-temperature models) just answer 400 with
+     * a message about the temperature. A request that sent no temperature is not asked again for it.
+     */
+    private rejectsTemperature(status: number, errorData: any, errorText: string, requestBody: Record<string, any>): boolean {
+        if (
+            errorData?.error?.code === 'unsupported_value' &&
+            errorData?.error?.param === 'temperature' &&
+            errorData?.error?.message?.includes('Only the default')
+        ) {
+            return true;
+        }
+        return status === 400 && requestBody.temperature !== undefined && /temperature/i.test(errorText);
+    }
+
+    /**
      * Build request body with correct token limit parameter
      */
     private buildRequestBody(
@@ -217,9 +233,7 @@ export class OpenAIProvider implements AIProvider {
                 }
 
                 // Retry without temperature if model rejects it
-                if (errorData?.error?.code === 'unsupported_value' && 
-                    errorData?.error?.param === 'temperature' &&
-                    errorData?.error?.message?.includes('Only the default')) {
+                if (this.rejectsTemperature(response.status, errorData, errorText, requestBody)) {
                     const retryBody = { ...requestBody };
                     delete retryBody.temperature;
 
@@ -459,9 +473,7 @@ export class OpenAIProvider implements AIProvider {
                     }
 
                     // If error is about temperature, retry without temperature (use default)
-                    if (errorData?.error?.code === 'unsupported_value' && 
-                        errorData?.error?.param === 'temperature' &&
-                        errorData?.error?.message?.includes('Only the default')) {
+                    if (this.rejectsTemperature(response.status, errorData, errorText, requestBody)) {
                         if (process.env.ENABLE_BOT_DEBUG === 'true') {
                             console.log(`[OpenAIProvider] Retrying without temperature parameter for model: ${config.model}`);
                         }
