@@ -81,6 +81,11 @@ async function* failed(errorStatus?: number) {
     yield { content: "", done: true, metadata: { tokensUsed: 0, latency: 10, error: true, errorStatus } };
 }
 
+async function* toolCall() {
+    yield { content: "", done: false, toolCalls: [{ id: "call_1", name: "get_bot_position", arguments: "{}" }] };
+    yield { content: "", done: true, metadata: { tokensUsed: 5, latency: 10, error: false } };
+}
+
 async function drain(generator: AsyncGenerator<any>): Promise<any[]> {
     const chunks: any[] = [];
     for await (const chunk of generator) chunks.push(chunk);
@@ -247,6 +252,29 @@ describe("AIService – finding a bot's AI by bot id", () => {
                 { ok: false, rejected: true },
                 { ok: false, rejected: true },
             ]);
+        });
+
+        it("counts a reply whose follow-up after a tool failed as failed, and as rejected when that follow-up got a 401", async () => {
+            const { admin, memory } = buildMocks();
+            admin.getBotAiCredentials.mockResolvedValue(ownKey());
+            const service = new AIService(memory, admin, "http://admin.local");
+            mockGenerateStream.mockImplementationOnce(toolCall).mockImplementationOnce(() => failed(500));
+            await reply(service, "key-abc");
+            mockGenerateStream.mockImplementationOnce(toolCall).mockImplementationOnce(() => failed(401));
+            await reply(service, "key-abc");
+            expect(admin.reportAiHealth.mock.calls.map((call: any[]) => call[1])).toEqual([
+                { ok: false, rejected: false },
+                { ok: false, rejected: true },
+            ]);
+        });
+
+        it("still counts a reply as worked when its tool follow-up worked", async () => {
+            const { admin, memory } = buildMocks();
+            admin.getBotAiCredentials.mockResolvedValue(ownKey());
+            const service = new AIService(memory, admin, "http://admin.local");
+            mockGenerateStream.mockImplementationOnce(toolCall).mockImplementationOnce(answer);
+            await reply(service, "key-abc");
+            expect(admin.reportAiHealth.mock.calls.map((call: any[]) => call[1])).toEqual([{ ok: true }]);
         });
 
         it("tells Orbit nothing when the reply was cancelled", async () => {

@@ -728,6 +728,10 @@ Everything above is technical guidance. Follow your personality as defined in th
             let initialGenCaptured = false;
             let followUpGenCaptured = false;
             let followUpError = false;
+            // Whether any follow-up call (after a tool ran) failed. `followUpError` is reset per round for telemetry; the key's
+            // health report needs the reply as a whole, and the provider's status when it gave one.
+            let followUpFailedForHealth = false;
+            let followUpErrorStatus: number | undefined;
             // skipping code after the loop but still reaching the finally block.
             let followUpInput = '';
             let overallFollowUpStartTime = 0;
@@ -1219,6 +1223,8 @@ Everything above is technical guidance. Follow your personality as defined in th
                                 }
                                 if (resultChunk.metadata?.error) {
                                     followUpError = true;
+                                    followUpFailedForHealth = true;
+                                    if (resultChunk.metadata.errorStatus) followUpErrorStatus = resultChunk.metadata.errorStatus;
                                 }
                                 // Accumulate content from follow-up response (same as main stream)
                                 if (resultChunk.content) {
@@ -1468,6 +1474,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     }
                                     // Flag the error before yielding done so telemetry captures it
                                     followUpError = true;
+                                    followUpFailedForHealth = true;
                                     followUpContent = '';
                                     followUpTokens = 0;
                                     followUpPromptTokens = 0;
@@ -1884,8 +1891,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 // A reply through a person's own key: tell Orbit how it went (a cancelled one says nothing either way).
                 // 401 and 403 mean the provider rejected the key, which marks it Down at once.
                 if (reportHealth && streamCompleted && !abortSignal?.aborted) {
+                    const failed = error || followUpFailedForHealth;
+                    const status = errorStatus ?? followUpErrorStatus;
                     this.adminApiService
-                        .reportAiHealth(botId, error ? { ok: false, rejected: errorStatus === 401 || errorStatus === 403 } : { ok: true })
+                        .reportAiHealth(botId, failed ? { ok: false, rejected: status === 401 || status === 403 } : { ok: true })
                         .catch(() => {});
                 }
 
