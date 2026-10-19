@@ -7,6 +7,7 @@ import {
     visionMain,
     visionState,
     withVisionChoice,
+    withoutRefused,
 } from "./visionModel";
 
 const key = (id: string, over: Partial<BotAiOptions["keys"][number]> = {}): BotAiOptions["keys"][number] => ({
@@ -335,5 +336,47 @@ describe("tapping a choice", () => {
                 "another"
             )
         ).toBe(false);
+    });
+});
+
+describe("withoutRefused", () => {
+    const bot = (behaviorConfig: BotData["behaviorConfig"], over: Partial<BotData> = {}): BotData => ({
+        id: "b1",
+        behaviorConfig,
+        ...over,
+    });
+    const space = { center: { x: 1, y: 2 }, radius: 3 };
+
+    it("puts the last saved Vision pick back and keeps everything else the person changed", () => {
+        const refused = bot({
+            assignedSpace: { center: { x: 9, y: 9 }, radius: 3 },
+            vision: { choice: "another", keyId: "key-1", model: "m" },
+        });
+        const saved = JSON.stringify({ assignedSpace: space, vision: { choice: "universe-ai" } });
+        expect(withoutRefused(refused, "config", saved).behaviorConfig).toEqual({
+            assignedSpace: { center: { x: 9, y: 9 }, radius: 3 },
+            vision: { choice: "universe-ai" },
+        });
+    });
+
+    it("takes the pick out when nothing was saved, so the page shows the default again", () => {
+        const refused = bot({ assignedSpace: space, vision: { choice: "another", keyId: "key-1", model: "m" } });
+        expect(withoutRefused(refused, "config", JSON.stringify({ assignedSpace: space })).behaviorConfig).toEqual({
+            assignedSpace: space,
+        });
+        expect(withoutRefused(refused, "config", null).behaviorConfig).toEqual({ assignedSpace: space });
+    });
+
+    it("puts the last saved Runs on back for a refused AI save, and leaves the behavior alone", () => {
+        const refused = bot({ assignedSpace: space }, { aiProviderRef: "key-9", chatInstructions: "Be kind" });
+        const result = withoutRefused(refused, "ai", JSON.stringify({ aiProviderRef: "universe-ai" }));
+        expect(result.aiProviderRef).toBe("universe-ai");
+        expect(result.chatInstructions).toBe("Be kind");
+        expect(result.behaviorConfig).toEqual({ assignedSpace: space });
+    });
+
+    it("copes with a saved value that can't be read", () => {
+        const refused = bot({ assignedSpace: space, vision: { choice: "this" } });
+        expect(withoutRefused(refused, "config", "{nope").behaviorConfig).toEqual({ assignedSpace: space });
     });
 });

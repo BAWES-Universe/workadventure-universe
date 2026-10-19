@@ -349,6 +349,18 @@ describe("AIService – finding a bot's AI by bot id", () => {
                     expect(mockGenerateStream.mock.calls[0][3]).toMatchObject({ providerId: "key-abc" });
                 });
 
+                it("Another model: the model picked is the one that looks, whatever the key row also declares", async () => {
+                    const { admin, memory } = buildMocks();
+                    admin.getBotAiCredentials.mockResolvedValue(
+                        ownKey({ vision: { choice: "another", credentials: visionKey({ visionModel: "some-other-model", supportsVision: false }) } })
+                    );
+                    describerSaying("A boat.");
+                    mockGenerateStream.mockImplementation(answer);
+                    const service = new AIService(memory, admin, "http://admin.local");
+                    await replyWithImages(service);
+                    expect(mockGetOrCreateProvider.mock.calls[0][0]).toMatchObject({ model: "deepseek-v4-flash-vision-exp", supportsVision: true, visionModel: null });
+                });
+
                 it("Another model: a typed address on that key still goes through the address guard", async () => {
                     const { admin, memory } = buildMocks();
                     admin.getBotAiCredentials.mockResolvedValue(ownKey({ vision: { choice: "another", credentials: visionKey({ keyAddressTyped: true }) } }));

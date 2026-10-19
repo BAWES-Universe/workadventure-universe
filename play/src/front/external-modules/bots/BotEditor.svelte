@@ -38,6 +38,7 @@
         type BotEditorMode,
     } from "./stores/BotEditorStore";
     import { routeStops } from "./behaviorModel";
+    import { withoutRefused } from "./visionModel";
     import { newBotRef } from "./mindModel";
     import { getBotEditorTool } from "./phaser/BotEditorTool";
     import { botApiService } from "./services/BotApiService";
@@ -72,6 +73,15 @@
             toolTimeoutSeconds: bot.toolTimeoutSeconds ?? null,
             description: bot.description ?? "",
         });
+    }
+
+    /**
+     * A save Orbit refused: put what it refused (the Vision pick, or the Runs on key) back to what was last saved, so the page
+     * shows what is real and the refused value isn't sent again with every later save, such as moving the bot.
+     */
+    function revertRefused(botId: string, kind: SaveKind, saved: string | null): void {
+        const current = get(botPreviewsStore).get(botId);
+        if (current) upsertBot(withoutRefused(current, kind, saved));
     }
 
     /** Debounce a save (wait 1 second after the last change), replacing the pending save of the same kind */
@@ -151,6 +161,9 @@
                             lastSavedBotConfig = currentConfig;
                         } catch (e) {
                             console.error("[BotEditor] Failed to auto-save bot:", e);
+                            if ((e as Error & { isRefusal?: boolean })?.isRefusal === true) {
+                                revertRefused(bot.id, "config", lastSavedBotConfig);
+                            }
 
                             // Show auth errors, and a refusal (Orbit said why it can't be saved): the person must hear it
                             const isAuthError = (e as Error & { isAuthError?: boolean })?.isAuthError === true;
@@ -210,6 +223,9 @@
                             lastSavedAIConfig = currentAIConfig;
                         } catch (e) {
                             console.error("[BotEditor] Failed to auto-save bot AI config:", e);
+                            if ((e as Error & { isRefusal?: boolean })?.isRefusal === true) {
+                                revertRefused(bot.id, "ai", lastSavedAIConfig);
+                            }
 
                             // Show auth errors, and a refusal (Orbit said why it can't be saved): the person must hear it
                             const isAuthError = (e as Error & { isAuthError?: boolean })?.isAuthError === true;

@@ -209,7 +209,8 @@ export class AIService {
         if (!plan) return undefined;
         if (plan.choice !== 'another') return { choice: plan.choice };
         try {
-            const config = this.buildProviderConfig(plan.credentials);
+            // The model picked is the one that looks: no declared visionModel may stand in for it, and Orbit has checked it sees
+            const config = { ...this.buildProviderConfig(plan.credentials), visionModel: null, supportsVision: true };
             config.ownKey = { addressTyped: plan.credentials.keyAddressTyped !== false };
             return { choice: 'another', config };
         } catch (error) {

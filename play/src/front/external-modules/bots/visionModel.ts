@@ -230,3 +230,27 @@ export function withVisionChoice(
     }
     return { ...bot, behaviorConfig: { ...bot.behaviorConfig, vision } };
 }
+
+/**
+ * The bot with what a refused save asked for put back to what was last saved: the Vision pick for a behavior save (kind
+ * "config", `saved` is the behavior config as last saved, as JSON) or the "Runs on" ref for an AI save (kind "ai", `saved` is
+ * the AI config as last saved). Without this the refused value stays in the page and is sent again with every later save
+ * (moving the bot, for one), so each of them would be refused too. Everything else the person changed is kept.
+ */
+export function withoutRefused(bot: BotData, kind: "config" | "ai", saved: string | null): BotData {
+    let parsed: Record<string, unknown> | null = null;
+    try {
+        parsed = saved ? (JSON.parse(saved) as Record<string, unknown>) : null;
+    } catch {
+        parsed = null;
+    }
+    if (kind === "ai") {
+        return { ...bot, aiProviderRef: typeof parsed?.aiProviderRef === "string" ? parsed.aiProviderRef : undefined };
+    }
+    const { vision: _refused, ...rest } = bot.behaviorConfig;
+    const before = parsed?.vision;
+    return {
+        ...bot,
+        behaviorConfig: before && typeof before === "object" ? { ...rest, vision: before as VisionPick } : rest,
+    } as BotData;
+}
