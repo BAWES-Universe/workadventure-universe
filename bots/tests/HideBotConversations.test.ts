@@ -61,6 +61,16 @@ async function* plainAnswer() {
     };
 }
 
+// A turn where the bot uses a tool: the initial call, the tool, then a follow-up call (each its own $ai_generation)
+async function* toolCall() {
+    yield { content: "", done: false, toolCalls: [{ id: "call_1", name: "get_bot_position", arguments: "{}" }] };
+    yield { content: "", done: true, metadata: { tokensUsed: 110, promptTokens: 100, completionTokens: 10, latency: 20, error: false, truncated: false } };
+}
+async function* followUp() {
+    yield { content: "I'm by the fountain.", done: false };
+    yield { content: "", done: true, metadata: { tokensUsed: 220, promptTokens: 200, completionTokens: 20, latency: 30, error: false, truncated: false } };
+}
+
 async function drain(generator: AsyncGenerator<any>): Promise<any[]> {
     const chunks: any[] = [];
     for await (const chunk of generator) chunks.push(chunk);
@@ -127,6 +137,13 @@ describe("AIService: PostHog and Sentry", () => {
         });
     });
 
+    it("keeps sending every PostHog event of a tool turn when the bot is not private", async () => {
+        hoisted.generateStream.mockReset().mockImplementationOnce(toolCall).mockImplementationOnce(followUp);
+        await runTurn(adminApiMock(async () => false));
+        expect(hoisted.captureAiGeneration.mock.calls.length).toBeGreaterThanOrEqual(2);
+        expect(hoisted.captureAiTrace).toHaveBeenCalledTimes(1);
+    });
+
     describe("private", () => {
         it("sends nothing to PostHog and no conversation, player or place ids to the Sentry span", async () => {
             const adminApi = adminApiMock(async () => true);
@@ -146,6 +163,15 @@ describe("AIService: PostHog and Sentry", () => {
             expect(names).toEqual(expect.arrayContaining(["bot.provider", "bot.model"]));
             expect(hoisted.parentSpan.end).toHaveBeenCalled();
             expect(chunks.some((chunk) => chunk.content === "Hello there.")).toBe(true);
+        });
+
+        it("sends nothing to PostHog on a turn that uses a tool either (initial call, tool, follow-up)", async () => {
+            hoisted.generateStream.mockReset().mockImplementationOnce(toolCall).mockImplementationOnce(followUp);
+            await runTurn(adminApiMock(async () => true));
+            expect(hoisted.generateStream).toHaveBeenCalledTimes(2);
+            expect(hoisted.captureAiGeneration).not.toHaveBeenCalled();
+            expect(hoisted.captureAiTrace).not.toHaveBeenCalled();
+            expect(hoisted.flushPostHog).not.toHaveBeenCalled();
         });
 
         it("still counts the usage in Orbit, with the same numbers", async () => {

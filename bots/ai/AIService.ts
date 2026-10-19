@@ -681,6 +681,10 @@ Everything above is technical guidance. Follow your personality as defined in th
             // Hide bot conversations (#1166): a private bot sends no conversation or player ids to Sentry and no
             // text to PostHog. Anything else (usage counts, memory, errors) is unchanged.
             const privateBot = await this.isPrivateBot(botId);
+            // Every PostHog capture of this turn goes through here, so a private bot cannot miss one
+            const captureGeneration: typeof captureAiGeneration = (params) => {
+                if (!privateBot) captureAiGeneration(params);
+            };
             if (privateBot) {
                 // Clear it too: the scope can still hold the id of another bot's last conversation
                 Sentry.getCurrentScope().setConversationId(null);
@@ -852,7 +856,7 @@ Everything above is technical guidance. Follow your personality as defined in th
                         // propagate (it would abort the stream and yield an error
                         // done chunk, killing the turn).
                         try {
-                            captureAiGeneration({
+                            captureGeneration({
                                 distinctId: `bot-${botId}`,
                                 traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
                                 sessionId: `conversation-${botId}-player-${playerId}`,
@@ -1219,7 +1223,7 @@ Everything above is technical guidance. Follow your personality as defined in th
                                     // Telemetry is fire-and-forget: a capture failure must never
                                     // propagate (it would abort the follow-up loop mid-turn).
                                     try {
-                                        captureAiGeneration({
+                                        captureGeneration({
                                             distinctId: `bot-${botId}`,
                                             traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
                                             sessionId: `conversation-${botId}-player-${playerId}`,
@@ -1551,7 +1555,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             // Telemetry is fire-and-forget: a capture failure must never
                             // propagate (it would abort the turn after the answer).
                             try {
-                                captureAiGeneration({
+                                captureGeneration({
                                     distinctId: `bot-${botId}`,
                                     traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
                                     sessionId: `conversation-${botId}-player-${playerId}`,
