@@ -73,6 +73,8 @@
             ? page.mind.universeAi()
             : runsOnBrief?.kind === "key"
             ? runsOnBrief.name
+            : runsOnBrief?.kind === "gone"
+            ? page.mind.keyGoneTitle()
             : runsOnBrief?.kind === "provider" && current
             ? [
                   current.enabled ? current.name : `${current.name} ${$LL.actionbar.botEditorModule.providerDisabled()}`,
@@ -117,6 +119,8 @@
                     : page.mind.othersKeyUnknown({ bot: bot.name ?? "" });
             case "pinned":
                 return page.mind.pinned();
+            case "gone":
+                return page.mind.keyGone();
         }
     }
 
@@ -160,7 +164,7 @@
                         {#if card.kind === "universe-ai"}<IconSparkles font-size="20" />{:else}<IconKey font-size="20" />{/if}
                     </span>
                     <span class="bp-ctx">
-                        <span class="bp-ct">{card.kind === "universe-ai" ? page.mind.universeAi() : card.title}</span>
+                        <span class="bp-ct">{card.kind === "universe-ai" ? page.mind.universeAi() : card.kind === "gone" ? page.mind.keyGoneTitle() : card.title}</span>
                         <span class="bp-cn">
                             {noteOf(card)}
                             {#if downNoteOf(card)}

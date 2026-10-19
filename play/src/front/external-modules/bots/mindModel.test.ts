@@ -67,6 +67,14 @@ describe("runsOnCards", () => {
         expect(runsOnCards(options({ current: "mystery" }), "mystery")[0]).toMatchObject({ kind: "pinned", title: "mystery" });
     });
 
+    it("a personal key Orbit no longer knows is said to be gone, never shown as its raw id; Universe AI is still the way off it", () => {
+        const cards = runsOnCards(options({ current: "key-deleted" }), "key-deleted");
+        expect(cards[0]).toEqual({ kind: "gone", id: "key-deleted", picked: true, selectable: false });
+        expect(cards[1]).toMatchObject({ kind: "universe-ai", picked: false, selectable: true });
+        expect(canPick(options({ current: "key-deleted" }), cards[1])).toBe(true);
+        expect(mindBriefName(options(), "key-deleted")).toEqual({ kind: "gone" });
+    });
+
     it("matches a pinned provider's id without caring about case, as the old dropdown did", () => {
         const names = new Map([["lmstudio-local", "LM Studio Local"]]);
         expect(runsOnCards(options({ current: "LMStudio-Local" }), "LMStudio-Local", names)[0]).toMatchObject({ title: "LM Studio Local" });

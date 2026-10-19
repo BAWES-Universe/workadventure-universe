@@ -751,6 +751,8 @@ const mapEditor: BaseTranslation = {
                     othersKey: "{owner:string}’s key. Only {owner} can put {bot:string} on it.",
                     othersKeyUnknown: "Someone else’s key. Only its owner can put {bot:string} on it.",
                     pinned: "Pinned to a provider by an admin.",
+                    keyGoneTitle: "A key that was removed",
+                    keyGone: "This key isn’t there anymore. Pick Universe AI to get replies.",
                     aiKeys: "AI keys",
                     makerHint: "Only keys you lent to this universe show here.",
                     managerHint:

@@ -28,7 +28,9 @@ export type RunsOnCard =
     /** Someone else's key the bot is on now: shown as it is, never offered, only Universe AI can replace it. */
     | { kind: "theirs"; id: string; title: string; owner: string | null; picked: true; selectable: false; status: "working" | "down"; ifDown: "universe-ai" | "stop" }
     /** A server provider the bot is pinned to (a super admin did that): shown as it is. */
-    | { kind: "pinned"; id: string; title: string; picked: true; selectable: false };
+    | { kind: "pinned"; id: string; title: string; picked: true; selectable: false }
+    /** A personal key the bot points at that Orbit no longer knows (removed): said so, never shown as a raw id. Only Universe AI can replace it. */
+    | { kind: "gone"; id: string; picked: true; selectable: false };
 
 /** The cards for one bot, in the order the mock shows: what it is on now (when that isn't Universe AI or one of my keys), Universe AI, then my keys. */
 export function runsOnCards(
@@ -66,6 +68,8 @@ export function runsOnCards(
                           ifDown: options.currentKey.ifDown,
                       }
             );
+        } else if (isOwnKeyRef(current)) {
+            cards.push({ kind: "gone", id: current, picked: true, selectable: false });
         } else {
             const name =
                 providerNames.get(current.toLowerCase()) ??
@@ -104,14 +108,14 @@ export function mindBriefName(
     options: BotAiOptions,
     ref: string | null | undefined,
     providerNames: ReadonlyMap<string, string> = new Map()
-): { kind: "none" } | { kind: "universe-ai" } | { kind: "key"; name: string } | { kind: "provider"; ref: string; name: string | null } {
+): { kind: "none" } | { kind: "universe-ai" } | { kind: "key"; name: string } | { kind: "gone" } | { kind: "provider"; ref: string; name: string | null } {
     const current = ref ?? options.current ?? null;
     if (!current) return { kind: "none" };
     if (current === UNIVERSE_AI_REF) return { kind: "universe-ai" };
     if (isOwnKeyRef(current)) {
         const key = options.keys.find((entry) => entry.id === current);
         const name = key?.name ?? (options.currentKey?.id === current ? options.currentKey.name : null);
-        if (name) return { kind: "key", name };
+        return name ? { kind: "key", name } : { kind: "gone" };
     }
     const name = providerNames.get(current.toLowerCase()) ?? options.providers?.find((provider) => provider.id.toLowerCase() === current.toLowerCase())?.name ?? null;
     return { kind: "provider", ref: current, name };
