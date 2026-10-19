@@ -6,7 +6,7 @@ import express, { type Request, type Response, type NextFunction } from 'express
 import { timingSafeEqual } from 'crypto';
 import jwt from 'jsonwebtoken';
 import { BotManager } from './BotManager';
-import { AdminApiService } from './AdminApiService';
+import { AdminApiService, BotConfigRefused } from './AdminApiService';
 import { BotRegistry } from './BotRegistry';
 import type { BotConfiguration } from './AdminApiService';
 import { movementLogger } from '../utils/MovementLogger';
@@ -142,6 +142,22 @@ function sameRoomAddress(a: string, b: string): boolean {
         }
     };
     return pathOf(a) === pathOf(b);
+}
+
+/**
+ * Whether a bot save puts one of the person's own keys to work: a new "Runs on" key (a ref starting "key-"), or a Vision pick of
+ * "Another model" (a key too). Those are judged by who is saving, so they go to Orbit with the person's session; every other
+ * save keeps going with the admin token, as it always has.
+ */
+export function changesPersonalKey(existing: BotConfiguration, updates: Partial<BotConfiguration>): boolean {
+    const ref = updates.aiProviderRef;
+    if (typeof ref === 'string' && ref.startsWith('key-') && ref !== existing.aiProviderRef) return true;
+    const vision = updates.behaviorConfig?.vision;
+    if (vision && typeof vision === 'object' && vision.choice === 'another') {
+        const before = existing.behaviorConfig?.vision;
+        return !(before && before.choice === 'another' && before.keyId === vision.keyId && before.model === vision.model);
+    }
+    return false;
 }
 
 export class BotAPI {
@@ -772,7 +788,19 @@ export class BotAPI {
                     }
                 }
                 
-                await this.adminApiService.saveBotConfiguration(finalConfigToSave);
+                // Orbit only lets a person put their own key on a bot (or pick their own key for its images), and the
+                // admin token is nobody. So when this save changes one of those, it goes with the person's session.
+                const actingSession = changesPersonalKey(existingConfig, updatesToApply) ? req.sessionToken : undefined;
+                try {
+                    await this.adminApiService.saveBotConfiguration(finalConfigToSave, actingSession);
+                } catch (error: any) {
+                    // Orbit says why it refused (a key that isn't theirs, a model that can't see images): pass it on, don't hide it
+                    if (error instanceof BotConfigRefused) {
+                        res.status(400).json({ error: error.message });
+                        return;
+                    }
+                    throw error;
+                }
 
                 // Check if name or texture changed (require respawn)
                 const nameChanged = 'name' in updates && updates.name !== existingConfig.name;

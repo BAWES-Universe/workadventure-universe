@@ -29,6 +29,7 @@
     import PageGroup from "./page/PageGroup.svelte";
     import BehaviorGroup from "./page/BehaviorGroup.svelte";
     import MindGroup from "./page/MindGroup.svelte";
+    import VisionGroup from "./page/VisionGroup.svelte";
     import SayGroup from "./page/SayGroup.svelte";
     import ToolsGroup from "./page/ToolsGroup.svelte";
     import BotFooter from "./page/BotFooter.svelte";
@@ -60,8 +61,17 @@
         }
     }
 
+    // The "Runs on" ref as the store last had it: a change the store makes by itself (a refused save put back) is taken in below,
+    // while a tap not saved yet is kept when the map changes something else
+    let storeAiProviderRef: string | undefined;
+
     // Subscribe to store for real-time updates from map
     const unsubscribe = selectedBotStore.subscribe((storeBot) => {
+        if (storeBot && currentBot && storeBot.id === currentBot.id && storeBot.aiProviderRef !== storeAiProviderRef) {
+            storeAiProviderRef = storeBot.aiProviderRef;
+            currentBot.aiProviderRef = storeBot.aiProviderRef;
+            currentBot = currentBot; // Trigger reactivity
+        }
         if (storeBot && currentBot && storeBot.id === currentBot.id && storeBot.behaviorConfig) {
             // Take the whole behavior config from the store, not just the assigned space: the map also changes the
             // detection range and waypoints, and autoSave() writes currentBot back to the store, so any field left
@@ -123,6 +133,7 @@
             if (!currentBot.behaviorConfig.behaviorType) {
                 currentBot.behaviorConfig.behaviorType = behaviorType;
             }
+            storeAiProviderRef = bot.aiProviderRef;
             // Reset last saved name when bot changes
             lastSavedName = bot.name || null;
         }
@@ -518,6 +529,12 @@
             <MindGroup
                 bot={currentBot}
                 open={openGroup === "mind"}
+                onToggle={toggleGroup}
+                onChange={(next) => apply(next)}
+            />
+            <VisionGroup
+                bot={currentBot}
+                open={openGroup === "vision"}
                 onToggle={toggleGroup}
                 onChange={(next) => apply(next)}
             />

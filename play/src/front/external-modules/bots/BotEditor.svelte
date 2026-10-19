@@ -38,6 +38,7 @@
         type BotEditorMode,
     } from "./stores/BotEditorStore";
     import { routeStops } from "./behaviorModel";
+    import { withoutRefused } from "./visionModel";
     import { newBotRef } from "./mindModel";
     import { getBotEditorTool } from "./phaser/BotEditorTool";
     import { botApiService } from "./services/BotApiService";
@@ -63,6 +64,8 @@
     const pendingSaves = new Map<SaveKind, { timeout: ReturnType<typeof setTimeout>; save: () => void }>();
     let lastSavedBotConfig: string | null = null;
     let lastSavedAIConfig: string | null = null;
+    // What each bot last saved successfully, however often it was opened and closed since: a refused save is put back to this
+    const lastSavedByBot = new Map<string, { config?: string; ai?: string }>();
 
     /** What the "ai" save sends besides the behavior: the bot's mind, chat instructions, Patience and description */
     function aiConfigOf(bot: BotData): string {
@@ -72,6 +75,27 @@
             toolTimeoutSeconds: bot.toolTimeoutSeconds ?? null,
             description: bot.description ?? "",
         });
+    }
+
+    /**
+     * A save Orbit refused: put what it refused (the Vision pick, or the Runs on key) back to what was last saved, so the page
+     * shows what is real and the refused value isn't sent again with every later save, such as moving the bot.
+     */
+    function revertRefused(sent: BotData, kind: SaveKind, saved: string | null): void {
+        const current = get(botPreviewsStore).get(sent.id);
+        if (!current) return;
+        // The person may have picked something newer while this save was on its way: that pick has its own save coming, and
+        // putting the old value back over it would leave the page showing one thing and Orbit holding another
+        const stillRefused =
+            kind === "ai"
+                ? current.aiProviderRef === sent.aiProviderRef
+                : JSON.stringify(current.behaviorConfig?.vision ?? null) ===
+                  JSON.stringify(sent.behaviorConfig?.vision ?? null);
+        if (!stillRefused) return;
+        const reverted = withoutRefused(current, kind, saved);
+        // Only when something was really put back: that is what lets the next save through. A refusal that is about something
+        // else changes nothing here, so it can't set off a save that is refused again, and again.
+        if (JSON.stringify(reverted) !== JSON.stringify(current)) upsertBot(reverted);
     }
 
     /** Debounce a save (wait 1 second after the last change), replacing the pending save of the same kind */
@@ -134,6 +158,11 @@
                 });
             }
 
+            // What was saved for this bot when the change was made: used when it has not saved anything since this page opened.
+            // The shared last-saved values may be another bot's, or re-read from the page after the bot was closed and opened again
+            const savedConfigThen = lastSavedBotConfig;
+            const savedAIConfigThen = lastSavedAIConfig;
+
             // Only save if config actually changed
             if (currentConfig !== lastSavedBotConfig) {
                 scheduleSave("config", () => {
@@ -148,18 +177,27 @@
                                     behaviorConfig: bot.behaviorConfig,
                                 })
                             );
-                            lastSavedBotConfig = currentConfig;
+                            lastSavedByBot.set(bot.id, { ...lastSavedByBot.get(bot.id), config: currentConfig });
+                            // Only for the bot that is open: these values are shared, and another bot's page has its own
+                            if (selectedBot?.id === bot.id) lastSavedBotConfig = currentConfig;
                         } catch (e) {
                             console.error("[BotEditor] Failed to auto-save bot:", e);
+                            if ((e as Error & { isRefusal?: boolean })?.isRefusal === true) {
+                                revertRefused(bot, "config", lastSavedByBot.get(bot.id)?.config ?? savedConfigThen);
+                            }
 
-                            // Check if it's an authentication error - show error for auth issues
+                            // Show auth errors, and a refusal (Orbit said why it can't be saved): the person must hear it
                             const isAuthError = (e as Error & { isAuthError?: boolean })?.isAuthError === true;
-                            if (isAuthError) {
+                            const isRefusal = (e as Error & { isRefusal?: boolean })?.isRefusal === true;
+                            if (isAuthError || isRefusal) {
                                 error = (e as Error).message;
-                                // Clear error after 5 seconds
-                                setTimeout(() => {
-                                    error = null;
-                                }, 5000);
+                                // Clear error after 5 seconds (a refusal is longer to read)
+                                setTimeout(
+                                    () => {
+                                        error = null;
+                                    },
+                                    isRefusal ? 10000 : 5000
+                                );
                             }
                             // For other errors, just log (don't show for auto-saves)
                         }
@@ -203,26 +241,34 @@
                             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                                 console.log("[BotEditor] AI config update successful");
                             }
-                            lastSavedAIConfig = currentAIConfig;
+                            lastSavedByBot.set(bot.id, { ...lastSavedByBot.get(bot.id), ai: currentAIConfig });
+                            if (selectedBot?.id === bot.id) lastSavedAIConfig = currentAIConfig;
                         } catch (e) {
                             console.error("[BotEditor] Failed to auto-save bot AI config:", e);
+                            if ((e as Error & { isRefusal?: boolean })?.isRefusal === true) {
+                                revertRefused(bot, "ai", lastSavedByBot.get(bot.id)?.ai ?? savedAIConfigThen);
+                            }
 
-                            // Check if it's an authentication error - show error for auth issues
+                            // Show auth errors, and a refusal (Orbit said why it can't be saved): the person must hear it
                             const isAuthError = (e as Error & { isAuthError?: boolean })?.isAuthError === true;
-                            if (isAuthError) {
+                            const isRefusal = (e as Error & { isRefusal?: boolean })?.isRefusal === true;
+                            if (isAuthError || isRefusal) {
                                 error = (e as Error).message;
-                                // Clear error after 5 seconds
-                                setTimeout(() => {
-                                    error = null;
-                                }, 5000);
+                                // Clear error after 5 seconds (a refusal is longer to read)
+                                setTimeout(
+                                    () => {
+                                        error = null;
+                                    },
+                                    isRefusal ? 10000 : 5000
+                                );
                             }
                             // For other errors, just log (don't show for auto-saves)
                         }
                     })();
                 });
             }
-        } else {
-            // Reset when no bot selected
+        } else if (!bot) {
+            // Reset when no bot selected. A rename alone keeps them: they are what a refused save is put back to
             lastSavedBotConfig = null;
             lastSavedAIConfig = null;
         }
