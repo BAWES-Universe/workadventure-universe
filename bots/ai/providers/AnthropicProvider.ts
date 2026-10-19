@@ -119,10 +119,14 @@ export class AnthropicProvider implements AIProvider {
         for (const tool of tools) {
             const definition = tool?.function ?? tool;
             if (!definition?.name) continue;
+            // Claude insists on an object schema. A tool server that leaves its schema out (the connector then passes
+            // {}) or leaves out the type would otherwise be refused with a 400 that silences every reply.
+            const schema = definition.parameters ?? definition.input_schema;
+            const hasObjectSchema = schema && typeof schema === 'object' && !Array.isArray(schema);
             converted.push({
                 name: definition.name,
                 description: definition.description || '',
-                input_schema: definition.parameters ?? definition.input_schema ?? { type: 'object', properties: {} },
+                input_schema: hasObjectSchema ? { type: 'object', ...schema } : { type: 'object', properties: {} },
             });
         }
         return converted;

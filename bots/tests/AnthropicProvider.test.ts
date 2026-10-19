@@ -148,6 +148,20 @@ describe("AnthropicProvider", () => {
             expect(body.tool_choice).toEqual({ type: "auto" });
         });
 
+        it("gives a tool whose schema is empty, or has no type, an object schema Claude accepts", async () => {
+            const tools = [
+                { type: "function", function: { name: "empty", parameters: {} } },
+                { type: "function", function: { name: "no_type", parameters: { properties: { a: { type: "string" } } } } },
+                { type: "function", function: { name: "odd", parameters: "nope" } },
+            ];
+            await drain(new AnthropicProvider().generateStream("s", "hi", config(), tools));
+            expect(sentBody(fetchMock).tools.map((tool: any) => tool.input_schema)).toEqual([
+                { type: "object" },
+                { type: "object", properties: { a: { type: "string" } } },
+                { type: "object", properties: {} },
+            ]);
+        });
+
         it("sends no tools field when there are no tools", async () => {
             await drain(new AnthropicProvider().generateStream("s", "hi", config(), []));
             expect(sentBody(fetchMock)).not.toHaveProperty("tools");
