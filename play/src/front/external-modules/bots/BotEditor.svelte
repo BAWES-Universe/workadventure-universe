@@ -79,9 +79,17 @@
      * A save Orbit refused: put what it refused (the Vision pick, or the Runs on key) back to what was last saved, so the page
      * shows what is real and the refused value isn't sent again with every later save, such as moving the bot.
      */
-    function revertRefused(botId: string, kind: SaveKind, saved: string | null): void {
-        const current = get(botPreviewsStore).get(botId);
+    function revertRefused(sent: BotData, kind: SaveKind, saved: string | null): void {
+        const current = get(botPreviewsStore).get(sent.id);
         if (!current) return;
+        // The person may have picked something newer while this save was on its way: that pick has its own save coming, and
+        // putting the old value back over it would leave the page showing one thing and Orbit holding another
+        const stillRefused =
+            kind === "ai"
+                ? current.aiProviderRef === sent.aiProviderRef
+                : JSON.stringify(current.behaviorConfig?.vision ?? null) ===
+                  JSON.stringify(sent.behaviorConfig?.vision ?? null);
+        if (!stillRefused) return;
         const reverted = withoutRefused(current, kind, saved);
         // Only when something was really put back: that is what lets the next save through. A refusal that is about something
         // else changes nothing here, so it can't set off a save that is refused again, and again.
@@ -172,7 +180,7 @@
                             console.error("[BotEditor] Failed to auto-save bot:", e);
                             if ((e as Error & { isRefusal?: boolean })?.isRefusal === true) {
                                 revertRefused(
-                                    bot.id,
+                                    bot,
                                     "config",
                                     selectedBot?.id === bot.id ? lastSavedBotConfig : savedConfigThen
                                 );
@@ -238,7 +246,7 @@
                             console.error("[BotEditor] Failed to auto-save bot AI config:", e);
                             if ((e as Error & { isRefusal?: boolean })?.isRefusal === true) {
                                 revertRefused(
-                                    bot.id,
+                                    bot,
                                     "ai",
                                     selectedBot?.id === bot.id ? lastSavedAIConfig : savedAIConfigThen
                                 );
