@@ -145,6 +145,17 @@ describe("AIService – finding a bot's AI by bot id", () => {
             expect(admin.reportAiHealth).not.toHaveBeenCalled();
         });
 
+        it("is still priced: usage cost is not lost because the config came by bot id", async () => {
+            const { admin, memory } = buildMocks();
+            admin.getBotAiCredentials.mockResolvedValue({ ...provider(), source: "universe-ai" });
+            mockGenerateStream.mockImplementation(answer);
+            const service = new AIService(memory, admin, "http://admin.local");
+            await reply(service, "universe-ai");
+            expect(service.calculateCost("deepseek-flash", { promptTokens: 1000, completionTokens: 1000 })).toBeGreaterThan(0);
+            // and the same call for a provider the service never saw is still 0, as before
+            expect(service.calculateCost("never-seen", { promptTokens: 1000, completionTokens: 1000 })).toBe(0);
+        });
+
         it("is asked again after 30 seconds, so a new Default reaches the next reply", async () => {
             vi.useFakeTimers();
             try {

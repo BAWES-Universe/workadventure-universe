@@ -161,6 +161,52 @@ describe("ownComputerFetch", () => {
         expect(MAX_RESPONSE_BYTES).toBe(20_000_000);
     });
 
+    it("only limits getting connected: a model that is slow to start answering is not cut off", async () => {
+        vi.useFakeTimers();
+        try {
+            lookupMock.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
+            let socket: any;
+            let request: any;
+            requestSpy = vi.spyOn(https, "request").mockImplementation((() => {
+                request = Object.assign(new EventEmitter(), { destroy: vi.fn(), write: vi.fn(), end: vi.fn() });
+                return request;
+            }) as never);
+            const pending = ownComputerFetch("https://lm.example.com/v1/chat/completions", { method: "POST", body: "{}" });
+            await vi.advanceTimersByTimeAsync(0);
+            socket = Object.assign(new EventEmitter(), { connecting: true, getProtocol: () => null });
+            request.emit("socket", socket);
+            // Connected and TLS done, then 30 seconds with no answer yet
+            socket.connecting = false;
+            socket.emit("secureConnect");
+            await vi.advanceTimersByTimeAsync(30_000);
+            expect(request.destroy).not.toHaveBeenCalled();
+            request.emit("error", new Error("stop"));
+            await expect(pending).rejects.toThrow("stop");
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("still gives up when it cannot get connected", async () => {
+        vi.useFakeTimers();
+        try {
+            lookupMock.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
+            let request: any;
+            requestSpy = vi.spyOn(https, "request").mockImplementation((() => {
+                request = Object.assign(new EventEmitter(), { destroy: vi.fn(), write: vi.fn(), end: vi.fn() });
+                return request;
+            }) as never);
+            const pending = ownComputerFetch("https://lm.example.com/v1/models");
+            pending.catch(() => {});
+            await vi.advanceTimersByTimeAsync(0);
+            request.emit("socket", Object.assign(new EventEmitter(), { connecting: true, getProtocol: () => null }));
+            await vi.advanceTimersByTimeAsync(10_001);
+            expect(request.destroy).toHaveBeenCalledWith(expect.objectContaining({ message: "Timed out connecting" }));
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it("rejects with an abort when the caller cancels", async () => {
         lookupMock.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
         const controller = new AbortController();

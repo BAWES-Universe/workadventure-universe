@@ -75,6 +75,8 @@ export class AIService {
      */
     private botCredentialCache: Map<string, { resolved: ResolvedProvider; expiresAt: number }> = new Map();
     private readonly BOT_CREDENTIAL_TTL = 30 * 1000;
+    /** The latest config Orbit gave for each provider id on the bot route, so usage can still be priced. */
+    private botRoutePricing: Map<string, AIProviderConfig> = new Map();
     private providerRegistry: AIProviderRegistry;
     private mapDataService?: MapDataService;
 
@@ -155,6 +157,7 @@ export class AIService {
             if (answer) {
                 const resolved = this.resolvedFromAnswer(answer);
                 this.botCredentialCache.set(cacheKey, { resolved, expiresAt: Date.now() + this.BOT_CREDENTIAL_TTL });
+                if (!resolved.resting) this.botRoutePricing.set(resolved.config.providerId, resolved.config);
                 return resolved;
             }
         }
@@ -2101,12 +2104,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      */
     private calculateCost(providerId: string, metadata: AIUsageMetadata): number {
         try {
-            const cached = this.credentialCache.get(providerId);
-            if (!cached) {
+            const config = this.credentialCache.get(providerId)?.credentials ?? this.botRoutePricing.get(providerId);
+            if (!config) {
                 return 0;
             }
 
-            const config = cached.credentials;
             const promptTokens = metadata.promptTokens || 0;
             const completionTokens = metadata.completionTokens || 0;
             const durationSeconds = metadata.durationSeconds;
@@ -2156,6 +2158,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      */
     clearCache(): void {
         this.credentialCache.clear();
+        this.botCredentialCache.clear();
+        this.botRoutePricing.clear();
     }
 
     /**

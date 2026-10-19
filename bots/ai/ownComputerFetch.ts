@@ -16,6 +16,7 @@ import https from 'https';
 import { BlockList, isIP } from 'net';
 import { lookup } from 'dns/promises';
 import { Readable, Transform } from 'stream';
+import type { TLSSocket } from 'tls';
 
 const blocked = new BlockList();
 for (const [network, prefix] of [
@@ -155,6 +156,12 @@ export async function ownComputerFetch(input: string | URL, init: RequestInit = 
             }
         );
         const connectTimer = setTimeout(() => request.destroy(new Error('Timed out connecting')), CONNECT_TIMEOUT_MS);
+        // The limit is for getting connected, not for a slow model to start answering: stop it once the handshake is done
+        request.on('socket', (socket) => {
+            const tls = socket as TLSSocket;
+            if (!tls.connecting && tls.getProtocol?.()) clearTimeout(connectTimer);
+            else socket.once('secureConnect', () => clearTimeout(connectTimer));
+        });
         const onAbort = () => request.destroy(Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }));
         signal?.addEventListener('abort', onAbort, { once: true });
         request.on('error', (error) => {
