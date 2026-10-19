@@ -192,7 +192,7 @@
         </div>
         {#if options.viewerIsMaker && canOpenOrbit()}
             <div class="bp-line">
-                <PageButton testId="bot-runs-on-ai-keys" on:click={() => openOrbitPage("/admin/you/ai-keys")}>
+                <PageButton testId="bot-runs-on-ai-keys" tall on:click={() => openOrbitPage("/admin/you/ai-keys")}>
                     {page.mind.aiKeys()}
                     <IconExternalLink font-size="14" />
                 </PageButton>
