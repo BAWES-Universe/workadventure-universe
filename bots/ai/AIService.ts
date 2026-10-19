@@ -952,6 +952,11 @@ Everything above is technical guidance. Follow your personality as defined in th
                         if (chunk.metadata?.completionTokens) {
                             completionTokens = chunk.metadata.completionTokens;
                         }
+                        // A first call that broke off after its tool calls still counts against the key's health, even when the follow-up works
+                        if (chunk.metadata?.error) {
+                            followUpFailedForHealth = true;
+                            if (chunk.metadata.errorStatus) followUpErrorStatus = chunk.metadata.errorStatus;
+                        }
 
                         // Capture $ai_generation for the initial LLM call NOW —
                         // before tool execution distorts its latency and before
