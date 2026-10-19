@@ -411,10 +411,12 @@ export class AIService {
                 // be the one answering (persona, chat instructions, tools).
                 const visionCapable = this.providerRegistry.supportsVision(config);
                 if (!visionCapable) {
-                    const description = await this.describeImagesViaDefaultVision(
-                        visionImages,
-                        abortSignal
-                    );
+                    // A person's own key without Vision never has its pictures described by Universe AI: the picture would
+                    // leave their key (or their own computer) and Universe would pay for it. The link stays in the text.
+                    const description =
+                        resolved.source === 'own-key'
+                            ? ''
+                            : await this.describeImagesViaDefaultVision(visionImages, abortSignal);
                     if (description) {
                         message = `${message}\n[The user sent an image. Description from a vision model: ${description}]`;
                         // Persist the description into conversation history so
