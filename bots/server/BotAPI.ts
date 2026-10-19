@@ -11,6 +11,7 @@ import { BotRegistry } from './BotRegistry';
 import type { BotConfiguration } from './AdminApiService';
 import { movementLogger } from '../utils/MovementLogger';
 import { MCPConnector } from '../mcp/MCPConnector';
+import { BotBusyError, BotUnavailableError } from '../utils/summonErrors';
 
 export interface BotAPIRequest extends Request {
     /** Who the game token says the caller is (its `identifier`): a guest's uuid, a member's email or id. */
@@ -20,6 +21,8 @@ export interface BotAPIRequest extends Request {
     sessionUuid?: string;
     isLogged?: boolean;
     sessionToken?: string;
+    /** Set when the request carried an Orbit session the Admin API did not accept (expired or revoked). */
+    sessionRejected?: boolean;
 }
 
 /**
@@ -108,28 +111,89 @@ function requireServiceOperator(req: BotAPIRequest, res: Response, next: NextFun
 }
 
 /**
+ * Reads the player's game token (X-WA-Auth), signed with the same SECRET_KEY the bots already use to join the game.
+ * Returns the identifier it carries, or null when the token is missing or not valid.
+ */
+function readGameToken(req: BotAPIRequest): { identifier: string | undefined } | null {
+    const secretKey = process.env.SECRET_KEY;
+    const token = req.headers['x-wa-auth'];
+    if (!secretKey || typeof token !== 'string' || !token) {
+        return null;
+    }
+    try {
+        const payload = jwt.verify(token, secretKey, { algorithms: ['HS256'] });
+        return {
+            identifier:
+                typeof payload === 'object' && payload !== null && typeof payload.identifier === 'string'
+                    ? payload.identifier
+                    : undefined,
+        };
+    } catch {
+        return null;
+    }
+}
+
+/**
  * Middleware for routes every player in the game uses, guests included (bots spawning when a room opens, a bot's
  * feelings about you). It needs the player's game token in the X-WA-Auth header, signed with the same SECRET_KEY the
  * bots already use to join the game.
  */
 function requireGameToken(req: BotAPIRequest, res: Response, next: NextFunction): void {
-    const secretKey = process.env.SECRET_KEY;
-    const token = req.headers['x-wa-auth'];
-    if (!secretKey || typeof token !== 'string' || !token) {
+    if (!process.env.SECRET_KEY || typeof req.headers['x-wa-auth'] !== 'string' || !req.headers['x-wa-auth']) {
         res.status(401).json({ error: 'Missing game token' });
         return;
     }
-    try {
-        const payload = jwt.verify(token, secretKey, { algorithms: ['HS256'] });
-        // Keep who the token belongs to, so routes about one person can check it is that person asking.
-        req.gameIdentifier =
-            typeof payload === 'object' && payload !== null && typeof payload.identifier === 'string'
-                ? payload.identifier
-                : undefined;
-        next();
-    } catch {
+    const game = readGameToken(req);
+    if (!game) {
         res.status(401).json({ error: 'Invalid game token' });
+        return;
     }
+    // Keep who the token belongs to, so routes about one person can check it is that person asking.
+    req.gameIdentifier = game.identifier;
+    next();
+}
+
+/**
+ * Middleware for routes any player may use, guests included, that act for the person asking (Summon). It works out
+ * who is asking from what the request carries: the Orbit session of a signed-in player, and the game token, whose
+ * identifier is a guest's uuid. The route then checks the one it needs against the person the request is about.
+ */
+async function identifyPlayer(
+    req: BotAPIRequest,
+    res: Response,
+    next: NextFunction,
+    adminApiService: AdminApiService
+): Promise<void> {
+    const authHeader = req.headers.authorization;
+    const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice('Bearer '.length).trim() : '';
+    if (bearerToken) {
+        try {
+            const userInfo = /^orb_sess_v2_[0-9a-f]{64}$/.test(bearerToken)
+                ? await adminApiService.validateSessionToken(bearerToken)
+                : null;
+            if (userInfo) {
+                req.userIdentifier = userInfo.email || userInfo.uuid;
+                req.isLogged = true;
+                req.sessionToken = bearerToken;
+                req.sessionUuid = userInfo.uuid;
+            } else {
+                req.sessionRejected = true;
+            }
+        } catch {
+            req.sessionRejected = true;
+        }
+    }
+
+    const game = readGameToken(req);
+    if (game) {
+        req.gameIdentifier = game.identifier;
+    }
+
+    if (!req.sessionUuid && !game) {
+        res.status(401).json({ error: 'Missing or invalid Orbit session or game token' });
+        return;
+    }
+    next();
 }
 
 /** Whether two room addresses name the same room: the same /@/universe/world/room path, whatever the host or scheme. */
@@ -204,6 +268,8 @@ export class BotAPI {
             authenticateToken(req, res, next, this.adminApiService);
         const requireManager = (req: BotAPIRequest, res: Response, next: NextFunction) =>
             requireBotManager(req, res, next, this.adminApiService);
+        const identifySummoner = (req: BotAPIRequest, res: Response, next: NextFunction) =>
+            identifyPlayer(req, res, next, this.adminApiService);
         const requireOperator = (req: BotAPIRequest, res: Response, next: NextFunction) => requireServiceOperator(req, res, next);
 
         // Health check (no auth required)
@@ -267,10 +333,11 @@ export class BotAPI {
             }
         });
 
-        // Summon bot to the player who asks. Any signed-in player may summon; it only moves the bot to them. Who is
-        // asking comes from the Orbit session, and where they stand comes from what the bot itself sees, so nobody
-        // can call a bot to another person or to a spot of their choosing.
-        this.app.post('/api/bots/:botId/summon', requireSession, async (req: BotAPIRequest, res: Response) => {
+        // Summon bot to the player who asks. Any player may summon, guests included; it only moves the bot to them. Who
+        // is asking comes from the Orbit session (signed in) or the game token (a guest's identifier is their uuid),
+        // and where they stand comes from what the bot itself sees, so nobody can call a bot to another person or to
+        // a spot of their choosing. Every refusal carries a `code` so the game can tell the player why.
+        this.app.post('/api/bots/:botId/summon', identifySummoner, async (req: BotAPIRequest, res: Response) => {
             try {
                 const { botId } = req.params;
                 const { playerUuid } = req.body;
@@ -280,21 +347,31 @@ export class BotAPI {
                     return;
                 }
 
-                if (!req.sessionUuid || req.sessionUuid !== playerUuid) {
-                    res.status(403).json({ error: 'You can only summon a bot to yourself' });
+                const isThatPlayer = req.sessionUuid === playerUuid || req.gameIdentifier === playerUuid;
+                if (!isThatPlayer) {
+                    if (req.sessionRejected && !req.sessionUuid) {
+                        // Their Orbit session ran out: the game asks for a fresh one and tries again.
+                        res.status(401).json({ error: 'Invalid or expired Orbit session', code: 'session_expired' });
+                        return;
+                    }
+                    res.status(403).json({ error: 'You can only summon a bot to yourself', code: 'not_you' });
                     return;
                 }
 
                 const bot = this.botManager.getBot(botId);
                 if (!bot) {
-                    res.status(404).json({ error: 'Bot not found or not spawned' });
+                    res.status(404).json({ error: 'Bot not found or not spawned', code: 'not_here' });
                     return;
                 }
 
                 // Summon the bot to where it sees the player standing
                 const targetPosition = await this.botManager.summonBot(botId, { playerUuid });
                 if (!targetPosition) {
-                    res.status(409).json({ summoned: false, reason: 'The bot cannot see you in its room' });
+                    res.status(409).json({
+                        summoned: false,
+                        reason: 'The bot cannot see you in its room',
+                        code: 'cannot_see_you',
+                    });
                     return;
                 }
 
@@ -304,8 +381,20 @@ export class BotAPI {
                     targetPosition,
                 });
             } catch (error: any) {
+                if (error instanceof BotBusyError) {
+                    res.status(409).json({
+                        summoned: false,
+                        reason: error.message,
+                        code: error.withYou ? 'already_with_you' : 'busy',
+                    });
+                    return;
+                }
+                if (error instanceof BotUnavailableError) {
+                    res.status(404).json({ error: error.message, code: 'not_here' });
+                    return;
+                }
                 console.error('[BotAPI] Error summoning bot:', error);
-                res.status(500).json({ error: error.message });
+                res.status(500).json({ error: error.message, code: 'failed' });
             }
         });
 

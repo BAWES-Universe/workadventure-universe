@@ -10,7 +10,9 @@ import { EditorToolName } from "../../Phaser/Game/MapEditor/MapEditorModeManager
 import { gameManager } from "../../Phaser/Game/GameManager";
 import { wokaMenuStore, type WokaMenuData, type WokaMenuAction } from "../../Stores/WokaMenuStore";
 import { BOT_SERVER_URL } from "../../Enum/EnvironmentVariable";
+import { warningMessageStore } from "../../Stores/ErrorStore";
 import { botApiService } from "./services/BotApiService";
+import { summonFailureLine, type SummonFailure } from "./services/summonFailure";
 import { destroyBotEditorTool } from "./phaser/BotEditorTool";
 import { IconMapPin, IconRobot } from "@wa-icons";
 
@@ -1142,6 +1144,7 @@ function registerSummonButtonsForBots() {
                             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                                 console.warn(`[Bot Extension] Cannot summon - scene not available`);
                             }
+                            showSummonFailure("failed", playerData.name);
                             return;
                         }
 
@@ -1152,6 +1155,7 @@ function registerSummonButtonsForBots() {
                             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                                 console.warn(`[Bot Extension] Cannot summon - current player not available`);
                             }
+                            showSummonFailure("failed", playerData.name);
                             return;
                         }
 
@@ -1171,20 +1175,25 @@ function registerSummonButtonsForBots() {
                         // Strip the "bot-" prefix to get the actual botId
                         const botId = botUuid.startsWith("bot-") ? botUuid.substring(4) : botUuid;
                         // Call summon API - it will validate if this is a bot
-                        await botApiService.summonBot(
+                        const result = await botApiService.summonBot(
                             botId, // Use botId (without "bot-" prefix)
                             currentUuid,
                             currentPosition.x,
                             currentPosition.y
                         );
+                        if (!result.summoned) {
+                            showSummonFailure(result.failure, playerData.name);
+                            return;
+                        }
                         if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                             console.log(`[Bot Extension] Summon request sent successfully`);
                         }
                     } catch (error) {
-                        // Silently fail if it's not a bot (API will return 404)
+                        // Anything unexpected still tells the player: nothing fails silently.
                         if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                             console.warn(`[Bot Extension] Summon failed for ${botUuid}:`, error);
                         }
+                        showSummonFailure("failed", playerData.name);
                     }
                 },
             };
@@ -1205,6 +1214,14 @@ function registerSummonButtonsForBots() {
     } catch (error) {
         console.error("[Bot Extension] Error registering summon buttons:", error);
     }
+}
+
+/** Tell the player why a Summon did not happen, in a short line. Every failure goes through here. */
+function showSummonFailure(failure: SummonFailure, botName: string | undefined): void {
+    const line = summonFailureLine(failure, localUserStore.isLogged());
+    warningMessageStore.addWarningMessage(get(LL).woka.summon[line]({ name: botName || "The bot" }), {
+        closable: true,
+    });
 }
 
 // Function to initialize the bot editor integration
