@@ -147,6 +147,11 @@ export abstract class BaseBehavior {
     // Authentication tracking - map userId (number) to isLogged (boolean)
     protected userIdToIsLogged: Map<number, boolean> = new Map();
 
+    /** Whether the game has told this bot who the person is yet (their join can arrive just after their first message) */
+    isPersonKnown(userId: number): boolean {
+        return this.userIdToUuid.has(userId) || this.userIdToIsLogged.has(userId);
+    }
+
     /**
      * Who someone in the room is, for Orbit's bot access check: signed in only when the game says so and their uuid is
      * known (Orbit looks a signed-in person up by it). Anyone else is asked about as a guest.

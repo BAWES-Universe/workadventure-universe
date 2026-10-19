@@ -33,6 +33,7 @@ function setup(verdict: BotAccessVerdict | undefined) {
     const behavior = {
         onChatMessage: vi.fn().mockResolvedValue(undefined),
         getPersonForAccess: vi.fn().mockReturnValue({ signedIn: true, identifier: 'mishari@example.test' }),
+        isPersonKnown: vi.fn().mockReturnValue(true),
         onPlayerLeft: vi.fn(),
     };
     const check = vi.fn().mockResolvedValue(verdict);
@@ -170,5 +171,40 @@ describe('BotClient chat access', () => {
 
         expect(behavior.onChatMessage).toHaveBeenCalledTimes(1);
         expect(said).not.toHaveBeenCalled();
+    });
+
+    it('waits for the game to say who just joined before asking, so a member is not taken for a guest', async () => {
+        vi.useFakeTimers();
+        try {
+            const { behavior, check, receive } = setup({ allowed: true, kind: 'allowed' });
+            behavior.isPersonKnown.mockReturnValueOnce(false).mockReturnValueOnce(false).mockReturnValue(true);
+
+            const handling = receive(chatFrom('room_9'));
+            await vi.advanceTimersByTimeAsync(300);
+            await handling;
+
+            expect(check).toHaveBeenCalledTimes(1);
+            expect(check).toHaveBeenCalledWith('bot-test', 'chat', { signedIn: true, identifier: 'mishari@example.test' }, 'Nora');
+            expect(behavior.onChatMessage).toHaveBeenCalledTimes(1);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('asks about someone the game never identified as a guest, after a short wait', async () => {
+        vi.useFakeTimers();
+        try {
+            const { behavior, check, receive } = setup({ allowed: true, kind: 'allowed' });
+            behavior.isPersonKnown.mockReturnValue(false);
+            behavior.getPersonForAccess.mockReturnValue({ signedIn: false, identifier: null });
+
+            const handling = receive(chatFrom('room_10'));
+            await vi.advanceTimersByTimeAsync(3100);
+            await handling;
+
+            expect(check).toHaveBeenCalledWith('bot-test', 'chat', { signedIn: false, identifier: null }, 'Nora');
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });

@@ -1006,6 +1006,9 @@ async function injectEmotionsIntoWokaMenu(menuData: WokaMenuData): Promise<void>
     }
 }
 
+// Counts the menus opened, so an answer that arrives after the card was closed (or reopened) adds nothing to it
+let wokaMenuOpening = 0;
+
 function setupWokaMenuHook() {
     if (wokaMenuUnsubscriber) return; // Already set up
 
@@ -1013,6 +1016,7 @@ function setupWokaMenuHook() {
         // When menu is cleared, cleanup emotions display
         if (!menuData) {
             lastProcessedMenu = null;
+            wokaMenuOpening++;
 
             isInjectingEmotions = false; // Reset guard
             injectionId++;
@@ -1048,6 +1052,7 @@ function setupWokaMenuHook() {
             if (actions && actions.length > 0) {
                 // Mark as processed immediately
                 lastProcessedMenu = currentState;
+                const opening = ++wokaMenuOpening;
 
                 // Check if "Summon" action already exists (safety check)
                 const hasSummon = menuData.actions.some((a) => a.actionName === "Summon");
@@ -1061,6 +1066,7 @@ function setupWokaMenuHook() {
                             const access = await botApiService.getBotAccess(menuData.userUuid.substring(4), "summon");
                             if (access.allowed === false) return;
                         }
+                        if (opening !== wokaMenuOpening) return;
                         actions.forEach((action: WokaMenuAction) => {
                             // Double-check menu is still valid before adding
                             const currentMenu = get(wokaMenuStore);

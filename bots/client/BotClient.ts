@@ -69,6 +69,8 @@ export class BotClient {
     private accessGate: BotAccessGate | null = null;
     /** When each person was told that the bot's owner limits who can chat with it: once per visit (see mayChat). */
     private readonly toldNoChat = new Map<number, number>();
+    /** How long a first message waits for the game to say who sent it (see mayChat) */
+    private static readonly PERSON_WAIT_MS = 3000;
     /** A person who stays this long without leaving the room hears the line again. */
     private static readonly TOLD_NO_CHAT_FOR_MS = 10 * 60 * 1000;
     private userId: number | null = null;
@@ -299,6 +301,12 @@ export class BotClient {
     private async mayChat(spaceName: string, senderId: number): Promise<boolean> {
         const gate = this.accessGate;
         if (!gate || !this.behavior) return true;
+        // Someone's first words can arrive just before the game says who they are: asking Orbit now would take a
+        // signed-in member for a guest. Give their join a moment; after that they are asked about as the guest they look like.
+        for (let waited = 0; !this.behavior.isPersonKnown(senderId) && waited < BotClient.PERSON_WAIT_MS; waited += 100) {
+            await new Promise<void>((resolve) => setTimeout(resolve, 100));
+            if (!this.behavior) return true;
+        }
         let verdict: BotAccessVerdict;
         try {
             verdict = await gate.check(
