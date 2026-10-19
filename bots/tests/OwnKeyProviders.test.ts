@@ -200,6 +200,8 @@ describe("helpers", () => {
         [new Error("OpenAI API error: 503 down"), 503],
         [new Error("fetch failed"), undefined],
         ["LMStudio API error: 403 x", 403],
+        [new Error('OpenAI API error: 429 {"error":{"type":"insufficient_quota","message":"You exceeded your current quota"}}'), 402],
+        [new Error('OpenAI API error: 429 {"error":{"type":"rate_limit_exceeded","message":"Rate limit reached"}}'), 429],
         [undefined, undefined],
     ])("reads the status from %s", (error, expected) => {
         expect(statusFromError(error)).toBe(expected);
