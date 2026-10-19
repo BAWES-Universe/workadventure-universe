@@ -253,11 +253,12 @@ export function withoutRefused(bot: BotData, kind: "config" | "ai", saved: strin
     if (kind === "ai") {
         return { ...bot, aiProviderRef: typeof parsed?.aiProviderRef === "string" ? parsed.aiProviderRef : undefined };
     }
+    const before = parsed?.vision;
+    if (before && typeof before === "object") {
+        // Spread then set keeps `vision` where it was in the object, so an unchanged pick compares equal as JSON
+        return { ...bot, behaviorConfig: { ...bot.behaviorConfig, vision: before as VisionPick } };
+    }
     const rest: Record<string, unknown> = { ...bot.behaviorConfig };
     delete rest.vision;
-    const before = parsed?.vision;
-    return {
-        ...bot,
-        behaviorConfig: before && typeof before === "object" ? { ...rest, vision: before as VisionPick } : rest,
-    } as BotData;
+    return { ...bot, behaviorConfig: rest } as BotData;
 }

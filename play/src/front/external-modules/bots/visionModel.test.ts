@@ -404,6 +404,12 @@ describe("withoutRefused", () => {
         });
     });
 
+    it("an unchanged pick is put back where it was in the object, so nothing looks changed", () => {
+        const current = bot({ vision: { choice: "this" }, assignedSpace: space });
+        const saved = JSON.stringify({ assignedSpace: space, vision: { choice: "this" } });
+        expect(JSON.stringify(withoutRefused(current, "config", saved))).toBe(JSON.stringify(current));
+    });
+
     it("takes the pick out when nothing was saved, so the page shows the default again", () => {
         const refused = bot({ assignedSpace: space, vision: { choice: "another", keyId: "key-1", model: "m" } });
         expect(withoutRefused(refused, "config", JSON.stringify({ assignedSpace: space })).behaviorConfig).toEqual({
