@@ -94,6 +94,15 @@ export class OpenAIProvider implements AIProvider {
     }
 
     /**
+     * The status to report for a failed call. Gemini answers a wrong or revoked key with 400 ("Please pass a valid API key", or "API key expired" for an old one),
+     * not 401, and a 400 is not counted against a key, so it is reported as the 401 it means.
+     */
+    private reportedStatus(status: number, errorText: string): number {
+        if (status === 400 && /valid API key|API_KEY_INVALID|API key expired/i.test(errorText)) return 401;
+        return status;
+    }
+
+    /**
      * Whether the provider refused the request because of the temperature we sent, so it is worth asking again without
      * one. OpenAI names it by code; other OpenAI-format providers (Kimi's fixed-temperature models) just answer 400 with
      * a message about the temperature. A request that sent no temperature is not asked again for it.
@@ -255,7 +264,7 @@ export class OpenAIProvider implements AIProvider {
 
                     if (!retryResponse.ok) {
                         const retryErrorText = await retryResponse.text();
-                        throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
+                        throw new Error(`OpenAI API error: ${this.reportedStatus(retryResponse.status, retryErrorText)} ${retryErrorText}`);
                     }
 
                     finalResponse = retryResponse;
@@ -286,12 +295,12 @@ export class OpenAIProvider implements AIProvider {
 
                     if (!retryResponse.ok) {
                         const retryErrorText = await retryResponse.text();
-                        throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
+                        throw new Error(`OpenAI API error: ${this.reportedStatus(retryResponse.status, retryErrorText)} ${retryErrorText}`);
                     }
 
                     finalResponse = retryResponse;
                 } else {
-                    throw new Error(`OpenAI API error: ${response.status} ${errorText}`);
+                    throw new Error(`OpenAI API error: ${this.reportedStatus(response.status, errorText)} ${errorText}`);
                 }
             }
 
@@ -497,7 +506,7 @@ export class OpenAIProvider implements AIProvider {
 
                             if (!retryResponse.ok) {
                                 const retryErrorText = await retryResponse.text();
-                                throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
+                                throw new Error(`OpenAI API error: ${this.reportedStatus(retryResponse.status, retryErrorText)} ${retryErrorText}`);
                             }
 
                             finalResponse = retryResponse;
@@ -533,7 +542,7 @@ export class OpenAIProvider implements AIProvider {
 
                             if (!retryResponse.ok) {
                                 const retryErrorText = await retryResponse.text();
-                                throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
+                                throw new Error(`OpenAI API error: ${this.reportedStatus(retryResponse.status, retryErrorText)} ${retryErrorText}`);
                             }
 
                             finalResponse = retryResponse;
@@ -541,7 +550,7 @@ export class OpenAIProvider implements AIProvider {
                             clearTimeout(retryTimeoutId);
                         }
                     } else {
-                        throw new Error(`OpenAI API error: ${response.status} ${errorText}`);
+                        throw new Error(`OpenAI API error: ${this.reportedStatus(response.status, errorText)} ${errorText}`);
                     }
                 }
 

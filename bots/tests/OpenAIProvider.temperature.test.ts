@@ -121,3 +121,46 @@ describe("OpenAIProvider and a refused temperature", () => {
         expect(sent(fetchMock, 0)).toMatchObject({ temperature: 0.7, max_tokens: 300 });
     });
 });
+
+describe("OpenAIProvider and a key the provider calls invalid with a 400", () => {
+    const originalFetch = global.fetch;
+    let fetchMock: ReturnType<typeof vi.fn>;
+    beforeEach(() => {
+        fetchMock = vi.fn();
+        global.fetch = fetchMock as unknown as typeof fetch;
+    });
+    afterEach(() => {
+        global.fetch = originalFetch;
+    });
+
+    const GEMINI = '[{ "error": { "code": 400, "message": "Please pass a valid API key", "status": "INVALID_ARGUMENT" } } ]';
+
+    it("reports Gemini's 400 for a wrong key as a 401, so Orbit marks the key rejected", async () => {
+        fetchMock.mockResolvedValue(failure(400, GEMINI));
+        const chunks = await drain(new OpenAIProvider().generateStream("s", "hi", config({ endpoint: "https://generativelanguage.googleapis.com/v1beta/openai", model: "gemini-2.0-flash" })));
+        expect(chunks[chunks.length - 1].metadata).toMatchObject({ error: true, errorStatus: 401 });
+        fetchMock.mockResolvedValue(failure(400, GEMINI));
+        await expect(new OpenAIProvider().generate("s", "hi", config())).resolves.toMatchObject({ error: true });
+    });
+
+    it("reports Gemini's 400 for an expired key as a 401 too", async () => {
+        fetchMock.mockResolvedValue(failure(400, '[{ "error": { "code": 400, "message": "API key expired. Please renew the API key.", "status": "INVALID_ARGUMENT" } } ]'));
+        const chunks = await drain(new OpenAIProvider().generateStream("s", "hi", config({ endpoint: "https://generativelanguage.googleapis.com/v1beta/openai", model: "gemini-2.0-flash" })));
+        expect(chunks[chunks.length - 1].metadata).toMatchObject({ error: true, errorStatus: 401 });
+    });
+
+    it("leaves every other 400 as a 400", async () => {
+        fetchMock.mockResolvedValue(failure(400, '{"error":{"message":"messages: must not be empty"}}'));
+        const chunks = await drain(new OpenAIProvider().generateStream("s", "hi", config()));
+        expect(chunks[chunks.length - 1].metadata).toMatchObject({ error: true, errorStatus: 400 });
+    });
+
+    it("keeps a real 401 and 402 as they are", async () => {
+        fetchMock.mockResolvedValueOnce(failure(401, '{"error":{"message":"Incorrect API key provided"}}'));
+        let chunks = await drain(new OpenAIProvider().generateStream("s", "hi", config()));
+        expect(chunks[chunks.length - 1].metadata).toMatchObject({ errorStatus: 401 });
+        fetchMock.mockResolvedValueOnce(failure(402, '{"error":{"message":"Insufficient Balance"}}'));
+        chunks = await drain(new OpenAIProvider().generateStream("s", "hi", config()));
+        expect(chunks[chunks.length - 1].metadata).toMatchObject({ errorStatus: 402 });
+    });
+});
