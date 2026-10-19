@@ -110,7 +110,7 @@ export class OpenAIProvider implements AIProvider {
     }
 
     /**
-     * Open-source Qwen3 models on Alibaba's service answer a non-streaming call with 400 unless thinking is turned off
+     * Alibaba's thinking models (open-source Qwen3 among them) answer a non-streaming call with 400 "parameter.enable_thinking only support stream call" unless thinking is turned off
      * (the message names `enable_thinking`). Streamed replies are not affected. A request that already says it is not
      * asked again.
      */

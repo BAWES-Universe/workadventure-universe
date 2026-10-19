@@ -1,5 +1,5 @@
 /**
- * Open-source Qwen3 models refuse a non-streaming reply unless thinking is off (the 400 names `enable_thinking`): the
+ * Alibaba's thinking models refuse a non-streaming reply unless thinking is off (the 400 says "parameter.enable_thinking only support stream call"): the
  * call is asked again once with it off, streamed replies and every other call stay as they were (#374).
  */
 
@@ -27,7 +27,7 @@ const config = (): AIProviderConfig => ({
     settings: {},
 });
 
-const REFUSAL = '{"error":{"message":"parameter.enable_thinking must be set to false for non-streaming calls","type":"invalid_request_error"}}';
+const REFUSAL = '{"error":{"message":"parameter.enable_thinking only support stream call","type":"invalid_request_error"}}';
 const failure = (status: number, text: string) => ({ ok: false, status, text: async () => text }) as unknown as Response;
 const json = () =>
     ({ ok: true, status: 200, json: async () => ({ choices: [{ message: { content: "hi" }, finish_reason: "stop" }], usage: { total_tokens: 3 } }), text: async () => "" }) as unknown as Response;
