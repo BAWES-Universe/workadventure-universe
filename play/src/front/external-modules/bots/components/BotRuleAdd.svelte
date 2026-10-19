@@ -1,6 +1,7 @@
 <script lang="ts">
     // Add a role or a person to the bot. A role is one tap; a person is found by name or email. The new row opens at
     // once, so the owner can change what it says.
+    import { onDestroy } from "svelte";
     import LL from "../../../../i18n/i18n-svelte";
     import MemberAutocomplete from "../../../Components/Input/MemberAutocomplete.svelte";
     import { addRule, botPermissionsStore } from "../stores/BotPermissionsStore";
@@ -17,13 +18,20 @@
 
     let busy = false;
     let error: string | undefined;
+    // The screen may be left (back, or another bot) while the row is still being added: its answer then opens nothing
+    let gone = false;
+    onDestroy(() => {
+        gone = true;
+    });
 
     async function add(subject: { roleId: string } | { identifier: string }) {
         if (busy) return;
         busy = true;
         error = undefined;
         await addRule(botId, subject)
-            .then(onAdded)
+            .then((rule) => {
+                if (!gone) onAdded(rule);
+            })
             .catch((e) => {
                 error = e instanceof Error ? e.message : access.saveFailed();
             })

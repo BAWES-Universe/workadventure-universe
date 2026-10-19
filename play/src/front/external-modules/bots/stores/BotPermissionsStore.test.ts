@@ -192,4 +192,47 @@ describe("who may use the bot, as the page holds it", () => {
         expect(get(botPermissionsStore)?.botId).toBe("b2");
         expect(get(botPermissionsStore)?.data?.privateBot).toBe(false);
     });
+
+    it("keeps both changes when two choices of one row are saved one after the other", async () => {
+        await opened(permissions({ rules: [rule()] }));
+        const releases: Array<() => void> = [];
+        mocks.saveBotRule
+            .mockImplementationOnce(
+                () =>
+                    new Promise<BotRule>((resolve) => {
+                        releases.push(() => resolve(rule({ chat: "no" })));
+                    })
+            )
+            .mockImplementationOnce(
+                () =>
+                    new Promise<BotRule>((resolve) => {
+                        releases.push(() => resolve(rule({ chat: "no", dm: "no" })));
+                    })
+            );
+        const first = setRuleValue("b1", rule(), "chat", "no");
+        const second = setRuleValue("b1", rule({ chat: "no" }), "dm", "no");
+        // The first answer does not say the second change yet: the page must not go back to it
+        await vi.waitFor(() => expect(releases).toHaveLength(1));
+        releases[0]();
+        await first;
+        expect(get(botPermissionsStore)?.data?.rules[0]).toMatchObject({ chat: "no", dm: "no" });
+        // The second save only starts once the first is done
+        await vi.waitFor(() => expect(releases).toHaveLength(2));
+        releases[1]();
+        await second;
+        expect(get(botPermissionsStore)?.data?.rules[0]).toMatchObject({ chat: "no", dm: "no" });
+        expect(mocks.saveBotRule).toHaveBeenCalledTimes(2);
+    });
+
+    it("goes back to what Orbit holds when an earlier change was refused and a later one went through", async () => {
+        await opened(permissions({ rules: [rule()] }));
+        mocks.saveBotRule.mockRejectedValueOnce(new Error("API error: 500")).mockResolvedValueOnce(rule({ dm: "no" }));
+        mocks.getBotPermissions.mockResolvedValueOnce(permissions({ rules: [rule({ dm: "no" })] }));
+        const first = setRuleValue("b1", rule(), "chat", "no");
+        const second = setRuleValue("b1", rule({ chat: "no" }), "dm", "no");
+        await Promise.all([first, second]);
+        const state = get(botPermissionsStore);
+        expect(state?.data?.rules[0]).toMatchObject({ chat: "default", dm: "no" });
+        expect(state?.saveError).toBeTruthy();
+    });
 });

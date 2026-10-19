@@ -268,6 +268,27 @@ describe("the Permissions screens", () => {
         expect(onAdded).toHaveBeenCalledWith(expect.objectContaining({ id: "r7", chat: "yes" }));
     });
 
+    it("opens nothing when the screen was left before the row was added", async () => {
+        await open(permissions({ rules: [] }));
+        let release: (value: ReturnType<typeof rule>) => void = () => undefined;
+        mocks.saveBotRule
+            .mockReturnValueOnce(
+                new Promise((resolve) => {
+                    release = resolve;
+                })
+            )
+            .mockResolvedValueOnce(rule({ id: "r7", chat: "yes", dm: "yes", summon: "yes" }));
+        const onAdded = vi.fn();
+        const component = new BotRuleAdd({ target, props: { botId: "b1", onAdded } });
+        destroy = () => undefined;
+        await settle();
+        byTestId("bot-rule-add-role")[1].click();
+        component.$destroy();
+        release(rule({ id: "r7" }));
+        await settle();
+        expect(onAdded).not.toHaveBeenCalled();
+    });
+
     it("says why when adding is refused, and stays on the screen", async () => {
         await open(permissions({ rules: [] }));
         mocks.saveBotRule.mockRejectedValue(new Error("The bot's owner always has access"));
