@@ -173,15 +173,16 @@ describe('BotClient chat access', () => {
         expect(said).not.toHaveBeenCalled();
     });
 
-    it('waits for the game to say who just joined before asking, so a member is not taken for a guest', async () => {
+    it('puts a first message off until the game says who just joined, so a member is not taken for a guest', async () => {
         vi.useFakeTimers();
         try {
             const { behavior, check, receive } = setup({ allowed: true, kind: 'allowed' });
             behavior.isPersonKnown.mockReturnValueOnce(false).mockReturnValueOnce(false).mockReturnValue(true);
 
-            const handling = receive(chatFrom('room_9'));
+            await receive(chatFrom('room_9'));
+            // Not held up: the handler comes back at once, and nothing was asked or answered yet
+            expect(check).not.toHaveBeenCalled();
             await vi.advanceTimersByTimeAsync(300);
-            await handling;
 
             expect(check).toHaveBeenCalledTimes(1);
             expect(check).toHaveBeenCalledWith('bot-test', 'chat', { signedIn: true, identifier: 'mishari@example.test' }, 'Nora');
@@ -198,10 +199,10 @@ describe('BotClient chat access', () => {
             behavior.isPersonKnown.mockReturnValue(false);
             behavior.getPersonForAccess.mockReturnValue({ signedIn: false, identifier: null });
 
-            const handling = receive(chatFrom('room_10'));
-            await vi.advanceTimersByTimeAsync(3100);
-            await handling;
+            await receive(chatFrom('room_10'));
+            await vi.advanceTimersByTimeAsync(3300);
 
+            expect(check).toHaveBeenCalledTimes(1);
             expect(check).toHaveBeenCalledWith('bot-test', 'chat', { signedIn: false, identifier: null }, 'Nora');
         } finally {
             vi.useRealTimers();

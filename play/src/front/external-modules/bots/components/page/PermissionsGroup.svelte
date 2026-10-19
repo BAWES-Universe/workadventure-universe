@@ -73,6 +73,7 @@
     // to the first one and never shown or sent to the second
     let reply: { botId: string; text: string } | undefined;
     let replyTimeout: ReturnType<typeof setTimeout> | null = null;
+    let replyFocused = false;
     $: replyShown = (reply?.botId === bot.id ? reply.text : undefined) ?? data?.refusalReply ?? "";
 
     function typeReply(event: Event) {
@@ -100,7 +101,9 @@
         replySaving = draft;
         void setRefusalReply(draft.botId, draft.text)
             .then((saved) => {
-                if (saved && reply === draft) reply = undefined;
+                // Orbit keeps the line without its trailing spaces: while the box is being typed in, it keeps what the
+                // person typed, so the next word still has its space, and settles when the box is left
+                if (saved && reply === draft && !(replyFocused && draft.text !== draft.text.trim())) reply = undefined;
             })
             .finally(() => {
                 if (replySaving === draft) replySaving = undefined;
@@ -168,7 +171,11 @@
                 aria-label={access.reply()}
                 data-testid="bot-access-reply"
                 on:input={typeReply}
-                on:blur={saveReply}
+                on:focus={() => (replyFocused = true)}
+                on:blur={() => {
+                    replyFocused = false;
+                    saveReply();
+                }}
             />
         </PageField>
     {/if}

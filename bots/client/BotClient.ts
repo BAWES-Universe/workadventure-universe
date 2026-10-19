@@ -69,8 +69,11 @@ export class BotClient {
     private accessGate: BotAccessGate | null = null;
     /** When each person was told that the bot's owner limits who can chat with it: once per visit (see mayChat). */
     private readonly toldNoChat = new Map<number, number>();
-    /** How long a first message waits for the game to say who sent it (see mayChat) */
+    /** How long a first message waits for the game to say who sent it, and how often it looks again (see mayChat) */
     private static readonly PERSON_WAIT_MS = 3000;
+    private static readonly PERSON_RETRY_MS = 100;
+    /** How many times each chat message has been put off for that */
+    private chatIdentityTries = new WeakMap<object, number>();
     /** A person who stays this long without leaving the room hears the line again. */
     private static readonly TOLD_NO_CHAT_FOR_MS = 10 * 60 * 1000;
     private userId: number | null = null;
@@ -298,14 +301,24 @@ export class BotClient {
      * go no further; when Orbit cannot answer and the bot has no earlier answer for them, they are told so each time.
      * Never throws.
      */
-    private async mayChat(spaceName: string, senderId: number): Promise<boolean> {
+    private async mayChat(spaceName: string, senderId: number, message: object): Promise<boolean> {
         const gate = this.accessGate;
         if (!gate || !this.behavior) return true;
         // Someone's first words can arrive just before the game says who they are: asking Orbit now would take a
-        // signed-in member for a guest. Give their join a moment; after that they are asked about as the guest they look like.
-        for (let waited = 0; !this.behavior.isPersonKnown(senderId) && waited < BotClient.PERSON_WAIT_MS; waited += 100) {
-            await new Promise<void>((resolve) => setTimeout(resolve, 100));
-            if (!this.behavior) return true;
+        // signed-in member for a guest. Their join may be right behind it in the same batch, so the message is not
+        // waited for here (that would hold the join back too): it is handled again a moment later, and after a few
+        // seconds the person is asked about as the guest they look like.
+        if (!this.behavior.isPersonKnown(senderId)) {
+            const tries = this.chatIdentityTries.get(message) ?? 0;
+            if (tries * BotClient.PERSON_RETRY_MS < BotClient.PERSON_WAIT_MS) {
+                this.chatIdentityTries.set(message, tries + 1);
+                setTimeout(() => {
+                    this.handleSubMessage(message).catch((error) => {
+                        Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
+                    });
+                }, BotClient.PERSON_RETRY_MS);
+                return false;
+            }
         }
         let verdict: BotAccessVerdict;
         try {
@@ -2724,7 +2737,7 @@ export class BotClient {
                     const chatMessage = message.updateSpaceUserMessage.message.message;
                     if (chatMessage && this.behavior) {
                         console.log(`[Bot ${this.config.botId}] Received chat via updateSpaceUserMessage: "${chatMessage}" from user ${message.updateSpaceUserMessage.userId}`);
-                        if (!(await this.mayChat(message.updateSpaceUserMessage.spaceName, message.updateSpaceUserMessage.userId ?? 0))) {
+                        if (!(await this.mayChat(message.updateSpaceUserMessage.spaceName, message.updateSpaceUserMessage.userId ?? 0, message))) {
                             break;
                         }
                         // Extract ALL URLs (not just the first) so multi-link
@@ -2824,7 +2837,7 @@ export class BotClient {
                             break;
                         }
                         // Before anything is done with the message (links looked up, files read, the AI asked)
-                        if (!(await this.mayChat(spaceName, senderId))) {
+                        if (!(await this.mayChat(spaceName, senderId, message))) {
                             break;
                         }
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {

@@ -197,6 +197,32 @@ describe("the Permissions screens", () => {
         expect(mocks.saveBotPermissions).not.toHaveBeenCalledWith("b2", expect.anything());
     });
 
+    it("keeps a trailing space in the refusal line while it is being typed, and settles when the box is left", async () => {
+        await open(permissions());
+        mocks.saveBotPermissions.mockResolvedValue(permissions({ refusalReply: "Only the team" }));
+        const component = new PermissionsGroup({
+            target,
+            props: { bot, open: true, onToggle: vi.fn(), onOpenRule: vi.fn(), onAdd: vi.fn() },
+        });
+        destroy = () => component.$destroy();
+        await settle();
+        const box = byTestId("bot-access-reply")[0] as HTMLTextAreaElement;
+        box.dispatchEvent(new Event("focus"));
+        box.value = "Only the team ";
+        box.dispatchEvent(new Event("input"));
+        box.dispatchEvent(new Event("input"));
+        await new Promise<void>((resolve) => {
+            setTimeout(resolve, 900);
+        });
+        await settle();
+        expect(mocks.saveBotPermissions).toHaveBeenCalledWith("b1", { refusalReply: "Only the team" });
+        expect((byTestId("bot-access-reply")[0] as HTMLTextAreaElement).value).toBe("Only the team ");
+
+        byTestId("bot-access-reply")[0].dispatchEvent(new Event("blur"));
+        await settle();
+        expect((byTestId("bot-access-reply")[0] as HTMLTextAreaElement).value).toBe("Only the team");
+    });
+
     it("shows No / Default / Yes with what Default comes to, and saves a tap", async () => {
         await open(permissions({ rules: [rule()] }));
         mocks.saveBotRule.mockResolvedValue(rule({ summon: "no" }));
