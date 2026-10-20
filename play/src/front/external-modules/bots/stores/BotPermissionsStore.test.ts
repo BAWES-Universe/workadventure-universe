@@ -14,7 +14,18 @@ vi.mock("../../../../i18n/i18n-svelte", async () => {
     const { readable } = await import("svelte/store");
     return {
         default: readable({
-            mapEditor: { edit: { bots: { page: { access: { saveFailed: () => "That didn't save. Try again." } } } } },
+            mapEditor: {
+                edit: {
+                    bots: {
+                        page: {
+                            access: {
+                                saveFailed: () => "That didn't save. Try again.",
+                                loadFailed: () => "Couldn't load who can use this bot.",
+                            },
+                        },
+                    },
+                },
+            },
         }),
     };
 });
@@ -73,7 +84,8 @@ describe("who may use the bot, as the page holds it", () => {
         await loadBotPermissions("b1");
         const state = get(botPermissionsStore);
         expect(state?.data?.privateBot).toBe(true);
-        expect(state?.saveError).toBeTruthy();
+        // Nothing was saved, so it must not say "That didn't save"
+        expect(state?.saveError).toBe("Couldn't load who can use this bot.");
     });
 
     it("shows a switch change at once and keeps what Orbit answers", async () => {
@@ -234,5 +246,52 @@ describe("who may use the bot, as the page holds it", () => {
         const state = get(botPermissionsStore);
         expect(state?.data?.rules[0]).toMatchObject({ chat: "default", dm: "no" });
         expect(state?.saveError).toBeTruthy();
+    });
+
+    it("keeps a role added right after a switch change when the switch's answer arrives without it", async () => {
+        await opened(permissions());
+        let release: (value: BotPermissions) => void = () => undefined;
+        mocks.saveBotPermissions.mockReturnValueOnce(
+            new Promise<BotPermissions>((resolve) => {
+                release = resolve;
+            })
+        );
+        mocks.saveBotRule
+            .mockResolvedValueOnce(rule({ id: "r9" }))
+            .mockResolvedValueOnce(rule({ id: "r9", chat: "yes", dm: "yes", summon: "yes" }));
+        const switching = setPrivateBot("b1", true);
+        const adding = addRule("b1", { roleId: "role-member" });
+        // The add waits for the switch change to be saved
+        await Promise.resolve();
+        expect(mocks.saveBotRule).not.toHaveBeenCalled();
+        // Orbit answered the switch before the role existed
+        release(permissions({ privateBot: true }));
+        await switching;
+        await adding;
+        const state = get(botPermissionsStore);
+        expect(state?.data?.privateBot).toBe(true);
+        expect(state?.data?.rules.map((r) => r.id)).toEqual(["r9"]);
+    });
+
+    it("does not undo a switch change that is still being saved when a role cannot be added", async () => {
+        await opened(permissions());
+        let release: (value: BotPermissions) => void = () => undefined;
+        mocks.saveBotPermissions.mockReturnValueOnce(
+            new Promise<BotPermissions>((resolve) => {
+                release = resolve;
+            })
+        );
+        mocks.saveBotRule.mockRejectedValueOnce(new Error("The bot's owner always has access"));
+        mocks.getBotPermissions.mockResolvedValueOnce(permissions({ privateBot: true }));
+        const switching = setPrivateBot("b1", true);
+        const adding = addRule("b1", { identifier: "owner" });
+        const refused = expect(adding).rejects.toThrow("The bot's owner always has access");
+        release(permissions({ privateBot: true }));
+        await switching;
+        await refused;
+        // The failed add was the last change: the page goes back to what Orbit holds, which has the switch change
+        const state = get(botPermissionsStore);
+        expect(state?.data?.privateBot).toBe(true);
+        expect(state?.saveError).toBe("The bot's owner always has access");
     });
 });
