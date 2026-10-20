@@ -2,8 +2,8 @@
  * Answers a direct message to a bot the same way the bot answers in a bubble on the map: same personality, memory,
  * emotions, tools (minus the map ones) and repetition checks. The bot does not need to be spawned.
  *
- * A private chat stays private: it is never written to the bot's conversation log, so the people who manage the bot
- * don't read it there.
+ * Direct messages stay between the person and the bot: they are never written to the bot's conversation log, so the
+ * people who manage the bot don't read them there.
  *
  * It reuses BaseBehavior's helpers (attachment parsing, vision images, regenerate-on-repetition) by extending it with
  * no BotClient attached, so the bubble path itself is untouched. One instance serves every bot in the process.

@@ -23,7 +23,7 @@ describe("AdminApiService.checkDmAccess", () => {
     vi.restoreAllMocks();
   });
 
-  it("asks Orbit's bot access check about a private chat, naming the person by their chat ID", async () => {
+  it("asks Orbit's bot access check about a direct message, naming the person by their chat ID", async () => {
     post.mockResolvedValue({ status: 200, data: { allowed: true, code: "allowed", reason: null, person: ALICE } });
     expect(await service.checkDmAccess("bot 1", "@alice:matrix.test")).toEqual({
       allowed: true,

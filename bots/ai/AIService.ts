@@ -75,7 +75,7 @@ const WORLD_PLACE_RULES = `**LOCATION & SPACE QUESTIONS (Answer naturally, like 
 
 `;
 /** In a direct message the person is not next to the bot, so it cannot show them around. */
-const DM_PLACE_RULES = `**DIRECT MESSAGE (You are chatting privately, not on the map):**
+const DM_PLACE_RULES = `**DIRECT MESSAGE (You are chatting by direct message, not on the map):**
 - This person is messaging you directly. They may be anywhere, or not in the game at all.
 - You cannot see who is near you, walk anywhere, or lead them. If they ask you to take them somewhere, say they can find you in your room and you will show them around there.
 - Keep replies the length of a chat message.

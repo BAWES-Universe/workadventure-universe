@@ -1055,7 +1055,7 @@ describe('DmReplyService history', () => {
         expect(await (service as any).replyNow(BOT, person, 'left while resting', [], {})).toEqual({ text: '', media: [], failed: true });
         const history = memory.getMemory(BOT, service.playerIdFor(ALICE))!.conversationHistory;
         expect(history.map((entry) => entry.message)).toEqual(['left while resting']);
-        // A private chat stays out of the log the bot's managers read.
+        // A direct message stays out of the log the bot's managers read.
         expect(storage.startConversation).not.toHaveBeenCalled();
         expect(storage.addMessage).not.toHaveBeenCalled();
         // Something new is kept as usual.

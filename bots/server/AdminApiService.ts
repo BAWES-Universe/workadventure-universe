@@ -56,7 +56,7 @@ export type BotAccessAction = 'chat' | 'dm' | 'summon';
 export interface BotAccessPerson {
     signedIn: boolean;
     identifier?: string | null;
-    /** For a private chat that reached the bot over chat: the sender's Matrix ID, which Orbit looks up instead. */
+    /** For a direct message that reached the bot over chat: the sender's Matrix ID, which Orbit looks up instead. */
     chatId?: string | null;
 }
 
@@ -72,7 +72,7 @@ export interface BotAccessAnswer {
     person?: { uuid: string; name: string | null };
 }
 
-/** Orbit failing a private chat's access check is reported to Sentry at most this often, not once per message. */
+/** Orbit failing a direct message's access check is reported to Sentry at most this often, not once per message. */
 const DM_ACCESS_REPORT_EVERY_MS = 60_000;
 let lastDmAccessReportAt = 0;
 
