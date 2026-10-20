@@ -373,3 +373,21 @@ describe('bots with a default facing direction', () => {
         expect(behavior.getConfiguredFacing()).toBe(PositionMessage_Direction.RIGHT);
     });
 });
+
+describe('people already around when a settings save rebuilds the behavior', () => {
+    it('stay known, so a signed-in person is not asked about as a guest', () => {
+        const bot = createBot();
+        const before = idleBehavior(bot);
+        // What the game's join message leaves behind
+        (before as any).userIdToUuid.set(7, 'uuid-7');
+        (before as any).userIdToIsLogged.set(7, true);
+
+        const after = idleBehavior(bot);
+        expect(after.getPersonForAccess(7)).toEqual({ signedIn: false, identifier: null });
+
+        after.carryPeopleFrom(before);
+
+        expect(after.isPersonKnown(7)).toBe(true);
+        expect(after.getPersonForAccess(7)).toEqual({ signedIn: true, identifier: 'uuid-7' });
+    });
+});
