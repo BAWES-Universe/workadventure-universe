@@ -135,7 +135,7 @@ describe('Summon', () => {
                     { 'X-WA-Auth': GAME_TOKEN }
                 ),
         ],
-    ])('still calls the bot over for %s when Orbit cannot answer and no rule has been seen', async (_who, call) => {
+    ])('does not call the bot over for %s when Orbit cannot answer and nothing is remembered', async (_who, call) => {
         gate.check.mockResolvedValue({
             allowed: false,
             kind: 'cannot_check',
@@ -144,8 +144,13 @@ describe('Summon', () => {
 
         const response = await call();
 
-        expect(response.status).toBe(200);
-        expect(botManager.summonBot).toHaveBeenCalledTimes(1);
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({
+            summoned: false,
+            code: 'cannot_check',
+            reason: "Nora can't check that right now. Try again soon.",
+        });
+        expect(botManager.summonBot).not.toHaveBeenCalled();
     });
 
     it('does not ask Orbit for a bot that is not here', async () => {
