@@ -337,4 +337,17 @@ describe("who may use the bot, as the page holds it", () => {
         await switching;
         expect(get(botPermissionsStore)?.data?.privateBot).toBe(true);
     });
+
+    it("still says a removal was refused when the page reads again right after it", async () => {
+        const held = rule({ id: "r1" });
+        await opened(permissions({ rules: [held] }));
+        mocks.deleteBotRule.mockRejectedValueOnce(new Error("The bot's owner always has access"));
+        mocks.getBotPermissions.mockResolvedValueOnce(permissions({ rules: [held] }));
+        const removing = removeRule("b1", held);
+        const loading = loadBotPermissions("b1");
+        await Promise.all([removing, loading]);
+        const state = get(botPermissionsStore);
+        expect(state?.data?.rules).toHaveLength(1);
+        expect(state?.saveError).toBe("The bot's owner always has access");
+    });
 });

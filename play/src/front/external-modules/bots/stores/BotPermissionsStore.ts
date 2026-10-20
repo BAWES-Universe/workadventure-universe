@@ -41,10 +41,17 @@ function update(botId: string, change: (state: BotPermissionsState) => BotPermis
 export async function loadBotPermissions(botId: string): Promise<void> {
     const held = get(botPermissionsStore);
     if (!held || held.botId !== botId || !held.data) botPermissionsStore.set({ botId, status: "loading" });
-    await queued(botId, async (isLast) => {
+    await queued(botId, async (isLast, queue) => {
         try {
             const data = await botApiService.getBotPermissions(botId);
-            update(botId, (state) => (isLast() || !state.data ? { botId, status: "ready", data } : state));
+            // A change refused while this read waited: the page shows what Orbit holds now, and still says why
+            const refused = isLast() ? queue.failure : undefined;
+            if (refused) queue.failure = undefined;
+            update(botId, (state) =>
+                isLast() || !state.data
+                    ? { botId, status: "ready", data, saveError: refused ? failedToSave(refused.error) : undefined }
+                    : state
+            );
         } catch (error) {
             console.error("[BotPermissionsStore] Failed to load who may use the bot:", error);
             // What the page already shows stays; with nothing to show, it says it could not load
