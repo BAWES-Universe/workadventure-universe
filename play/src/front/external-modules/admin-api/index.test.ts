@@ -569,8 +569,8 @@ describe("The Orbit bridge", () => {
         close();
         expect(mocks.setPlayerName).toHaveBeenCalledWith("Khalid A");
         expect(mocks.rejoinCurrentRoom).toHaveBeenCalledTimes(1);
-        // Signed in: the server already has it.
-        expect(mocks.setLocalName).not.toHaveBeenCalled();
+        // Orbit already has it; the device keeps a copy so it never comes back with an older name (#1192).
+        expect(mocks.setLocalName).toHaveBeenCalledWith("Khalid A");
     });
 
     it("doesn't rejoin for the same name, a name the game refuses, or another visit's frame", async () => {

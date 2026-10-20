@@ -150,7 +150,8 @@ describe("GET /me asked again for a token it already renewed", () => {
         await callMe({ token: "game-token", playUri, refresh: "true" });
         fetchMemberDataByUuid.mockClear();
         await callMe({ token: "game-token", playUri, refresh: "true" });
-        expect(fetchMemberDataByUuid).toHaveBeenCalledTimes(1);
+        // Once with the token it was given, once with the renewed one.
+        expect(fetchMemberDataByUuid.mock.calls.map((call) => call[1])).toEqual(["old-access", "new-access"]);
     });
 
     it("makes one provider call for renewals of the same token that overlap", async () => {
@@ -343,5 +344,80 @@ describe("GET /me for a member whose access token ran out (Orbit #306)", () => {
         const res = await callMe({ token: "game-token", playUri });
         expect(refreshAccessToken).toHaveBeenCalledWith("refresh");
         expect(res.body).toEqual(expect.objectContaining({ status: "ok", authToken: "renewed-game-token" }));
+    });
+});
+
+describe("GET /me in a public room for a member whose access token ran out (#1192)", () => {
+    beforeEach(() => {
+        vi.resetAllMocks();
+        verifyJWTToken.mockReturnValue({ identifier: "owner", accessToken: "expired-access", refreshToken: "refresh" });
+        // Orbit can't verify the expired token and answers as it would a guest: ok, but with no name or tags.
+        fetchMemberDataByUuid.mockImplementation((_id: string, accessToken: string | undefined) =>
+            Promise.resolve(
+                accessToken === "new-access"
+                    ? {
+                          status: "ok",
+                          userUuid: "owner",
+                          username: "Khalid",
+                          tags: ["admin"],
+                          isCharacterTexturesValid: true,
+                          isCompanionTextureValid: true,
+                      }
+                    : {
+                          status: "ok",
+                          userUuid: "owner",
+                          tags: [],
+                          isCharacterTexturesValid: true,
+                          isCompanionTextureValid: true,
+                      }
+            )
+        );
+        checkTokenAuth.mockImplementation((accessToken: string) =>
+            accessToken === "new-access"
+                ? Promise.resolve({})
+                : Promise.reject(new openIdErrors.OPError({ error: "invalid_token" }))
+        );
+        refreshAccessToken.mockResolvedValue({ access_token: "new-access", refresh_token: "new-refresh" });
+        createAuthToken.mockReturnValue("renewed-game-token");
+    });
+
+    it("answers with the account's name, asked of Orbit with the renewed token", async () => {
+        const res = await callMe({ token: "game-token", playUri });
+        expect(fetchMemberDataByUuid.mock.calls.map((call) => call[1])).toEqual(["expired-access", "new-access"]);
+        expect(res.body).toEqual(
+            expect.objectContaining({
+                status: "ok",
+                authToken: "renewed-game-token",
+                username: "Khalid",
+                tags: ["admin"],
+            })
+        );
+    });
+
+    it("answers with Orbit's refusal, and the renewed token, when Orbit refuses the account it now knows", async () => {
+        const banned = {
+            status: "error",
+            type: "error",
+            title: "Banned",
+            subtitle: "",
+            code: "BANNED",
+            details: "",
+        };
+        fetchMemberDataByUuid.mockImplementation((_id: string, accessToken: string | undefined) =>
+            Promise.resolve(
+                accessToken === "new-access"
+                    ? banned
+                    : { status: "ok", userUuid: "owner", isCharacterTexturesValid: true, isCompanionTextureValid: true }
+            )
+        );
+        const res = await callMe({ token: "game-token", playUri });
+        expect(res.body).toEqual({ ...banned, authToken: "renewed-game-token" });
+    });
+
+    it("asks Orbit only once when the token is still good", async () => {
+        checkTokenAuth.mockResolvedValue({});
+        await callMe({ token: "game-token", playUri });
+        expect(fetchMemberDataByUuid).toHaveBeenCalledTimes(1);
+        expect(refreshAccessToken).not.toHaveBeenCalled();
     });
 });

@@ -318,13 +318,25 @@ export class AuthenticateController extends BaseHttpController {
                 const respondWithRefreshedToken = async (): Promise<boolean> => {
                     const renewed = await renewTokens();
                     if (!renewed) return false;
+                    // Orbit can't check an access token that ran out and answers a member of a public room as a
+                    // guest: no name, tags or card, so the game kept whatever name the device had (#1192). Ask it
+                    // again with the renewed token, unless that is already what it answered.
+                    let userData = resUserData;
+                    if (!answeredWithRenewedToken) {
+                        const askedAgain = await fetchUserData(renewed.accessToken);
+                        if (askedAgain.status === "error") {
+                            res.json({ ...askedAgain, authToken: renewed.authToken });
+                            return true;
+                        }
+                        userData = askedAgain;
+                    }
                     res.json({
                         username: authTokenData?.username,
                         authToken: renewed.authToken,
                         locale: authTokenData?.locale,
                         matrixUserId: authTokenData?.matrixUserId,
                         matrixServerUrl: (renewed.checked.matrix_url as string | undefined) ?? MATRIX_PUBLIC_URI,
-                        ...resUserData,
+                        ...userData,
                         ...renewed.checked,
                     } satisfies MeResponse);
                     return true;
