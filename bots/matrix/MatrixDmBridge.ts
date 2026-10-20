@@ -259,14 +259,32 @@ export class MatrixDmBridge implements MatrixEventHandler {
             return;
         }
 
-        // The person left the direct chat: the bot leaves too, so nothing lingers on the homeserver.
+        // The person left the direct chat: the bot leaves too, so nothing lingers on the homeserver. Someone else
+        // leaving (a third person the person invited, or one who declined) leaves the chat as it was.
         if (membership === 'leave' || membership === 'ban') {
             const roomBot = await this.botForRoom(event.room_id);
-            if (roomBot) {
+            if (roomBot && !(await this.someoneStays(roomBot, event.room_id, event.state_key!))) {
                 await this.client.leaveRoom(this.botUserId(roomBot), event.room_id).catch(() => undefined);
                 await this.forgetRoom(event.room_id);
             }
         }
+    }
+
+    /** Whether a person other than the bot and the one who just left is still in the room. */
+    private async someoneStays(botId: string, roomId: string, leaving: string): Promise<boolean> {
+        const botUserId = this.botUserId(botId);
+        let members = this.roomMembers.get(roomId);
+        if (!members) {
+            const joined = await this.client.getJoinedMembers(botUserId, roomId).catch((error) => {
+                // Unknown members: leave as the person most likely was the only one, and say so.
+                console.warn(`[MatrixDmBridge] Could not read the members of ${roomId}, leaving it:`, error?.message ?? error);
+                return null;
+            });
+            if (!joined) return false;
+            members = new Set(joined.filter((member) => member !== leaving));
+            this.roomMembers.set(roomId, members);
+        }
+        return [...members].some((member) => member !== botUserId && member !== leaving);
     }
 
     /** A fresh answer from Orbit that this person may chat with the bot. Any refusal, failure or exception is a no. */

@@ -369,6 +369,34 @@ describe('MatrixDmBridge', () => {
         expect(deps.reply).not.toHaveBeenCalled();
     });
 
+    it('stays when someone other than the person leaves, then leaves with the person', async () => {
+        await bridge.onEvent(invite());
+        await bridge.onEvent(message('hi'));
+        const carol = '@carol:matrix.test';
+        // The person invited Carol, who declined.
+        await bridge.onEvent({ type: 'm.room.member', room_id: ROOM, sender: carol, event_id: '$d', state_key: carol, content: { membership: 'leave' } });
+        // Carol joined, then left again.
+        await bridge.onEvent({ type: 'm.room.member', room_id: ROOM, sender: carol, event_id: '$cj', state_key: carol, content: { membership: 'join' } });
+        await bridge.onEvent({ type: 'm.room.member', room_id: ROOM, sender: carol, event_id: '$cl', state_key: carol, content: { membership: 'leave' } });
+        expect(client.leaveRoom).not.toHaveBeenCalled();
+        await bridge.onEvent(message('still here'));
+        expect(deps.reply).toHaveBeenCalledTimes(2);
+        await bridge.onEvent({ type: 'm.room.member', room_id: ROOM, sender: ALICE, event_id: '$l', state_key: ALICE, content: { membership: 'leave' } });
+        expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
+    });
+
+    it('after a restart, reads who is left before leaving', async () => {
+        await bridge.onEvent(invite());
+        const restarted = new MatrixDmBridge(config, client as never, deps);
+        const carol = '@carol:matrix.test';
+        await restarted.onEvent({ type: 'm.room.member', room_id: ROOM, sender: carol, event_id: '$cl', state_key: carol, content: { membership: 'leave' } });
+        expect(client.leaveRoom).not.toHaveBeenCalled();
+        client.getJoinedMembers.mockRejectedValueOnce(new Error('down'));
+        const again = new MatrixDmBridge(config, client as never, deps);
+        await again.onEvent({ type: 'm.room.member', room_id: ROOM, sender: ALICE, event_id: '$l', state_key: ALICE, content: { membership: 'leave' } });
+        expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
+    });
+
     const noteStates = () =>
         client.sendMessage.mock.calls.map((call: any[]) => call[2]?.[BOT_STATUS_KEY]?.state).filter(Boolean);
     const resting = { botId: BOT, name: 'Guide', enabled: false, aiProviderRef: 'p' };
