@@ -8,7 +8,7 @@ vi.mock('@sentry/node', () => ({ captureException: vi.fn() }));
 
 import * as Sentry from '@sentry/node';
 import { ACCESS_CACHE_TTL_MS, BotAccessGate, CANNOT_CHECK_CHAT_LINE } from '../server/BotAccessGate';
-import type { BotAccessAnswer } from '../server/AdminApiService';
+import { AdminApiService, type BotAccessAnswer } from '../server/AdminApiService';
 
 const ALLOWED: BotAccessAnswer = { allowed: true, code: 'allowed', reason: null };
 const REFUSED: BotAccessAnswer = {
@@ -181,6 +181,29 @@ describe('BotAccessGate', () => {
         tick(60_001);
         await gate.check('b1', 'chat', MEMBER);
         expect(Sentry.captureException).toHaveBeenCalledTimes(2);
+    });
+
+    it('refuses and tells Sentry when the bot server has an Orbit address but no BOT_SERVICE_TOKEN', async () => {
+        // A broken deploy, not an open door: the server is told where Orbit is, so it must not act as if there were none
+        const saved = process.env.BOT_SERVICE_TOKEN;
+        delete process.env.BOT_SERVICE_TOKEN;
+        try {
+            const orbit = new AdminApiService('https://orbit.example.test', 'admin-token');
+            const gate = new BotAccessGate(orbit);
+
+            expect(await gate.check('b1', 'summon', GUEST, 'Nora')).toEqual({
+                allowed: false,
+                kind: 'cannot_check',
+                line: "Nora can't check that right now. Try again soon.",
+            });
+            expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+            expect(vi.mocked(Sentry.captureException).mock.calls[0][0]).toEqual(
+                new Error('BOT_SERVICE_TOKEN environment variable is not set')
+            );
+        } finally {
+            if (saved === undefined) delete process.env.BOT_SERVICE_TOKEN;
+            else process.env.BOT_SERVICE_TOKEN = saved;
+        }
     });
 
     it('asks nobody when the bot server has no Orbit to ask', async () => {
