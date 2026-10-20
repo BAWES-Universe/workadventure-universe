@@ -320,19 +320,7 @@ export class BotClient {
                 return false;
             }
         }
-        let verdict: BotAccessVerdict;
-        try {
-            verdict = await gate.check(
-                this.config.botId,
-                'chat',
-                this.behavior.getPersonForAccess(senderId),
-                this.config.name
-            );
-        } catch (error) {
-            // The gate does not throw; if that ever changes, a failed check must not let a chat through
-            Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
-            verdict = { allowed: false, kind: 'cannot_check', line: CANNOT_CHECK_CHAT_LINE };
-        }
+        const verdict = await this.chatVerdict(gate, this.behavior.getPersonForAccess(senderId));
         if (verdict.kind === 'allowed') {
             this.toldNoChat.delete(senderId);
             return true;
@@ -343,6 +331,41 @@ export class BotClient {
             this.toldNoChat.set(senderId, Date.now());
         }
         this.sendChatMessage(spaceName, verdict.line);
+        return false;
+    }
+
+    /** Orbit's answer to "may this person chat with the bot?". A failed check never lets anyone through. */
+    private async chatVerdict(
+        gate: BotAccessGate,
+        person: Parameters<BotAccessGate['check']>[2]
+    ): Promise<BotAccessVerdict> {
+        try {
+            return await gate.check(this.config.botId, 'chat', person, this.config.name);
+        } catch (error) {
+            // The gate does not throw; if that ever changes, a failed check must not let a chat through
+            Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
+            return { allowed: false, kind: 'cannot_check', line: CANNOT_CHECK_CHAT_LINE };
+        }
+    }
+
+    /**
+     * Whether the bot may greet this person with its AI: the same answer as for chatting with it nearby, asked before
+     * anything is generated. A person who is refused hears the owner's line once per visit (shared with mayChat, so a
+     * greeting and a message do not both say it) and gets no greeting. When Orbit cannot answer and nothing is
+     * remembered there is no greeting; their first words get the "can't check" line. Never throws.
+     */
+    async mayGreet(spaceName: string, personId: number): Promise<boolean> {
+        const gate = this.accessGate;
+        if (!gate || !this.behavior) return true;
+        const verdict = await this.chatVerdict(gate, this.behavior.getPersonForAccess(personId));
+        if (verdict.kind === 'allowed') return true;
+        if (verdict.kind === 'refused') {
+            const toldAt = this.toldNoChat.get(personId);
+            if (toldAt === undefined || Date.now() - toldAt >= BotClient.TOLD_NO_CHAT_FOR_MS) {
+                this.toldNoChat.set(personId, Date.now());
+                this.sendChatMessage(spaceName, verdict.line);
+            }
+        }
         return false;
     }
 
