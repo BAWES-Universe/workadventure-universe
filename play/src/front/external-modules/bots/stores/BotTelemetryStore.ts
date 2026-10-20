@@ -15,7 +15,12 @@ export interface BotTelemetryState {
 export const botTelemetryStore = writable<BotTelemetryState | undefined>(undefined);
 
 /** Only the newest request of a bot may set the page: an older answer arriving late would undo a newer change. */
-let latest = 0;
+const latest = new Map<string, number>();
+function ticket(botId: string): number {
+    const next = (latest.get(botId) ?? 0) + 1;
+    latest.set(botId, next);
+    return next;
+}
 
 function update(botId: string, change: (state: BotTelemetryState) => BotTelemetryState) {
     botTelemetryStore.update((state) => (state && state.botId === botId ? change(state) : state));
@@ -37,13 +42,13 @@ export async function loadBotTelemetry(botId: string): Promise<void> {
     if (!held || held.botId !== botId || !held.data) botTelemetryStore.set({ botId, status: "loading" });
     // A read waits for the changes already on their way, so it cannot overtake one and bring back the old setting
     await (tails.get(botId) ?? Promise.resolve()).catch(() => undefined);
-    const mine = ++latest;
+    const mine = ticket(botId);
     try {
         const data = await botApiService.getBotTelemetry(botId);
-        if (mine === latest) update(botId, () => ({ botId, status: "ready", data }));
+        if (mine === latest.get(botId)) update(botId, () => ({ botId, status: "ready", data }));
     } catch (error) {
         console.error("[BotTelemetryStore] Failed to load bot chat telemetry:", error);
-        if (mine !== latest) return;
+        if (mine !== latest.get(botId)) return;
         update(botId, (state) =>
             state.data
                 ? { ...state, saveError: lineOf(error, get(LL).mapEditor.edit.bots.page.telemetry.loadFailed()) }
@@ -57,7 +62,7 @@ export async function setBotTelemetry(botId: string, on: boolean): Promise<void>
     const before = get(botTelemetryStore);
     if (!before || before.botId !== botId || !before.data || before.data.universeHides) return;
     if (!confirmed.has(botId)) confirmed.set(botId, before.data);
-    latest++;
+    ticket(botId);
     update(botId, (state) => ({ ...state, data: state.data && { ...state.data, on }, saveError: undefined }));
     const run = (tails.get(botId) ?? Promise.resolve()).then(async () => {
         try {
@@ -93,7 +98,7 @@ export async function setBotTelemetry(botId: string, on: boolean): Promise<void>
 }
 
 export function clearBotTelemetry(): void {
-    latest++;
+    latest.clear();
     tails.clear();
     confirmed.clear();
     botTelemetryStore.set(undefined);
