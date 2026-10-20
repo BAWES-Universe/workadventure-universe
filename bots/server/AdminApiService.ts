@@ -528,9 +528,9 @@ export class AdminApiService {
      * bot's own choice are resolved by Orbit; this only asks. A private bot sends nothing to PostHog or Sentry
      * spans and saves no transcript; memory, usage counts and everything else work as always.
      *
-     * Orbit is asked at most every 30 seconds per bot. If it cannot answer (down, no such endpoint yet, bot not
-     * found), the last answer is kept; with none yet the answer is "not private", which is how every bot behaved
-     * before this setting existed. Never throws. `fresh` skips the 30 second wait (the bot server's own check).
+     * Orbit is asked at most every 30 seconds per bot. A bot Orbit does not know, or an Orbit without the setting
+     * yet, is "not private", as every bot was before this setting existed. If Orbit cannot answer (down, timeout,
+     * refused), the last answer is kept, and with none yet the bot counts as private until Orbit answers. Never throws. `fresh` skips the 30 second wait (the bot server's own check).
      *
      * Orbit's answer also carries the people a manager asked the bot to forget; those go to the forget handler.
      */
@@ -545,7 +545,7 @@ export class AdminApiService {
         const inFlight = this.botPrivacyRequests.get(botId);
         if (inFlight) return inFlight;
 
-        const request = this.fetchBotPrivacy(botId, cached?.hidden ?? false).finally(() => {
+        const request = this.fetchBotPrivacy(botId, cached?.hidden).finally(() => {
             this.botPrivacyRequests.delete(botId);
         });
         this.botPrivacyRequests.set(botId, request);
@@ -591,7 +591,7 @@ export class AdminApiService {
         }
     }
 
-    private async fetchBotPrivacy(botId: string, lastKnown: boolean): Promise<boolean> {
+    private async fetchBotPrivacy(botId: string, lastKnown: boolean | undefined): Promise<boolean> {
         // BOT_SERVICE_TOKEN is preferred, the admin token is the fallback (same as the memory endpoints)
         const token = process.env.BOT_SERVICE_TOKEN || this.adminApiToken;
         try {
@@ -608,8 +608,11 @@ export class AdminApiService {
             return hidden;
         } catch (error) {
             // Not found (or an Orbit without the setting yet) is a plain "not private"; anything else keeps what we knew.
+            // With nothing known yet (a bot server that just started, while Orbit restarts too), the bot counts as
+            // private until Orbit answers: a hidden bot must never send its text out because Orbit was slow to say so.
+            // Only telemetry and the transcript wait; replies and memory are the same either way.
             const notFound = axios.isAxiosError(error) && (error.response?.status === 404 || error.response?.status === 405);
-            const hidden = notFound ? false : lastKnown;
+            const hidden = notFound ? false : lastKnown ?? true;
             // Retry soon, not after the full 30 seconds, when Orbit could not answer
             this.botPrivacyCache.set(botId, { hidden, cachedAt: notFound ? Date.now() : Date.now() - this.BOT_PRIVACY_CACHE_TTL + 5000 });
             if (!notFound) {
