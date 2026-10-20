@@ -124,6 +124,23 @@ describe("an Orbit that does not answer about who may use a bot", () => {
         );
     }
 
+    it("fails the same way when it is the Orbit sign-in that stalls", async () => {
+        const api = service();
+        vi.spyOn(
+            api as unknown as { getAdminApiSessionToken: () => Promise<string> },
+            "getAdminApiSessionToken"
+        ).mockImplementation(
+            () =>
+                new Promise<string>(() => {
+                    // never answers, and does not listen for an abort
+                })
+        );
+        const asked = api.getBotPermissions("b1");
+        const failed = expect(asked).rejects.toThrow("Orbit did not answer in time");
+        await vi.advanceTimersByTimeAsync(20000);
+        await failed;
+    });
+
     it("fails a read, a change, a row change and a removal after a while instead of holding the page", async () => {
         const api = service();
         const calls = [

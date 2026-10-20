@@ -869,12 +869,19 @@ export class BotApiService {
      */
     private async withPermissionsTimeout<T>(run: (signal: AbortSignal) => Promise<T>): Promise<T> {
         const stop = new AbortController();
-        const timer = setTimeout(() => stop.abort(), PERMISSIONS_TIMEOUT_MS);
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        // Raced as well as aborted: the Orbit sign-in that comes first in a request does not listen for the abort
+        const late = new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => {
+                stop.abort();
+                reject(new Error("Orbit did not answer in time"));
+            }, PERMISSIONS_TIMEOUT_MS);
+        });
+        const running = run(stop.signal);
+        // When the timeout wins, the request that was left behind may still fail later: nobody waits for it
+        running.catch(() => undefined);
         try {
-            return await run(stop.signal);
-        } catch (error) {
-            if (stop.signal.aborted) throw new Error("Orbit did not answer in time");
-            throw error;
+            return await Promise.race([running, late]);
         } finally {
             clearTimeout(timer);
         }
