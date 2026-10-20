@@ -1,6 +1,6 @@
 /**
  * Tests for the check that runs before a bot's AI is reached (game #1158): Orbit decides who may chat with a bot or
- * call it over; the gate keeps its answer for a short while, and never lets anyone through when it cannot ask.
+ * summon it; the gate keeps its answer for a short while, and never lets anyone through when it cannot ask.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -67,13 +67,13 @@ describe('BotAccessGate', () => {
         const answer: BotAccessAnswer = {
             allowed: false,
             code: 'not_allowed',
-            reason: "Nora's owner limits who can call it over.",
+            reason: "Nora's owner limits who can summon it.",
             reply: 'Sorry, I only help the finance team.',
         };
         const { gate } = gateWith(vi.fn().mockResolvedValue(answer));
 
         const verdict = await gate.check('b1', 'summon', MEMBER, 'Nora');
-        expect(verdict).toMatchObject({ allowed: false, kind: 'refused', line: "Nora's owner limits who can call it over." });
+        expect(verdict).toMatchObject({ allowed: false, kind: 'refused', line: "Nora's owner limits who can summon it." });
     });
 
     it('asks Orbit once for answers under 30 seconds old, then again', async () => {

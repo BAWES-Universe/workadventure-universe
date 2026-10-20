@@ -68,14 +68,14 @@ describe("BotApiService.summonBot", () => {
         expect(init.headers.Authorization).toBeUndefined();
     });
 
-    it("tells a guest the owner limits who can call the bot over, in the owner's line", async () => {
+    it("tells a guest the owner limits who can summon the bot, in the owner's line", async () => {
         fetchMock.mockResolvedValue(
-            reply(403, { summoned: false, error: "Nora's owner limits who can call it over.", code: "not_allowed" })
+            reply(403, { summoned: false, error: "Nora's owner limits who can summon it.", code: "not_allowed" })
         );
         await expect(guestService().summonBot("b1", "guest-uuid", 1, 2)).resolves.toEqual({
             summoned: false,
             failure: "not_allowed",
-            reason: "Nora's owner limits who can call it over.",
+            reason: "Nora's owner limits who can summon it.",
         });
     });
 

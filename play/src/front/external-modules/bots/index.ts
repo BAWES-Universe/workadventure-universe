@@ -1190,7 +1190,7 @@ function registerSummonButtonsForBots() {
                         // Bot userUuid is in format "bot-{botId}", but BotManager stores by botId
                         // Strip the "bot-" prefix to get the actual botId
                         const botId = botUuid.startsWith("bot-") ? botUuid.substring(4) : botUuid;
-                        // The owner may have limited who can call the bot over since the menu opened: say so, rather
+                        // The owner may have limited who can summon the bot since the menu opened: say so, rather
                         // than do nothing
                         const access = await botApiService.getBotAccess(botId, "summon", currentUuid);
                         if (access.allowed === false) {

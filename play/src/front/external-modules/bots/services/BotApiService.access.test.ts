@@ -41,11 +41,11 @@ describe("asking whether the player may use a bot", () => {
         );
 
         fetchMock.mockResolvedValueOnce(
-            json({ allowed: false, code: "not_allowed", reason: "Nora's owner limits who can call it over" })
+            json({ allowed: false, code: "not_allowed", reason: "Nora's owner limits who can summon it" })
         );
         await expect(service().getBotAccess("b1", "summon")).resolves.toEqual({
             allowed: false,
-            reason: "Nora's owner limits who can call it over",
+            reason: "Nora's owner limits who can summon it",
         });
     });
 
@@ -112,12 +112,12 @@ describe("summoning a bot the owner limits", () => {
 
     it("hands back the owner's line as it is, as a not_allowed failure", async () => {
         vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-            json({ summoned: false, error: "Nora's owner limits who can call it over", code: "not_allowed" }, 403)
+            json({ summoned: false, error: "Nora's owner limits who can summon it", code: "not_allowed" }, 403)
         );
         await expect(service().summonBot("b1", "u1", 1, 2)).resolves.toEqual({
             summoned: false,
             failure: "not_allowed",
-            reason: "Nora's owner limits who can call it over",
+            reason: "Nora's owner limits who can summon it",
         });
     });
 

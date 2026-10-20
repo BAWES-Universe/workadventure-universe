@@ -181,7 +181,7 @@ export async function setRuleValue(botId: string, rule: BotRule, action: RuleAct
 }
 
 /**
- * Add a role or a person to the bot. A new row starts with Yes for chatting, messaging and calling it over, so on a
+ * Add a role or a person to the bot. A new row starts with Yes for chatting, messaging and summoning it, so on a
  * Private bot the person is let in. A role or person who already had a row keeps what it said. Throws a line for the
  * person when Orbit refuses (the bot's owner needs no row, for one); the page shows it.
  */

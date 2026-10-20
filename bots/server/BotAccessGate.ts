@@ -1,5 +1,5 @@
 /**
- * BotAccessGate: asks Orbit whether a person may chat with a bot nearby or call it over, before anything reaches the
+ * BotAccessGate: asks Orbit whether a person may chat with a bot nearby or summon it, before anything reaches the
  * bot's AI (game #1158). Orbit decides (roles, the bot's own rules, Private bot); this keeps the answer for a short
  * while so a chat does not wait on Orbit for every message, and says what to do when Orbit cannot answer:
  *
@@ -37,7 +37,7 @@ function cannotCheckLine(action: BotAccessAction, botName: string | undefined): 
 function refusalLine(action: BotAccessAction, botName: string | undefined, answer: BotAccessAnswer): string {
     const owner = botName || 'The bot';
     if (action === 'chat') return answer.reply || answer.reason || `${owner}'s owner limits who can chat with it.`;
-    if (action === 'summon') return answer.reason || `${owner}'s owner limits who can call it over.`;
+    if (action === 'summon') return answer.reason || `${owner}'s owner limits who can summon it.`;
     return answer.reason || `You can't message ${owner} now.`;
 }
 
