@@ -777,6 +777,7 @@ const mapEditor: BaseTranslation = {
                     saveFailed: "Could not save this. Check again in a moment.",
                     loadFailed: "Could not load this setting. Check again in a moment.",
                     newBotAdvanced: "Advanced settings",
+                    dismiss: "Dismiss",
                     createdButNotSaved:
                         "The bot was created, but its bot chat telemetry setting was not saved. Change it under Advanced settings.",
                     info: {

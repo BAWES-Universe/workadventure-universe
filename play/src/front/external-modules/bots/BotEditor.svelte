@@ -2,6 +2,7 @@
     import { onMount, onDestroy } from "svelte";
     import { get } from "svelte/store";
     import LL from "../../../i18n/i18n-svelte";
+    import { botTelemetryStore } from "./stores/BotTelemetryStore";
     import type { TranslationFunctions } from "../../../i18n/i18n-types";
     import {
         editPanelBackStore,
@@ -48,6 +49,16 @@
     let botEditorTool = getBotEditorTool();
     let isLoading = false;
     let error: string | null = null;
+    // A new bot was made but its bot chat telemetry "off" was not saved: said until the person sets it, dismisses it or
+    // moves to another bot
+    let telemetryNotice: { botId: string; text: string } | null = null;
+    $: if (
+        telemetryNotice &&
+        $botTelemetryStore?.botId === telemetryNotice.botId &&
+        $botTelemetryStore.data?.on === false
+    ) {
+        telemetryNotice = null;
+    }
 
     // Subscribe to stores
     let currentMode: BotEditorMode = "list";
@@ -398,6 +409,7 @@
     }
 
     function handleSelectBot(bot: BotData | null) {
+        if (telemetryNotice && bot?.id !== telemetryNotice.botId) telemetryNotice = null;
         selectBot(bot || undefined);
     }
 
@@ -491,7 +503,12 @@
 
             // Start placement mode - user will click on map to set position
             startPlacingBot(newBot);
-            if (telemetryNotSaved) error = $LL.mapEditor.edit.bots.page.telemetry.createdButNotSaved();
+            if (telemetryNotSaved) {
+                telemetryNotice = {
+                    botId: newBot.id,
+                    text: $LL.mapEditor.edit.bots.page.telemetry.createdButNotSaved(),
+                };
+            }
         } catch (e) {
             console.error("[BotEditor] Failed to create bot:", e);
             error = e instanceof Error ? e.message : "Failed to create bot";
@@ -501,6 +518,7 @@
     }
 
     function handleBackToList() {
+        telemetryNotice = null;
         selectBot(undefined);
         botEditorModeStore.set("list");
     }
@@ -780,6 +798,17 @@
 </script>
 
 <div class="bot-editor flex flex-col h-full min-h-0">
+    {#if telemetryNotice}
+        <div class="bg-red-500/20 border border-red-500/50 rounded-lg p-4 m-4" data-testid="bot-telemetry-notice">
+            <p class="text-red-200 text-sm">{telemetryNotice.text}</p>
+            <button
+                class="mt-2 px-3 py-1 bg-red-500/20 text-red-200 rounded hover:bg-red-500/30 text-xs"
+                on:click={() => (telemetryNotice = null)}
+            >
+                {$LL.mapEditor.edit.bots.page.telemetry.dismiss()}
+            </button>
+        </div>
+    {/if}
     {#if error}
         <div class="bg-red-500/20 border border-red-500/50 rounded-lg p-4 m-4">
             <p class="text-red-200 text-sm">{error}</p>
