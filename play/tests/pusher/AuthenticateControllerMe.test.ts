@@ -429,6 +429,29 @@ describe("GET /me in a public room for a member whose access token ran out (#119
         expect(res.body).toEqual(expect.objectContaining({ status: "ok", authToken: "renewed-game-token" }));
     });
 
+    it("still lets the member in with the first answer when Orbit's second answer is a connection error", async () => {
+        // The admin client doesn't throw when Orbit can't be reached: it answers with an error of its own.
+        fetchMemberDataByUuid.mockImplementation((_id: string, accessToken: string | undefined) =>
+            Promise.resolve(
+                accessToken === "new-access"
+                    ? {
+                          status: "error",
+                          type: "error",
+                          title: "Connection error",
+                          subtitle: "Something wrong happened while connecting!",
+                          image: "",
+                          code: "ROOM_ACCESS_ERROR",
+                          details: "connect ECONNREFUSED",
+                      }
+                    : { status: "ok", userUuid: "owner", isCharacterTexturesValid: true, isCompanionTextureValid: true }
+            )
+        );
+        const res = await callMe({ token: "game-token", playUri });
+        expect(res.body).toEqual(
+            expect.objectContaining({ status: "ok", userUuid: "owner", authToken: "renewed-game-token" })
+        );
+    });
+
     it("asks Orbit only once when the token is still good", async () => {
         checkTokenAuth.mockResolvedValue({});
         await callMe({ token: "game-token", playUri });
