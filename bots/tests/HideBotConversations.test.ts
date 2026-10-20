@@ -520,6 +520,57 @@ describe("memory: always kept, and forgotten when Orbit says so", () => {
         expect(memory.loadedMemoriesByUuid.has("bot-1_uuid-bob")).toBe(false);
     });
 
+    it("applies a Forget once: Orbit repeating it for a minute does not wipe what the person said since", async () => {
+        const memory: any = await newMemory();
+        seed(memory, "uuid-bob", 7);
+        const forget = { everyone: false, userUuids: ["uuid-bob"] };
+        memory.forget("bot-1", forget);
+        expect(memory.memories.has("bot-1_7")).toBe(false);
+
+        // Bob keeps talking; Orbit's next answers (a save, the 30-second check) still carry the same Forget
+        seed(memory, "uuid-bob", 7);
+        memory.forget("bot-1", forget);
+        memory.forget("bot-1", { everyone: false, userUuids: ["uuid-bob"] });
+        expect(memory.memories.has("bot-1_7")).toBe(true);
+        expect(memory.loadedMemoriesByUuid.has("bot-1_uuid-bob")).toBe(true);
+        expect(memory.pendingSaves.has("bot-1_7")).toBe(true);
+    });
+
+    it("applies a repeated Forget-everyone once too, but a new person in a later notice is still forgotten", async () => {
+        const memory: any = await newMemory();
+        seed(memory, "uuid-bob", 7);
+        memory.forget("bot-1", { everyone: true, userUuids: [] });
+        seed(memory, "uuid-bob", 7);
+        seed(memory, "uuid-sara", 8);
+        memory.forget("bot-1", { everyone: true, userUuids: ["uuid-sara"] });
+        expect(memory.memories.has("bot-1_7")).toBe(true);
+        expect(memory.memories.has("bot-1_8")).toBe(false);
+    });
+
+    it("applies the same Forget again once Orbit has long stopped repeating it (a new Forget later)", async () => {
+        vi.useFakeTimers();
+        try {
+            const memory: any = await newMemory();
+            seed(memory, "uuid-bob", 7);
+            memory.forget("bot-1", { everyone: false, userUuids: ["uuid-bob"] });
+            vi.advanceTimersByTime(3 * 60 * 1000);
+            seed(memory, "uuid-bob", 7);
+            memory.forget("bot-1", { everyone: false, userUuids: ["uuid-bob"] });
+            expect(memory.memories.has("bot-1_7")).toBe(false);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("forgets someone whose live memory still says temp-<playerId>, by the uuid tracked for them", async () => {
+        const memory: any = await newMemory();
+        const record = seed(memory, "uuid-bob", 7);
+        record.userUuid = "temp-7";
+        memory.uuidTracking.set("bot-1_7", { userUuid: "uuid-bob", isLogged: true });
+        memory.forget("bot-1", { everyone: false, userUuids: ["uuid-bob"] });
+        expect(memory.memories.has("bot-1_7")).toBe(false);
+    });
+
     it("ignores a forget list that is not one, and never turns a good save into a retry", async () => {
         const memory: any = await newMemory();
         seed(memory, "uuid-bob", 7);

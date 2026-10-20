@@ -106,6 +106,11 @@ function instantiateBehavior(kind: LegacyBehaviorType, cfg: Record<string, unkno
 
 export class BotManager {
     private bots: Map<string, BotInstance> = new Map();
+    /**
+     * Every bot spawned since this server started. Its memory stays held here after it despawns (to come back when it
+     * respawns), so a Forget must reach it too (#435).
+     */
+    private botsHoldingMemory: Set<string> = new Set();
     private adminApiService: AdminApiService;
     private botRegistry: BotRegistry;
     private mapDataService: MapDataService;
@@ -260,7 +265,7 @@ export class BotManager {
         // Start room occupancy verification
         this.startRoomVerification();
         // Hide bot conversations (#1166): a Forget reaches bots nobody is talking to
-        this.adminApiService.startPrivacySync?.(() => this.bots.keys());
+        this.adminApiService.startPrivacySync?.(() => new Set([...this.bots.keys(), ...this.botsHoldingMemory]));
 
         // TODO: Load bots from storage (WAM files + Admin API)
         // This will be called on server startup
@@ -361,6 +366,10 @@ export class BotManager {
         const hasLoadMemories = 'loadMemories' in this.conversationMemory && typeof (this.conversationMemory as any).loadMemories === 'function';
         
         if (hasLoadMemories) {
+            this.botsHoldingMemory.add(botId);
+            // A Forget pressed while the bot was away is applied to what is still held for it before anyone can be
+            // remembered from it (Orbit's answer carries the Forget; this never throws)
+            await this.adminApiService.isBotPrivate?.(botId, { fresh: true });
             const MAX_LOAD_RETRIES = 2;
             for (let attempt = 1; attempt <= MAX_LOAD_RETRIES; attempt++) {
                 try {

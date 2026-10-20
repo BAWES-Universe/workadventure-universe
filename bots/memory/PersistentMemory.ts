@@ -33,6 +33,10 @@ export class PersistentMemory extends ConversationMemory {
     private uuidTracking: Map<string, { userUuid: string; isLogged: boolean }> = new Map();
     // Temporary storage for loaded memories (keyed by userUuid) - restored when user joins
     private loadedMemoriesByUuid: Map<string, BotPlayerMemory> = new Map(); // key: "botId_userUuid"
+    /** Forgets already applied, by "botId|*" or "botId|uuid:<uuid>", with when (see forget) */
+    private appliedForgets: Map<string, number> = new Map();
+    /** Longer than Orbit's one-minute repeat plus one 30-second privacy check */
+    private static readonly FORGET_REPEAT_WINDOW_MS = 2 * 60 * 1000;
 
     constructor(config: PersistentMemoryConfig = {}) {
         super(config.maxHistorySize || 50, config.maxMemories || 1000);
@@ -59,13 +63,27 @@ export class PersistentMemory extends ConversationMemory {
      * bot starts fresh from their next message.
      */
     forget(botId: string, notice: MemoryForgetNotice): void {
+        // Orbit repeats a Forget in every answer for a minute after it first sends it. Applied each time, it would wipe what
+        // the bot learned since from someone who kept talking, so each one is applied once.
+        const now = Date.now();
+        for (const [key, appliedAt] of this.appliedForgets) {
+            if (now - appliedAt > PersistentMemory.FORGET_REPEAT_WINDOW_MS) this.appliedForgets.delete(key);
+        }
+        const isNew = (who: string) => !this.appliedForgets.has(`${botId}|${who}`);
+        const everyone = notice.everyone && isNew('*');
+        const userUuids = notice.userUuids.filter((uuid) => isNew(`uuid:${uuid}`));
+        if (!everyone && userUuids.length === 0) return;
+        if (everyone) this.appliedForgets.set(`${botId}|*`, now);
+        for (const uuid of userUuids) this.appliedForgets.set(`${botId}|uuid:${uuid}`, now);
+
         const prefix = `${botId}_`;
-        const forgotten = new Set(notice.userUuids);
-        const isForgotten = (userUuid: string | undefined) => notice.everyone || (!!userUuid && forgotten.has(userUuid));
+        const forgotten = new Set(userUuids);
+        const isForgotten = (userUuid: string | undefined) => everyone || (!!userUuid && forgotten.has(userUuid));
 
         for (const [key, memory] of this.getAllMemories().entries()) {
             if (!key.startsWith(prefix)) continue;
-            if (!isForgotten(memory.userUuid || this.uuidTracking.get(key)?.userUuid)) continue;
+            // A memory made before the person's uuid was known still says "temp-<playerId>": the tracked uuid counts too
+            if (!isForgotten(memory.userUuid) && !isForgotten(this.uuidTracking.get(key)?.userUuid)) continue;
             this.clearMemory(botId, Number(key.slice(prefix.length)));
             const timer = this.debounceTimers.get(key);
             if (timer) clearTimeout(timer);
