@@ -405,7 +405,7 @@
         botEditorModeStore.set("create");
     }
 
-    async function handleCreateBotSubmit(name: string, textureId: string) {
+    async function handleCreateBotSubmit(name: string, textureId: string, telemetryOn: boolean) {
         if (!botApiService.isInitialized()) {
             error = "API service not initialized";
             return;
@@ -475,10 +475,23 @@
                 updatedBy: createdBot.updatedBy || null,
             };
 
+            // Bot chat telemetry is on for a new bot; only an off needs saving. If that cannot be saved the bot still
+            // exists, so say so (its Advanced settings can set it) instead of leaving it on without a word.
+            let telemetryNotSaved = false;
+            if (!telemetryOn) {
+                try {
+                    await botApiService.saveBotTelemetry(createdBot.id, false);
+                } catch (e) {
+                    console.error("[BotEditor] Failed to save bot chat telemetry for the new bot:", e);
+                    telemetryNotSaved = true;
+                }
+            }
+
             // Close modal
 
             // Start placement mode - user will click on map to set position
             startPlacingBot(newBot);
+            if (telemetryNotSaved) error = $LL.mapEditor.edit.bots.page.telemetry.createdButNotSaved();
         } catch (e) {
             console.error("[BotEditor] Failed to create bot:", e);
             error = e instanceof Error ? e.message : "Failed to create bot";
@@ -632,6 +645,8 @@
     // back circle returns to the bot's page
     let editingRuleId: string | null = null;
     let addingRule = false;
+    // Advanced settings the same way
+    let editingAdvanced = false;
     function editedRuleName(ruleId: string | null, botId: string | undefined, someone: string): string | undefined {
         const held = get(botPermissionsStore);
         const rule = ruleId && held && held.botId === botId ? held.data?.rules.find((r) => r.id === ruleId) : undefined;
@@ -657,6 +672,13 @@
                   label: $LL.mapEditor.edit.bots.page.companion.back({ name: selectedBot.name ?? "" }),
                   title: selectedBot.name || undefined,
                   subtitle: $LL.mapEditor.edit.bots.page.body.title(),
+              }
+            : currentMode === "detail" && selectedBot && editingAdvanced
+            ? {
+                  onBack: () => (editingAdvanced = false),
+                  label: $LL.mapEditor.edit.bots.page.companion.back({ name: selectedBot.name ?? "" }),
+                  title: $LL.mapEditor.edit.bots.page.telemetry.title(),
+                  subtitle: selectedBot.name || undefined,
               }
             : currentMode === "detail" && selectedBot && editingCompanion
             ? {
@@ -789,6 +811,7 @@
                 bind:editingTexture
                 bind:editingRuleId
                 bind:addingRule
+                bind:editingAdvanced
                 bot={selectedBot}
                 onSave={handleSave}
                 onDelete={handleDelete}

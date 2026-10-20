@@ -38,7 +38,10 @@
     import PermissionsGroup from "./page/PermissionsGroup.svelte";
     import LimitSuggestion from "./page/LimitSuggestion.svelte";
     import BotFooter from "./page/BotFooter.svelte";
-    import { IconCurrentLocation, IconPaw, IconPencil } from "@wa-icons";
+    import PageNote from "./page/PageNote.svelte";
+    import TelemetryCard from "./page/TelemetryCard.svelte";
+    import { botTelemetryStore, loadBotTelemetry, setBotTelemetry } from "../stores/BotTelemetryStore";
+    import { IconAdjustmentsHorizontal, IconCurrentLocation, IconPaw, IconPencil } from "@wa-icons";
 
     export let bot: BotData | null = null;
     export let onSave: () => void;
@@ -54,6 +57,29 @@
     export let editingRuleId: string | null = null;
     /** Adding a role or person fills the panel in place of the page */
     export let addingRule = false;
+    /** Advanced settings (Bot chat telemetry) fill the panel in place of the page */
+    export let editingAdvanced = false;
+    $: telemetryState = $botTelemetryStore && $botTelemetryStore.botId === bot?.id ? $botTelemetryStore : undefined;
+    $: telemetryLocked = telemetryState?.data?.universeHides === true;
+    $: advancedBrief = !telemetryState
+        ? $LL.mapEditor.edit.bots.page.telemetry.briefLoading()
+        : telemetryState.status === "failed"
+        ? $LL.mapEditor.edit.bots.page.telemetry.briefFailed()
+        : !telemetryState.data
+        ? $LL.mapEditor.edit.bots.page.telemetry.briefLoading()
+        : telemetryLocked
+        ? $LL.mapEditor.edit.bots.page.telemetry.briefLocked()
+        : telemetryState.data.on
+        ? $LL.mapEditor.edit.bots.page.telemetry.briefOn()
+        : $LL.mapEditor.edit.bots.page.telemetry.briefOff();
+    function changeTelemetry(next: boolean) {
+        if (currentBot) void setBotTelemetry(currentBot.id, next);
+    }
+    let telemetryLoadedFor: string | undefined;
+    $: if (bot && bot.id !== telemetryLoadedFor) {
+        telemetryLoadedFor = bot.id;
+        void loadBotTelemetry(bot.id);
+    }
     let switching = false;
     let switchError: string | null = null;
     let openGroup: string | undefined = lastOpenGroup;
@@ -69,6 +95,7 @@
             editingCompanion = false;
             editingRuleId = null;
             addingRule = false;
+            editingAdvanced = false;
         }
     }
 
@@ -159,6 +186,7 @@
             editingTexture = false;
             editingRuleId = null;
             addingRule = false;
+            editingAdvanced = false;
             toolBaseline = undefined;
             toolAdded = false;
             askedNow = false;
@@ -516,6 +544,23 @@
     />
 {:else if currentBot && editingRuleId}
     <BotRuleScreen botId={currentBot.id} ruleId={editingRuleId} onClose={() => (editingRuleId = null)} />
+{:else if currentBot && editingAdvanced}
+    <div class="bot-page" data-testid="bot-advanced">
+        {#if telemetryState?.data}
+            <TelemetryCard
+                on={telemetryState.data.on}
+                locked={telemetryLocked}
+                error={telemetryState.saveError}
+                onChange={changeTelemetry}
+            />
+        {:else}
+            <PageNote
+                >{telemetryState?.status === "failed"
+                    ? page.telemetry.loadFailed()
+                    : page.telemetry.briefLoading()}</PageNote
+            >
+        {/if}
+    </div>
 {:else if currentBot}
     <div class="bot-page" data-testid="bot-page">
         <div class="bp-hd">
@@ -627,6 +672,15 @@
                 brief={companionLine}
                 link
                 onToggle={() => (editingCompanion = true)}
+            />
+            <!-- Settings most owners never need, on a screen of their own -->
+            <PageGroup
+                id="advanced"
+                icon={IconAdjustmentsHorizontal}
+                title={page.telemetry.title()}
+                brief={advancedBrief}
+                link
+                onToggle={() => (editingAdvanced = true)}
             />
         </div>
         <BotFooter bot={currentBot} {onDelete} />
