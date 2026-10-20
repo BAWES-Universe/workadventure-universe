@@ -1816,6 +1816,11 @@ export class SocialBehavior extends BaseBehavior {
             return;
         }
 
+        // Greeting is a chat too: a person the owner refused is not greeted (and the AI is not asked)
+        if (!(await this.bot.mayGreet(spaceName, playerId))) {
+            return;
+        }
+
         // Get conversation context (includes memory, emotions, relationship history)
         // This context includes previous conversations, emotional state, and relationship history
         // The AI will use this to remember bad interactions and respond appropriately

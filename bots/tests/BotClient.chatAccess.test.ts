@@ -209,3 +209,45 @@ describe('BotClient chat access', () => {
         }
     });
 });
+
+describe('BotClient greeting access', () => {
+    it('greets a person Orbit allows to chat, and says nothing extra', async () => {
+        const { check, said, bot } = setup({ allowed: true, kind: 'allowed' });
+
+        await expect(bot.mayGreet(SPACE, 7)).resolves.toBe(true);
+
+        expect(check).toHaveBeenCalledWith('bot-test', 'chat', { signedIn: true, identifier: 'mishari@example.test' }, 'Nora');
+        expect(said).not.toHaveBeenCalled();
+    });
+
+    it("does not greet a refused person, and says the owner's line once per visit, shared with their messages", async () => {
+        const { behavior, said, receive, bot } = setup({
+            allowed: false,
+            kind: 'refused',
+            code: 'not_allowed',
+            line: 'Sorry, I only help the finance team.',
+        });
+
+        await expect(bot.mayGreet(SPACE, 7)).resolves.toBe(false);
+        await expect(bot.mayGreet(SPACE, 7)).resolves.toBe(false);
+        await receive(chatFrom('room_7'));
+
+        expect(said).toHaveBeenCalledTimes(1);
+        expect(said).toHaveBeenCalledWith(SPACE, 'Sorry, I only help the finance team.');
+        expect(behavior.onChatMessage).not.toHaveBeenCalled();
+    });
+
+    it('does not greet when Orbit cannot answer and nothing is remembered, and stays quiet about it', async () => {
+        const { said, bot } = setup({ allowed: false, kind: 'cannot_check', line: "I can't check that right now, try again soon." });
+
+        await expect(bot.mayGreet(SPACE, 7)).resolves.toBe(false);
+
+        expect(said).not.toHaveBeenCalled();
+    });
+
+    it('greets as before when there is no gate (a bot server with no Orbit)', async () => {
+        const { bot } = setup(undefined);
+
+        await expect(bot.mayGreet(SPACE, 7)).resolves.toBe(true);
+    });
+});
