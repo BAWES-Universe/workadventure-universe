@@ -861,6 +861,7 @@ class ConnectionManager {
             userUuid,
             email,
             username,
+            usernameFromAccount,
             locale,
             visitCardUrl,
             matrixUserId,
@@ -891,10 +892,16 @@ class ConnectionManager {
         const opidWokaNamePolicy = this.currentRoom?.opidWokaNamePolicy;
         if (username != undefined && opidWokaNamePolicy != undefined) {
             if (hasCapability("api/save-name")) {
-                gameManager.setPlayerName(username);
-                // The account's name is the one that counts. The device keeps a copy so it never comes back with an
-                // older name it held (#1192).
-                localUserStore.setName(username, true);
+                if (usernameFromAccount) {
+                    gameManager.setPlayerName(username);
+                    // The account's name is the one that counts. The device keeps a copy so it never comes back with an
+                    // older name it held (#1192).
+                    localUserStore.setName(username, true);
+                } else {
+                    // Orbit didn't answer with the name this time, so this is only the name from sign-in, which can be
+                    // older than the account's name this device last got (#1192).
+                    gameManager.setPlayerName(localUserStore.getAccountName(userUuid) ?? username);
+                }
             } else {
                 if (opidWokaNamePolicy === "force_opid") {
                     gameManager.setPlayerName(username);

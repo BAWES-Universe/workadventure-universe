@@ -389,6 +389,7 @@ describe("GET /me in a public room for a member whose access token ran out (#119
                 status: "ok",
                 authToken: "renewed-game-token",
                 username: "Khalid",
+                usernameFromAccount: true,
                 tags: ["admin"],
             })
         );
@@ -450,6 +451,27 @@ describe("GET /me in a public room for a member whose access token ran out (#119
         expect(res.body).toEqual(
             expect.objectContaining({ status: "ok", userUuid: "owner", authToken: "renewed-game-token" })
         );
+    });
+
+    it("says the name is only the one from sign-in when Orbit couldn't give the account's", async () => {
+        verifyJWTToken.mockReturnValue({
+            identifier: "owner",
+            accessToken: "expired-access",
+            refreshToken: "refresh",
+            username: "K",
+        });
+        fetchMemberDataByUuid.mockImplementation((_id: string, accessToken: string | undefined) =>
+            accessToken === "new-access"
+                ? Promise.reject(new Error("Orbit unreachable"))
+                : Promise.resolve({
+                      status: "ok",
+                      userUuid: "owner",
+                      isCharacterTexturesValid: true,
+                      isCompanionTextureValid: true,
+                  })
+        );
+        const res = await callMe({ token: "game-token", playUri });
+        expect(res.body).toEqual(expect.objectContaining({ username: "K", usernameFromAccount: false }));
     });
 
     it("asks Orbit only once when the token is still good", async () => {

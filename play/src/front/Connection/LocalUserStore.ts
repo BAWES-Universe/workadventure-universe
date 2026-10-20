@@ -110,12 +110,20 @@ class LocalUserStore {
         return data ? JSON.parse(data) : null;
     }
 
-    /** fromAccount: the account's name (from Orbit, or a rename while signed in), not one a guest typed. */
+    /**
+     * fromAccount: the account's name (from Orbit, or a rename while signed in), not one a guest typed. It is kept
+     * against the signed-in user, so another account on this device doesn't take it.
+     */
     setName(name: string, fromAccount = false): void {
         this.name = name;
         localStorage.setItem(playerNameKey, name);
-        if (fromAccount) localStorage.setItem(playerNameIsAccountsKey, "true");
+        if (fromAccount) localStorage.setItem(playerNameIsAccountsKey, this.getLocalUser()?.uuid ?? "true");
         else localStorage.removeItem(playerNameIsAccountsKey);
+    }
+
+    /** The name this device last got as this account's own (see setName), if it holds one. */
+    getAccountName(userUuid: string): string | null {
+        return localStorage.getItem(playerNameIsAccountsKey) === userUuid ? this.getName() : null;
     }
 
     /**
@@ -125,7 +133,7 @@ class LocalUserStore {
     backupGuestName(): void {
         // Only a guest's: never the account's name the device kept, also once its sign-in was refused and the device
         // carried on as a guest.
-        if (this.isLogged() || localStorage.getItem(playerNameIsAccountsKey) === "true") return;
+        if (this.isLogged() || localStorage.getItem(playerNameIsAccountsKey) !== null) return;
         const name = this.getName();
         if (name !== null) localStorage.setItem(guestNameKey, name);
     }

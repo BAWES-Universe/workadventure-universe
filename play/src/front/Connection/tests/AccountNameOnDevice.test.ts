@@ -35,13 +35,14 @@ import { localUserStore } from "../LocalUserStore";
 // A signed-in player's game token: three parts, the middle one a JSON payload carrying an access token
 const gameToken = `header.${window.btoa(JSON.stringify({ identifier: "uuid-me", accessToken: "access" }))}.signature`;
 
-const meAnswer = (username?: string) => ({
+const meAnswer = (username?: string, usernameFromAccount = username !== undefined) => ({
     data: {
         status: "ok",
         authToken: gameToken,
         userUuid: "uuid-me",
         email: "me@example.com",
         username,
+        usernameFromAccount,
         isCharacterTexturesValid: true,
         isCompanionTextureValid: true,
     },
@@ -69,6 +70,25 @@ describe("the account's name on this device", () => {
         mocks.me.mockResolvedValue(meAnswer("Khalid"));
         await openTheGame();
         expect(mocks.setPlayerName).toHaveBeenCalledWith("Khalid");
+        expect(localStorage.getItem("playerName")).toBe("Khalid");
+    });
+
+    it("keeps the account's newer name over the older one from sign-in when Orbit didn't give a name", async () => {
+        mocks.me.mockResolvedValue(meAnswer("Khalid"));
+        await openTheGame();
+        // Orbit couldn't be asked this time: the answer only has the name the game token carried from sign-in.
+        mocks.me.mockResolvedValue(meAnswer("K", false));
+        await openTheGame();
+        expect(mocks.setPlayerName).toHaveBeenLastCalledWith("Khalid");
+        expect(localStorage.getItem("playerName")).toBe("Khalid");
+    });
+
+    it("doesn't use another account's name the device kept when Orbit didn't give a name", async () => {
+        mocks.me.mockResolvedValue(meAnswer("Khalid"));
+        await openTheGame();
+        mocks.me.mockResolvedValue({ data: { ...meAnswer("Nova", false).data, userUuid: "uuid-someone-else" } });
+        await openTheGame();
+        expect(mocks.setPlayerName).toHaveBeenLastCalledWith("Nova");
         expect(localStorage.getItem("playerName")).toBe("Khalid");
     });
 

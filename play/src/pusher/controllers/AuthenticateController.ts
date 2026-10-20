@@ -20,6 +20,12 @@ import { renewedTokenMemo } from "../services/RenewedTokenMemo";
 import { BaseHttpController } from "./BaseHttpController";
 
 const debug = Debug("pusher:requests");
+// Says whether the name /me answers with is the account's, as Orbit just gave it, or only the one the game token
+// carried from sign-in, which can be older (#1192). The game keeps only the account's.
+function withNameSource<T extends { username?: string | null }>(response: T, accountName: string | null | undefined) {
+    return { ...response, usernameFromAccount: !!accountName && response.username === accountName };
+}
+
 // What the admin client answers when Orbit can't be reached or sends something it can't read (see AdminApi).
 const ORBIT_UNREACHABLE_CODES = new Set(["ROOM_ACCESS_ERROR", "ROOM_ACCESS_VALIDATION"]);
 
@@ -341,15 +347,21 @@ export class AuthenticateController extends BaseHttpController {
                             console.warn("Could not ask Orbit again with the renewed token", askAgainErr);
                         }
                     }
-                    res.json({
-                        username: authTokenData?.username,
-                        authToken: renewed.authToken,
-                        locale: authTokenData?.locale,
-                        matrixUserId: authTokenData?.matrixUserId,
-                        matrixServerUrl: (renewed.checked.matrix_url as string | undefined) ?? MATRIX_PUBLIC_URI,
-                        ...userData,
-                        ...renewed.checked,
-                    } satisfies MeResponse);
+                    res.json(
+                        withNameSource(
+                            {
+                                username: authTokenData?.username,
+                                authToken: renewed.authToken,
+                                locale: authTokenData?.locale,
+                                matrixUserId: authTokenData?.matrixUserId,
+                                matrixServerUrl:
+                                    (renewed.checked.matrix_url as string | undefined) ?? MATRIX_PUBLIC_URI,
+                                ...userData,
+                                ...renewed.checked,
+                            },
+                            userData.username
+                        ) satisfies MeResponse
+                    );
                     return true;
                 };
 
@@ -359,16 +371,22 @@ export class AuthenticateController extends BaseHttpController {
 
                 try {
                     const resCheckTokenAuth = await openIDClient.checkTokenAuth(authTokenData.accessToken);
-                    res.json({
-                        username: authTokenData?.username,
-                        authToken: token,
-                        locale: authTokenData?.locale,
-                        matrixUserId: authTokenData?.matrixUserId,
-                        matrixServerUrl: (resCheckTokenAuth.matrix_url as string | undefined) ?? MATRIX_PUBLIC_URI,
-                        // TODO: replace ... with each property
-                        ...resUserData,
-                        ...resCheckTokenAuth,
-                    } satisfies MeResponse);
+                    res.json(
+                        withNameSource(
+                            {
+                                username: authTokenData?.username,
+                                authToken: token,
+                                locale: authTokenData?.locale,
+                                matrixUserId: authTokenData?.matrixUserId,
+                                matrixServerUrl:
+                                    (resCheckTokenAuth.matrix_url as string | undefined) ?? MATRIX_PUBLIC_URI,
+                                // TODO: replace ... with each property
+                                ...resUserData,
+                                ...resCheckTokenAuth,
+                            },
+                            resUserData.username
+                        ) satisfies MeResponse
+                    );
                 } catch (err) {
                     if (shouldRefreshAccessToken(err) && (await respondWithRefreshedToken())) return;
                     console.warn("Error while checking token auth", err);
