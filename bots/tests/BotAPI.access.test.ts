@@ -192,6 +192,40 @@ describe('May I? (the question the game asks before it shows Summon)', () => {
         expect(gate.check).toHaveBeenCalledWith('b1', 'summon', { signedIn: false, identifier: undefined }, 'Nora');
     });
 
+    it('asks about a guest as a guest when the game says it is asking for that guest', async () => {
+        const response = await post(
+            '/api/bots/b1/access',
+            { action: 'summon', playerUuid: 'guest-uuid' },
+            { 'X-WA-Auth': GAME_TOKEN }
+        );
+
+        expect(response.status).toBe(200);
+        expect(gate.check).toHaveBeenCalledWith('b1', 'summon', { signedIn: false, identifier: undefined }, 'Nora');
+    });
+
+    it('asks about a signed-in member by their session when the game names them', async () => {
+        const response = await post(
+            '/api/bots/b1/access',
+            { action: 'summon', playerUuid: 'uuid-1' },
+            { Authorization: `Bearer ${SESSION}`, 'X-WA-Auth': GAME_TOKEN }
+        );
+
+        expect(response.status).toBe(200);
+        expect(gate.check).toHaveBeenCalledWith('b1', 'summon', { signedIn: true, identifier: 'uuid-1' }, 'Nora');
+    });
+
+    it('tells a signed-in member whose session did not come along to sign in again, not asking about them as a guest', async () => {
+        const response = await post(
+            '/api/bots/b1/access',
+            { action: 'summon', playerUuid: 'member-uuid' },
+            { 'X-WA-Auth': GAME_TOKEN }
+        );
+
+        expect(response.status).toBe(403);
+        expect(await response.json()).toMatchObject({ code: 'not_you' });
+        expect(gate.check).not.toHaveBeenCalled();
+    });
+
     it('is a 503 when Orbit cannot answer, so the game can tell "no" from "unknown"', async () => {
         gate.check.mockResolvedValue({ allowed: false, kind: 'cannot_check', line: "Nora can't check that right now. Try again soon." });
 

@@ -1064,7 +1064,11 @@ function setupWokaMenuHook() {
                         // A person the owner has refused does not get a Summon button. When it cannot be found out
                         // (a guest, Orbit not answering) the button shows, and the real answer comes when it is used.
                         if (menuData.userUuid.startsWith("bot-")) {
-                            const access = await botApiService.getBotAccess(menuData.userUuid.substring(4), "summon");
+                            const access = await botApiService.getBotAccess(
+                                menuData.userUuid.substring(4),
+                                "summon",
+                                localUserStore.getLocalUser()?.uuid
+                            );
                             if (access.allowed === false) return;
                         }
                         if (opening !== wokaMenuOpening) return;
@@ -1188,9 +1192,14 @@ function registerSummonButtonsForBots() {
                         const botId = botUuid.startsWith("bot-") ? botUuid.substring(4) : botUuid;
                         // The owner may have limited who can call the bot over since the menu opened: say so, rather
                         // than do nothing
-                        const access = await botApiService.getBotAccess(botId, "summon");
+                        const access = await botApiService.getBotAccess(botId, "summon", currentUuid);
                         if (access.allowed === false) {
                             showSummonFailure("not_allowed", playerData.name, access.reason);
+                            return;
+                        }
+                        // Their login did not come along: say so up front, as Summon itself would
+                        if (access.allowed === null && access.signIn) {
+                            showSummonFailure("sign_in", playerData.name);
                             return;
                         }
                         // Call summon API - it will validate if this is a bot
