@@ -625,9 +625,14 @@ export class AdminApiService {
         tokensUsed?: number;
         promptTokens?: number;
         completionTokens?: number;
+        cachedTokens?: number;
+        reasoningTokens?: number;
         apiCalls?: number;
         durationSeconds?: number | null;
-        cost?: number;
+        cost?: number | null;
+        costMicrodollars?: number | null;
+        priceSource?: string | null;
+        priceVersion?: string | null;
         latency?: number;
         error?: boolean;
         timestamp?: string;
@@ -646,13 +651,26 @@ export class AdminApiService {
         }
 
         try {
+            const costMicrodollars =
+                usage.costMicrodollars !== undefined
+                    ? usage.costMicrodollars
+                    : typeof usage.cost === 'number' && Number.isFinite(usage.cost)
+                        ? Math.round(usage.cost * 1_000_000)
+                        : null;
             const payload = {
                 botId: usage.botId,
                 providerId: usage.providerId,
                 tokensUsed: usage.tokensUsed || 0,
+                promptTokens: usage.promptTokens || 0,
+                completionTokens: usage.completionTokens || 0,
+                cachedTokens: usage.cachedTokens || 0,
+                reasoningTokens: usage.reasoningTokens || 0,
                 apiCalls: usage.apiCalls || 1,
                 durationSeconds: usage.durationSeconds ?? null,
                 cost: usage.cost ?? null,
+                costMicrodollars,
+                priceSource: usage.priceSource ?? null,
+                priceVersion: usage.priceVersion ?? null,
                 latency: usage.latency ?? null,
                 error: usage.error || false,
                 timestamp: usage.timestamp || new Date().toISOString(),

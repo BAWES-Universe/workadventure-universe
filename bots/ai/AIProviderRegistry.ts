@@ -105,6 +105,11 @@ export class AIProviderRegistry {
                 done: true,
                 metadata: {
                     tokensUsed: response.tokensUsed,
+                    promptTokens: response.promptTokens,
+                    completionTokens: response.completionTokens,
+                    cachedTokens: response.cachedTokens,
+                    reasoningTokens: response.reasoningTokens,
+                    upstreamCost: response.upstreamCost,
                     latency: response.latency,
                     error: response.error,
                     truncated: response.truncated,
@@ -124,4 +129,3 @@ export class AIProviderRegistry {
         this.providers.clear();
     }
 }
-

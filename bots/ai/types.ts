@@ -44,6 +44,9 @@ export interface AIStreamChunk {
         tokensUsed?: number;
         promptTokens?: number;
         completionTokens?: number;
+        cachedTokens?: number;
+        reasoningTokens?: number;
+        upstreamCost?: number;
         latency?: number;
         durationSeconds?: number; // For voice AI
         error?: boolean;
@@ -73,6 +76,11 @@ export interface AIStreamChunk {
 export interface AIResponse {
     content: string;
     tokensUsed: number;
+    promptTokens?: number;
+    completionTokens?: number;
+    cachedTokens?: number;
+    reasoningTokens?: number;
+    upstreamCost?: number;
     latency: number;
     error?: boolean;
     truncated?: boolean; // true when the provider hit finish_reason='length' (max_tokens cap)
@@ -85,10 +93,16 @@ export interface AIUsageMetadata {
     tokensUsed?: number;
     promptTokens?: number;
     completionTokens?: number;
+    cachedTokens?: number;
+    reasoningTokens?: number;
+    upstreamCost?: number;
     apiCalls?: number;
     latency?: number;
     durationSeconds?: number; // For voice AI
-    cost?: number;
+    cost?: number | null;
+    priceSource?: string;
+    priceVersion?: string | null;
+    timestamp?: Date | string;
     error?: boolean;
 }
 
