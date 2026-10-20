@@ -19,6 +19,7 @@ const requestedCameraStateKey = "requestedCameraStateKey";
 const requestedMicrophoneStateKey = "requestedMicrophoneStateKey";
 const characterTexturesKey = "characterTextures";
 const guestCharacterTexturesKey = "guestCharacterTextures";
+const guestNameKey = "guestPlayerName";
 const companionKey = "companion";
 const audioPlayerVolumeKey = "audioVolume";
 const audioPlayerMuteKey = "audioMute";
@@ -111,6 +112,26 @@ class LocalUserStore {
     setName(name: string): void {
         this.name = name;
         localStorage.setItem(playerNameKey, name);
+    }
+
+    /**
+     * Keeps a guest's name aside before signing in. The device keeps the account's name while signed in (#1192), and
+     * signing out gives the guest's own back (restoreGuestName), as with the woka.
+     */
+    backupGuestName(): void {
+        const name = this.getName();
+        if (name !== null) localStorage.setItem(guestNameKey, name);
+    }
+
+    /** On signing out: the device goes back to the guest's own name, or to none, never the account's. */
+    restoreGuestName(): void {
+        const backup = localStorage.getItem(guestNameKey);
+        if (backup && isUserNameValid(backup)) {
+            this.setName(backup);
+            return;
+        }
+        this.name = undefined;
+        localStorage.removeItem(playerNameKey);
     }
 
     getName(): string | null {

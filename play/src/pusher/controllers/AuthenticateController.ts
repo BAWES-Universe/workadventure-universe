@@ -321,14 +321,19 @@ export class AuthenticateController extends BaseHttpController {
                     // Orbit can't check an access token that ran out and answers a member of a public room as a
                     // guest: no name, tags or card, so the game kept whatever name the device had (#1192). Ask it
                     // again with the renewed token, unless that is already what it answered.
+                    // If Orbit can't be reached this time, the first answer still lets them in.
                     let userData = resUserData;
                     if (!answeredWithRenewedToken) {
-                        const askedAgain = await fetchUserData(renewed.accessToken);
-                        if (askedAgain.status === "error") {
-                            res.json({ ...askedAgain, authToken: renewed.authToken });
-                            return true;
+                        try {
+                            const askedAgain = await fetchUserData(renewed.accessToken);
+                            if (askedAgain.status === "error") {
+                                res.json({ ...askedAgain, authToken: renewed.authToken });
+                                return true;
+                            }
+                            userData = askedAgain;
+                        } catch (askAgainErr) {
+                            console.warn("Could not ask Orbit again with the renewed token", askAgainErr);
                         }
-                        userData = askedAgain;
                     }
                     res.json({
                         username: authTokenData?.username,

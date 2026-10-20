@@ -414,6 +414,21 @@ describe("GET /me in a public room for a member whose access token ran out (#119
         expect(res.body).toEqual({ ...banned, authToken: "renewed-game-token" });
     });
 
+    it("still lets the member in with the first answer when Orbit can't be reached the second time", async () => {
+        fetchMemberDataByUuid.mockImplementation((_id: string, accessToken: string | undefined) =>
+            accessToken === "new-access"
+                ? Promise.reject(new Error("Orbit unreachable"))
+                : Promise.resolve({
+                      status: "ok",
+                      userUuid: "owner",
+                      isCharacterTexturesValid: true,
+                      isCompanionTextureValid: true,
+                  })
+        );
+        const res = await callMe({ token: "game-token", playUri });
+        expect(res.body).toEqual(expect.objectContaining({ status: "ok", authToken: "renewed-game-token" }));
+    });
+
     it("asks Orbit only once when the token is still good", async () => {
         checkTokenAuth.mockResolvedValue({});
         await callMe({ token: "game-token", playUri });

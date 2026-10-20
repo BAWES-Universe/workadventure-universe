@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => {
     (window as unknown as { env: Record<string, unknown> }).env = {
         PUSHER_URL: "http://pusher.example.com",
         PUBLIC_MAP_STORAGE_URL: "http://map-storage.example.com",
+        MAX_USERNAME_LENGTH: 25,
     };
     return { me: vi.fn(), setPlayerName: vi.fn() };
 });
@@ -74,5 +75,43 @@ describe("the account's name on this device", () => {
         await openTheGame();
         expect(mocks.setPlayerName).not.toHaveBeenCalled();
         expect(localStorage.getItem("playerName")).toBe("test");
+    });
+});
+
+// Keeping the account's name on the device must not hand it to the next guest there after signing out.
+describe("signing out", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        localStorage.clear();
+        localUserStore.restoreGuestName();
+        // On a guest's game token, as before signing in
+        localUserStore.setAuthToken(`header.${window.btoa(JSON.stringify({ identifier: "guest" }))}.signature`);
+    });
+
+    it("gives the device back the name the guest had before signing in", async () => {
+        localUserStore.setName("Nova");
+        connectionManager.goToSignIn();
+        mocks.me.mockResolvedValue(meAnswer("Khalid"));
+        await openTheGame();
+        expect(localUserStore.getName()).toBe("Khalid");
+
+        connectionManager.logout();
+        expect(localUserStore.getName()).toBe("Nova");
+    });
+
+    it("leaves no name when there was no guest name before", async () => {
+        mocks.me.mockResolvedValue(meAnswer("Khalid"));
+        await openTheGame();
+        connectionManager.logout();
+        expect(localUserStore.getName()).toBeNull();
+        expect(localStorage.getItem("playerName")).toBeNull();
+    });
+
+    it("doesn't keep the account's name as a guest's when a signed-in player is sent to sign in again", async () => {
+        mocks.me.mockResolvedValue(meAnswer("Khalid"));
+        await openTheGame();
+        connectionManager.goToSignIn();
+        connectionManager.logout();
+        expect(localUserStore.getName()).toBeNull();
     });
 });
