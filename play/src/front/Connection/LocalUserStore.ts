@@ -119,6 +119,9 @@ class LocalUserStore {
      * signing out gives the guest's own back (restoreGuestName), as with the woka.
      */
     backupGuestName(): void {
+        // Only a guest's. A device on a signed-in game token holds the account's name, also when that token was just
+        // refused and this page never took it in (isLogged() only knows a token set in this page).
+        if (this.isLogged() || this.storedTokenIsSignedIn()) return;
         const name = this.getName();
         if (name !== null) localStorage.setItem(guestNameKey, name);
     }
@@ -426,6 +429,17 @@ class LocalUserStore {
 
     getAuthToken(): string | null {
         return localStorage.getItem(authToken);
+    }
+
+    private storedTokenIsSignedIn(): boolean {
+        const token = this.getAuthToken();
+        if (!token) return false;
+        try {
+            const accessToken = JwtAuthToken.parse(LocalUserStore.parseJwt(token)).accessToken;
+            return accessToken !== undefined && accessToken !== null;
+        } catch {
+            return false;
+        }
     }
 
     isLogged(): boolean {

@@ -160,9 +160,8 @@ class ConnectionManager {
      * @param providerScopes - The scopes to request from the OpenID provider.
      */
     public loadOpenIDScreen(manuallyTriggered: boolean, providerId?: string, providerScopes?: string[]): URL | null {
-        // A guest's name is kept aside too, for when they sign out again. A signed-in player sent to sign in again
-        // holds the account's name, which is not a guest's.
-        if (!localUserStore.isLogged()) localUserStore.backupGuestName();
+        // A guest's name is kept aside too, for when they sign out again (not an account's: see backupGuestName).
+        localUserStore.backupGuestName();
         localUserStore.setAuthToken(null);
         // Clear guest-picked textures/name/companion so OIDC user's
         // saved data loads from DB via the /room/access fallback.
@@ -209,7 +208,7 @@ class ConnectionManager {
      * in comes back to this room with the account's token, as through /login.
      */
     public goToSignIn(): void {
-        if (!localUserStore.isLogged()) localUserStore.backupGuestName();
+        localUserStore.backupGuestName();
         if (!ENABLE_OPENID || !this._currentRoom) {
             window.location.assign("/login");
             return;

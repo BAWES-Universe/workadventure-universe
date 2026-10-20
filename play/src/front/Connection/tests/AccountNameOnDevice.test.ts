@@ -20,7 +20,9 @@ vi.mock("../../Phaser/Game/GameManager", () => ({
         setVisitCardUrl: vi.fn(),
     },
 }));
-vi.mock("../../Administration/AnalyticsClient", () => ({ analyticsClient: { identifyUser: vi.fn() } }));
+vi.mock("../../Administration/AnalyticsClient", () => ({
+    analyticsClient: { identifyUser: vi.fn(), loggedWithToken: vi.fn(), loggedWithSso: vi.fn() },
+}));
 vi.mock("../../Network/ServiceWorker", () => ({ _ServiceWorker: class {} }));
 vi.mock("../../Chat/Utils", () => ({ openChatRoom: vi.fn() }));
 vi.mock("../../external-modules/admin-api/orbitAccessToken", () => ({ gameTokenToJoinWith: vi.fn() }));
@@ -105,6 +107,15 @@ describe("signing out", () => {
         connectionManager.logout();
         expect(localUserStore.getName()).toBeNull();
         expect(localStorage.getItem("playerName")).toBeNull();
+    });
+
+    it("doesn't keep the account's name as a guest's when the page never took in the refused signed-in token", () => {
+        // A new page on a signed-in token that /me refused: this page never set it, so it doesn't count as signed in.
+        localStorage.setItem("authToken", gameToken);
+        localUserStore.setName("Khalid");
+        connectionManager.loadOpenIDScreen(false);
+        connectionManager.logout();
+        expect(localUserStore.getName()).toBeNull();
     });
 
     it("doesn't keep the account's name as a guest's when a signed-in player is sent to sign in again", async () => {
