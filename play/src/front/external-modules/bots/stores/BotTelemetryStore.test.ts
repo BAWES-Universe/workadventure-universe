@@ -78,6 +78,16 @@ describe("BotTelemetryStore", () => {
         expect(get(botTelemetryStore)?.saveError).toBe("Orbit said no");
     });
 
+    it("goes back to what Orbit holds when two quick changes both fail", async () => {
+        mocks.getBotTelemetry.mockResolvedValue({ universeHides: false, on: true });
+        await loadBotTelemetry("bot-1");
+        mocks.saveBotTelemetry.mockRejectedValue(new Error("Orbit said no"));
+        await Promise.all([setBotTelemetry("bot-1", false), setBotTelemetry("bot-1", true)]);
+        expect(get(botTelemetryStore)?.data).toEqual({ universeHides: false, on: true });
+        expect(get(botTelemetryStore)?.saveError).toBe("Orbit said no");
+        expect(mocks.saveBotTelemetry).toHaveBeenCalledTimes(2);
+    });
+
     it("changes nothing for a bot whose universe has telemetry off", async () => {
         mocks.getBotTelemetry.mockResolvedValue({ universeHides: true, on: false });
         await loadBotTelemetry("bot-1");

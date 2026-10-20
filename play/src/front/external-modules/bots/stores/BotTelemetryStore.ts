@@ -43,28 +43,49 @@ export async function loadBotTelemetry(botId: string): Promise<void> {
     }
 }
 
+/**
+ * Changes to one bot are saved one after the other, and a refused one goes back to what Orbit last confirmed, never to
+ * a state the page only showed. So two quick taps that both fail leave the switch where Orbit holds it.
+ */
+const tails = new Map<string, Promise<unknown>>();
+const confirmed = new Map<string, BotTelemetry>();
+
 /** Turn the switch on or off for this bot. */
 export async function setBotTelemetry(botId: string, on: boolean): Promise<void> {
     const before = get(botTelemetryStore);
     if (!before || before.botId !== botId || !before.data || before.data.universeHides) return;
-    const previous = before.data;
-    const mine = ++latest;
-    update(botId, (state) => ({ ...state, data: { ...previous, on }, saveError: undefined }));
-    try {
-        const data = await botApiService.saveBotTelemetry(botId, on);
-        if (mine === latest) update(botId, () => ({ botId, status: "ready", data }));
-    } catch (error) {
-        console.error("[BotTelemetryStore] Failed to save bot chat telemetry:", error);
-        if (mine !== latest) return;
-        update(botId, (state) => ({
-            ...state,
-            data: previous,
-            saveError: lineOf(error, get(LL).mapEditor.edit.bots.page.telemetry.saveFailed()),
-        }));
-    }
+    if (!confirmed.has(botId)) confirmed.set(botId, before.data);
+    latest++;
+    update(botId, (state) => ({ ...state, data: state.data && { ...state.data, on }, saveError: undefined }));
+    const run = (tails.get(botId) ?? Promise.resolve()).then(async () => {
+        try {
+            const data = await botApiService.saveBotTelemetry(botId, on);
+            confirmed.set(botId, data);
+            // Only the last change in the line sets the page: an earlier answer must not undo a newer tap
+            if (tails.get(botId) === run) update(botId, () => ({ botId, status: "ready", data }));
+        } catch (error) {
+            console.error("[BotTelemetryStore] Failed to save bot chat telemetry:", error);
+            const held = confirmed.get(botId);
+            if (tails.get(botId) !== run) return;
+            update(botId, (state) => ({
+                ...state,
+                data: held ?? state.data,
+                saveError: lineOf(error, get(LL).mapEditor.edit.bots.page.telemetry.saveFailed()),
+            }));
+        } finally {
+            if (tails.get(botId) === run) {
+                tails.delete(botId);
+                confirmed.delete(botId);
+            }
+        }
+    });
+    tails.set(botId, run);
+    await run;
 }
 
 export function clearBotTelemetry(): void {
     latest++;
+    tails.clear();
+    confirmed.clear();
     botTelemetryStore.set(undefined);
 }

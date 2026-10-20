@@ -16,12 +16,16 @@
         };
     }
 
+    // Caught before the bot page's own Escape handler, so Escape closes this popup and not the screen behind it
     function onKeydown(e: KeyboardEvent) {
-        if (e.key === "Escape") onClose();
+        if (e.key === "Escape") {
+            e.stopPropagation();
+            onClose();
+        }
     }
 </script>
 
-<svelte:window on:keydown={onKeydown} />
+<svelte:window on:keydown|capture={onKeydown} />
 
 <!-- svelte-ignore a11y-click-events-have-key-events -->
 <div
