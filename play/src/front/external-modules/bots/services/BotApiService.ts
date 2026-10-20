@@ -874,7 +874,7 @@ export class BotApiService {
         const late = new Promise<never>((_resolve, reject) => {
             timer = setTimeout(() => {
                 stop.abort();
-                reject(new Error("Orbit did not answer in time"));
+                reject(new Error("Orbit did not answer in time. Check again in a moment."));
             }, PERMISSIONS_TIMEOUT_MS);
         });
         const running = run(stop.signal);
