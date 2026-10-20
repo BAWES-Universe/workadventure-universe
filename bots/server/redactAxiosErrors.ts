@@ -25,8 +25,8 @@ function redactHeaders(headers: unknown): void {
     }
 }
 
-/** `https://user:password@host/...`: the login written in front of the host. */
-const URL_LOGIN = /^([a-z][a-z0-9+.-]*:\/\/)[^/?#@]*@/i;
+/** `https://user:password@host/...`: the login written in front of the host. It runs to the last `@` before the path, as the URL standard reads it, so a password holding an `@` is covered too. */
+const URL_LOGIN = /^([a-z][a-z0-9+.-]*:\/\/)[^/?#]*@/i;
 
 /** The address with its login and every secret-looking query value replaced, so a key passed as `?key=` or `user:pw@` stays out of the logs. */
 export function redactUrl(url: string): string {

@@ -75,6 +75,8 @@ describe('a failed axios call keeps tokens and message text out of the logs', ()
         }
         expect(redactUrl('https://orbit.example.com/api/bots?room=lobby')).toBe('https://orbit.example.com/api/bots?room=lobby');
         expect(redactUrl('https://u:p@orbit.example.com/api')).toBe('https://[redacted]@orbit.example.com/api');
+        expect(redactUrl('https://u:pa@ss@orbit.example.com/api?room=lobby')).toBe('https://[redacted]@orbit.example.com/api?room=lobby');
+        expect(redactUrl('https://orbit.example.com/api/user@example.com')).toBe('https://orbit.example.com/api/user@example.com');
     });
 
     it('a server that cannot be reached at all: the token is still not logged', async () => {
