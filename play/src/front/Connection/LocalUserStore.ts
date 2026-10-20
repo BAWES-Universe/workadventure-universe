@@ -20,6 +20,7 @@ const requestedMicrophoneStateKey = "requestedMicrophoneStateKey";
 const characterTexturesKey = "characterTextures";
 const guestCharacterTexturesKey = "guestCharacterTextures";
 const guestNameKey = "guestPlayerName";
+const playerNameIsAccountsKey = "playerNameIsAccounts";
 const companionKey = "companion";
 const audioPlayerVolumeKey = "audioVolume";
 const audioPlayerMuteKey = "audioMute";
@@ -109,9 +110,12 @@ class LocalUserStore {
         return data ? JSON.parse(data) : null;
     }
 
-    setName(name: string): void {
+    /** fromAccount: the account's name (from Orbit, or a rename while signed in), not one a guest typed. */
+    setName(name: string, fromAccount = false): void {
         this.name = name;
         localStorage.setItem(playerNameKey, name);
+        if (fromAccount) localStorage.setItem(playerNameIsAccountsKey, "true");
+        else localStorage.removeItem(playerNameIsAccountsKey);
     }
 
     /**
@@ -119,9 +123,9 @@ class LocalUserStore {
      * signing out gives the guest's own back (restoreGuestName), as with the woka.
      */
     backupGuestName(): void {
-        // Only a guest's. A device on a signed-in game token holds the account's name, also when that token was just
-        // refused and this page never took it in (isLogged() only knows a token set in this page).
-        if (this.isLogged() || this.storedTokenIsSignedIn()) return;
+        // Only a guest's: never the account's name the device kept, also once its sign-in was refused and the device
+        // carried on as a guest.
+        if (this.isLogged() || localStorage.getItem(playerNameIsAccountsKey) === "true") return;
         const name = this.getName();
         if (name !== null) localStorage.setItem(guestNameKey, name);
     }
@@ -135,6 +139,7 @@ class LocalUserStore {
         }
         this.name = undefined;
         localStorage.removeItem(playerNameKey);
+        localStorage.removeItem(playerNameIsAccountsKey);
     }
 
     getName(): string | null {
@@ -429,17 +434,6 @@ class LocalUserStore {
 
     getAuthToken(): string | null {
         return localStorage.getItem(authToken);
-    }
-
-    private storedTokenIsSignedIn(): boolean {
-        const token = this.getAuthToken();
-        if (!token) return false;
-        try {
-            const accessToken = JwtAuthToken.parse(LocalUserStore.parseJwt(token)).accessToken;
-            return accessToken !== undefined && accessToken !== null;
-        } catch {
-            return false;
-        }
     }
 
     isLogged(): boolean {

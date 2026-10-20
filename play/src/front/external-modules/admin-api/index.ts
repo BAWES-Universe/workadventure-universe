@@ -380,7 +380,7 @@ function applyPendingPlayerName() {
     if (!name || name === gameManager.getPlayerName()) return;
     gameManager.setPlayerName(name);
     // Orbit already has it; this device keeps a copy too, so it never comes back with an older name (#1192).
-    localUserStore.setName(name);
+    localUserStore.setName(name, localUserStore.isLogged());
     gameManager.rejoinCurrentRoom();
 }
 

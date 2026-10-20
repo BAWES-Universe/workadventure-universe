@@ -56,7 +56,7 @@ export class LoginScene extends ResizableScene {
         await connectionManager.saveName(name);
         gameManager.setPlayerName(name);
         // Also kept on this device, signed in or not: a device that kept an older name showed it again (#1192).
-        localUserStore.setName(name);
+        localUserStore.setName(name, localUserStore.isLogged());
 
         this.scene.stop(LoginSceneName);
         gameManager.goToNextSceneAfterName();

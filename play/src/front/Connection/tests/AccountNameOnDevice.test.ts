@@ -109,10 +109,19 @@ describe("signing out", () => {
         expect(localStorage.getItem("playerName")).toBeNull();
     });
 
+    it("doesn't keep the account's name as a guest's once a refused sign-in carried on as a guest", async () => {
+        mocks.me.mockResolvedValue(meAnswer("Khalid"));
+        await openTheGame();
+        // The sign-in was refused later and the game went on with a guest's token, keeping the name it had.
+        localUserStore.setAuthToken(`header.${window.btoa(JSON.stringify({ identifier: "guest-2" }))}.signature`);
+        connectionManager.goToSignIn();
+        connectionManager.logout();
+        expect(localUserStore.getName()).toBeNull();
+    });
+
     it("doesn't keep the account's name as a guest's when the page never took in the refused signed-in token", () => {
         // A new page on a signed-in token that /me refused: this page never set it, so it doesn't count as signed in.
-        localStorage.setItem("authToken", gameToken);
-        localUserStore.setName("Khalid");
+        localUserStore.setName("Khalid", true);
         connectionManager.loadOpenIDScreen(false);
         connectionManager.logout();
         expect(localUserStore.getName()).toBeNull();

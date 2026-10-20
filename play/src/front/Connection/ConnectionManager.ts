@@ -894,7 +894,7 @@ class ConnectionManager {
                 gameManager.setPlayerName(username);
                 // The account's name is the one that counts. The device keeps a copy so it never comes back with an
                 // older name it held (#1192).
-                localUserStore.setName(username);
+                localUserStore.setName(username, true);
             } else {
                 if (opidWokaNamePolicy === "force_opid") {
                     gameManager.setPlayerName(username);
