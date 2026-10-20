@@ -276,15 +276,15 @@
         const capturedPreviousBot = previousPlacingBot;
         previousPlacingBot = bot;
 
-        // Placement ended without the bot being picked (cancelled by the button or Escape): the bot is not in the
-        // list, so a note about its telemetry would point at nothing
+        // Placement ended without the bot being picked (cancelled by the button or Escape): the bot exists in Orbit
+        // with telemetry still on, so it is listed and its note stays, instead of the person's "off" going unsaid
         if (
             capturedPreviousBot &&
             !bot &&
             get(botTelemetryNoticeStore)?.botId === capturedPreviousBot.id &&
             get(selectedBotStore)?.id !== capturedPreviousBot.id
         ) {
-            botTelemetryNoticeStore.set(null);
+            upsertBot(capturedPreviousBot);
         }
 
         // If placement was just completed (bot went from defined to undefined)
