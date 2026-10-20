@@ -75,6 +75,19 @@
         });
     }
 
+    /** The provider in a saved AI config (see aiConfigOf); undefined when the bot had none, null when nothing is saved yet */
+    function savedProviderRef(savedAIConfig: string | null): string | undefined | null {
+        if (savedAIConfig === null) return null;
+        try {
+            return (JSON.parse(savedAIConfig) as { aiProviderRef?: string }).aiProviderRef;
+        } catch {
+            return null;
+        }
+    }
+
+    /** Whether the banner shows a save Orbit refused, so the next save that goes through clears it */
+    let refusedSave = false;
+
     /** Debounce a save (wait 1 second after the last change), replacing the pending save of the same kind */
     function scheduleSave(kind: SaveKind, save: () => void): void {
         const pending = pendingSaves.get(kind);
@@ -189,13 +202,17 @@
                             // behind this bot's other saves, and reads the type when it runs rather than from this
                             // snapshot: the behavior may have been switched in the meantime, and a stale type would
                             // switch it back.
+                            // The provider is sent only when it was changed here. Sent with every save, a page left
+                            // open would put back a provider Orbit has since moved the bot off (a key that was pulled).
+                            const savedRef = savedProviderRef(lastSavedAIConfig);
+                            const providerChanged = savedRef === null || bot.aiProviderRef !== savedRef;
                             await queueBotSave(bot.id, () => {
                                 const currentBot = get(botPreviewsStore).get(bot.id) ?? bot;
                                 const behaviorType =
                                     currentBot.behaviorType || currentBot.behaviorConfig?.behaviorType || "idle";
                                 return botApiService.updateBot(bot.id, {
                                     behaviorType, // Include behaviorType explicitly to ensure it's saved
-                                    aiProviderRef: bot.aiProviderRef,
+                                    ...(providerChanged ? { aiProviderRef: bot.aiProviderRef } : {}),
                                     chatInstructions: bot.chatInstructions,
                                     toolTimeoutSeconds: bot.toolTimeoutSeconds ?? null,
                                     description: bot.description ?? "",
@@ -205,8 +222,25 @@
                                 console.log("[BotEditor] AI config update successful");
                             }
                             lastSavedAIConfig = currentAIConfig;
+                            if (refusedSave) {
+                                refusedSave = false;
+                                error = null;
+                            }
                         } catch (e) {
                             console.error("[BotEditor] Failed to auto-save bot AI config:", e);
+
+                            // Orbit refused the save and said why (a key that isn't theirs, or isn't lent here): say so,
+                            // and put the provider back to the one that is really saved, so the page doesn't show a move that didn't happen
+                            if ((e as Error & { status?: number })?.status === 400) {
+                                error = (e as Error).message;
+                                refusedSave = true;
+                                const savedRef = savedProviderRef(lastSavedAIConfig);
+                                const currentBot = get(botPreviewsStore).get(bot.id);
+                                if (savedRef !== null && currentBot && currentBot.aiProviderRef !== savedRef) {
+                                    upsertBot({ ...currentBot, aiProviderRef: savedRef });
+                                }
+                                return;
+                            }
 
                             // Check if it's an authentication error - show error for auth issues
                             const isAuthError = (e as Error & { isAuthError?: boolean })?.isAuthError === true;

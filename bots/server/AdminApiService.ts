@@ -134,6 +134,14 @@ export interface BotUsageQuery {
     endDate?: Date;
 }
 
+/** Orbit turned a bot save down and said why, in words meant for the person saving. */
+export class BotConfigRefused extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'BotConfigRefused';
+    }
+}
+
 export class AdminApiService {
     private adminApiUrl: string;
     // Cache for room metadata (room URL -> metadata, cached for 5 minutes)
@@ -156,7 +164,7 @@ export class AdminApiService {
     /**
      * Save bot configuration to admin API
      */
-    async saveBotConfiguration(config: BotConfiguration): Promise<void> {
+    async saveBotConfiguration(config: BotConfiguration, actingSession?: string): Promise<void> {
         if (!this.isConfigured()) {
             console.warn('[AdminApiService] Admin API not configured, skipping bot configuration save');
             return;
@@ -186,7 +194,8 @@ export class AdminApiService {
                 payload,
                 {
                     headers: {
-                        Authorization: `Bearer ${this.adminApiToken}`,
+                        // A change only a person may make (a bot on their own AI key) goes with their session, so Orbit can see whose it is
+                        Authorization: `Bearer ${actingSession ?? this.adminApiToken}`,
                         'Content-Type': 'application/json',
                     },
                 }
@@ -196,6 +205,10 @@ export class AdminApiService {
                 console.log(`[AdminApiService] Successfully saved bot config for ${config.botId}`);
             }
         } catch (error) {
+            // Orbit turned the save down and said why: that is an answer for the person, not a crash
+            if (axios.isAxiosError(error) && error.response?.status === 400 && typeof error.response.data?.error === 'string') {
+                throw new BotConfigRefused(error.response.data.error);
+            }
             console.error('[AdminApiService] Error saving bot configuration:', error);
             if ((process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') && axios.isAxiosError(error) && error.response) {
                 console.error('[AdminApiService] Response status:', error.response.status);
