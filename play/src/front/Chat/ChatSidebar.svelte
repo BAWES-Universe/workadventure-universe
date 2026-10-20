@@ -311,7 +311,8 @@
 <svelte:window on:resize={onresize} />
 {#if $chatVisibilityStore && sheet}
     <!-- The sheet keeps the chat's id and test id: everything that looks for the chat finds it. -->
-    <!-- A tap anywhere on the chat brings it in front of a window it overlaps. -->
+    <!-- A tap anywhere on the chat brings it in front of a window it overlaps. ph-mask and ph-sensitive keep what people
+         and bots write out of PostHog: session replays show it as asterisks and clicks carry no text (#1166). -->
     <!-- svelte-ignore a11y-no-static-element-interactions -->
     <section
         bind:this={container}
@@ -325,7 +326,7 @@
             0,
             $windowSize.height - sheetHeight
         )}px));"
-        class="chatWindow chat-sheet u-surface-flat p-0 screen-blocker"
+        class="chatWindow chat-sheet u-surface-flat p-0 screen-blocker ph-mask ph-sensitive"
         class:dragging={sheetDragHeight !== undefined}
     >
         <SheetDragHandle
@@ -359,7 +360,7 @@
         </div>
     </section>
 {:else if $chatVisibilityStore}
-    <!-- A click anywhere on the chat brings it in front of a window it overlaps. -->
+    <!-- A click anywhere on the chat brings it in front of a window it overlaps. ph-mask and ph-sensitive: as above. -->
     <!-- svelte-ignore a11y-no-static-element-interactions -->
     <section
         bind:this={container}
@@ -373,7 +374,7 @@
         on:introend={() => reposition()}
         on:outroend={() => reposition()}
         style="width: {sideBarWidth}px; max-width: {sideBarWidth}px;"
-        class=" chatWindow !min-w-[150px] max-sm:!min-w-[150px] u-surface-flat p-0 screen-blocker"
+        class=" chatWindow !min-w-[150px] max-sm:!min-w-[150px] u-surface-flat p-0 screen-blocker ph-mask ph-sensitive"
     >
         {#if $chatCarriesItsCloseStore && isInSpecificDiscussion}
             <!-- The same plain close as the one beside the Chats and People tabs, in the same place. -->
