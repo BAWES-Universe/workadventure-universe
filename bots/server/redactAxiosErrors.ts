@@ -25,11 +25,15 @@ function redactHeaders(headers: unknown): void {
     }
 }
 
-/** The address with every secret-looking query value replaced, so a key passed as `?key=` stays out of the logs. */
+/** `https://user:password@host/...`: the login written in front of the host. */
+const URL_LOGIN = /^([a-z][a-z0-9+.-]*:\/\/)[^/?#@]*@/i;
+
+/** The address with its login and every secret-looking query value replaced, so a key passed as `?key=` or `user:pw@` stays out of the logs. */
 export function redactUrl(url: string): string {
-    const queryStart = url.indexOf('?');
-    if (queryStart === -1) return url;
-    const params = new URLSearchParams(url.slice(queryStart + 1));
+    const withoutLogin = url.replace(URL_LOGIN, `$1${REDACTED}@`);
+    const queryStart = withoutLogin.indexOf('?');
+    if (queryStart === -1) return withoutLogin;
+    const params = new URLSearchParams(withoutLogin.slice(queryStart + 1));
     let changed = false;
     for (const name of [...params.keys()]) {
         if (SECRET_NAME.test(name)) {
@@ -37,7 +41,7 @@ export function redactUrl(url: string): string {
             changed = true;
         }
     }
-    return changed ? `${url.slice(0, queryStart)}?${params.toString()}` : url;
+    return changed ? `${withoutLogin.slice(0, queryStart)}?${params.toString()}` : withoutLogin;
 }
 
 /** Hide a property from logging (`util.inspect`, `JSON.stringify`) while leaving it readable for code. */
@@ -54,6 +58,7 @@ export function redactAxiosError(error: unknown): unknown {
     if (config) {
         redactHeaders(config.headers);
         if (typeof config.url === 'string') config.url = redactUrl(config.url);
+        if (typeof config.baseURL === 'string') config.baseURL = redactUrl(config.baseURL);
         // The request body (a transcript, a memory, an MCP call's arguments) is never needed to read the error
         if (config.data !== undefined) {
             config.data = typeof config.data === 'string' ? `${REDACTED} ${config.data.length} chars` : REDACTED;

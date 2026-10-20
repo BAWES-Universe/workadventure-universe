@@ -64,6 +64,19 @@ describe('a failed axios call keeps tokens and message text out of the logs', ()
         expect(format(error)).toContain('room=lobby');
     });
 
+    it('a login written in the address (with or without a query) is not logged, and an address without one is unchanged', async () => {
+        const port = new URL(baseUrl).port;
+        const withQuery = await failingCall(axios.post(`http://svc:${TOKEN}@127.0.0.1:${port}/mcp?room=lobby`, {}));
+        const withoutQuery = await failingCall(axios.get(`http://svc:${TOKEN}@127.0.0.1:${port}/mcp`));
+        const viaBase = await failingCall(axios.get('/mcp', { baseURL: `http://svc:${TOKEN}@127.0.0.1:${port}` }));
+        for (const error of [withQuery, withoutQuery, viaBase]) {
+            expect(format(error)).not.toContain(TOKEN);
+            expect(sentryLogAttribute(error)).not.toContain(TOKEN);
+        }
+        expect(redactUrl('https://orbit.example.com/api/bots?room=lobby')).toBe('https://orbit.example.com/api/bots?room=lobby');
+        expect(redactUrl('https://u:p@orbit.example.com/api')).toBe('https://[redacted]@orbit.example.com/api');
+    });
+
     it('a server that cannot be reached at all: the token is still not logged', async () => {
         const error = await failingCall(
             axios.get('http://127.0.0.1:9/api/bots', { headers: { Authorization: `Bearer ${TOKEN}` }, timeout: 2000 })
