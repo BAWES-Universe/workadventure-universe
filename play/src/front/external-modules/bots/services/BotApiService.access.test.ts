@@ -104,6 +104,44 @@ describe("a bot server that does not answer", () => {
     });
 });
 
+describe("an Orbit that does not answer about who may use a bot", () => {
+    beforeEach(() => {
+        sessionStorage.clear();
+        vi.restoreAllMocks();
+        vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    function hang(): void {
+        vi.spyOn(globalThis, "fetch").mockImplementation(
+            (_url, init) =>
+                new Promise<Response>((_resolve, reject) => {
+                    init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+                })
+        );
+    }
+
+    it("fails a read, a change, a row change and a removal after a while instead of holding the page", async () => {
+        const api = service();
+        const calls = [
+            () => api.getBotPermissions("b1"),
+            () => api.saveBotPermissions("b1", { privateBot: true }),
+            () => api.saveBotRule("b1", { roleId: "r1" }, { dm: "no" }),
+            () => api.deleteBotRule("b1", { roleId: "r1" }),
+        ];
+        for (const call of calls) {
+            hang();
+            const asked = call();
+            const failed = expect(asked).rejects.toThrow("Orbit did not answer in time");
+            await vi.advanceTimersByTimeAsync(20000);
+            await failed;
+        }
+    });
+});
+
 describe("summoning a bot the owner limits", () => {
     beforeEach(() => {
         sessionStorage.clear();

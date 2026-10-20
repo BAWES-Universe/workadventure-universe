@@ -22,6 +22,8 @@ const SESSION_EXPIRES_KEY = "orbit_admin_session_v2_expires";
 const OPAQUE_SESSION_PATTERN = /^orb_sess_v2_[0-9a-f]{64}$/;
 /** How long the game waits to learn whether Summon is allowed before it shows the button anyway */
 const ACCESS_CHECK_TIMEOUT_MS = 3000;
+/** How long a read or change of who may use a bot waits for Orbit before it counts as failed */
+const PERMISSIONS_TIMEOUT_MS = 20000;
 
 export function isOrbitSessionResponse(value: unknown): value is { version: 2; sessionId: string; expiresAt: number } {
     if (!value || typeof value !== "object") return false;
@@ -861,10 +863,29 @@ export class BotApiService {
         }
     }
 
+    /**
+     * Run one request about who may use a bot, and give up when Orbit does not answer. The page queues these one after
+     * another, so a request that hangs would otherwise hold back every change after it.
+     */
+    private async withPermissionsTimeout<T>(run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+        const stop = new AbortController();
+        const timer = setTimeout(() => stop.abort(), PERMISSIONS_TIMEOUT_MS);
+        try {
+            return await run(stop.signal);
+        } catch (error) {
+            if (stop.signal.aborted) throw new Error("Orbit did not answer in time");
+            throw error;
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
     /** Who may use this bot: Private bot, the line refused people hear, every rule, and the roles a rule can name */
     async getBotPermissions(botId: string): Promise<BotPermissions> {
-        const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/permissions`);
-        return readPermissions(await response.json());
+        return this.withPermissionsTimeout(async (signal) => {
+            const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/permissions`, { signal });
+            return readPermissions(await response.json());
+        });
     }
 
     /** Private bot and the line refused people hear; only what is sent changes. Answers with all of it. */
@@ -872,11 +893,14 @@ export class BotApiService {
         botId: string,
         change: { privateBot?: boolean; refusalReply?: string | null }
     ): Promise<BotPermissions> {
-        const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/permissions`, {
-            method: "PUT",
-            body: JSON.stringify(change),
+        return this.withPermissionsTimeout(async (signal) => {
+            const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/permissions`, {
+                method: "PUT",
+                body: JSON.stringify(change),
+                signal,
+            });
+            return readPermissions(await response.json());
         });
-        return readPermissions(await response.json());
     }
 
     /**
@@ -888,13 +912,16 @@ export class BotApiService {
         subject: { roleId: string } | { identifier: string } | { userId: string },
         values: Partial<Record<RuleAction, RuleValue>>
     ): Promise<BotRule> {
-        const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/permissions/rules`, {
-            method: "PUT",
-            body: JSON.stringify({ ...subject, ...values }),
+        return this.withPermissionsTimeout(async (signal) => {
+            const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/permissions/rules`, {
+                method: "PUT",
+                body: JSON.stringify({ ...subject, ...values }),
+                signal,
+            });
+            const rule = readRule(await response.json());
+            if (!rule) throw new Error("Orbit answered with something the game does not understand");
+            return rule;
         });
-        const rule = readRule(await response.json());
-        if (!rule) throw new Error("Orbit answered with something the game does not understand");
-        return rule;
     }
 
     /** Take a role's or a person's row off this bot: they follow the roles again */
@@ -903,7 +930,12 @@ export class BotApiService {
             "roleId" in subject
                 ? `roleId=${encodeURIComponent(subject.roleId)}`
                 : `userId=${encodeURIComponent(subject.userId)}`;
-        await this.fetch(`/api/bots/${encodeURIComponent(botId)}/permissions/rules?${query}`, { method: "DELETE" });
+        await this.withPermissionsTimeout((signal) =>
+            this.fetch(`/api/bots/${encodeURIComponent(botId)}/permissions/rules?${query}`, {
+                method: "DELETE",
+                signal,
+            })
+        );
     }
 
     // ─── MCP Server management ──────────────────────────────────────────────────────
