@@ -14,6 +14,12 @@ export interface BotTelemetryState {
 
 export const botTelemetryStore = writable<BotTelemetryState | undefined>(undefined);
 
+/**
+ * A new bot was made but its telemetry "off" was not saved: said until the person sets it, dismisses it or moves to
+ * another bot. Kept here and not in the editor, so it still shows if the editor was closed while the save failed.
+ */
+export const botTelemetryNoticeStore = writable<{ botId: string; text: string } | null>(null);
+
 /** Only the newest request of a bot may set the page: an older answer arriving late would undo a newer change. */
 const latest = new Map<string, number>();
 function ticket(botId: string): number {

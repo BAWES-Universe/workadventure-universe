@@ -39,7 +39,7 @@
     } from "./stores/BotEditorStore";
     import { routeStops } from "./behaviorModel";
     import { botPermissionsStore } from "./stores/BotPermissionsStore";
-    import { botTelemetryStore } from "./stores/BotTelemetryStore";
+    import { botTelemetryNoticeStore, botTelemetryStore } from "./stores/BotTelemetryStore";
     import { ruleName } from "./accessModel";
     import { getBotEditorTool } from "./phaser/BotEditorTool";
     import { botApiService } from "./services/BotApiService";
@@ -50,14 +50,13 @@
     let isLoading = false;
     let error: string | null = null;
     // A new bot was made but its bot chat telemetry "off" was not saved: said until the person sets it, dismisses it or
-    // moves to another bot
-    let telemetryNotice: { botId: string; text: string } | null = null;
+    // moves to another bot (kept in botTelemetryNoticeStore, so it outlives the editor)
     $: if (
-        telemetryNotice &&
-        $botTelemetryStore?.botId === telemetryNotice.botId &&
+        $botTelemetryNoticeStore &&
+        $botTelemetryStore?.botId === $botTelemetryNoticeStore.botId &&
         $botTelemetryStore.data?.on === false
     ) {
-        telemetryNotice = null;
+        botTelemetryNoticeStore.set(null);
     }
 
     // Subscribe to stores
@@ -279,10 +278,10 @@
         if (
             capturedPreviousBot &&
             !bot &&
-            telemetryNotice?.botId === capturedPreviousBot.id &&
+            get(botTelemetryNoticeStore)?.botId === capturedPreviousBot.id &&
             get(selectedBotStore)?.id !== capturedPreviousBot.id
         ) {
-            telemetryNotice = null;
+            botTelemetryNoticeStore.set(null);
         }
 
         // If placement was just completed (bot went from defined to undefined)
@@ -420,7 +419,8 @@
     }
 
     function handleSelectBot(bot: BotData | null) {
-        if (telemetryNotice && bot?.id !== telemetryNotice.botId) telemetryNotice = null;
+        const notice = get(botTelemetryNoticeStore);
+        if (notice && bot?.id !== notice.botId) botTelemetryNoticeStore.set(null);
         selectBot(bot || undefined);
     }
 
@@ -521,11 +521,11 @@
             // note shown if its telemetry off was not saved), but placement is not theirs to resume
             if (destroyed || get(botEditorModeStore) !== "create") {
                 upsertBot(newBot);
-                if (telemetryNotSaved && !destroyed) {
-                    telemetryNotice = {
+                if (telemetryNotSaved) {
+                    botTelemetryNoticeStore.set({
                         botId: newBot.id,
-                        text: $LL.mapEditor.edit.bots.page.telemetry.createdButNotSaved(),
-                    };
+                        text: get(LL).mapEditor.edit.bots.page.telemetry.createdButNotSaved(),
+                    });
                 }
                 return;
             }
@@ -535,10 +535,10 @@
             // Start placement mode - user will click on map to set position
             startPlacingBot(newBot);
             if (telemetryNotSaved) {
-                telemetryNotice = {
+                botTelemetryNoticeStore.set({
                     botId: newBot.id,
-                    text: $LL.mapEditor.edit.bots.page.telemetry.createdButNotSaved(),
-                };
+                    text: get(LL).mapEditor.edit.bots.page.telemetry.createdButNotSaved(),
+                });
             }
         } catch (e) {
             console.error("[BotEditor] Failed to create bot:", e);
@@ -549,7 +549,7 @@
     }
 
     function handleBackToList() {
-        telemetryNotice = null;
+        botTelemetryNoticeStore.set(null);
         selectBot(undefined);
         botEditorModeStore.set("list");
     }
@@ -829,12 +829,12 @@
 </script>
 
 <div class="bot-editor flex flex-col h-full min-h-0">
-    {#if telemetryNotice}
+    {#if $botTelemetryNoticeStore}
         <div class="bg-red-500/20 border border-red-500/50 rounded-lg p-4 m-4" data-testid="bot-telemetry-notice">
-            <p class="text-red-200 text-sm">{telemetryNotice.text}</p>
+            <p class="text-red-200 text-sm">{$botTelemetryNoticeStore.text}</p>
             <button
                 class="mt-2 px-3 py-1 bg-red-500/20 text-red-200 rounded hover:bg-red-500/30 text-xs"
-                on:click={() => (telemetryNotice = null)}
+                on:click={() => botTelemetryNoticeStore.set(null)}
             >
                 {$LL.mapEditor.edit.bots.page.telemetry.dismiss()}
             </button>

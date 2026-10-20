@@ -80,6 +80,15 @@
         telemetryLoadedFor = bot.id;
         void loadBotTelemetry(bot.id);
     }
+    // Opening Advanced settings after the read failed asks Orbit again (once per opening), so there is no need to leave
+    // the bot to retry
+    let advancedWasOpen = false;
+    $: {
+        if (editingAdvanced && !advancedWasOpen && bot && telemetryState?.status === "failed") {
+            void loadBotTelemetry(bot.id);
+        }
+        advancedWasOpen = editingAdvanced;
+    }
     let switching = false;
     let switchError: string | null = null;
     let openGroup: string | undefined = lastOpenGroup;
