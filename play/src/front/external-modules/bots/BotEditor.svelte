@@ -109,6 +109,9 @@
         }
         const previousBot = selectedBot;
         selectedBot = bot || null;
+        // Picking a different bot (the list and the map both end up here) ends a note about another one
+        const notice = get(botTelemetryNoticeStore);
+        if (notice && bot && bot.id !== notice.botId) botTelemetryNoticeStore.set(null);
 
         // Initialize lastSaved values when bot first selected or changes
         if (bot && (!previousBot || previousBot.id !== bot.id)) {
@@ -316,7 +319,10 @@
         // Load bots from API (tool will create previews via store subscription).
         // Reopening the editor in the same room keeps the current list on screen while it refreshes.
         const loadedRoomId = get(botsLoadedForRoomIdStore);
-        await loadBots({ keepCurrent: loadedRoomId !== null && loadedRoomId === botApiService.getRoomId() });
+        const sameRoom = loadedRoomId !== null && loadedRoomId === botApiService.getRoomId();
+        // A note kept from another room points at a bot that is not here
+        if (!sameRoom) botTelemetryNoticeStore.set(null);
+        await loadBots({ keepCurrent: sameRoom });
 
         // The editor was closed while loading: don't reactivate the tool or leave a subscription nothing removes
         if (destroyed) {
@@ -337,6 +343,7 @@
                 return; // Skip initial value
             }
             // Room changed - reload bots for the new room
+            botTelemetryNoticeStore.set(null);
             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                 console.log(`[BotEditor] Room change detected (trigger: ${triggerValue}), reloading bots...`);
             }
@@ -443,6 +450,8 @@
 
         isLoading = true;
         error = null;
+        // The room the bot is made in: the person may move to another room while it is being made
+        const createdInRoomId = botApiService.getRoomId();
 
         try {
             // Get first available AI provider to auto-select
@@ -515,6 +524,12 @@
                     console.error("[BotEditor] Failed to save bot chat telemetry for the new bot:", e);
                     telemetryNotSaved = true;
                 }
+            }
+
+            // The person is in another room now: the bot belongs to the room it was made in, so this room's list and
+            // notes are not touched
+            if (botApiService.getRoomId() !== createdInRoomId) {
+                return;
             }
 
             // The person may have left the form while the bot was being made: the bot exists, so it is listed (and the
