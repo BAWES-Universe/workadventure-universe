@@ -3,8 +3,8 @@
     // the New bot form. "What's sent" opens the explainer popup. When the universe has turned it off, the switch is
     // off, locked, and the line under it says where to change it.
     import LL from "../../../../../i18n/i18n-svelte";
-    import { IconLock } from "@wa-icons";
     import TelemetryInfo from "./TelemetryInfo.svelte";
+    import { IconLock } from "@wa-icons";
 
     export let on: boolean;
     export let locked = false;

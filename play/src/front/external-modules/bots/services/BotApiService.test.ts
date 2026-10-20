@@ -262,8 +262,8 @@ describe("BotApiService bot chat telemetry", () => {
         const service = serviceWithSession();
         await expect(service.saveBotTelemetry("bot-1", false)).resolves.toEqual({ universeHides: false, on: false });
         await expect(service.saveBotTelemetry("bot-1", true)).resolves.toEqual({ universeHides: false, on: true });
-        expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({ choice: "private" });
-        expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toEqual({ choice: "follow" });
+        expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string)).toEqual({ choice: "private" });
+        expect(JSON.parse(fetchMock.mock.calls[1][1]?.body as string)).toEqual({ choice: "follow" });
         expect(fetchMock.mock.calls[0][1]?.method).toBe("PUT");
     });
 

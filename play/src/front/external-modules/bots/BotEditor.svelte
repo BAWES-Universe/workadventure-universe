@@ -2,7 +2,6 @@
     import { onMount, onDestroy } from "svelte";
     import { get } from "svelte/store";
     import LL from "../../../i18n/i18n-svelte";
-    import { botTelemetryStore } from "./stores/BotTelemetryStore";
     import type { TranslationFunctions } from "../../../i18n/i18n-types";
     import {
         editPanelBackStore,
@@ -40,6 +39,7 @@
     } from "./stores/BotEditorStore";
     import { routeStops } from "./behaviorModel";
     import { botPermissionsStore } from "./stores/BotPermissionsStore";
+    import { botTelemetryStore } from "./stores/BotTelemetryStore";
     import { ruleName } from "./accessModel";
     import { getBotEditorTool } from "./phaser/BotEditorTool";
     import { botApiService } from "./services/BotApiService";

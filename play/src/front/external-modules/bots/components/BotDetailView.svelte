@@ -25,6 +25,7 @@
     } from "../stores/BotCompanionCatalogStore";
     import { botPermissionsStore } from "../stores/BotPermissionsStore";
     import { isOpenToEveryone } from "../accessModel";
+    import { botTelemetryStore, loadBotTelemetry, setBotTelemetry } from "../stores/BotTelemetryStore";
     import BotWokaPicker from "./BotWokaPicker.svelte";
     import BotCompanionPicker from "./BotCompanionPicker.svelte";
     import BotRuleScreen from "./BotRuleScreen.svelte";
@@ -40,7 +41,6 @@
     import BotFooter from "./page/BotFooter.svelte";
     import PageNote from "./page/PageNote.svelte";
     import TelemetryCard from "./page/TelemetryCard.svelte";
-    import { botTelemetryStore, loadBotTelemetry, setBotTelemetry } from "../stores/BotTelemetryStore";
     import { IconAdjustmentsHorizontal, IconCurrentLocation, IconPaw, IconPencil } from "@wa-icons";
 
     export let bot: BotData | null = null;

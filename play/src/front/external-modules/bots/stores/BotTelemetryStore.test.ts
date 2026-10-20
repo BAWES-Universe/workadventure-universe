@@ -56,7 +56,11 @@ describe("BotTelemetryStore", () => {
         mocks.getBotTelemetry.mockResolvedValue({ universeHides: false, on: true });
         await loadBotTelemetry("bot-1");
         let answer: (value: unknown) => void = () => undefined;
-        mocks.saveBotTelemetry.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+        mocks.saveBotTelemetry.mockReturnValue(
+            new Promise((resolve) => {
+                answer = resolve;
+            })
+        );
         const saving = setBotTelemetry("bot-1", false);
         expect(get(botTelemetryStore)?.data).toEqual({ universeHides: false, on: false });
         answer({ universeHides: false, on: false });
@@ -102,7 +106,11 @@ describe("BotTelemetryStore", () => {
         mocks.getBotTelemetry.mockResolvedValueOnce({ universeHides: false, on: true });
         await loadBotTelemetry("bot-1");
         let answer: (value: unknown) => void = () => undefined;
-        mocks.saveBotTelemetry.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+        mocks.saveBotTelemetry.mockReturnValue(
+            new Promise((resolve) => {
+                answer = resolve;
+            })
+        );
         const saving = setBotTelemetry("bot-1", false);
         mocks.getBotTelemetry.mockResolvedValueOnce({ universeHides: false, on: false });
         const loading = loadBotTelemetry("bot-1");
