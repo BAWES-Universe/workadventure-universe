@@ -474,6 +474,19 @@ describe("GET /me in a public room for a member whose access token ran out (#119
         expect(res.body).toEqual(expect.objectContaining({ username: "K", usernameFromAccount: false }));
     });
 
+    it("answers with the account's name from Orbit over a name the provider's user info carries", async () => {
+        checkTokenAuth.mockResolvedValue({ username: "provider-name" });
+        fetchMemberDataByUuid.mockResolvedValue({
+            status: "ok",
+            userUuid: "owner",
+            username: "Khalid",
+            isCharacterTexturesValid: true,
+            isCompanionTextureValid: true,
+        });
+        const res = await callMe({ token: "game-token", playUri });
+        expect(res.body).toEqual(expect.objectContaining({ username: "Khalid", usernameFromAccount: true }));
+    });
+
     it("asks Orbit only once when the token is still good", async () => {
         checkTokenAuth.mockResolvedValue({});
         await callMe({ token: "game-token", playUri });

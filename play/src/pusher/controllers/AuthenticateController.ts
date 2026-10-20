@@ -20,10 +20,12 @@ import { renewedTokenMemo } from "../services/RenewedTokenMemo";
 import { BaseHttpController } from "./BaseHttpController";
 
 const debug = Debug("pusher:requests");
-// Says whether the name /me answers with is the account's, as Orbit just gave it, or only the one the game token
-// carried from sign-in, which can be older (#1192). The game keeps only the account's.
+// The account's name from Orbit wins over any other the answer carries (the game token's from sign-in, which can be
+// older, or a provider claim), and /me says whether it had one (#1192). The game keeps only the account's.
 function withNameSource<T extends { username?: string | null }>(response: T, accountName: string | null | undefined) {
-    return { ...response, usernameFromAccount: !!accountName && response.username === accountName };
+    return accountName
+        ? { ...response, username: accountName, usernameFromAccount: true }
+        : { ...response, usernameFromAccount: false };
 }
 
 // What the admin client answers when Orbit can't be reached or sends something it can't read (see AdminApi).
