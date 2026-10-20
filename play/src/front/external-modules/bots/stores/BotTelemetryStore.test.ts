@@ -88,6 +88,32 @@ describe("BotTelemetryStore", () => {
         expect(mocks.saveBotTelemetry).toHaveBeenCalledTimes(2);
     });
 
+    it("asks Orbit what it holds after a failed save, in case the save landed late", async () => {
+        mocks.getBotTelemetry.mockResolvedValueOnce({ universeHides: false, on: true });
+        await loadBotTelemetry("bot-1");
+        mocks.saveBotTelemetry.mockRejectedValue(new Error("timed out"));
+        mocks.getBotTelemetry.mockResolvedValueOnce({ universeHides: false, on: false });
+        await setBotTelemetry("bot-1", false);
+        expect(get(botTelemetryStore)?.data).toEqual({ universeHides: false, on: false });
+        expect(get(botTelemetryStore)?.saveError).toBe("timed out");
+    });
+
+    it("lets a read wait for a change on its way", async () => {
+        mocks.getBotTelemetry.mockResolvedValueOnce({ universeHides: false, on: true });
+        await loadBotTelemetry("bot-1");
+        let answer: (value: unknown) => void = () => undefined;
+        mocks.saveBotTelemetry.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+        const saving = setBotTelemetry("bot-1", false);
+        mocks.getBotTelemetry.mockResolvedValueOnce({ universeHides: false, on: false });
+        const loading = loadBotTelemetry("bot-1");
+        await Promise.resolve();
+        expect(mocks.getBotTelemetry).toHaveBeenCalledTimes(1);
+        answer({ universeHides: false, on: false });
+        await Promise.all([saving, loading]);
+        expect(mocks.getBotTelemetry).toHaveBeenCalledTimes(2);
+        expect(get(botTelemetryStore)?.data).toEqual({ universeHides: false, on: false });
+    });
+
     it("changes nothing for a bot whose universe has telemetry off", async () => {
         mocks.getBotTelemetry.mockResolvedValue({ universeHides: true, on: false });
         await loadBotTelemetry("bot-1");

@@ -25,9 +25,18 @@ function lineOf(error: unknown, fallback: string): string {
     return error instanceof Error && error.message ? error.message : fallback;
 }
 
+/**
+ * Changes to one bot are saved one after the other, and a refused one goes back to what Orbit last confirmed, never to
+ * a state the page only showed. So two quick taps that both fail leave the switch where Orbit holds it.
+ */
+const tails = new Map<string, Promise<unknown>>();
+const confirmed = new Map<string, BotTelemetry>();
+
 export async function loadBotTelemetry(botId: string): Promise<void> {
     const held = get(botTelemetryStore);
     if (!held || held.botId !== botId || !held.data) botTelemetryStore.set({ botId, status: "loading" });
+    // A read waits for the changes already on their way, so it cannot overtake one and bring back the old setting
+    await (tails.get(botId) ?? Promise.resolve()).catch(() => undefined);
     const mine = ++latest;
     try {
         const data = await botApiService.getBotTelemetry(botId);
@@ -42,13 +51,6 @@ export async function loadBotTelemetry(botId: string): Promise<void> {
         );
     }
 }
-
-/**
- * Changes to one bot are saved one after the other, and a refused one goes back to what Orbit last confirmed, never to
- * a state the page only showed. So two quick taps that both fail leave the switch where Orbit holds it.
- */
-const tails = new Map<string, Promise<unknown>>();
-const confirmed = new Map<string, BotTelemetry>();
 
 /** Turn the switch on or off for this bot. */
 export async function setBotTelemetry(botId: string, on: boolean): Promise<void> {
@@ -65,7 +67,14 @@ export async function setBotTelemetry(botId: string, on: boolean): Promise<void>
             if (tails.get(botId) === run) update(botId, () => ({ botId, status: "ready", data }));
         } catch (error) {
             console.error("[BotTelemetryStore] Failed to save bot chat telemetry:", error);
-            const held = confirmed.get(botId);
+            if (tails.get(botId) !== run) return;
+            // A timed-out save may still have landed: ask Orbit what it holds, and fall back to the last confirmed
+            let held = confirmed.get(botId);
+            try {
+                held = await botApiService.getBotTelemetry(botId);
+            } catch {
+                // Orbit does not answer: the last confirmed setting stays
+            }
             if (tails.get(botId) !== run) return;
             update(botId, (state) => ({
                 ...state,
