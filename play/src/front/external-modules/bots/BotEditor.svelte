@@ -230,13 +230,19 @@
                             console.error("[BotEditor] Failed to auto-save bot AI config:", e);
 
                             // Orbit refused the save and said why (a key that isn't theirs, or isn't lent here): say so,
-                            // and put the provider back to the one that is really saved, so the page doesn't show a move that didn't happen
+                            // and put the provider back to the one that is really saved, so the page doesn't show a move that didn't happen.
+                            // Only while the page still shows the refused one: a provider picked since has its own save coming.
                             if ((e as Error & { status?: number })?.status === 400) {
                                 error = (e as Error).message;
                                 refusedSave = true;
                                 const savedRef = savedProviderRef(lastSavedAIConfig);
                                 const currentBot = get(botPreviewsStore).get(bot.id);
-                                if (savedRef !== null && currentBot && currentBot.aiProviderRef !== savedRef) {
+                                if (
+                                    savedRef !== null &&
+                                    currentBot &&
+                                    currentBot.aiProviderRef === bot.aiProviderRef &&
+                                    currentBot.aiProviderRef !== savedRef
+                                ) {
                                     upsertBot({ ...currentBot, aiProviderRef: savedRef });
                                 }
                                 return;
