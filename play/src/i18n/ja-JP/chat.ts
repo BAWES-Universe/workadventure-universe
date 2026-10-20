@@ -318,6 +318,16 @@ const chat: DeepPartial<Translation["chat"]> = {
         unsafeFileType: '"{name}"は安全でないファイルタイプのため、アップロードできません。',
         fileTooLarge: '"{name}"は大きすぎます。最大サイズは{size}MBです。',
     },
+    botStatus: {
+        online: "オンライン",
+        resting: "お休み中",
+        unready: "準備中",
+        gone: "いなくなりました",
+        restingPlaceholder: "返信は一時停止中",
+        unreadyPlaceholder: "まだ返信できません",
+        closed: "このチャットは終了しました",
+        left: "{name}はいなくなりました",
+    },
 };
 
 export default chat;

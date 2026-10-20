@@ -483,6 +483,23 @@ export class BotApiService {
     }
 
     /**
+     * Each bot's state for direct messages (online, resting, unready, gone), for the chat header and People list.
+     * Null when the bot server can't say (not signed in, direct messages off, or unreachable).
+     */
+    async getDmStatus(botIds: string[]): Promise<Record<string, string> | null> {
+        if (!this.botServerUrl || botIds.length === 0) return null;
+        try {
+            const response = await this.fetchBotServer(
+                `/api/bots/dm-status?ids=${botIds.map(encodeURIComponent).join(",")}`
+            );
+            const data = (await response.json()) as { bots?: Record<string, string> };
+            return data.bots ?? null;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
      * Delete a bot
      */
     async deleteBot(id: string): Promise<void> {
@@ -815,12 +832,13 @@ export class BotApiService {
 
     /**
      * Whether the local player may do this with a bot, asked of the bot server (which asks Orbit): the game uses it to
-     * hide Summon from people the owner has refused. `allowed: null` means it could not be found out (a guest with no
-     * Orbit session, Orbit not answering): the caller shows the button, and the real answer comes when it is used.
+     * hide Summon and Message from people the owner has refused. `allowed: null` means it could not be found out (a
+     * guest with no Orbit session, Orbit not answering): Summon then shows, and the real answer comes when it is used;
+     * Message only shows on a yes, since the bot could not answer a chat it cannot check either.
      * `playerUuid` is who is asking. A signed-in player whose Orbit session did not come along is then told so
      * (`signIn`) instead of being asked about as a guest.
      */
-    async getBotAccess(botId: string, action: "summon" | "chat", playerUuid?: string): Promise<BotAccessAnswer> {
+    async getBotAccess(botId: string, action: "summon" | "chat" | "dm", playerUuid?: string): Promise<BotAccessAnswer> {
         // A bot server or sign-in that stalls must not hold the Summon button back: after a few seconds it is "unknown"
         const stop = new AbortController();
         let timer: ReturnType<typeof setTimeout> | undefined;
@@ -837,7 +855,7 @@ export class BotApiService {
 
     private async askBotAccess(
         botId: string,
-        action: "summon" | "chat",
+        action: "summon" | "chat" | "dm",
         playerUuid: string | undefined,
         signal: AbortSignal
     ): Promise<BotAccessAnswer> {

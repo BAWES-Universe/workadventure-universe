@@ -497,6 +497,16 @@ const chat: DeepPartial<Translation["chat"]> = {
         },
     },
     remoteUserNotConnected: "사용자가 인증되지 않았습니다. 메시지를 보낼 수 없습니다.",
+    botStatus: {
+        online: "온라인",
+        resting: "휴식 중",
+        unready: "아직 준비 중",
+        gone: "떠났어요",
+        restingPlaceholder: "답장이 일시 중지됨",
+        unreadyPlaceholder: "아직 답장할 수 없어요",
+        closed: "이 채팅은 닫혔어요",
+        left: "{name}님이 떠났어요",
+    },
 };
 
 export default chat;

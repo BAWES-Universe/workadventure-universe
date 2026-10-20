@@ -20,6 +20,8 @@ import { canOpenOrbit, openOrbitProfile } from "../../external-modules/admin-api
 import { friendsEnabledStore, relationshipsStore } from "../../Chat/Stores/FriendsStore";
 import { invitesEnabledStore, ringStore } from "../../Chat/Stores/RingStore";
 import { isBotUser } from "../../Chat/UserProvider/ChatUserMapper";
+import { botIdFromChatId } from "../../Chat/Bots/BotChatStatus";
+import { botDmAccessCache } from "../../Chat/Bots/BotStatusStore";
 import { friendMenuAction } from "../../Chat/Components/UserList/FriendMenuAction";
 import { IconMessage, IconUserCircle, IconUsersPlus, IconWalk } from "@wa-icons";
 
@@ -152,6 +154,7 @@ export class RemotePlayer extends Character implements ActivatableInterface {
         for (const action of this.getDefaultWokaMenuActions()) {
             wokaMenuStore.addAction(action);
         }
+        this.addBotMessageWhenAllowed();
 
         // Send the remote player clicked event to the iframe listener
         const userFound = this.scene.getRemotePlayersRepository().getPlayers().get(this.userId);
@@ -227,35 +230,13 @@ export class RemotePlayer extends Character implements ActivatableInterface {
                 actionIcon: IconUsersPlus,
             });
         }
-        if (chatID !== undefined && get(userIsConnected) && !isMyOtherSession) {
-            actions.push({
-                actionName: get(LL).chat.userList.message(),
-                protected: false,
-                priority: 1,
-                style: "bg-white/10 hover:bg-white/30",
-                testId: "wokamenu-message-button",
-                callback: () => {
-                    // Track the opened chat action
-                    analyticsClient.openedChat();
-
-                    openDirectChatRoom(chatID).catch((error) => {
-                        console.error("Error opening direct chat room:", error);
-                        Sentry.captureException(error, {
-                            extra: {
-                                userId: this.userUuid,
-                                chatId: chatID,
-                                playUri: this.scene.roomUrl,
-                                username: this.playerName,
-                            },
-                        });
-                    });
-                },
-                actionIcon: IconMessage,
-            });
+        // A bot's Message waits for its owner's yes (see addBotMessageWhenAllowed), so nobody refused ever sees it.
+        if (chatID !== undefined && get(userIsConnected) && !isMyOtherSession && !isBot) {
+            actions.push(this.messageAction(chatID));
         }
         // Add friend beside Message when you are both signed in; once asked or friends, the follow-up (cancel,
-        // remove) waits under "more", and accepting their request stays beside Message.
-        if (chatID !== undefined && get(friendsEnabledStore) && !isMyOtherSession) {
+        // remove) waits under "more", and accepting their request stays beside Message. Bots are not friends.
+        if (chatID !== undefined && get(friendsEnabledStore) && !isMyOtherSession && !isBot) {
             const relationship = get(relationshipsStore).get(this.userUuid) ?? "none";
             const friendAction = friendMenuAction(relationship, this.userUuid, this.playerName, get(LL));
             if (friendAction) {
@@ -273,7 +254,8 @@ export class RemotePlayer extends Character implements ActivatableInterface {
             }
         }
         // Their profile in Orbit, when you are both signed in (only signed-in players have a chat id): after Message.
-        if (chatID !== undefined && canOpenOrbit()) {
+        // A bot has no profile.
+        if (chatID !== undefined && canOpenOrbit() && !isBot) {
             actions.push({
                 actionName: get(LL).chat.userList.viewProfile(),
                 protected: false,
@@ -288,6 +270,53 @@ export class RemotePlayer extends Character implements ActivatableInterface {
         }
 
         return actions;
+    }
+
+    /** Message: opens your direct chat with them, as the People tab's Message does. */
+    private messageAction(chatID: string): WokaMenuAction {
+        return {
+            actionName: get(LL).chat.userList.message(),
+            protected: false,
+            priority: 1,
+            style: "bg-white/10 hover:bg-white/30",
+            testId: "wokamenu-message-button",
+            callback: () => {
+                // Track the opened chat action
+                analyticsClient.openedChat();
+
+                openDirectChatRoom(chatID).catch((error) => {
+                    console.error("Error opening direct chat room:", error);
+                    Sentry.captureException(error, {
+                        extra: {
+                            userId: this.userUuid,
+                            chatId: chatID,
+                            playUri: this.scene.roomUrl,
+                            username: this.playerName,
+                        },
+                    });
+                });
+            },
+            actionIcon: IconMessage,
+        };
+    }
+
+    /**
+     * A bot's card gets Message once Orbit says its owner lets you message it, the way Summon waits for its answer.
+     * Bots get a chat id only while bot chats are on. A card closed or showing someone else by then gets nothing.
+     */
+    private addBotMessageWhenAllowed(): void {
+        const chatID = this.getChatID();
+        const botId = botIdFromChatId(chatID);
+        if (!chatID || !botId || !get(userIsConnected)) return;
+        botDmAccessCache
+            .get(botId)
+            .then((allowed) => {
+                const card = get(wokaMenuStore);
+                if (!allowed || card?.userUuid !== this.userUuid) return;
+                if (card.actions.some((action) => action.testId === "wokamenu-message-button")) return;
+                wokaMenuStore.addAction(this.messageAction(chatID));
+            })
+            .catch((error) => console.error("[RemotePlayer] Could not check whether you may message this bot:", error));
     }
 
     /**

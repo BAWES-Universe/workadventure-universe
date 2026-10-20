@@ -1,0 +1,47 @@
+import { get } from "svelte/store";
+import { describe, expect, it, vi } from "vitest";
+import { BotDmAccessCache, DM_ACCESS_TTL_MS } from "../BotDmAccess";
+
+const settle = () =>
+    new Promise<void>((resolve) => {
+        setTimeout(resolve, 0);
+    });
+const yes = () => Promise.resolve(true);
+
+describe("BotDmAccessCache", () => {
+    it("says no until the answer comes, then shows it", async () => {
+        const cache = new BotDmAccessCache(yes);
+        const store = cache.store("b1");
+        const seen: boolean[] = [];
+        const stop = store.subscribe((value) => seen.push(value));
+        await settle();
+        stop();
+        expect(seen).toEqual([false, true]);
+    });
+
+    it("asks once for everyone looking at the same bot, and keeps the answer for 30 seconds", async () => {
+        let now = 0;
+        const ask = vi.fn(yes);
+        const cache = new BotDmAccessCache(ask, () => now);
+        await Promise.all([cache.get("b1"), cache.get("b1")]);
+        expect(ask).toHaveBeenCalledTimes(1);
+        now = DM_ACCESS_TTL_MS - 1;
+        await cache.get("b1");
+        expect(ask).toHaveBeenCalledTimes(1);
+        now = DM_ACCESS_TTL_MS;
+        await cache.get("b1");
+        expect(ask).toHaveBeenCalledTimes(2);
+    });
+
+    it("an answer it could not get is a no, so Message never shows for a bot that could not answer", async () => {
+        const cache = new BotDmAccessCache(() => Promise.reject(new Error("bot server down")));
+        await expect(cache.get("b1")).resolves.toBe(false);
+        expect(get(cache.store("b1"))).toBe(false);
+    });
+
+    it("a store opened after an answer starts from it", async () => {
+        const cache = new BotDmAccessCache(yes);
+        await cache.get("b1");
+        expect(get(cache.store("b1"))).toBe(true);
+    });
+});

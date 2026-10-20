@@ -235,6 +235,16 @@ const chat: DeepPartial<Translation["chat"]> = {
         Folder: "Ordner",
         Pin: "Stecknadel",
     },
+    botStatus: {
+        online: "Online",
+        resting: "Pause",
+        unready: "Noch nicht bereit",
+        gone: "Weg",
+        restingPlaceholder: "Antworten pausiert",
+        unreadyPlaceholder: "Kann noch nicht antworten",
+        closed: "Dieser Chat ist geschlossen",
+        left: "{name} ist gegangen",
+    },
 };
 
 export default chat;

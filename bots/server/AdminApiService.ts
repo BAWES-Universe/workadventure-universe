@@ -5,6 +5,7 @@
  */
 
 import axios, { type AxiosResponse } from 'axios';
+import * as Sentry from '@sentry/node';
 
 // Optional Sentry integration (uncomment if @sentry/node is installed)
 // import * as Sentry from '@sentry/node';
@@ -55,17 +56,25 @@ export type BotAccessAction = 'chat' | 'dm' | 'summon';
 export interface BotAccessPerson {
     signedIn: boolean;
     identifier?: string | null;
+    /** For a private chat that reached the bot over chat: the sender's Matrix ID, which Orbit looks up instead. */
+    chatId?: string | null;
 }
 
 /** Orbit's answer to "can this person do this with this bot?" (POST /api/bots/:id/access). */
 export interface BotAccessAnswer {
     allowed: boolean;
-    code: 'allowed' | 'sign_in_required' | 'not_allowed' | 'no_room_access';
+    code: 'allowed' | 'sign_in_required' | 'not_allowed' | 'no_room_access' | 'unknown_person' | 'shared_chat_id' | 'banned';
     /** A line to show as it is. Null when allowed. */
     reason: string | null;
     /** The owner's own line for people who may not chat with the bot, only when the owner wrote one. */
     reply?: string;
+    /** Whose chat account it is, when the person was named by `chatId` and Orbit found exactly one account. */
+    person?: { uuid: string; name: string | null };
 }
+
+/** Orbit failing a private chat's access check is reported to Sentry at most this often, not once per message. */
+const DM_ACCESS_REPORT_EVERY_MS = 60_000;
+let lastDmAccessReportAt = 0;
 
 /** How long a bot waits for Orbit's access answer before it counts as "could not check". */
 const BOT_ACCESS_TIMEOUT_MS = 4_000;
@@ -491,6 +500,51 @@ export class AdminApiService {
     }
 
     /**
+     * Ask Orbit whether the person behind a Matrix ID may message this bot directly: the same check the game asks
+     * before it shows Message (roles, the bot's own rules, Private bot, room access, bans), with Orbit finding whose
+     * chat account it is. Fails closed: anything that stops Orbit answering is a no whose reason starts `admin_api_`.
+     *
+     * `user` (the verified person) comes back only when Orbit allows the chat. A refusal carries Orbit's code as
+     * `reason` and no identity.
+     */
+    async checkDmAccess(botId: string, chatId: string): Promise<{
+        allowed: boolean;
+        reason: string | null;
+        user: { uuid: string; name: string | null; isGuest: boolean } | null;
+    }> {
+        const denied = (reason: string) => ({ allowed: false, reason, user: null });
+        if (!this.isConfigured() || !process.env.BOT_SERVICE_TOKEN) {
+            return denied('admin_api_not_configured');
+        }
+        let answer: BotAccessAnswer;
+        try {
+            answer = await this.checkBotAccess(botId, 'dm', { signedIn: true, chatId });
+        } catch (error) {
+            console.error('[AdminApiService] Error checking DM access:', error instanceof Error ? error.message : error);
+            if (Date.now() - lastDmAccessReportAt >= DM_ACCESS_REPORT_EVERY_MS) {
+                lastDmAccessReportAt = Date.now();
+                Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
+                    tags: { area: 'bot-dm-access' },
+                });
+            }
+            return denied('admin_api_error');
+        }
+        if (!answer.allowed) {
+            return denied(answer.code);
+        }
+        const person = answer.person;
+        if (typeof person?.uuid !== 'string' || person.uuid === '') {
+            // A yes without a verified person is not something to act on.
+            return denied('admin_api_missing_user');
+        }
+        return {
+            allowed: true,
+            reason: null,
+            user: { uuid: person.uuid, name: typeof person.name === 'string' ? person.name : null, isGuest: false },
+        };
+    }
+
+    /**
      * Get available AI providers
      * Uses BOT_SERVICE_TOKEN (separate from ADMIN_API_TOKEN)
      */
@@ -653,7 +707,14 @@ export class AdminApiService {
 
         const response: AxiosResponse<BotAccessAnswer> = await axios.post(
             resolveAdminApiEndpoint(this.adminApiUrl, `api/bots/${encodeURIComponent(botId)}/access`),
-            { action, person: { signedIn: person.signedIn, ...(person.identifier ? { identifier: person.identifier } : {}) } },
+            {
+                action,
+                person: {
+                    signedIn: person.signedIn,
+                    ...(person.identifier ? { identifier: person.identifier } : {}),
+                    ...(person.chatId ? { chatId: person.chatId } : {}),
+                },
+            },
             {
                 headers: {
                     Authorization: `Bearer ${botServiceToken}`,

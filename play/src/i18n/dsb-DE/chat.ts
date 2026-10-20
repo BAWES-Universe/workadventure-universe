@@ -167,6 +167,16 @@ const chat: DeepPartial<Translation["chat"]> = {
     anAdmin: "administrator",
     messageDeletedByYou: "Wy sćo tu powěsć wulašowali",
     waiting: "Cakajucy",
+    botStatus: {
+        online: "Online",
+        resting: "Wótpócujo",
+        unready: "Hyšći njejo gótowy",
+        gone: "Wótšeł",
+        restingPlaceholder: "Wótmołwy su zastajone",
+        unreadyPlaceholder: "Hyšći njamóžo wótmołwiś",
+        closed: "Toś ten chat jo zacynjony",
+        left: "{name} jo wótšeł",
+    },
 };
 
 export default chat;

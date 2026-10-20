@@ -483,6 +483,16 @@ const chat: DeepPartial<Translation["chat"]> = {
         },
     },
     remoteUserNotConnected: "Usuário não autenticado. Não é possível enviar mensagem.",
+    botStatus: {
+        online: "Online",
+        resting: "Descansando",
+        unready: "Ainda não está pronto",
+        gone: "Saiu",
+        restingPlaceholder: "Respostas em pausa",
+        unreadyPlaceholder: "Ainda não pode responder",
+        closed: "Esta conversa está fechada",
+        left: "{name} saiu",
+    },
 };
 
 export default chat;
