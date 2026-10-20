@@ -126,12 +126,6 @@ export class ConversationStorage {
     ): Promise<void> {
         const key = `${botId}_${userUuid}`;
 
-        // Hide bot conversations (#1166): a private bot writes no transcript, here or in Orbit. What it remembers about
-        // the person is saved by MemoryStorage, which this does not touch.
-        if (await this.isPrivateBot(botId)) {
-            return;
-        }
-
         let conversation = this.activeConversations.get(key);
 
         if (!conversation) {
@@ -160,15 +154,6 @@ export class ConversationStorage {
 
         // Immediately save to Admin API
         await this.saveToAdminAPI(key, conversation);
-    }
-
-    /** Does this bot hide its conversations (#1166)? Not private when Orbit cannot say, as before the setting existed. */
-    private async isPrivateBot(botId: string): Promise<boolean> {
-        try {
-            return (await this.adminApiService.isBotPrivate?.(botId)) === true;
-        } catch {
-            return false;
-        }
     }
 
     /**
@@ -327,13 +312,6 @@ export class ConversationStorage {
 
         if (!conversation || !conversationId) {
             // Clean up if no active conversation
-            this.activeConversations.delete(key);
-            this.conversationIds.delete(key);
-            return;
-        }
-
-        // A bot that turned private mid-conversation sends nothing more; the transcript so far stays hidden in Orbit
-        if (await this.isPrivateBot(botId)) {
             this.activeConversations.delete(key);
             this.conversationIds.delete(key);
             return;

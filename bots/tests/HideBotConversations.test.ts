@@ -1,8 +1,8 @@
 /**
  * Hide bot conversations (#1166, Orbit #435).
  *
- * A private bot sends no text to PostHog, no conversation or player ids to Sentry spans and no transcript to Orbit.
- * What it remembers (memory), its usage counts and everything else work exactly as before, and a bot that is not
+ * A bot with telemetry off sends no text to PostHog and no conversation or player ids to Sentry spans. It still saves
+ * its chats to Orbit (#514), which shows them to super admins only. What it remembers (memory), its usage counts and everything else work exactly as before, and a bot that is not
  * private (the default, or when Orbit cannot say) behaves exactly as it did before this setting existed.
  */
 
@@ -345,7 +345,7 @@ describe("ConversationStorage: transcripts", () => {
         return new ConversationStorage(admin);
     }
 
-    it("saves the transcript as before when the bot is not private", async () => {
+    it("saves the transcript when the bot has telemetry on", async () => {
         // Orbit gets the live conversation object, so keep a copy of what each call carried
         const sent: Array<{ method: string; url: string; body: any }> = [];
         hoisted.axios.post.mockImplementation(async (url: string, body: any) => {
@@ -377,36 +377,14 @@ describe("ConversationStorage: transcripts", () => {
         expect(hoisted.axios.post).toHaveBeenCalledTimes(1);
     });
 
-    it("saves no transcript, and keeps none in memory, when the bot is private", async () => {
+    it("saves the transcript of a bot with telemetry off too (#514): only where the text goes changes", async () => {
         const conversations = await storage(async () => true);
         conversations.startConversation("bot-1", "uuid-bob", { name: "Bob", isLogged: true });
         await conversations.addMessage("bot-1", "uuid-bob", "my secret plan", "person");
         await conversations.addMessage("bot-1", "uuid-bob", "noted", "bot");
         await conversations.endConversation("bot-1", "uuid-bob", "user_left");
-        expect(hoisted.axios.post).not.toHaveBeenCalled();
-        expect(hoisted.axios.put).not.toHaveBeenCalled();
-        expect(JSON.stringify([...(conversations as any).activeConversations.values()])).not.toContain("my secret plan");
-    });
-
-    it("stops sending once a bot turns private in the middle of a conversation", async () => {
-        const sent: string[] = [];
-        hoisted.axios.post.mockImplementation(async (_url: string, body: any) => {
-            sent.push(JSON.stringify(body));
-            return { data: { conversationId: "c-1", status: "created" } };
-        });
-        hoisted.axios.put.mockImplementation(async (_url: string, body: any) => {
-            sent.push(JSON.stringify(body));
-            return { data: {} };
-        });
-        let hidden = false;
-        const conversations = await storage(async () => hidden);
-        await conversations.addMessage("bot-1", "uuid-bob", "hello", "person");
-        const sentBefore = sent.length;
-        hidden = true;
-        await conversations.addMessage("bot-1", "uuid-bob", "my secret plan", "person");
-        await conversations.endConversation("bot-1", "uuid-bob", "user_left");
-        expect(sent.length).toBe(sentBefore);
-        expect(sent.join("")).not.toContain("my secret plan");
+        expect(hoisted.axios.post).toHaveBeenCalledTimes(1);
+        expect(hoisted.axios.put).toHaveBeenCalled();
     });
 });
 
