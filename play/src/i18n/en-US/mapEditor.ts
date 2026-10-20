@@ -785,7 +785,7 @@ const mapEditor: BaseTranslation = {
                         lead: "Bots always save their chats and remember people the same way. This only decides where the chat text goes.",
                         onTitle: "On (default)",
                         on1: "Bot chats go to our analytics and error reports, so we can find and fix bots that misbehave.",
-                        on2: "Super admins can read them on the admin pages.",
+                        on2: "The Universe team can read them on the admin pages.",
                         offTitle: "Off",
                         off1: "The text stays out of analytics, error reports and the admin pages.",
                         off2: "Chats stay saved in our database, which only the Universe team can open.",
