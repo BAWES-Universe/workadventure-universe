@@ -115,13 +115,14 @@ describe("an Orbit that does not answer about who may use a bot", () => {
         vi.useRealTimers();
     });
 
-    function hang(): void {
-        vi.spyOn(globalThis, "fetch").mockImplementation(
-            (_url, init) =>
-                new Promise<Response>((_resolve, reject) => {
-                    init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
-                })
-        );
+    function untilCancelled(signal: AbortSignal | null | undefined): Promise<Response> {
+        return new Promise<Response>((_resolve, reject) => {
+            function onAbort() {
+                signal?.removeEventListener("abort", onAbort);
+                reject(new DOMException("aborted", "AbortError"));
+            }
+            signal?.addEventListener("abort", onAbort);
+        });
     }
 
     it("fails the same way when it is the Orbit sign-in that stalls", async () => {
@@ -141,21 +142,18 @@ describe("an Orbit that does not answer about who may use a bot", () => {
         await failed;
     });
 
-    it("fails a read, a change, a row change and a removal after a while instead of holding the page", async () => {
-        const api = service();
-        const calls = [
-            () => api.getBotPermissions("b1"),
-            () => api.saveBotPermissions("b1", { privateBot: true }),
-            () => api.saveBotRule("b1", { roleId: "r1" }, { dm: "no" }),
-            () => api.deleteBotRule("b1", { roleId: "r1" }),
-        ];
-        for (const call of calls) {
-            hang();
-            const asked = call();
-            const failed = expect(asked).rejects.toThrow("Orbit did not answer in time");
-            await vi.advanceTimersByTimeAsync(20000);
-            await failed;
-        }
+    const requests: Array<[string, (api: BotApiService) => Promise<unknown>]> = [
+        ["a read", (api) => api.getBotPermissions("b1")],
+        ["a change", (api) => api.saveBotPermissions("b1", { privateBot: true })],
+        ["a row change", (api) => api.saveBotRule("b1", { roleId: "r1" }, { dm: "no" })],
+        ["a removal", (api) => api.deleteBotRule("b1", { roleId: "r1" })],
+    ];
+
+    it.each(requests)("fails %s after a while instead of holding the page", async (_name, call) => {
+        vi.spyOn(globalThis, "fetch").mockImplementation((_url, init) => untilCancelled(init?.signal));
+        const failed = expect(call(service())).rejects.toThrow("Orbit did not answer in time");
+        await vi.advanceTimersByTimeAsync(20000);
+        await failed;
     });
 });
 
