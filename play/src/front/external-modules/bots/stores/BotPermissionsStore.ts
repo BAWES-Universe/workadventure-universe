@@ -47,7 +47,9 @@ export async function loadBotPermissions(botId: string): Promise<void> {
         console.error("[BotPermissionsStore] Failed to load who may use the bot:", error);
         // What the page already shows stays; with nothing to show, it says it could not load
         update(botId, (state) =>
-            state.data ? { ...state, saveError: failedToSave(error) } : { botId, status: "failed" }
+            state.data
+                ? { ...state, saveError: errorLine(error, get(LL).mapEditor.edit.bots.page.access.loadFailed()) }
+                : { botId, status: "failed" }
         );
     }
 }
@@ -186,30 +188,33 @@ export async function setRuleValue(botId: string, rule: BotRule, action: RuleAct
  * person when Orbit refuses (the bot's owner needs no row, for one); the page shows it.
  */
 export async function addRule(botId: string, subject: { roleId: string } | { identifier: string }): Promise<BotRule> {
-    try {
-        let rule = await botApiService.saveBotRule(botId, subject, {});
-        if (saysNothing(rule)) rule = await botApiService.saveBotRule(botId, subjectOf(rule), NEW_ROW_VALUES);
-        const saved = rule;
-        update(botId, (state) =>
-            state.data
-                ? {
-                      ...state,
-                      saveError: undefined,
-                      data: {
-                          ...state.data,
-                          rules: state.data.rules.some((r) => r.id === saved.id)
-                              ? state.data.rules.map((r) => (r.id === saved.id ? saved : r))
-                              : [...state.data.rules, saved],
-                      },
-                  }
-                : state
-        );
-        return saved;
-    } catch (error) {
-        // A row may have been added before the second step failed: go back to what Orbit holds
-        await reloadAfterFailure(botId, error);
-        throw new Error(failedToSave(error), { cause: error });
-    }
+    // In the queue like every other change, so an answer for an earlier change cannot replace the rows without this one
+    return queued(botId, async (isLast, queue) => {
+        try {
+            let rule = await botApiService.saveBotRule(botId, subject, {});
+            if (saysNothing(rule)) rule = await botApiService.saveBotRule(botId, subjectOf(rule), NEW_ROW_VALUES);
+            const row = rule;
+            update(botId, (state) =>
+                state.data
+                    ? {
+                          ...state,
+                          data: {
+                              ...state.data,
+                              rules: state.data.rules.some((r) => r.id === row.id)
+                                  ? state.data.rules.map((r) => (r.id === row.id ? row : r))
+                                  : [...state.data.rules, row],
+                          },
+                      }
+                    : state
+            );
+            await saved(botId, isLast, queue, () => update(botId, (state) => ({ ...state, saveError: undefined })));
+            return row;
+        } catch (error) {
+            // A row may have been added before the second step failed: the last change goes back to what Orbit holds
+            await failed(botId, error, isLast, queue);
+            throw new Error(failedToSave(error), { cause: error });
+        }
+    });
 }
 
 export async function removeRule(botId: string, rule: BotRule): Promise<void> {
