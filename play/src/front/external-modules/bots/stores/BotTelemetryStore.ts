@@ -40,9 +40,10 @@ const confirmed = new Map<string, BotTelemetry>();
 export async function loadBotTelemetry(botId: string): Promise<void> {
     const held = get(botTelemetryStore);
     if (!held || held.botId !== botId || !held.data) botTelemetryStore.set({ botId, status: "loading" });
-    // A read waits for the changes already on their way, so it cannot overtake one and bring back the old setting
-    await (tails.get(botId) ?? Promise.resolve()).catch(() => undefined);
+    // The read takes its place before it waits, so a change made while it waits is newer than it and its answer is
+    // dropped. It still waits for the changes already on their way, so it cannot overtake one.
     const mine = ticket(botId);
+    await (tails.get(botId) ?? Promise.resolve()).catch(() => undefined);
     try {
         const data = await botApiService.getBotTelemetry(botId);
         if (mine === latest.get(botId)) update(botId, () => ({ botId, status: "ready", data }));

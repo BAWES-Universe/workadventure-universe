@@ -510,6 +510,10 @@
                 }
             }
 
+            // The person may have left the form while the bot was being made: the bot exists, but placement is not
+            // theirs to resume
+            if (destroyed || get(botEditorModeStore) !== "create") return;
+
             // Close modal
 
             // Start placement mode - user will click on map to set position

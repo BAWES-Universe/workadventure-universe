@@ -122,6 +122,34 @@ describe("BotTelemetryStore", () => {
         expect(get(botTelemetryStore)?.data).toEqual({ universeHides: false, on: false });
     });
 
+    it("drops a read that a change made while it waited has overtaken", async () => {
+        mocks.getBotTelemetry.mockResolvedValueOnce({ universeHides: false, on: true });
+        await loadBotTelemetry("bot-1");
+        let answerFirst: (value: unknown) => void = () => undefined;
+        mocks.saveBotTelemetry
+            .mockReturnValueOnce(
+                new Promise((resolve) => {
+                    answerFirst = resolve;
+                })
+            )
+            .mockResolvedValueOnce({ universeHides: false, on: true });
+        let answerRead: (value: unknown) => void = () => undefined;
+        mocks.getBotTelemetry.mockReturnValueOnce(
+            new Promise((resolve) => {
+                answerRead = resolve;
+            })
+        );
+        const first = setBotTelemetry("bot-1", false);
+        const loading = loadBotTelemetry("bot-1");
+        const second = setBotTelemetry("bot-1", true);
+        answerFirst({ universeHides: false, on: false });
+        await Promise.all([first, second]);
+        // The read was asked before the second change and answers after it: it must not bring the old setting back
+        answerRead({ universeHides: false, on: false });
+        await loading;
+        expect(get(botTelemetryStore)?.data).toEqual({ universeHides: false, on: true });
+    });
+
     it("changes nothing for a bot whose universe has telemetry off", async () => {
         mocks.getBotTelemetry.mockResolvedValue({ universeHides: true, on: false });
         await loadBotTelemetry("bot-1");
