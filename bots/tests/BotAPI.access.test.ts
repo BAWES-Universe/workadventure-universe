@@ -78,7 +78,7 @@ describe('Summon', () => {
             allowed: false,
             kind: 'refused',
             code: 'not_allowed',
-            line: "Nora's owner limits who can call it over.",
+            line: "Nora's owner limits who can summon it.",
         });
 
         const response = await summon();
@@ -87,8 +87,8 @@ describe('Summon', () => {
         expect(await response.json()).toMatchObject({
             summoned: false,
             code: 'not_allowed',
-            error: "Nora's owner limits who can call it over.",
-            reason: "Nora's owner limits who can call it over.",
+            error: "Nora's owner limits who can summon it.",
+            reason: "Nora's owner limits who can summon it.",
         });
         expect(botManager.summonBot).not.toHaveBeenCalled();
     });
@@ -110,7 +110,7 @@ describe('Summon', () => {
             allowed: false,
             kind: 'refused',
             code: 'not_allowed',
-            line: "Nora's owner limits who can call it over.",
+            line: "Nora's owner limits who can summon it.",
         });
 
         const response = await post(
@@ -172,7 +172,7 @@ describe('May I? (the question the game asks before it shows Summon)', () => {
             allowed: false,
             kind: 'refused',
             code: 'not_allowed',
-            line: "Nora's owner limits who can call it over.",
+            line: "Nora's owner limits who can summon it.",
         });
 
         const response = await post('/api/bots/b1/access', { action: 'summon' }, { Authorization: `Bearer ${SESSION}` });
@@ -181,7 +181,7 @@ describe('May I? (the question the game asks before it shows Summon)', () => {
         expect(await response.json()).toEqual({
             allowed: false,
             code: 'not_allowed',
-            reason: "Nora's owner limits who can call it over.",
+            reason: "Nora's owner limits who can summon it.",
         });
     });
 

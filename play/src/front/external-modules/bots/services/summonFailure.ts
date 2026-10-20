@@ -13,7 +13,7 @@ export type SummonFailure =
     | "not_here"
     /** The player's Orbit login ended and could not be renewed. */
     | "sign_in"
-    /** The bot's owner limits who can call it over. */
+    /** The bot's owner limits who can summon it. */
     | "not_allowed"
     /** The owner's limits could not be checked right now (Orbit did not answer). */
     | "cannot_check"

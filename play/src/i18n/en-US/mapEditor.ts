@@ -805,7 +805,7 @@ const mapEditor: BaseTranslation = {
                         chat: "Chat nearby",
                         chatHint: "In its bubble on the map",
                         summon: "Summon",
-                        summonHint: "Call it over in its room",
+                        summonHint: "Summon it to you in its room",
                         manage: "Manage this bot",
                         manageHint: "Change what it says and where it stands",
                     },
@@ -830,7 +830,7 @@ const mapEditor: BaseTranslation = {
                         "{name:string} now has a tool. Anyone who can walk up to it can chat with it and make it use that tool.",
                     recommendChoose: "Choose who",
                     recommendKeep: "Keep it open",
-                    summonRefused: "{name:string}'s owner limits who can call it over.",
+                    summonRefused: "{name:string}'s owner limits who can summon it.",
                 },
                 list: {
                     newBot: "New bot",

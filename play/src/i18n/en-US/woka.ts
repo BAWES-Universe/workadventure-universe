@@ -6,7 +6,7 @@ const woka: BaseTranslation = {
         notHere: "{name:string} isn't here right now.",
         busy: "{name:string} is with someone. Try again soon.",
         withYou: "{name:string} is already with you.",
-        signIn: "Sign in again to call {name:string}.",
+        signIn: "Sign in again to summon {name:string}.",
         failed: "Couldn't reach {name:string}. Try again.",
     },
     customWoka: {

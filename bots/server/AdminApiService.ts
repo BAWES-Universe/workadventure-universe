@@ -638,7 +638,7 @@ export class AdminApiService {
 
     /**
      * Ask Orbit whether a person may do something with a bot (Orbit #426/#427): chat in its bubble, message it, or
-     * call it over. A no is an answer ({ allowed: false }); anything that stops Orbit answering throws, so the caller
+     * summon it. A no is an answer ({ allowed: false }); anything that stops Orbit answering throws, so the caller
      * can tell "no" from "could not check". Uses BOT_SERVICE_TOKEN.
      */
     async checkBotAccess(

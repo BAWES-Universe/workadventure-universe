@@ -109,7 +109,7 @@ function instantiateBehavior(kind: LegacyBehaviorType, cfg: Record<string, unkno
 export class BotManager {
     private bots: Map<string, BotInstance> = new Map();
     private adminApiService: AdminApiService;
-    /** Asks Orbit who may chat with a bot nearby or call it over, before the bot's AI is reached. */
+    /** Asks Orbit who may chat with a bot nearby or summon it, before the bot's AI is reached. */
     private accessGate: BotAccessGate;
     private botRegistry: BotRegistry;
     private mapDataService: MapDataService;
@@ -603,7 +603,7 @@ export class BotManager {
         return this.adminApiService;
     }
 
-    /** Who may chat with a bot nearby or call it over (asks Orbit, remembers its answer for a short while) */
+    /** Who may chat with a bot nearby or summon it (asks Orbit, remembers its answer for a short while) */
     getAccessGate(): BotAccessGate {
         return this.accessGate;
     }

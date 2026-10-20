@@ -129,7 +129,7 @@ describe("who may use the bot, as the page holds it", () => {
         expect(state?.saveError).toBe("That didn't save. Try again.");
     });
 
-    it("adds a role with Yes for chatting and calling it over, so a Private bot lets them in", async () => {
+    it("adds a role with Yes for chatting and summoning it, so a Private bot lets them in", async () => {
         await opened(permissions({ privateBot: true }));
         mocks.saveBotRule
             .mockResolvedValueOnce(rule({ id: "r9" }))
