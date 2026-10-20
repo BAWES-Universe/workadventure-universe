@@ -266,6 +266,17 @@ describe("AdminApiService.isBotPrivate", () => {
         expect(hoisted.axios.get).not.toHaveBeenCalled();
     });
 
+    it("passes on each Forget's id, and drops malformed rows", async () => {
+        const forgotten: unknown[] = [];
+        service.setForgetHandler((botId: string, notice: unknown) => forgotten.push([botId, notice]));
+        const rows = [{ id: "f1", userUuid: "uuid-bob" }, { id: "f2", userUuid: null }, { id: 3, userUuid: "x" }, { id: "f4", userUuid: 5 }, null];
+        hoisted.axios.get.mockResolvedValue({ data: { hidden: true, forget: { everyone: true, userUuids: ["uuid-bob"], rows } } });
+        expect(await service.isBotPrivate("bot-1")).toBe(true);
+        expect(forgotten).toEqual([
+            ["bot-1", { everyone: true, userUuids: ["uuid-bob"], rows: [{ id: "f1", userUuid: "uuid-bob" }, { id: "f2", userUuid: null }] }],
+        ]);
+    });
+
     it("hands the people Orbit says to forget to the forget handler, and answers as usual", async () => {
         const forgotten: unknown[] = [];
         service.setForgetHandler((botId: string, notice: unknown) => forgotten.push([botId, notice]));
@@ -545,6 +556,36 @@ describe("memory: always kept, and forgotten when Orbit says so", () => {
         memory.forget("bot-1", { everyone: true, userUuids: ["uuid-sara"] });
         expect(memory.memories.has("bot-1_7")).toBe(true);
         expect(memory.memories.has("bot-1_8")).toBe(false);
+    });
+
+    it("applies a second Forget of the same person within the minute, told apart from a repeat by its id", async () => {
+        const memory: any = await newMemory();
+        seed(memory, "uuid-bob", 7);
+        const first = { everyone: false, userUuids: ["uuid-bob"], rows: [{ id: "f1", userUuid: "uuid-bob" }] };
+        memory.forget("bot-1", first);
+        expect(memory.memories.has("bot-1_7")).toBe(false);
+
+        // Bob keeps talking; Orbit repeats the first Forget: what he said since stays
+        seed(memory, "uuid-bob", 7);
+        memory.forget("bot-1", first);
+        expect(memory.memories.has("bot-1_7")).toBe(true);
+
+        // The manager presses Forget on Bob again: Orbit sends both rows, and the new one is applied
+        memory.forget("bot-1", { ...first, rows: [...first.rows, { id: "f2", userUuid: "uuid-bob" }] });
+        expect(memory.memories.has("bot-1_7")).toBe(false);
+        expect(memory.pendingSaves.has("bot-1_7")).toBe(false);
+    });
+
+    it("applies a Forget-everyone row once, and a new one for everyone again", async () => {
+        const memory: any = await newMemory();
+        seed(memory, "uuid-bob", 7);
+        const first = { everyone: true, userUuids: [], rows: [{ id: "f1", userUuid: null }] };
+        memory.forget("bot-1", first);
+        seed(memory, "uuid-bob", 7);
+        memory.forget("bot-1", first);
+        expect(memory.memories.has("bot-1_7")).toBe(true);
+        memory.forget("bot-1", { ...first, rows: [{ id: "f1", userUuid: null }, { id: "f3", userUuid: null }] });
+        expect(memory.memories.has("bot-1_7")).toBe(false);
     });
 
     it("applies the same Forget again once Orbit has long stopped repeating it (a new Forget later)", async () => {

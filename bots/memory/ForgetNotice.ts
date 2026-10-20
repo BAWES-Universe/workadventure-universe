@@ -6,6 +6,12 @@
 export interface MemoryForgetNotice {
     everyone: boolean;
     userUuids: string[];
+    /**
+     * Each Forget behind the notice, by its id (`userUuid` null is everyone). Orbit repeats a Forget for a minute, so
+     * the id is what tells a repeat from a second Forget of the same person. An Orbit that does not send them yet
+     * leaves this out.
+     */
+    rows?: { id: string; userUuid: string | null }[];
 }
 
 export type MemoryForgetHandler = (botId: string, notice: MemoryForgetNotice) => void;
@@ -16,10 +22,17 @@ export type MemoryForgetHandler = (botId: string, notice: MemoryForgetNotice) =>
  */
 export function parseForgetNotice(forget: unknown): MemoryForgetNotice | null {
     if (!forget || typeof forget !== 'object') return null;
-    const { everyone, userUuids } = forget as { everyone?: unknown; userUuids?: unknown };
+    const { everyone, userUuids, rows } = forget as { everyone?: unknown; userUuids?: unknown; rows?: unknown };
     const notice: MemoryForgetNotice = {
         everyone: everyone === true,
         userUuids: Array.isArray(userUuids) ? userUuids.filter((uuid): uuid is string => typeof uuid === 'string') : [],
     };
+    if (Array.isArray(rows)) {
+        notice.rows = rows.flatMap((row) => {
+            const { id, userUuid } = (row ?? {}) as { id?: unknown; userUuid?: unknown };
+            if (typeof id !== 'string' || (userUuid !== null && typeof userUuid !== 'string')) return [];
+            return [{ id, userUuid }];
+        });
+    }
     return notice.everyone || notice.userUuids.length > 0 ? notice : null;
 }
