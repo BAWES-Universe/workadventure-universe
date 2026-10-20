@@ -35,23 +35,26 @@ function update(botId: string, change: (state: BotPermissionsState) => BotPermis
 
 /**
  * Read who may use the bot. When the page already holds an answer for this bot (it came back from a rule screen), it
- * keeps showing it while Orbit is asked again.
+ * keeps showing it while Orbit is asked again. The read waits for the changes already on their way, so it cannot
+ * overtake one (a rule just removed must not come back), and a change made after it is not undone by its answer.
  */
 export async function loadBotPermissions(botId: string): Promise<void> {
     const held = get(botPermissionsStore);
     if (!held || held.botId !== botId || !held.data) botPermissionsStore.set({ botId, status: "loading" });
-    try {
-        const data = await botApiService.getBotPermissions(botId);
-        update(botId, () => ({ botId, status: "ready", data }));
-    } catch (error) {
-        console.error("[BotPermissionsStore] Failed to load who may use the bot:", error);
-        // What the page already shows stays; with nothing to show, it says it could not load
-        update(botId, (state) =>
-            state.data
-                ? { ...state, saveError: errorLine(error, get(LL).mapEditor.edit.bots.page.access.loadFailed()) }
-                : { botId, status: "failed" }
-        );
-    }
+    await queued(botId, async (isLast) => {
+        try {
+            const data = await botApiService.getBotPermissions(botId);
+            update(botId, (state) => (isLast() || !state.data ? { botId, status: "ready", data } : state));
+        } catch (error) {
+            console.error("[BotPermissionsStore] Failed to load who may use the bot:", error);
+            // What the page already shows stays; with nothing to show, it says it could not load
+            update(botId, (state) =>
+                state.data
+                    ? { ...state, saveError: errorLine(error, get(LL).mapEditor.edit.bots.page.access.loadFailed()) }
+                    : { botId, status: "failed" }
+            );
+        }
+    });
 }
 
 export function clearBotPermissions(): void {

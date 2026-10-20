@@ -294,4 +294,47 @@ describe("who may use the bot, as the page holds it", () => {
         expect(state?.data?.privateBot).toBe(true);
         expect(state?.saveError).toBe("The bot's owner always has access");
     });
+
+    it("does not read before a removal is saved, so the removed row does not come back", async () => {
+        const held = rule({ id: "r1" });
+        await opened(permissions({ rules: [held] }));
+        let finish: () => void = () => undefined;
+        mocks.deleteBotRule.mockReturnValueOnce(
+            new Promise<void>((resolve) => {
+                finish = resolve;
+            })
+        );
+        mocks.getBotPermissions.mockClear();
+        mocks.getBotPermissions.mockResolvedValueOnce(permissions({ rules: [] }));
+        const removing = removeRule("b1", held);
+        // The page the rule screen came back to asks Orbit again straight away
+        const loading = loadBotPermissions("b1");
+        await Promise.resolve();
+        expect(mocks.getBotPermissions).not.toHaveBeenCalled();
+        finish();
+        await removing;
+        await loading;
+        expect(mocks.getBotPermissions).toHaveBeenCalledTimes(1);
+        expect(get(botPermissionsStore)?.data?.rules).toEqual([]);
+    });
+
+    it("keeps a change made while a read is on its way", async () => {
+        await opened(permissions());
+        let answer: (value: BotPermissions) => void = () => undefined;
+        mocks.getBotPermissions.mockReturnValueOnce(
+            new Promise<BotPermissions>((resolve) => {
+                answer = resolve;
+            })
+        );
+        mocks.saveBotPermissions.mockResolvedValueOnce(permissions({ privateBot: true }));
+        const loading = loadBotPermissions("b1");
+        await vi.waitFor(() => expect(mocks.getBotPermissions).toHaveBeenCalledTimes(2));
+        const switching = setPrivateBot("b1", true);
+        // The read was answered before the switch change: its answer must not turn the switch back off
+        answer(permissions({ privateBot: false }));
+        await loading;
+        expect(get(botPermissionsStore)?.data?.privateBot).toBe(true);
+        await switching;
+        expect(get(botPermissionsStore)?.data?.privateBot).toBe(true);
+    });
 });
