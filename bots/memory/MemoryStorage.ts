@@ -8,6 +8,14 @@
 import type { BotPlayerMemory } from './ConversationMemory';
 import axios from 'axios';
 
+/** A failed save in words, without the request it carried. */
+function describeSaveError(error: unknown): string {
+    if (axios.isAxiosError(error)) {
+        return error.response ? `status=${error.response.status} ${error.message}` : `${error.code || 'no response'} ${error.message}`;
+    }
+    return error instanceof Error ? error.message : 'unknown error';
+}
+
 export interface MemoryStorageConfig {
     adminApiUrl?: string;
     adminApiToken?: string;
@@ -139,7 +147,9 @@ export class MemoryStorage {
                 retries++;
                 if (retries >= this.maxRetries) {
                     // Always log critical errors (max retries exceeded)
-                    console.error(`[MemoryStorage] Failed to save memories after ${this.maxRetries} retries:`, error);
+                    // Status and message only: the error also carries the request, and that is what the bot remembers
+                    // (facts, recent messages). Error lines go to Sentry, private bots' too (#1166).
+                    console.error(`[MemoryStorage] Failed to save memories for bot ${botId} after ${this.maxRetries} retries: ${describeSaveError(error)}`);
                     // Don't throw - memory persistence shouldn't break bot functionality
                 } else {
                     // Wait before retry (exponential backoff)
