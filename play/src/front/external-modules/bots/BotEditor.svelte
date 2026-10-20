@@ -274,6 +274,17 @@
         const capturedPreviousBot = previousPlacingBot;
         previousPlacingBot = bot;
 
+        // Placement ended without the bot being picked (cancelled by the button or Escape): the bot is not in the
+        // list, so a note about its telemetry would point at nothing
+        if (
+            capturedPreviousBot &&
+            !bot &&
+            telemetryNotice?.botId === capturedPreviousBot.id &&
+            get(selectedBotStore)?.id !== capturedPreviousBot.id
+        ) {
+            telemetryNotice = null;
+        }
+
         // If placement was just completed (bot went from defined to undefined)
         if (capturedPreviousBot && !bot && botApiService.isInitialized()) {
             // Find the bot that was just placed
