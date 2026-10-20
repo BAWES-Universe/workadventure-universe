@@ -75,17 +75,23 @@ export async function setBotTelemetry(botId: string, on: boolean): Promise<void>
             console.error("[BotTelemetryStore] Failed to save bot chat telemetry:", error);
             if (tails.get(botId) !== run) return;
             // A timed-out save may still have landed: ask Orbit what it holds, and fall back to the last confirmed
-            let held = confirmed.get(botId);
+            const lastConfirmed = confirmed.get(botId);
+            let held = lastConfirmed;
+            let answered = false;
             try {
                 held = await botApiService.getBotTelemetry(botId);
+                answered = true;
             } catch {
                 // Orbit does not answer: the last confirmed setting stays
             }
             if (tails.get(botId) !== run) return;
+            // If Orbit now holds the asked setting and did not before, the save landed late: nothing to report
+            const landed = answered && held?.on === on && lastConfirmed?.on !== on;
+            if (held) confirmed.set(botId, held);
             update(botId, (state) => ({
                 ...state,
                 data: held ?? state.data,
-                saveError: lineOf(error, get(LL).mapEditor.edit.bots.page.telemetry.saveFailed()),
+                saveError: landed ? undefined : lineOf(error, get(LL).mapEditor.edit.bots.page.telemetry.saveFailed()),
             }));
         } finally {
             if (tails.get(botId) === run) {

@@ -424,7 +424,14 @@
         selectBot(bot || undefined);
     }
 
+    // What New bot's Advanced settings hold. Here and not in the form, because the form is rebuilt when the first bot
+    // of a room fails to create.
+    let newBotAdvancedOpen = false;
+    let newBotTelemetryOn = true;
+
     function handleCreateBot() {
+        newBotAdvancedOpen = false;
+        newBotTelemetryOn = true;
         botEditorModeStore.set("create");
     }
 
@@ -510,9 +517,18 @@
                 }
             }
 
-            // The person may have left the form while the bot was being made: the bot exists, but placement is not
-            // theirs to resume
-            if (destroyed || get(botEditorModeStore) !== "create") return;
+            // The person may have left the form while the bot was being made: the bot exists, so it is listed (and the
+            // note shown if its telemetry off was not saved), but placement is not theirs to resume
+            if (destroyed || get(botEditorModeStore) !== "create") {
+                upsertBot(newBot);
+                if (telemetryNotSaved && !destroyed) {
+                    telemetryNotice = {
+                        botId: newBot.id,
+                        text: $LL.mapEditor.edit.bots.page.telemetry.createdButNotSaved(),
+                    };
+                }
+                return;
+            }
 
             // Close modal
 
@@ -846,7 +862,13 @@
     {:else if currentMode === "list" || currentMode === "placing"}
         <BotList {bots} onSelectBot={handleSelectBot} onCreateBot={handleCreateBot} />
     {:else if currentMode === "create"}
-        <NewBotView busy={isLoading} onCreate={handleCreateBotSubmit} onCancel={handleBackToList} />
+        <NewBotView
+            busy={isLoading}
+            bind:advancedOpen={newBotAdvancedOpen}
+            bind:telemetryOn={newBotTelemetryOn}
+            onCreate={handleCreateBotSubmit}
+            onCancel={handleBackToList}
+        />
     {:else if currentMode === "detail" || currentMode === "waypoint-edit"}
         {#if selectedBot}
             <BotDetailView

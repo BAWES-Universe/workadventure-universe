@@ -12,11 +12,13 @@
     export let onCreate: (name: string, textureId: string, telemetryOn: boolean) => void;
     export let onCancel: () => void;
 
+    // Advanced settings, folded away under the WOKA grid. Kept by the panel, so a form that is rebuilt after a failed
+    // create (the first bot of a room swaps it for the spinner meanwhile) still has what the person chose.
+    export let advancedOpen = false;
+    export let telemetryOn = true;
+
     let name = "";
     let textureId = "";
-    // Advanced settings, folded away under the WOKA grid
-    let advancedOpen = false;
-    let telemetryOn = true;
 
     $: page = $LL.mapEditor.edit.bots.page;
     $: collections = $botWokaCatalogStore?.["woka"]?.collections ?? [];
