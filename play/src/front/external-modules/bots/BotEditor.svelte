@@ -202,11 +202,12 @@
                             // behind this bot's other saves, and reads the type when it runs rather than from this
                             // snapshot: the behavior may have been switched in the meantime, and a stale type would
                             // switch it back.
-                            // The provider is sent only when it was changed here. Sent with every save, a page left
-                            // open would put back a provider Orbit has since moved the bot off (a key that was pulled).
-                            const savedRef = savedProviderRef(lastSavedAIConfig);
-                            const providerChanged = savedRef === null || bot.aiProviderRef !== savedRef;
                             await queueBotSave(bot.id, () => {
+                                // The provider is sent only when it was changed here, against what the saves before
+                                // this one stored. Sent with every save, a page left open would put back a provider
+                                // Orbit has since moved the bot off (a key that was pulled).
+                                const savedRef = savedProviderRef(lastSavedAIConfig);
+                                const providerChanged = savedRef === null || bot.aiProviderRef !== savedRef;
                                 const currentBot = get(botPreviewsStore).get(bot.id) ?? bot;
                                 const behaviorType =
                                     currentBot.behaviorType || currentBot.behaviorConfig?.behaviorType || "idle";
