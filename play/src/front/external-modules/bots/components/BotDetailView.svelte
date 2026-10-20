@@ -115,6 +115,16 @@
 
     // Subscribe to store for real-time updates from map
     const unsubscribe = selectedBotStore.subscribe((storeBot) => {
+        // A provider pick Orbit refused is put back in the store (see BotEditor). Taken from there, the picker shows
+        // the provider that is really saved, and the next edit does not send the refused one again.
+        if (
+            storeBot &&
+            currentBot &&
+            storeBot.id === currentBot.id &&
+            storeBot.aiProviderRef !== currentBot.aiProviderRef
+        ) {
+            currentBot = { ...currentBot, aiProviderRef: storeBot.aiProviderRef };
+        }
         if (storeBot && currentBot && storeBot.id === currentBot.id && storeBot.behaviorConfig) {
             // Take the whole behavior config from the store, not just the assigned space: the map also changes the
             // detection range and waypoints, and autoSave() writes currentBot back to the store, so any field left
