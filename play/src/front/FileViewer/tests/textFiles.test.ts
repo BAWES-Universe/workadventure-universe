@@ -125,6 +125,11 @@ describe("tables from CSV", () => {
         expect(parseCsv("a\tb\n1\t2", true).rows[1]).toEqual(["1", "2"]);
     });
 
+    it("reads the separator from the first line of a file whose lines end with a lone carriage return", () => {
+        // Commas in the later rows would outweigh the header's semicolons if the first line ran on past the return.
+        expect(parseCsv("a;b\r1,2,3,4\r5,6,7,8", true).rows[0]).toEqual(["a", "b"]);
+    });
+
     it("skips blank lines and keeps the last row without a final line break", () => {
         expect(parseCsv("a,b\n\n1,2", true).rows).toEqual([
             ["a", "b"],
