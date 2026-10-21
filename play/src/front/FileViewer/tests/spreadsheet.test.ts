@@ -190,6 +190,18 @@ describe("the spreadsheet reader", () => {
         expect(sheet.totalRows).toBe(MAX_TABLE_ROWS + 1);
     });
 
+    it("says only that the first rows are shown, when a sheet that fills every row read cannot be counted", async () => {
+        // A file that gives no size and has exactly as many rows as are read looks the same as one that goes on.
+        const rows = Array.from({ length: MAX_TABLE_ROWS + 2 }, (_, index) => [index, "x"]);
+        const zip = await JSZip.loadAsync(workbookBytes({ S: rows }));
+        const sheetXml = await zip.file("xl/worksheets/sheet1.xml")!.async("string");
+        zip.file("xl/worksheets/sheet1.xml", sheetXml.replace(/<dimension [^>]*\/>/, ""));
+        const [sheet] = await readSpreadsheet(await zip.generateAsync({ type: "arraybuffer" }));
+        expect(sheet.rows).toHaveLength(MAX_TABLE_ROWS);
+        expect(sheet.rowsCut).toBe(true);
+        expect(sheet.totalRows).toBeUndefined();
+    });
+
     it("ignores the row that is read but not shown when it comes to the width of the sheet", async () => {
         const rows: string[][] = Array.from({ length: MAX_TABLE_ROWS }, () => ["a", "b"]);
         rows.push(Array.from({ length: MAX_TABLE_COLUMNS + 20 }, () => "wide"));
