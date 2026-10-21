@@ -66,7 +66,10 @@ describe("the membership button on a person's card", () => {
             const mine = opening;
             return addMembershipCardButton({
                 userUuid: "ali",
-                ask: () => new Promise<MembershipButton>((resolve) => resolvers.push(resolve)),
+                ask: () =>
+                    new Promise<MembershipButton>((resolve) => {
+                        resolvers.push(resolve);
+                    }),
                 // As the card does: only the opening it was asked for
                 stillShown: () => mine === opening,
                 add,
