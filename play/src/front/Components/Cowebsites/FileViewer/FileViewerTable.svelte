@@ -37,6 +37,8 @@
         border-collapse: collapse;
         border: 0;
         border-radius: 0;
+        /* The page's own table style adds outer space: this table sits inside the panel's own padding. */
+        margin: 0;
         /* Fills the panel; with many columns it grows past it and scrolls sideways inside it. */
         width: 100%;
         font-size: 13px;
