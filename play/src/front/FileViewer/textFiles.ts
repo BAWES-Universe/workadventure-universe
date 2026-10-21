@@ -158,10 +158,15 @@ const SAFE_INLINE_PICTURE = /^data:image\/(png|jpe?g|gif|webp);base64,/i;
 
 // Its own sanitizer, so these settings and hooks never touch the chat's.
 const purify = DOMPurify(window);
+const OPENABLE_LINK = /^(https?:|mailto:|tel:)/i;
 purify.addHook("afterSanitizeAttributes", (node) => {
-    if (node.tagName === "A") {
+    if (node.tagName !== "A") return;
+    if (OPENABLE_LINK.test((node.getAttribute("href") ?? "").trim())) {
         node.setAttribute("target", "_blank");
         node.setAttribute("rel", "noopener noreferrer");
+    } else {
+        // A link inside the file ("#section", "other.md") has nowhere to go here: it would open the game itself.
+        node.removeAttribute("href");
     }
 });
 
