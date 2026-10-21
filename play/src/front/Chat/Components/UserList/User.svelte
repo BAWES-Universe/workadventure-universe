@@ -74,6 +74,8 @@
     $: isMe = isSelf(user, me);
     // The roles Orbit named, minus any whose badge is hidden on others. A world whose admin sends no list keeps the Admin badge.
     $: shownRoles = rolesToShow(user.roles, isMe);
+    // Only a name that shares its row with a badge gives way to it; alone, it takes the whole row.
+    $: hasBadge = $worldRolesStore ? shownRoles.length > 0 : !!isAdmin;
     // Your own account seen from somewhere else (another of your tabs is listed before this one is): no chat with it.
     $: isMine = !isMe && isMyAccount(user, me);
 
@@ -280,7 +282,7 @@
             >
                 <div class="flex items-center h-4 min-w-0">
                     <div class="text-sm font-bold mb-0 flex w-full items-center text-nowrap min-w-0">
-                        <span class="truncate shrink-[2] min-w-0 max-w-[46%]" title={displayName}>
+                        <span class="truncate shrink-[2] min-w-0 {hasBadge ? 'max-w-[46%]' : ''}" title={displayName}>
                             {#each chunks as chunk (chunk.key)}
                                 <span class={`${chunk.match ? "text-light-blue" : ""}`}>{chunk.text}</span>
                             {/each}
