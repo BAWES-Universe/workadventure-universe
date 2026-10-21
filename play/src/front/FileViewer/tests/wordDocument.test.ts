@@ -16,8 +16,8 @@ function picture(attribute: string, id: number): string {
 }
 
 /** A small .docx: two pages, a table, a stored picture, pictures linked from another site and two links. */
-async function makeDocx(): Promise<ArrayBuffer> {
-    const body = [
+async function makeDocx(
+    paragraphs: string[] = [
         "<w:p><w:r><w:t>Hello Word</w:t></w:r></w:p>",
         `<w:p>${picture('r:embed="rIdImage"', 1)}${picture('r:link="rIdOutside"', 2)}${picture(
             'r:embed="rIdOutside"',
@@ -28,7 +28,9 @@ async function makeDocx(): Promise<ArrayBuffer> {
         '<w:p><w:hyperlink r:id="rIdScript"><w:r><w:t>script link</w:t></w:r></w:hyperlink></w:p>',
         '<w:p><w:r><w:br w:type="page"/></w:r></w:p>',
         "<w:p><w:r><w:t>Second page</w:t></w:r></w:p>",
-    ].join("");
+    ]
+): Promise<ArrayBuffer> {
+    const body = paragraphs.join("");
     const relationship = (id: string, type: string, target: string, external = false) =>
         `<Relationship Id="${id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/${type}" Target="${target}"${
             external ? ' TargetMode="External"' : ""
@@ -89,6 +91,16 @@ describe("drawing a Word file", () => {
         expect(page.body.textContent).toContain("Hello Word");
         expect(page.body.textContent).toContain("Second page");
         expect(page.querySelector("table")?.textContent).toContain("Cell");
+    });
+
+    it("starts a new page where Word ended one, in a file with no page break of its own", async () => {
+        const flowing = [
+            "<w:p><w:r><w:t>First page text</w:t></w:r></w:p>",
+            "<w:p><w:r><w:lastRenderedPageBreak/><w:t>Second page text</w:t></w:r></w:p>",
+        ];
+        const result = await renderWordDocument(await makeDocx(flowing));
+
+        expect(result.pageCount).toBe(2);
     });
 
     it("seals the page: nothing can be fetched and no script is there", async () => {

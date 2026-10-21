@@ -8,8 +8,8 @@ import { readable } from "svelte/store";
 vi.mock("svelte", async (importOriginal) => {
     const svelte = await importOriginal<typeof SvelteRuntime>();
     // eslint-disable-next-line svelte/no-svelte-internal
-    const { onMount } = await import("svelte/internal");
-    return { ...svelte, onMount };
+    const { onMount, afterUpdate } = await import("svelte/internal");
+    return { ...svelte, onMount, afterUpdate };
 });
 vi.mock("../../../src/i18n/i18n-svelte", () => {
     const text = (path: string[]): unknown =>
@@ -58,6 +58,35 @@ describe("the Word reader's frame", () => {
         // Same origin only lets the panel measure and zoom the frame; scripts, forms, pop-ups and top navigation stay off.
         expect(rules).toEqual(["allow-same-origin"]);
         expect(frame.getAttribute("src")).toBeNull();
+    });
+
+    it("keeps the reader at the same place in the document when the zoom changes", async () => {
+        render.renderWordDocument.mockResolvedValue({
+            srcdoc: "<!doctype html><p>Hi</p>",
+            pageWidth: 816,
+            pageCount: 2,
+        });
+        const reader = new FileViewerWord({
+            target,
+            props: { bytes: new ArrayBuffer(8), name: "plan.docx", compact: false },
+        });
+        component = reader;
+        await vi.waitFor(() => expect(target.querySelector("iframe[sandbox]")).not.toBeNull());
+        await tick();
+        const internals = (reader as unknown as { $$: { ctx: unknown[]; props: Record<string, number> } }).$$;
+        const controller = internals.ctx[internals.props.controller] as { zoomIn(): void };
+
+        // The document is 2000 tall; after the zoom it is 4000 tall, and the reader was a quarter of the way down.
+        const area = target.querySelector('[data-testid="fileViewerWord"]') as HTMLElement;
+        let zoomed = false;
+        Object.defineProperty(area, "scrollHeight", { configurable: true, get: () => (zoomed ? 4000 : 2000) });
+        area.scrollTop = 500;
+        zoomed = false;
+        controller.zoomIn();
+        zoomed = true;
+        await tick();
+
+        expect(area.scrollTop).toBe(1000);
     });
 
     it("says it failed when the file cannot be drawn", async () => {
