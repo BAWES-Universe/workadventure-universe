@@ -184,4 +184,12 @@ describe("Markdown", () => {
         expect(link?.getAttribute("target")).toBe("_blank");
         expect(link?.getAttribute("rel")).toBe("noopener noreferrer");
     });
+
+    it("leaves links that point inside the file or the game with nowhere to go", () => {
+        const links = render("[top](#top) [next](other.md) [mail](mailto:a@b.c) [call](tel:+1234)").querySelectorAll(
+            "a"
+        );
+        expect([...links].map((link) => link.getAttribute("href"))).toEqual([null, null, "mailto:a@b.c", "tel:+1234"]);
+        expect(links[0].getAttribute("target")).toBeNull();
+    });
 });
