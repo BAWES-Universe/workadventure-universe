@@ -3,6 +3,7 @@
     import { writable } from "svelte/store";
     import { createAttachmentUrl, revokeAttachmentUrl } from "../../../Utils/AttachmentUrls";
     import { imageMimeTypeOf } from "../../../FileViewer/fileKinds";
+    import { drawnSizeOf } from "../../../FileViewer/pictureSize";
     import type { ViewerController } from "../../../FileViewer/viewerController";
 
     export let bytes: ArrayBuffer;
@@ -37,8 +38,12 @@
 
     function onLoad(): void {
         if (!picture) return;
-        naturalWidth = picture.naturalWidth || 1;
-        naturalHeight = picture.naturalHeight || 1;
+        const size = drawnSizeOf(
+            { width: picture.naturalWidth, height: picture.naturalHeight },
+            { width: container.clientWidth, height: container.clientHeight }
+        );
+        naturalWidth = size.width;
+        naturalHeight = size.height;
         fitScale = fitToView();
         setScale(fitScale);
         dispatch("loaded");
