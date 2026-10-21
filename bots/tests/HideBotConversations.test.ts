@@ -361,7 +361,7 @@ describe("AdminApiService.isBotPrivate", () => {
         expect(hoisted.axios.get).not.toHaveBeenCalled();
     });
 
-    it("stops asking about a bot Orbit no longer knows (404), and tells the caller once", async () => {
+    it("stops asking about a bot Orbit has not found three times in a row (404), and tells the caller once", async () => {
         const gone = Object.assign(new Error("not found"), { isAxiosError: true, response: { status: 404 } });
         hoisted.axios.get.mockImplementation(async (url: string) => {
             if (url.includes("bot-gone")) throw gone;
@@ -370,12 +370,30 @@ describe("AdminApiService.isBotPrivate", () => {
         const holding = new Set(["bot-gone", "bot-1"]);
         const onGone = vi.fn((id: string) => holding.delete(id));
         service.startPrivacySync(() => [...holding], onGone);
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(onGone).not.toHaveBeenCalled();
         await vi.advanceTimersByTimeAsync(30_000);
         expect(onGone).toHaveBeenCalledTimes(1);
         expect(onGone).toHaveBeenCalledWith("bot-gone");
         hoisted.axios.get.mockClear();
         await vi.advanceTimersByTimeAsync(30_000);
         expect(hoisted.axios.get.mock.calls.map((call) => call[0])).toEqual(["http://orbit.local/api/bots/bot-1/privacy"]);
+        service.stopPrivacySync();
+    });
+
+    it("keeps a bot when a \"not found\" is followed by an answer (a hiccup, not a deletion)", async () => {
+        const gone = Object.assign(new Error("not found"), { isAxiosError: true, response: { status: 404 } });
+        hoisted.axios.get
+            .mockRejectedValueOnce(gone)
+            .mockRejectedValueOnce(gone)
+            .mockResolvedValueOnce(answer(false))
+            .mockRejectedValueOnce(gone)
+            .mockRejectedValueOnce(gone)
+            .mockResolvedValue(answer(false));
+        const onGone = vi.fn();
+        service.startPrivacySync(() => ["bot-1"], onGone);
+        await vi.advanceTimersByTimeAsync(30_000 * 6);
+        expect(onGone).not.toHaveBeenCalled();
         service.stopPrivacySync();
     });
 
