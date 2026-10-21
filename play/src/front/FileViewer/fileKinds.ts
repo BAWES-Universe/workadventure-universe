@@ -44,18 +44,27 @@ export const MAP_VIEWER_KINDS: ReadonlySet<FileViewerKind> = new Set<FileViewerK
 /** The kinds that are text the viewer decodes itself (no reader library). */
 export const TEXT_KINDS: ReadonlySet<FileViewerKind> = new Set<FileViewerKind>(["markdown", "text", "json", "csv"]);
 
-/** The lower-case extension of a file name or link, without its query or fragment. */
-export function extensionOf(nameOrLink: string | undefined): string {
-    if (!nameOrLink) return "";
-    const path = nameOrLink.split(/[?#]/)[0];
-    const lastDot = path.lastIndexOf(".");
-    const lastSlash = path.lastIndexOf("/");
-    return lastDot > lastSlash ? path.slice(lastDot + 1).toLowerCase() : "";
+/** The lower-case extension of a file name. A "#" or "?" in a name ("Invoice #12.pdf") is part of the name. */
+export function extensionOf(name: string | undefined): string {
+    if (!name) return "";
+    const lastDot = name.lastIndexOf(".");
+    const lastSlash = name.lastIndexOf("/");
+    return lastDot > lastSlash ? name.slice(lastDot + 1).toLowerCase() : "";
 }
 
-/** The kind of reader a file name or link asks for, or undefined when the viewer has none for it. */
-export function fileKindOf(nameOrLink: string | undefined): FileViewerKind | undefined {
-    return KIND_BY_EXTENSION[extensionOf(nameOrLink)];
+/** The lower-case extension a link ends with, without its query or fragment. */
+export function extensionOfLink(link: string | undefined): string {
+    return extensionOf(link?.split(/[?#]/)[0]);
+}
+
+/** The kind of reader a file name asks for, or undefined when the viewer has none for it. */
+export function fileKindOf(name: string | undefined): FileViewerKind | undefined {
+    return KIND_BY_EXTENSION[extensionOf(name)];
+}
+
+/** The kind of reader a link asks for, or undefined when the viewer has none for it. */
+export function fileKindOfLink(link: string | undefined): FileViewerKind | undefined {
+    return KIND_BY_EXTENSION[extensionOfLink(link)];
 }
 
 /** Whether a tap on a chat card for this file opens the viewer (otherwise the card stays a download). */
@@ -64,8 +73,8 @@ export function chatFileOpensInViewer(name: string | undefined): boolean {
     return kind !== undefined && CHAT_VIEWER_KINDS.has(kind);
 }
 
-export function imageMimeTypeOf(nameOrLink: string | undefined): string {
-    return IMAGE_MIME_BY_EXTENSION[extensionOf(nameOrLink)] ?? "application/octet-stream";
+export function imageMimeTypeOf(name: string | undefined): string {
+    return IMAGE_MIME_BY_EXTENSION[extensionOf(name)] ?? "application/octet-stream";
 }
 
 export interface FileBadge {

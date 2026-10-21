@@ -3,6 +3,7 @@ import {
     bytesMatchKind,
     chatFileOpensInViewer,
     extensionOf,
+    extensionOfLink,
     fileKindOf,
     formatFileSize,
     imageMimeTypeOf,
@@ -12,12 +13,19 @@ const bytes = (...values: number[]) => new Uint8Array(values);
 const text = (value: string) => new TextEncoder().encode(value);
 
 describe("picking how a file is shown", () => {
-    it("reads the extension of a name or a link, without its query or fragment", () => {
+    it("reads the extension of a name, keeping a # or ? that is part of it", () => {
         expect(extensionOf("Q3 roadmap.PDF")).toBe("pdf");
-        expect(extensionOf("https://maps.example.com/files/plan.pdf?token=a.b.c#page=2")).toBe("pdf");
+        expect(extensionOf("Invoice #12.pdf")).toBe("pdf");
+        expect(extensionOf("Is this final?.docx")).toBe("docx");
         expect(extensionOf("notes")).toBe("");
-        expect(extensionOf("https://example.com/v1.2/readme")).toBe("");
         expect(extensionOf(undefined)).toBe("");
+        expect(chatFileOpensInViewer("Invoice #12.pdf")).toBe(true);
+    });
+
+    it("reads the extension of a link, without its query or fragment", () => {
+        expect(extensionOfLink("https://maps.example.com/files/plan.pdf?token=a.b.c#page=2")).toBe("pdf");
+        expect(extensionOfLink("https://example.com/v1.2/readme")).toBe("");
+        expect(extensionOfLink(undefined)).toBe("");
     });
 
     it("shows PDFs and the map's picture types, and nothing else yet", () => {

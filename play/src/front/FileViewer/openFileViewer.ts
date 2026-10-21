@@ -2,7 +2,7 @@ import { derived, get, type Readable } from "svelte/store";
 import { coWebsites, fullScreenCowebsite } from "../Stores/CoWebsiteStore";
 import { FileViewerCoWebsite, type FileViewerSource } from "../WebRtc/CoWebsite/FileViewerCoWebsite";
 import { saveMessageFiles } from "../Chat/Components/Room/MessageActions/availableActions";
-import { extensionOf, fileKindOf, MAP_VIEWER_KINDS } from "./fileKinds";
+import { extensionOf, fileKindOfLink, MAP_VIEWER_KINDS } from "./fileKinds";
 
 /** The keys of the files the viewer has open now, for the cards of those files. */
 export const openFileViewerKeys: Readable<ReadonlySet<string>> = derived(coWebsites, ($coWebsites) => {
@@ -159,6 +159,6 @@ export function createMapFileViewer({ link, width, closable, hideUrl }: MapFileT
 
 /** Whether the viewer can show a map file with this link (a PDF or a picture). */
 export function mapFileOpensInViewer(link: string): boolean {
-    const kind = fileKindOf(link);
+    const kind = fileKindOfLink(link);
     return kind !== undefined && MAP_VIEWER_KINDS.has(kind);
 }
