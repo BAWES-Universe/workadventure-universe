@@ -1,0 +1,240 @@
+<script lang="ts">
+    import { createEventDispatcher, onDestroy, onMount } from "svelte";
+    import { writable } from "svelte/store";
+    import LL from "../../../../i18n/i18n-svelte";
+    import { renderWordDocument, type RenderedWord } from "../../../FileViewer/wordDocument";
+    import type { ViewerController, ViewerPages } from "../../../FileViewer/viewerController";
+
+    export let bytes: ArrayBuffer;
+    export let name: string;
+    /** A narrow panel (a phone): the page pill hints at pinching. */
+    export let compact: boolean;
+    export let controller: ViewerController | undefined = undefined;
+
+    const dispatch = createEventDispatcher<{ loaded: { pageCount: number }; failed: void }>();
+
+    const MIN_ZOOM = 0.5;
+    const MAX_ZOOM = 5;
+
+    let area: HTMLDivElement;
+    let frame: HTMLIFrameElement | undefined;
+    let areaWidth = 0;
+    let rendered: RenderedWord | undefined;
+    /** The page's whole size at 100% (width of a sheet with its desk margins, height of all of them). */
+    let contentWidth = 0;
+    let contentHeight = 0;
+    let sheetTops: number[] = [];
+    /** 100% is the page fitted to the panel's width; the plus and minus buttons and a pinch change this. */
+    let userZoom = 1;
+    let pinchHint = true;
+    const pages = writable<ViewerPages>({ page: 1, count: 0 });
+    const zoomPercent = writable(100);
+    let frameDocument: Document | undefined;
+
+    $: fitScale = contentWidth > 0 && areaWidth > 0 ? Math.min(1, areaWidth / contentWidth) : 1;
+    $: scale = fitScale * userZoom;
+    $: zoomPercent.set(Math.round(userZoom * 100));
+    $: if ($pages.page > 1) pinchHint = false;
+
+    function setZoom(next: number): void {
+        userZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next));
+    }
+
+    function updatePage(): void {
+        if (sheetTops.length === 0 || !area) return;
+        // The sheet that covers the upper part of what is in view.
+        const probe = area.scrollTop / scale + area.clientHeight / scale / 3;
+        let page = 1;
+        for (let index = 0; index < sheetTops.length; index++) if (sheetTops[index] <= probe) page = index + 1;
+        // At the very end the last page counts, even when it is short.
+        if (area.scrollTop + area.clientHeight >= area.scrollHeight - 2) page = sheetTops.length;
+        if (page !== $pages.page) pages.update((value) => ({ ...value, page }));
+    }
+
+    // --- Pinch (two fingers) and Ctrl + wheel zoom, from the panel and from over the document ---
+    const pointers = new Map<number, { x: number; y: number }>();
+    let pinchDistance = 0;
+
+    function distance(): number {
+        const [first, second] = [...pointers.values()];
+        return Math.hypot(first.x - second.x, first.y - second.y);
+    }
+
+    function onPointerDown(event: PointerEvent): void {
+        pointers.set(event.pointerId, { x: event.screenX, y: event.screenY });
+        if (pointers.size === 2) pinchDistance = distance();
+    }
+
+    function onPointerMove(event: PointerEvent): void {
+        if (!pointers.has(event.pointerId)) return;
+        pointers.set(event.pointerId, { x: event.screenX, y: event.screenY });
+        if (pointers.size === 2 && pinchDistance > 0) {
+            const next = distance();
+            setZoom(userZoom * (next / pinchDistance));
+            pinchDistance = next;
+            pinchHint = false;
+        }
+    }
+
+    function onPointerEnd(event: PointerEvent): void {
+        pointers.delete(event.pointerId);
+        if (pointers.size < 2) pinchDistance = 0;
+    }
+
+    function onWheel(event: WheelEvent): void {
+        if (!event.ctrlKey) return;
+        event.preventDefault();
+        setZoom(userZoom * Math.exp(-event.deltaY * 0.01));
+    }
+
+    // A link in the document opens in a new tab, from here: the sealed page itself can run nothing.
+    function onLinkClick(event: MouseEvent): void {
+        const link = (event.target as Element | null)?.closest?.("a");
+        if (!link) return;
+        event.preventDefault();
+        const href = link.getAttribute("href");
+        if (href && /^(https?:|mailto:|tel:)/i.test(href)) window.open(href, "_blank", "noopener,noreferrer");
+    }
+
+    function listen(target: Document | HTMLElement): void {
+        target.addEventListener("pointerdown", onPointerDown as EventListener);
+        target.addEventListener("pointermove", onPointerMove as EventListener);
+        target.addEventListener("pointerup", onPointerEnd as EventListener);
+        target.addEventListener("pointercancel", onPointerEnd as EventListener);
+        target.addEventListener("wheel", onWheel as EventListener, { passive: false });
+        target.addEventListener("click", onLinkClick as EventListener);
+    }
+
+    function unlisten(target: Document | HTMLElement): void {
+        target.removeEventListener("pointerdown", onPointerDown as EventListener);
+        target.removeEventListener("pointermove", onPointerMove as EventListener);
+        target.removeEventListener("pointerup", onPointerEnd as EventListener);
+        target.removeEventListener("pointercancel", onPointerEnd as EventListener);
+        target.removeEventListener("wheel", onWheel as EventListener);
+        target.removeEventListener("click", onLinkClick as EventListener);
+    }
+
+    function onFrameLoad(): void {
+        const loadedDocument = frame?.contentDocument;
+        if (!loadedDocument || !rendered) return;
+        frameDocument = loadedDocument;
+        // The sealed page is as wide as a sheet and its desk margins, and as tall as all the sheets together.
+        contentWidth = Math.ceil(loadedDocument.documentElement.scrollWidth);
+        contentHeight = Math.ceil(loadedDocument.documentElement.scrollHeight);
+        sheetTops = Array.from(loadedDocument.querySelectorAll<HTMLElement>("section.docx")).map(
+            (sheet) => sheet.getBoundingClientRect().top
+        );
+        listen(loadedDocument);
+        pages.set({ page: 1, count: rendered.pageCount });
+        dispatch("loaded", { pageCount: rendered.pageCount });
+    }
+
+    onMount(() => {
+        controller = {
+            pages: { subscribe: pages.subscribe },
+            zoomPercent: { subscribe: zoomPercent.subscribe },
+            zoomIn: () => setZoom(userZoom * 1.25),
+            zoomOut: () => setZoom(userZoom / 1.25),
+        };
+        listen(area);
+        renderWordDocument(bytes)
+            .then((result) => {
+                rendered = result;
+                // The frame is as wide as a sheet before it loads, so its width can be measured right after.
+                contentWidth = Math.ceil(result.pageWidth + 32);
+            })
+            .catch((error) => {
+                console.warn("Could not read a Word file to preview it", error);
+                dispatch("failed");
+            });
+    });
+
+    onDestroy(() => {
+        unlisten(area);
+        if (frameDocument) unlisten(frameDocument);
+    });
+</script>
+
+<div class="word-body">
+    <div
+        class="doc-area"
+        bind:this={area}
+        bind:clientWidth={areaWidth}
+        on:scroll={updatePage}
+        data-testid="fileViewerWord"
+    >
+        {#if rendered}
+            <div class="sizer" style:width="{contentWidth * scale}px" style:height="{contentHeight * scale}px">
+                <!--
+                    A sealed page: it can run no script (no "allow-scripts"), and its own rules let it fetch nothing.
+                    "allow-same-origin" only lets this panel measure it, zoom it and open its links.
+                -->
+                <iframe
+                    bind:this={frame}
+                    title={name}
+                    sandbox="allow-same-origin"
+                    srcdoc={rendered.srcdoc}
+                    scrolling="no"
+                    style:width="{contentWidth}px"
+                    style:height="{contentHeight || 1000}px"
+                    style:transform="scale({scale})"
+                    on:load={onFrameLoad}
+                />
+            </div>
+        {/if}
+    </div>
+    {#if $pages.count > 0}
+        <div class="page-pill" aria-live="polite">
+            {$LL.chat.fileViewer.pageOfShort({ page: $pages.page, count: $pages.count })}{#if compact && pinchHint}
+                &nbsp;· {$LL.chat.fileViewer.pinchHint()}{/if}
+        </div>
+    {/if}
+</div>
+
+<style>
+    .word-body {
+        position: relative;
+        flex: 1;
+        min-height: 0;
+        background: #3a3950;
+    }
+
+    .doc-area {
+        position: absolute;
+        inset: 0;
+        overflow: auto;
+        background: #3a3950;
+        -webkit-overflow-scrolling: touch;
+        /* One finger scrolls and two pinch: the panel decides pinch itself. */
+        touch-action: pan-x pan-y;
+    }
+
+    .sizer {
+        position: relative;
+        /* Centred while narrower than the panel. */
+        margin: 0 auto;
+    }
+
+    iframe {
+        position: absolute;
+        top: 0;
+        left: 0;
+        border: 0;
+        background: #3a3950;
+        transform-origin: 0 0;
+    }
+
+    .page-pill {
+        position: absolute;
+        left: 50%;
+        bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+        transform: translateX(-50%);
+        background: rgba(20, 19, 31, 0.9);
+        color: #fff;
+        font-size: 12px;
+        padding: 6px 12px;
+        border-radius: 999px;
+        white-space: nowrap;
+        pointer-events: none;
+    }
+</style>

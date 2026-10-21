@@ -1,0 +1,78 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { tick } from "svelte";
+import type * as SvelteRuntime from "svelte";
+import { readable } from "svelte/store";
+
+// Vitest's Node conditions select Svelte's SSR no-op onMount; use the browser
+// lifecycle hook that the compiled DOM component uses in the running client.
+vi.mock("svelte", async (importOriginal) => {
+    const svelte = await importOriginal<typeof SvelteRuntime>();
+    // eslint-disable-next-line svelte/no-svelte-internal
+    const { onMount } = await import("svelte/internal");
+    return { ...svelte, onMount };
+});
+vi.mock("../../../src/i18n/i18n-svelte", () => {
+    const text = (path: string[]): unknown =>
+        new Proxy((values?: Record<string, unknown>) => `${path.join(".")}${values ? JSON.stringify(values) : ""}`, {
+            get: (_target, key: string) => text([...path, key]),
+        });
+    return { default: readable(text([])) };
+});
+const render = vi.hoisted(() => ({ renderWordDocument: vi.fn() }));
+vi.mock("../../../src/front/FileViewer/wordDocument", () => ({ renderWordDocument: render.renderWordDocument }));
+
+import FileViewerWord from "../../../src/front/Components/Cowebsites/FileViewer/FileViewerWord.svelte";
+
+describe("the Word reader's frame", () => {
+    let target: HTMLElement;
+    let component: { $destroy(): void } | undefined;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        target = document.createElement("div");
+        document.body.appendChild(target);
+    });
+
+    afterEach(() => {
+        component?.$destroy();
+        component = undefined;
+        target.remove();
+    });
+
+    it("draws the document in a sealed frame that can run no script", async () => {
+        render.renderWordDocument.mockResolvedValue({
+            srcdoc: "<!doctype html><p>Hi</p>",
+            pageWidth: 816,
+            pageCount: 2,
+        });
+        component = new FileViewerWord({
+            target,
+            props: { bytes: new ArrayBuffer(8), name: "plan.docx", compact: false },
+        });
+        await vi.waitFor(() => expect(target.querySelector("iframe[sandbox]")).not.toBeNull());
+        await tick();
+
+        const frame = target.querySelector("iframe[sandbox]") as HTMLIFrameElement;
+        expect(frame.getAttribute("srcdoc")).toBe("<!doctype html><p>Hi</p>");
+        const rules = frame.getAttribute("sandbox")?.split(/\s+/) ?? [];
+        // Same origin only lets the panel measure and zoom the frame; scripts, forms, pop-ups and top navigation stay off.
+        expect(rules).toEqual(["allow-same-origin"]);
+        expect(frame.getAttribute("src")).toBeNull();
+    });
+
+    it("says it failed when the file cannot be drawn", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        render.renderWordDocument.mockRejectedValue(new Error("Corrupted zip"));
+        const reader = new FileViewerWord({
+            target,
+            props: { bytes: new ArrayBuffer(8), name: "x.docx", compact: false },
+        });
+        component = reader;
+        const failed = vi.fn();
+        (reader as unknown as { $on(name: string, handler: () => void): void }).$on("failed", failed);
+
+        await vi.waitFor(() => expect(failed).toHaveBeenCalledOnce());
+        expect(target.querySelector("iframe[sandbox]")).toBeNull();
+        warn.mockRestore();
+    });
+});

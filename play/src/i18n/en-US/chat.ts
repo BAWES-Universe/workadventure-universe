@@ -279,6 +279,7 @@ const chat: BaseTranslation = {
         rowsCutUnknown: "Showing the first {shown:number} rows.",
         columnsCut: "Showing the first {shown:number} columns.",
         downloadAll: "Download to see all",
+        oldWord: "Old Word files (.doc) open in Word or another app.",
     },
     needRefresh: "Your connection has expired, you need to refresh the page to reconnect to the chat.",
     refresh: "Refresh",
