@@ -67,7 +67,17 @@ function lastUsedColumn(XLSX: typeof SheetJs, sheet: SheetJs.WorkSheet): number 
 
 function viewOfSheet(XLSX: typeof SheetJs, name: string, sheet: SheetJs.WorkSheet): SheetView {
     const reference = sheet["!ref"];
-    if (!reference) return { name, rows: [], columnCount: 0, totalRows: 0, rowsCut: false, columnsCut: false };
+    // A sheet with no cells is drawn like Excel draws it: the grid of one empty cell, A1.
+    if (!reference) {
+        return {
+            name,
+            rows: [[textOfCell(undefined)]],
+            columnCount: 1,
+            totalRows: 0,
+            rowsCut: false,
+            columnsCut: false,
+        };
+    }
     const range = XLSX.utils.decode_range(reference);
     // Reading stops two rows after the rows that are shown. A sheet that ends within them is as long as its cells say,
     // whatever size the file claims. One that fills them all goes on, and its length is the size the file claims, or

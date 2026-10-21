@@ -217,6 +217,13 @@ describe("the spreadsheet reader", () => {
         expect(sheets.map((sheet) => sheet.name)).toEqual(["One"]);
     });
 
+    it("draws a sheet with no cells as an empty A1, like Excel", async () => {
+        const [sheet] = await readSpreadsheet(workbookBytes({ Blank: [] }));
+        expect(sheet.columnCount).toBe(1);
+        expect(sheet.rows).toEqual([[{ text: "", number: false }]]);
+        expect(sheet.rowsCut).toBe(false);
+    });
+
     it("leaves hidden sheets out, as Excel does", async () => {
         const sheets = await readSpreadsheet(workbookBytes({ One: [[1]], Secret: [[2]] }, "xlsx", ["Secret"]));
         expect(sheets.map((sheet) => sheet.name)).toEqual(["One"]);
