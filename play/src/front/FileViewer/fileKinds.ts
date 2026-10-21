@@ -118,7 +118,16 @@ export function textEncodingOf(bytes: Uint8Array): "utf-8" | "utf-16le" | "utf-1
 function looksLikeText(bytes: Uint8Array): boolean {
     // A zero byte in the first few kilobytes is a binary file (UTF-16 text has them by design, and says so up front).
     if (textEncodingOf(bytes) !== "utf-8") return true;
-    return !bytes.subarray(0, 8192).includes(0);
+    if (bytes.subarray(0, 8192).includes(0)) return false;
+    // Text in an older code page (Windows-1252, Windows-1256, as some spreadsheets export) is not UTF-8: it would show
+    // as broken letters, so it opens as "Can't preview" with the download instead. A letter cut at the end of the
+    // part checked is not an error.
+    try {
+        new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, 65536), { stream: bytes.length > 65536 });
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 /**

@@ -182,13 +182,14 @@ function picturesFromOtherSitesToLinks(html: string): string {
         const alt = picture.getAttribute("alt") ?? "";
         if (SAFE_INLINE_PICTURE.test(source)) {
             picture.removeAttribute("srcset");
-        } else if (/^https?:\/\//i.test(source)) {
+        } else if (/^https?:\/\//i.test(source) && !picture.closest("a")) {
+            // (A picture that is itself a link, like a badge, stays inside its own link: as its text.)
             const link = document.createElement("a");
             link.setAttribute("href", source);
             link.textContent = alt || source;
             picture.replaceWith(link);
         } else {
-            picture.replaceWith(document.createTextNode(alt));
+            picture.replaceWith(document.createTextNode(alt || (/^https?:\/\//i.test(source) ? source : "")));
         }
     }
     return template.innerHTML;
