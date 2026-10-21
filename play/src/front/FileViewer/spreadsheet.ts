@@ -221,11 +221,13 @@ async function prepareOpenDocument(bytes: ArrayBuffer): Promise<{ data: Uint8Arr
     if (!content) return { data: new Uint8Array(bytes), hidden: new Set() };
     const xml = await content.async("string");
     const hidden = hiddenOpenDocumentSheets(xml);
-    const limit = MAX_TABLE_COLUMNS + 1;
+    // A row repeated past the rows that are read is cut as well: the reader would fill every repeat with cells before
+    // it looks at how many rows it has, and a million repeats of a wide row never finishes.
+    const limits = { columns: MAX_TABLE_COLUMNS + 1, rows: MAX_TABLE_ROWS + READ_BEYOND_SHOWN + 1 };
     const limited = xml.replace(
-        /(number-columns-repeated\s*=\s*)(["'])(\d+)\2/g,
-        (whole, name: string, quote: string, count: string) =>
-            Number(count) > limit ? `${name}${quote}${limit}${quote}` : whole
+        /(number-(columns|rows)-repeated\s*=\s*)(["'])(\d+)\3/g,
+        (whole, name: string, kind: "columns" | "rows", quote: string, count: string) =>
+            Number(count) > limits[kind] ? `${name}${quote}${limits[kind]}${quote}` : whole
     );
     if (limited === xml) return { data: new Uint8Array(bytes), hidden };
     zip.file("content.xml", limited);
