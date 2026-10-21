@@ -174,6 +174,19 @@ describe("AIService: PostHog and Sentry", () => {
             expect(hoisted.flushPostHog).not.toHaveBeenCalled();
         });
 
+        it("sends nothing to PostHog on a turn with two tool rounds (the follow-up that calls a tool again)", async () => {
+            async function* followUpWithTool() {
+                yield { content: "Let me look again.", done: false };
+                yield { content: "", done: false, toolCalls: [{ id: "call_2", name: "get_bot_position", arguments: "{}" }] };
+                yield { content: "", done: true, metadata: { tokensUsed: 150, promptTokens: 140, completionTokens: 10, latency: 20, error: false, truncated: false } };
+            }
+            hoisted.generateStream.mockReset().mockImplementationOnce(toolCall).mockImplementationOnce(followUpWithTool).mockImplementation(followUp);
+            await runTurn(adminApiMock(async () => true));
+            expect(hoisted.generateStream.mock.calls.length).toBeGreaterThanOrEqual(3);
+            expect(hoisted.captureAiGeneration).not.toHaveBeenCalled();
+            expect(hoisted.captureAiTrace).not.toHaveBeenCalled();
+        });
+
         it("still counts the usage in Orbit, with the same numbers", async () => {
             const adminApi = adminApiMock(async () => true);
             await runTurn(adminApi);
@@ -253,8 +266,32 @@ describe("AdminApiService.isBotPrivate", () => {
         expect(await service.isBotPrivate("bot-1")).toBe(false);
     });
 
-    it("is not private when Orbit has never answered (as every bot worked before the setting)", async () => {
-        hoisted.axios.get.mockRejectedValue({ isAxiosError: true, message: "down", response: { status: 502 } });
+    it("counts as private until Orbit answers, when it has never answered (down, timeout or refused)", async () => {
+        for (const failure of [
+            { isAxiosError: true, message: "down", response: { status: 502 } },
+            { isAxiosError: true, message: "timeout", response: undefined },
+            { isAxiosError: true, message: "refused", response: { status: 401 } },
+        ]) {
+            const { AdminApiService } = await import("../server/AdminApiService");
+            const fresh: any = new AdminApiService("http://orbit.local", "admin-secret");
+            hoisted.axios.get.mockReset().mockRejectedValue(failure);
+            expect(await fresh.isBotPrivate("bot-1")).toBe(true);
+        }
+    });
+
+    it("picks up \"not private\" as soon as Orbit answers after an outage at start", async () => {
+        hoisted.axios.get.mockRejectedValueOnce({ isAxiosError: true, message: "down", response: { status: 502 } });
+        expect(await service.isBotPrivate("bot-1")).toBe(true);
+        vi.advanceTimersByTime(6_000);
+        hoisted.axios.get.mockResolvedValueOnce(answer(false));
+        expect(await service.isBotPrivate("bot-1")).toBe(false);
+    });
+
+    it("keeps a known \"not private\" through an outage (no change for bots Orbit has already answered for)", async () => {
+        hoisted.axios.get.mockResolvedValueOnce(answer(false));
+        expect(await service.isBotPrivate("bot-1")).toBe(false);
+        vi.advanceTimersByTime(31_000);
+        hoisted.axios.get.mockRejectedValueOnce({ isAxiosError: true, message: "down", response: { status: 502 } });
         expect(await service.isBotPrivate("bot-1")).toBe(false);
     });
 
