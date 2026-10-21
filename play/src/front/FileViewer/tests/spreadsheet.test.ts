@@ -266,6 +266,12 @@ describe("the spreadsheet reader", () => {
             expect(sheet.textCut).toBe(true);
         });
 
+        it("is cut between characters, never in the middle of an emoji", async () => {
+            // 1,023 letters then an emoji of two code units: the cut at 1,024 would split it.
+            const [sheet] = await readSpreadsheet(workbookBytes({ S: [[`${"x".repeat(1023)}😀tail`]] }));
+            expect(sheet.rows[0][0].text).toBe(`${"x".repeat(1023)}…`);
+        });
+
         it("is not reported as cut when every cell is drawn in full", async () => {
             const [sheet] = await readSpreadsheet(workbookBytes({ S: [["x".repeat(1024), "short"]] }));
             expect(sheet.textCut).toBe(false);
