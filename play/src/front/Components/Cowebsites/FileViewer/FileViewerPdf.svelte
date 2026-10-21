@@ -75,11 +75,21 @@
                 },
                 matches: { subscribe: matches.subscribe },
             },
-            pageList: compact
-                ? undefined
-                : { shown: { subscribe: thumbsShown.subscribe }, toggle: () => thumbsShown.update((shown) => !shown) },
+            pageList: pageListFor(compact),
         };
     }
+
+    function pageListFor(isCompact: boolean): ViewerController["pageList"] {
+        return isCompact
+            ? undefined
+            : { shown: { subscribe: thumbsShown.subscribe }, toggle: () => thumbsShown.update((shown) => !shown) };
+    }
+
+    // The page list button follows the panel when it gets narrow or wide again (a phone turned on its side).
+    function followPanelWidth(isCompact: boolean): void {
+        if (controller) controller = { ...controller, pageList: pageListFor(isCompact) };
+    }
+    $: followPanelWidth(compact);
 
     let lastQuery = "";
 

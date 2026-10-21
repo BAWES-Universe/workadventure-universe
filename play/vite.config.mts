@@ -84,7 +84,15 @@ export default defineConfig(({ mode }) => {
             // itself. The reader's script sandbox is left out: PDF scripts never run.
             viteStaticCopy({
                 targets: [
-                    { src: `${pdfjsDir}/legacy/build/pdf.worker.min.mjs`, dest: "static/pdfjs" },
+                    {
+                        src: [
+                            `${pdfjsDir}/legacy/build/pdf.mjs`,
+                            `${pdfjsDir}/legacy/build/pdf.worker.min.mjs`,
+                            `${pdfjsDir}/legacy/web/pdf_viewer.mjs`,
+                            `${pdfjsDir}/web/pdf_viewer.css`,
+                        ],
+                        dest: "static/pdfjs",
+                    },
                     { src: `${pdfjsDir}/cmaps/*`, dest: "static/pdfjs/cmaps" },
                     { src: `${pdfjsDir}/standard_fonts/*`, dest: "static/pdfjs/standard_fonts" },
                     { src: [`${pdfjsDir}/wasm/*`, `!${pdfjsDir}/wasm/quickjs-eval.*`], dest: "static/pdfjs/wasm" },
@@ -118,7 +126,13 @@ export default defineConfig(({ mode }) => {
         },
     };
 
-    if (env.SENTRY_ORG && env.SENTRY_PROJECT && env.SENTRY_AUTH_TOKEN && (env.RELEASE_VERSION || env.SENTRY_RELEASE) && env.SENTRY_ENVIRONMENT) {
+    if (
+        env.SENTRY_ORG &&
+        env.SENTRY_PROJECT &&
+        env.SENTRY_AUTH_TOKEN &&
+        (env.RELEASE_VERSION || env.SENTRY_RELEASE) &&
+        env.SENTRY_ENVIRONMENT
+    ) {
         console.info("Sentry plugin enabled");
         config.plugins.push(
             sentryVitePlugin({

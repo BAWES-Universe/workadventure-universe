@@ -132,7 +132,7 @@ describe("a chat file card", () => {
         function mountMessageFile(filename: string, url: string | undefined): void {
             component = new MessageFile({
                 target,
-                props: { content: writable({ body: filename, filename, url }) },
+                props: { content: writable({ body: filename, filename, url, urls: undefined, fileNames: undefined }) },
             });
         }
 

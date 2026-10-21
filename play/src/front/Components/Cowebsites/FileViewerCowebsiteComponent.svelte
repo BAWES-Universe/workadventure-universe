@@ -99,6 +99,8 @@
         coWebsites.remove(actualCowebsite);
     }
 
+    $: canDownload = !source.downloadNeedsFile || bytes !== undefined;
+
     function download(): void {
         Promise.resolve(source.download(bytes)).catch((error) => console.error(error));
     }
@@ -311,17 +313,19 @@
             </div>
         {/if}
 
-        <button
-            type="button"
-            class="ib"
-            title={$LL.chat.fileViewer.download()}
-            aria-label={$LL.chat.fileViewer.downloadFile({ name: source.name })}
-            on:click={download}
-            data-testid="fileViewerDownload"
-        >
-            <IconDownload font-size={compact ? 18 : 16} />
-            {#if !compact}{$LL.chat.fileViewer.download()}{/if}
-        </button>
+        {#if canDownload}
+            <button
+                type="button"
+                class="ib"
+                title={$LL.chat.fileViewer.download()}
+                aria-label={$LL.chat.fileViewer.downloadFile({ name: source.name })}
+                on:click={download}
+                data-testid="fileViewerDownload"
+            >
+                <IconDownload font-size={compact ? 18 : 16} />
+                {#if !compact}{$LL.chat.fileViewer.download()}{/if}
+            </button>
+        {/if}
 
         {#if !compact && closable}
             <button
@@ -376,10 +380,12 @@
             <div class="box">
                 <b>{$LL.chat.fileViewer.cantPreview()}</b>
                 <p>{$LL.chat.fileViewer.cantPreviewHelp()}</p>
-                <button type="button" class="bigbtn" on:click={download}>
-                    <IconDownload font-size="18" />
-                    {$LL.chat.fileViewer.download()}
-                </button>
+                {#if canDownload}
+                    <button type="button" class="bigbtn" on:click={download}>
+                        <IconDownload font-size="18" />
+                        {$LL.chat.fileViewer.download()}
+                    </button>
+                {/if}
                 {#if canOpenInNewTab}
                     <button type="button" class="soft" on:click={openInNewTab}>
                         {$LL.chat.fileViewer.openPictureInNewTab()}

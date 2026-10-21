@@ -14,6 +14,8 @@ export interface FileViewerSource {
     load: (signal: AbortSignal) => Promise<ArrayBuffer>;
     /** Saves the file under its real name. `bytes` is undefined when the file could not be read. */
     download: (bytes: ArrayBuffer | undefined) => Promise<void> | void;
+    /** Saving needs the file read first: with Hide URL there is no link to fall back to when it could not be. */
+    downloadNeedsFile?: boolean;
     /** Opens the file in the browser's own viewer in a new tab. Undefined when there is no such way (Hide URL). */
     openInNewTab?: (bytes: ArrayBuffer | undefined) => void;
     /** The new tab opens the file's link, so it works even when the viewer could not read the file. */

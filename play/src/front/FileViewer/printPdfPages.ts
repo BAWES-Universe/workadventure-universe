@@ -70,14 +70,21 @@ export async function printPdfPages(pdf: PDFDocumentProxy): Promise<void> {
         }
         /* eslint-enable no-await-in-loop */
 
-        await new Promise<void>((resolve) => {
-            win.addEventListener("afterprint", () => resolve(), { once: true });
-            win.focus();
-            win.print();
-            // Some browsers print without ever telling the page: the frame goes away after a while either way.
-            setTimeout(resolve, 10 * 60_000);
-        });
-    } finally {
+        // The frame must stay until the print dialog is done with it, which some browsers do not wait for. The
+        // viewer is free again as soon as the dialog is open: the frame goes away when printing ends.
+        let cleaned = false;
+        const cleanUpOnce = () => {
+            if (cleaned) return;
+            cleaned = true;
+            cleanUp();
+        };
+        win.addEventListener("afterprint", cleanUpOnce, { once: true });
+        // Some browsers print without ever telling the page: the frame goes away after a while either way.
+        setTimeout(cleanUpOnce, 10 * 60_000);
+        win.focus();
+        win.print();
+    } catch (error) {
         cleanUp();
+        throw error;
     }
 }

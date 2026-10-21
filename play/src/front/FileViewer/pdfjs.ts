@@ -1,6 +1,7 @@
-// PDF.js is loaded only when a PDF opens: the reader, its viewer parts and styles are separate chunks, and the
-// worker and its font, character and image files are copied from node_modules at build time (see vite.config.mts)
-// and served by the game itself, never fetched from a CDN.
+// PDF.js is loaded only when a PDF opens. Its files (the reader, the viewer parts, their styles, the worker and the
+// font, character and image files) are copied from node_modules at build time (see vite.config.mts) and served by
+// the game itself, never fetched from a CDN. They load from there as they are, rather than being bundled: the
+// package already ships a build for older phones, and the bundler's own legacy pass cannot read it.
 import type * as PdfJsLibModule from "pdfjs-dist/legacy/build/pdf.mjs";
 import type * as PdfJsViewerModule from "pdfjs-dist/legacy/web/pdf_viewer.mjs";
 
@@ -21,15 +22,26 @@ function assetUrl(file: string): string {
 
 let loading: Promise<PdfJs> | undefined;
 
+function loadStyles(): Promise<void> {
+    return new Promise((resolve, reject) => {
+        const link = document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = assetUrl("pdf_viewer.css");
+        link.onload = () => resolve();
+        link.onerror = () => reject(new Error("The PDF styles did not load"));
+        document.head.appendChild(link);
+    });
+}
+
 export function loadPdfJs(): Promise<PdfJs> {
     loading ??= (async () => {
         const [lib] = await Promise.all([
-            import("pdfjs-dist/legacy/build/pdf.mjs"),
-            import("pdfjs-dist/web/pdf_viewer.css"),
+            import(/* @vite-ignore */ assetUrl("pdf.mjs")) as Promise<PdfJsLib>,
+            loadStyles(),
         ]);
         lib.GlobalWorkerOptions.workerSrc = assetUrl("pdf.worker.min.mjs");
         // The viewer parts read the reader from the page, so they load after it.
-        const viewer = await import("pdfjs-dist/legacy/web/pdf_viewer.mjs");
+        const viewer = (await import(/* @vite-ignore */ assetUrl("pdf_viewer.mjs"))) as PdfJsViewer;
         return { lib, viewer };
     })().catch((error) => {
         // A failed load (offline for a moment) is tried again the next time a PDF opens.

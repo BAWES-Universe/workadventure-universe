@@ -205,4 +205,19 @@ describe("opening a map's file in the viewer", () => {
         const blob = (createObjectURL.mock.calls[0] as unknown as [Blob])[0];
         expect(blob.type).toBe("application/octet-stream");
     });
+
+    it("falls back to the link for a file that could not be read, unless Hide URL is on", () => {
+        const open = vi.spyOn(window, "open").mockReturnValue(null);
+
+        const plain = createMapFileViewer({ link }).source;
+        void plain.download(undefined);
+        expect(open).toHaveBeenCalledWith(link, "_blank", "noopener,noreferrer");
+        expect(plain.downloadNeedsFile).toBeFalsy();
+
+        open.mockClear();
+        const hidden = createMapFileViewer({ link, hideUrl: true }).source;
+        void hidden.download(undefined);
+        expect(open).not.toHaveBeenCalled();
+        expect(hidden.downloadNeedsFile).toBe(true);
+    });
 });

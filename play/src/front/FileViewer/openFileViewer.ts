@@ -136,7 +136,12 @@ export function createMapFileViewer({ link, width, closable, hideUrl }: MapFileT
         name,
         // The map storage allows this fetch from the game (it answers with CORS headers).
         load: async (signal) => readBytes(await fetch(link, { signal })),
-        download: (bytes) => (bytes ? downloadBytes(name, bytes) : openLinkInNewTab(link)),
+        // Hide URL keeps the address out of reach, so a file that could not be read has no link to fall back to.
+        download: (bytes) => {
+            if (bytes) downloadBytes(name, bytes);
+            else if (!hideUrl) openLinkInNewTab(link);
+        },
+        downloadNeedsFile: hideUrl,
         // Hide URL keeps the address out of reach, as the panel's copy and open buttons did.
         openInNewTab: hideUrl ? undefined : () => openLinkInNewTab(link),
         openInNewTabFromLink: true,
