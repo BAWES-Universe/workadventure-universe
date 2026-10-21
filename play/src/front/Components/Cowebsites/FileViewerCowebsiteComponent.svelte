@@ -204,7 +204,8 @@
     onDestroy(() => {
         abort.abort();
         clearTimeout(findTimer);
-        inputFormFocusStore.set(false);
+        // Only a panel that had the focus gives the keys back: another box (the chat) may be using them now.
+        if (panelFocused) inputFormFocusStore.set(false);
         // The panel that filled a phone's screen gives it back.
         if (actualCowebsite.openedFullScreen) fullScreenCowebsite.set(false);
     });
