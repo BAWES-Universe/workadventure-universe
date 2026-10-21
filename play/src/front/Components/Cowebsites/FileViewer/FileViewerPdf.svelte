@@ -4,6 +4,7 @@
     import type { PDFDocumentProxy } from "pdfjs-dist";
     import LL from "../../../../i18n/i18n-svelte";
     import { loadPdfJs, pdfDocumentOptions, type PdfJs } from "../../../FileViewer/pdfjs";
+    import { findCountOf } from "../../../FileViewer/pdfFind";
     import { printPdfPages } from "../../../FileViewer/printPdfPages";
     import type { ViewerController, ViewerPages } from "../../../FileViewer/viewerController";
 
@@ -239,8 +240,9 @@
         zoomPercent.set(Math.round(clampScale(event.scale) * 100));
     }
 
-    function onMatchesCount(event: { matchesCount: { current: number; total: number } }): void {
-        matches.set(event.matchesCount);
+    function onMatchesCount(event: { state?: number; matchesCount: { current: number; total: number } }): void {
+        const count = findCountOf(event);
+        if (count) matches.set(count);
     }
 
     async function start(): Promise<void> {
