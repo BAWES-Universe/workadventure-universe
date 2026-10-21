@@ -112,6 +112,8 @@ export function parseCsv(text: string, complete: boolean): ParsedTable {
     let row: string[] = [];
     let cell = "";
     let inQuotes = false;
+    /** The cell being read was opened with a quote: "" is an empty value, not a blank line. */
+    let quoted = false;
     let totalRows = 0;
     let columnsCut = false;
 
@@ -119,11 +121,13 @@ export function parseCsv(text: string, complete: boolean): ParsedTable {
         if (row.length < MAX_TABLE_COLUMNS) row.push(cell);
         else columnsCut = true;
         cell = "";
+        quoted = false;
     };
     const endRow = () => {
-        endCell();
         // A blank line is not a row.
-        if (!(row.length === 1 && row[0] === "")) {
+        const blank = row.length === 0 && cell === "" && !quoted;
+        endCell();
+        if (!blank) {
             totalRows++;
             if (rows.length < MAX_TABLE_ROWS) rows.push(row);
         }
@@ -139,8 +143,10 @@ export function parseCsv(text: string, complete: boolean): ParsedTable {
                     index++;
                 } else inQuotes = false;
             } else cell += char;
-        } else if (char === '"' && cell === "") inQuotes = true;
-        else if (char === delimiter) endCell();
+        } else if (char === '"' && cell === "") {
+            inQuotes = true;
+            quoted = true;
+        } else if (char === delimiter) endCell();
         else if (char === "\n") endRow();
         else if (char === "\r") {
             if (text[index + 1] === "\n") index++;
@@ -148,7 +154,7 @@ export function parseCsv(text: string, complete: boolean): ParsedTable {
         } else cell += char;
     }
     // The last row, when the text does not end with a line break.
-    if (cell !== "" || row.length > 0) endRow();
+    if (cell !== "" || row.length > 0 || quoted) endRow();
 
     return {
         rows,
