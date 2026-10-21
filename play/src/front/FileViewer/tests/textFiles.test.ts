@@ -25,7 +25,7 @@ describe("picking the reader for a text file", () => {
     });
 
     it("leaves every other file as a download", () => {
-        for (const name of ["a.zip", "a.docx", "a.xlsx", "a.pptx", "a.doc", "a.html", "a.js", "a.xml"]) {
+        for (const name of ["a.zip", "a.xlsx", "a.pptx", "a.html", "a.js", "a.xml"]) {
             expect(chatFileOpensInViewer(name)).toBe(false);
         }
     });

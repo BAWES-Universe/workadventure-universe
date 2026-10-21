@@ -20,12 +20,14 @@ describe("picking how a file is shown", () => {
         expect(extensionOf(undefined)).toBe("");
     });
 
-    it("shows PDFs and the map's picture types, and nothing else yet", () => {
+    it("shows PDFs, pictures and Word files, and nothing else yet", () => {
         expect(fileKindOf("plan.pdf")).toBe("pdf");
         for (const name of ["a.png", "a.jpg", "a.jpeg", "a.gif", "a.webp", "a.bmp", "a.svg"]) {
             expect(fileKindOf(name)).toBe("image");
         }
-        for (const name of ["a.zip", "a.pptx", "a.doc", "a.html", "a.exe", "a"]) {
+        expect(fileKindOf("a.docx")).toBe("word");
+        expect(fileKindOf("a.doc")).toBe("oldword");
+        for (const name of ["a.zip", "a.pptx", "a.html", "a.exe", "a"]) {
             expect(fileKindOf(name)).toBeUndefined();
         }
     });
