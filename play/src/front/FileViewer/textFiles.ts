@@ -88,9 +88,15 @@ export function indentJson(text: string): string {
 function delimiterOf(text: string): string {
     const counts: Record<string, number> = { ",": 0, ";": 0, "\t": 0 };
     let inQuotes = false;
+    /** Blank lines before the first row do not count as the first line. */
+    let started = false;
     for (const char of text.slice(0, 4096)) {
+        if (!inQuotes && (char === "\n" || char === "\r")) {
+            if (started) break;
+            continue;
+        }
+        started = true;
         if (char === '"') inQuotes = !inQuotes;
-        else if (!inQuotes && (char === "\n" || char === "\r")) break;
         else if (!inQuotes && char in counts) counts[char]++;
     }
     const [best, count] = Object.entries(counts).sort((first, second) => second[1] - first[1])[0];

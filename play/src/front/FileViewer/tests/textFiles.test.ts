@@ -130,6 +130,14 @@ describe("tables from CSV", () => {
         expect(parseCsv("a;b\r1,2,3,4\r5,6,7,8", true).rows[0]).toEqual(["a", "b"]);
     });
 
+    it("reads the separator from the first row when the file starts with blank lines", () => {
+        expect(parseCsv("\n\r\na;b\n1;2", true).rows).toEqual([
+            ["a", "b"],
+            ["1", "2"],
+        ]);
+        expect(parseCsv("\na\tb\n1\t2", true).rows[1]).toEqual(["1", "2"]);
+    });
+
     it("skips blank lines and keeps the last row without a final line break", () => {
         expect(parseCsv("a,b\n\n1,2", true).rows).toEqual([
             ["a", "b"],
