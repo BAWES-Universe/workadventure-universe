@@ -3,6 +3,7 @@ import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
 import { bytesMatchKind, badgeOfKind, fileKindOf } from "../fileKinds";
 import { columnLetters, readSpreadsheet } from "../spreadsheet";
+import { MAX_TABLE_COLUMNS, MAX_TABLE_ROWS } from "../textFiles";
 
 function workbookBytes(
     sheets: Record<string, unknown[][]>,
@@ -144,6 +145,25 @@ describe("the spreadsheet reader", () => {
         expect(sheet.columnCount).toBe(3);
         expect(sheet.columnsCut).toBe(false);
         expect(sheet.rows[0].map((cell) => cell.text)).toEqual(["a", "b", "c"]);
+    });
+
+    it.each(["xlsx", "biff8", "ods"] as const)(
+        "counts a sheet of exactly one row more than is shown, in %s",
+        async (bookType) => {
+            const rows = Array.from({ length: MAX_TABLE_ROWS + 1 }, (_, index) => [index, "x"]);
+            const [sheet] = await readSpreadsheet(workbookBytes({ S: rows }, bookType));
+            expect(sheet.rows).toHaveLength(MAX_TABLE_ROWS);
+            expect(sheet.rowsCut).toBe(true);
+            expect(sheet.totalRows).toBe(MAX_TABLE_ROWS + 1);
+        }
+    );
+
+    it("ignores the row that is read but not shown when it comes to the width of the sheet", async () => {
+        const rows: string[][] = Array.from({ length: MAX_TABLE_ROWS }, () => ["a", "b"]);
+        rows.push(Array.from({ length: MAX_TABLE_COLUMNS + 20 }, () => "wide"));
+        const [sheet] = await readSpreadsheet(workbookBytes({ S: rows }));
+        expect(sheet.columnCount).toBe(2);
+        expect(sheet.columnsCut).toBe(false);
     });
 
     it("leaves hidden sheets out, as Excel does", async () => {
