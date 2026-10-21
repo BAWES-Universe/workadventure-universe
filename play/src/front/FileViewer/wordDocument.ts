@@ -102,6 +102,8 @@ export async function renderWordDocument(bytes: ArrayBuffer): Promise<RenderedWo
     await renderAsync(bytes, body, styles, {
         inWrapper: true,
         breakPages: true,
+        // A document that was saved by Word marks where its pages ended; without this, a long letter is one tall page.
+        ignoreLastRenderedPageBreak: false,
         ignoreFonts: true,
         // Pictures inside the file become data addresses: nothing is stored as an object address the page keeps.
         useBase64URL: true,

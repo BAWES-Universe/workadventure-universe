@@ -235,6 +235,7 @@ export function renderMarkdown(text: string): string {
             "object",
             "embed",
         ],
-        FORBID_ATTR: ["style", "srcset", "poster", "background", "formaction", "action"],
+        // No class or id either: the page's own styles would apply to the file's text (a file dressing itself as the app).
+        FORBID_ATTR: ["style", "class", "id", "srcset", "poster", "background", "formaction", "action"],
     });
 }
