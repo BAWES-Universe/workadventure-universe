@@ -128,6 +128,15 @@ describe("a chat file card", () => {
         expect(byTestId("fileCard").classList.contains("open")).toBe(true);
     });
 
+    it("names a text file by its kind", async () => {
+        component = new ViewableFileCard({
+            target,
+            props: { url: "blob:http://play/notes", name: "Standup notes.md" },
+        });
+        await vi.waitFor(() => expect(byTestId("fileCard").textContent).toContain("Markdown · 2 KB"));
+        expect(byTestId("fileCard").textContent).toContain("MD");
+    });
+
     describe("in a message", () => {
         function mountMessageFile(filename: string, url: string | undefined): void {
             component = new MessageFile({
