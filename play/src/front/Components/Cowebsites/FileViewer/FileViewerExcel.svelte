@@ -49,6 +49,7 @@
                       : $LL.chat.fileViewer.rowsCutUnknown({ shown: MAX_TABLE_ROWS })
                   : "",
               sheet.columnsCut ? $LL.chat.fileViewer.columnsCut({ shown: MAX_TABLE_COLUMNS }) : "",
+              sheet.textCut ? $LL.chat.fileViewer.cellsCut() : "",
           ]
               .filter(Boolean)
               .join(" ")

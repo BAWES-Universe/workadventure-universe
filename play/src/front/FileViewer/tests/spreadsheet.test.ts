@@ -263,6 +263,12 @@ describe("the spreadsheet reader", () => {
             const [sheet] = await readSpreadsheet(workbookBytes({ S: [["x".repeat(5000), "short"]] }));
             expect(sheet.rows[0][0].text).toBe(`${"x".repeat(1024)}…`);
             expect(sheet.rows[0][1].text).toBe("short");
+            expect(sheet.textCut).toBe(true);
+        });
+
+        it("is not reported as cut when every cell is drawn in full", async () => {
+            const [sheet] = await readSpreadsheet(workbookBytes({ S: [["x".repeat(1024), "short"]] }));
+            expect(sheet.textCut).toBe(false);
         });
 
         it("shares a budget of text across the sheet, so many cells that point at one long text stay small", async () => {
@@ -273,6 +279,7 @@ describe("the spreadsheet reader", () => {
             expect(drawn).toBeLessThanOrEqual(2_000_000 + 12_000);
             expect(sheet.rows.flat()).toHaveLength(12_000);
             expect(drawn).toBeGreaterThan(1_000_000);
+            expect(sheet.textCut).toBe(true);
         });
     });
 
