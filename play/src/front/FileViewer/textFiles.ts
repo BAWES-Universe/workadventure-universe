@@ -90,7 +90,7 @@ function delimiterOf(text: string): string {
     let inQuotes = false;
     for (const char of text.slice(0, 4096)) {
         if (char === '"') inQuotes = !inQuotes;
-        else if (!inQuotes && char === "\n") break;
+        else if (!inQuotes && (char === "\n" || char === "\r")) break;
         else if (!inQuotes && char in counts) counts[char]++;
     }
     const [best, count] = Object.entries(counts).sort((first, second) => second[1] - first[1])[0];
