@@ -218,13 +218,14 @@ export async function readSpreadsheet(bytes: ArrayBuffer): Promise<SheetView[]> 
         cellDates: false,
         bookVBA: false,
     });
-    const hidden = workbook.Workbook?.Sheets ?? [];
-    const names = workbook.SheetNames.filter((name, index) => !hidden[index]?.Hidden && !opened.hidden.has(name));
-    // A workbook whose sheets are all hidden still opens.
-    const shown = names.length > 0 ? names : workbook.SheetNames;
+    const hiddenInWorkbook = workbook.Workbook?.Sheets ?? [];
     // A sheet the file lists but holds no data for (a damaged file) is left out instead of failing the others.
     // A chart sheet, macro sheet or dialog sheet holds no cells: it is left out like a hidden one, not drawn as an empty grid.
-    return shown
-        .filter((name) => holdsCells(workbook.Sheets[name]))
-        .map((name) => viewOfSheet(XLSX, name, workbook.Sheets[name]));
+    const sheets = workbook.SheetNames.map((name, index) => ({
+        name,
+        hidden: Boolean(hiddenInWorkbook[index]?.Hidden) || opened.hidden.has(name),
+    })).filter(({ name }) => holdsCells(workbook.Sheets[name]));
+    // A workbook whose data sheets are all hidden still opens.
+    const visible = sheets.filter(({ hidden }) => !hidden);
+    return (visible.length > 0 ? visible : sheets).map(({ name }) => viewOfSheet(XLSX, name, workbook.Sheets[name]));
 }

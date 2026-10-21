@@ -224,8 +224,9 @@ describe("the spreadsheet reader", () => {
         expect(sheet.rowsCut).toBe(false);
     });
 
-    it("leaves a chart sheet out, and still shows the sheets with cells", async () => {
-        const zip = await JSZip.loadAsync(workbookBytes({ Data: [[1]] }));
+    /** Adds a visible chart sheet, which holds no cells, to a workbook. */
+    async function withChartSheet(bytes: ArrayBuffer): Promise<ArrayBuffer> {
+        const zip = await JSZip.loadAsync(bytes);
         zip.file(
             "xl/workbook.xml",
             (await zip.file("xl/workbook.xml")!.async("string")).replace(
@@ -244,7 +245,16 @@ describe("the spreadsheet reader", () => {
             "xl/chartsheets/sheet1.xml",
             '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><chartsheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"/></sheetViews></chartsheet>'
         );
-        const sheets = await readSpreadsheet(await zip.generateAsync({ type: "arraybuffer" }));
+        return zip.generateAsync({ type: "arraybuffer" });
+    }
+
+    it("leaves a chart sheet out, and still shows the sheets with cells", async () => {
+        const sheets = await readSpreadsheet(await withChartSheet(workbookBytes({ Data: [[1]] })));
+        expect(sheets.map((sheet) => sheet.name)).toEqual(["Data"]);
+    });
+
+    it("shows the data sheets when every one of them is hidden and a visible chart sheet is the only other", async () => {
+        const sheets = await readSpreadsheet(await withChartSheet(workbookBytes({ Data: [[1]] }, "xlsx", ["Data"])));
         expect(sheets.map((sheet) => sheet.name)).toEqual(["Data"]);
     });
 
