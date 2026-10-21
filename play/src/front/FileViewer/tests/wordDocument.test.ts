@@ -132,6 +132,15 @@ describe("drawing a Word file", () => {
         zip.file("hello.txt", "just a zip");
         await expect(renderWordDocument(await zip.generateAsync({ type: "arraybuffer" }))).rejects.toThrow();
     });
+
+    it("refuses a file that would unpack to far more than any document", async () => {
+        const bytes = await makeDocx();
+        const view = new DataView(bytes);
+        for (let at = 0; at < bytes.byteLength - 46; at++) {
+            if (view.getUint32(at, true) === 0x02014b50) view.setUint32(at + 24, 400 * 1024 * 1024, true);
+        }
+        await expect(renderWordDocument(bytes)).rejects.toThrow("too big");
+    });
 });
 
 describe("cleaning the drawn pages", () => {

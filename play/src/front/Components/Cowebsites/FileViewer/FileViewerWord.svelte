@@ -114,16 +114,32 @@
         target.removeEventListener("click", onLinkClick as EventListener);
     }
 
-    function onFrameLoad(): void {
-        const loadedDocument = frame?.contentDocument;
-        if (!loadedDocument || !rendered) return;
-        frameDocument = loadedDocument;
+    /** The panel was hidden while the pages loaded, so nothing could be measured yet. */
+    let needsMeasure = false;
+
+    function measure(loadedDocument: Document): void {
+        const width = Math.ceil(loadedDocument.documentElement.scrollWidth);
+        // A hidden panel has no layout: every size reads 0. Measure again when it is shown.
+        if (width === 0) {
+            needsMeasure = true;
+            return;
+        }
+        needsMeasure = false;
         // The sealed page is as wide as a sheet and its desk margins, and as tall as all the sheets together.
-        contentWidth = Math.ceil(loadedDocument.documentElement.scrollWidth);
+        contentWidth = width;
         contentHeight = Math.ceil(loadedDocument.documentElement.scrollHeight);
         sheetTops = Array.from(loadedDocument.querySelectorAll<HTMLElement>("section.docx")).map(
             (sheet) => sheet.getBoundingClientRect().top
         );
+    }
+
+    $: if (needsMeasure && areaWidth > 0 && frameDocument) measure(frameDocument);
+
+    function onFrameLoad(): void {
+        const loadedDocument = frame?.contentDocument;
+        if (!loadedDocument || !rendered) return;
+        frameDocument = loadedDocument;
+        measure(loadedDocument);
         listen(loadedDocument);
         pages.set({ page: 1, count: rendered.pageCount });
         dispatch("loaded", { pageCount: rendered.pageCount });
