@@ -41,11 +41,17 @@
     /** How far down the document the reader was when the zoom or the panel's width changed, to keep them at the same place. */
     let scrollAnchor: number | undefined;
     let lastAreaWidth = 0;
+    /** Where the reader was while the panel was shown: a hidden panel (display none) forgets its scroll position. */
+    let lastPlace: number | undefined;
 
     // The panel was resized, or the phone turned: the page is fitted to the new width, so it is as tall as it is now.
+    // The panel was shown again after being hidden: the reader is put back where they left it.
     $: if (areaWidth !== lastAreaWidth) {
         const height = area?.scrollHeight ?? 0;
-        if (lastAreaWidth > 0 && scrollAnchor === undefined && height > 0) scrollAnchor = area.scrollTop / height;
+        if (scrollAnchor === undefined) {
+            if (lastAreaWidth > 0 && height > 0) scrollAnchor = area.scrollTop / height;
+            else if (lastAreaWidth === 0 && areaWidth > 0) scrollAnchor = lastPlace;
+        }
         lastAreaWidth = areaWidth;
     }
 
@@ -65,6 +71,7 @@
     });
 
     function updatePage(): void {
+        if (area && area.scrollHeight > 0 && area.clientWidth > 0) lastPlace = area.scrollTop / area.scrollHeight;
         if (sheetTops.length === 0 || !area) return;
         const page = pageInView({
             scrollTop: area.scrollTop,
