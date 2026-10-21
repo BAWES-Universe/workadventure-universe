@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onDestroy, onMount } from "svelte";
+    import { afterUpdate, onDestroy, onMount } from "svelte";
     import { readable } from "svelte/store";
     import LL from "../../../i18n/i18n-svelte";
     import type { FileViewerCoWebsite } from "../../WebRtc/CoWebsite/FileViewerCoWebsite";
@@ -41,6 +41,9 @@
     let findOpen = false;
     let findQuery = "";
     let findTimer: ReturnType<typeof setTimeout> | undefined;
+    /** The text the search was last started with, so Enter knows whether the box holds a new one. */
+    let searchedQuery = "";
+    let panelFocused = false;
     const abort = new AbortController();
 
     $: compact = panelWidth > 0 && panelWidth < COMPACT_WIDTH;
@@ -115,12 +118,18 @@
         if (!findOpen) {
             controller?.search?.clear();
             findQuery = "";
+            searchedQuery = "";
         }
+    }
+
+    function startSearch(): void {
+        searchedQuery = findQuery;
+        controller?.search?.find(findQuery);
     }
 
     function onFindInput(): void {
         clearTimeout(findTimer);
-        findTimer = setTimeout(() => controller?.search?.find(findQuery), 200);
+        findTimer = setTimeout(startSearch, 200);
     }
 
     function onFindKeydown(event: KeyboardEvent): void {
@@ -128,8 +137,8 @@
             event.preventDefault();
             clearTimeout(findTimer);
             if (findQuery.trim() === "") return;
-            // The same key again goes to the next match; the first time it starts the search.
-            if ($matches === undefined) controller?.search?.find(findQuery);
+            // The same key again goes to the next match; the first time, or after the text changed, it starts the search.
+            if ($matches === undefined || findQuery !== searchedQuery) startSearch();
             else controller?.search?.next(event.shiftKey);
         } else if (event.key === "Escape") {
             toggleFind();
@@ -153,12 +162,22 @@
 
     // The game's keys (arrows, space) belong to the file while the person is working in the panel.
     function onFocusIn(): void {
+        panelFocused = true;
         inputFormFocusStore.set(true);
     }
 
     function onFocusOut(event: FocusEvent): void {
-        if (!root.contains(event.relatedTarget as Node | null)) inputFormFocusStore.set(false);
+        if (!root.contains(event.relatedTarget as Node | null)) {
+            panelFocused = false;
+            inputFormFocusStore.set(false);
+        }
     }
+
+    // A browser may not say that a focused control left (the search box closing, the menu closing). The panel keeps
+    // the focus then, so the game's keys do not stay switched off with nothing focused.
+    afterUpdate(() => {
+        if (panelFocused && root && !root.contains(document.activeElement)) root.focus();
+    });
 
     onMount(() => {
         void open();
