@@ -451,6 +451,7 @@ describe("The Orbit bridge", () => {
         return (await import("./index")) as unknown as {
             default: AdminModuleLike;
             requestOrbitPage(intent: string, params?: Record<string, string>): boolean;
+            openOrbitMembership(userUuid: string): boolean;
             notifyOrbitChanged(topic: string): void;
             openAdminModalFromMenu(): void;
         };
@@ -498,6 +499,29 @@ describe("The Orbit bridge", () => {
             expect.objectContaining({ type: "orbit-navigate", intent: "new-universe", roomRevision: revision }),
             ADMIN
         );
+    });
+
+    it("opens a player's profile with the membership sheet when their card's membership button is tapped", async () => {
+        const index = await freshIndex();
+        index.default.init({}, makeOptions());
+        vi.advanceTimersByTime(3000);
+
+        expect(index.openOrbitMembership("ali@example.com")).toBe(true);
+        fromOrbit({ type: "orbit-bridge-ready", version: 1, capabilities: ["navigate", "event"] });
+        expect(frame.postMessage).toHaveBeenNthCalledWith(
+            2,
+            expect.objectContaining({
+                type: "orbit-navigate",
+                intent: "user-profile",
+                params: { userUuid: "ali@example.com", sheet: "membership" },
+            }),
+            ADMIN
+        );
+    });
+
+    it("cannot open a player's membership sheet when Orbit cannot be opened", async () => {
+        const index = await freshIndex();
+        expect(index.openOrbitMembership("ali@example.com")).toBe(false);
     });
 
     it("ignores a ready message from another window or origin", async () => {
