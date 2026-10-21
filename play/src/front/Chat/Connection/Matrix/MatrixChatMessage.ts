@@ -1,4 +1,4 @@
-import type { MatrixEvent, Room } from "matrix-js-sdk";
+import type { IContent, MatrixEvent, Room } from "matrix-js-sdk";
 import { Direction, EventStatus, EventType, MatrixEventEvent, MsgType, RelationType } from "matrix-js-sdk";
 import type { Writable } from "svelte/store";
 import { writable } from "svelte/store";
@@ -220,7 +220,7 @@ export class MatrixChatMessage implements ChatMessage {
      * The name of the file a media message carries. Without a `filename` field, the body is the name and there is no
      * caption (Matrix, MSC2530): so what we show under a picture is only a body that differs from this name.
      */
-    private getMediaFileName(content: { filename?: unknown; body?: unknown }): string | undefined {
+    private getMediaFileName(content: IContent): string | undefined {
         if (typeof content.filename === "string") return content.filename;
         return typeof content.body === "string" ? content.body : undefined;
     }
