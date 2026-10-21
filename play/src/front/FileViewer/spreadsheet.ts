@@ -37,6 +37,8 @@ export interface SheetView {
     totalRows: number | undefined;
     rowsCut: boolean;
     columnsCut: boolean;
+    /** A cell's text was drawn shorter than the file has it (a very long text, or the sheet's text budget ran out). */
+    textCut: boolean;
 }
 
 /** "A", "B", ... "Z", "AA": the column letters over a sheet. */
@@ -63,13 +65,14 @@ function textOfCell(cell: SheetJs.CellObject | undefined): SheetCell {
 }
 
 /** The cell with its text cut to what is drawn, taken from what is left of the sheet's text budget. */
-function limitedCell(cell: SheetCell, budget: { left: number }): SheetCell {
+function limitedCell(cell: SheetCell, budget: { left: number; cut: boolean }): SheetCell {
     const room = Math.max(0, Math.min(MAX_CELL_CHARS, budget.left));
     if (cell.text.length <= room) {
         budget.left -= cell.text.length;
         return cell;
     }
     budget.left -= room;
+    budget.cut = true;
     return { ...cell, text: `${cell.text.slice(0, room)}…` };
 }
 
@@ -119,7 +122,7 @@ function viewOfSheet(XLSX: typeof SheetJs, name: string, sheet: SheetJs.WorkShee
     const lastColumn = Math.min(Math.max(usedColumns, 1), MAX_TABLE_COLUMNS) - 1;
     // Like Excel, a sheet always starts at A1, even when its first cells are further down or to the right.
     const rows: SheetCell[][] = [];
-    const budget = { left: MAX_SHEET_TEXT_CHARS };
+    const budget = { left: MAX_SHEET_TEXT_CHARS, cut: false };
     for (let row = 0; row <= lastRow; row++) {
         const cells: SheetCell[] = [];
         for (let column = 0; column <= lastColumn; column++) {
@@ -134,6 +137,7 @@ function viewOfSheet(XLSX: typeof SheetJs, name: string, sheet: SheetJs.WorkShee
         totalRows,
         rowsCut: stoppedEarly,
         columnsCut: usedColumns > MAX_TABLE_COLUMNS,
+        textCut: budget.cut,
     };
 }
 

@@ -279,6 +279,7 @@ const chat: BaseTranslation = {
         rowsCut: "Showing the first {shown:number} of {total:number} rows.",
         rowsCutUnknown: "Showing the first {shown:number} rows.",
         columnsCut: "Showing the first {shown:number} columns.",
+        cellsCut: "Long cell text is cut short.",
         downloadAll: "Download to see all",
         oldWord: "Old Word files (.doc) open in Word or another app.",
     },

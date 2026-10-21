@@ -107,6 +107,18 @@ describe("the spreadsheet reader panel", () => {
         );
     });
 
+    it("says when a long cell's text is cut short, with the way to get the rest", async () => {
+        mount(workbookBytes({ S: [["x".repeat(3000)]] }));
+        await vi.waitFor(() => expect(target.querySelector("[data-testid=fileViewerLimit]")).not.toBeNull());
+
+        expect(target.querySelector("[data-testid=fileViewerLimit]")?.textContent).toContain(
+            "chat.fileViewer.cellsCut"
+        );
+        expect(target.querySelector("[data-testid=fileViewerLimit]")?.textContent).toContain(
+            "chat.fileViewer.downloadAll"
+        );
+    });
+
     it("draws nothing for a file it cannot read", async () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
         mount(new Uint8Array([1, 2, 3, 4]).buffer);
