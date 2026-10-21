@@ -132,6 +132,18 @@ describe("tables from CSV", () => {
         ]);
     });
 
+    it("keeps a quoted empty value in a one-column file, which is not a blank line", () => {
+        const parsed = parseCsv('name\n"Ann"\n""\n\n"Bo"\n""', true);
+        expect(parsed.rows).toEqual([["name"], ["Ann"], [""], ["Bo"], [""]]);
+        expect(parsed.totalRows).toBe(5);
+        // Blank lines are still not rows; a delimiter alone makes a row of two empty cells.
+        expect(parseCsv("a\n\n\nb", true).rows).toEqual([["a"], ["b"]]);
+        expect(parseCsv("a,b\n,\n", true).rows).toEqual([
+            ["a", "b"],
+            ["", ""],
+        ]);
+    });
+
     it("shows the first rows and columns only, and counts the rows", () => {
         const manyRows = Array.from({ length: MAX_TABLE_ROWS + 5 }, (_, index) => `r${index},x`).join("\n");
         const rows = parseCsv(manyRows, true);
