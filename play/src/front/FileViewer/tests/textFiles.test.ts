@@ -42,6 +42,18 @@ describe("picking the reader for a text file", () => {
         expect(bytesMatchKind("text", "a.txt", new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00]))).toBe(false);
         expect(bytesMatchKind("markdown", "a.md", new Uint8Array(0))).toBe(false);
     });
+
+    it("refuses text in an older code page, which would show as broken letters", () => {
+        // "café" in Windows-1252, and Arabic in Windows-1256: neither is UTF-8.
+        expect(bytesMatchKind("csv", "a.csv", new Uint8Array([0x63, 0x61, 0x66, 0xe9]))).toBe(false);
+        expect(bytesMatchKind("csv", "a.csv", new Uint8Array([0xc7, 0xe1, 0xe3, 0xd3, 0xc7, 0xed]))).toBe(false);
+    });
+
+    it("accepts UTF-8 text with accents and Arabic, even when the part checked ends inside a letter", () => {
+        expect(bytesMatchKind("text", "a.txt", encode("café مرحبا"))).toBe(true);
+        // 'a' then two-byte letters: the 64 KB cut falls in the middle of one.
+        expect(bytesMatchKind("text", "a.txt", encode(`a${"é".repeat(40000)}`))).toBe(true);
+    });
 });
 
 describe("decoding", () => {
@@ -183,6 +195,14 @@ describe("Markdown", () => {
         const link = render("[docs](https://example.com/a)").querySelector("a");
         expect(link?.getAttribute("target")).toBe("_blank");
         expect(link?.getAttribute("rel")).toBe("noopener noreferrer");
+    });
+
+    it("keeps a picture that is itself a link as one link, not a link inside a link", () => {
+        const html = render("[![Build](https://img.example.com/b.svg)](https://ci.example.com/run)");
+        const links = html.querySelectorAll("a");
+        expect(links).toHaveLength(1);
+        expect(links[0].getAttribute("href")).toBe("https://ci.example.com/run");
+        expect(links[0].textContent).toBe("Build");
     });
 
     it("leaves links that point inside the file or the game with nowhere to go", () => {
