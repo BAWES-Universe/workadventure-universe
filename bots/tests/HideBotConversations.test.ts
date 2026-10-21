@@ -296,6 +296,25 @@ describe("AdminApiService.isBotPrivate", () => {
         expect(await service.isBotPrivate("bot-1")).toBe(false);
     });
 
+    it("keeps a private bot private through one or two \"not found\" answers (Orbit restarting), not after three in a row", async () => {
+        const notFound = Object.assign(new Error("not found"), { isAxiosError: true, response: { status: 404 } });
+        hoisted.axios.get.mockResolvedValueOnce(answer(true));
+        expect(await service.isBotPrivate("bot-1")).toBe(true);
+        hoisted.axios.get.mockRejectedValue(notFound);
+        expect(await service.isBotPrivate("bot-1", { fresh: true })).toBe(true);
+        expect(await service.isBotPrivate("bot-1", { fresh: true })).toBe(true);
+        expect(await service.isBotPrivate("bot-1", { fresh: true })).toBe(false);
+    });
+
+    it("keeps a private bot private through a 405, and goes back to Orbit's answer when it returns", async () => {
+        hoisted.axios.get.mockResolvedValueOnce(answer(true));
+        expect(await service.isBotPrivate("bot-1")).toBe(true);
+        hoisted.axios.get.mockRejectedValueOnce({ isAxiosError: true, message: "no", response: { status: 405 } });
+        expect(await service.isBotPrivate("bot-1", { fresh: true })).toBe(true);
+        hoisted.axios.get.mockResolvedValueOnce(answer(false));
+        expect(await service.isBotPrivate("bot-1", { fresh: true })).toBe(false);
+    });
+
     it("is not private for a bot Orbit does not know, or an Orbit without the setting yet", async () => {
         hoisted.axios.get.mockRejectedValue({ isAxiosError: true, message: "nope", response: { status: 404 } });
         expect(await service.isBotPrivate("bot-1")).toBe(false);

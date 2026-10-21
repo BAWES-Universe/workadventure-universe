@@ -638,14 +638,16 @@ export class AdminApiService {
             this.applyForgetNotice(botId, response.data?.forget);
             return hidden;
         } catch (error) {
-            // Not found (or an Orbit without the setting yet) is a plain "not private"; anything else keeps what we knew.
+            // Not found (or an Orbit without the setting yet) is a plain "not private", except for a bot last known as
+            // private: its proxy can answer "not found" while Orbit restarts, so it stays private until Orbit has said
+            // it BOT_GONE_AFTER times running, the same rule that decides the bot is gone. Anything else keeps what we knew.
             // With nothing known yet (a bot server that just started, while Orbit restarts too), the bot counts as
             // private until Orbit answers: a hidden bot must never send its text out because Orbit was slow to say so.
             // Only telemetry waits; replies, memory and saved chats are the same either way.
             const notFound = axios.isAxiosError(error) && (error.response?.status === 404 || error.response?.status === 405);
-            const hidden = notFound ? false : lastKnown ?? true;
-            // Retry soon, not after the full 30 seconds, when Orbit could not answer
             const notFoundInARow = axios.isAxiosError(error) && error.response?.status === 404 ? (this.botPrivacyCache.get(botId)?.notFoundInARow ?? 0) + 1 : 0;
+            const hidden = notFound ? lastKnown === true && notFoundInARow < this.BOT_GONE_AFTER : lastKnown ?? true;
+            // Retry soon, not after the full 30 seconds, when Orbit could not answer
             this.botPrivacyCache.set(botId, { hidden, cachedAt: notFound ? Date.now() : Date.now() - this.BOT_PRIVACY_CACHE_TTL + 5000, ...(notFoundInARow ? { notFoundInARow } : {}) });
             if (!notFound) {
                 console.warn('[AdminApiService] Could not read the bot privacy setting, keeping the last answer:', axios.isAxiosError(error) ? error.message : 'unknown error');
