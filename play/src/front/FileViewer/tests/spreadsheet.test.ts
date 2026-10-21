@@ -136,6 +136,16 @@ describe("the spreadsheet reader", () => {
         expect(sheet.columnsCut).toBe(false);
     });
 
+    it("shows only the columns that hold cells, however wide the file says the sheet is", async () => {
+        const zip = await JSZip.loadAsync(workbookBytes({ S: [["a", "b", "c"]] }));
+        const sheetXml = (await zip.file("xl/worksheets/sheet1.xml")?.async("string")) ?? "";
+        zip.file("xl/worksheets/sheet1.xml", sheetXml.replace(/<dimension[^>]*\/>/, '<dimension ref="A1:XFD500"/>'));
+        const [sheet] = await readSpreadsheet(await zip.generateAsync({ type: "arraybuffer" }));
+        expect(sheet.columnCount).toBe(3);
+        expect(sheet.columnsCut).toBe(false);
+        expect(sheet.rows[0].map((cell) => cell.text)).toEqual(["a", "b", "c"]);
+    });
+
     it("leaves hidden sheets out, as Excel does", async () => {
         const sheets = await readSpreadsheet(workbookBytes({ One: [[1]], Secret: [[2]] }, "xlsx", ["Secret"]));
         expect(sheets.map((sheet) => sheet.name)).toEqual(["One"]);

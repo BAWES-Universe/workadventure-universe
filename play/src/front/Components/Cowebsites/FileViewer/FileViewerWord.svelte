@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { createEventDispatcher, onDestroy, onMount } from "svelte";
+    import { afterUpdate, createEventDispatcher, onDestroy, onMount } from "svelte";
     import { writable } from "svelte/store";
     import LL from "../../../../i18n/i18n-svelte";
     import { renderWordDocument, type RenderedWord } from "../../../FileViewer/wordDocument";
@@ -36,9 +36,23 @@
     $: zoomPercent.set(Math.round(userZoom * 100));
     $: if ($pages.page > 1) pinchHint = false;
 
+    /** How far down the document the reader was when the zoom changed, to keep them at the same place. */
+    let scrollAnchor: number | undefined;
+
     function setZoom(next: number): void {
-        userZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next));
+        const zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next));
+        if (zoom === userZoom) return;
+        if (area && area.scrollHeight > 0) scrollAnchor = area.scrollTop / area.scrollHeight;
+        userZoom = zoom;
     }
+
+    // Once the document has its new size, the reader is back where they were, and the page number follows.
+    afterUpdate(() => {
+        if (scrollAnchor === undefined || !area) return;
+        area.scrollTop = scrollAnchor * area.scrollHeight;
+        scrollAnchor = undefined;
+        updatePage();
+    });
 
     function updatePage(): void {
         if (sheetTops.length === 0 || !area) return;

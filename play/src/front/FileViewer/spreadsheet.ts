@@ -48,6 +48,16 @@ function textOfCell(cell: SheetJs.CellObject | undefined): SheetCell {
     return { text, number: cell.t === "n" };
 }
 
+/** The last column (from 0) that holds a cell, or -1 for a sheet without cells. */
+function lastUsedColumn(XLSX: typeof SheetJs, sheet: SheetJs.WorkSheet): number {
+    let last = -1;
+    for (const address in sheet) {
+        if (address.charCodeAt(0) === 33) continue; // "!ref", "!fullref", "!merges"...
+        last = Math.max(last, XLSX.utils.decode_cell(address).c);
+    }
+    return last;
+}
+
 function viewOfSheet(XLSX: typeof SheetJs, name: string, sheet: SheetJs.WorkSheet): SheetView {
     const reference = sheet["!ref"];
     if (!reference) return { name, rows: [], columnCount: 0, totalRows: 0, rowsCut: false, columnsCut: false };
@@ -59,7 +69,9 @@ function viewOfSheet(XLSX: typeof SheetJs, name: string, sheet: SheetJs.WorkShee
     const claimedRows = fullReference ? XLSX.utils.decode_range(fullReference).e.r + 1 : undefined;
     const totalRows = stoppedEarly ? claimedRows : range.e.r + 1;
     const lastRow = Math.min(range.e.r, MAX_TABLE_ROWS - 1);
-    const lastColumn = Math.min(range.e.c, MAX_TABLE_COLUMNS - 1);
+    // The columns are the ones that hold cells: the size a file claims can reach column XFD over a sheet of three.
+    const usedColumns = lastUsedColumn(XLSX, sheet) + 1;
+    const lastColumn = Math.min(Math.max(usedColumns, 1), MAX_TABLE_COLUMNS) - 1;
     // Like Excel, a sheet always starts at A1, even when its first cells are further down or to the right.
     const rows: SheetCell[][] = [];
     for (let row = 0; row <= lastRow; row++) {
@@ -75,7 +87,7 @@ function viewOfSheet(XLSX: typeof SheetJs, name: string, sheet: SheetJs.WorkShee
         columnCount: lastColumn + 1,
         totalRows,
         rowsCut: stoppedEarly,
-        columnsCut: range.e.c + 1 > MAX_TABLE_COLUMNS,
+        columnsCut: usedColumns > MAX_TABLE_COLUMNS,
     };
 }
 
