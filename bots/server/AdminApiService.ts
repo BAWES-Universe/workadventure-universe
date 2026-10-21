@@ -548,7 +548,7 @@ export class AdminApiService {
     /**
      * Does this bot hide its conversations (Orbit "Hide bot conversations", #435)? The universe default and the
      * bot's own choice are resolved by Orbit; this only asks. A private bot sends nothing to PostHog or Sentry
-     * spans and saves no transcript; memory, usage counts and everything else work as always.
+     * spans; chats, memory, usage counts and everything else work as always.
      *
      * Orbit is asked at most every 30 seconds per bot. A bot Orbit does not know, or an Orbit without the setting
      * yet, is "not private", as every bot was before this setting existed. If Orbit cannot answer (down, timeout,
