@@ -4,6 +4,7 @@
 
 import { BotClient } from '../client/BotClient';
 import { AdminApiService } from './AdminApiService';
+import { BotAccessGate } from './BotAccessGate';
 import { BotRegistry } from './BotRegistry';
 import { MapDataService } from './MapDataService';
 import type { BotConfiguration } from './AdminApiService';
@@ -23,6 +24,7 @@ import { SelfImprovementLoop } from '../improvement/SelfImprovementLoop';
 import type { AutoPilotImprovement } from '../services/AutoPilotImprovement';
 import * as Sentry from '@sentry/node';
 import { resolveWsUrl } from '../utils/resolveWsUrl';
+import { BotUnavailableError } from '../utils/summonErrors';
 import { hasPlayersInRoom } from './roomOccupancy';
 import {
     buildBehaviorConfig,
@@ -112,6 +114,8 @@ export class BotManager {
      */
     private botsHoldingMemory: Set<string> = new Set();
     private adminApiService: AdminApiService;
+    /** Asks Orbit who may chat with a bot nearby or summon it, before the bot's AI is reached. */
+    private accessGate: BotAccessGate;
     private botRegistry: BotRegistry;
     private mapDataService: MapDataService;
     private conversationMemory: ConversationMemory | PersistentMemory;
@@ -134,6 +138,7 @@ export class BotManager {
 
     constructor(adminApiService: AdminApiService, botRegistry: BotRegistry) {
         this.adminApiService = adminApiService;
+        this.accessGate = new BotAccessGate(adminApiService);
         this.botRegistry = botRegistry;
         this.mapDataService = new MapDataService();
         
@@ -338,6 +343,7 @@ export class BotManager {
         };
         
         const client = new BotClient(botConfig);
+        client.setAccessGate(this.accessGate);
         
         // Store botId mapping
         botIdMap.set(client, botId);
@@ -610,6 +616,11 @@ export class BotManager {
         return this.adminApiService;
     }
 
+    /** Who may chat with a bot nearby or summon it (asks Orbit, remembers its answer for a short while) */
+    getAccessGate(): BotAccessGate {
+        return this.accessGate;
+    }
+
     /**
      * Update bot configuration (live update for running bot)
      */
@@ -819,12 +830,12 @@ export class BotManager {
     ): Promise<{ x: number; y: number } | undefined> {
         const instance = this.bots.get(botId);
         if (!instance) {
-            throw new Error(`Bot ${botId} not found or not spawned`);
+            throw new BotUnavailableError(`Bot ${botId} not found or not spawned`);
         }
 
         const bot = instance.client;
         if (!bot.isConnected()) {
-            throw new Error(`Bot ${botId} is not connected`);
+            throw new BotUnavailableError(`Bot ${botId} is not connected`);
         }
 
         // The bot goes where it sees the player, never to a spot the caller names. A player the bot cannot see in

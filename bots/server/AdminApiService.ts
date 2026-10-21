@@ -49,6 +49,28 @@ export function canSendSessionTo(adminApiUrl: URL, nodeEnv: string | undefined =
     return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
 }
 
+/** What people do with a bot, as Orbit's check names it. */
+export type BotAccessAction = 'chat' | 'dm' | 'summon';
+
+/** Who is asking: a signed-in person is named by their uuid or email, a guest only by being a guest. */
+export interface BotAccessPerson {
+    signedIn: boolean;
+    identifier?: string | null;
+}
+
+/** Orbit's answer to "can this person do this with this bot?" (POST /api/bots/:id/access). */
+export interface BotAccessAnswer {
+    allowed: boolean;
+    code: 'allowed' | 'sign_in_required' | 'not_allowed' | 'no_room_access';
+    /** A line to show as it is. Null when allowed. */
+    reason: string | null;
+    /** The owner's own line for people who may not chat with the bot, only when the owner wrote one. */
+    reply?: string;
+}
+
+/** How long a bot waits for Orbit's access answer before it counts as "could not check". */
+const BOT_ACCESS_TIMEOUT_MS = 4_000;
+
 export interface BotConfiguration {
     botId: string;
     name: string;
@@ -715,6 +737,40 @@ export class AdminApiService {
             }
             return false;
         }
+    }
+
+    /**
+     * Ask Orbit whether a person may do something with a bot (Orbit #426/#427): chat in its bubble, message it, or
+     * summon it. A no is an answer ({ allowed: false }); anything that stops Orbit answering throws, so the caller
+     * can tell "no" from "could not check". Uses BOT_SERVICE_TOKEN.
+     */
+    async checkBotAccess(
+        botId: string,
+        action: BotAccessAction,
+        person: BotAccessPerson
+    ): Promise<BotAccessAnswer> {
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!botServiceToken) {
+            throw new Error('BOT_SERVICE_TOKEN environment variable is not set');
+        }
+
+        const response: AxiosResponse<BotAccessAnswer> = await axios.post(
+            resolveAdminApiEndpoint(this.adminApiUrl, `api/bots/${encodeURIComponent(botId)}/access`),
+            { action, person: { signedIn: person.signedIn, ...(person.identifier ? { identifier: person.identifier } : {}) } },
+            {
+                headers: {
+                    Authorization: `Bearer ${botServiceToken}`,
+                    'Content-Type': 'application/json',
+                    'Cache-Control': 'no-store',
+                },
+                timeout: BOT_ACCESS_TIMEOUT_MS,
+            }
+        );
+        const answer = response.data;
+        if (!answer || typeof answer.allowed !== 'boolean') {
+            throw new Error('Orbit answered the bot access check with something unexpected');
+        }
+        return answer;
     }
 
     /**
