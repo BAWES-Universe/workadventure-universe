@@ -246,8 +246,11 @@ describe('FileParser', () => {
             expect(result.truncated).toBeFalsy();
         });
 
-        it('extracts spreadsheet content via real xlsx parsing', async () => {
-            const url = 'https://cdn.example.com/data.xlsx';
+        it.each([
+            ['xlsx', 'xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+            ['biff8', 'xls', 'application/vnd.ms-excel'],
+        ] as const)('extracts spreadsheet content via real xlsx parsing (%s)', async (bookType, extension, mimeType) => {
+            const url = `https://cdn.example.com/data.${extension}`;
 
             // Create a real xlsx buffer using the actual xlsx library
             const XLSX = await import('xlsx');
@@ -260,12 +263,12 @@ describe('FileParser', () => {
             XLSX.utils.book_append_sheet(realWb, realWs, 'Sheet1');
             const secondWs = XLSX.utils.aoa_to_sheet([['Date', 'Event']]);
             XLSX.utils.book_append_sheet(realWb, secondWs, 'Sheet2');
-            const xlsxBuffer: ArrayBuffer = XLSX.write(realWb, { type: 'array', bookType: 'xlsx' });
+            const xlsxBuffer: ArrayBuffer = XLSX.write(realWb, { type: 'array', bookType });
 
             // Mock the global fetch API that FileParser.fetchBuffer uses
             const originalFetch = globalThis.fetch;
             globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
-                if (url.startsWith('https://cdn.example.com/data.xlsx')) {
+                if (url.startsWith(`https://cdn.example.com/data.${extension}`)) {
                     let streamDone = false;
                     const reader = {
                         read: async () => {
@@ -279,16 +282,13 @@ describe('FileParser', () => {
                         ok: true,
                         status: 200,
                         body: { getReader: () => reader },
-                        headers: new Map([['content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']]),
+                        headers: new Map([['content-type', mimeType]]),
                     };
                 }
                 return new Response(null, { status: 404 });
             });
 
-            const result = await FileParser.parseFile(
-                url,
-                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-            );
+            const result = await FileParser.parseFile(url, mimeType);
 
             // Restore original fetch
             globalThis.fetch = originalFetch;
