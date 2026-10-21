@@ -34,7 +34,7 @@ function createConfig(overrides: Partial<SocialBehaviorConfig> = {}): SocialBeha
     };
 }
 
-function createBot(players: FakePlayer[], options: { aiProviderRef?: string } = {}) {
+function createBot(players: FakePlayer[], options: { aiProviderRef?: string; mayGreet?: boolean } = {}) {
     const byId = new Map(players.map((player) => [player.userId, player]));
     let followingPath = false;
     const bubbles: number[][] = [];
@@ -47,6 +47,7 @@ function createBot(players: FakePlayer[], options: { aiProviderRef?: string } = 
         getBotId: vi.fn(() => 'bot-1'),
         getUserId: vi.fn(() => BOT_USER_ID),
         getFullConfig: vi.fn(() => ({ aiProviderRef: options.aiProviderRef, chatInstructions: 'Be nice.' })),
+        mayGreet: vi.fn(async () => options.mayGreet !== false),
         getState: vi.fn(() => ({
             getPosition: () => ({ x: 0, y: 0 }),
             getDirection: () => 0,
@@ -313,6 +314,22 @@ describe('SocialBehavior greetings', () => {
         await vi.waitFor(() => expect(ai.generateBotResponseStream).toHaveBeenCalled());
 
         expect(ai.generateBotResponseStream.mock.calls[0][2]).toContain('just approached you');
+    });
+
+    it('does not greet a player the owner refused, and does not ask the AI', async () => {
+        const bot = createBot([player(1)], { aiProviderRef: 'provider-1', mayGreet: false });
+        const ai = createAi();
+        const behavior = new SocialBehavior(createConfig());
+        behavior.setBot(bot as any);
+        behavior.setServices(ai as any, {} as any);
+
+        behavior.onSpaceJoined(SPACE);
+        await behavior.onSpaceUserJoined(SPACE, { id: 1, name: 'Player 1', spaceUserId: 'room_1' } as any);
+        await vi.waitFor(() => expect(bot.mayGreet).toHaveBeenCalledWith(SPACE, 1));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+
+        expect(ai.generateBotResponseStream).not.toHaveBeenCalled();
+        expect(bot.sendStreamMessage).not.toHaveBeenCalled();
     });
 
     it('only greets players who are in the bubble, not bystanders nearby', () => {

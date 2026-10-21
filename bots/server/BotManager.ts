@@ -4,6 +4,7 @@
 
 import { BotClient } from '../client/BotClient';
 import { AdminApiService } from './AdminApiService';
+import { BotAccessGate } from './BotAccessGate';
 import { BotRegistry } from './BotRegistry';
 import { MapDataService } from './MapDataService';
 import type { BotConfiguration } from './AdminApiService';
@@ -23,6 +24,7 @@ import { SelfImprovementLoop } from '../improvement/SelfImprovementLoop';
 import type { AutoPilotImprovement } from '../services/AutoPilotImprovement';
 import * as Sentry from '@sentry/node';
 import { resolveWsUrl } from '../utils/resolveWsUrl';
+import { BotUnavailableError } from '../utils/summonErrors';
 import { hasPlayersInRoom } from './roomOccupancy';
 import {
     buildBehaviorConfig,
@@ -106,7 +108,14 @@ function instantiateBehavior(kind: LegacyBehaviorType, cfg: Record<string, unkno
 
 export class BotManager {
     private bots: Map<string, BotInstance> = new Map();
+    /**
+     * Every bot spawned since this server started. Its memory stays held here after it despawns (to come back when it
+     * respawns), so a Forget must reach it too (#435).
+     */
+    private botsHoldingMemory: Set<string> = new Set();
     private adminApiService: AdminApiService;
+    /** Asks Orbit who may chat with a bot nearby or summon it, before the bot's AI is reached. */
+    private accessGate: BotAccessGate;
     private botRegistry: BotRegistry;
     private mapDataService: MapDataService;
     private conversationMemory: ConversationMemory | PersistentMemory;
@@ -129,6 +138,7 @@ export class BotManager {
 
     constructor(adminApiService: AdminApiService, botRegistry: BotRegistry) {
         this.adminApiService = adminApiService;
+        this.accessGate = new BotAccessGate(adminApiService);
         this.botRegistry = botRegistry;
         this.mapDataService = new MapDataService();
         
@@ -260,7 +270,7 @@ export class BotManager {
         // Start room occupancy verification
         this.startRoomVerification();
         // Hide bot conversations (#1166): a Forget reaches bots nobody is talking to
-        this.adminApiService.startPrivacySync?.(() => this.bots.keys());
+        this.adminApiService.startPrivacySync?.(() => new Set([...this.bots.keys(), ...this.botsHoldingMemory]));
 
         // TODO: Load bots from storage (WAM files + Admin API)
         // This will be called on server startup
@@ -333,6 +343,7 @@ export class BotManager {
         };
         
         const client = new BotClient(botConfig);
+        client.setAccessGate(this.accessGate);
         
         // Store botId mapping
         botIdMap.set(client, botId);
@@ -361,6 +372,10 @@ export class BotManager {
         const hasLoadMemories = 'loadMemories' in this.conversationMemory && typeof (this.conversationMemory as any).loadMemories === 'function';
         
         if (hasLoadMemories) {
+            this.botsHoldingMemory.add(botId);
+            // A Forget pressed while the bot was away is applied to what is still held for it before anyone can be
+            // remembered from it (Orbit's answer carries the Forget; this never throws)
+            await this.adminApiService.isBotPrivate?.(botId, { fresh: true });
             const MAX_LOAD_RETRIES = 2;
             for (let attempt = 1; attempt <= MAX_LOAD_RETRIES; attempt++) {
                 try {
@@ -601,6 +616,11 @@ export class BotManager {
         return this.adminApiService;
     }
 
+    /** Who may chat with a bot nearby or summon it (asks Orbit, remembers its answer for a short while) */
+    getAccessGate(): BotAccessGate {
+        return this.accessGate;
+    }
+
     /**
      * Update bot configuration (live update for running bot)
      */
@@ -810,12 +830,12 @@ export class BotManager {
     ): Promise<{ x: number; y: number } | undefined> {
         const instance = this.bots.get(botId);
         if (!instance) {
-            throw new Error(`Bot ${botId} not found or not spawned`);
+            throw new BotUnavailableError(`Bot ${botId} not found or not spawned`);
         }
 
         const bot = instance.client;
         if (!bot.isConnected()) {
-            throw new Error(`Bot ${botId} is not connected`);
+            throw new BotUnavailableError(`Bot ${botId} is not connected`);
         }
 
         // The bot goes where it sees the player, never to a spot the caller names. A player the bot cannot see in
