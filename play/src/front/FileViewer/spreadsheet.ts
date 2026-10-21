@@ -117,26 +117,72 @@ function viewOfSheet(XLSX: typeof SheetJs, name: string, sheet: SheetJs.WorkShee
     };
 }
 
+/** The text of an XML attribute value with the five entities XML defines turned back into characters. */
+function unescapeXml(value: string): string {
+    return value
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&quot;/g, '"')
+        .replace(/&apos;/g, "'")
+        .replace(/&amp;/g, "&");
+}
+
+function attributeOf(attributes: string, name: string): string | undefined {
+    return new RegExp(`(?:^|\\s)${name}\\s*=\\s*(["'])(.*?)\\1`).exec(attributes)?.[2];
+}
+
+/**
+ * The names of the sheets an OpenDocument file hides. The reader leaves them out of its workbook properties, so they are
+ * found in the file: a sheet names a style, and that style says "display false".
+ */
+function hiddenOpenDocumentSheets(xml: string): Set<string> {
+    const hiddenStyles = new Set<string>();
+    for (const [, attributes, body] of xml.matchAll(/<style:style\b([^>]*[^/>])>([\s\S]*?)<\/style:style>/g)) {
+        const name = attributeOf(attributes, "style:name");
+        if (
+            name !== undefined &&
+            attributeOf(attributes, "style:family") === "table" &&
+            /table:display\s*=\s*["']false["']/.test(body)
+        ) {
+            hiddenStyles.add(name);
+        }
+    }
+    const hidden = new Set<string>();
+    if (hiddenStyles.size === 0) return hidden;
+    for (const [, attributes] of xml.matchAll(/<table:table(?=[\s>])([^>]*)>/g)) {
+        const style = attributeOf(attributes, "table:style-name");
+        const name = attributeOf(attributes, "table:name");
+        if (style !== undefined && name !== undefined && hiddenStyles.has(style)) {
+            // The reader keeps an ampersand in a sheet's name as it is written in the file, so either spelling is hidden.
+            hidden.add(name);
+            hidden.add(unescapeXml(name));
+        }
+    }
+    return hidden;
+}
+
 /**
  * An OpenDocument sheet can write one cell as "repeated a hundred thousand times" in a few bytes, and the reader then
  * builds every one of them. Only the first columns are shown, so a repeat is cut to one cell more than that: the cells
- * after it are past the last column shown either way. A file that is not OpenDocument is returned as it is.
+ * after it are past the last column shown either way. The sheets the file hides are listed too. A file that is not
+ * OpenDocument is returned as it is.
  */
-async function limitRepeatedColumns(bytes: ArrayBuffer): Promise<Uint8Array> {
+async function prepareOpenDocument(bytes: ArrayBuffer): Promise<{ data: Uint8Array; hidden: Set<string> }> {
     const { default: JSZip } = await import("jszip");
     const zip = await JSZip.loadAsync(bytes);
     const content = zip.file("content.xml");
-    if (!content) return new Uint8Array(bytes);
+    if (!content) return { data: new Uint8Array(bytes), hidden: new Set() };
     const xml = await content.async("string");
+    const hidden = hiddenOpenDocumentSheets(xml);
     const limit = MAX_TABLE_COLUMNS + 1;
     const limited = xml.replace(
         /(number-columns-repeated\s*=\s*)(["'])(\d+)\2/g,
         (whole, name: string, quote: string, count: string) =>
             Number(count) > limit ? `${name}${quote}${limit}${quote}` : whole
     );
-    if (limited === xml) return new Uint8Array(bytes);
+    if (limited === xml) return { data: new Uint8Array(bytes), hidden };
     zip.file("content.xml", limited);
-    return zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
+    return { data: await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" }), hidden };
 }
 
 /**
@@ -158,7 +204,11 @@ export async function readSpreadsheet(bytes: ArrayBuffer): Promise<SheetView[]> 
         await assertUnpackedWithin(bytes, MAX_UNPACKED_SPREADSHEET_BYTES);
     }
     const XLSX = await import("xlsx");
-    const workbook = XLSX.read(head[0] === 0x50 ? await limitRepeatedColumns(bytes) : new Uint8Array(bytes), {
+    const opened =
+        head[0] === 0x50
+            ? await prepareOpenDocument(bytes)
+            : { data: new Uint8Array(bytes), hidden: new Set<string>() };
+    const workbook = XLSX.read(opened.data, {
         type: "array",
         // Only the rows that are shown are read, so a sheet of a million rows opens as fast as a small one.
         sheetRows: MAX_TABLE_ROWS + READ_BEYOND_SHOWN,
@@ -169,7 +219,7 @@ export async function readSpreadsheet(bytes: ArrayBuffer): Promise<SheetView[]> 
         bookVBA: false,
     });
     const hidden = workbook.Workbook?.Sheets ?? [];
-    const names = workbook.SheetNames.filter((_, index) => !hidden[index]?.Hidden);
+    const names = workbook.SheetNames.filter((name, index) => !hidden[index]?.Hidden && !opened.hidden.has(name));
     // A workbook whose sheets are all hidden still opens.
     const shown = names.length > 0 ? names : workbook.SheetNames;
     // A sheet the file lists but holds no data for (a damaged file) is left out instead of failing the others.

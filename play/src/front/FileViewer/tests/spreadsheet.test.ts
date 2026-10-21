@@ -285,6 +285,35 @@ describe("the spreadsheet reader", () => {
         });
     });
 
+    describe("an OpenDocument sheet that is hidden", () => {
+        /** The way LibreOffice hides a sheet: the sheet names a table style whose properties say "display false". */
+        async function odsWithHidden(hiddenName: string, sheetNames: string[]): Promise<ArrayBuffer> {
+            const sheets = Object.fromEntries(sheetNames.map((name) => [name, [[name]]]));
+            const zip = await JSZip.loadAsync(workbookBytes(sheets, "ods"));
+            let xml = await zip.file("content.xml")!.async("string");
+            const shown = /<style:style style:name="ta1"[\s\S]*?<\/style:style>/.exec(xml)![0];
+            const secret = shown.replace('"ta1"', '"ta9"').replace(/table:display="true"/, 'table:display="false"');
+            xml = xml.replace(shown, shown + secret);
+            const escaped = hiddenName.replace(/&/g, "&amp;");
+            xml = xml.replace(
+                `table:name="${escaped}" table:style-name="ta1"`,
+                `table:name="${escaped}" table:style-name="ta9"`
+            );
+            zip.file("content.xml", xml);
+            return zip.generateAsync({ type: "arraybuffer" });
+        }
+
+        it("is left out of the tabs, like a hidden Excel sheet", async () => {
+            const sheets = await readSpreadsheet(await odsWithHidden("Secret", ["Shown", "Secret"]));
+            expect(sheets.map((sheet) => sheet.name)).toEqual(["Shown"]);
+        });
+
+        it("is found by its name when the name has an ampersand", async () => {
+            const sheets = await readSpreadsheet(await odsWithHidden("Q&A", ["Shown", "Q&A"]));
+            expect(sheets.map((sheet) => sheet.name)).toEqual(["Shown"]);
+        });
+    });
+
     it("refuses a zip that would unpack to far more than any sheet", async () => {
         const bytes = workbookBytes({ A: [[1]] });
         const view = new DataView(bytes);
