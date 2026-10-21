@@ -99,6 +99,12 @@ describe("GET /me with refresh", () => {
         expect(res.body).toEqual(expect.objectContaining({ authToken: "game-token" }));
     });
 
+    it("checks a token the provider accepts only once", async () => {
+        await callMe({ token: "game-token", playUri });
+        expect(checkTokenAuth).toHaveBeenCalledTimes(1);
+        expect(fetchMemberDataByUuid.mock.calls.map((call) => call[1])).toEqual(["old-access"]);
+    });
+
     it("renews an access token the provider still accepts when asked to", async () => {
         refreshAccessToken.mockResolvedValue({ access_token: "new-access", refresh_token: "new-refresh" });
         const res = await callMe({ token: "game-token", playUri, refresh: "true" });
@@ -107,6 +113,7 @@ describe("GET /me with refresh", () => {
             expect.objectContaining({ accessToken: "new-access", refreshToken: "new-refresh" })
         );
         expect(res.body).toEqual(expect.objectContaining({ authToken: "renewed-game-token" }));
+        expect(fetchMemberDataByUuid.mock.calls.map((call) => call[1])).toEqual(["new-access"]);
     });
 
     it("falls back to the token it has when the asked-for renewal fails", async () => {
@@ -114,6 +121,7 @@ describe("GET /me with refresh", () => {
         const res = await callMe({ token: "game-token", playUri, refresh: "true" });
         expect(refreshAccessToken).toHaveBeenCalledTimes(1);
         expect(res.body).toEqual(expect.objectContaining({ authToken: "game-token" }));
+        expect(fetchMemberDataByUuid.mock.calls.map((call) => call[1])).toEqual(["old-access"]);
     });
 });
 
@@ -318,7 +326,7 @@ describe("GET /me for a member whose access token ran out (Orbit #306)", () => {
     it("keeps a stranger out after renewing, and sends the renewed token along with the refusal", async () => {
         fetchMemberDataByUuid.mockResolvedValue(membersOnly);
         const res = await callMe({ token: "game-token", playUri });
-        expect(fetchMemberDataByUuid).toHaveBeenCalledTimes(2);
+        expect(fetchMemberDataByUuid).toHaveBeenCalledTimes(1);
         expect(res.body).toEqual({ ...membersOnly, authToken: "renewed-game-token" });
     });
 
@@ -328,9 +336,15 @@ describe("GET /me for a member whose access token ran out (Orbit #306)", () => {
         expect(refreshAccessToken).toHaveBeenCalledTimes(1);
     });
 
-    it("asks Orbit again with the renewed access token", async () => {
+    it("asks Orbit once, with the renewed access token, never with the one that ran out", async () => {
         await callMe({ token: "game-token", playUri });
-        expect(fetchMemberDataByUuid.mock.calls.map((call) => call[1])).toEqual(["expired-access", "new-access"]);
+        expect(fetchMemberDataByUuid.mock.calls.map((call) => call[1])).toEqual(["new-access"]);
+    });
+
+    it("asks Orbit with the token that ran out when it can't be renewed", async () => {
+        refreshAccessToken.mockRejectedValue(new Error("provider down"));
+        await callMe({ token: "game-token", playUri });
+        expect(fetchMemberDataByUuid.mock.calls.map((call) => call[1])).toEqual(["expired-access"]);
     });
 
     it("lets the same owner into a public room (control: Orbit answers ok to a guest)", async () => {
@@ -343,5 +357,17 @@ describe("GET /me for a member whose access token ran out (Orbit #306)", () => {
         const res = await callMe({ token: "game-token", playUri });
         expect(refreshAccessToken).toHaveBeenCalledWith("refresh");
         expect(res.body).toEqual(expect.objectContaining({ status: "ok", authToken: "renewed-game-token" }));
+    });
+
+    it("asks Orbit about them in a public room with the renewed token, so the visit is theirs (#1232)", async () => {
+        fetchMemberDataByUuid.mockResolvedValue({
+            status: "ok",
+            userUuid: "owner",
+            isCharacterTexturesValid: true,
+            isCompanionTextureValid: true,
+        });
+        await callMe({ token: "game-token", playUri });
+        expect(fetchMemberDataByUuid).toHaveBeenCalledTimes(1);
+        expect(fetchMemberDataByUuid.mock.calls[0][1]).toBe("new-access");
     });
 });
