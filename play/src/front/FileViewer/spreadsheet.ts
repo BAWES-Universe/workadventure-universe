@@ -127,5 +127,6 @@ export async function readSpreadsheet(bytes: ArrayBuffer): Promise<SheetView[]> 
     const names = workbook.SheetNames.filter((_, index) => !hidden[index]?.Hidden);
     // A workbook whose sheets are all hidden still opens.
     const shown = names.length > 0 ? names : workbook.SheetNames;
-    return shown.map((name) => viewOfSheet(XLSX, name, workbook.Sheets[name]));
+    // A sheet the file lists but holds no data for (a damaged file) is left out instead of failing the others.
+    return shown.filter((name) => workbook.Sheets[name]).map((name) => viewOfSheet(XLSX, name, workbook.Sheets[name]));
 }
