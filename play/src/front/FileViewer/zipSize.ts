@@ -48,20 +48,28 @@ export async function assertUnpackedWithin(bytes: ArrayBuffer, limit: number): P
     const { default: JSZip } = await import("jszip");
     const zip = await JSZip.loadAsync(bytes);
     let total = 0;
-    for (const entry of Object.values(zip.files)) {
-        if (entry.dir) continue;
-        await new Promise<void>((resolve, reject) => {
-            const stream = entry.internalStream("uint8array");
-            stream
-                .on("data", (chunk: Uint8Array) => {
-                    total += chunk.length;
-                    if (total <= limit) return;
-                    stream.pause();
-                    reject(new Error("The file is too big to show"));
-                })
-                .on("error", reject)
-                .on("end", () => resolve())
-                .resume();
-        });
-    }
+    // Every file is counted into the same total, so the files together are held to the limit. Once it is passed,
+    // each file that is still being unpacked stops at its next piece.
+    await Promise.all(
+        Object.values(zip.files)
+            .filter((entry) => !entry.dir)
+            .map(
+                (entry) =>
+                    new Promise<void>((resolve, reject) => {
+                        const stream = entry.internalStream("uint8array");
+                        /* eslint-disable listeners/no-missing-remove-event-listener, listeners/no-inline-function-event-listener */
+                        stream
+                            .on("data", (chunk: Uint8Array) => {
+                                total += chunk.length;
+                                if (total <= limit) return;
+                                stream.pause();
+                                reject(new Error("The file is too big to show"));
+                            })
+                            .on("error", reject)
+                            .on("end", () => resolve())
+                            .resume();
+                        /* eslint-enable listeners/no-missing-remove-event-listener, listeners/no-inline-function-event-listener */
+                    })
+            )
+    );
 }
