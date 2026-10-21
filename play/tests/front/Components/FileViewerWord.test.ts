@@ -60,6 +60,27 @@ describe("the Word reader's frame", () => {
         expect(frame.getAttribute("src")).toBeNull();
     });
 
+    it("shows the opening box until the document is drawn", async () => {
+        let finish: (rendered: { srcdoc: string; pageWidth: number; pageCount: number }) => void = () => undefined;
+        render.renderWordDocument.mockReturnValue(
+            new Promise((resolve) => {
+                finish = resolve;
+            })
+        );
+        component = new FileViewerWord({
+            target,
+            props: { bytes: new ArrayBuffer(8), name: "plan.docx", compact: false },
+        });
+        await tick();
+        expect(target.querySelector('[data-testid="fileViewerReading"]')).not.toBeNull();
+        expect(target.querySelector("iframe[sandbox]")).toBeNull();
+
+        finish({ srcdoc: "<!doctype html><p>Hi</p>", pageWidth: 816, pageCount: 1 });
+        await vi.waitFor(() => expect(target.querySelector("iframe[sandbox]")).not.toBeNull());
+        await tick();
+        expect(target.querySelector('[data-testid="fileViewerReading"]')).toBeNull();
+    });
+
     it("keeps the reader at the same place in the document when the zoom changes", async () => {
         render.renderWordDocument.mockResolvedValue({
             srcdoc: "<!doctype html><p>Hi</p>",
