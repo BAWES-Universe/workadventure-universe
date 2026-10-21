@@ -7,6 +7,9 @@
 
 import type { BotPlayerMemory } from './ConversationMemory';
 import axios from 'axios';
+import { parseForgetNotice, type MemoryForgetHandler } from './ForgetNotice';
+
+export type { MemoryForgetNotice, MemoryForgetHandler } from './ForgetNotice';
 
 /** A failed save in words, without the request it carried. */
 function describeSaveError(error: unknown): string {
@@ -31,6 +34,7 @@ export class MemoryStorage {
     private saveInterval: number;
     private maxRetries: number;
     private saveTimer: NodeJS.Timeout | null = null;
+    private forgetHandler: MemoryForgetHandler | null = null;
 
     constructor(config: MemoryStorageConfig) {
         this.adminApiUrl = config.adminApiUrl || process.env.ADMIN_API_URL;
@@ -38,6 +42,11 @@ export class MemoryStorage {
         this.botServiceToken = config.botServiceToken || process.env.BOT_SERVICE_TOKEN;
         this.saveInterval = config.saveInterval || 5 * 60 * 1000; // 5 minutes
         this.maxRetries = config.maxRetries || 3;
+    }
+
+    /** Called when a save is answered with people to forget. */
+    setForgetHandler(handler: MemoryForgetHandler | null): void {
+        this.forgetHandler = handler;
     }
 
     /**
@@ -128,7 +137,7 @@ export class MemoryStorage {
                     }
                 }
                 
-                await axios.post(
+                const response = await axios.post(
                     `${this.adminApiUrl}/api/bots/memory/${botId}`,
                     {
                         memories: serializedMemories,
@@ -142,6 +151,7 @@ export class MemoryStorage {
                         },
                     }
                 );
+                this.applyForgetNotice(botId, response?.data?.forget);
                 return; // Success
             } catch (error: any) {
                 retries++;
@@ -156,6 +166,19 @@ export class MemoryStorage {
                     await new Promise(resolve => setTimeout(resolve, 1000 * retries));
                 }
             }
+        }
+    }
+
+    /**
+     * Pass on who Orbit asked us to forget. A handler that fails must never turn a save that worked into a retry.
+     */
+    private applyForgetNotice(botId: string, forget: unknown): void {
+        const notice = parseForgetNotice(forget);
+        if (!this.forgetHandler || !notice) return;
+        try {
+            this.forgetHandler(botId, notice);
+        } catch (error) {
+            console.error('[MemoryStorage] Could not drop forgotten memories:', error);
         }
     }
 

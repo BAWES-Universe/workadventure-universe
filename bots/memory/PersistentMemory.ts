@@ -10,6 +10,7 @@
 
 import { ConversationMemory, type BotPlayerMemory, type EmotionalState } from './ConversationMemory';
 import { MemoryStorage } from './MemoryStorage';
+import type { MemoryForgetNotice } from './ForgetNotice';
 
 export type ConversationPurpose = 'navigation' | 'information' | 'social' | 'support' | 'entertainment' | 'unknown';
 
@@ -47,6 +48,36 @@ export class PersistentMemory extends ConversationMemory {
             saveInterval: 5 * 60 * 1000, // 5 minutes (not used for debounced saves)
             maxRetries: 3,
         });
+        // Orbit answers a save with the people a manager asked the bot to forget (#435)
+        this.memoryStorage.setForgetHandler((botId, notice) => this.forget(botId, notice));
+    }
+
+    /**
+     * Drop forgotten people from everything held in memory: what is active, what was loaded for them to join later,
+     * and any save still waiting. Orbit has already deleted them and skipped them in the save it just answered, so
+     * after this the bot does not remember them and nothing saves them again. Someone who is still talking to the
+     * bot starts fresh from their next message.
+     */
+    forget(botId: string, notice: MemoryForgetNotice): void {
+        const prefix = `${botId}_`;
+        const forgotten = new Set(notice.userUuids);
+        const isForgotten = (userUuid: string | undefined) => notice.everyone || (!!userUuid && forgotten.has(userUuid));
+
+        for (const [key, memory] of this.getAllMemories().entries()) {
+            if (!key.startsWith(prefix)) continue;
+            if (!isForgotten(memory.userUuid || this.uuidTracking.get(key)?.userUuid)) continue;
+            this.clearMemory(botId, Number(key.slice(prefix.length)));
+            const timer = this.debounceTimers.get(key);
+            if (timer) clearTimeout(timer);
+            this.debounceTimers.delete(key);
+            this.pendingSaves.delete(key);
+        }
+
+        for (const key of Array.from(this.loadedMemoriesByUuid.keys())) {
+            if (key.startsWith(prefix) && isForgotten(key.slice(prefix.length))) {
+                this.loadedMemoriesByUuid.delete(key);
+            }
+        }
     }
 
     /**
