@@ -195,7 +195,8 @@ export class MatrixChatMessage implements ChatMessage {
                 body: content.formatted_body.replace(/^(<mx-reply>).*(<\/mx-reply>)/, ""),
                 url: undefined,
                 urls: undefined,
-                filename: undefined,
+                // A picture sent as a reply still tells its body from its name.
+                filename: this.type === "text" ? undefined : this.getMediaFileName(content),
                 fileNames: undefined,
             };
         }
@@ -207,12 +208,21 @@ export class MatrixChatMessage implements ChatMessage {
                 url: undefined,
                 urls: undefined,
                 // The body of a Matrix file is its name: the blob: URL it loads from has none.
-                filename: content.filename ?? (this.type === "file" ? content.body : undefined),
+                filename: this.getMediaFileName(content),
                 fileNames: undefined,
             };
         }
 
         return { body: content.body, url: undefined, urls: undefined, filename: undefined, fileNames: undefined };
+    }
+
+    /**
+     * The name of the file a media message carries. Without a `filename` field, the body is the name and there is no
+     * caption (Matrix, MSC2530): so what we show under a picture is only a body that differs from this name.
+     */
+    private getMediaFileName(content: { filename?: unknown; body?: unknown }): string | undefined {
+        if (typeof content.filename === "string") return content.filename;
+        return typeof content.body === "string" ? content.body : undefined;
     }
 
     public initReactions() {
