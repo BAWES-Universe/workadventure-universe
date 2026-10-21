@@ -56,4 +56,28 @@ describe("the membership button on a person's card", () => {
         await expect(done).resolves.toBe(false);
         expect(add).not.toHaveBeenCalled();
     });
+
+    it("adds one button when the card is opened again while the first answer is still on its way", async () => {
+        const add = vi.fn();
+        let opening = 0;
+        const resolvers: ((button: MembershipButton) => void)[] = [];
+        const open = () => {
+            opening += 1;
+            const mine = opening;
+            return addMembershipCardButton({
+                userUuid: "ali",
+                ask: () => new Promise<MembershipButton>((resolve) => resolvers.push(resolve)),
+                // As the card does: only the opening it was asked for
+                stillShown: () => mine === opening,
+                add,
+                open: vi.fn(),
+                icons: ICONS,
+            });
+        };
+        const first = open();
+        const second = open();
+        for (const resolve of resolvers) resolve({ kind: "membership", label: "Give membership" });
+        await Promise.all([first, second]);
+        expect(add).toHaveBeenCalledTimes(1);
+    });
 });
