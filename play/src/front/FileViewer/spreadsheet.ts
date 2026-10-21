@@ -6,6 +6,8 @@ import { assertUnpackedWithin, zipUnpackedSize } from "./zipSize";
 export const MAX_SPREADSHEET_BYTES = 30 * 1024 * 1024;
 /** Rows read after the ones that are shown, to tell a sheet that ends there from one that goes on. */
 const READ_BEYOND_SHOWN = 2;
+/** The most a repeated column or row of an OpenDocument sheet is let to count: one more than the reader goes on to use. */
+const OPEN_DOCUMENT_LIMITS = { columns: MAX_TABLE_COLUMNS + 1, rows: MAX_TABLE_ROWS + READ_BEYOND_SHOWN + 1 };
 /**
  * A sheet's text can be many times its zip, and every cell it holds takes about eight times its text in memory once read
  * (measured: a million cells, 26 MB of text, 215 MB of memory). At this much unpacked a sheet takes about 400 MB to read,
@@ -163,15 +165,21 @@ function attributeOf(attributes: string, name: string): string | undefined {
 }
 
 /**
- * The names of the sheets an OpenDocument file hides. The reader leaves them out of its workbook properties, so they are
- * found in the file: a sheet names a style, and that style says "display false". The file is walked tag by tag, once, so
- * a crafted file cannot make it slow.
+ * The sheets an OpenDocument file hides, and the rows a sheet repeats past the ones that are read. The reader leaves
+ * hidden sheets out of its workbook properties, so they are found in the file: a sheet names a style, and that style says
+ * "display false". The file is walked tag by tag, once, so a crafted file cannot make it slow.
+ *
+ * A row repeated more often than the rows read is cut before the reader sees it, so the rows it leaves out are counted
+ * here, by sheet name, to keep the sheet's length right. Only the first such row counts: the reader stops there.
  */
-function hiddenOpenDocumentSheets(xml: string): Set<string> {
+function scanOpenDocument(xml: string): { hidden: Set<string>; cutRows: Map<string, number> } {
+    const cutRows = new Map<string, number>();
     const hiddenStyles = new Set<string>();
     const tables: { name: string; style: string }[] = [];
     /** The table style whose properties are being read. */
     let openStyle: string | undefined;
+    /** The sheet whose rows are being counted, and the rows before the tag being read; undefined once the reader stops. */
+    let rowsOf: { name: string; before: number } | undefined;
     let position = 0;
     for (;;) {
         const start = xml.indexOf("<", position);
@@ -196,6 +204,18 @@ function hiddenOpenDocumentSheets(xml: string): Set<string> {
             const tableName = attributeOf(attributes, "table:name");
             const style = attributeOf(attributes, "table:style-name");
             if (tableName !== undefined && style !== undefined) tables.push({ name: tableName, style });
+            rowsOf = tableName === undefined ? undefined : { name: tableName, before: 0 };
+        } else if (name === "table:table-row" && rowsOf) {
+            const repeated = Number(attributeOf(attributes, "table:number-rows-repeated") ?? 1);
+            if (repeated > OPEN_DOCUMENT_LIMITS.rows) {
+                const left = repeated - OPEN_DOCUMENT_LIMITS.rows;
+                cutRows.set(rowsOf.name, left);
+                cutRows.set(unescapeXml(rowsOf.name), left);
+                rowsOf = undefined;
+            } else {
+                rowsOf.before += repeated;
+                if (rowsOf.before >= MAX_TABLE_ROWS + READ_BEYOND_SHOWN) rowsOf = undefined;
+            }
         }
     }
     const hidden = new Set<string>();
@@ -205,7 +225,14 @@ function hiddenOpenDocumentSheets(xml: string): Set<string> {
         hidden.add(name);
         hidden.add(unescapeXml(name));
     }
-    return hidden;
+    return { hidden, cutRows };
+}
+
+interface OpenDocument {
+    data: Uint8Array;
+    hidden: Set<string>;
+    /** By sheet name: the repeats of a row that were cut away, which the sheet still counts in its length. */
+    cutRows: Map<string, number>;
 }
 
 /**
@@ -214,24 +241,24 @@ function hiddenOpenDocumentSheets(xml: string): Set<string> {
  * after it are past the last column shown either way. The sheets the file hides are listed too. A file that is not
  * OpenDocument is returned as it is.
  */
-async function prepareOpenDocument(bytes: ArrayBuffer): Promise<{ data: Uint8Array; hidden: Set<string> }> {
+async function prepareOpenDocument(bytes: ArrayBuffer): Promise<OpenDocument> {
     const { default: JSZip } = await import("jszip");
     const zip = await JSZip.loadAsync(bytes);
     const content = zip.file("content.xml");
-    if (!content) return { data: new Uint8Array(bytes), hidden: new Set() };
+    if (!content) return { data: new Uint8Array(bytes), hidden: new Set(), cutRows: new Map() };
     const xml = await content.async("string");
-    const hidden = hiddenOpenDocumentSheets(xml);
+    const { hidden, cutRows } = scanOpenDocument(xml);
     // A row repeated past the rows that are read is cut as well: the reader would fill every repeat with cells before
     // it looks at how many rows it has, and a million repeats of a wide row never finishes.
-    const limits = { columns: MAX_TABLE_COLUMNS + 1, rows: MAX_TABLE_ROWS + READ_BEYOND_SHOWN + 1 };
+    const limits = OPEN_DOCUMENT_LIMITS;
     const limited = xml.replace(
         /(number-(columns|rows)-repeated\s*=\s*)(["'])(\d+)\3/g,
         (whole, name: string, kind: "columns" | "rows", quote: string, count: string) =>
             Number(count) > limits[kind] ? `${name}${quote}${limits[kind]}${quote}` : whole
     );
-    if (limited === xml) return { data: new Uint8Array(bytes), hidden };
+    if (limited === xml) return { data: new Uint8Array(bytes), hidden, cutRows };
     zip.file("content.xml", limited);
-    return { data: await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" }), hidden };
+    return { data: await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" }), hidden, cutRows };
 }
 
 /**
@@ -256,7 +283,7 @@ export async function readSpreadsheet(bytes: ArrayBuffer): Promise<SheetView[]> 
     const opened =
         head[0] === 0x50
             ? await prepareOpenDocument(bytes)
-            : { data: new Uint8Array(bytes), hidden: new Set<string>() };
+            : { data: new Uint8Array(bytes), hidden: new Set<string>(), cutRows: new Map<string, number>() };
     const workbook = XLSX.read(opened.data, {
         type: "array",
         // Only the rows that are shown are read, so a sheet of a million rows opens as fast as a small one.
@@ -276,5 +303,11 @@ export async function readSpreadsheet(bytes: ArrayBuffer): Promise<SheetView[]> 
     })).filter(({ name }) => holdsCells(workbook.Sheets[name]));
     // A workbook whose data sheets are all hidden still opens.
     const visible = sheets.filter(({ hidden }) => !hidden);
-    return (visible.length > 0 ? visible : sheets).map(({ name }) => viewOfSheet(XLSX, name, workbook.Sheets[name]));
+    return (visible.length > 0 ? visible : sheets).map(({ name }) => {
+        const view = viewOfSheet(XLSX, name, workbook.Sheets[name]);
+        // The rows of a cut repeat still count in the sheet's length.
+        const cut = opened.cutRows.get(name);
+        if (cut !== undefined && view.rowsCut && view.totalRows !== undefined) view.totalRows += cut;
+        return view;
+    });
 }

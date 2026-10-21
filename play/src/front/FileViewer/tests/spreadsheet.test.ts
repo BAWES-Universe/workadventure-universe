@@ -327,6 +327,12 @@ describe("the spreadsheet reader", () => {
             expect(sheet.columnCount).toBe(50);
         });
 
+        it("still says how many rows the sheet has when a repeated row is cut", async () => {
+            const [sheet] = await readSpreadsheet(await odsWithRepeat(3, 5000));
+            expect(sheet.rowsCut).toBe(true);
+            expect(sheet.totalRows).toBe(5000);
+        });
+
         it("keeps a repeat that fits in the columns shown", async () => {
             const [sheet] = await readSpreadsheet(await odsWithRepeat(5, 2));
             expect(sheet.columnCount).toBe(5);
