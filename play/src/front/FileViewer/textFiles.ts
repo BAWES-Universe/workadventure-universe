@@ -228,6 +228,9 @@ export function renderMarkdown(text: string): string {
             "source",
             "track",
             "picture",
+            // Picture maps are links that skip the link rules above.
+            "map",
+            "area",
             "link",
             "meta",
             "base",
@@ -236,6 +239,6 @@ export function renderMarkdown(text: string): string {
             "embed",
         ],
         // No class or id either: the page's own styles would apply to the file's text (a file dressing itself as the app).
-        FORBID_ATTR: ["style", "class", "id", "srcset", "poster", "background", "formaction", "action"],
+        FORBID_ATTR: ["style", "class", "id", "usemap", "srcset", "poster", "background", "formaction", "action"],
     });
 }
