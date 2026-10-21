@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
 import { bytesMatchKind, badgeOfKind, fileKindOf } from "../fileKinds";
 import { columnLetters, readSpreadsheet } from "../spreadsheet";
@@ -89,6 +90,28 @@ describe("the spreadsheet reader", () => {
         expect(read.rows).toHaveLength(3);
         expect(read.rows[2][1].text).toBe("x");
         expect(read.rows[0][0].text).toBe("");
+    });
+
+    it("trusts the cells over a size tag that is wrong", async () => {
+        const zip = await JSZip.loadAsync(
+            workbookBytes({
+                S: [
+                    ["a", "b"],
+                    ["c", "d"],
+                    ["e", "f"],
+                ],
+            })
+        );
+        const sheetXml = await zip.file("xl/worksheets/sheet1.xml")?.async("string");
+        expect(sheetXml).toContain("<dimension");
+        zip.file("xl/worksheets/sheet1.xml", (sheetXml ?? "").replace(/<dimension[^>]*\/>/, '<dimension ref="A1"/>'));
+        const [sheet] = await readSpreadsheet(await zip.generateAsync({ type: "arraybuffer" }));
+        expect(sheet.rows.map((row) => row.map((cell) => cell.text))).toEqual([
+            ["a", "b"],
+            ["c", "d"],
+            ["e", "f"],
+        ]);
+        expect(sheet.rowsCut).toBe(false);
     });
 
     it("leaves hidden sheets out, as Excel does", async () => {
