@@ -9,6 +9,17 @@
     let open = false;
     $: top = roles[0];
     $: more = roles.length - 1;
+
+    // Moves the list to the page itself, so a row that is dimmed (someone away) or inside the chat panel's transforms
+    // neither fades it nor traps it.
+    function portal(node: HTMLElement) {
+        document.body.appendChild(node);
+        return {
+            destroy() {
+                if (node.parentNode) node.parentNode.removeChild(node);
+            },
+        };
+    }
 </script>
 
 {#if top}
@@ -35,12 +46,13 @@
     <!-- svelte-ignore a11y-click-events-have-key-events -->
     <!-- svelte-ignore a11y-no-static-element-interactions -->
     <div
-        class="fixed inset-0 z-[2000] flex items-end bg-black/55"
+        use:portal
+        class="fixed inset-0 z-[9999] flex items-end bg-black/55"
         data-testid="role-list"
         on:click|stopPropagation={() => (open = false)}
     >
         <div
-            class="sheet w-full whitespace-normal rounded-t-3xl px-5 pb-6 pt-5 text-left font-normal"
+            class="sheet mx-auto w-full max-w-[480px] whitespace-normal rounded-t-3xl px-5 pb-6 pt-5 text-left font-normal"
             role="dialog"
             aria-label={$LL.chat.role.rolesOf({ name: personName })}
             on:click|stopPropagation
