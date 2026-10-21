@@ -120,7 +120,8 @@ describe("opening a chat file in the viewer", () => {
     });
 
     it("opens a card clicked with Ctrl or Cmd as a new tab, without the panel", async () => {
-        const open = vi.spyOn(window, "open").mockReturnValue(null);
+        const tab = { location: { href: "" }, opener: {} as unknown, close: vi.fn() };
+        const open = vi.spyOn(window, "open").mockReturnValue(tab as unknown as Window);
         URL.createObjectURL = vi.fn(() => "blob:http://play/new");
         URL.revokeObjectURL = vi.fn();
         vi.stubGlobal(
@@ -129,9 +130,42 @@ describe("opening a chat file in the viewer", () => {
         );
 
         openChatFileInNewTab({ url: "blob:http://play/abc", name: "plan.pdf" });
-        await vi.waitFor(() => expect(open).toHaveBeenCalled());
+        // The tab is opened inside the click, before the file is read, so no pop-up blocker can stop it.
+        expect(open).toHaveBeenCalledWith("about:blank", "_blank");
+        expect(tab.opener).toBeNull();
+        await vi.waitFor(() => expect(tab.location.href).toBe("blob:http://play/new"));
 
         expect(opened()).toHaveLength(0);
+        expect(tab.close).not.toHaveBeenCalled();
+        vi.unstubAllGlobals();
+    });
+
+    it("closes the new tab again when the file cannot be read", async () => {
+        const tab = { location: { href: "" }, opener: {} as unknown, close: vi.fn() };
+        vi.spyOn(window, "open").mockReturnValue(tab as unknown as Window);
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(() => Promise.reject(new Error("gone")))
+        );
+
+        openChatFileInNewTab({ url: "blob:http://play/abc", name: "plan.pdf" });
+        await vi.waitFor(() => expect(tab.close).toHaveBeenCalled());
+
+        warn.mockRestore();
+        vi.unstubAllGlobals();
+    });
+
+    it("opens no tab for a file the browser has no viewer for, which is saved instead", () => {
+        const open = vi.spyOn(window, "open").mockReturnValue(null);
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(() => new Promise<Response>(() => {}))
+        );
+
+        openChatFileInNewTab({ url: "blob:http://play/abc", name: "notes.zip" });
+
+        expect(open).not.toHaveBeenCalled();
         vi.unstubAllGlobals();
     });
 });
