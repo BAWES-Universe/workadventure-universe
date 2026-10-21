@@ -1,4 +1,5 @@
 import DOMPurify from "dompurify";
+import { MAX_UNPACKED_BYTES, zipUnpackedSize } from "./zipSize";
 
 /** A Word file is read in memory; a file far bigger than any document is offered as a download instead. */
 export const MAX_WORD_BYTES = 30 * 1024 * 1024;
@@ -92,6 +93,9 @@ function pageWidthOf(pages: HTMLElement | undefined): number {
  * Word file only. Throws when the file is not a readable Word file (damaged, locked, or another kind of file).
  */
 export async function renderWordDocument(bytes: ArrayBuffer): Promise<RenderedWord> {
+    // A small file can hold gigabytes once unpacked: that is measured before anything is unpacked.
+    const unpacked = zipUnpackedSize(bytes);
+    if (unpacked === undefined || unpacked > MAX_UNPACKED_BYTES) throw new Error("The file is too big to show");
     const { renderAsync } = await import("docx-preview");
     const body = document.createElement("div");
     const styles = document.createElement("div");
