@@ -2,8 +2,9 @@
  * Hide bot conversations (#1166, Orbit #435).
  *
  * A bot with telemetry off sends no text to PostHog and no conversation or player ids to Sentry spans. It still saves
- * its chats to Orbit (#514), which shows them to super admins only. What it remembers (memory), its usage counts and everything else work exactly as before, and a bot that is not
- * private (the default, or when Orbit cannot say) behaves exactly as it did before this setting existed.
+ * its chats to Orbit (#514). What it remembers (memory), its usage counts and everything else work exactly as before,
+ * and a bot with telemetry on (the default, or when Orbit cannot say) behaves exactly as it did before this setting
+ * existed.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -174,6 +175,19 @@ describe("AIService: PostHog and Sentry", () => {
             expect(hoisted.flushPostHog).not.toHaveBeenCalled();
         });
 
+        it("sends nothing to PostHog on a turn with two tool rounds (the follow-up that calls a tool again)", async () => {
+            async function* followUpWithTool() {
+                yield { content: "Let me look again.", done: false };
+                yield { content: "", done: false, toolCalls: [{ id: "call_2", name: "get_bot_position", arguments: "{}" }] };
+                yield { content: "", done: true, metadata: { tokensUsed: 150, promptTokens: 140, completionTokens: 10, latency: 20, error: false, truncated: false } };
+            }
+            hoisted.generateStream.mockReset().mockImplementationOnce(toolCall).mockImplementationOnce(followUpWithTool).mockImplementation(followUp);
+            await runTurn(adminApiMock(async () => true));
+            expect(hoisted.generateStream.mock.calls.length).toBeGreaterThanOrEqual(3);
+            expect(hoisted.captureAiGeneration).not.toHaveBeenCalled();
+            expect(hoisted.captureAiTrace).not.toHaveBeenCalled();
+        });
+
         it("still counts the usage in Orbit, with the same numbers", async () => {
             const adminApi = adminApiMock(async () => true);
             await runTurn(adminApi);
@@ -253,8 +267,32 @@ describe("AdminApiService.isBotPrivate", () => {
         expect(await service.isBotPrivate("bot-1")).toBe(false);
     });
 
-    it("is not private when Orbit has never answered (as every bot worked before the setting)", async () => {
-        hoisted.axios.get.mockRejectedValue({ isAxiosError: true, message: "down", response: { status: 502 } });
+    it("counts as private until Orbit answers, when it has never answered (down, timeout or refused)", async () => {
+        for (const failure of [
+            { isAxiosError: true, message: "down", response: { status: 502 } },
+            { isAxiosError: true, message: "timeout", response: undefined },
+            { isAxiosError: true, message: "refused", response: { status: 401 } },
+        ]) {
+            const { AdminApiService } = await import("../server/AdminApiService");
+            const fresh: any = new AdminApiService("http://orbit.local", "admin-secret");
+            hoisted.axios.get.mockReset().mockRejectedValue(failure);
+            expect(await fresh.isBotPrivate("bot-1")).toBe(true);
+        }
+    });
+
+    it("picks up \"not private\" as soon as Orbit answers after an outage at start", async () => {
+        hoisted.axios.get.mockRejectedValueOnce({ isAxiosError: true, message: "down", response: { status: 502 } });
+        expect(await service.isBotPrivate("bot-1")).toBe(true);
+        vi.advanceTimersByTime(6_000);
+        hoisted.axios.get.mockResolvedValueOnce(answer(false));
+        expect(await service.isBotPrivate("bot-1")).toBe(false);
+    });
+
+    it("keeps a known \"not private\" through an outage (no change for bots Orbit has already answered for)", async () => {
+        hoisted.axios.get.mockResolvedValueOnce(answer(false));
+        expect(await service.isBotPrivate("bot-1")).toBe(false);
+        vi.advanceTimersByTime(31_000);
+        hoisted.axios.get.mockRejectedValueOnce({ isAxiosError: true, message: "down", response: { status: 502 } });
         expect(await service.isBotPrivate("bot-1")).toBe(false);
     });
 
@@ -264,6 +302,17 @@ describe("AdminApiService.isBotPrivate", () => {
         hoisted.axios.get.mockClear();
         expect(await service.isBotPrivate("bot-1")).toBe(false);
         expect(hoisted.axios.get).not.toHaveBeenCalled();
+    });
+
+    it("passes on each Forget's id, and drops malformed rows", async () => {
+        const forgotten: unknown[] = [];
+        service.setForgetHandler((botId: string, notice: unknown) => forgotten.push([botId, notice]));
+        const rows = [{ id: "f1", userUuid: "uuid-bob" }, { id: "f2", userUuid: null }, { id: 3, userUuid: "x" }, { id: "f4", userUuid: 5 }, null];
+        hoisted.axios.get.mockResolvedValue({ data: { hidden: true, forget: { everyone: true, userUuids: ["uuid-bob"], rows } } });
+        expect(await service.isBotPrivate("bot-1")).toBe(true);
+        expect(forgotten).toEqual([
+            ["bot-1", { everyone: true, userUuids: ["uuid-bob"], rows: [{ id: "f1", userUuid: "uuid-bob" }, { id: "f2", userUuid: null }] }],
+        ]);
     });
 
     it("hands the people Orbit says to forget to the forget handler, and answers as usual", async () => {
@@ -496,6 +545,87 @@ describe("memory: always kept, and forgotten when Orbit says so", () => {
         await admin.isBotPrivate("bot-1", { fresh: true });
         expect(memory.memories.has("bot-1_7")).toBe(false);
         expect(memory.loadedMemoriesByUuid.has("bot-1_uuid-bob")).toBe(false);
+    });
+
+    it("applies a Forget once: Orbit repeating it for a minute does not wipe what the person said since", async () => {
+        const memory: any = await newMemory();
+        seed(memory, "uuid-bob", 7);
+        const forget = { everyone: false, userUuids: ["uuid-bob"] };
+        memory.forget("bot-1", forget);
+        expect(memory.memories.has("bot-1_7")).toBe(false);
+
+        // Bob keeps talking; Orbit's next answers (a save, the 30-second check) still carry the same Forget
+        seed(memory, "uuid-bob", 7);
+        memory.forget("bot-1", forget);
+        memory.forget("bot-1", { everyone: false, userUuids: ["uuid-bob"] });
+        expect(memory.memories.has("bot-1_7")).toBe(true);
+        expect(memory.loadedMemoriesByUuid.has("bot-1_uuid-bob")).toBe(true);
+        expect(memory.pendingSaves.has("bot-1_7")).toBe(true);
+    });
+
+    it("applies a repeated Forget-everyone once too, but a new person in a later notice is still forgotten", async () => {
+        const memory: any = await newMemory();
+        seed(memory, "uuid-bob", 7);
+        memory.forget("bot-1", { everyone: true, userUuids: [] });
+        seed(memory, "uuid-bob", 7);
+        seed(memory, "uuid-sara", 8);
+        memory.forget("bot-1", { everyone: true, userUuids: ["uuid-sara"] });
+        expect(memory.memories.has("bot-1_7")).toBe(true);
+        expect(memory.memories.has("bot-1_8")).toBe(false);
+    });
+
+    it("applies a second Forget of the same person within the minute, told apart from a repeat by its id", async () => {
+        const memory: any = await newMemory();
+        seed(memory, "uuid-bob", 7);
+        const first = { everyone: false, userUuids: ["uuid-bob"], rows: [{ id: "f1", userUuid: "uuid-bob" }] };
+        memory.forget("bot-1", first);
+        expect(memory.memories.has("bot-1_7")).toBe(false);
+
+        // Bob keeps talking; Orbit repeats the first Forget: what he said since stays
+        seed(memory, "uuid-bob", 7);
+        memory.forget("bot-1", first);
+        expect(memory.memories.has("bot-1_7")).toBe(true);
+
+        // The manager presses Forget on Bob again: Orbit sends both rows, and the new one is applied
+        memory.forget("bot-1", { ...first, rows: [...first.rows, { id: "f2", userUuid: "uuid-bob" }] });
+        expect(memory.memories.has("bot-1_7")).toBe(false);
+        expect(memory.pendingSaves.has("bot-1_7")).toBe(false);
+    });
+
+    it("applies a Forget-everyone row once, and a new one for everyone again", async () => {
+        const memory: any = await newMemory();
+        seed(memory, "uuid-bob", 7);
+        const first = { everyone: true, userUuids: [], rows: [{ id: "f1", userUuid: null }] };
+        memory.forget("bot-1", first);
+        seed(memory, "uuid-bob", 7);
+        memory.forget("bot-1", first);
+        expect(memory.memories.has("bot-1_7")).toBe(true);
+        memory.forget("bot-1", { ...first, rows: [{ id: "f1", userUuid: null }, { id: "f3", userUuid: null }] });
+        expect(memory.memories.has("bot-1_7")).toBe(false);
+    });
+
+    it("applies the same Forget again once Orbit has long stopped repeating it (a new Forget later)", async () => {
+        vi.useFakeTimers();
+        try {
+            const memory: any = await newMemory();
+            seed(memory, "uuid-bob", 7);
+            memory.forget("bot-1", { everyone: false, userUuids: ["uuid-bob"] });
+            vi.advanceTimersByTime(3 * 60 * 1000);
+            seed(memory, "uuid-bob", 7);
+            memory.forget("bot-1", { everyone: false, userUuids: ["uuid-bob"] });
+            expect(memory.memories.has("bot-1_7")).toBe(false);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("forgets someone whose live memory still says temp-<playerId>, by the uuid tracked for them", async () => {
+        const memory: any = await newMemory();
+        const record = seed(memory, "uuid-bob", 7);
+        record.userUuid = "temp-7";
+        memory.uuidTracking.set("bot-1_7", { userUuid: "uuid-bob", isLogged: true });
+        memory.forget("bot-1", { everyone: false, userUuids: ["uuid-bob"] });
+        expect(memory.memories.has("bot-1_7")).toBe(false);
     });
 
     it("ignores a forget list that is not one, and never turns a good save into a retry", async () => {

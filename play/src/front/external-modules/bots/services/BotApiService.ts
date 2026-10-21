@@ -53,6 +53,20 @@ export interface CreateBotDto {
     companionTextureId?: string | null;
 }
 
+/** Bot chat telemetry of one bot: on unless the bot or its universe turned it off. The universe's choice locks the switch. */
+export interface BotTelemetry {
+    universeHides: boolean;
+    on: boolean;
+}
+
+function readTelemetry(value: unknown): BotTelemetry {
+    const answer = value as { universeHides?: unknown; hidden?: unknown } | null;
+    if (!answer || typeof answer.universeHides !== "boolean" || typeof answer.hidden !== "boolean") {
+        throw new Error("Orbit answered with something the game does not understand");
+    }
+    return { universeHides: answer.universeHides, on: !answer.hidden };
+}
+
 export interface UpdateBotDto extends Partial<CreateBotDto> {
     id: string;
 }
@@ -907,6 +921,26 @@ export class BotApiService {
                 signal,
             });
             return readPermissions(await response.json());
+        });
+    }
+
+    /** Bot chat telemetry of this bot: whether it is on, and whether its universe has turned it off for every bot */
+    async getBotTelemetry(botId: string): Promise<BotTelemetry> {
+        return this.withPermissionsTimeout(async (signal) => {
+            const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/privacy`, { signal });
+            return readTelemetry(await response.json());
+        });
+    }
+
+    /** Turn bot chat telemetry on (the bot follows its universe again) or off for this bot. Answers with how it stands. */
+    async saveBotTelemetry(botId: string, on: boolean): Promise<BotTelemetry> {
+        return this.withPermissionsTimeout(async (signal) => {
+            const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/privacy`, {
+                method: "PUT",
+                body: JSON.stringify({ choice: on ? "follow" : "private" }),
+                signal,
+            });
+            return readTelemetry(await response.json());
         });
     }
 
