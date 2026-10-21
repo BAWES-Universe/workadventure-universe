@@ -38,8 +38,16 @@
     $: zoomPercent.set(Math.round(userZoom * 100));
     $: if ($pages.page > 1) pinchHint = false;
 
-    /** How far down the document the reader was when the zoom changed, to keep them at the same place. */
+    /** How far down the document the reader was when the zoom or the panel's width changed, to keep them at the same place. */
     let scrollAnchor: number | undefined;
+    let lastAreaWidth = 0;
+
+    // The panel was resized, or the phone turned: the page is fitted to the new width, so it is as tall as it is now.
+    $: if (areaWidth !== lastAreaWidth) {
+        const height = area?.scrollHeight ?? 0;
+        if (lastAreaWidth > 0 && scrollAnchor === undefined && height > 0) scrollAnchor = area.scrollTop / height;
+        lastAreaWidth = areaWidth;
+    }
 
     function setZoom(next: number): void {
         const zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next));
