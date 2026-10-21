@@ -150,6 +150,9 @@
         document.removeEventListener("touchend", handleTouchEnd);
     });
 
+    // Held to the screen's height on a phone held upright: a long file scrolls inside its panel instead of stretching it.
+    $: hasFileViewer = $coWebsites.some((coWebsite) => coWebsite instanceof FileViewerCoWebsite);
+
     // A file on its own has its own header (name, Download, Close or Back), so the strip of tabs would only add a second
     // row above it. With other panels open the tabs come back, so the person can still switch between them.
     $: soleFileViewer = $coWebsites.length === 1 && $coWebsites[0] instanceof FileViewerCoWebsite;
@@ -287,6 +290,7 @@
 
         <div
             class={$screenOrientationStore === "portrait" ? "flex-1 mb-3" : "h-full object-contain ms-3"}
+            class:min-h-0={hasFileViewer}
             class:file-viewer-alone={soleFileViewer && $screenOrientationStore !== "portrait" && !$fullScreenCowebsite}
         >
             {#each $coWebsites as coWebsite (coWebsite.getId())}
