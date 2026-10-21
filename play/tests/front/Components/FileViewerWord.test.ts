@@ -133,9 +133,8 @@ describe("the Word reader's frame", () => {
             configurable: true,
             get: () => (width === 300 && readsAfterTurn++ > 0 ? 4000 : 2000),
         });
-        const resizer = [...target.querySelectorAll("iframe[aria-hidden]")].find((frame) => frame.contentWindow) as
-            | HTMLIFrameElement
-            | undefined;
+        // Svelte measures the panel with a hidden frame that reports its resizes.
+        const resizer = target.querySelector<HTMLIFrameElement>("iframe[aria-hidden]") ?? undefined;
         resizer?.contentWindow?.dispatchEvent(new Event("resize"));
         await tick();
         area.scrollTop = 500;

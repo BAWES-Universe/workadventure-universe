@@ -234,6 +234,33 @@ describe("the spreadsheet reader", () => {
         expect(sheet.rows[0].map((cell) => cell.text)).toEqual(["a", "2"]);
     });
 
+    describe("an OpenDocument sheet that repeats a cell", () => {
+        async function odsWithRepeat(columns: number, rows: number): Promise<ArrayBuffer> {
+            const zip = await JSZip.loadAsync(workbookBytes({ S: [[1]] }, "ods"));
+            const xml = await zip.file("content.xml")!.async("string");
+            const cell = `<table:table-cell table:number-columns-repeated="${columns}" office:value-type="float" office:value="7"><text:p>7</text:p></table:table-cell>`;
+            const row = `<table:table-row table:number-rows-repeated="${rows}">${cell}</table:table-row>`;
+            zip.file("content.xml", xml.replace(/<table:table-row[\s\S]*<\/table:table-row>/, row));
+            return zip.generateAsync({ type: "arraybuffer" });
+        }
+
+        it("opens at once when the repeat is a hundred thousand cells wide, and shows the first 100 columns", async () => {
+            const started = Date.now();
+            const [sheet] = await readSpreadsheet(await odsWithRepeat(100_000, 100));
+            expect(Date.now() - started).toBeLessThan(5000);
+            expect(sheet.columnCount).toBe(MAX_TABLE_COLUMNS);
+            expect(sheet.columnsCut).toBe(true);
+            expect(sheet.rows[0].every((cell) => cell.text === "7")).toBe(true);
+        });
+
+        it("keeps a repeat that fits in the columns shown", async () => {
+            const [sheet] = await readSpreadsheet(await odsWithRepeat(5, 2));
+            expect(sheet.columnCount).toBe(5);
+            expect(sheet.columnsCut).toBe(false);
+            expect(sheet.rows).toHaveLength(2);
+        });
+    });
+
     it("refuses a zip that would unpack to far more than any sheet", async () => {
         const bytes = workbookBytes({ A: [[1]] });
         const view = new DataView(bytes);
