@@ -1,6 +1,6 @@
 import type * as SheetJs from "xlsx";
 import { MAX_TABLE_COLUMNS, MAX_TABLE_ROWS } from "./textFiles";
-import { zipUnpackedSize } from "./zipSize";
+import { assertUnpackedWithin, zipUnpackedSize } from "./zipSize";
 
 /** A spreadsheet is read in memory; a file far bigger than any sheet people share is offered as a download instead. */
 export const MAX_SPREADSHEET_BYTES = 30 * 1024 * 1024;
@@ -103,12 +103,14 @@ export async function readSpreadsheet(bytes: ArrayBuffer): Promise<SheetView[]> 
     // The reader also takes plain text and web pages as sheets; only the real file types are accepted here.
     const head = new Uint8Array(bytes, 0, Math.min(8, bytes.byteLength));
     if (!isSpreadsheetContainer(head)) throw new Error("Not a spreadsheet file");
-    // A zip (.xlsx, .ods) is measured before anything is unpacked. An old .xls is not a zip.
+    // A zip (.xlsx, .ods) is measured before anything is unpacked, by the sizes it lists and then by the bytes that
+    // really come out. An old .xls is not a zip.
     if (head[0] === 0x50) {
         const unpacked = zipUnpackedSize(bytes);
         if (unpacked === undefined || unpacked > MAX_UNPACKED_SPREADSHEET_BYTES) {
             throw new Error("The file is too big to show");
         }
+        await assertUnpackedWithin(bytes, MAX_UNPACKED_SPREADSHEET_BYTES);
     }
     const XLSX = await import("xlsx");
     const workbook = XLSX.read(new Uint8Array(bytes), {
