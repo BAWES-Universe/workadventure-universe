@@ -37,3 +37,31 @@ export function zipUnpackedSize(bytes: ArrayBuffer): number | undefined {
     }
     return total;
 }
+
+/**
+ * Unpacks every file inside a zip only to count the bytes that really come out, and stops the moment they pass
+ * `limit`. The sizes in the zip's own list are written by whoever made the file, so a zip bomb can claim a few
+ * bytes over gigabytes: this is the count that cannot be argued with. Nothing is kept. Throws when the zip holds
+ * more than `limit`, or cannot be read.
+ */
+export async function assertUnpackedWithin(bytes: ArrayBuffer, limit: number): Promise<void> {
+    const { default: JSZip } = await import("jszip");
+    const zip = await JSZip.loadAsync(bytes);
+    let total = 0;
+    for (const entry of Object.values(zip.files)) {
+        if (entry.dir) continue;
+        await new Promise<void>((resolve, reject) => {
+            const stream = entry.internalStream("uint8array");
+            stream
+                .on("data", (chunk: Uint8Array) => {
+                    total += chunk.length;
+                    if (total <= limit) return;
+                    stream.pause();
+                    reject(new Error("The file is too big to show"));
+                })
+                .on("error", reject)
+                .on("end", () => resolve())
+                .resume();
+        });
+    }
+}

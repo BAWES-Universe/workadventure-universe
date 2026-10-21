@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import JSZip from "jszip";
-import { MAX_UNPACKED_BYTES, zipUnpackedSize } from "../zipSize";
+import { MAX_UNPACKED_BYTES, assertUnpackedWithin, zipUnpackedSize } from "../zipSize";
 
 async function zipOf(files: Record<string, string>): Promise<ArrayBuffer> {
     const zip = new JSZip();
@@ -39,5 +39,29 @@ describe("measuring a zip before it is unpacked", () => {
             undefined
         );
         expect(zipUnpackedSize(new ArrayBuffer(0))).toBe(undefined);
+    });
+});
+
+describe("counting what a zip really holds", () => {
+    it("lets a zip within the limit through", async () => {
+        const bytes = await zipOf({ "a.txt": "x".repeat(1000), "dir/b.txt": "y".repeat(234) });
+        await expect(assertUnpackedWithin(bytes, 5000)).resolves.toBeUndefined();
+    });
+
+    it("stops a zip that claims a few bytes and holds far more, which the list of sizes cannot tell", async () => {
+        const bomb = claimSize(await zipOf({ "a.txt": "\0".repeat(5 * 1024 * 1024) }), 10);
+        expect(zipUnpackedSize(bomb)).toBe(10);
+        await expect(assertUnpackedWithin(bomb, 1024 * 1024)).rejects.toThrow("too big");
+    });
+
+    it("counts the files together, not one by one", async () => {
+        const bytes = await zipOf({ "a.txt": "x".repeat(600), "b.txt": "y".repeat(600) });
+        await expect(assertUnpackedWithin(bytes, 1000)).rejects.toThrow("too big");
+    });
+
+    it("refuses bytes that are not a zip", async () => {
+        await expect(
+            assertUnpackedWithin(new TextEncoder().encode("hello").buffer as ArrayBuffer, 10)
+        ).rejects.toThrow();
     });
 });
