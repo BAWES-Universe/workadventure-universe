@@ -48,12 +48,14 @@ function textOfCell(cell: SheetJs.CellObject | undefined): SheetCell {
     return { text, number: cell.t === "n" };
 }
 
-/** The last column (from 0) that holds a cell, or -1 for a sheet without cells. */
+/** The last column (from 0) that holds a cell in the rows that are shown, or -1 when they hold none. */
 function lastUsedColumn(XLSX: typeof SheetJs, sheet: SheetJs.WorkSheet): number {
     let last = -1;
     for (const address in sheet) {
         if (address.charCodeAt(0) === 33) continue; // "!ref", "!fullref", "!merges"...
-        last = Math.max(last, XLSX.utils.decode_cell(address).c);
+        const cell = XLSX.utils.decode_cell(address);
+        // The reader keeps one row more than is shown, to tell a sheet that ends there from one that goes on.
+        if (cell.r < MAX_TABLE_ROWS) last = Math.max(last, cell.c);
     }
     return last;
 }
@@ -67,7 +69,8 @@ function viewOfSheet(XLSX: typeof SheetJs, name: string, sheet: SheetJs.WorkShee
     const stoppedEarly = range.e.r + 1 > MAX_TABLE_ROWS;
     const fullReference = sheet["!fullref"];
     const claimedRows = fullReference ? XLSX.utils.decode_range(fullReference).e.r + 1 : undefined;
-    const totalRows = stoppedEarly ? claimedRows : range.e.r + 1;
+    // A file that claims no size was read whole: the rows read are all it has.
+    const totalRows = stoppedEarly ? claimedRows ?? range.e.r + 1 : range.e.r + 1;
     const lastRow = Math.min(range.e.r, MAX_TABLE_ROWS - 1);
     // The columns are the ones that hold cells: the size a file claims can reach column XFD over a sheet of three.
     const usedColumns = lastUsedColumn(XLSX, sheet) + 1;
