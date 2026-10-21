@@ -236,6 +236,15 @@ describe("the spreadsheet reader", () => {
         await expect(readSpreadsheet(bytes)).rejects.toThrow("too big");
     });
 
+    it("refuses a zip that would unpack to more than 150 MB, which a very wide sheet can fill with cells", async () => {
+        const bytes = workbookBytes({ A: [[1]] });
+        const view = new DataView(bytes);
+        for (let at = 0; at < bytes.byteLength - 46; at++) {
+            if (view.getUint32(at, true) === 0x02014b50) view.setUint32(at + 24, 200 * 1024 * 1024, true);
+        }
+        await expect(readSpreadsheet(bytes)).rejects.toThrow("too big");
+    });
+
     it("refuses a file that is not a spreadsheet", async () => {
         await expect(readSpreadsheet(new Uint8Array([1, 2, 3, 4]).buffer)).rejects.toThrow();
     });

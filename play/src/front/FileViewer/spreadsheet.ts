@@ -1,13 +1,16 @@
 import type * as SheetJs from "xlsx";
 import { MAX_TABLE_COLUMNS, MAX_TABLE_ROWS } from "./textFiles";
-import { assertUnpackedWithin, zipUnpackedSize } from "./zipSize";
+import { MAX_UNPACKED_BYTES, assertUnpackedWithin, zipUnpackedSize } from "./zipSize";
 
 /** A spreadsheet is read in memory; a file far bigger than any sheet people share is offered as a download instead. */
 export const MAX_SPREADSHEET_BYTES = 30 * 1024 * 1024;
 /** Rows read after the ones that are shown, to tell a sheet that ends there from one that goes on. */
 const READ_BEYOND_SHOWN = 2;
-/** A sheet's text can be many times its zip: this much unpacked is a big sheet, more is a file meant to fill memory. */
-const MAX_UNPACKED_SPREADSHEET_BYTES = 400 * 1024 * 1024;
+/**
+ * A sheet's text can be many times its zip, and every cell it holds takes about eight times its text in memory once read
+ * (measured: a million cells, 26 MB of text, 215 MB of memory). Past this much unpacked it is a file meant to fill memory.
+ */
+const MAX_UNPACKED_SPREADSHEET_BYTES = MAX_UNPACKED_BYTES;
 
 export interface SheetCell {
     /** The cell as the file shows it (dates, percentages and currencies already formatted). Always drawn as text. */
