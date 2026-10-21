@@ -110,6 +110,44 @@ describe("the Word reader's frame", () => {
         expect(area.scrollTop).toBe(1000);
     });
 
+    it("keeps the reader at the same place in the document when the panel changes width", async () => {
+        render.renderWordDocument.mockResolvedValue({
+            srcdoc: "<!doctype html><p>Hi</p>",
+            pageWidth: 816,
+            pageCount: 2,
+        });
+        component = new FileViewerWord({
+            target,
+            props: { bytes: new ArrayBuffer(8), name: "plan.docx", compact: false },
+        });
+        await vi.waitFor(() => expect(target.querySelector("iframe[sandbox]")).not.toBeNull());
+        await tick();
+
+        // The panel is 600 wide with a document 2000 tall; turned to 300 wide, the document is 4000 tall.
+        const area = target.querySelector('[data-testid="fileViewerWord"]') as HTMLElement;
+        let width = 600;
+        // The first read after the turn is the reader's place, taken before the document is resized: the next is after.
+        let readsAfterTurn = 0;
+        Object.defineProperty(area, "clientWidth", { configurable: true, get: () => width });
+        Object.defineProperty(area, "scrollHeight", {
+            configurable: true,
+            get: () => (width === 300 && readsAfterTurn++ > 0 ? 4000 : 2000),
+        });
+        const resizer = [...target.querySelectorAll("iframe[aria-hidden]")].find((frame) => frame.contentWindow) as
+            | HTMLIFrameElement
+            | undefined;
+        resizer?.contentWindow?.dispatchEvent(new Event("resize"));
+        await tick();
+        area.scrollTop = 500;
+
+        width = 300;
+        resizer?.contentWindow?.dispatchEvent(new Event("resize"));
+        await tick();
+
+        expect(resizer).toBeDefined();
+        expect(area.scrollTop).toBe(1000);
+    });
+
     it("says it failed when the file cannot be drawn", async () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
         render.renderWordDocument.mockRejectedValue(new Error("Corrupted zip"));
