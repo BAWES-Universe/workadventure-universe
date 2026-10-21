@@ -72,6 +72,16 @@ describe("the spreadsheet reader panel", () => {
         expect(target.querySelector(".tabs")).toBeNull();
     });
 
+    it("shows the opening box until the sheet is read", async () => {
+        mount(workbookBytes({ Growth: [["Month"], ["Jan"]] }));
+        await tick();
+        expect(target.querySelector("[data-testid=fileViewerReading]")).not.toBeNull();
+        expect(target.querySelector("[data-testid=fileViewerSheet]")).toBeNull();
+
+        await vi.waitFor(() => expect(target.querySelector("[data-testid=fileViewerSheet]")).not.toBeNull());
+        expect(target.querySelector("[data-testid=fileViewerReading]")).toBeNull();
+    });
+
     it("switches sheets from the tabs at the bottom", async () => {
         mount(workbookBytes({ First: [["one"]], Second: [["two"]] }));
         await vi.waitFor(() => expect(target.querySelectorAll(".tabs button")).toHaveLength(2));
