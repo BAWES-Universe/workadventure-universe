@@ -273,6 +273,7 @@ const chat: BaseTranslation = {
         downloadFile: "Download {name}",
         pdfKind: "PDF",
         rows: "{count:number} {{row|rows}}",
+        sheets: "{count:number} {{sheet|sheets}}",
         textCut: "Showing the first 1 MB.",
         downloadRest: "Download to see the rest",
         rowsCut: "Showing the first {shown:number} of {total:number} rows.",

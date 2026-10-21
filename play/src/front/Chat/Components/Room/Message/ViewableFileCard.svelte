@@ -20,7 +20,7 @@
     let size: number | undefined;
 
     $: kind = fileKindOf(name);
-    $: badge = kind ? badgeOfKind(kind) : { color: "#757575", label: "FILE", kindName: "File" };
+    $: badge = kind ? badgeOfKind(kind, name) : { color: "#757575", label: "FILE", kindName: "File" };
     $: isOpen = $openFileViewerKeys.has(`chat:${url}`);
     $: sub = size === undefined ? badge.kindName : `${badge.kindName} · ${formatFileSize(size)}`;
 

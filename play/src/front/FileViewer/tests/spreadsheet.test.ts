@@ -1,0 +1,129 @@
+import * as XLSX from "xlsx";
+import { describe, expect, it } from "vitest";
+import { bytesMatchKind, badgeOfKind, fileKindOf } from "../fileKinds";
+import { columnLetters, readSpreadsheet } from "../spreadsheet";
+
+function workbookBytes(
+    sheets: Record<string, unknown[][]>,
+    bookType: XLSX.BookType = "xlsx",
+    hidden: string[] = []
+): ArrayBuffer {
+    const workbook = XLSX.utils.book_new();
+    for (const [name, rows] of Object.entries(sheets)) {
+        XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), name);
+    }
+    if (hidden.length > 0) {
+        workbook.Workbook = {
+            Sheets: workbook.SheetNames.map((name) => ({ name, Hidden: hidden.includes(name) ? 1 : 0 })),
+        };
+    }
+    const written = XLSX.write(workbook, { type: "array", bookType }) as ArrayBuffer;
+    return written;
+}
+
+describe("the spreadsheet reader", () => {
+    it("names the columns like Excel does", () => {
+        expect([0, 1, 25, 26, 27, 51, 52, 701, 702].map(columnLetters)).toEqual([
+            "A",
+            "B",
+            "Z",
+            "AA",
+            "AB",
+            "AZ",
+            "BA",
+            "ZZ",
+            "AAA",
+        ]);
+    });
+
+    it("reads every sheet with its values as text, numbers marked for the right edge", async () => {
+        const sheets = await readSpreadsheet(
+            workbookBytes({
+                Growth: [
+                    ["Month", "Visitors"],
+                    ["Jan", 1240],
+                ],
+                Rooms: [["Name"], ["Lobby"]],
+            })
+        );
+        expect(sheets.map((sheet) => sheet.name)).toEqual(["Growth", "Rooms"]);
+        expect(sheets[0].rows[0].map((cell) => cell.text)).toEqual(["Month", "Visitors"]);
+        expect(sheets[0].rows[1][1]).toEqual({ text: "1240", number: true });
+        expect(sheets[0].rows[1][0].number).toBe(false);
+        expect(sheets[0].totalRows).toBe(2);
+        expect(sheets[0].rowsCut).toBe(false);
+    });
+
+    it("keeps a cell with markup as text", async () => {
+        const [sheet] = await readSpreadsheet(
+            workbookBytes({ A: [['<img src=x onerror="alert(1)"><script>x</script>']] })
+        );
+        expect(sheet.rows[0][0].text).toBe('<img src=x onerror="alert(1)"><script>x</script>');
+    });
+
+    it("shows the first 1,000 rows and says how many there are", async () => {
+        const rows = Array.from({ length: 2500 }, (_, index) => [index + 1]);
+        const [sheet] = await readSpreadsheet(workbookBytes({ Big: rows }));
+        expect(sheet.rows).toHaveLength(1000);
+        expect(sheet.rows[999][0].text).toBe("1000");
+        expect(sheet.rowsCut).toBe(true);
+        expect(sheet.totalRows).toBe(2500);
+    });
+
+    it("shows the first 100 columns", async () => {
+        const [sheet] = await readSpreadsheet(
+            workbookBytes({ Wide: [Array.from({ length: 150 }, (_, index) => index)] })
+        );
+        expect(sheet.columnCount).toBe(100);
+        expect(sheet.rows[0]).toHaveLength(100);
+        expect(sheet.columnsCut).toBe(true);
+        expect(sheet.rowsCut).toBe(false);
+    });
+
+    it("starts at A1 even when the data starts further down", async () => {
+        const workbook = XLSX.utils.book_new();
+        const sheet = XLSX.utils.aoa_to_sheet([]);
+        XLSX.utils.sheet_add_aoa(sheet, [["x"]], { origin: "B3" });
+        XLSX.utils.book_append_sheet(workbook, sheet, "Offset");
+        const [read] = await readSpreadsheet(XLSX.write(workbook, { type: "array", bookType: "xlsx" }) as ArrayBuffer);
+        expect(read.rows).toHaveLength(3);
+        expect(read.rows[2][1].text).toBe("x");
+        expect(read.rows[0][0].text).toBe("");
+    });
+
+    it("leaves hidden sheets out, as Excel does", async () => {
+        const sheets = await readSpreadsheet(workbookBytes({ One: [[1]], Secret: [[2]] }, "xlsx", ["Secret"]));
+        expect(sheets.map((sheet) => sheet.name)).toEqual(["One"]);
+    });
+
+    it.each(["biff8", "ods"] as const)("reads the %s format", async (bookType) => {
+        const [sheet] = await readSpreadsheet(workbookBytes({ S: [["a", 2]] }, bookType));
+        expect(sheet.rows[0].map((cell) => cell.text)).toEqual(["a", "2"]);
+    });
+
+    it("refuses a file that is not a spreadsheet", async () => {
+        await expect(readSpreadsheet(new Uint8Array([1, 2, 3, 4]).buffer)).rejects.toThrow();
+    });
+});
+
+describe("spreadsheet files", () => {
+    it("are Excel for .xlsx, .xls and .ods, with a badge that matches", () => {
+        for (const name of ["a.xlsx", "a.xls", "a.ods"]) expect(fileKindOf(name)).toBe("excel");
+        expect(badgeOfKind("excel", "a.xlsx")).toMatchObject({ label: "XLSX", kindName: "Excel" });
+        expect(badgeOfKind("excel", "a.xls").label).toBe("XLS");
+        expect(badgeOfKind("excel", "a.ods").label).toBe("ODS");
+    });
+
+    it("must start like the type they say they are", () => {
+        const zip = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0]);
+        const office = new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+        const html = new TextEncoder().encode("<html>");
+        expect(bytesMatchKind("excel", "a.xlsx", zip)).toBe(true);
+        expect(bytesMatchKind("excel", "a.ods", zip)).toBe(true);
+        expect(bytesMatchKind("excel", "a.xls", office)).toBe(true);
+        expect(bytesMatchKind("excel", "a.xls", zip)).toBe(false);
+        // A password-locked .xlsx is an old Office container: it opens as "Can't preview".
+        expect(bytesMatchKind("excel", "a.xlsx", office)).toBe(false);
+        expect(bytesMatchKind("excel", "a.xlsx", html)).toBe(false);
+    });
+});
