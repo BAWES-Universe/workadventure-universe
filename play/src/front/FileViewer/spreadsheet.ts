@@ -65,6 +65,12 @@ function lastUsedColumn(XLSX: typeof SheetJs, sheet: SheetJs.WorkSheet): number 
     return last;
 }
 
+function holdsCells(sheet: SheetJs.WorkSheet | undefined): boolean {
+    if (!sheet) return false;
+    const type = (sheet as { "!type"?: string })["!type"];
+    return type === undefined || type === "sheet";
+}
+
 function viewOfSheet(XLSX: typeof SheetJs, name: string, sheet: SheetJs.WorkSheet): SheetView {
     const reference = sheet["!ref"];
     // A sheet with no cells is drawn like Excel draws it: the grid of one empty cell, A1.
@@ -166,5 +172,8 @@ export async function readSpreadsheet(bytes: ArrayBuffer): Promise<SheetView[]> 
     // A workbook whose sheets are all hidden still opens.
     const shown = names.length > 0 ? names : workbook.SheetNames;
     // A sheet the file lists but holds no data for (a damaged file) is left out instead of failing the others.
-    return shown.filter((name) => workbook.Sheets[name]).map((name) => viewOfSheet(XLSX, name, workbook.Sheets[name]));
+    // A chart sheet, macro sheet or dialog sheet holds no cells: it is left out like a hidden one, not drawn as an empty grid.
+    return shown
+        .filter((name) => holdsCells(workbook.Sheets[name]))
+        .map((name) => viewOfSheet(XLSX, name, workbook.Sheets[name]));
 }

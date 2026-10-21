@@ -224,6 +224,30 @@ describe("the spreadsheet reader", () => {
         expect(sheet.rowsCut).toBe(false);
     });
 
+    it("leaves a chart sheet out, and still shows the sheets with cells", async () => {
+        const zip = await JSZip.loadAsync(workbookBytes({ Data: [[1]] }));
+        zip.file(
+            "xl/workbook.xml",
+            (await zip.file("xl/workbook.xml")!.async("string")).replace(
+                "</sheets>",
+                '<sheet name="Chart" sheetId="9" r:id="rIdChart"/></sheets>'
+            )
+        );
+        zip.file(
+            "xl/_rels/workbook.xml.rels",
+            (await zip.file("xl/_rels/workbook.xml.rels")!.async("string")).replace(
+                "</Relationships>",
+                '<Relationship Id="rIdChart" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chartsheet" Target="chartsheets/sheet1.xml"/></Relationships>'
+            )
+        );
+        zip.file(
+            "xl/chartsheets/sheet1.xml",
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><chartsheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"/></sheetViews></chartsheet>'
+        );
+        const sheets = await readSpreadsheet(await zip.generateAsync({ type: "arraybuffer" }));
+        expect(sheets.map((sheet) => sheet.name)).toEqual(["Data"]);
+    });
+
     it("leaves hidden sheets out, as Excel does", async () => {
         const sheets = await readSpreadsheet(workbookBytes({ One: [[1]], Secret: [[2]] }, "xlsx", ["Secret"]));
         expect(sheets.map((sheet) => sheet.name)).toEqual(["One"]);
