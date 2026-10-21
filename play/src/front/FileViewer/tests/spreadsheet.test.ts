@@ -166,6 +166,13 @@ describe("the spreadsheet reader", () => {
         expect(sheet.columnsCut).toBe(false);
     });
 
+    it("leaves out a sheet the file lists but holds no data for, and still shows the others", async () => {
+        const zip = await JSZip.loadAsync(workbookBytes({ One: [[1]], Gone: [[2]] }));
+        zip.remove("xl/worksheets/sheet2.xml");
+        const sheets = await readSpreadsheet(await zip.generateAsync({ type: "arraybuffer" }));
+        expect(sheets.map((sheet) => sheet.name)).toEqual(["One"]);
+    });
+
     it("leaves hidden sheets out, as Excel does", async () => {
         const sheets = await readSpreadsheet(workbookBytes({ One: [[1]], Secret: [[2]] }, "xlsx", ["Secret"]));
         expect(sheets.map((sheet) => sheet.name)).toEqual(["One"]);
