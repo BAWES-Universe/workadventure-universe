@@ -41,7 +41,7 @@ export async function printPdfPages(pdf: PDFDocumentProxy): Promise<void> {
         if (!doc || !win) throw new Error("Could not prepare the pages to print");
         const style = doc.createElement("style");
         style.textContent =
-            "@page{margin:0}html,body{margin:0;background:#fff}img{display:block;width:100%;height:auto;page-break-after:always;break-after:page}img:last-child{page-break-after:auto;break-after:auto}";
+            "@page{margin:0}html,body{margin:0;background:#fff}img{display:block;width:100%;height:auto;max-height:100vh;object-fit:contain;page-break-after:always;break-after:page}img:last-child{page-break-after:auto;break-after:auto}";
         doc.head.appendChild(style);
         doc.title = "";
 
