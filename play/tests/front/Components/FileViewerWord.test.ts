@@ -147,6 +147,45 @@ describe("the Word reader's frame", () => {
         expect(area.scrollTop).toBe(1000);
     });
 
+    it("puts the reader back where they were when the panel is shown again after being hidden", async () => {
+        render.renderWordDocument.mockResolvedValue({
+            srcdoc: "<!doctype html><p>Hi</p>",
+            pageWidth: 816,
+            pageCount: 2,
+        });
+        component = new FileViewerWord({
+            target,
+            props: { bytes: new ArrayBuffer(8), name: "plan.docx", compact: false },
+        });
+        await vi.waitFor(() => expect(target.querySelector("iframe[sandbox]")).not.toBeNull());
+        await tick();
+
+        const area = target.querySelector('[data-testid="fileViewerWord"]') as HTMLElement;
+        const resizer = target.querySelector<HTMLIFrameElement>("iframe[aria-hidden]") ?? undefined;
+        let width = 600;
+        let height = 2000;
+        Object.defineProperty(area, "clientWidth", { configurable: true, get: () => width });
+        Object.defineProperty(area, "scrollHeight", { configurable: true, get: () => height });
+        resizer?.contentWindow?.dispatchEvent(new Event("resize"));
+        await tick();
+
+        // The reader is a quarter of the way down, then the panel is hidden: its size and its scroll position go.
+        area.scrollTop = 500;
+        area.dispatchEvent(new Event("scroll"));
+        width = 0;
+        height = 0;
+        area.scrollTop = 0;
+        resizer?.contentWindow?.dispatchEvent(new Event("resize"));
+        await tick();
+
+        width = 600;
+        height = 2000;
+        resizer?.contentWindow?.dispatchEvent(new Event("resize"));
+        await tick();
+
+        expect(area.scrollTop).toBe(500);
+    });
+
     it("says it failed when the file cannot be drawn", async () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
         render.renderWordDocument.mockRejectedValue(new Error("Corrupted zip"));
