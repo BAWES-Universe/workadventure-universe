@@ -42,14 +42,19 @@ describe("the picture reader's first fit", () => {
         vi.unstubAllGlobals();
     });
 
-    function open(): { area: HTMLElement; picture: HTMLImageElement; controller: () => ViewerController } {
+    function open(): {
+        area: HTMLElement;
+        picture: HTMLImageElement;
+        controller: () => Required<Pick<ViewerController, "zoomPercent">>;
+    } {
         const reader = new FileViewerImage({ target, props: { bytes: new ArrayBuffer(8), name: "plan.png" } });
         component = reader;
         const internals = (reader as unknown as { $$: { ctx: unknown[]; props: Record<string, number> } }).$$;
         return {
             area: target.querySelector(".image-area") as HTMLElement,
             picture: target.querySelector("img") as HTMLImageElement,
-            controller: () => internals.ctx[internals.props.controller] as ViewerController,
+            controller: () =>
+                internals.ctx[internals.props.controller] as Required<Pick<ViewerController, "zoomPercent">>,
         };
     }
 
