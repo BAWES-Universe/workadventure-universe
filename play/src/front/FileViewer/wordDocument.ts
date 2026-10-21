@@ -47,12 +47,14 @@ export function cleanPages(html: string): string {
             "audio",
             "source",
             "track",
+            "map",
+            "area",
             "link",
             "meta",
             "base",
             "style",
         ],
-        FORBID_ATTR: ["srcset", "poster", "background", "formaction", "action"],
+        FORBID_ATTR: ["usemap", "srcset", "poster", "background", "formaction", "action"],
         ALLOW_DATA_ATTR: false,
     });
     for (const picture of Array.from(template.content.querySelectorAll("img"))) {

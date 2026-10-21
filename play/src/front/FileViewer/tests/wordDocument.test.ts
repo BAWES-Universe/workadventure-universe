@@ -168,12 +168,13 @@ describe("cleaning the drawn pages", () => {
                 '<p style="color:red" onmouseover="window.__ran = true">text</p>',
                 '<object data="https://evil.example"></object><embed src="https://evil.example"><link rel="stylesheet" href="https://evil.example/c.css">',
                 '<form action="https://evil.example"><input name="a"></form>',
+                '<map name="m"><area href="https://evil.example"></map>',
             ].join("")
         );
         const host = document.createElement("div");
         host.innerHTML = cleaned;
 
-        expect(host.querySelector("script, iframe, object, embed, link, form, input")).toBeNull();
+        expect(host.querySelector("script, iframe, object, embed, link, form, input, map, area")).toBeNull();
         expect(cleaned).not.toMatch(/evil\.example|onerror|onclick|onmouseover|javascript:|srcset|text\/html/);
         expect(host.querySelectorAll("img")).toHaveLength(1);
         expect(host.querySelector("p")?.getAttribute("style")).toBe("color:red");
