@@ -153,6 +153,13 @@ describe("Markdown", () => {
         expect(host.querySelector("pre code")?.textContent).toContain("code");
     });
 
+    it("shows task list items as ticked and unticked signs, never as form fields", () => {
+        const host = render("- [x] done\n- [ ] todo\n");
+        const items = Array.from(host.querySelectorAll("li")).map((item) => item.textContent?.trim());
+        expect(items).toEqual(["\u2611 done", "\u2610 todo"]);
+        expect(host.querySelector("input")).toBeNull();
+    });
+
     it("runs nothing from HTML inside the file", () => {
         const host = render(
             [
