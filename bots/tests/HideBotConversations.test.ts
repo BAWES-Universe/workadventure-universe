@@ -494,6 +494,18 @@ describe("ConversationStorage: transcripts", () => {
             expect(sent[sent.length - 1].messages.map((m: any) => m.message)).toEqual(["my name is Bob", "hi Bob", "what is my name?"]);
         });
 
+        it("saves those lines when the person leaves after Orbit says Normal, with no further line", async () => {
+            const { sent, conversations, orbitAnswers } = await startedWhileOrbitIsDown();
+            await conversations.addMessage("bot-1", "uuid-bob", "my name is Bob", "person");
+            await conversations.addMessage("bot-1", "uuid-bob", "hi Bob", "bot");
+            await orbitAnswers("normal");
+            await conversations.endConversation("bot-1", "uuid-bob", "user_left");
+            const last = sent[sent.length - 1];
+            expect(last.messages.map((m: any) => m.message)).toEqual(["my name is Bob", "hi Bob"]);
+            expect(last).toMatchObject({ endReason: "user_left" });
+            expect((conversations as any).activeConversations.size).toBe(0);
+        });
+
         it("drops those lines, and sends and keeps nothing, when Orbit then says the bot is hidden", async () => {
             const { sent, conversations, orbitAnswers } = await startedWhileOrbitIsDown();
             await conversations.addMessage("bot-1", "uuid-bob", "my secret plan", "person");

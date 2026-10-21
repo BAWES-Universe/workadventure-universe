@@ -348,6 +348,17 @@ export class ConversationStorage {
         const conversation = this.activeConversations.get(key);
         const conversationId = this.conversationIds.get(key);
 
+        // Lines kept while Orbit had not answered yet (#1217): if it has since said Normal, save them with the end
+        // rather than lose them because no further line came
+        if (conversation && !conversationId && conversation.messages.length > 0 && (await this.privacyOf(botId)) === 'normal') {
+            conversation.endedAt = Date.now();
+            conversation.endReason = endReason;
+            await this.saveToAdminAPI(key, conversation);
+            this.activeConversations.delete(key);
+            this.conversationIds.delete(key);
+            return;
+        }
+
         if (!conversation || !conversationId) {
             // Clean up if no active conversation
             this.activeConversations.delete(key);
