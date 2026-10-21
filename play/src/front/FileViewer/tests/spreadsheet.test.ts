@@ -318,6 +318,15 @@ describe("the spreadsheet reader", () => {
             expect(sheet.rows[0].every((cell) => cell.text === "7")).toBe(true);
         });
 
+        it("opens at once when a wide row is repeated a million times, and shows the first 1,000 rows", async () => {
+            const started = Date.now();
+            const [sheet] = await readSpreadsheet(await odsWithRepeat(50, 1_000_000));
+            expect(Date.now() - started).toBeLessThan(5000);
+            expect(sheet.rows).toHaveLength(MAX_TABLE_ROWS);
+            expect(sheet.rowsCut).toBe(true);
+            expect(sheet.columnCount).toBe(50);
+        });
+
         it("keeps a repeat that fits in the columns shown", async () => {
             const [sheet] = await readSpreadsheet(await odsWithRepeat(5, 2));
             expect(sheet.columnCount).toBe(5);
