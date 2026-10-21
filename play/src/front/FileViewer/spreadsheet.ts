@@ -52,11 +52,12 @@ function viewOfSheet(XLSX: typeof SheetJs, name: string, sheet: SheetJs.WorkShee
     const reference = sheet["!ref"];
     if (!reference) return { name, rows: [], columnCount: 0, totalRows: 0, rowsCut: false, columnsCut: false };
     const range = XLSX.utils.decode_range(reference);
-    // Reading stops after the rows that are shown; the full size of the sheet is kept next to the cut one.
+    // Reading stops after the rows that are shown. Only when it did stop there is more below, and only then does the
+    // size the file claims for the sheet count: a sheet that ends sooner is as long as its cells say, whatever it claims.
+    const stoppedEarly = range.e.r + 1 > MAX_TABLE_ROWS;
     const fullReference = sheet["!fullref"];
-    const fullRange = fullReference ? XLSX.utils.decode_range(fullReference) : undefined;
-    const totalRows = fullRange ? fullRange.e.r + 1 : range.e.r + 1;
-    const rowsCut = totalRows > MAX_TABLE_ROWS;
+    const claimedRows = fullReference ? XLSX.utils.decode_range(fullReference).e.r + 1 : undefined;
+    const totalRows = stoppedEarly ? claimedRows : range.e.r + 1;
     const lastRow = Math.min(range.e.r, MAX_TABLE_ROWS - 1);
     const lastColumn = Math.min(range.e.c, MAX_TABLE_COLUMNS - 1);
     // Like Excel, a sheet always starts at A1, even when its first cells are further down or to the right.
@@ -72,9 +73,9 @@ function viewOfSheet(XLSX: typeof SheetJs, name: string, sheet: SheetJs.WorkShee
         name,
         rows,
         columnCount: lastColumn + 1,
-        totalRows: !fullRange && range.e.r + 1 > MAX_TABLE_ROWS ? undefined : totalRows,
-        rowsCut: rowsCut || (!fullRange && range.e.r + 1 > MAX_TABLE_ROWS),
-        columnsCut: range.e.c + 1 > MAX_TABLE_COLUMNS || (fullRange ? fullRange.e.c + 1 > MAX_TABLE_COLUMNS : false),
+        totalRows,
+        rowsCut: stoppedEarly,
+        columnsCut: range.e.c + 1 > MAX_TABLE_COLUMNS,
     };
 }
 
