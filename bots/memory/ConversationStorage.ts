@@ -117,15 +117,6 @@ export class ConversationStorage {
     ): Promise<void> {
         const key = `${botId}_${userUuid}`;
 
-        // Hide bot conversations (#1166): a private bot writes no transcript, here or in Orbit. What it remembers about
-        // the person is saved by MemoryStorage, which this does not touch.
-        const privacy = await this.privacyOf(botId);
-        if (privacy === 'private') {
-            // Lines kept while Orbit had not answered yet were never sent: they go too
-            if (!this.conversationIds.has(key)) this.activeConversations.delete(key);
-            return;
-        }
-
         let conversation = this.activeConversations.get(key);
 
         if (!conversation) {
@@ -152,37 +143,8 @@ export class ConversationStorage {
             console.log(`[ConversationStorage] Added ${sender} message to conversation: botId=${botId}, userUuid=${userUuid}, totalMessages=${conversation.messageCount}`);
         }
 
-        // Until Orbit has answered for this bot, keep the line here and send nothing (#1217): a Normal bot then sends
-        // them all with its next line, as before Hide existed, and a hidden one drops them
-        if (privacy === 'unknown') {
-            return;
-        }
-
         // Immediately save to Admin API
         await this.saveToAdminAPI(key, conversation);
-    }
-
-    /**
-     * Is this bot private, Normal, or not yet answered by Orbit (#1166, #1217)? Normal when Orbit's answer is not
-     * available at all, as before the setting existed.
-     */
-    private async privacyOf(botId: string): Promise<'private' | 'normal' | 'unknown'> {
-        try {
-            const state = await this.adminApiService.botPrivacyState?.(botId);
-            if (state) return state;
-            return (await this.adminApiService.isBotPrivate?.(botId)) === true ? 'private' : 'normal';
-        } catch {
-            return 'normal';
-        }
-    }
-
-    /** Does this bot hide its conversations (#1166)? Not private when Orbit cannot say, as before the setting existed. */
-    private async isPrivateBot(botId: string): Promise<boolean> {
-        try {
-            return (await this.adminApiService.isBotPrivate?.(botId)) === true;
-        } catch {
-            return false;
-        }
     }
 
     /**
@@ -339,26 +301,8 @@ export class ConversationStorage {
         const conversation = this.activeConversations.get(key);
         const conversationId = this.conversationIds.get(key);
 
-        // Lines kept while Orbit had not answered yet (#1217): if it has since said Normal, save them with the end
-        // rather than lose them because no further line came
-        if (conversation && !conversationId && conversation.messages.length > 0 && (await this.privacyOf(botId)) === 'normal') {
-            conversation.endedAt = Date.now();
-            conversation.endReason = endReason;
-            await this.saveToAdminAPI(key, conversation);
-            this.activeConversations.delete(key);
-            this.conversationIds.delete(key);
-            return;
-        }
-
         if (!conversation || !conversationId) {
             // Clean up if no active conversation
-            this.activeConversations.delete(key);
-            this.conversationIds.delete(key);
-            return;
-        }
-
-        // A bot that turned private mid-conversation sends nothing more; the transcript so far stays hidden in Orbit
-        if (await this.isPrivateBot(botId)) {
             this.activeConversations.delete(key);
             this.conversationIds.delete(key);
             return;

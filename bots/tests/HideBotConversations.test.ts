@@ -1,9 +1,10 @@
 /**
  * Hide bot conversations (#1166, Orbit #435).
  *
- * A private bot sends no text to PostHog, no conversation or player ids to Sentry spans and no transcript to Orbit.
- * What it remembers (memory), its usage counts and everything else work exactly as before, and a bot that is not
- * private (the default, or when Orbit cannot say) behaves exactly as it did before this setting existed.
+ * A bot with telemetry off sends no text to PostHog and no conversation or player ids to Sentry spans. It still saves
+ * its chats to Orbit (#514). What it remembers (memory), its usage counts and everything else work exactly as before,
+ * and a bot with telemetry on (the default, or when Orbit cannot say) behaves exactly as it did before this setting
+ * existed.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -393,7 +394,7 @@ describe("ConversationStorage: transcripts", () => {
         return new ConversationStorage(admin);
     }
 
-    it("saves the transcript as before when the bot is not private", async () => {
+    it("saves the transcript when the bot has telemetry on", async () => {
         // Orbit gets the live conversation object, so keep a copy of what each call carried
         const sent: Array<{ method: string; url: string; body: any }> = [];
         hoisted.axios.post.mockImplementation(async (url: string, body: any) => {
@@ -425,98 +426,14 @@ describe("ConversationStorage: transcripts", () => {
         expect(hoisted.axios.post).toHaveBeenCalledTimes(1);
     });
 
-    it("saves no transcript, and keeps none in memory, when the bot is private", async () => {
+    it("saves the transcript of a bot with telemetry off too (#514): only where the text goes changes", async () => {
         const conversations = await storage(async () => true);
         conversations.startConversation("bot-1", "uuid-bob", { name: "Bob", isLogged: true });
         await conversations.addMessage("bot-1", "uuid-bob", "my secret plan", "person");
         await conversations.addMessage("bot-1", "uuid-bob", "noted", "bot");
         await conversations.endConversation("bot-1", "uuid-bob", "user_left");
-        expect(hoisted.axios.post).not.toHaveBeenCalled();
-        expect(hoisted.axios.put).not.toHaveBeenCalled();
-        expect(JSON.stringify([...(conversations as any).activeConversations.values()])).not.toContain("my secret plan");
-    });
-
-    it("stops sending once a bot turns private in the middle of a conversation", async () => {
-        const sent: string[] = [];
-        hoisted.axios.post.mockImplementation(async (_url: string, body: any) => {
-            sent.push(JSON.stringify(body));
-            return { data: { conversationId: "c-1", status: "created" } };
-        });
-        hoisted.axios.put.mockImplementation(async (_url: string, body: any) => {
-            sent.push(JSON.stringify(body));
-            return { data: {} };
-        });
-        let hidden = false;
-        const conversations = await storage(async () => hidden);
-        await conversations.addMessage("bot-1", "uuid-bob", "hello", "person");
-        const sentBefore = sent.length;
-        hidden = true;
-        await conversations.addMessage("bot-1", "uuid-bob", "my secret plan", "person");
-        await conversations.endConversation("bot-1", "uuid-bob", "user_left");
-        expect(sent.length).toBe(sentBefore);
-        expect(sent.join("")).not.toContain("my secret plan");
-    });
-
-    describe("while Orbit has not answered yet after a start (#1217)", () => {
-        const down = () => Promise.reject({ isAxiosError: true, message: "connect ECONNREFUSED", response: undefined });
-
-        async function startedWhileOrbitIsDown() {
-            const sent: any[] = [];
-            let orbit: "down" | "normal" | "private" = "down";
-            hoisted.axios.get.mockReset().mockImplementation(async () => (orbit === "down" ? down() : { data: { hidden: orbit === "private" } }));
-            hoisted.axios.post.mockImplementation(async (_url: string, body: any) => {
-                if (orbit === "down") return down();
-                sent.push(JSON.parse(JSON.stringify(body)));
-                return { data: { conversationId: "c-1", status: "created" } };
-            });
-            hoisted.axios.put.mockImplementation(async (_url: string, body: any) => {
-                sent.push(JSON.parse(JSON.stringify(body)));
-                return { data: {} };
-            });
-            const { AdminApiService } = await import("../server/AdminApiService");
-            const { ConversationStorage } = await import("../memory/ConversationStorage");
-            const admin = new AdminApiService("http://orbit.local", "admin-secret");
-            const conversations = new ConversationStorage(admin as any);
-            const orbitAnswers = async (setting: "normal" | "private") => {
-                orbit = setting;
-                await admin.isBotPrivate("bot-1", { fresh: true });
-            };
-            return { sent, conversations, orbitAnswers };
-        }
-
-        it("sends nothing meanwhile, then saves every line of a Normal bot once Orbit says so, as before Hide existed", async () => {
-            const { sent, conversations, orbitAnswers } = await startedWhileOrbitIsDown();
-            await conversations.addMessage("bot-1", "uuid-bob", "my name is Bob", "person");
-            await conversations.addMessage("bot-1", "uuid-bob", "hi Bob", "bot");
-            expect(hoisted.axios.post).not.toHaveBeenCalled();
-            await orbitAnswers("normal");
-            await conversations.addMessage("bot-1", "uuid-bob", "what is my name?", "person");
-            expect(sent[sent.length - 1].messages.map((m: any) => m.message)).toEqual(["my name is Bob", "hi Bob", "what is my name?"]);
-        });
-
-        it("saves those lines when the person leaves after Orbit says Normal, with no further line", async () => {
-            const { sent, conversations, orbitAnswers } = await startedWhileOrbitIsDown();
-            await conversations.addMessage("bot-1", "uuid-bob", "my name is Bob", "person");
-            await conversations.addMessage("bot-1", "uuid-bob", "hi Bob", "bot");
-            await orbitAnswers("normal");
-            await conversations.endConversation("bot-1", "uuid-bob", "user_left");
-            const last = sent[sent.length - 1];
-            expect(last.messages.map((m: any) => m.message)).toEqual(["my name is Bob", "hi Bob"]);
-            expect(last).toMatchObject({ endReason: "user_left" });
-            expect((conversations as any).activeConversations.size).toBe(0);
-        });
-
-        it("drops those lines, and sends and keeps nothing, when Orbit then says the bot is hidden", async () => {
-            const { sent, conversations, orbitAnswers } = await startedWhileOrbitIsDown();
-            await conversations.addMessage("bot-1", "uuid-bob", "my secret plan", "person");
-            await orbitAnswers("private");
-            await conversations.addMessage("bot-1", "uuid-bob", "and another one", "person");
-            await conversations.endConversation("bot-1", "uuid-bob", "user_left");
-            expect(sent).toEqual([]);
-            expect(hoisted.axios.post).not.toHaveBeenCalled();
-            expect(hoisted.axios.put).not.toHaveBeenCalled();
-            expect((conversations as any).activeConversations.size).toBe(0);
-        });
+        expect(hoisted.axios.post).toHaveBeenCalledTimes(1);
+        expect(hoisted.axios.put).toHaveBeenCalled();
     });
 });
 
