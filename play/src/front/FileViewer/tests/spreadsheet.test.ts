@@ -258,6 +258,24 @@ describe("the spreadsheet reader", () => {
         expect(sheets.map((sheet) => sheet.name)).toEqual(["Data"]);
     });
 
+    describe("a cell with a very long text", () => {
+        it("is drawn up to 1,024 characters, then an ellipsis, like Excel", async () => {
+            const [sheet] = await readSpreadsheet(workbookBytes({ S: [["x".repeat(5000), "short"]] }));
+            expect(sheet.rows[0][0].text).toBe(`${"x".repeat(1024)}…`);
+            expect(sheet.rows[0][1].text).toBe("short");
+        });
+
+        it("shares a budget of text across the sheet, so many cells that point at one long text stay small", async () => {
+            const long = "y".repeat(1100);
+            const rows = Array.from({ length: 120 }, () => Array.from({ length: 100 }, () => long));
+            const [sheet] = await readSpreadsheet(workbookBytes({ S: rows }));
+            const drawn = sheet.rows.flat().reduce((total, cell) => total + cell.text.length, 0);
+            expect(drawn).toBeLessThanOrEqual(2_000_000 + 12_000);
+            expect(sheet.rows.flat()).toHaveLength(12_000);
+            expect(drawn).toBeGreaterThan(1_000_000);
+        });
+    });
+
     it("leaves hidden sheets out, as Excel does", async () => {
         const sheets = await readSpreadsheet(workbookBytes({ One: [[1]], Secret: [[2]] }, "xlsx", ["Secret"]));
         expect(sheets.map((sheet) => sheet.name)).toEqual(["One"]);

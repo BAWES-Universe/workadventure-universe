@@ -13,6 +13,14 @@ const READ_BEYOND_SHOWN = 2;
  */
 const MAX_UNPACKED_SPREADSHEET_BYTES = 50 * 1024 * 1024;
 
+/** Like Excel, which draws the first 1,024 characters of a cell, a cell is drawn up to this long. */
+const MAX_CELL_CHARS = 1024;
+/**
+ * A sheet can point many cells at one very long text (a shared string), so the cells drawn share a budget of text. A sheet
+ * of ordinary cells is far below it.
+ */
+const MAX_SHEET_TEXT_CHARS = 2_000_000;
+
 export interface SheetCell {
     /** The cell as the file shows it (dates, percentages and currencies already formatted). Always drawn as text. */
     text: string;
@@ -52,6 +60,17 @@ function textOfCell(cell: SheetJs.CellObject | undefined): SheetCell {
     // `w` is the text the file's own number format makes of the value. A cell without one shows its plain value.
     const text = cell.w ?? String(cell.v);
     return { text, number: cell.t === "n" };
+}
+
+/** The cell with its text cut to what is drawn, taken from what is left of the sheet's text budget. */
+function limitedCell(cell: SheetCell, budget: { left: number }): SheetCell {
+    const room = Math.max(0, Math.min(MAX_CELL_CHARS, budget.left));
+    if (cell.text.length <= room) {
+        budget.left -= cell.text.length;
+        return cell;
+    }
+    budget.left -= room;
+    return { ...cell, text: `${cell.text.slice(0, room)}…` };
 }
 
 /** The last column (from 0) that holds a cell in the rows that are shown, or -1 when they hold none. */
@@ -100,10 +119,11 @@ function viewOfSheet(XLSX: typeof SheetJs, name: string, sheet: SheetJs.WorkShee
     const lastColumn = Math.min(Math.max(usedColumns, 1), MAX_TABLE_COLUMNS) - 1;
     // Like Excel, a sheet always starts at A1, even when its first cells are further down or to the right.
     const rows: SheetCell[][] = [];
+    const budget = { left: MAX_SHEET_TEXT_CHARS };
     for (let row = 0; row <= lastRow; row++) {
         const cells: SheetCell[] = [];
         for (let column = 0; column <= lastColumn; column++) {
-            cells.push(textOfCell(sheet[XLSX.utils.encode_cell({ r: row, c: column })]));
+            cells.push(limitedCell(textOfCell(sheet[XLSX.utils.encode_cell({ r: row, c: column })]), budget));
         }
         rows.push(cells);
     }
