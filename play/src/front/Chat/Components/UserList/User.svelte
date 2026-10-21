@@ -8,6 +8,7 @@
     import { getColorHexOfStatus } from "../../../Utils/AvailabilityStatus";
     import type { ChatUser } from "../../Connection/ChatConnection";
     import { LL } from "../../../../i18n/i18n-svelte";
+    import { rolesToShow, worldRolesStore } from "../../Roles/WorldRoles";
     import { chatSearchBarValue } from "../../Stores/ChatStore";
     import { defaultColor, defaultWoka } from "../../Connection/Matrix/MatrixChatConnection";
     import { openDirectChatRoom } from "../../Utils";
@@ -37,6 +38,7 @@
     import { friendMenuAction } from "./FriendMenuAction";
     import type { FriendMenuAction } from "./FriendMenuAction";
     import RingButton from "./RingButton.svelte";
+    import RoleBadge from "./RoleBadge.svelte";
     import {
         IconChevronDown,
         IconDoorIn,
@@ -70,6 +72,8 @@
         uuid: localUserStore.getLocalUser()?.uuid,
     };
     $: isMe = isSelf(user, me);
+    // The roles Orbit named, minus any whose badge is hidden on others. A world whose admin sends no list keeps the Admin badge.
+    $: shownRoles = rolesToShow(user.roles, isMe);
     // Your own account seen from somewhere else (another of your tabs is listed before this one is): no chat with it.
     $: isMine = !isMe && isMyAccount(user, me);
 
@@ -275,8 +279,8 @@
                 on:click|stopPropagation={openWokaMenu}
             >
                 <div class="flex items-center h-4 min-w-0">
-                    <div class="text-sm font-bold mb-0 flex items-center text-nowrap min-w-0">
-                        <span class="truncate" title={displayName}>
+                    <div class="text-sm font-bold mb-0 flex w-full items-center text-nowrap min-w-0">
+                        <span class="truncate shrink-[2] min-w-0 max-w-[46%]" title={displayName}>
                             {#each chunks as chunk (chunk.key)}
                                 <span class={`${chunk.match ? "text-light-blue" : ""}`}>{chunk.text}</span>
                             {/each}
@@ -299,7 +303,9 @@
                                 <IconUserCheck font-size="14" aria-label={$LL.chat.friends.friendBadge()} />
                             </span>
                         {/if}
-                        {#if isAdmin}
+                        {#if $worldRolesStore}
+                            <RoleBadge roles={shownRoles} personName={displayName} />
+                        {:else if isAdmin}
                             <div
                                 class="text-xxs bg-secondary rounded-sm px-1 py-0.5 ms-1"
                                 title={$LL.chat.role.admin()}

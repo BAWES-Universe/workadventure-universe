@@ -336,6 +336,10 @@ export class SocketManager implements ZoneEventListener {
                                 message.message.roomJoinedMessage.megaphoneSettings
                             );
                             setMegaphoneSettings(socketData, message.message.roomJoinedMessage.megaphoneSettings);
+                            // What each role is called, for the badge next to people (nothing when Orbit sent no list)
+                            message.message.roomJoinedMessage.roleCatalogue = socketData.roleCatalogue
+                                ? { roles: socketData.roleCatalogue }
+                                : undefined;
 
                             // If this is the first message sent, send back the viewport.
                             this.handleViewport(client, viewport);
