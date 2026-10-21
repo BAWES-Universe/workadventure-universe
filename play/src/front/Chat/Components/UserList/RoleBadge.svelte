@@ -1,4 +1,6 @@
 <script lang="ts">
+    import { onDestroy, tick } from "svelte";
+    import { lightboxOpenStore } from "../../../Stores/UserInputStore";
     import { LL } from "../../../../i18n/i18n-svelte";
     import type { HeldRole } from "../../Roles/WorldRoles";
 
@@ -7,8 +9,29 @@
     export let personName = "";
 
     let open = false;
+    let closeButton: HTMLButtonElement | undefined;
     $: top = roles[0];
     $: more = roles.length - 1;
+
+    // While the list is on screen the game's keys are not for the avatar (the same switch the picture viewer uses), and
+    // the Close button holds the focus so a keyboard can leave it.
+    let openedStore = false;
+    $: if (open) {
+        lightboxOpenStore.set(true);
+        openedStore = true;
+        // The list is drawn after this update
+        void tick().then(() => closeButton?.focus());
+    } else if (openedStore) {
+        lightboxOpenStore.set(false);
+        openedStore = false;
+    }
+    onDestroy(() => {
+        if (openedStore) lightboxOpenStore.set(false);
+    });
+
+    function onKeyDown(event: KeyboardEvent): void {
+        if (open && event.key === "Escape") open = false;
+    }
 
     // Moves the list to the page itself, so a row that is dimmed (someone away) or inside the chat panel's transforms
     // neither fades it nor traps it.
@@ -21,6 +44,8 @@
         };
     }
 </script>
+
+<svelte:window on:keydown={onKeyDown} />
 
 {#if top}
     <button
@@ -52,8 +77,9 @@
         on:click|stopPropagation={() => (open = false)}
     >
         <div
-            class="sheet mx-auto w-full max-w-[480px] whitespace-normal rounded-t-3xl px-5 pb-6 pt-5 text-left font-normal"
+            class="sheet mx-auto w-full max-h-[85dvh] max-w-[480px] overflow-y-auto whitespace-normal rounded-t-3xl px-5 pb-6 pt-5 text-left font-normal"
             role="dialog"
+            aria-modal="true"
             aria-label={$LL.chat.role.rolesOf({ name: personName })}
             on:click|stopPropagation
         >
@@ -72,6 +98,7 @@
             </ul>
             <p class="my-3 text-sm text-white/60">{$LL.chat.role.memberNote()}</p>
             <button
+                bind:this={closeButton}
                 type="button"
                 class="u-cta-secondary h-11 w-full rounded-full text-base font-bold"
                 on:click|stopPropagation={() => (open = false)}>{$LL.chat.role.close()}</button
