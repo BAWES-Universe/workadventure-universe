@@ -168,6 +168,14 @@ describe("Markdown", () => {
         expect(host.querySelector("pre code")?.textContent).toContain("let a = 1;");
     });
 
+    it("has no picture maps, whose areas would be links that skip the link rules", () => {
+        const host = render(
+            '<img src="data:image/png;base64,iVBORw0KGgo=" usemap="#m"><map name="m"><area shape="rect" coords="0,0,9,9" href="https://evil.example"></map>\n'
+        );
+        expect(host.querySelector("map, area")).toBeNull();
+        expect(host.innerHTML).not.toMatch(/usemap|evil\.example/);
+    });
+
     it("runs nothing from HTML inside the file", () => {
         const host = render(
             [
