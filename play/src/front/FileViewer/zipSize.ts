@@ -38,6 +38,15 @@ export function zipUnpackedSize(bytes: ArrayBuffer): number | undefined {
     return total;
 }
 
+/** The part of JSZip's stream of a file that is used here: its types leave it out, though the library ships it. */
+interface UnpackStream {
+    on(event: "data", listener: (chunk: Uint8Array) => void): UnpackStream;
+    on(event: "error", listener: (error: Error) => void): UnpackStream;
+    on(event: "end", listener: () => void): UnpackStream;
+    pause(): UnpackStream;
+    resume(): UnpackStream;
+}
+
 /**
  * Unpacks every file inside a zip only to count the bytes that really come out, and stops the moment they pass
  * `limit`. The sizes in the zip's own list are written by whoever made the file, so a zip bomb can claim a few
@@ -56,7 +65,9 @@ export async function assertUnpackedWithin(bytes: ArrayBuffer, limit: number): P
             .map(
                 (entry) =>
                     new Promise<void>((resolve, reject) => {
-                        const stream = entry.internalStream("uint8array");
+                        const stream = (
+                            entry as unknown as { internalStream(type: "uint8array"): UnpackStream }
+                        ).internalStream("uint8array");
                         /* eslint-disable listeners/no-missing-remove-event-listener, listeners/no-inline-function-event-listener */
                         stream
                             .on("data", (chunk: Uint8Array) => {
