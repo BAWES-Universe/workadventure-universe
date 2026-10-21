@@ -64,6 +64,10 @@ function textOfCell(cell: SheetJs.CellObject | undefined): SheetCell {
     return { text, number: cell.t === "n" };
 }
 
+function isHighSurrogate(codeUnit: number): boolean {
+    return codeUnit >= 0xd800 && codeUnit <= 0xdbff;
+}
+
 /** The cell with its text cut to what is drawn, taken from what is left of the sheet's text budget. */
 function limitedCell(cell: SheetCell, budget: { left: number; cut: boolean }): SheetCell {
     const room = Math.max(0, Math.min(MAX_CELL_CHARS, budget.left));
@@ -71,9 +75,11 @@ function limitedCell(cell: SheetCell, budget: { left: number; cut: boolean }): S
         budget.left -= cell.text.length;
         return cell;
     }
-    budget.left -= room;
+    // Never end on the first half of a character the file writes as two code units (an emoji, for one).
+    const end = room > 0 && isHighSurrogate(cell.text.charCodeAt(room - 1)) ? room - 1 : room;
+    budget.left -= end;
     budget.cut = true;
-    return { ...cell, text: `${cell.text.slice(0, room)}…` };
+    return { ...cell, text: `${cell.text.slice(0, end)}…` };
 }
 
 /** The last column (from 0) that holds a cell in the rows that are shown, or -1 when they hold none. */
