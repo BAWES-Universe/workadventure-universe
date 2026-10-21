@@ -6,27 +6,37 @@
     $: body = rows.slice(1);
 </script>
 
-<div class="table-area" data-testid="fileViewerTable">
-    <table style:min-width="calc({header.length} * 96px)">
-        <thead>
-            <tr>
-                {#each header as cell, column (column)}<th>{cell}</th>{/each}
-            </tr>
-        </thead>
-        <tbody>
-            {#each body as row, line (line)}
+<div class="table-box" data-testid="fileViewerTable">
+    <div class="table-area">
+        <table style:min-width="calc({header.length} * 96px)">
+            <thead>
                 <tr>
-                    {#each row as cell, column (column)}<td>{cell}</td>{/each}
+                    {#each header as cell, column (column)}<th>{cell}</th>{/each}
                 </tr>
-            {/each}
-        </tbody>
-    </table>
+            </thead>
+            <tbody>
+                {#each body as row, line (line)}
+                    <tr>
+                        {#each row as cell, column (column)}<td>{cell}</td>{/each}
+                    </tr>
+                {/each}
+            </tbody>
+        </table>
+    </div>
 </div>
 
 <style>
-    .table-area {
+    .table-box {
         flex: 1;
         min-height: 0;
+        min-width: 0;
+        position: relative;
+    }
+
+    /* Out of the flow, so a table with many columns never makes the panel wider: it scrolls inside the panel. */
+    .table-area {
+        position: absolute;
+        inset: 0;
         overflow: auto;
         background: #1b1a2b;
         padding: 18px 22px;
