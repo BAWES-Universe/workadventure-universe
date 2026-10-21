@@ -26,11 +26,15 @@
         };
     }
 
-    // Caught before the bot page's own Escape handler, so Escape closes this popup and not the screen behind it
+    // Caught before the bot page's own Escape handler, so Escape closes this popup and not the screen behind it.
+    // Close is the only thing in the popup to reach, so Tab and Shift+Tab keep focus on it instead of leaving.
     function onKeydown(e: KeyboardEvent) {
         if (e.key === "Escape") {
             e.stopPropagation();
             onClose();
+        } else if (e.key === "Tab") {
+            e.preventDefault();
+            closeButton?.focus();
         }
     }
 </script>
