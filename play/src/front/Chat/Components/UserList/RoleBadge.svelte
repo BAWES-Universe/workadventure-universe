@@ -76,6 +76,7 @@
         data-testid="role-list"
         on:click|stopPropagation={() => (open = false)}
     >
+        <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
         <div
             class="sheet mx-auto w-full max-h-[85dvh] max-w-[480px] overflow-y-auto whitespace-normal rounded-t-3xl px-5 pb-6 pt-5 text-left font-normal"
             role="dialog"
