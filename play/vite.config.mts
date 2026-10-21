@@ -7,6 +7,12 @@ import { noiseSuppressionAudioWorkletVitePlugin } from "@workadventure/noise-sup
 import Icons from "unplugin-icons/vite";
 import tsconfigPaths from "vite-tsconfig-paths";
 import { nodePolyfills } from "vite-plugin-node-polyfills";
+import { viteStaticCopy } from "vite-plugin-static-copy";
+import { createRequire } from "node:module";
+import { dirname } from "node:path";
+
+// The folder of the PDF reader package, wherever npm put it (here or hoisted to the repository root).
+const pdfjsDir = dirname(createRequire(import.meta.url).resolve("pdfjs-dist/package.json"));
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
@@ -73,6 +79,18 @@ export default defineConfig(({ mode }) => {
                       }),
                   ]),
             tsconfigPaths(),
+            // The file viewer's PDF reader reads its worker, fonts, character maps and image decoders at run time.
+            // They are copied from node_modules (never committed, never fetched from a CDN) and served by the game
+            // itself. The reader's script sandbox is left out: PDF scripts never run.
+            viteStaticCopy({
+                targets: [
+                    { src: `${pdfjsDir}/legacy/build/pdf.worker.min.mjs`, dest: "static/pdfjs" },
+                    { src: `${pdfjsDir}/cmaps/*`, dest: "static/pdfjs/cmaps" },
+                    { src: `${pdfjsDir}/standard_fonts/*`, dest: "static/pdfjs/standard_fonts" },
+                    { src: [`${pdfjsDir}/wasm/*`, `!${pdfjsDir}/wasm/quickjs-eval.*`], dest: "static/pdfjs/wasm" },
+                    { src: `${pdfjsDir}/iccs/*`, dest: "static/pdfjs/iccs" },
+                ],
+            }),
         ],
         resolve: {
             alias: {
