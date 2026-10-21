@@ -100,6 +100,13 @@ describe("JSON layout", () => {
         expect(indentJson(pretty)).toBe(pretty);
         expect(indentJson("not json at all")).toBe("not json at all");
     });
+
+    it("leaves a text that nests so deep its indents would fill memory as it is", () => {
+        const deep = "[".repeat(50_000) + "]".repeat(50_000);
+        const started = Date.now();
+        expect(indentJson(deep)).toBe(deep);
+        expect(Date.now() - started).toBeLessThan(2000);
+    });
 });
 
 describe("tables from CSV", () => {
