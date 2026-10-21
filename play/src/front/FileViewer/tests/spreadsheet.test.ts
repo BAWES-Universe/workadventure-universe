@@ -318,6 +318,22 @@ describe("the spreadsheet reader", () => {
             expect(sheets.map((sheet) => sheet.name)).toEqual(["Shown"]);
         });
 
+        it("is found without slowing down on a file with a million unclosed style tags", async () => {
+            const zip = await JSZip.loadAsync(await odsWithHidden("Secret", ["Shown", "Secret"]));
+            const xml = await zip.file("content.xml")!.async("string");
+            zip.file(
+                "content.xml",
+                xml.replace(
+                    "<office:automatic-styles>",
+                    `<office:automatic-styles>${"<style:style ".repeat(1_000_000)}`
+                )
+            );
+            const started = Date.now();
+            const sheets = await readSpreadsheet(await zip.generateAsync({ type: "arraybuffer" }));
+            expect(Date.now() - started).toBeLessThan(5000);
+            expect(sheets.length).toBeGreaterThan(0);
+        });
+
         it("is found by its name when the name has an ampersand", async () => {
             const sheets = await readSpreadsheet(await odsWithHidden("Q&A", ["Shown", "Q&A"]));
             expect(sheets.map((sheet) => sheet.name)).toEqual(["Shown"]);
