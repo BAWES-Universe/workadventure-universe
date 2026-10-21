@@ -3,6 +3,7 @@
     import { writable } from "svelte/store";
     import LL from "../../../../i18n/i18n-svelte";
     import { renderWordDocument, type RenderedWord } from "../../../FileViewer/wordDocument";
+    import { pageInView } from "../../../FileViewer/wordPages";
     import type { ViewerController, ViewerPages } from "../../../FileViewer/viewerController";
 
     export let bytes: ArrayBuffer;
@@ -56,12 +57,13 @@
 
     function updatePage(): void {
         if (sheetTops.length === 0 || !area) return;
-        // The sheet that covers the upper part of what is in view.
-        const probe = area.scrollTop / scale + area.clientHeight / scale / 3;
-        let page = 1;
-        for (let index = 0; index < sheetTops.length; index++) if (sheetTops[index] <= probe) page = index + 1;
-        // At the very end the last page counts, even when it is short.
-        if (area.scrollTop + area.clientHeight >= area.scrollHeight - 2) page = sheetTops.length;
+        const page = pageInView({
+            scrollTop: area.scrollTop,
+            clientHeight: area.clientHeight,
+            scrollHeight: area.scrollHeight,
+            scale,
+            sheetTops,
+        });
         if (page !== $pages.page) pages.update((value) => ({ ...value, page }));
     }
 
