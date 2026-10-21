@@ -4,6 +4,8 @@ import { assertUnpackedWithin, zipUnpackedSize } from "./zipSize";
 
 /** A spreadsheet is read in memory; a file far bigger than any sheet people share is offered as a download instead. */
 export const MAX_SPREADSHEET_BYTES = 30 * 1024 * 1024;
+/** Rows read after the ones that are shown, to tell a sheet that ends there from one that goes on. */
+const READ_BEYOND_SHOWN = 2;
 /** A sheet's text can be many times its zip: this much unpacked is a big sheet, more is a file meant to fill memory. */
 const MAX_UNPACKED_SPREADSHEET_BYTES = 400 * 1024 * 1024;
 
@@ -54,7 +56,7 @@ function lastUsedColumn(XLSX: typeof SheetJs, sheet: SheetJs.WorkSheet): number 
     for (const address in sheet) {
         if (address.charCodeAt(0) === 33) continue; // "!ref", "!fullref", "!merges"...
         const cell = XLSX.utils.decode_cell(address);
-        // The reader keeps one row more than is shown, to tell a sheet that ends there from one that goes on.
+        // The reader keeps rows beyond the ones that are shown; they do not count.
         if (cell.r < MAX_TABLE_ROWS) last = Math.max(last, cell.c);
     }
     return last;
@@ -64,13 +66,14 @@ function viewOfSheet(XLSX: typeof SheetJs, name: string, sheet: SheetJs.WorkShee
     const reference = sheet["!ref"];
     if (!reference) return { name, rows: [], columnCount: 0, totalRows: 0, rowsCut: false, columnsCut: false };
     const range = XLSX.utils.decode_range(reference);
-    // Reading stops after the rows that are shown. Only when it did stop there is more below, and only then does the
-    // size the file claims for the sheet count: a sheet that ends sooner is as long as its cells say, whatever it claims.
+    // Reading stops two rows after the rows that are shown. A sheet that ends within them is as long as its cells say,
+    // whatever size the file claims. One that fills them all goes on, and its length is the size the file claims, or
+    // unknown when it claims none: a file that gives no size cannot be counted without reading all of it.
     const stoppedEarly = range.e.r + 1 > MAX_TABLE_ROWS;
+    const readAll = range.e.r + 1 <= MAX_TABLE_ROWS + READ_BEYOND_SHOWN - 1;
     const fullReference = sheet["!fullref"];
     const claimedRows = fullReference ? XLSX.utils.decode_range(fullReference).e.r + 1 : undefined;
-    // A file that claims no size was read whole: the rows read are all it has.
-    const totalRows = stoppedEarly ? claimedRows ?? range.e.r + 1 : range.e.r + 1;
+    const totalRows = readAll ? range.e.r + 1 : claimedRows;
     const lastRow = Math.min(range.e.r, MAX_TABLE_ROWS - 1);
     // The columns are the ones that hold cells: the size a file claims can reach column XFD over a sheet of three.
     const usedColumns = lastUsedColumn(XLSX, sheet) + 1;
@@ -116,7 +119,7 @@ export async function readSpreadsheet(bytes: ArrayBuffer): Promise<SheetView[]> 
     const workbook = XLSX.read(new Uint8Array(bytes), {
         type: "array",
         // Only the rows that are shown are read, so a sheet of a million rows opens as fast as a small one.
-        sheetRows: MAX_TABLE_ROWS + 1,
+        sheetRows: MAX_TABLE_ROWS + READ_BEYOND_SHOWN,
         cellFormula: false,
         cellHTML: false,
         cellStyles: false,
