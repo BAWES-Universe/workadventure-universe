@@ -4,6 +4,7 @@
     import { MAX_TABLE_COLUMNS, MAX_TABLE_ROWS } from "../../../FileViewer/textFiles";
     import { columnLetters, readSpreadsheet, type SheetView } from "../../../FileViewer/spreadsheet";
     import FileViewerLimitNote from "./FileViewerLimitNote.svelte";
+    import FileViewerOpening from "./FileViewerOpening.svelte";
 
     export let bytes: ArrayBuffer;
 
@@ -104,6 +105,8 @@
             </div>
         {/if}
     </div>
+{:else}
+    <FileViewerOpening />
 {/if}
 
 <style>

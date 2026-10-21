@@ -5,6 +5,7 @@
     import { renderWordDocument, type RenderedWord } from "../../../FileViewer/wordDocument";
     import { pageInView } from "../../../FileViewer/wordPages";
     import type { ViewerController, ViewerPages } from "../../../FileViewer/viewerController";
+    import FileViewerOpening from "./FileViewerOpening.svelte";
 
     export let bytes: ArrayBuffer;
     export let name: string;
@@ -213,6 +214,8 @@
                     on:load={onFrameLoad}
                 />
             </div>
+        {:else}
+            <FileViewerOpening />
         {/if}
     </div>
     {#if $pages.count > 0}
