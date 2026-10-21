@@ -95,6 +95,28 @@ async function requireBotManager(
 }
 
 /**
+ * Middleware for routes that return what people said to a bot. Runs after authenticateToken and lets the request
+ * through only when Orbit says the session's person may read the words: super admins, never room managers.
+ */
+async function requireBotContentReader(
+    req: BotAPIRequest,
+    res: Response,
+    next: NextFunction,
+    adminApiService: AdminApiService
+): Promise<void> {
+    const botId = req.params?.botId as string | undefined;
+    if (!botId || typeof botId !== 'string') {
+        res.status(400).json({ error: 'Missing botId' });
+        return;
+    }
+    if (!req.sessionToken || !(await adminApiService.canSessionReadBotContent(req.sessionToken, botId))) {
+        res.status(403).json({ error: 'You cannot read what people said to this bot' });
+        return;
+    }
+    next();
+}
+
+/**
  * Middleware for operator tools that act across every bot with the Admin API token (create, list, global cleanup,
  * improvement runs). No person's session is enough: the caller must also present BOT_SERVICE_TOKEN.
  */
@@ -305,6 +327,8 @@ export class BotAPI {
             authenticateToken(req, res, next, this.adminApiService);
         const requireManager = (req: BotAPIRequest, res: Response, next: NextFunction) =>
             requireBotManager(req, res, next, this.adminApiService);
+        const requireContentReader = (req: BotAPIRequest, res: Response, next: NextFunction) =>
+            requireBotContentReader(req, res, next, this.adminApiService);
         const identifyForAccess = (req: BotAPIRequest, res: Response, next: NextFunction) =>
             identifyForAccessMiddleware(req, res, next, this.adminApiService);
         const identifySummoner = (req: BotAPIRequest, res: Response, next: NextFunction) =>
@@ -1234,7 +1258,7 @@ export class BotAPI {
         });
 
         // Get problematic conversations
-        this.app.get('/api/bots/:botId/conversations/problematic', requireManager, async (req: BotAPIRequest, res: Response) => {
+        this.app.get('/api/bots/:botId/conversations/problematic', requireContentReader, async (req: BotAPIRequest, res: Response) => {
             try {
                 const { botId } = req.params;
                 const criteria = req.query.criteria ? JSON.parse(req.query.criteria as string) : undefined;
@@ -1255,7 +1279,7 @@ export class BotAPI {
 
         // Conversation storage endpoints (production)
         // Get recent conversations for a bot
-        this.app.get('/api/bots/:botId/conversations', requireManager, async (req: BotAPIRequest, res: Response) => {
+        this.app.get('/api/bots/:botId/conversations', requireContentReader, async (req: BotAPIRequest, res: Response) => {
             try {
                 const { botId } = req.params;
                 const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;

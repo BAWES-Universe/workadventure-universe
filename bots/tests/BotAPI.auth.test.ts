@@ -31,6 +31,7 @@ const botManager = {
 const adminApiService = {
     validateSessionToken: vi.fn(),
     canSessionManageBot: vi.fn(),
+    canSessionReadBotContent: vi.fn(),
     getBotConfigurations: vi.fn(),
     getAvailableAIProviders: vi.fn(),
     getBotConfiguration: vi.fn(),
@@ -58,6 +59,7 @@ beforeEach(() => {
     vi.clearAllMocks();
     adminApiService.validateSessionToken.mockResolvedValue({ userId: 'u1', uuid: 'uuid-1', email: 'a@b.c' });
     adminApiService.canSessionManageBot.mockResolvedValue(true);
+    adminApiService.canSessionReadBotContent.mockResolvedValue(false);
     botManager.getBot.mockReturnValue({ getName: () => 'Nora' });
     botManager.getAccessGate.mockReturnValue({ check: vi.fn().mockResolvedValue({ allowed: true, kind: 'allowed' }) });
     botManager.hasPlayersIn.mockResolvedValue(true);
@@ -246,7 +248,6 @@ describe('bot server control routes', () => {
         ['PUT', '/api/bots/b1', { name: 'Hijacked' }],
         ['DELETE', '/api/bots/b1', undefined],
         ['GET', '/api/bots/b1', undefined],
-        ['GET', '/api/bots/b1/conversations', undefined],
         ['DELETE', '/api/bots/b1/conversations/cleanup', undefined],
         ['GET', '/api/bots/b1/status', undefined],
         ['POST', '/api/bots/test/run-suite', { testSuite: 'basic', botId: 'b1' }],
@@ -260,6 +261,27 @@ describe('bot server control routes', () => {
         expect(adminApiService.getBotConfiguration).not.toHaveBeenCalled();
         expect(adminApiService.saveBotConfiguration).not.toHaveBeenCalled();
         expect(adminApiService.deleteBotConfiguration).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['/api/bots/b1/conversations'],
+        ['/api/bots/b1/conversations/problematic'],
+    ])('refuses GET %s to a manager who is not a super admin (Orbit #504)', async (path) => {
+        adminApiService.canSessionManageBot.mockResolvedValue(true);
+        adminApiService.canSessionReadBotContent.mockResolvedValue(false);
+        const response = await call('GET', path);
+        expect(response.status).toBe(403);
+        expect(adminApiService.canSessionReadBotContent).toHaveBeenCalledWith(SESSION, 'b1');
+    });
+
+    it.each([
+        ['/api/bots/b1/conversations'],
+        ['/api/bots/b1/conversations/problematic'],
+    ])('lets a person Orbit allows to read what was said through GET %s', async (path) => {
+        adminApiService.canSessionReadBotContent.mockResolvedValue(true);
+        const response = await call('GET', path);
+        expect(response.status).not.toBe(403);
+        expect(adminApiService.canSessionReadBotContent).toHaveBeenCalledWith(SESSION, 'b1');
     });
 
     it('despawns through the per-bot route for a person who can manage the bot', async () => {

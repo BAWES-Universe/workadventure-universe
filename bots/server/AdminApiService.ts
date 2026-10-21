@@ -743,6 +743,48 @@ export class AdminApiService {
     }
 
     /**
+     * Ask the Admin API whether the person behind an Orbit session may read what people said to a bot. Orbit answers
+     * the transcript list with a 200 only to super admins (managers get a 403, Orbit #504), so a 200 means yes and
+     * anything else means no. Fails closed.
+     */
+    async canSessionReadBotContent(sessionToken: string, botId: string): Promise<boolean> {
+        if (!this.adminApiUrl || !/^orb_sess_v2_[0-9a-f]{64}$/.test(sessionToken) || !botId) {
+            return false;
+        }
+
+        let adminApiUrl: URL;
+        try {
+            adminApiUrl = new URL(this.adminApiUrl);
+        } catch {
+            return false;
+        }
+        if (!canSendSessionTo(adminApiUrl)) {
+            return false;
+        }
+
+        try {
+            const response: AxiosResponse = await axios.get(
+                resolveAdminApiEndpoint(adminApiUrl, `api/bots/${encodeURIComponent(botId)}/conversations`),
+                {
+                    headers: {
+                        Authorization: `Bearer ${sessionToken}`,
+                        'Cache-Control': 'no-store',
+                    },
+                    params: { limit: 1 },
+                    timeout: 5_000,
+                    validateStatus: () => true,
+                }
+            );
+            return response.status === 200;
+        } catch (error) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.error('[AdminApiService] Bot content permission check failed');
+            }
+            return false;
+        }
+    }
+
+    /**
      * Ask Orbit whether a person may do something with a bot (Orbit #426/#427): chat in its bubble, message it, or
      * summon it. A no is an answer ({ allowed: false }); anything that stops Orbit answering throws, so the caller
      * can tell "no" from "could not check". Uses BOT_SERVICE_TOKEN.
