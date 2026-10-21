@@ -105,6 +105,7 @@ function viewOfSheet(XLSX: typeof SheetJs, name: string, sheet: SheetJs.WorkShee
             totalRows: 0,
             rowsCut: false,
             columnsCut: false,
+            textCut: false,
         };
     }
     const range = XLSX.utils.decode_range(reference);
