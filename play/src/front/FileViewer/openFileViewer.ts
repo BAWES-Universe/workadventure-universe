@@ -52,24 +52,36 @@ const NEW_TAB_MIME_BY_EXTENSION: Record<string, string> = {
     json: PLAIN_TEXT,
 };
 
-/** Hands a chat file to the browser's own viewer as a top-level tab, so drawing and signing stay one click away. */
-function openBytesInNewTab(name: string, bytes: ArrayBuffer): void {
+/**
+ * Hands a chat file to the browser's own viewer as a top-level tab, so drawing and signing stay one click away.
+ * `tab` is a tab that was opened during the click; the file goes into it once it is read.
+ */
+function openBytesInNewTab(name: string, bytes: ArrayBuffer, tab: Window | null = null): void {
     const mimeType = NEW_TAB_MIME_BY_EXTENSION[extensionOf(name)];
     if (!mimeType) {
+        tab?.close();
         downloadBytes(name, bytes);
         return;
     }
     const url = URL.createObjectURL(new Blob([bytes], { type: mimeType }));
-    openLinkInNewTab(url);
+    if (tab) tab.location.href = url;
+    else openLinkInNewTab(url);
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 /** Ctrl or Cmd click on a chat card: the file in the browser's own viewer, in a new tab. */
 export function openChatFileInNewTab(file: { url: string; name: string }): void {
+    // The tab opens now, inside the click: a tab opened after the file is read could be blocked as a pop-up.
+    const tab = NEW_TAB_MIME_BY_EXTENSION[extensionOf(file.name)] ? window.open("about:blank", "_blank") : null;
+    // The new tab must not reach back to the game.
+    if (tab) tab.opener = null;
     fetch(file.url)
         .then(readBytes)
-        .then((bytes) => openBytesInNewTab(file.name, bytes))
-        .catch((error) => console.warn("Could not open a chat file in a new tab", error));
+        .then((bytes) => openBytesInNewTab(file.name, bytes, tab))
+        .catch((error) => {
+            tab?.close();
+            console.warn("Could not open a chat file in a new tab", error);
+        });
 }
 
 export interface ChatFileToOpen {
