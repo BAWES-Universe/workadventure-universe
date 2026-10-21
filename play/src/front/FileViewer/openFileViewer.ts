@@ -2,7 +2,7 @@ import { derived, get, type Readable } from "svelte/store";
 import { coWebsites, fullScreenCowebsite } from "../Stores/CoWebsiteStore";
 import { FileViewerCoWebsite, type FileViewerSource } from "../WebRtc/CoWebsite/FileViewerCoWebsite";
 import { saveMessageFiles } from "../Chat/Components/Room/MessageActions/availableActions";
-import { extensionOf, fileKindOf } from "./fileKinds";
+import { extensionOf, fileKindOf, MAP_VIEWER_KINDS } from "./fileKinds";
 
 /** The keys of the files the viewer has open now, for the cards of those files. */
 export const openFileViewerKeys: Readable<ReadonlySet<string>> = derived(coWebsites, ($coWebsites) => {
@@ -42,7 +42,15 @@ function downloadBytes(name: string, bytes: ArrayBuffer): void {
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
-const NEW_TAB_MIME_BY_EXTENSION: Record<string, string> = { pdf: "application/pdf" };
+// A text file opens in a new tab as plain text, whatever it holds: the browser shows it, and never runs it.
+const PLAIN_TEXT = "text/plain;charset=utf-8";
+const NEW_TAB_MIME_BY_EXTENSION: Record<string, string> = {
+    pdf: "application/pdf",
+    md: PLAIN_TEXT,
+    txt: PLAIN_TEXT,
+    csv: PLAIN_TEXT,
+    json: PLAIN_TEXT,
+};
 
 /** Hands a chat file to the browser's own viewer as a top-level tab, so drawing and signing stay one click away. */
 function openBytesInNewTab(name: string, bytes: ArrayBuffer): void {
@@ -151,5 +159,6 @@ export function createMapFileViewer({ link, width, closable, hideUrl }: MapFileT
 
 /** Whether the viewer can show a map file with this link (a PDF or a picture). */
 export function mapFileOpensInViewer(link: string): boolean {
-    return fileKindOf(link) !== undefined;
+    const kind = fileKindOf(link);
+    return kind !== undefined && MAP_VIEWER_KINDS.has(kind);
 }

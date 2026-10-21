@@ -5,10 +5,18 @@
     import type { FileViewerCoWebsite } from "../../WebRtc/CoWebsite/FileViewerCoWebsite";
     import { coWebsites, fullScreenCowebsite } from "../../Stores/CoWebsiteStore";
     import { inputFormFocusStore } from "../../Stores/UserInputStore";
-    import { bytesMatchKind, extensionOf, fileKindOf, type FileViewerKind } from "../../FileViewer/fileKinds";
+    import {
+        TEXT_KINDS,
+        badgeOfKind,
+        bytesMatchKind,
+        extensionOf,
+        fileKindOf,
+        type FileViewerKind,
+    } from "../../FileViewer/fileKinds";
     import type { ViewerController } from "../../FileViewer/viewerController";
     import FileViewerPdf from "./FileViewer/FileViewerPdf.svelte";
     import FileViewerImage from "./FileViewer/FileViewerImage.svelte";
+    import FileViewerText from "./FileViewer/FileViewerText.svelte";
     import {
         IconArrowLeft,
         IconDots,
@@ -37,6 +45,7 @@
     let kind: FileViewerKind | undefined;
     let controller: ViewerController | undefined;
     let pageCount = 0;
+    let rowCount: number | undefined;
     let menuOpen = false;
     let findOpen = false;
     let findQuery = "";
@@ -56,14 +65,23 @@
         : source.senderName
         ? $LL.chat.fileViewer.from({ name: source.senderName })
         : "";
-    $: pagesLabel = pageCount > 0 ? $LL.chat.fileViewer.pages({ count: pageCount }) : "";
+    $: pagesLabel =
+        pageCount > 0
+            ? $LL.chat.fileViewer.pages({ count: pageCount })
+            : rowCount !== undefined
+            ? $LL.chat.fileViewer.rows({ count: rowCount })
+            : "";
     $: subtitle = compact && sender && pagesLabel ? `${sender} · ${pagesLabel}` : sender || pagesLabel;
+    // A text file has nothing to hand to a browser viewer: Ctrl or Cmd click on its card opens it as plain text.
     $: canOpenInNewTab =
-        source.openInNewTab !== undefined && (phase === "ready" || source.openInNewTabFromLink === true);
+        source.openInNewTab !== undefined &&
+        (phase === "ready" || source.openInNewTabFromLink === true) &&
+        !(kind && TEXT_KINDS.has(kind));
 
     function badgeFor(name: string): { label: string; color: string } {
+        const fileKind = fileKindOf(name);
+        if (fileKind) return badgeOfKind(fileKind);
         const extension = extensionOf(name);
-        if (extension === "pdf") return { label: "PDF", color: "#E53935" };
         return { label: (extension || "FILE").slice(0, 4).toUpperCase(), color: "#5b6b82" };
     }
 
@@ -400,6 +418,14 @@
             bind:controller
             on:loaded={(event) => (pageCount = event.detail.pageCount)}
             on:failed={onReaderFailed}
+        />
+    {:else if bytes && kind && TEXT_KINDS.has(kind)}
+        <FileViewerText
+            {bytes}
+            {kind}
+            on:loaded={(event) => (rowCount = event.detail.rowCount)}
+            on:failed={onReaderFailed}
+            on:download={download}
         />
     {:else if bytes && kind === "image"}
         <FileViewerImage {bytes} name={source.name} bind:controller on:failed={onReaderFailed} />

