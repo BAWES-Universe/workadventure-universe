@@ -36,6 +36,17 @@
         return Math.min(1, container.clientWidth / naturalWidth, container.clientHeight / naturalHeight);
     }
 
+    /** The picture loaded while the panel was hidden (it has no size then): it is fitted once the panel shows. */
+    let fitPending = false;
+    let resizeObserver: ResizeObserver | undefined;
+
+    function fitWhenShown(): void {
+        if (!fitPending || !container.clientWidth || !container.clientHeight) return;
+        fitPending = false;
+        fitScale = fitToView();
+        setScale(fitScale);
+    }
+
     function onLoad(): void {
         if (!picture) return;
         const size = drawnSizeOf(
@@ -44,8 +55,12 @@
         );
         naturalWidth = size.width;
         naturalHeight = size.height;
-        fitScale = fitToView();
-        setScale(fitScale);
+        if (container.clientWidth && container.clientHeight) {
+            fitScale = fitToView();
+            setScale(fitScale);
+        } else {
+            fitPending = true;
+        }
         dispatch("loaded");
     }
 
@@ -92,9 +107,14 @@
             zoomOut: () => setScale(scale / 1.25),
             fitWidth: () => setScale(naturalWidth ? container.clientWidth / naturalWidth : 1),
         };
+        if (typeof ResizeObserver !== "undefined") {
+            resizeObserver = new ResizeObserver(fitWhenShown);
+            resizeObserver.observe(container);
+        }
     });
 
     onDestroy(() => {
+        resizeObserver?.disconnect();
         if (url) revokeAttachmentUrl(url);
     });
 </script>
