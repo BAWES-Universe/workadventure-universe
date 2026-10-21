@@ -26,6 +26,8 @@ export function decodeText(bytes: Uint8Array, limit = MAX_TEXT_BYTES): DecodedTe
     return { text, truncated };
 }
 
+const MAX_INDENTED_CHARS = 8 * MAX_TEXT_BYTES;
+
 /**
  * Lays a one-line JSON text out over several lines. Only white space is added: the values stay exactly as they are
  * written (a long number keeps all its digits). A text that already has line breaks, or is not JSON, is left as it is.
@@ -76,6 +78,8 @@ export function indentJson(text: string): string {
         } else if (!/\s/.test(char)) {
             out += char;
         }
+        // Laid out, a text grows by its indents: one that nests so deep it would fill memory is shown as it is.
+        if (out.length > MAX_INDENTED_CHARS) return text;
     }
     return out;
 }
