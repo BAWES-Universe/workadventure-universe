@@ -133,30 +133,46 @@ function attributeOf(attributes: string, name: string): string | undefined {
 
 /**
  * The names of the sheets an OpenDocument file hides. The reader leaves them out of its workbook properties, so they are
- * found in the file: a sheet names a style, and that style says "display false".
+ * found in the file: a sheet names a style, and that style says "display false". The file is walked tag by tag, once, so
+ * a crafted file cannot make it slow.
  */
 function hiddenOpenDocumentSheets(xml: string): Set<string> {
     const hiddenStyles = new Set<string>();
-    for (const [, attributes, body] of xml.matchAll(/<style:style\b([^>]*[^/>])>([\s\S]*?)<\/style:style>/g)) {
-        const name = attributeOf(attributes, "style:name");
-        if (
-            name !== undefined &&
-            attributeOf(attributes, "style:family") === "table" &&
-            /table:display\s*=\s*["']false["']/.test(body)
-        ) {
-            hiddenStyles.add(name);
+    const tables: { name: string; style: string }[] = [];
+    /** The table style whose properties are being read. */
+    let openStyle: string | undefined;
+    let position = 0;
+    for (;;) {
+        const start = xml.indexOf("<", position);
+        if (start < 0) break;
+        const end = xml.indexOf(">", start);
+        if (end < 0) break;
+        position = end + 1;
+        const tag = xml.slice(start + 1, end);
+        const nameEnd = tag.search(/[\s/]|$/);
+        const name = tag.slice(0, nameEnd);
+        const attributes = tag.slice(nameEnd);
+        if (name === "style:style") {
+            const family = attributeOf(attributes, "style:family");
+            openStyle = tag.endsWith("/") || family !== "table" ? undefined : attributeOf(attributes, "style:name");
+        } else if (name === "/style:style") {
+            openStyle = undefined;
+        } else if (name === "style:table-properties") {
+            if (openStyle !== undefined && /table:display\s*=\s*["']false["']/.test(attributes)) {
+                hiddenStyles.add(openStyle);
+            }
+        } else if (name === "table:table") {
+            const tableName = attributeOf(attributes, "table:name");
+            const style = attributeOf(attributes, "table:style-name");
+            if (tableName !== undefined && style !== undefined) tables.push({ name: tableName, style });
         }
     }
     const hidden = new Set<string>();
-    if (hiddenStyles.size === 0) return hidden;
-    for (const [, attributes] of xml.matchAll(/<table:table(?=[\s>])([^>]*)>/g)) {
-        const style = attributeOf(attributes, "table:style-name");
-        const name = attributeOf(attributes, "table:name");
-        if (style !== undefined && name !== undefined && hiddenStyles.has(style)) {
-            // The reader keeps an ampersand in a sheet's name as it is written in the file, so either spelling is hidden.
-            hidden.add(name);
-            hidden.add(unescapeXml(name));
-        }
+    for (const { name, style } of tables) {
+        if (!hiddenStyles.has(style)) continue;
+        // The reader keeps an ampersand in a sheet's name as it is written in the file, so either spelling is hidden.
+        hidden.add(name);
+        hidden.add(unescapeXml(name));
     }
     return hidden;
 }
