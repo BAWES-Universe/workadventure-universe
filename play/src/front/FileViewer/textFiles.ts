@@ -195,6 +195,16 @@ function picturesFromOtherSitesToLinks(html: string): string {
     return template.innerHTML;
 }
 
+/** A task list item ("- [x] done") is drawn with a sign: the sanitizer keeps no form fields, and a sign cannot be clicked. */
+function checkboxesToSigns(html: string): string {
+    const template = document.createElement("template");
+    template.innerHTML = html;
+    for (const box of Array.from(template.content.querySelectorAll('input[type="checkbox"]'))) {
+        box.replaceWith(document.createTextNode(box.hasAttribute("checked") ? "\u2611" : "\u2610"));
+    }
+    return template.innerHTML;
+}
+
 const marked = new Marked({ gfm: true, async: false });
 
 /**
@@ -203,7 +213,7 @@ const marked = new Marked({ gfm: true, async: false });
  */
 export function renderMarkdown(text: string): string {
     const html = marked.parse(text) as string;
-    return purify.sanitize(picturesFromOtherSitesToLinks(html), {
+    return purify.sanitize(checkboxesToSigns(picturesFromOtherSitesToLinks(html)), {
         USE_PROFILES: { html: true },
         FORBID_TAGS: [
             "style",
