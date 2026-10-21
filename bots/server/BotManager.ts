@@ -270,7 +270,13 @@ export class BotManager {
         // Start room occupancy verification
         this.startRoomVerification();
         // Hide bot conversations (#1166): a Forget reaches bots nobody is talking to
-        this.adminApiService.startPrivacySync?.(() => new Set([...this.bots.keys(), ...this.botsHoldingMemory]));
+        this.adminApiService.startPrivacySync?.(
+            () => new Set([...this.bots.keys(), ...this.botsHoldingMemory]),
+            // A bot Orbit no longer knows, and that is not running, has nothing left to Forget: stop asking about it
+            (botId) => {
+                if (!this.bots.has(botId)) this.botsHoldingMemory.delete(botId);
+            }
+        );
 
         // TODO: Load bots from storage (WAM files + Admin API)
         // This will be called on server startup

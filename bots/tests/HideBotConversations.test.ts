@@ -361,6 +361,36 @@ describe("AdminApiService.isBotPrivate", () => {
         expect(hoisted.axios.get).not.toHaveBeenCalled();
     });
 
+    it("stops asking about a bot Orbit no longer knows (404), and tells the caller once", async () => {
+        const gone = Object.assign(new Error("not found"), { isAxiosError: true, response: { status: 404 } });
+        hoisted.axios.get.mockImplementation(async (url: string) => {
+            if (url.includes("bot-gone")) throw gone;
+            return answer(false);
+        });
+        const holding = new Set(["bot-gone", "bot-1"]);
+        const onGone = vi.fn((id: string) => holding.delete(id));
+        service.startPrivacySync(() => [...holding], onGone);
+        await vi.advanceTimersByTimeAsync(30_000);
+        expect(onGone).toHaveBeenCalledTimes(1);
+        expect(onGone).toHaveBeenCalledWith("bot-gone");
+        hoisted.axios.get.mockClear();
+        await vi.advanceTimersByTimeAsync(30_000);
+        expect(hoisted.axios.get.mock.calls.map((call) => call[0])).toEqual(["http://orbit.local/api/bots/bot-1/privacy"]);
+        service.stopPrivacySync();
+    });
+
+    it("keeps asking about a bot when Orbit failed for another reason", async () => {
+        const down = Object.assign(new Error("boom"), { isAxiosError: true, response: { status: 500 } });
+        hoisted.axios.get.mockRejectedValue(down);
+        const onGone = vi.fn();
+        service.startPrivacySync(() => ["bot-1"], onGone);
+        await vi.advanceTimersByTimeAsync(30_000);
+        await vi.advanceTimersByTimeAsync(30_000);
+        expect(onGone).not.toHaveBeenCalled();
+        expect(hoisted.axios.get.mock.calls.length).toBeGreaterThanOrEqual(2);
+        service.stopPrivacySync();
+    });
+
     it("does not check anything when the bot server is not connected to Orbit", async () => {
         const { AdminApiService } = await import("../server/AdminApiService");
         const unconnected = new AdminApiService("", "");
