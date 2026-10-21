@@ -38,6 +38,8 @@
         type BotEditorMode,
     } from "./stores/BotEditorStore";
     import { routeStops } from "./behaviorModel";
+    import { botPermissionsStore } from "./stores/BotPermissionsStore";
+    import { ruleName } from "./accessModel";
     import { getBotEditorTool } from "./phaser/BotEditorTool";
     import { botApiService } from "./services/BotApiService";
     import { IconMapPin } from "@wa-icons";
@@ -626,8 +628,30 @@
     let editingCompanion = false;
     // Its WOKA the same way: the bot's name over "Body", and the back circle returns to the page
     let editingTexture = false;
+    // Who may use it the same way: the bot's name over a role's or person's name (or "Add role or person"), and the
+    // back circle returns to the bot's page
+    let editingRuleId: string | null = null;
+    let addingRule = false;
+    function editedRuleName(ruleId: string | null, botId: string | undefined, someone: string): string | undefined {
+        const held = get(botPermissionsStore);
+        const rule = ruleId && held && held.botId === botId ? held.data?.rules.find((r) => r.id === ruleId) : undefined;
+        return rule ? ruleName(rule, someone) : undefined;
+    }
     $: editPanelBackStore.set(
-        currentMode === "detail" && selectedBot && editingTexture
+        currentMode === "detail" && selectedBot && (addingRule || editingRuleId)
+            ? {
+                  onBack: () => {
+                      addingRule = false;
+                      editingRuleId = null;
+                  },
+                  label: $LL.mapEditor.edit.bots.page.access.back({ name: selectedBot.name ?? "" }),
+                  title: selectedBot.name || undefined,
+                  subtitle: addingRule
+                      ? $LL.mapEditor.edit.bots.page.access.addTitle()
+                      : editedRuleName(editingRuleId, selectedBot.id, $LL.mapEditor.edit.bots.page.access.someone()) ??
+                        $LL.mapEditor.edit.bots.page.access.title(),
+              }
+            : currentMode === "detail" && selectedBot && editingTexture
             ? {
                   onBack: () => (editingTexture = false),
                   label: $LL.mapEditor.edit.bots.page.companion.back({ name: selectedBot.name ?? "" }),
@@ -763,6 +787,8 @@
                 bind:this={detailView}
                 bind:editingCompanion
                 bind:editingTexture
+                bind:editingRuleId
+                bind:addingRule
                 bot={selectedBot}
                 onSave={handleSave}
                 onDelete={handleDelete}

@@ -9,8 +9,10 @@ import LL from "../../../i18n/i18n-svelte";
 import { EditorToolName } from "../../Phaser/Game/MapEditor/MapEditorModeManager";
 import { gameManager } from "../../Phaser/Game/GameManager";
 import { wokaMenuStore, type WokaMenuData, type WokaMenuAction } from "../../Stores/WokaMenuStore";
+import { warningMessageStore } from "../../Stores/ErrorStore";
 import { BOT_SERVER_URL } from "../../Enum/EnvironmentVariable";
 import { botApiService } from "./services/BotApiService";
+import { summonFailureLine, type SummonFailure } from "./services/summonFailure";
 import { destroyBotEditorTool } from "./phaser/BotEditorTool";
 import { IconMapPin, IconRobot } from "@wa-icons";
 
@@ -1005,6 +1007,9 @@ async function injectEmotionsIntoWokaMenu(menuData: WokaMenuData): Promise<void>
     }
 }
 
+// Counts the menus opened, so an answer that arrives after the card was closed (or reopened) adds nothing to it
+let wokaMenuOpening = 0;
+
 function setupWokaMenuHook() {
     if (wokaMenuUnsubscriber) return; // Already set up
 
@@ -1012,6 +1017,7 @@ function setupWokaMenuHook() {
         // When menu is cleared, cleanup emotions display
         if (!menuData) {
             lastProcessedMenu = null;
+            wokaMenuOpening++;
 
             isInjectingEmotions = false; // Reset guard
             injectionId++;
@@ -1047,13 +1053,25 @@ function setupWokaMenuHook() {
             if (actions && actions.length > 0) {
                 // Mark as processed immediately
                 lastProcessedMenu = currentState;
+                const opening = ++wokaMenuOpening;
 
                 // Check if "Summon" action already exists (safety check)
                 const hasSummon = menuData.actions.some((a) => a.actionName === "Summon");
                 if (!hasSummon) {
                     // Use microtask to add actions after current execution completes
                     // This prevents the subscription from firing again in the same tick
-                    void Promise.resolve().then(() => {
+                    void Promise.resolve().then(async () => {
+                        // A person the owner has refused does not get a Summon button. When it cannot be found out
+                        // (a guest, Orbit not answering) the button shows, and the real answer comes when it is used.
+                        if (menuData.userUuid.startsWith("bot-")) {
+                            const access = await botApiService.getBotAccess(
+                                menuData.userUuid.substring(4),
+                                "summon",
+                                localUserStore.getLocalUser()?.uuid
+                            );
+                            if (access.allowed === false) return;
+                        }
+                        if (opening !== wokaMenuOpening) return;
                         actions.forEach((action: WokaMenuAction) => {
                             // Double-check menu is still valid before adding
                             const currentMenu = get(wokaMenuStore);
@@ -1142,6 +1160,7 @@ function registerSummonButtonsForBots() {
                             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                                 console.warn(`[Bot Extension] Cannot summon - scene not available`);
                             }
+                            showSummonFailure("failed", playerData.name);
                             return;
                         }
 
@@ -1152,6 +1171,7 @@ function registerSummonButtonsForBots() {
                             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                                 console.warn(`[Bot Extension] Cannot summon - current player not available`);
                             }
+                            showSummonFailure("failed", playerData.name);
                             return;
                         }
 
@@ -1170,21 +1190,38 @@ function registerSummonButtonsForBots() {
                         // Bot userUuid is in format "bot-{botId}", but BotManager stores by botId
                         // Strip the "bot-" prefix to get the actual botId
                         const botId = botUuid.startsWith("bot-") ? botUuid.substring(4) : botUuid;
+                        // The owner may have limited who can summon the bot since the menu opened: say so, rather
+                        // than do nothing
+                        const access = await botApiService.getBotAccess(botId, "summon", currentUuid);
+                        if (access.allowed === false) {
+                            showSummonFailure("not_allowed", playerData.name, access.reason);
+                            return;
+                        }
+                        // Their login did not come along: say so up front, as Summon itself would
+                        if (access.allowed === null && access.signIn) {
+                            showSummonFailure("sign_in", playerData.name);
+                            return;
+                        }
                         // Call summon API - it will validate if this is a bot
-                        await botApiService.summonBot(
+                        const result = await botApiService.summonBot(
                             botId, // Use botId (without "bot-" prefix)
                             currentUuid,
                             currentPosition.x,
                             currentPosition.y
                         );
+                        if (!result.summoned) {
+                            showSummonFailure(result.failure, playerData.name, result.reason);
+                            return;
+                        }
                         if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                             console.log(`[Bot Extension] Summon request sent successfully`);
                         }
                     } catch (error) {
-                        // Silently fail if it's not a bot (API will return 404)
+                        // Anything unexpected still tells the player: nothing fails silently.
                         if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                             console.warn(`[Bot Extension] Summon failed for ${botUuid}:`, error);
                         }
+                        showSummonFailure("failed", playerData.name);
                     }
                 },
             };
@@ -1205,6 +1242,18 @@ function registerSummonButtonsForBots() {
     } catch (error) {
         console.error("[Bot Extension] Error registering summon buttons:", error);
     }
+}
+
+/** Tell the player why a Summon did not happen, in a short line. Every failure goes through here. */
+function showSummonFailure(failure: SummonFailure, botName: string | undefined, reason?: string): void {
+    const name = botName || "The bot";
+    // The owner's limits come in the bot server's own words (the owner's line when one is set); without them, plain ones
+    const text =
+        reason ||
+        (failure === "not_allowed"
+            ? get(LL).mapEditor.edit.bots.page.access.summonRefused({ name })
+            : get(LL).woka.summon[summonFailureLine(failure, localUserStore.isLogged())]({ name }));
+    warningMessageStore.addWarningMessage(text, { closable: true });
 }
 
 // Function to initialize the bot editor integration
