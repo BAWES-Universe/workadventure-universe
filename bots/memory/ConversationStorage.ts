@@ -44,15 +44,6 @@ export interface ConversationUpdateResponse {
     status: 'updated';
 }
 
-export interface ConversationQuery {
-    botId: string;
-    limit?: number;
-    offset?: number;
-    userId?: string; // Query by userUuid or userId
-    startDate?: number;
-    endDate?: number;
-}
-
 export interface ConversationStats {
     botId: string;
     totalConversations: number;
@@ -386,51 +377,6 @@ export class ConversationStorage {
         }
     }
 
-
-    /**
-     * Get conversations from Admin API
-     */
-    async getConversations(query: ConversationQuery): Promise<ConversationRecord[]> {
-        if (!this.adminApiService.isConfigured()) {
-            return [];
-        }
-
-        const adminApiUrl = this.adminApiService['adminApiUrl'] || process.env.ADMIN_API_URL;
-        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
-
-        if (!adminApiUrl || !botServiceToken) {
-            return [];
-        }
-
-        try {
-            const params: Record<string, any> = {};
-            if (query.limit) params.limit = query.limit;
-            if (query.offset) params.offset = query.offset;
-            if (query.userId) params.userId = query.userId;
-            if (query.startDate) params.startDate = query.startDate;
-            if (query.endDate) params.endDate = query.endDate;
-
-            const response = await axios.get(
-                `${adminApiUrl}/api/bots/${query.botId}/conversations`,
-                {
-                    headers: {
-                        Authorization: `Bearer ${botServiceToken}`,
-                    },
-                    params,
-                }
-            );
-
-            return response.data || [];
-        } catch (error: any) {
-            if (axios.isAxiosError(error) && error.response?.status === 404) {
-                return [];
-            }
-            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.error('[ConversationStorage] Error getting conversations:', error);
-            }
-            return [];
-        }
-    }
 
     /**
      * Get conversation statistics
