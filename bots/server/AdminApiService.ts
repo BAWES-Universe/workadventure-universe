@@ -142,7 +142,8 @@ export class AdminApiService {
     private readonly ROOM_METADATA_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
     private adminApiToken: string;
     // Hide bot conversations (#1166): the answer per bot, asked of Orbit at most every 30 seconds
-    private botPrivacyCache: Map<string, { hidden: boolean; cachedAt: number }> = new Map();
+    // `answered`: Orbit has given an answer for this bot (not just the fallback used while it cannot)
+    private botPrivacyCache: Map<string, { hidden: boolean; answered: boolean; cachedAt: number }> = new Map();
     private botPrivacyRequests: Map<string, Promise<boolean>> = new Map();
     private readonly BOT_PRIVACY_CACHE_TTL = 30 * 1000;
     private forgetHandler: MemoryForgetHandler | null = null;
@@ -575,6 +576,16 @@ export class AdminApiService {
     }
 
     /**
+     * The same answer as isBotPrivate, saying also when Orbit has not answered yet for this bot ('unknown': it counts
+     * as private meanwhile). The transcript keeps a Normal bot's lines in the bot server until Orbit says which (#1217).
+     */
+    async botPrivacyState(botId: string, options: { fresh?: boolean } = {}): Promise<'private' | 'normal' | 'unknown'> {
+        const hidden = await this.isBotPrivate(botId, options);
+        if (this.botPrivacyCache.get(botId)?.answered === false) return 'unknown';
+        return hidden ? 'private' : 'normal';
+    }
+
+    /**
      * Ask Orbit about each running bot every 30 seconds. The answer keeps the privacy setting fresh and carries the
      * people a manager asked the bot to forget, so a Forget lands even while nobody is talking to the bot.
      */
@@ -625,7 +636,7 @@ export class AdminApiService {
                 }
             );
             const hidden = response.data?.hidden === true;
-            this.botPrivacyCache.set(botId, { hidden, cachedAt: Date.now() });
+            this.botPrivacyCache.set(botId, { hidden, answered: true, cachedAt: Date.now() });
             this.applyForgetNotice(botId, response.data?.forget);
             return hidden;
         } catch (error) {
@@ -636,7 +647,8 @@ export class AdminApiService {
             const notFound = axios.isAxiosError(error) && (error.response?.status === 404 || error.response?.status === 405);
             const hidden = notFound ? false : lastKnown ?? true;
             // Retry soon, not after the full 30 seconds, when Orbit could not answer
-            this.botPrivacyCache.set(botId, { hidden, cachedAt: notFound ? Date.now() : Date.now() - this.BOT_PRIVACY_CACHE_TTL + 5000 });
+            const answered = notFound || this.botPrivacyCache.get(botId)?.answered === true;
+            this.botPrivacyCache.set(botId, { hidden, answered, cachedAt: notFound ? Date.now() : Date.now() - this.BOT_PRIVACY_CACHE_TTL + 5000 });
             if (!notFound) {
                 console.warn('[AdminApiService] Could not read the bot privacy setting, keeping the last answer:', axios.isAxiosError(error) ? error.message : 'unknown error');
             }
