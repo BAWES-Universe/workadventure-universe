@@ -645,7 +645,7 @@ export class AdminApiService {
             // private until Orbit answers: a hidden bot must never send its text out because Orbit was slow to say so.
             // Only telemetry waits; replies, memory and saved chats are the same either way.
             const notFound = axios.isAxiosError(error) && (error.response?.status === 404 || error.response?.status === 405);
-            const notFoundInARow = axios.isAxiosError(error) && error.response?.status === 404 ? (this.botPrivacyCache.get(botId)?.notFoundInARow ?? 0) + 1 : 0;
+            const notFoundInARow = notFound ? (this.botPrivacyCache.get(botId)?.notFoundInARow ?? 0) + 1 : 0;
             const hidden = notFound ? lastKnown === true && notFoundInARow < this.BOT_GONE_AFTER : lastKnown ?? true;
             // Retry soon, not after the full 30 seconds, when Orbit could not answer
             this.botPrivacyCache.set(botId, { hidden, cachedAt: notFound ? Date.now() : Date.now() - this.BOT_PRIVACY_CACHE_TTL + 5000, ...(notFoundInARow ? { notFoundInARow } : {}) });
