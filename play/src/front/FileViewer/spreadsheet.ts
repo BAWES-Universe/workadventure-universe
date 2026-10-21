@@ -111,6 +111,28 @@ function viewOfSheet(XLSX: typeof SheetJs, name: string, sheet: SheetJs.WorkShee
 }
 
 /**
+ * An OpenDocument sheet can write one cell as "repeated a hundred thousand times" in a few bytes, and the reader then
+ * builds every one of them. Only the first columns are shown, so a repeat is cut to one cell more than that: the cells
+ * after it are past the last column shown either way. A file that is not OpenDocument is returned as it is.
+ */
+async function limitRepeatedColumns(bytes: ArrayBuffer): Promise<Uint8Array> {
+    const { default: JSZip } = await import("jszip");
+    const zip = await JSZip.loadAsync(bytes);
+    const content = zip.file("content.xml");
+    if (!content) return new Uint8Array(bytes);
+    const xml = await content.async("string");
+    const limit = MAX_TABLE_COLUMNS + 1;
+    const limited = xml.replace(
+        /(number-columns-repeated\s*=\s*)(["'])(\d+)\2/g,
+        (whole, name: string, quote: string, count: string) =>
+            Number(count) > limit ? `${name}${quote}${limit}${quote}` : whole
+    );
+    if (limited === xml) return new Uint8Array(bytes);
+    zip.file("content.xml", limited);
+    return zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
+}
+
+/**
  * The sheets of an Excel (.xlsx, .xls) or OpenDocument (.ods) file, as plain text cells. Only values are read:
  * formulas, macros, links, styles, pictures and charts are left out, and a cell is never turned into HTML. A damaged
  * or password-locked file throws.
@@ -129,7 +151,7 @@ export async function readSpreadsheet(bytes: ArrayBuffer): Promise<SheetView[]> 
         await assertUnpackedWithin(bytes, MAX_UNPACKED_SPREADSHEET_BYTES);
     }
     const XLSX = await import("xlsx");
-    const workbook = XLSX.read(new Uint8Array(bytes), {
+    const workbook = XLSX.read(head[0] === 0x50 ? await limitRepeatedColumns(bytes) : new Uint8Array(bytes), {
         type: "array",
         // Only the rows that are shown are read, so a sheet of a million rows opens as fast as a small one.
         sheetRows: MAX_TABLE_ROWS + READ_BEYOND_SHOWN,
