@@ -38,6 +38,8 @@ export interface ProbeOptions {
     /** Which URLs the server may fetch, the first one and every redirect. */
     parseUrl?: (raw: string) => URL | undefined;
     lookup?: LookupFunction;
+    /** All hops of one request, redirects included. */
+    timeoutMs?: number;
 }
 
 /**
@@ -51,9 +53,10 @@ export async function probeEmbeddableWebsite(rawUrl: string, options: ProbeOptio
         return UNREACHABLE;
     }
     const agents = options.lookup ? agentsWith(options.lookup) : safeAgents;
+    const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
 
     try {
-        const response = await requestHeaders("head", url, parseUrl, agents);
+        const response = await requestHeaders("head", url, parseUrl, agents, timeoutMs);
         return { state: true, embeddable: isAllowed(response) };
     } catch (error) {
         // If response from server is "Method not allowed", we try to do a GET request
@@ -62,7 +65,7 @@ export async function probeEmbeddableWebsite(rawUrl: string, options: ProbeOptio
         }
     }
     try {
-        const response = await requestHeaders("get", url, parseUrl, agents);
+        const response = await requestHeaders("get", url, parseUrl, agents, timeoutMs);
         return { state: true, embeddable: isAllowed(response) };
     } catch (error) {
         return answerForError(rawUrl, error);
@@ -83,15 +86,19 @@ async function requestHeaders(
     method: "head" | "get",
     url: URL,
     parseUrl: (raw: string) => URL | undefined,
-    agents: Agents
+    agents: Agents,
+    timeoutMs: number
 ): Promise<AxiosResponse> {
     let current = url;
-    const giveUpAt = Date.now() + REQUEST_TIMEOUT_MS;
+    const giveUpAt = Date.now() + timeoutMs;
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
         const timeout = Math.min(HOP_TIMEOUT_MS, giveUpAt - Date.now());
         if (timeout <= 0) {
             throw new Error("Timed out");
         }
+        // `timeout` only notices an idle socket: a server dripping its headers would never trip it.
+        const deadline = new AbortController();
+        const timer = setTimeout(() => deadline.abort(), timeout);
         let response: AxiosResponse<Readable>;
         try {
             // Each hop depends on the previous one's answer.
@@ -100,6 +107,7 @@ async function requestHeaders(
                 method,
                 url: current.toString(),
                 timeout,
+                signal: deadline.signal,
                 // The address guard lives in the agents below, which only the Node adapter uses.
                 adapter: "http",
                 maxRedirects: 0,
@@ -115,6 +123,8 @@ async function requestHeaders(
                 (error.response?.data as Readable | undefined)?.destroy?.();
             }
             throw error;
+        } finally {
+            clearTimeout(timer);
         }
         response.data.destroy();
 
