@@ -160,6 +160,14 @@ describe("Markdown", () => {
         expect(host.querySelector("input")).toBeNull();
     });
 
+    it("takes no class or id from the file, so the page's own styles cannot be borrowed", () => {
+        const host = render('<div class="fixed inset-0 z-50" id="menu">hello</div>\n\n```js\nlet a = 1;\n```\n');
+        expect(host.querySelector("[class]")).toBeNull();
+        expect(host.querySelector("[id]")).toBeNull();
+        expect(host.textContent).toContain("hello");
+        expect(host.querySelector("pre code")?.textContent).toContain("let a = 1;");
+    });
+
     it("runs nothing from HTML inside the file", () => {
         const host = render(
             [
