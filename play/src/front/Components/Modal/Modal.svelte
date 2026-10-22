@@ -12,9 +12,10 @@
     } from "../../Stores/ModalStore";
     import { isMediaBreakpointUp } from "../../Utils/BreakpointsUtils";
     import { gameManager } from "../../Phaser/Game/GameManager";
-    import { canvasSize } from "../../Stores/CoWebsiteStore";
+    import { canvasSize, openHereInFrontOfOrbitStore } from "../../Stores/CoWebsiteStore";
     import { DESKTOP_LAYOUT_MIN_WIDTH } from "../../Stores/BarInViewStore";
     import { windowInFrontStore } from "../../Stores/WindowInFrontStore";
+    import { sideWindowInFrontStore } from "../../Stores/SideWindowInFrontStore";
     import { IconX, IconArrowsMaximize, IconArrowsMinimize } from "@wa-icons";
 
     /** The device asks for less motion: the panel appears and goes at once, without the blur. */
@@ -37,8 +38,11 @@
         }
     }
 
+    // Esc closes the window in front. The Open here window, when it is the one in front, takes the key instead. Whichever
+    // of the two answers first marks the key as used, so the other one leaves it alone, in whatever order they listen.
     function onKeyDown(e: KeyboardEvent) {
-        if (e.key === "Escape") {
+        if (e.key === "Escape" && !e.defaultPrevented && !$openHereInFrontOfOrbitStore) {
+            e.preventDefault();
             close();
         }
     }
@@ -55,6 +59,8 @@
         setTimeout(() => {
             if (modalIframe && document.hasFocus() && document.activeElement === modalIframe) {
                 windowInFrontStore.set("window");
+                // A click on Orbit's own page brings it in front of the window of files and links, as one on its frame does.
+                sideWindowInFrontStore.set("orbit");
             }
         }, 0);
     }
@@ -128,7 +134,10 @@
         : shown?.position} {isFullScreened ? 'fullscreened' : ''} {takesSide ? 'screen-blocker' : ''}"
     bind:this={mainModal}
     on:transitionend|self={reposition}
-    on:pointerdown|capture={() => windowInFrontStore.set("window")}
+    on:pointerdown|capture={() => {
+        windowInFrontStore.set("window");
+        sideWindowInFrontStore.set("orbit");
+    }}
 >
     <div
         class="modal-panel w-full h-full bg-contrast/80 backdrop-blur rounded"
