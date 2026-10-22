@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onDestroy, onMount } from "svelte";
+    import { afterUpdate, onDestroy, onMount } from "svelte";
     import { get, type Unsubscriber } from "svelte/store";
     import { titleBarHeightStore } from "../../TitleBar/WindowControlsOverlay";
     import { coWebsiteRatio, coWebsites, fullScreenCowebsite, windowSize } from "../../Stores/CoWebsiteStore";
@@ -161,6 +161,14 @@
     let tabsScrollX = 0;
     // eslint-disable-next-line @typescript-eslint/no-unused-expressions
     $: tabsContainerWidth, $coWebsites, (tabsOverflowing = areTabsOverflowing());
+    // The reactive line above measures before the new tab is drawn, so it counts one tab too few when the window keeps
+    // its width (it did not before, as the split resized with every change). Measure again once the page is updated.
+    afterUpdate(() => {
+        const overflowing = areTabsOverflowing();
+        if (overflowing !== tabsOverflowing) {
+            tabsOverflowing = overflowing;
+        }
+    });
 
     function areTabsOverflowing(): boolean {
         if (!tabsContainer) {
