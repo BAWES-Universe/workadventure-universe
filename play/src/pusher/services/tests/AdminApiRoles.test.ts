@@ -56,6 +56,10 @@ describe("the role names Orbit sends with room access", () => {
         expect(isFetchMemberDataByUuidSuccessResponse.parse({ ...answer, roles }).roles).toEqual([good]);
     });
 
+    it.each(["roles", {}, 7, null])("treats the value %j, which is not a list, as no roles (#1296)", (roles) => {
+        expect(isFetchMemberDataByUuidSuccessResponse.parse({ ...answer, roles }).roles).toEqual([]);
+    });
+
     it("accepts an answer with no list, as older Orbit versions send", () => {
         expect(isFetchMemberDataByUuidSuccessResponse.parse(answer).roles).toBeUndefined();
     });

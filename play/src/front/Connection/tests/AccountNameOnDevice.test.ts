@@ -89,7 +89,8 @@ describe("the account's name on this device", () => {
         mocks.me.mockResolvedValue({ data: { ...meAnswer("Nova", false).data, userUuid: "uuid-someone-else" } });
         await openTheGame();
         expect(mocks.setPlayerName).toHaveBeenLastCalledWith("Nova");
-        expect(localStorage.getItem("playerName")).toBe("Khalid");
+        // The first account's name is not left on the device for this one (#1295)
+        expect(localStorage.getItem("playerName")).toBeNull();
     });
 
     it("doesn't show another account's name when Orbit has no name at all for this one (#1291)", async () => {

@@ -177,6 +177,23 @@ describe("the caption of a Matrix picture or video", () => {
         expect(getMediaCaption(shown)).toBeUndefined();
     });
 
+    it("is empty for a reply picture with quoted lines and no HTML form (#1297)", () => {
+        const quoted = fakeEvent({ msgtype: "m.text", body: "Look at this" }, "$quoted");
+        const { shown } = contentOf(
+            {
+                msgtype: "m.image",
+                body: "> <@ada:matrix.test> Look at this\n\nimage.png",
+                url: "mxc://matrix.test/a",
+                "m.relates_to": { "m.in_reply_to": { event_id: "$quoted" } },
+            },
+            fakeRoom({ $quoted: quoted }),
+            "$quoted"
+        );
+
+        expect(shown.body).toBe("image.png");
+        expect(getMediaCaption(shown)).toBeUndefined();
+    });
+
     it("keeps the name of a document, whether or not it is sent as a reply", () => {
         const plain = contentOf({ msgtype: "m.file", body: "Q4 roster.pdf", url: "mxc://matrix.test/a" });
         expect(plain.message.type).toBe("file");

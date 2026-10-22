@@ -221,7 +221,8 @@ export class MatrixChatMessage implements ChatMessage {
 
         if (this.type !== "text") {
             return {
-                body: content.body,
+                // A reply picture whose app sends no HTML form still has the quoted lines in its plain text.
+                body: withoutReplyFallback(content.body),
                 // Set by loadMediaUrl once the file is fetched.
                 url: undefined,
                 urls: undefined,

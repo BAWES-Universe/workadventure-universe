@@ -133,16 +133,20 @@ export const isFetchMemberDataByUuidSuccessResponse = z.object({
         example: "16383",
     }),
     roles: extendApi(
-        z
-            .array(z.unknown())
-            // A badly formed entry is left out: it must not stop the player from joining.
-            .transform((list) =>
-                list.flatMap((entry) => {
-                    const role = isWorldRole.safeParse(entry);
-                    return role.success ? [role.data] : [];
-                })
-            )
-            .optional(),
+        z.preprocess(
+            // Missing stays missing; anything that is not a list counts as no roles.
+            (value) => (value === undefined ? undefined : Array.isArray(value) ? value : []),
+            z
+                .array(z.unknown())
+                // A badly formed entry is left out: it must not stop the player from joining.
+                .transform((list) =>
+                    list.flatMap((entry) => {
+                        const role = isWorldRole.safeParse(entry);
+                        return role.success ? [role.data] : [];
+                    })
+                )
+                .optional()
+        ),
         {
             description:
                 "What each role key is called, highest first, for the badge next to people. Missing when the admin sends no list.",

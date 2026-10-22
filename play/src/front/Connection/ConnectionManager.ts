@@ -900,9 +900,9 @@ class ConnectionManager {
             gameManager.setVisitCardUrl(visitCardUrl);
         }
 
-        // Another account's name stays on the device after a switch, and the game read it when it started: with no name
-        // for this account, neither may show it.
-        if (username === undefined && localUserStore.dropOtherAccountsName(userUuid)) {
+        // Another account's name stays on the device after a switch, and the game read it when it started: neither may
+        // show it for this account (the name this account does have is set below).
+        if (localUserStore.dropOtherAccountsName(userUuid)) {
             gameManager.setPlayerName(localUserStore.getName());
         }
 
