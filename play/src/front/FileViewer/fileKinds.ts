@@ -1,5 +1,5 @@
 /** The ways the file viewer can show a file. Each reader is loaded only when a file of its kind opens. */
-export type FileViewerKind = "pdf" | "image" | "markdown" | "text" | "json" | "csv" | "word" | "oldword";
+export type FileViewerKind = "pdf" | "image" | "markdown" | "text" | "json" | "csv" | "word" | "oldword" | "excel";
 
 const KIND_BY_EXTENSION: Record<string, FileViewerKind> = {
     pdf: "pdf",
@@ -10,6 +10,9 @@ const KIND_BY_EXTENSION: Record<string, FileViewerKind> = {
     docx: "word",
     // Word 97 to 2003: the viewer opens to say it cannot show these, and offers the download.
     doc: "oldword",
+    xlsx: "excel",
+    xls: "excel",
+    ods: "excel",
     jpg: "image",
     jpeg: "image",
     png: "image",
@@ -31,7 +34,7 @@ const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
 
 /**
  * The kinds a chat file card opens in the viewer. Pictures in chat keep the picture viewer, and videos and audio keep
- * playing in the chat, so they are not listed. Zip, PowerPoint and old Word files stay downloads.
+ * playing in the chat, so they are not listed. Zip and PowerPoint files stay downloads.
  */
 export const CHAT_VIEWER_KINDS: ReadonlySet<FileViewerKind> = new Set<FileViewerKind>([
     "pdf",
@@ -41,6 +44,7 @@ export const CHAT_VIEWER_KINDS: ReadonlySet<FileViewerKind> = new Set<FileViewer
     "csv",
     "word",
     "oldword",
+    "excel",
 ]);
 
 /** The kinds a map's "Open file" shows in the viewer: the formats the map editor lets a map maker upload. */
@@ -54,6 +58,7 @@ export const NO_BROWSER_VIEWER_KINDS: ReadonlySet<FileViewerKind> = new Set<File
     ...TEXT_KINDS,
     "word",
     "oldword",
+    "excel",
 ]);
 
 /** The lower-case extension of a file name. A "#" or "?" in a name ("Invoice #12.pdf") is part of the name. */
@@ -106,11 +111,15 @@ const BADGE_BY_KIND: Record<FileViewerKind, FileBadge> = {
     csv: { label: "CSV", color: "#1e7145", kindName: "CSV" },
     word: { label: "DOCX", color: "#2b579a", kindName: "Word" },
     oldword: { label: "DOC", color: "#2b579a", kindName: "Word" },
+    excel: { label: "XLSX", color: "#1e7145", kindName: "Excel" },
 };
 
-/** The badge of a file the viewer opens, from its kind. */
-export function badgeOfKind(kind: FileViewerKind): FileBadge {
-    return BADGE_BY_KIND[kind];
+/** The badge of a file the viewer opens, from its kind. A spreadsheet's badge shows its own ending (XLSX, XLS, ODS). */
+export function badgeOfKind(kind: FileViewerKind, name?: string): FileBadge {
+    const badge = BADGE_BY_KIND[kind];
+    if (kind !== "excel") return badge;
+    const extension = extensionOf(name).toUpperCase();
+    return { ...badge, label: extension || badge.label };
 }
 
 function startsWith(bytes: Uint8Array, signature: number[], offset = 0): boolean {
@@ -154,6 +163,11 @@ export function bytesMatchKind(kind: FileViewerKind, name: string, bytes: Uint8A
     // A Word file is a zip: "PK" and a record number.
     if (kind === "word") return startsWith(bytes, [0x50, 0x4b, 0x03, 0x04]);
     if (kind === "oldword") return false;
+    if (kind === "excel") {
+        // .xlsx and .ods are zip files ("PK"). .xls is an old Office file; a password-locked .xlsx is one too.
+        if (extensionOf(name) === "xls") return startsWith(bytes, [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+        return startsWith(bytes, [0x50, 0x4b, 0x03, 0x04]);
+    }
     switch (extensionOf(name)) {
         case "png":
             return startsWith(bytes, [0x89, 0x50, 0x4e, 0x47]);

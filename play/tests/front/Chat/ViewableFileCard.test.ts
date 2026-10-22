@@ -155,12 +155,21 @@ describe("a chat file card", () => {
             expect(document.querySelector('[data-testid="fileCard"]')).toBeNull();
         });
 
-        it("keeps a picture-named office file a plain download link", async () => {
-            mountMessageFile("Budget.xlsx", "blob:http://play/xlsx");
+        it("keeps a PowerPoint file a plain download link", async () => {
+            mountMessageFile("Slides.pptx", "blob:http://play/pptx");
             await tick();
 
-            expect(target.querySelector("a")?.getAttribute("download")).toBe("Budget.xlsx");
+            expect(target.querySelector("a")?.getAttribute("download")).toBe("Slides.pptx");
             expect(document.querySelector('[data-testid="fileCard"]')).toBeNull();
+        });
+
+        it("shows a spreadsheet as a card with the badge of its own type", async () => {
+            mountMessageFile("Budget.xls", "blob:http://play/xls");
+            await tick();
+
+            const card = document.querySelector('[data-testid="fileCard"]');
+            expect(card?.textContent).toContain("XLS");
+            expect(card?.textContent).toContain("Excel");
         });
 
         it("shows a PDF as a card once its file is ready", async () => {

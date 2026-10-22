@@ -189,6 +189,7 @@
     "unplugin-icons": "^0.19.0",
     "uuid": "^9.0.0",
     "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.51.0",
+    "xlsx": "npm:@e965/xlsx@0.20.3",
     "zod": "^3.23.8"
   }
 }

@@ -15,7 +15,9 @@
         type FileViewerKind,
     } from "../../FileViewer/fileKinds";
     import type { ViewerController } from "../../FileViewer/viewerController";
+    import { MAX_SPREADSHEET_BYTES } from "../../FileViewer/spreadsheet";
     import { MAX_WORD_BYTES } from "../../FileViewer/wordDocument";
+    import FileViewerExcel from "./FileViewer/FileViewerExcel.svelte";
     import FileViewerPdf from "./FileViewer/FileViewerPdf.svelte";
     import FileViewerImage from "./FileViewer/FileViewerImage.svelte";
     import FileViewerText from "./FileViewer/FileViewerText.svelte";
@@ -49,6 +51,7 @@
     let controller: ViewerController | undefined;
     let pageCount = 0;
     let rowCount: number | undefined;
+    let sheetCount = 0;
     let menuOpen = false;
     let findOpen = false;
     let findQuery = "";
@@ -75,6 +78,8 @@
     $: pagesLabel =
         pageCount > 0
             ? $LL.chat.fileViewer.pages({ count: pageCount })
+            : sheetCount > 0
+            ? $LL.chat.fileViewer.sheets({ count: sheetCount })
             : rowCount !== undefined
             ? $LL.chat.fileViewer.rows({ count: rowCount })
             : "";
@@ -87,7 +92,7 @@
 
     function badgeFor(name: string): { label: string; color: string } {
         const fileKind = fileKindOf(name);
-        if (fileKind) return badgeOfKind(fileKind);
+        if (fileKind) return badgeOfKind(fileKind, name);
         const extension = extensionOf(name);
         return { label: (extension || "FILE").slice(0, 4).toUpperCase(), color: "#5b6b82" };
     }
@@ -102,6 +107,7 @@
                 !fileKind ||
                 loaded.byteLength > MAX_VIEWER_BYTES ||
                 (fileKind === "word" && loaded.byteLength > MAX_WORD_BYTES) ||
+                (fileKind === "excel" && loaded.byteLength > MAX_SPREADSHEET_BYTES) ||
                 !bytesMatchKind(fileKind, source.name, new Uint8Array(loaded))
             ) {
                 phase = "failed";
@@ -452,6 +458,13 @@
             bind:controller
             on:loaded={(event) => (pageCount = event.detail.pageCount)}
             on:failed={onReaderFailed}
+        />
+    {:else if bytes && kind === "excel"}
+        <FileViewerExcel
+            {bytes}
+            on:loaded={(event) => (sheetCount = event.detail.sheetCount)}
+            on:failed={onReaderFailed}
+            on:download={download}
         />
     {:else if bytes && kind && TEXT_KINDS.has(kind)}
         <FileViewerText
