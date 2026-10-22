@@ -327,7 +327,11 @@ describe("the spreadsheet reader", () => {
 
         it("shares the text drawn between the sheets, and says so on the sheet that is cut", async () => {
             const longRows = (): XLSX.WorkSheet =>
-                XLSX.utils.aoa_to_sheet(Array.from({ length: 1000 }, () => [1, 2, 3].map(() => "x".repeat(1000))));
+                XLSX.utils.aoa_to_sheet(
+                    Array.from({ length: 1000 }, (_, row) =>
+                        row === 999 ? ["42", "43", "44"] : [1, 2, 3].map(() => "x".repeat(1000))
+                    )
+                );
             const sheets = await readSpreadsheet(workbookOf(Array.from({ length: 7 }, longRows)));
             const drawn = sheets.reduce(
                 (sum, sheet) => sum + sheet.rows.flat().reduce((n, c) => n + c.text.length, 0),
@@ -336,6 +340,9 @@ describe("the spreadsheet reader", () => {
             expect(drawn).toBeLessThan(10_100_000);
             expect(sheets[0].textCut).toBe(true);
             expect(sheets[6].textCut).toBe(true);
+            // Short values stay readable once the budget is spent; long text is the part that is cut.
+            expect(sheets[6].rows[999].map((cell) => cell.text)).toEqual(["42", "43", "44"]);
+            expect(sheets[6].rows[0][0].text).toBe("…");
         });
     });
 
