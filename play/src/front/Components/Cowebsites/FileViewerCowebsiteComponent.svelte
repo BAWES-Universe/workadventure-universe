@@ -6,6 +6,7 @@
     import { coWebsites, fullScreenCowebsite } from "../../Stores/CoWebsiteStore";
     import { inputFormFocusStore } from "../../Stores/UserInputStore";
     import {
+        NO_BROWSER_VIEWER_KINDS,
         TEXT_KINDS,
         badgeOfKind,
         bytesMatchKind,
@@ -14,9 +15,11 @@
         type FileViewerKind,
     } from "../../FileViewer/fileKinds";
     import type { ViewerController } from "../../FileViewer/viewerController";
+    import { MAX_WORD_BYTES } from "../../FileViewer/wordDocument";
     import FileViewerPdf from "./FileViewer/FileViewerPdf.svelte";
     import FileViewerImage from "./FileViewer/FileViewerImage.svelte";
     import FileViewerText from "./FileViewer/FileViewerText.svelte";
+    import FileViewerWord from "./FileViewer/FileViewerWord.svelte";
     import {
         IconArrowLeft,
         IconDots,
@@ -63,6 +66,7 @@
     $: matches = controller?.search?.matches ?? readable(undefined);
 
     const badge = badgeFor(source.name);
+    const isOldWord = fileKindOf(source.name) === "oldword";
     $: sender = source.sentByMe
         ? $LL.chat.fileViewer.fromYou()
         : source.senderName
@@ -79,7 +83,7 @@
     $: canOpenInNewTab =
         source.openInNewTab !== undefined &&
         (phase === "ready" || source.openInNewTabFromLink === true) &&
-        !(kind && TEXT_KINDS.has(kind));
+        !(kind && NO_BROWSER_VIEWER_KINDS.has(kind));
 
     function badgeFor(name: string): { label: string; color: string } {
         const fileKind = fileKindOf(name);
@@ -97,6 +101,7 @@
             if (
                 !fileKind ||
                 loaded.byteLength > MAX_VIEWER_BYTES ||
+                (fileKind === "word" && loaded.byteLength > MAX_WORD_BYTES) ||
                 !bytesMatchKind(fileKind, source.name, new Uint8Array(loaded))
             ) {
                 phase = "failed";
@@ -417,7 +422,7 @@
         <div class="state" data-testid="fileViewerFailed">
             <div class="box">
                 <b>{$LL.chat.fileViewer.cantPreview()}</b>
-                <p>{$LL.chat.fileViewer.cantPreviewHelp()}</p>
+                <p>{isOldWord ? $LL.chat.fileViewer.oldWord() : $LL.chat.fileViewer.cantPreviewHelp()}</p>
                 {#if canDownload}
                     <button type="button" class="bigbtn" on:click={download}>
                         <IconDownload font-size="18" />
@@ -434,6 +439,15 @@
     {:else if bytes && kind === "pdf"}
         <FileViewerPdf
             {bytes}
+            {compact}
+            bind:controller
+            on:loaded={(event) => (pageCount = event.detail.pageCount)}
+            on:failed={onReaderFailed}
+        />
+    {:else if bytes && kind === "word"}
+        <FileViewerWord
+            {bytes}
+            name={source.name}
             {compact}
             bind:controller
             on:loaded={(event) => (pageCount = event.detail.pageCount)}

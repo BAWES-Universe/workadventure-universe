@@ -1,5 +1,5 @@
 /** The ways the file viewer can show a file. Each reader is loaded only when a file of its kind opens. */
-export type FileViewerKind = "pdf" | "image" | "markdown" | "text" | "json" | "csv";
+export type FileViewerKind = "pdf" | "image" | "markdown" | "text" | "json" | "csv" | "word" | "oldword";
 
 const KIND_BY_EXTENSION: Record<string, FileViewerKind> = {
     pdf: "pdf",
@@ -7,6 +7,9 @@ const KIND_BY_EXTENSION: Record<string, FileViewerKind> = {
     txt: "text",
     json: "json",
     csv: "csv",
+    docx: "word",
+    // Word 97 to 2003: the viewer opens to say it cannot show these, and offers the download.
+    doc: "oldword",
     jpg: "image",
     jpeg: "image",
     png: "image",
@@ -36,6 +39,8 @@ export const CHAT_VIEWER_KINDS: ReadonlySet<FileViewerKind> = new Set<FileViewer
     "text",
     "json",
     "csv",
+    "word",
+    "oldword",
 ]);
 
 /** The kinds a map's "Open file" shows in the viewer: the formats the map editor lets a map maker upload. */
@@ -43,6 +48,13 @@ export const MAP_VIEWER_KINDS: ReadonlySet<FileViewerKind> = new Set<FileViewerK
 
 /** The kinds that are text the viewer decodes itself (no reader library). */
 export const TEXT_KINDS: ReadonlySet<FileViewerKind> = new Set<FileViewerKind>(["markdown", "text", "json", "csv"]);
+
+/** The kinds a browser has no viewer for, so "Open in new tab" has nothing to open (Ctrl or Cmd click saves them). */
+export const NO_BROWSER_VIEWER_KINDS: ReadonlySet<FileViewerKind> = new Set<FileViewerKind>([
+    ...TEXT_KINDS,
+    "word",
+    "oldword",
+]);
 
 /** The lower-case extension of a file name. A "#" or "?" in a name ("Invoice #12.pdf") is part of the name. */
 export function extensionOf(name: string | undefined): string {
@@ -92,6 +104,8 @@ const BADGE_BY_KIND: Record<FileViewerKind, FileBadge> = {
     text: { label: "TXT", color: "#5b6b82", kindName: "Text" },
     json: { label: "JSON", color: "#5b6b82", kindName: "JSON" },
     csv: { label: "CSV", color: "#1e7145", kindName: "CSV" },
+    word: { label: "DOCX", color: "#2b579a", kindName: "Word" },
+    oldword: { label: "DOC", color: "#2b579a", kindName: "Word" },
 };
 
 /** The badge of a file the viewer opens, from its kind. */
@@ -137,6 +151,9 @@ export function bytesMatchKind(kind: FileViewerKind, name: string, bytes: Uint8A
         return head.includes("%PDF-");
     }
     if (TEXT_KINDS.has(kind)) return looksLikeText(bytes);
+    // A Word file is a zip: "PK" and a record number.
+    if (kind === "word") return startsWith(bytes, [0x50, 0x4b, 0x03, 0x04]);
+    if (kind === "oldword") return false;
     switch (extensionOf(name)) {
         case "png":
             return startsWith(bytes, [0x89, 0x50, 0x4e, 0x47]);
