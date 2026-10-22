@@ -123,6 +123,17 @@ describe("signing out", () => {
         expect(localUserStore.getName()).toBe("Nova");
     });
 
+    it("doesn't hand a name of unknown origin to the next guest (a device from before the name was marked)", async () => {
+        // An older version stored this name; it may have been the account's, and nothing says it was typed by a guest.
+        localStorage.setItem("playerName", "Khalid");
+        connectionManager.goToSignIn();
+        mocks.me.mockResolvedValue(meAnswer("Khalid"));
+        await openTheGame();
+        connectionManager.logout();
+        expect(localUserStore.getName()).toBeNull();
+        expect(localStorage.getItem("playerName")).toBeNull();
+    });
+
     it("keeps a guest's own name when a guest is logged out (a refused token)", () => {
         localUserStore.setName("Nova");
         connectionManager.logout();
