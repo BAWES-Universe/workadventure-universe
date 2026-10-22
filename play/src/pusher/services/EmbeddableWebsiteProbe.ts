@@ -42,12 +42,15 @@ export interface ProbeOptions {
     timeoutMs?: number;
 }
 
+// A site can sit on any port (https://example.com:8443); the address guard is what keeps the check off internal hosts.
+const parseProbeUrl = (raw: string) => parsePreviewableUrl(raw, true);
+
 /**
  * Asks a site whether it lets itself be framed. Any connected player can ask about any URL, so it goes through the
  * same guard as link previews: no internal or reserved address, on the first hop, on each redirect, or after DNS.
  */
 export async function probeEmbeddableWebsite(rawUrl: string, options: ProbeOptions = {}): Promise<EmbeddableAnswer> {
-    const parseUrl = options.parseUrl ?? parsePreviewableUrl;
+    const parseUrl = options.parseUrl ?? parseProbeUrl;
     const url = parseUrl(rawUrl);
     if (!url) {
         return UNREACHABLE;
