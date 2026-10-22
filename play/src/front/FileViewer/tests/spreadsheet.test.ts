@@ -367,6 +367,44 @@ describe("the spreadsheet reader", () => {
             expect(sheet.rowsCut).toBe(false);
         });
 
+        it.each(["+1000000", "1000000x", " 1000000", "1000000.5", "01000000", "1000000'"])(
+            "cuts a repeat the file writes as %j, the way the reader would read it",
+            async (written) => {
+                const started = Date.now();
+                const [sheet] = await readSpreadsheet(
+                    await odsWithRows(
+                        `<table:table-row><table:table-cell table:number-columns-repeated="${written}" office:value-type="float" office:value="7"><text:p>7</text:p></table:table-cell></table:table-row>`
+                    )
+                );
+                expect(Date.now() - started).toBeLessThan(5000);
+                expect(sheet.columnCount).toBe(MAX_TABLE_COLUMNS);
+            }
+        );
+
+        it("cuts a row repeat the reader reads as a number, such as 1e6", async () => {
+            const row = `<table:table-row table:number-rows-repeated="1e6">${valueCell(50)}</table:table-row>`;
+            const started = Date.now();
+            const [sheet] = await readSpreadsheet(await odsWithRows(row));
+            expect(Date.now() - started).toBeLessThan(5000);
+            expect(sheet.rows).toHaveLength(MAX_TABLE_ROWS);
+        });
+
+        it("counts repeats whatever prefix the file gives the tags", async () => {
+            const cell = `<x:table-cell x:number-columns-repeated="101" o:value-type="float" o:value="7"><p:p>7</p:p></x:table-cell>`;
+            const bytes = await odsWithRows(`<x:table-row>${cell.repeat(40_000)}</x:table-row>`);
+            await expect(readSpreadsheet(bytes)).rejects.toThrow("too big");
+        });
+
+        it("does not add empty rows at the end of a sheet to its length when they are cut", async () => {
+            const data = Array.from({ length: 1001 }, () => `<table:table-row>${valueCell(1)}</table:table-row>`).join(
+                ""
+            );
+            const tail = `<table:table-row table:number-rows-repeated="5000"><table:table-cell table:number-columns-repeated="1024"/></table:table-row>`;
+            const [sheet] = await readSpreadsheet(await odsWithRows(data + tail));
+            expect(sheet.rowsCut).toBe(true);
+            expect(sheet.totalRows).toBe(1001);
+        });
+
         it("still says how many rows the sheet has when a repeated row is cut", async () => {
             const [sheet] = await readSpreadsheet(await odsWithRepeat(3, 5000));
             expect(sheet.rowsCut).toBe(true);
