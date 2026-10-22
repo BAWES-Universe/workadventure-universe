@@ -38,9 +38,11 @@
         }
     }
 
-    // Esc closes the window in front. The Open here window, when it is the one in front, takes the key instead.
+    // Esc closes the window in front. The Open here window, when it is the one in front, takes the key instead. Whichever
+    // of the two answers first marks the key as used, so the other one leaves it alone, in whatever order they listen.
     function onKeyDown(e: KeyboardEvent) {
-        if (e.key === "Escape" && !$openHereInFrontOfOrbitStore) {
+        if (e.key === "Escape" && !e.defaultPrevented && !$openHereInFrontOfOrbitStore) {
+            e.preventDefault();
             close();
         }
     }

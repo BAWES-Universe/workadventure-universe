@@ -43,7 +43,6 @@
     import { wokaRefusedStore } from "../Stores/WokaRefusedStore";
     import { refreshPromptStore } from "../Stores/RefreshPromptStore";
     import BrowserNotSupported from "./BrowserNotSupported/BrowserNotSupported.svelte";
-    import CoWebsitesContainer from "./EmbedScreens/CoWebsitesContainer.svelte";
     import OpenHereWindow from "./EmbedScreens/OpenHereWindow.svelte";
     import GameOverlay from "./GameOverlay.svelte";
 
@@ -325,25 +324,11 @@
         >
             <GameOverlay {game} />
         </div>
-        {#if $coWebsites.length > 0 && $openHereFloatsStore}
-            <!-- Files and links open in a window over the game, like Orbit's: the map keeps its size. -->
-            <OpenHereWindow />
-        {:else if $coWebsites.length > 0}
-            <!-- An upright phone still splits the game with the panel. -->
-            <div class="flex-1">
-                <!-- Transitions are breaking the onDestroy lifecycle of cowebsites -->
-                <!--            transition:fly={{-->
-                <!--            duration: 200,-->
-                <!--            x:-->
-                <!--                $screenOrientationStore === "portrait"-->
-                <!--                    ? 0-->
-                <!--                    : document.documentElement.dir === "rtl"-->
-                <!--                        ? -$coWebsitesSize.width-->
-                <!--                        : $coWebsitesSize.width,-->
-                <!--            y: $screenOrientationStore === "portrait" ? -$coWebsitesSize.height : 0,-->
-                <!--        }}-->
-                <CoWebsitesContainer />
-            </div>
+        {#if $coWebsites.length > 0}
+            <!-- Files and links open in a window over the game, like Orbit's: the map keeps its size. An upright phone
+                 still splits the game with the panel. It is one component either way, so turning the phone does not
+                 unload what is open (a file, a page, a meeting). -->
+            <OpenHereWindow floating={$openHereFloatsStore} />
         {/if}
     </div>
 {/if}

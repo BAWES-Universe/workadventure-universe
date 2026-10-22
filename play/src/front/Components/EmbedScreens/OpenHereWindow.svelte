@@ -16,7 +16,10 @@
     import CoWebsitesContainer from "./CoWebsitesContainer.svelte";
     import { IconX, IconArrowsMaximize, IconArrowsMinimize } from "@wa-icons";
 
-    $: expanded = $fullScreenCowebsite;
+    /** False on an upright phone, where the panel still splits the game: the same component, so turning the phone keeps what is open. */
+    export let floating = true;
+
+    $: expanded = floating && $fullScreenCowebsite;
 
     // Orbit and this window open in the same place: the one opened or tapped last is in front. Orbit lives inside the
     // main layout (z-index 10, or 2001 in front of the chat), so a window behind it sits just under that. The chat
@@ -25,6 +28,7 @@
     $: behindChat = $chatVisibilityStore && $windowInFrontStore === "chat";
 
     function bringForward() {
+        if (!floating) return;
         bringOpenHereInFront();
         windowInFrontStore.set("window");
     }
@@ -48,10 +52,12 @@
     // Esc closes the window when it is the one in front, like Orbit's. Esc inside a box (the file's search) belongs to
     // that box, and a key a page inside already used is left alone.
     function onKeyDown(event: KeyboardEvent) {
-        if (event.key !== "Escape" || event.defaultPrevented) return;
+        if (!floating || event.key !== "Escape" || event.defaultPrevented) return;
         if (behindOrbit) return;
         const target = event.target as HTMLElement | null;
         if (target?.closest?.("input, textarea, select, [contenteditable='true']")) return;
+        // Orbit leaves a key marked as used alone, so one press closes one window.
+        event.preventDefault();
         closeWindow();
     }
 
@@ -59,6 +65,7 @@
     // Double tap goes back to a third.
     let card: HTMLElement | undefined;
     let dragRatio: number | undefined;
+    let dragStartX: number | undefined;
     let anchorX = 0;
     $: ratio = dragRatio ?? $coWebsiteRatio;
 
@@ -68,16 +75,19 @@
         // The card's far edge stays where it is: only the grip's side moves.
         anchorX = document.documentElement.dir === "rtl" ? rect.left : rect.right;
         (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
-        dragRatio = $coWebsiteRatio;
+        dragStartX = event.clientX;
     }
 
+    // A tap on the grip that never moves leaves the width as it is (a map zone may have set one between the stops).
     function drag(event: PointerEvent) {
-        if (dragRatio === undefined) return;
+        if (dragStartX === undefined) return;
+        if (dragRatio === undefined && Math.abs(event.clientX - dragStartX) < 4) return;
         const width = document.documentElement.dir === "rtl" ? event.clientX - anchorX : anchorX - event.clientX;
         dragRatio = clampOpenHereRatio(width / window.innerWidth);
     }
 
     function endDrag() {
+        dragStartX = undefined;
         if (dragRatio === undefined) return;
         coWebsiteRatio.set(nearestWidthStop(dragRatio));
         dragRatio = undefined;
@@ -103,52 +113,54 @@
      (expand, close) outside the card. Taking a tap in front brings the window in front of Orbit or the chat. -->
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div
-    class="open-here"
+    class={floating ? "open-here" : "flex-1"}
     class:expanded
-    class:behind-orbit={behindOrbit}
-    class:behind-chat={!behindOrbit && behindChat}
+    class:behind-orbit={floating && behindOrbit}
+    class:behind-chat={floating && !behindOrbit && behindChat}
     class:dragging={dragRatio !== undefined}
-    style="--open-here-ratio: {ratio}"
-    data-testid="openHereWindow"
+    style={floating ? `--open-here-ratio: ${ratio}` : undefined}
+    data-testid={floating ? "openHereWindow" : undefined}
     on:pointerdown|capture={bringForward}
 >
-    <div
-        class="open-here-tools flex justify-center items-center content-center u-surface p-2 gap-2 rounded-full absolute z-50"
-    >
-        <button
-            type="button"
-            class="u-ab-btn u-ab-icon h-12 w-12 p-0 m-0 rounded-none flex items-center justify-center"
-            on:click={toggleExpanded}
-            aria-label={expanded ? "Return to compact view" : "Open full-screen view"}
-            title={expanded ? "Return to compact view" : "Open full-screen view"}
-            data-testid="openHereExpand"
+    {#if floating}
+        <div
+            class="open-here-tools flex justify-center items-center content-center u-surface p-2 gap-2 rounded-full absolute z-50"
         >
-            <span class="u-ab-state" aria-hidden="true" />
-            {#if expanded}
-                <IconArrowsMinimize font-size="20" class="text-white" />
-            {:else}
-                <IconArrowsMaximize font-size="20" class="text-white" />
-            {/if}
-        </button>
-        <!-- Close is neutral: closing a window is not a destructive act, so it is not red. -->
-        <button
-            type="button"
-            class="u-ab-btn u-ab-icon h-12 w-12 p-0 m-0 rounded-none flex items-center justify-center"
-            on:click|preventDefault|stopPropagation={closeWindow}
-            aria-label={$LL.chat.fileViewer.close()}
-            title={$LL.chat.fileViewer.close()}
-            data-testid="openHereClose"
-        >
-            <span class="u-ab-state" aria-hidden="true" />
-            <IconX font-size="20" class="text-white" />
-        </button>
+            <button
+                type="button"
+                class="u-ab-btn u-ab-icon h-12 w-12 p-0 m-0 rounded-none flex items-center justify-center"
+                on:click={toggleExpanded}
+                aria-label={expanded ? "Return to compact view" : "Open full-screen view"}
+                title={expanded ? "Return to compact view" : "Open full-screen view"}
+                data-testid="openHereExpand"
+            >
+                <span class="u-ab-state" aria-hidden="true" />
+                {#if expanded}
+                    <IconArrowsMinimize font-size="20" class="text-white" />
+                {:else}
+                    <IconArrowsMaximize font-size="20" class="text-white" />
+                {/if}
+            </button>
+            <!-- Close is neutral: closing a window is not a destructive act, so it is not red. -->
+            <button
+                type="button"
+                class="u-ab-btn u-ab-icon h-12 w-12 p-0 m-0 rounded-none flex items-center justify-center"
+                on:click|preventDefault|stopPropagation={closeWindow}
+                aria-label={$LL.chat.fileViewer.close()}
+                title={$LL.chat.fileViewer.close()}
+                data-testid="openHereClose"
+            >
+                <span class="u-ab-state" aria-hidden="true" />
+                <IconX font-size="20" class="text-white" />
+            </button>
+        </div>
+    {/if}
+
+    <div bind:this={card} class:open-here-card={floating} class:split-card={!floating} id="cowebsites-window">
+        <CoWebsitesContainer windowed={floating} />
     </div>
 
-    <div bind:this={card} class="open-here-card" id="cowebsites-window">
-        <CoWebsitesContainer windowed />
-    </div>
-
-    {#if !expanded}
+    {#if floating && !expanded}
         <!-- A focusable separator is the splitter pattern: arrow keys step its width like a drag does. -->
         <!-- svelte-ignore a11y-no-noninteractive-tabindex -->
         <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
@@ -202,6 +214,11 @@
         &.behind-chat {
             z-index: 1999;
         }
+    }
+
+    // Upright on a phone the panel is not a card: it sits in the split, as it always did.
+    .split-card {
+        display: contents;
     }
 
     .open-here-card {
