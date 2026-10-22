@@ -43,6 +43,8 @@ export function dismissClosedItems(): void {
 export function closeAllOpenItems(): void {
     const before = get(coWebsites);
     const closed = before.filter((coWebsite) => coWebsite.isClosable());
+    // Only pages that may not be closed are open: nothing to close, and nothing else changes.
+    if (closed.length === 0) return;
     const active = get(activeCoWebsiteStore);
     const fullScreen = get(fullScreenCowebsite);
     fullScreenCowebsite.set(false);

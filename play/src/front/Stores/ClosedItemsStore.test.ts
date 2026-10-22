@@ -76,6 +76,21 @@ describe("closing several items at once", () => {
         expect(ids()).toEqual(["a", "c"]);
     });
 
+    it("changes nothing when only pages that may not be closed are open", () => {
+        const [a, b, kept] = [item("a"), item("b"), item("kept", false)];
+        [a, b].forEach((i) => coWebsites.add(i));
+        closeAllOpenItems();
+        expect(get(closedItemsStore)).toBeDefined();
+        coWebsites.removeAll();
+        coWebsites.add(kept);
+        fullScreenCowebsite.set(true);
+
+        closeAllOpenItems();
+        expect(ids()).toEqual(["kept"]);
+        expect(get(fullScreenCowebsite)).toBe(true);
+        fullScreenCowebsite.set(false);
+    });
+
     it("offers no Undo once what is left to bring back is a single item", () => {
         const [a, b] = [item("a"), item("b")];
         [a, b].forEach((i) => coWebsites.add(i));
