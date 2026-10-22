@@ -1,6 +1,7 @@
 import { derived } from "svelte/store";
 import { incomingRingStore } from "../Chat/Stores/RingStore";
 import { broadcastPanelOpenStore } from "./BroadcastStore";
+import { followStateStore } from "./FollowStore";
 import { requestVisitCardsStore } from "./GameStore";
 import { menuVisiblilityStore, openedMenuStore } from "./MenuStore";
 import { roomListVisibilityStore } from "./ModalStore";
@@ -23,6 +24,7 @@ export const cardOverWindowStore = derived(
         actionsMenuStore,
         showReportScreenStore,
         popupStore,
+        followStateStore,
         incomingRingStore,
     ],
     ([
@@ -35,6 +37,7 @@ export const cardOverWindowStore = derived(
         $actionsMenu,
         $showReportScreen,
         $popups,
+        $followState,
         $incomingRing,
     ]) =>
         cardOverWindow({
@@ -45,7 +48,10 @@ export const cardOverWindowStore = derived(
                 $wokaMenu !== undefined ||
                 $actionsMenu !== undefined ||
                 $showReportScreen !== userReportEmpty ||
-                $popups.some((popup) => popup.uuid === "popupFollow" || popup.uuid === NEW_DEVICE_POPUP_ID) ||
+                // The follow popup is a card only while it asks (a request); the pill of a follow going on and the note
+                // after one are not.
+                ($followState === "requesting" && $popups.some((popup) => popup.uuid === "popupFollow")) ||
+                $popups.some((popup) => popup.uuid === NEW_DEVICE_POPUP_ID) ||
                 $incomingRing !== undefined,
         })
 );
