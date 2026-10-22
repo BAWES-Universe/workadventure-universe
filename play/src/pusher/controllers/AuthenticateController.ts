@@ -29,10 +29,10 @@ function shouldRefreshAccessToken(err: unknown): boolean {
     return err.error === "invalid_token" || err.response?.statusCode === 401;
 }
 
-/** True when the provider no longer accepts this access token, which is when it can be renewed. */
-async function accessTokenHasRunOut(accessToken: string): Promise<boolean> {
+/** True when the provider no longer accepts the access token it checked, which is when it can be renewed. */
+async function accessTokenHasRunOut(check: Promise<unknown>): Promise<boolean> {
     try {
-        await openIDClient.checkTokenAuth(accessToken);
+        await check;
         return false;
     } catch (err) {
         return shouldRefreshAccessToken(err);
@@ -234,9 +234,11 @@ export class AuthenticateController extends BaseHttpController {
                         // A member's name comes from their account.
                         authTokenData.accessToken ? undefined : name?.trim().slice(0, 100) || undefined
                     );
-                const firstUserData = await fetchUserData(authTokenData.accessToken);
-
                 const { refreshToken } = authTokenData;
+                // The access token the game sent is checked with the provider at most once per request.
+                let sentTokenCheck: ReturnType<typeof openIDClient.checkTokenAuth> | undefined;
+                const checkSentToken = (accessToken: string) =>
+                    (sentTokenCheck ??= openIDClient.checkTokenAuth(accessToken));
                 // Renews the access token through the refresh token, once per request. Null when there is nothing to
                 // renew with or the provider refuses.
                 const renewWithProvider = async () => {
@@ -269,35 +271,26 @@ export class AuthenticateController extends BaseHttpController {
                 let renewalInFlight: ReturnType<typeof doRenewTokens> | undefined;
                 const renewTokens = () => (renewalInFlight ??= doRenewTokens());
 
-                let resUserData: Exclude<typeof firstUserData, { status: "error" }>;
-                // Orbit knew the player once asked with the renewed token: answer with that token, no need to check
-                // the old one that ran out.
-                let answeredWithRenewedToken = false;
-                if (firstUserData.status !== "error") {
-                    resUserData = firstUserData;
-                } else {
-                    // Orbit can't check an access token that ran out, so it answers a signed-in owner or member as it
-                    // would a stranger (e.g. "Members only"). Renew the token and ask Orbit once more. A token the
-                    // provider still accepts is a real refusal and stays one, unless the caller asked for a renewal.
-                    const renewed =
-                        authTokenData.accessToken &&
-                        refreshToken &&
-                        (refresh === "true" || (await accessTokenHasRunOut(authTokenData.accessToken)))
-                            ? await renewTokens()
-                            : null;
-                    if (!renewed) {
-                        res.json(firstUserData);
-                        return;
-                    }
-                    const askedAgain = await fetchUserData(renewed.accessToken);
-                    if (askedAgain.status === "error") {
-                        // Still refused: send the renewed token along, so the client keeps the one that works.
-                        res.json({ ...askedAgain, authToken: renewed.authToken });
-                        return;
-                    }
-                    resUserData = askedAgain;
-                    answeredWithRenewedToken = true;
+                // Renew an access token that ran out before asking Orbit, not after: Orbit can't check one that ran
+                // out, so it would answer and record a signed-in player as an unverified guest (game #1232), even
+                // in a public room where it lets them in. A renewal the caller asked for is done first too. When
+                // the renewal fails, Orbit is asked with the token the game sent, as before.
+                const renewedFirst =
+                    authTokenData.accessToken &&
+                    refreshToken &&
+                    (refresh === "true" || (await accessTokenHasRunOut(checkSentToken(authTokenData.accessToken))))
+                        ? await renewTokens()
+                        : null;
+                const firstUserData = await fetchUserData(renewedFirst?.accessToken ?? authTokenData.accessToken);
+                if (firstUserData.status === "error") {
+                    // A refusal stays one. After a renewal, send the renewed token along, so the client keeps the
+                    // one that works.
+                    res.json(renewedFirst ? { ...firstUserData, authToken: renewedFirst.authToken } : firstUserData);
+                    return;
                 }
+                const resUserData = firstUserData;
+                // Orbit knew the player with the renewed token: answer with that token, no need to check the old one.
+                const answeredWithRenewedToken = renewedFirst !== null;
 
                 if (authTokenData.accessToken == undefined) {
                     //if not nonce and code, anonymous user connected
@@ -335,7 +328,7 @@ export class AuthenticateController extends BaseHttpController {
                 if ((refresh === "true" || answeredWithRenewedToken) && (await respondWithRefreshedToken())) return;
 
                 try {
-                    const resCheckTokenAuth = await openIDClient.checkTokenAuth(authTokenData.accessToken);
+                    const resCheckTokenAuth = await checkSentToken(authTokenData.accessToken);
                     res.json({
                         username: authTokenData?.username,
                         authToken: token,
