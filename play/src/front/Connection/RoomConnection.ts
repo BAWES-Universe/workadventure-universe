@@ -109,6 +109,7 @@ import { gameManager } from "../Phaser/Game/GameManager";
 import { SelectCharacterScene, SelectCharacterSceneName } from "../Phaser/Login/SelectCharacterScene";
 import { SelectCompanionScene, SelectCompanionSceneName } from "../Phaser/Login/SelectCompanionScene";
 import { chatZoneLiveStore } from "../Stores/ChatStore";
+import { worldRolesStore } from "../Chat/Roles/WorldRoles";
 import { errorScreenStore } from "../Stores/ErrorScreenStore";
 import { followRoleStore, followUsersStore } from "../Stores/FollowStore";
 import { isSpeakerStore, requestedMicrophoneState, requestedCameraState } from "../Stores/MediaStore";
@@ -554,6 +555,7 @@ export class RoomConnection implements RoomConnection {
                         this.userId = roomJoinedMessage.currentUserId;
                         this.tags = roomJoinedMessage.tag;
                         this.permissions = permissionsFrom(roomJoinedMessage.permissions, this.tags);
+                        worldRolesStore.set(roomJoinedMessage.roleCatalogue?.roles);
                         this._userRoomToken = roomJoinedMessage.userRoomToken;
                         //define if there is invite user option activated
                         inviteUserActivated.set(
