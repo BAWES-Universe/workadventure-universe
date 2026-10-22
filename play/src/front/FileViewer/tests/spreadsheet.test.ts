@@ -115,6 +115,33 @@ describe("the spreadsheet reader", () => {
         expect(sheet.rowsCut).toBe(false);
     });
 
+    it("shows every row the cells fill when the size tag claims fewer rows", async () => {
+        const rows = [
+            ["a", "b"],
+            ["c", "d"],
+            ["e", "f"],
+            ["g", "h"],
+        ];
+        const zip = await JSZip.loadAsync(workbookBytes({ S: rows }));
+        const sheetXml = (await zip.file("xl/worksheets/sheet1.xml")?.async("string")) ?? "";
+        zip.file("xl/worksheets/sheet1.xml", sheetXml.replace(/<dimension[^>]*\/>/, '<dimension ref="A1:B2"/>'));
+        const [sheet] = await readSpreadsheet(await zip.generateAsync({ type: "arraybuffer" }));
+        expect(sheet.rows.map((row) => row.map((cell) => cell.text))).toEqual(rows);
+        expect(sheet.totalRows).toBe(4);
+        expect(sheet.rowsCut).toBe(false);
+    });
+
+    it("says a long sheet is cut when the size tag claims a short one", async () => {
+        const rows = Array.from({ length: MAX_TABLE_ROWS + 500 }, (_, index) => [`row ${index}`]);
+        const zip = await JSZip.loadAsync(workbookBytes({ S: rows }));
+        const sheetXml = (await zip.file("xl/worksheets/sheet1.xml")?.async("string")) ?? "";
+        zip.file("xl/worksheets/sheet1.xml", sheetXml.replace(/<dimension[^>]*\/>/, '<dimension ref="A1:A2"/>'));
+        const [sheet] = await readSpreadsheet(await zip.generateAsync({ type: "arraybuffer" }));
+        expect(sheet.rows).toHaveLength(MAX_TABLE_ROWS);
+        expect(sheet.rowsCut).toBe(true);
+        expect(sheet.totalRows).toBeUndefined();
+    });
+
     it("counts the rows the cells fill, not the size a file claims for a short sheet", async () => {
         const zip = await JSZip.loadAsync(
             workbookBytes({
