@@ -1,6 +1,6 @@
 <script lang="ts">
     import { afterUpdate, onDestroy, onMount, getContext } from "svelte";
-    import { readable } from "svelte/store";
+    import { readable, type Readable } from "svelte/store";
     import LL from "../../../i18n/i18n-svelte";
     import type { FileViewerCoWebsite } from "../../WebRtc/CoWebsite/FileViewerCoWebsite";
     import { coWebsites, fullScreenCowebsite } from "../../Stores/CoWebsiteStore";
@@ -66,7 +66,7 @@
 
     $: compact = panelWidth > 0 && panelWidth < COMPACT_WIDTH;
     const closable = actualCowebsite.isClosable();
-    const windowed = getContext<boolean | undefined>("openHereWindowed") ?? false;
+    const windowedStore = getContext<Readable<boolean> | undefined>("openHereWindowed") ?? readable(false);
 
     $: zoomPercent = controller?.zoomPercent ?? readable(100);
     $: pageListShown = controller?.pageList?.shown ?? readable(false);
@@ -246,7 +246,7 @@
 >
     <OpenHereRow name={source.name} line={subtitle}>
         <svelte:fragment slot="icon">
-            {#if compact || !windowed}
+            {#if compact || !$windowedStore}
                 <!-- The split panel of an upright phone keeps the way back until the phone has its own sheet. -->
                 {#if closable}
                     <button

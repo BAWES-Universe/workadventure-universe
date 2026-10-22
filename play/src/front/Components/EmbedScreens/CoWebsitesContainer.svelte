@@ -1,6 +1,6 @@
 <script lang="ts">
     import { afterUpdate, onDestroy, onMount, setContext } from "svelte";
-    import { get, type Unsubscriber } from "svelte/store";
+    import { get, writable, type Unsubscriber } from "svelte/store";
     import { titleBarHeightStore } from "../../TitleBar/WindowControlsOverlay";
     import { coWebsiteRatio, coWebsites, fullScreenCowebsite, windowSize } from "../../Stores/CoWebsiteStore";
     import JitsiCowebsiteComponent from "../Cowebsites/JistiCowebsiteComponent.svelte";
@@ -20,7 +20,9 @@
     /** Inside the Open here window (its card, pill and grip are drawn around this), rather than the split beside the game. */
     export let windowed = false;
     // A file in the split beside the game has no pill to close it: its row keeps the way back.
-    setContext("openHereWindowed", windowed);
+    const windowedStore = writable(windowed);
+    $: windowedStore.set(windowed);
+    setContext("openHereWindowed", windowedStore);
 
     //let container: HTMLElement;
     let activeCowebsite: CoWebsite = $coWebsites[0];
