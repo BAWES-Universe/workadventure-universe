@@ -64,6 +64,35 @@ describe("closing several items at once", () => {
         fullScreenCowebsite.set(false);
     });
 
+    it("does not bring back an item that something asked to remove meanwhile", () => {
+        const [a, b, c] = [item("a"), item("b"), item("c")];
+        [a, b, c].forEach((i) => coWebsites.add(i));
+
+        closeAllOpenItems();
+        coWebsites.remove(b);
+        expect(get(closedItemsStore)?.closed.map((i) => i.getId())).toEqual(["a", "c"]);
+
+        undoClosedItems();
+        expect(ids()).toEqual(["a", "c"]);
+    });
+
+    it("offers no Undo once what is left to bring back is a single item", () => {
+        const [a, b] = [item("a"), item("b")];
+        [a, b].forEach((i) => coWebsites.add(i));
+
+        closeAllOpenItems();
+        coWebsites.keepOnly((coWebsite) => coWebsite.getId() !== "a");
+        expect(get(closedItemsStore)).toBeUndefined();
+    });
+
+    it("offers no Undo after a map script closed everything", () => {
+        [item("a"), item("b")].forEach((i) => coWebsites.add(i));
+
+        closeAllOpenItems();
+        coWebsites.removeAll();
+        expect(get(closedItemsStore)).toBeUndefined();
+    });
+
     it("keeps a page that may not be closed, and counts only what it closed", () => {
         const kept = item("kept", false);
         [item("a"), kept, item("b")].forEach((i) => coWebsites.add(i));

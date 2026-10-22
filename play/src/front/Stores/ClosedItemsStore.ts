@@ -53,9 +53,27 @@ export function closeAllOpenItems(): void {
     set({ before, closed, active, fullScreen });
     hideTimer = setTimeout(dismissClosedItems, CLOSED_ITEMS_UNDO_MS);
     // Something new opened (another meeting zone, a link): what was closed is not brought back over it.
-    stopWatching = coWebsites.subscribe((open) => {
+    const stopWatchingOpened = coWebsites.subscribe((open) => {
         if (open.some((coWebsite) => !before.includes(coWebsite))) dismissClosedItems();
     });
+    // Something asked for an item to go meanwhile (a zone left, a map script): it is not brought back either.
+    let stillBefore = before;
+    let stillClosed = closed;
+    const stopWatchingRemoved = coWebsites.onRemoval((removes) => {
+        const remaining = stillClosed.filter((coWebsite) => !removes(coWebsite));
+        if (remaining.length === stillClosed.length) return;
+        if (remaining.length < 2) {
+            dismissClosedItems();
+            return;
+        }
+        stillClosed = remaining;
+        stillBefore = stillBefore.filter((coWebsite) => !removes(coWebsite));
+        set({ before: stillBefore, closed: stillClosed, active, fullScreen });
+    });
+    stopWatching = () => {
+        stopWatchingOpened();
+        stopWatchingRemoved();
+    };
 }
 
 export function undoClosedItems(): void {
