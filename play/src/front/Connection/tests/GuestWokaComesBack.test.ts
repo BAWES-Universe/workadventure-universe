@@ -80,7 +80,10 @@ describe("a guest whose sign-in was refused at the start", () => {
         localStorage.clear();
         const authToken = `header.${window.btoa(JSON.stringify({ identifier: "guest-uuid" }))}.signature`;
         mocks.anonymLogin.mockResolvedValue({ data: { userUuid: "guest-uuid", email: null, authToken } });
-        localUserStore.setAuthToken("expired-account-token");
+        // An account's game token that the pusher no longer accepts: three parts, the middle one a JSON payload
+        localUserStore.setAuthToken(
+            `header.${window.btoa(JSON.stringify({ identifier: "uuid-me", accessToken: "expired" }))}.signature`
+        );
         vi.spyOn(
             connectionManager as unknown as { checkAuthUserConnexion: () => Promise<never> },
             "checkAuthUserConnexion"
