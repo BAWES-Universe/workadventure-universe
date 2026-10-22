@@ -14,6 +14,12 @@ const OPEN_DOCUMENT_LIMITS = { columns: MAX_TABLE_COLUMNS + 1, rows: MAX_TABLE_R
  * which a phone can hold; a file past it is offered as a download instead.
  */
 const MAX_UNPACKED_SPREADSHEET_BYTES = 50 * 1024 * 1024;
+/**
+ * The most cells with a value an OpenDocument sheet is let to repeat into, counted over the rows that are read. A few
+ * bytes can repeat a cell a hundred times and a row a thousand times, so the size limit alone does not bound the cells
+ * the reader builds (measured: four million repeated cells, 2.5 MB of text, 14 seconds and 430 MB).
+ */
+const MAX_OPEN_DOCUMENT_CELLS = 2_000_000;
 
 /** Like Excel, which draws the first 1,024 characters of a cell, a cell is drawn up to this long. */
 const MAX_CELL_CHARS = 1024;
@@ -170,7 +176,8 @@ function attributeOf(attributes: string, name: string): string | undefined {
  * "display false". The file is walked tag by tag, once, so a crafted file cannot make it slow.
  *
  * A row repeated more often than the rows read is cut before the reader sees it, so the rows it leaves out are counted
- * here, by sheet name, to keep the sheet's length right. Only the first such row counts: the reader stops there.
+ * here, by sheet name, to keep the sheet's length right. Only the first such row counts: the reader stops there. The
+ * cells with a value that the rows read repeat into are counted too, and a file past the limit throws.
  */
 function scanOpenDocument(xml: string): { hidden: Set<string>; cutRows: Map<string, number> } {
     const cutRows = new Map<string, number>();
@@ -180,6 +187,14 @@ function scanOpenDocument(xml: string): { hidden: Set<string>; cutRows: Map<stri
     let openStyle: string | undefined;
     /** The sheet whose rows are being counted, and the rows before the tag being read; undefined once the reader stops. */
     let rowsOf: { name: string; before: number } | undefined;
+    /** The row being read, if the reader goes through it: its cells with a value, and how often it is repeated. */
+    let openRow: { cells: number; repeated: number } | undefined;
+    let cells = 0;
+    const countCells = (): void => {
+        if (cells + (openRow ? openRow.cells * openRow.repeated : 0) > MAX_OPEN_DOCUMENT_CELLS) {
+            throw new Error("The file is too big to show");
+        }
+    };
     let position = 0;
     for (;;) {
         const start = xml.indexOf("<", position);
@@ -207,6 +222,9 @@ function scanOpenDocument(xml: string): { hidden: Set<string>; cutRows: Map<stri
             rowsOf = tableName === undefined ? undefined : { name: tableName, before: 0 };
         } else if (name === "table:table-row" && rowsOf) {
             const repeated = Number(attributeOf(attributes, "table:number-rows-repeated") ?? 1);
+            openRow = tag.endsWith("/")
+                ? undefined
+                : { cells: 0, repeated: Math.min(repeated, OPEN_DOCUMENT_LIMITS.rows) };
             if (repeated > OPEN_DOCUMENT_LIMITS.rows) {
                 const left = repeated - OPEN_DOCUMENT_LIMITS.rows;
                 cutRows.set(rowsOf.name, left);
@@ -216,6 +234,16 @@ function scanOpenDocument(xml: string): { hidden: Set<string>; cutRows: Map<stri
                 rowsOf.before += repeated;
                 if (rowsOf.before >= MAX_TABLE_ROWS + READ_BEYOND_SHOWN) rowsOf = undefined;
             }
+        } else if (name === "table:table-cell" && openRow) {
+            if (attributeOf(attributes, "office:value-type") !== undefined) {
+                const repeated = Number(attributeOf(attributes, "table:number-columns-repeated") ?? 1);
+                openRow.cells += Math.min(repeated, OPEN_DOCUMENT_LIMITS.columns);
+                countCells();
+            }
+        } else if (name === "/table:table-row" && openRow) {
+            cells += openRow.cells * openRow.repeated;
+            openRow = undefined;
+            countCells();
         }
     }
     const hidden = new Set<string>();

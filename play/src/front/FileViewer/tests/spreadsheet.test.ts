@@ -327,6 +327,46 @@ describe("the spreadsheet reader", () => {
             expect(sheet.columnCount).toBe(50);
         });
 
+        async function odsWithRows(rows: string): Promise<ArrayBuffer> {
+            const zip = await JSZip.loadAsync(workbookBytes({ S: [[1]] }, "ods"));
+            const xml = await zip.file("content.xml")!.async("string");
+            zip.file("content.xml", xml.replace(/<table:table-row[\s\S]*<\/table:table-row>/, rows));
+            return zip.generateAsync({ type: "arraybuffer", compression: "DEFLATE" });
+        }
+        const valueCell = (repeated: number) =>
+            `<table:table-cell table:number-columns-repeated="${repeated}" office:value-type="float" office:value="7"><text:p>7</text:p></table:table-cell>`;
+
+        it("refuses a file whose repeated cells add up to millions, before the reader builds them", async () => {
+            // 40,000 cells of 101 repeats in one row: four million cells from 5 MB of text.
+            const bytes = await odsWithRows(`<table:table-row>${valueCell(101).repeat(40_000)}</table:table-row>`);
+            const started = Date.now();
+            await expect(readSpreadsheet(bytes)).rejects.toThrow("too big");
+            expect(Date.now() - started).toBeLessThan(5000);
+        });
+
+        it("counts a repeated row too: a row of 150,000 cells repeated a thousand times is refused", async () => {
+            const bytes = await odsWithRows(
+                `<table:table-row table:number-rows-repeated="1000">${valueCell(101).repeat(1500)}</table:table-row>`
+            );
+            await expect(readSpreadsheet(bytes)).rejects.toThrow("too big");
+        });
+
+        it("reads a wide sheet of a few hundred thousand repeated cells", async () => {
+            const bytes = await odsWithRows(`<table:table-row>${valueCell(101).repeat(2000)}</table:table-row>`);
+            const [sheet] = await readSpreadsheet(bytes);
+            expect(sheet.columnCount).toBe(MAX_TABLE_COLUMNS);
+            expect(sheet.rows[0].every((cell) => cell.text === "7")).toBe(true);
+        });
+
+        it("does not count empty repeated cells, such as the blank tail LibreOffice writes on every row", async () => {
+            const tail = `<table:table-cell table:number-columns-repeated="1024"/>`;
+            const row = `<table:table-row table:number-rows-repeated="1000">${tail.repeat(5000)}${valueCell(
+                1
+            )}</table:table-row>`;
+            const [sheet] = await readSpreadsheet(await odsWithRows(row));
+            expect(sheet.rowsCut).toBe(false);
+        });
+
         it("still says how many rows the sheet has when a repeated row is cut", async () => {
             const [sheet] = await readSpreadsheet(await odsWithRepeat(3, 5000));
             expect(sheet.rowsCut).toBe(true);
