@@ -19,7 +19,8 @@ const requestedCameraStateKey = "requestedCameraStateKey";
 const requestedMicrophoneStateKey = "requestedMicrophoneStateKey";
 const characterTexturesKey = "characterTextures";
 const guestCharacterTexturesKey = "guestCharacterTextures";
-const guestNameKey = "guestPlayerName";
+// Only names a guest typed are kept here. A new key, so no name an earlier build backed up can come back (#1271).
+const guestNameKey = "guestTypedPlayerNameBackup";
 // The name a guest typed last: the only name backupGuestName keeps aside (#1271).
 const guestTypedNameKey = "guestTypedPlayerName";
 const playerNameIsAccountsKey = "playerNameIsAccounts";
