@@ -89,6 +89,12 @@ function isHighSurrogate(codeUnit: number): boolean {
     return codeUnit >= 0xd800 && codeUnit <= 0xdbff;
 }
 
+/**
+ * A cell this short is always drawn whole, so numbers and short labels stay readable on a sheet that has used up its text
+ * budget (the cells drawn are limited too, so this adds at most this many characters to each).
+ */
+const SHORT_CELL_CHARS = 16;
+
 /** The cell with its text cut to what is drawn, taken from what is left of the sheet's text budget. */
 function limitedCell(cell: SheetCell, budget: { left: number; cut: boolean }): SheetCell {
     const room = Math.max(0, Math.min(MAX_CELL_CHARS, budget.left));
@@ -96,6 +102,7 @@ function limitedCell(cell: SheetCell, budget: { left: number; cut: boolean }): S
         budget.left -= cell.text.length;
         return cell;
     }
+    if (cell.text.length <= SHORT_CELL_CHARS) return cell;
     // Never end on the first half of a character the file writes as two code units (an emoji, for one).
     const end = room > 0 && isHighSurrogate(cell.text.charCodeAt(room - 1)) ? room - 1 : room;
     budget.left -= end;
