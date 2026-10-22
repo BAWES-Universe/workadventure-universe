@@ -29,9 +29,6 @@
         unsubscribeCowebsitesUpdate = coWebsites.subscribe((arr) => {
             activeCowebsite = arr[arr.length - 1];
         });
-
-        resizeBar?.addEventListener("mousedown", handleMouseDown);
-        resizeBar?.addEventListener("touchstart", handleTouchStart);
     });
 
     const handleMouseDown = () => {
@@ -145,10 +142,8 @@
 
         unsubscribeCowebsitesUpdate?.();
 
-        resizeBar?.removeEventListener("mousedown", handleMouseDown);
         document.removeEventListener("mousemove", handleMouseMove);
         document.removeEventListener("mouseup", handleMouseUp);
-        resizeBar?.removeEventListener("touchstart", handleTouchStart);
         document.removeEventListener("touchmove", handleTouchMove);
         document.removeEventListener("touchend", handleTouchEnd);
     });
@@ -340,8 +335,10 @@
                 : "absolute start-1 top-0 bottom-0 m-auto w-1 h-40 bg-white rounded cursor-col-resize after:content-[''] after:absolute after:-start-4 after:-top-4 after:h-48 after:w-6"}
             class:hidden={$fullScreenCowebsite}
             bind:this={resizeBar}
+            on:mousedown={handleMouseDown}
             on:mousedown={addDivForResize}
             on:mouseup={removeDivForResize}
+            on:touchstart={handleTouchStart}
             on:touchstart={addDivForResize}
             on:touchstart={() => {
                 /*isResized.set(true)*/

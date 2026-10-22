@@ -59,6 +59,8 @@
         setTimeout(() => {
             if (modalIframe && document.hasFocus() && document.activeElement === modalIframe) {
                 windowInFrontStore.set("window");
+                // A click on Orbit's own page brings it in front of the window of files and links, as one on its frame does.
+                sideWindowInFrontStore.set("orbit");
             }
         }, 0);
     }
