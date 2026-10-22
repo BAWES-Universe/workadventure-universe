@@ -33,6 +33,19 @@ describe("the role names Orbit sends with room access", () => {
         expect(isFetchMemberDataByUuidSuccessResponse.parse({ ...answer, roles }).roles).toEqual(roles);
     });
 
+    it.each(["#fff", "#FFFA", "#38BDF8", "#38bdf8cc"])("keeps the colour %s", (color) => {
+        const roles = [{ key: "a", name: "A", color, visibleOnOthers: true }];
+        expect(isFetchMemberDataByUuidSuccessResponse.parse({ ...answer, roles }).roles).toEqual(roles);
+    });
+
+    it.each(["red", "#12", "#38BDF8; position: fixed", "url(https://x.test/a.png)", ""])(
+        "turns the colour %j into the neutral one, so the badge is still drawn",
+        (color) => {
+            const roles = [{ key: "a", name: "A", color, visibleOnOthers: true }];
+            expect(isFetchMemberDataByUuidSuccessResponse.parse({ ...answer, roles }).roles?.[0].color).toBe("#9AA0B4");
+        }
+    );
+
     it("accepts an answer with no list, as older Orbit versions send", () => {
         expect(isFetchMemberDataByUuidSuccessResponse.parse(answer).roles).toBeUndefined();
     });
