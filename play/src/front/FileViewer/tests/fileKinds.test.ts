@@ -25,6 +25,8 @@ describe("picking how a file is shown", () => {
     it("reads the extension of a link, without its query or fragment", () => {
         expect(extensionOfLink("https://maps.example.com/files/plan.pdf?token=a.b.c#page=2")).toBe("pdf");
         expect(extensionOfLink("https://example.com/v1.2/readme")).toBe("");
+        expect(extensionOfLink("https://example.md")).toBe("");
+        expect(extensionOfLink("https://example.com/notes.md")).toBe("md");
         expect(extensionOfLink(undefined)).toBe("");
     });
 

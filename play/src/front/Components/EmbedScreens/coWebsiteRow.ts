@@ -27,6 +27,6 @@ export function copyCoWebsiteLink(coWebsite: CoWebsite): void {
 }
 
 export function openCoWebsiteInBrowserTab(coWebsite: CoWebsite): void {
-    window.open(coWebsite.getUrl().toString(), "_blank");
+    window.open(coWebsite.getUrl().toString(), "_blank", "noopener");
     analyticsClient.openCowebsiteInNewTab();
 }
