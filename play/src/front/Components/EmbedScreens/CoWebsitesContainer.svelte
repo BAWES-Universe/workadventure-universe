@@ -5,8 +5,10 @@
     import { coWebsiteRatio, coWebsites, fullScreenCowebsite, windowSize } from "../../Stores/CoWebsiteStore";
     import JitsiCowebsiteComponent from "../Cowebsites/JistiCowebsiteComponent.svelte";
     import SimpleCowebsiteComponent from "../Cowebsites/SimpleCowebsiteComponent.svelte";
+    import FileViewerCowebsiteComponent from "../Cowebsites/FileViewerCowebsiteComponent.svelte";
     import { JitsiCoWebsite } from "../../WebRtc/CoWebsite/JitsiCoWebsite";
     import { SimpleCoWebsite } from "../../WebRtc/CoWebsite/SimpleCoWebsite";
+    import { FileViewerCoWebsite } from "../../WebRtc/CoWebsite/FileViewerCoWebsite";
     import { BBBCoWebsite } from "../../WebRtc/CoWebsite/BBBCoWebsite";
     import BigBlueButtonCowebsiteComponent from "../Cowebsites/BigBlueButtonCowebsiteComponent.svelte";
     import type { CoWebsite } from "../../WebRtc/CoWebsite/CoWebsite";
@@ -148,6 +150,13 @@
         document.removeEventListener("touchend", handleTouchEnd);
     });
 
+    // Held to the screen's height on a phone held upright: a long file scrolls inside its panel instead of stretching it.
+    $: hasFileViewer = $coWebsites.some((coWebsite) => coWebsite instanceof FileViewerCoWebsite);
+
+    // A file on its own has its own header (name, Download, Close or Back), so the strip of tabs would only add a second
+    // row above it. With other panels open the tabs come back, so the person can still switch between them.
+    $: soleFileViewer = $coWebsites.length === 1 && $coWebsites[0] instanceof FileViewerCoWebsite;
+
     let tabsContainer: HTMLElement | undefined;
     let tabsContainerWidth = 0;
     let tabsOverflowing = false;
@@ -213,6 +222,7 @@
         <!-- The tabs lead the page on a phone held upright, where the installed app's status bar is see-through (#969). -->
         <div
             class="flex pb-2 pt-[calc(8px+env(safe-area-inset-top))] ms-3 items-center height-tab overflow-hidden flex-none"
+            class:hidden={soleFileViewer}
         >
             {#if tabsOverflowing && tabsScrollX > 0}
                 <div class="flex-0 w-10">
@@ -278,7 +288,11 @@
             </div>
         </div>
 
-        <div class={$screenOrientationStore === "portrait" ? "flex-1 mb-3" : "h-full object-contain ms-3"}>
+        <div
+            class={$screenOrientationStore === "portrait" ? "flex-1 mb-3" : "h-full object-contain ms-3"}
+            class:min-h-0={hasFileViewer}
+            class:file-viewer-alone={soleFileViewer && $screenOrientationStore !== "portrait" && !$fullScreenCowebsite}
+        >
             {#each $coWebsites as coWebsite (coWebsite.getId())}
                 {#if coWebsite instanceof JitsiCoWebsite}
                     <JitsiCowebsiteComponent actualCowebsite={coWebsite} visible={coWebsite === activeCowebsite} />
@@ -287,6 +301,8 @@
                         actualCowebsite={coWebsite}
                         visible={coWebsite === activeCowebsite}
                     />
+                {:else if coWebsite instanceof FileViewerCoWebsite}
+                    <FileViewerCowebsiteComponent actualCowebsite={coWebsite} visible={coWebsite === activeCowebsite} />
                 {:else if coWebsite instanceof SimpleCoWebsite}
                     <SimpleCowebsiteComponent
                         actualCowebsite={coWebsite}
@@ -317,6 +333,12 @@
 </div>
 
 <style>
+    /* Beside the map, a file on its own keeps the same gap around it as the mock shows. */
+    .file-viewer-alone {
+        padding: 12px 12px 12px 0;
+        box-sizing: border-box;
+    }
+
     .cowebsite-normal {
         position: relative;
         z-index: 1;

@@ -17,6 +17,7 @@ import { actionsMenuStore } from "../../Stores/ActionsMenuStore";
 import { mapEditorModeStore } from "../../Stores/MapEditorStore";
 import { createColorStore } from "../../Stores/OutlineColorStore";
 import { SimpleCoWebsite } from "../../WebRtc/CoWebsite/SimpleCoWebsite";
+import { createMapFileViewer, mapFileOpensInViewer } from "../../FileViewer/openFileViewer";
 import { coWebsites } from "../../Stores/CoWebsiteStore";
 import type { ActivatableInterface } from "../Game/ActivatableInterface";
 import { GameScene } from "../Game/GameScene";
@@ -462,13 +463,20 @@ export class Entity extends Phaser.GameObjects.Image implements ActivatableInter
                                     propertyValue: link,
                                 });
                             } else {
-                                const coWebsite = new SimpleCoWebsite(
-                                    new URL(link),
-                                    false, // No need for API in file viewer
-                                    property.policy,
-                                    property.width,
-                                    property.closable
-                                );
+                                // A PDF or a picture opens in the file viewer; any other file keeps the plain panel.
+                                const coWebsite = mapFileOpensInViewer(link)
+                                    ? createMapFileViewer({
+                                          link,
+                                          width: property.width,
+                                          closable: property.closable,
+                                      })
+                                    : new SimpleCoWebsite(
+                                          new URL(link),
+                                          false, // No need for API in file viewer
+                                          property.policy,
+                                          property.width,
+                                          property.closable
+                                      );
                                 try {
                                     coWebsites.add(coWebsite);
                                 } catch (error) {
