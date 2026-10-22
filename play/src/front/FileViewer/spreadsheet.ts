@@ -317,15 +317,15 @@ function scanOpenDocument(xml: string): { hidden: Set<string>; cutRows: Map<stri
                       built: rowsOf.before < MAX_TABLE_ROWS + READ_BEYOND_SHOWN,
                       sheet: rowsOf.name,
                   };
-            // Every repeat cut away moves the rows after it, empty or not. (The reader does not move on past a row
-            // written as one tag, "<row/>", so neither does this.)
+            // Every repeat moves the rows after it, and every repeat cut away is part of the sheet's length, empty
+            // rows too. (The reader does not move on past a row written as one tag, "<row/>", so neither does this.)
             if (!selfClosing) {
                 rowsOf.cut = Math.min(
                     rowsOf.cut + Math.max(0, repeated - OPEN_DOCUMENT_LIMITS.rows),
                     Number.MAX_SAFE_INTEGER
                 );
+                rowsOf.before = Math.min(rowsOf.before + repeated, Number.MAX_SAFE_INTEGER);
             }
-            rowsOf.before = Math.min(rowsOf.before + repeated, Number.MAX_SAFE_INTEGER);
         } else if ((local === "table-cell" || local === "数据") && !closing && openRow) {
             // A cell that is not empty: it names its type, or it has content (an empty cell is written without any).
             if (!selfClosing || /(?:^|\s)(?:[^\s=:]+:)?value-type\s*=/.test(attributes)) {
