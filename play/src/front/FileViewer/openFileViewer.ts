@@ -1,5 +1,6 @@
 import { derived, get, type Readable } from "svelte/store";
 import { coWebsites, fullScreenCowebsite } from "../Stores/CoWebsiteStore";
+import { bringOpenHereInFront } from "../Stores/SideWindowInFrontStore";
 import { FileViewerCoWebsite, type FileViewerSource } from "../WebRtc/CoWebsite/FileViewerCoWebsite";
 import { saveMessageFiles } from "../Chat/Components/Room/MessageActions/availableActions";
 import { extensionOf, fileKindOfLink } from "./fileKinds";
@@ -96,6 +97,8 @@ export function openChatFileInViewer(file: ChatFileToOpen): void {
             coWebsites.remove(existing);
             coWebsites.add(existing);
         }
+        // Tapped again with Orbit in front of the window: the window comes forward with the file.
+        bringOpenHereInFront();
         return;
     }
     const source: FileViewerSource = {

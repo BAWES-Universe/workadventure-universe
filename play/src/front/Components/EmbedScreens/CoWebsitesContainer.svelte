@@ -17,9 +17,12 @@
     import CoWebsiteTab from "./CoWebsiteTab.svelte";
     import { IconChevronLeft, IconChevronRight, IconArrowsMinimize } from "@wa-icons";
 
+    /** Inside the Open here window (its card, pill and grip are drawn around this), rather than the split beside the game. */
+    export let windowed = false;
+
     //let container: HTMLElement;
     let activeCowebsite: CoWebsite = $coWebsites[0];
-    let resizeBar: HTMLElement;
+    let resizeBar: HTMLElement | undefined;
     let unsubscribeCowebsitesUpdate: Unsubscriber | undefined;
 
     onMount(() => {
@@ -27,8 +30,8 @@
             activeCowebsite = arr[arr.length - 1];
         });
 
-        resizeBar.addEventListener("mousedown", handleMouseDown);
-        resizeBar.addEventListener("touchstart", handleTouchStart);
+        resizeBar?.addEventListener("mousedown", handleMouseDown);
+        resizeBar?.addEventListener("touchstart", handleTouchStart);
     });
 
     const handleMouseDown = () => {
@@ -142,10 +145,10 @@
 
         unsubscribeCowebsitesUpdate?.();
 
-        resizeBar.removeEventListener("mousedown", handleMouseDown);
+        resizeBar?.removeEventListener("mousedown", handleMouseDown);
         document.removeEventListener("mousemove", handleMouseMove);
         document.removeEventListener("mouseup", handleMouseUp);
-        resizeBar.removeEventListener("touchstart", handleTouchStart);
+        resizeBar?.removeEventListener("touchstart", handleTouchStart);
         document.removeEventListener("touchmove", handleTouchMove);
         document.removeEventListener("touchend", handleTouchEnd);
     });
@@ -213,16 +216,22 @@
 
 <div
     id="cowebsites-container"
-    class="w-full h-full bg-contrast/50 backdrop-blur relative {!$fullScreenCowebsite
-        ? 'cowebsite-normal'
-        : 'cowebsite-fullscreen'}"
-    style="transition: background-color 0.2s ease-in-out, backdrop-filter 0.2s ease-in-out;"
+    class="w-full h-full relative {windowed
+        ? 'cowebsite-window'
+        : `bg-contrast/50 backdrop-blur ${!$fullScreenCowebsite ? 'cowebsite-normal' : 'cowebsite-fullscreen'}`}"
+    class:pill-over-header={windowed && $fullScreenCowebsite && soleFileViewer}
+    style={windowed ? undefined : "transition: background-color 0.2s ease-in-out, backdrop-filter 0.2s ease-in-out;"}
 >
     <div class="h-full w-full flex flex-col">
-        <!-- The tabs lead the page on a phone held upright, where the installed app's status bar is see-through (#969). -->
+        <!-- The tabs lead the page on a phone held upright, where the installed app's status bar is see-through (#969).
+             In the window, its card sits under the bar and starts below the inset itself; expanded, the pill sits
+             at the top right and the tabs keep clear of it. -->
         <div
-            class="flex pb-2 pt-[calc(8px+env(safe-area-inset-top))] ms-3 items-center height-tab overflow-hidden flex-none"
+            class="flex pb-2 ms-3 items-center height-tab overflow-hidden flex-none {windowed
+                ? 'pt-2'
+                : 'pt-[calc(8px+env(safe-area-inset-top))]'}"
             class:hidden={soleFileViewer}
+            class:expanded-tabs={windowed && $fullScreenCowebsite}
         >
             {#if tabsOverflowing && tabsScrollX > 0}
                 <div class="flex-0 w-10">
@@ -272,26 +281,35 @@
                 </div>
             {/if}
 
-            <!-- svelte-ignore a11y-click-events-have-key-events -->
-            <!-- svelte-ignore a11y-no-static-element-interactions -->
-            <div class="flex justify-end w-10 flex-none">
-                <div
-                    class="ms-full h-10 w-10 rounded flex items-center justify-center hover:bg-white/10 me-2 cursor-pointer"
-                    on:click={toggleFullScreen}
-                >
-                    {#if !$fullScreenCowebsite}
-                        <IconArrowsMinimize font-size="20" class="text-white" />
-                    {:else}
-                        <IconArrowsMinimize font-size="20" class="text-white" />
-                    {/if}
+            {#if !windowed}
+                <!-- svelte-ignore a11y-click-events-have-key-events -->
+                <!-- svelte-ignore a11y-no-static-element-interactions -->
+                <div class="flex justify-end w-10 flex-none">
+                    <div
+                        class="ms-full h-10 w-10 rounded flex items-center justify-center hover:bg-white/10 me-2 cursor-pointer"
+                        on:click={toggleFullScreen}
+                    >
+                        {#if !$fullScreenCowebsite}
+                            <IconArrowsMinimize font-size="20" class="text-white" />
+                        {:else}
+                            <IconArrowsMinimize font-size="20" class="text-white" />
+                        {/if}
+                    </div>
                 </div>
-            </div>
+            {/if}
         </div>
 
         <div
-            class={$screenOrientationStore === "portrait" ? "flex-1 mb-3" : "h-full object-contain ms-3"}
+            class={windowed
+                ? "flex-1 min-h-0"
+                : $screenOrientationStore === "portrait"
+                ? "flex-1 mb-3"
+                : "h-full object-contain ms-3"}
             class:min-h-0={hasFileViewer}
-            class:file-viewer-alone={soleFileViewer && $screenOrientationStore !== "portrait" && !$fullScreenCowebsite}
+            class:file-viewer-alone={!windowed &&
+                soleFileViewer &&
+                $screenOrientationStore !== "portrait" &&
+                !$fullScreenCowebsite}
         >
             {#each $coWebsites as coWebsite (coWebsite.getId())}
                 {#if coWebsite instanceof JitsiCoWebsite}
@@ -313,26 +331,41 @@
             {/each}
         </div>
     </div>
-    <!-- We make the drag handle bigger than it really is to make it more easily selectable (especially on mobile) with "after" pseudo element -->
-    <!-- svelte-ignore a11y-no-static-element-interactions -->
-    <div
-        class={$screenOrientationStore === "portrait"
-            ? "-mt-1.5 mx-auto w-40 h-1 bg-white rounded cursor-row-resize relative after:content-[''] after:absolute after:-start-4 after:-top-1  after:w-48 after:h-6"
-            : "absolute start-1 top-0 bottom-0 m-auto w-1 h-40 bg-white rounded cursor-col-resize after:content-[''] after:absolute after:-start-4 after:-top-4 after:h-48 after:w-6"}
-        class:hidden={$fullScreenCowebsite}
-        bind:this={resizeBar}
-        on:mousedown={addDivForResize}
-        on:mouseup={removeDivForResize}
-        on:touchstart={addDivForResize}
-        on:touchstart={() => {
-            /*isResized.set(true)*/
-        }}
-        on:dragend={removeDivForResize}
-        on:touchend={removeDivForResize}
-    />
+    {#if !windowed}
+        <!-- We make the drag handle bigger than it really is to make it more easily selectable (especially on mobile) with "after" pseudo element -->
+        <!-- svelte-ignore a11y-no-static-element-interactions -->
+        <div
+            class={$screenOrientationStore === "portrait"
+                ? "-mt-1.5 mx-auto w-40 h-1 bg-white rounded cursor-row-resize relative after:content-[''] after:absolute after:-start-4 after:-top-1  after:w-48 after:h-6"
+                : "absolute start-1 top-0 bottom-0 m-auto w-1 h-40 bg-white rounded cursor-col-resize after:content-[''] after:absolute after:-start-4 after:-top-4 after:h-48 after:w-6"}
+            class:hidden={$fullScreenCowebsite}
+            bind:this={resizeBar}
+            on:mousedown={addDivForResize}
+            on:mouseup={removeDivForResize}
+            on:touchstart={addDivForResize}
+            on:touchstart={() => {
+                /*isResized.set(true)*/
+            }}
+            on:dragend={removeDivForResize}
+            on:touchend={removeDivForResize}
+        />
+    {/if}
 </div>
 
 <style>
+    /* In the window the card is the surface: a file sits flush in it, square, with the card's rounded corners clipping. */
+    .cowebsite-window :global(.viewer) {
+        border-radius: 0;
+        box-shadow: none;
+    }
+
+    /* Expanded, the pill sits at the top right of the screen: the tabs, or a file's header with no tabs above it, keep
+       clear of it. */
+    .expanded-tabs,
+    .pill-over-header :global(.vbar) {
+        padding-inline-end: 136px;
+    }
+
     /* Beside the map, a file on its own keeps the same gap around it as the mock shows. */
     .file-viewer-alone {
         padding: 12px 12px 12px 0;

@@ -20,7 +20,13 @@
     import { HtmlUtils } from "../WebRtc/HtmlUtils";
     import { iframeListener } from "../Api/IframeListener";
     import { desktopApi } from "../Api/Desktop";
-    import { canvasSize, coWebsiteManager, coWebsites, fullScreenCowebsite } from "../Stores/CoWebsiteStore";
+    import {
+        canvasSize,
+        coWebsiteManager,
+        coWebsites,
+        fullScreenCowebsite,
+        openHereFloatsStore,
+    } from "../Stores/CoWebsiteStore";
     import { gameSceneIsLoadedStore } from "../Stores/GameSceneStore";
     import { softReconnect } from "../Connection/SoftReconnect";
     import { urlManager } from "../Url/UrlManager";
@@ -38,6 +44,7 @@
     import { refreshPromptStore } from "../Stores/RefreshPromptStore";
     import BrowserNotSupported from "./BrowserNotSupported/BrowserNotSupported.svelte";
     import CoWebsitesContainer from "./EmbedScreens/CoWebsitesContainer.svelte";
+    import OpenHereWindow from "./EmbedScreens/OpenHereWindow.svelte";
     import GameOverlay from "./GameOverlay.svelte";
 
     let WebGLRenderer = Phaser.Renderer.WebGL.WebGLRenderer;
@@ -312,13 +319,17 @@
     >
         <div
             id="game"
-            class="relative {$fullScreenCowebsite ? 'hidden' : ''}"
+            class="relative {$fullScreenCowebsite && !$openHereFloatsStore ? 'hidden' : ''}"
             class:game-scene-loaded={$gameSceneIsLoadedStore}
             bind:this={gameDiv}
         >
             <GameOverlay {game} />
         </div>
-        {#if $coWebsites.length > 0}
+        {#if $coWebsites.length > 0 && $openHereFloatsStore}
+            <!-- Files and links open in a window over the game, like Orbit's: the map keeps its size. -->
+            <OpenHereWindow />
+        {:else if $coWebsites.length > 0}
+            <!-- An upright phone still splits the game with the panel. -->
             <div class="flex-1">
                 <!-- Transitions are breaking the onDestroy lifecycle of cowebsites -->
                 <!--            transition:fly={{-->

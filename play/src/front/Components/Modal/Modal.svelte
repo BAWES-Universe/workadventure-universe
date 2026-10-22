@@ -12,9 +12,10 @@
     } from "../../Stores/ModalStore";
     import { isMediaBreakpointUp } from "../../Utils/BreakpointsUtils";
     import { gameManager } from "../../Phaser/Game/GameManager";
-    import { canvasSize } from "../../Stores/CoWebsiteStore";
+    import { canvasSize, openHereInFrontOfOrbitStore } from "../../Stores/CoWebsiteStore";
     import { DESKTOP_LAYOUT_MIN_WIDTH } from "../../Stores/BarInViewStore";
     import { windowInFrontStore } from "../../Stores/WindowInFrontStore";
+    import { sideWindowInFrontStore } from "../../Stores/SideWindowInFrontStore";
     import { IconX, IconArrowsMaximize, IconArrowsMinimize } from "@wa-icons";
 
     /** The device asks for less motion: the panel appears and goes at once, without the blur. */
@@ -37,8 +38,9 @@
         }
     }
 
+    // Esc closes the window in front. The Open here window, when it is the one in front, takes the key instead.
     function onKeyDown(e: KeyboardEvent) {
-        if (e.key === "Escape") {
+        if (e.key === "Escape" && !$openHereInFrontOfOrbitStore) {
             close();
         }
     }
@@ -128,7 +130,10 @@
         : shown?.position} {isFullScreened ? 'fullscreened' : ''} {takesSide ? 'screen-blocker' : ''}"
     bind:this={mainModal}
     on:transitionend|self={reposition}
-    on:pointerdown|capture={() => windowInFrontStore.set("window")}
+    on:pointerdown|capture={() => {
+        windowInFrontStore.set("window");
+        sideWindowInFrontStore.set("orbit");
+    }}
 >
     <div
         class="modal-panel w-full h-full bg-contrast/80 backdrop-blur rounded"
