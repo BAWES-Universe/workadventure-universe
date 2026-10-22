@@ -1,54 +1,46 @@
 <script lang="ts">
     import { createEventDispatcher, onMount } from "svelte";
-    import CopyIcon from "../Icons/CopyIcon.svelte";
-    import ExternalLinkIcon from "../Icons/ExternalLinkIcon.svelte";
     import XIcon from "../Icons/XIcon.svelte";
     import type { CoWebsite } from "../../WebRtc/CoWebsite/CoWebsite";
     import { JitsiCoWebsite } from "../../WebRtc/CoWebsite/JitsiCoWebsite";
     import { BBBCoWebsite } from "../../WebRtc/CoWebsite/BBBCoWebsite";
+    import { FileViewerCoWebsite } from "../../WebRtc/CoWebsite/FileViewerCoWebsite";
     import { ICON_URL } from "../../Enum/EnvironmentVariable";
     import jitsiIcon from "../images/jitsi.png";
     import meetingIcon from "../images/meeting.svg";
     import LoaderIcon from "../Icons/LoaderIcon.svelte";
     import LL from "../../../i18n/i18n-svelte";
-    import PopUpCopyUrl from "../PopUp/PopUpCopyUrl.svelte";
-    import { popupStore } from "../../Stores/PopupStore";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
+    import { IconFile } from "@wa-icons";
 
     export let coWebsite: CoWebsite;
     export let isLoading = false;
     export let active = false;
 
-    let isDuplicable = true;
     let isJitsi: boolean = coWebsite instanceof JitsiCoWebsite;
     let isBBB: boolean = coWebsite instanceof BBBCoWebsite;
+    // A file shown by the file viewer has no address of its own to show, copy or open.
+    const fileName: string | undefined = coWebsite instanceof FileViewerCoWebsite ? coWebsite.source.name : undefined;
     let cowebsiteName: string;
     let alt: string;
     let srcSimpleCowebsite = `${ICON_URL}/icon?url=${encodeURIComponent(
         coWebsite.getUrl().toString()
     )}&size=64..96..256&fallback_icon_color=14304c`;
-    let url: string;
     let srcJitsi = jitsiIcon;
     let srcMeeting = meetingIcon;
 
     const dispatch = createEventDispatcher<{
         close: void;
-        copy: void;
     }>();
 
     onMount(() => {
-        if (isJitsi) {
-            isDuplicable = true;
-        } else if (isBBB) {
-            isDuplicable = true;
-        } else {
+        if (!isJitsi && !isBBB) {
             alt = coWebsite.getUrl().hostname;
             cowebsiteName = coWebsite
                 .getUrl()
                 .toString()
                 .replace(/.+\/\/|www.|\..+/g, "");
             cowebsiteName = cowebsiteName.charAt(0).toUpperCase() + cowebsiteName.slice(1);
-            isDuplicable = true;
         }
     });
 
@@ -64,23 +56,6 @@
             active = !active;
             analyticsClient.switchCowebsite();
         }
-    }
-
-    function copyUrl() {
-        url = coWebsite.getUrl().toString();
-
-        navigator.clipboard.writeText(url).catch((e) => console.error(e));
-        analyticsClient.copyCowebsiteLink();
-        dispatch("copy");
-        popupStore.addPopup(PopUpCopyUrl, {}, "popupCopyUrl");
-    }
-
-    function handleClick() {
-        url = coWebsite.getUrl().toString();
-
-        window.open(url, "_blank");
-        analyticsClient.openCowebsiteInNewTab();
-        if (isJitsi) closeTab();
     }
 </script>
 
@@ -98,6 +73,8 @@
             <img draggable="false" src={srcJitsi} {alt} class="h-6 w-6 bg-black rounded-lg align-middle" />
         {:else if isBBB}
             <img draggable="false" src={srcMeeting} {alt} class="h-6 w-6 bg-black rounded-lg align-middle" />
+        {:else if fileName !== undefined}
+            <IconFile font-size="24" class={active ? "text-contrast" : "text-white"} />
         {:else}
             <img draggable="false" src={srcSimpleCowebsite} {alt} class="h-6 w-6 bg-black rounded-lg align-middle" />
         {/if}
@@ -123,6 +100,8 @@
                         {$LL.cowebsite.jitsi()}
                     {:else if isBBB}
                         {$LL.cowebsite.bigBlueButton()}
+                    {:else if fileName !== undefined}
+                        {fileName}
                     {:else}
                         {cowebsiteName}
                     {/if}
@@ -130,7 +109,7 @@
                     <div class="w-[100px] h-2 animate-pulse rounded-sm {active ? 'bg-contrast/10' : 'bg-white/20'}" />
                 {/if}
             </div>
-            {#if !coWebsite.getHideUrl()}
+            {#if !coWebsite.getHideUrl() && fileName === undefined}
                 <div class="text-xxs opacity-50 text-ellipsis max-w-[150px] whitespace-nowrap overflow-hidden">
                     {#if isLoading}
                         {coWebsite.getUrl()}
@@ -146,36 +125,6 @@
         </div>
 
         <div class="flex gap-0.5">
-            {#if isDuplicable && !coWebsite.getHideUrl()}
-                <button
-                    class="group {active
-                        ? 'hover:bg-contrast/10'
-                        : 'hover:bg-white/10'} transition-all aspect-ratio h-8 w-8 rounded flex items-center justify-center"
-                    on:click={copyUrl}
-                >
-                    <ExternalLinkIcon
-                        height="h-6"
-                        width="w-6"
-                        strokeColor={active ? "stroke-contrast" : "stroke-white"}
-                        hover={active ? "" : ""}
-                    />
-                </button>
-            {/if}
-            {#if !coWebsite.getHideUrl()}
-                <button
-                    class="group {active
-                        ? 'hover:bg-contrast/10'
-                        : 'hover:bg-white/10'} transition-all aspect-ratio h-8 w-8 rounded flex items-center justify-center"
-                    on:click={handleClick}
-                >
-                    <CopyIcon
-                        height="h-6"
-                        width="w-6"
-                        strokeColor={active ? "stroke-contrast" : "stroke-white"}
-                        hover={active ? "" : ""}
-                    />
-                </button>
-            {/if}
             {#if coWebsite.isClosable() === true}
                 <button
                     class="group {active

@@ -39,6 +39,8 @@ export interface ExtensionModuleOptions {
     logoutCallback?(): void;
     showComponentInChat(component: ComponentType, props?: Record<string, unknown>): void;
     onPlayerMovementEnded?: (callback: (event: HasPlayerMovedInterface) => void) => void;
+    /** The room is joined again after the connection dropped (not a first join or a change of room). */
+    reconnecting?: boolean;
 }
 
 export interface ExtensionModuleAreaProperty {

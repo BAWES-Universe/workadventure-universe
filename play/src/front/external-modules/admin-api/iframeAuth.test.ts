@@ -24,6 +24,14 @@ describe("Orbit iframe authentication", () => {
         expect(new URL(buildAdminLoginUrl("https://admin.example.com", "r")).searchParams.has("redirect")).toBe(false);
     });
 
+    it("tells Orbit it is opened again after a reconnect only when asked", () => {
+        const url = (resume?: boolean) =>
+            new URL(buildAdminLoginUrl("https://admin.example.com", "r", undefined, undefined, resume));
+        expect(url(true).searchParams.get("resume")).toBe("1");
+        expect(url(false).searchParams.has("resume")).toBe(false);
+        expect(url().searchParams.has("resume")).toBe(false);
+    });
+
     it("accepts only a versioned ready message with a bounded nonce", () => {
         expect(isOrbitAuthReadyMessage({ type: "orbit-auth-ready-v2", version: 2, nonce: "1234567890abcdef" })).toBe(
             true

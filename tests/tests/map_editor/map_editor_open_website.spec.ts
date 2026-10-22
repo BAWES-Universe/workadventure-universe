@@ -153,9 +153,9 @@ test.describe("Map editor @oidc @nomobile @nowebkit", () => {
         await page.getByTestId('tab2').getByText('Docs', { exact: true }).click();
         await page.getByTestId('tab3').getByText('Docs', { exact: true }).click();
         await page.locator('div:nth-child(3) > .w-10').click();
-        await page.getByText('Drive', { exact: true }).click();
+        await page.locator('[data-testid^="tab"]').getByText('Drive', { exact: true }).click();
         await page.locator('div:nth-child(3) > .w-10').click();
-        await page.getByText('Drive', { exact: true }).click();
+        await page.locator('[data-testid^="tab"]').getByText('Drive', { exact: true }).click();
 
 
         await page.context().close();

@@ -1509,6 +1509,11 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             return;
         }
 
+        // Greeting is a chat too: a person the owner refused is not greeted (and the AI is not asked)
+        if (!(await this.bot.mayGreet(spaceName, playerId))) {
+            return;
+        }
+
         // Get conversation context (includes memory, emotions, relationship history)
         const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
         const playerName = this.resolvePlayerName(botId, playerId, this.conversationMemory);
@@ -1712,7 +1717,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         // Get UUID (REQUIRED by Admin API) - should be available from InitSpaceUsersMessage or addSpaceUserMessage
         const userUuid = this.userIdToUuid.get(senderId);
         if (!userUuid) {
-            console.warn(`[PatrolBehavior] UUID not found for user ${senderId} (${userName}). This should not happen if InitSpaceUsersMessage is working correctly.`);
+            console.warn(`[PatrolBehavior] UUID not found for user ${senderId}. This should not happen if InitSpaceUsersMessage is working correctly.`);
             // Don't proceed without UUID - conversation cannot be stored correctly
             return;
         }

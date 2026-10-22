@@ -78,7 +78,7 @@ test.describe("Map editor @oidc @nomobile @nowebkit", () => {
         await EntityEditor.addProperty(page, "openWebsite");
 
         // fill link
-        await page.getByPlaceholder("https://workadventu.re").first().fill("https://workadventu.re");
+        await page.getByPlaceholder("https://bawes.net").first().fill("https://workadventu.re");
 
         // close object selector
         await Menu.closeMapEditor(page);
@@ -132,7 +132,7 @@ test.describe("Map editor @oidc @nomobile @nowebkit", () => {
         await EntityEditor.addProperty(page, "openWebsite");
 
         // fill link
-        await page.getByPlaceholder("https://workadventu.re").first().fill("https://workadventu.re");
+        await page.getByPlaceholder("https://bawes.net").first().fill("https://workadventu.re");
 
         // close object selector
         await Menu.closeMapEditor(page);
