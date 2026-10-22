@@ -121,6 +121,22 @@ export const isFetchMemberDataByUuidSuccessResponse = z.object({
             "What the user may do in this world, as a decimal number (the sum of the permission bits). When it is missing, the game decides from the tags.",
         example: "16383",
     }),
+    roles: extendApi(
+        z
+            .array(
+                z.object({
+                    key: z.string(),
+                    name: z.string(),
+                    color: z.string(),
+                    visibleOnOthers: z.boolean(),
+                })
+            )
+            .optional(),
+        {
+            description:
+                "What each role key is called, highest first, for the badge next to people. Missing when the admin sends no list.",
+        }
+    ),
     world: extendApi(z.string(), {
         description: "name of the world",
     }),
