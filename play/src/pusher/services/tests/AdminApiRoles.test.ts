@@ -33,6 +33,33 @@ describe("the role names Orbit sends with room access", () => {
         expect(isFetchMemberDataByUuidSuccessResponse.parse({ ...answer, roles }).roles).toEqual(roles);
     });
 
+    it.each(["#fff", "#FFFA", "#38BDF8", "#38bdf8cc"])("keeps the colour %s", (color) => {
+        const roles = [{ key: "a", name: "A", color, visibleOnOthers: true }];
+        expect(isFetchMemberDataByUuidSuccessResponse.parse({ ...answer, roles }).roles).toEqual(roles);
+    });
+
+    it.each(["red", "#12", "#38BDF8; position: fixed", "url(https://x.test/a.png)", ""])(
+        "turns the colour %j into the neutral one, so the badge is still drawn",
+        (color) => {
+            const roles = [{ key: "a", name: "A", color, visibleOnOthers: true }];
+            expect(isFetchMemberDataByUuidSuccessResponse.parse({ ...answer, roles }).roles?.[0].color).toBe("#9AA0B4");
+        }
+    );
+
+    it("leaves out a badly formed role and keeps the others, so the player still joins (#1292)", () => {
+        const good = { key: "a", name: "A", color: "#38BDF8", visibleOnOthers: true };
+        const roles = [
+            { key: "b", name: null, color: "#38BDF8", visibleOnOthers: true },
+            good,
+            { key: "c", name: "C" },
+        ];
+        expect(isFetchMemberDataByUuidSuccessResponse.parse({ ...answer, roles }).roles).toEqual([good]);
+    });
+
+    it.each(["roles", {}, 7, null])("treats the value %j, which is not a list, as no roles (#1296)", (roles) => {
+        expect(isFetchMemberDataByUuidSuccessResponse.parse({ ...answer, roles }).roles).toEqual([]);
+    });
+
     it("accepts an answer with no list, as older Orbit versions send", () => {
         expect(isFetchMemberDataByUuidSuccessResponse.parse(answer).roles).toBeUndefined();
     });

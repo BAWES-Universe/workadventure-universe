@@ -45,6 +45,17 @@ import { iceServersService } from "./IceServersService";
 import type { BanAppealResult } from "./BanDetails";
 import { BanDetailsData } from "./BanDetails";
 
+const HEX_COLOUR = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+const NEUTRAL_ROLE_COLOUR = "#9AA0B4";
+
+const isWorldRole = z.object({
+    key: z.string(),
+    name: z.string(),
+    // Drawn as a CSS colour on the badge: only a hex colour is kept, anything else turns neutral.
+    color: z.string().regex(HEX_COLOUR).catch(NEUTRAL_ROLE_COLOUR),
+    visibleOnOthers: z.boolean(),
+});
+
 export const AdminBannedData = z.object({
     is_banned: z.boolean(),
     message: z.string(),
@@ -122,16 +133,20 @@ export const isFetchMemberDataByUuidSuccessResponse = z.object({
         example: "16383",
     }),
     roles: extendApi(
-        z
-            .array(
-                z.object({
-                    key: z.string(),
-                    name: z.string(),
-                    color: z.string(),
-                    visibleOnOthers: z.boolean(),
-                })
-            )
-            .optional(),
+        z.preprocess(
+            // Missing stays missing; anything that is not a list counts as no roles.
+            (value) => (value === undefined ? undefined : Array.isArray(value) ? value : []),
+            z
+                .array(z.unknown())
+                // A badly formed entry is left out: it must not stop the player from joining.
+                .transform((list) =>
+                    list.flatMap((entry) => {
+                        const role = isWorldRole.safeParse(entry);
+                        return role.success ? [role.data] : [];
+                    })
+                )
+                .optional()
+        ),
         {
             description:
                 "What each role key is called, highest first, for the badge next to people. Missing when the admin sends no list.",

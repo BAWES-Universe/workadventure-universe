@@ -41,6 +41,17 @@ describe("proxyFiles", () => {
     });
 
     it.each([
+        "/maps/x.svg/",
+        "/maps/x.svg//",
+        "/maps/x.svg/.",
+        "/maps/x.svg/./",
+        "/maps/dir/../x.svg",
+        "/maps/x%2Esvg%2F",
+    ])("finds the SVG asked for as %s", (path) => {
+        expect(serve(path).headers["content-security-policy"]).toBe(SVG_NO_CODE_POLICY);
+    });
+
+    it.each([
         "/private/files/notes-0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0.pdf",
         "/private/files/photo.png",
         "/maps/office/map.wam",
