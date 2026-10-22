@@ -411,6 +411,34 @@ describe("the spreadsheet reader", () => {
             expect(sheet.totalRows).toBe(5000);
         });
 
+        it("adds up every repeated row that is cut, empty ones before the last row with a value too", async () => {
+            const bytes = await odsWithRows(
+                `<table:table-row table:number-rows-repeated="5000"><table:table-cell/></table:table-row>` +
+                    `<table:table-row table:number-rows-repeated="3000">${valueCell(1)}</table:table-row>` +
+                    `<table:table-row table:number-rows-repeated="4000">${valueCell(1)}</table:table-row>`
+            );
+            const [sheet] = await readSpreadsheet(bytes);
+            expect(sheet.rowsCut).toBe(true);
+            expect(sheet.totalRows).toBe(12000);
+        });
+
+        it("keeps the cell limit when a sheet's name holds a '>'", async () => {
+            const zip = await JSZip.loadAsync(
+                await odsWithRows(`<table:table-row>${valueCell(101).repeat(40_000)}</table:table-row>`)
+            );
+            const xml = await zip.file("content.xml")!.async("string");
+            zip.file("content.xml", xml.replace(/table:name="S"/, 'table:name="a>b"'));
+            const bytes = await zip.generateAsync({ type: "arraybuffer", compression: "DEFLATE" });
+            await expect(readSpreadsheet(bytes)).rejects.toThrow("too big");
+        });
+
+        it("does not let a comment stand in for a sheet", async () => {
+            const bytes = await odsWithRows(
+                `<!-- <table:table> --><table:table-row>${valueCell(101).repeat(40_000)}</table:table-row>`
+            );
+            await expect(readSpreadsheet(bytes)).rejects.toThrow("too big");
+        });
+
         it("keeps a repeat that fits in the columns shown", async () => {
             const [sheet] = await readSpreadsheet(await odsWithRepeat(5, 2));
             expect(sheet.columnCount).toBe(5);
