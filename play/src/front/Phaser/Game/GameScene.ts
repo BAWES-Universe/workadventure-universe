@@ -49,6 +49,7 @@ import { lazyLoadPlayerCharacterTextures } from "../Entity/PlayerTexturesLoading
 import { lazyLoadPlayerCompanionTexture } from "../Companion/CompanionTexturesLoadingManager";
 import { iframeListener } from "../../Api/IframeListener";
 import { coWebsiteManager, coWebsites } from "../../Stores/CoWebsiteStore";
+import { dismissClosedItems } from "../../Stores/ClosedItemsStore";
 import {
     ADMIN_URL,
     DEBUG_MODE,
@@ -1386,6 +1387,8 @@ export class GameScene extends DirtyScene {
         mediaManager.disableMyMicrophone();
         // stop playing audio, close any open website, stop any open Jitsi, unsubscribe
         coWebsiteManager.cleanup();
+        // What was closed belongs to this map: Undo is not offered in the next one.
+        dismissClosedItems();
 
         iframeListener.cleanup();
         uiWebsiteManager.closeAll();

@@ -356,19 +356,21 @@
                 </div>
             {/if}
 
-            <button
-                type="button"
-                class="open-chip"
-                bind:this={chipElement}
-                aria-expanded={listOpen}
-                aria-haspopup="true"
-                aria-label={$LL.cowebsite.openList()}
-                data-testid="openHereList"
-                on:click={() => (listOpen = !listOpen)}
-            >
-                {$LL.cowebsite.openCount({ count: $coWebsites.length })}
-                <IconChevronDown font-size="16" />
-            </button>
+            {#if $coWebsites.length > 1}
+                <button
+                    type="button"
+                    class="open-chip"
+                    bind:this={chipElement}
+                    aria-expanded={listOpen}
+                    aria-haspopup="true"
+                    aria-label={$LL.cowebsite.openList()}
+                    data-testid="openHereList"
+                    on:click={() => (listOpen = !listOpen)}
+                >
+                    {$LL.cowebsite.openCount({ count: $coWebsites.length })}
+                    <IconChevronDown font-size="16" />
+                </button>
+            {/if}
 
             {#if !windowed}
                 <!-- svelte-ignore a11y-click-events-have-key-events -->
