@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => {
         PUSHER_URL: "http://pusher.example.com",
         PUBLIC_MAP_STORAGE_URL: "http://map-storage.example.com",
     };
-    return { anonymLogin: vi.fn(), setCharacterTextureIds: vi.fn() };
+    return { anonymLogin: vi.fn(), setCharacterTextureIds: vi.fn(), setPlayerName: vi.fn() };
 });
 
 vi.mock("../AxiosUtils", () => ({
@@ -17,7 +17,7 @@ vi.mock("../AxiosUtils", () => ({
 }));
 vi.mock("../Capabilities", () => ({ hasCapability: () => true }));
 vi.mock("../../Phaser/Game/GameManager", () => ({
-    gameManager: { setCharacterTextureIds: mocks.setCharacterTextureIds },
+    gameManager: { setCharacterTextureIds: mocks.setCharacterTextureIds, setPlayerName: mocks.setPlayerName },
 }));
 vi.mock("../../Administration/AnalyticsClient", () => ({ analyticsClient: { identifyUser: vi.fn() } }));
 vi.mock("../../Url/UrlManager", () => ({
@@ -101,6 +101,8 @@ describe("a guest whose sign-in was refused at the start", () => {
         await connectionManager.initGameConnexion();
 
         expect(localUserStore.getName()).toBeNull();
+        // And the game, which read the name when the page started, no longer holds it
+        expect(mocks.setPlayerName).toHaveBeenCalledWith(null);
     });
 
     it("keeps a name they typed themselves", async () => {
@@ -109,5 +111,6 @@ describe("a guest whose sign-in was refused at the start", () => {
         await connectionManager.initGameConnexion();
 
         expect(localUserStore.getName()).toBe("Guesty");
+        expect(mocks.setPlayerName).toHaveBeenCalledWith("Guesty");
     });
 });

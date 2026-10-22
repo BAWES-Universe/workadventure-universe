@@ -471,6 +471,8 @@ class ConnectionManager {
                             // Signed out without logging out: the device goes back to the guest's own name, or none,
                             // not the account's it kept (#1192, as signing out does).
                             localUserStore.restoreGuestName();
+                            // The game read the name when the page started: it joins with what it holds, so too.
+                            gameManager.setPlayerName(localUserStore.getName());
                             await this.anonymousLogin();
                         }
                     } else {
