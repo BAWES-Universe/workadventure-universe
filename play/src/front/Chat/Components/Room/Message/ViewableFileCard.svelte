@@ -2,7 +2,7 @@
     import { getContext, onMount } from "svelte";
     import LL from "../../../../../i18n/i18n-svelte";
     import { saveMessageFiles } from "../MessageActions/availableActions";
-    import { formatFileSize, fileKindOf } from "../../../../FileViewer/fileKinds";
+    import { badgeOfKind, formatFileSize, fileKindOf } from "../../../../FileViewer/fileKinds";
     import {
         openChatFileInNewTab,
         openChatFileInViewer,
@@ -20,9 +20,9 @@
     let size: number | undefined;
 
     $: kind = fileKindOf(name);
-    $: badge = kind === "pdf" ? { color: "#E53935", label: "PDF" } : { color: "#757575", label: "FILE" };
+    $: badge = kind ? badgeOfKind(kind) : { color: "#757575", label: "FILE", kindName: "File" };
     $: isOpen = $openFileViewerKeys.has(`chat:${url}`);
-    $: sub = size === undefined ? badge.label : `${badge.label} · ${formatFileSize(size)}`;
+    $: sub = size === undefined ? badge.kindName : `${badge.kindName} · ${formatFileSize(size)}`;
 
     onMount(() => {
         // The size comes from the copy chat already holds in memory: nothing is downloaded again.

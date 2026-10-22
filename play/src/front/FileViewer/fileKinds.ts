@@ -1,8 +1,12 @@
 /** The ways the file viewer can show a file. Each reader is loaded only when a file of its kind opens. */
-export type FileViewerKind = "pdf" | "image";
+export type FileViewerKind = "pdf" | "image" | "markdown" | "text" | "json" | "csv";
 
 const KIND_BY_EXTENSION: Record<string, FileViewerKind> = {
     pdf: "pdf",
+    md: "markdown",
+    txt: "text",
+    json: "json",
+    csv: "csv",
     jpg: "image",
     jpeg: "image",
     png: "image",
@@ -26,7 +30,19 @@ const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
  * The kinds a chat file card opens in the viewer. Pictures in chat keep the picture viewer, and videos and audio keep
  * playing in the chat, so they are not listed. Zip, PowerPoint and old Word files stay downloads.
  */
-export const CHAT_VIEWER_KINDS: ReadonlySet<FileViewerKind> = new Set<FileViewerKind>(["pdf"]);
+export const CHAT_VIEWER_KINDS: ReadonlySet<FileViewerKind> = new Set<FileViewerKind>([
+    "pdf",
+    "markdown",
+    "text",
+    "json",
+    "csv",
+]);
+
+/** The kinds a map's "Open file" shows in the viewer: the formats the map editor lets a map maker upload. */
+export const MAP_VIEWER_KINDS: ReadonlySet<FileViewerKind> = new Set<FileViewerKind>(["pdf", "image"]);
+
+/** The kinds that are text the viewer decodes itself (no reader library). */
+export const TEXT_KINDS: ReadonlySet<FileViewerKind> = new Set<FileViewerKind>(["markdown", "text", "json", "csv"]);
 
 /** The lower-case extension of a file name. A "#" or "?" in a name ("Invoice #12.pdf") is part of the name. */
 export function extensionOf(name: string | undefined): string {
@@ -61,8 +77,52 @@ export function imageMimeTypeOf(name: string | undefined): string {
     return IMAGE_MIME_BY_EXTENSION[extensionOf(name)] ?? "application/octet-stream";
 }
 
+export interface FileBadge {
+    /** The short text on the badge. */
+    label: string;
+    color: string;
+    /** The file's kind in words, after the badge on a chat card ("Markdown · 3 KB"). */
+    kindName: string;
+}
+
+const BADGE_BY_KIND: Record<FileViewerKind, FileBadge> = {
+    pdf: { label: "PDF", color: "#E53935", kindName: "PDF" },
+    image: { label: "IMG", color: "#5b6b82", kindName: "Picture" },
+    markdown: { label: "MD", color: "#5b6b82", kindName: "Markdown" },
+    text: { label: "TXT", color: "#5b6b82", kindName: "Text" },
+    json: { label: "JSON", color: "#5b6b82", kindName: "JSON" },
+    csv: { label: "CSV", color: "#1e7145", kindName: "CSV" },
+};
+
+/** The badge of a file the viewer opens, from its kind. */
+export function badgeOfKind(kind: FileViewerKind): FileBadge {
+    return BADGE_BY_KIND[kind];
+}
+
 function startsWith(bytes: Uint8Array, signature: number[], offset = 0): boolean {
     return signature.every((value, index) => bytes[offset + index] === value);
+}
+
+/** Text in a Unicode form: UTF-8 (with or without a byte order mark) or UTF-16 with one. Other bytes are not text. */
+export function textEncodingOf(bytes: Uint8Array): "utf-8" | "utf-16le" | "utf-16be" {
+    if (bytes[0] === 0xff && bytes[1] === 0xfe) return "utf-16le";
+    if (bytes[0] === 0xfe && bytes[1] === 0xff) return "utf-16be";
+    return "utf-8";
+}
+
+function looksLikeText(bytes: Uint8Array): boolean {
+    // A zero byte in the first few kilobytes is a binary file (UTF-16 text has them by design, and says so up front).
+    if (textEncodingOf(bytes) !== "utf-8") return true;
+    if (bytes.subarray(0, 8192).includes(0)) return false;
+    // Text in an older code page (Windows-1252, Windows-1256, as some spreadsheets export) is not UTF-8: it would show
+    // as broken letters, so it opens as "Can't preview" with the download instead. A letter cut at the end of the
+    // part checked is not an error.
+    try {
+        new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, 65536), { stream: bytes.length > 65536 });
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 /**
@@ -76,6 +136,7 @@ export function bytesMatchKind(kind: FileViewerKind, name: string, bytes: Uint8A
         const head = new TextDecoder("latin1").decode(bytes.subarray(0, 1024));
         return head.includes("%PDF-");
     }
+    if (TEXT_KINDS.has(kind)) return looksLikeText(bytes);
     switch (extensionOf(name)) {
         case "png":
             return startsWith(bytes, [0x89, 0x50, 0x4e, 0x47]);

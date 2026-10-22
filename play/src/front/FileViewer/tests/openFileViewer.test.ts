@@ -254,4 +254,40 @@ describe("opening a map's file in the viewer", () => {
         expect(open).not.toHaveBeenCalled();
         expect(hidden.downloadNeedsFile).toBe(true);
     });
+
+    it("shows only a PDF or a picture from a map's Open file, never the chat's text types", () => {
+        expect(mapFileOpensInViewer("https://maps.example/a.pdf?token=x")).toBe(true);
+        expect(mapFileOpensInViewer("https://maps.example/a.png")).toBe(true);
+        for (const name of ["a.md", "a.txt", "a.json", "a.csv", "a.zip"]) {
+            expect(mapFileOpensInViewer(`https://maps.example/${name}?token=x`)).toBe(false);
+        }
+    });
+
+    it("opens a text file in a new tab as plain text, so the browser never runs it", () => {
+        const open = vi.spyOn(window, "open").mockReturnValue(null);
+        const createObjectURL = vi.fn(() => "blob:http://play/text");
+        URL.createObjectURL = createObjectURL;
+        URL.revokeObjectURL = vi.fn();
+        openChatFileInViewer({ url: "blob:http://play/abc", name: "notes.md" });
+
+        opened()[0].source.openInNewTab?.(new TextEncoder().encode("<script>x</script>").buffer);
+
+        expect(open).toHaveBeenCalled();
+        const blob = (createObjectURL.mock.calls[0] as unknown as [Blob])[0];
+        expect(blob.type).toBe("text/plain;charset=utf-8");
+    });
+
+    it("tells the new tab when a text file is UTF-16, so it does not show as noise", () => {
+        vi.spyOn(window, "open").mockReturnValue(null);
+        const createObjectURL = vi.fn(() => "blob:http://play/text16");
+        URL.createObjectURL = createObjectURL;
+        URL.revokeObjectURL = vi.fn();
+        openChatFileInViewer({ url: "blob:http://play/abc", name: "notes.txt" });
+
+        // A little-endian byte order mark, then "hi".
+        opened()[0].source.openInNewTab?.(new Uint8Array([0xff, 0xfe, 0x68, 0x00, 0x69, 0x00]).buffer);
+
+        const blob = (createObjectURL.mock.calls[0] as unknown as [Blob])[0];
+        expect(blob.type).toBe("text/plain;charset=utf-16le");
+    });
 });
