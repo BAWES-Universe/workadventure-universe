@@ -104,6 +104,43 @@ describe("the caption of a Matrix picture or video", () => {
         expect(getMediaCaption(shown)).toBeUndefined();
     });
 
+    it("is empty for a picture sent as a reply by an app that writes the quoted lines and HTML around its name", () => {
+        const quoted = fakeEvent({ msgtype: "m.text", body: "Look at this" }, "$quoted");
+        const { shown } = contentOf(
+            {
+                msgtype: "m.image",
+                body: "> <@ada:matrix.test> Look at this\n\nimage.png",
+                formatted_body: "<mx-reply><blockquote>Look at this</blockquote></mx-reply><p>image.png</p>",
+                filename: "image.png",
+                url: "mxc://matrix.test/a",
+                "m.relates_to": { "m.in_reply_to": { event_id: "$quoted" } },
+            },
+            fakeRoom({ $quoted: quoted }),
+            "$quoted"
+        );
+
+        expect(shown.body).toBe("image.png");
+        expect(getMediaCaption(shown)).toBeUndefined();
+    });
+
+    it("keeps a caption written under a picture sent as a reply, without the quoted lines", () => {
+        const quoted = fakeEvent({ msgtype: "m.text", body: "Look at this" }, "$quoted");
+        const { shown } = contentOf(
+            {
+                msgtype: "m.image",
+                body: "> <@ada:matrix.test> Look at this\n\nThe new desk",
+                formatted_body: "<mx-reply><blockquote>Look at this</blockquote></mx-reply><p>The new desk</p>",
+                filename: "image.png",
+                url: "mxc://matrix.test/a",
+                "m.relates_to": { "m.in_reply_to": { event_id: "$quoted" } },
+            },
+            fakeRoom({ $quoted: quoted }),
+            "$quoted"
+        );
+
+        expect(getMediaCaption(shown)).toBe("The new desk");
+    });
+
     it("keeps the name of a document, whether or not it is sent as a reply", () => {
         const plain = contentOf({ msgtype: "m.file", body: "Q4 roster.pdf", url: "mxc://matrix.test/a" });
         expect(plain.message.type).toBe("file");

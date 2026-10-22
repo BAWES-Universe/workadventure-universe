@@ -23,6 +23,16 @@ interface MyReaction {
 /** Clicks closer together than this count as one burst: only where the burst ends is sent. */
 const REACTION_BURST_MS = 300;
 
+/** A Matrix reply's plain body starts with the quoted lines ("> <@name> text"), then a blank line, then the reply. */
+function withoutReplyFallback(body: unknown): string | undefined {
+    if (typeof body !== "string") return undefined;
+    const lines = body.split("\n");
+    let first = 0;
+    while (first < lines.length && lines[first].startsWith(">")) first++;
+    if (first > 0 && lines[first] === "") first++;
+    return lines.slice(first).join("\n");
+}
+
 export class MatrixChatMessage implements ChatMessage {
     id: string;
     content: Writable<ChatMessageContent>;
@@ -192,7 +202,11 @@ export class MatrixChatMessage implements ChatMessage {
         if (quotedMessage !== undefined && content.formatted_body) {
             this.quotedMessage = quotedMessage;
             return {
-                body: content.formatted_body.replace(/^(<mx-reply>).*(<\/mx-reply>)/, ""),
+                // A picture's text is plain: the reply fallback comes off its body, and its HTML form is not shown.
+                body:
+                    this.type === "text"
+                        ? content.formatted_body.replace(/^(<mx-reply>).*(<\/mx-reply>)/, "")
+                        : withoutReplyFallback(content.body),
                 url: undefined,
                 urls: undefined,
                 // A picture sent as a reply still tells its body from its name.
