@@ -238,11 +238,12 @@ interface OpenDocument {
 
 /**
  * A run of spaces in a cell's text is written as one tag with its length ("<text:s text:c="3"/>"), and the reader turns it
- * into that many spaces. A run is cut to this many: a cell is drawn up to 1,024 characters, and a few bytes would
+ * into that many spaces (it first turns every tab and line break into a space and every run of spaces into one, so the
+ * tag may be spelled with any of them between its name and its attribute). A run is cut to this many: a cell is drawn up to 1,024 characters, and a few bytes would
  * otherwise make a string of billions.
  */
 const MAX_SPACE_RUN = 32;
-const SPACE_RUN = /<text:s text:c="(\d+)"\/>/g;
+const SPACE_RUN = /<text:s[ \t\r\n]+text:c="(\d+)"\/>/g;
 
 /** The tags the reader goes by in an OpenDocument sheet (its own pattern): a value in quotes may hold a ">". */
 const OPEN_DOCUMENT_TAG = /<([/]?)([^\s?><!/:"]*:|)([^\s?<>:/"]+)(?:\s+[^<>=?"'\s]+="[^"]*?")*\s*[/]?>/g;
