@@ -468,6 +468,9 @@ class ConnectionManager {
                             }
                             return redirect;
                         } else {
+                            // Signed out without logging out: the device goes back to the guest's own name, or none,
+                            // not the account's it kept (#1192, as signing out does).
+                            localUserStore.restoreGuestName();
                             await this.anonymousLogin();
                         }
                     } else {

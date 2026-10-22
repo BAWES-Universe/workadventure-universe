@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { AxiosError } from "axios";
+import type { AxiosResponse } from "axios";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
     // The game reads its settings from window.env when it is loaded.
@@ -67,5 +69,45 @@ describe("a guest back from an abandoned sign-in", () => {
 
         expect(result).toMatchObject({ nextScene: "selectCharacterScene" });
         expect(mocks.setCharacterTextureIds).not.toHaveBeenCalled();
+    });
+});
+
+// A sign-in that is refused (the token is no longer valid) leaves the player a guest on a device that still holds the
+// account's name: it must not stay as the guest's name (#1284).
+describe("a guest whose sign-in was refused at the start", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        localStorage.clear();
+        const authToken = `header.${window.btoa(JSON.stringify({ identifier: "guest-uuid" }))}.signature`;
+        mocks.anonymLogin.mockResolvedValue({ data: { userUuid: "guest-uuid", email: null, authToken } });
+        localUserStore.setAuthToken("expired-account-token");
+        vi.spyOn(
+            connectionManager as unknown as { checkAuthUserConnexion: () => Promise<never> },
+            "checkAuthUserConnexion"
+        ).mockRejectedValue(
+            new AxiosError("Unauthorized", "ERR_BAD_REQUEST", undefined, undefined, {
+                status: 401,
+            } as AxiosResponse)
+        );
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    it("does not keep the account's name as their own", async () => {
+        localUserStore.setName("Ada Account", true);
+
+        await connectionManager.initGameConnexion();
+
+        expect(localUserStore.getName()).toBeNull();
+    });
+
+    it("keeps a name they typed themselves", async () => {
+        localUserStore.setName("Guesty");
+
+        await connectionManager.initGameConnexion();
+
+        expect(localUserStore.getName()).toBe("Guesty");
     });
 });
