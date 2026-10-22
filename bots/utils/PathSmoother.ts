@@ -2,7 +2,7 @@
  * PathSmoother - Smooths and optimizes paths for natural movement
  */
 
-import type { PositionInterface } from '../../play/src/front/Connection/ConnexionModels';
+import type { PositionInterface } from '../types/Position';
 
 export class PathSmoother {
     private readonly minWaypointDistance: number = 100; // Minimum distance between waypoints (pixels) - increased to prevent glitching
