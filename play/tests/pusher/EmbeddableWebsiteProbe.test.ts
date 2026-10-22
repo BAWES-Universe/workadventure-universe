@@ -96,12 +96,13 @@ describe("probeEmbeddableWebsite, a public site on a port other than 80 or 443",
         });
         expect(requests).toEqual(["HEAD /ok"]);
         requests.length = 0;
-        for (const internal of [
-            `http://127.0.0.1:${port}/ok`,
-            `http://localhost:${port}/ok`,
-            `http://10.0.0.5:8443/`,
-        ]) {
-            expect(await probeEmbeddableWebsite(internal)).toEqual({
+        const refused = await Promise.all(
+            [`http://127.0.0.1:${port}/ok`, `http://localhost:${port}/ok`, `http://10.0.0.5:8443/`].map((internal) =>
+                probeEmbeddableWebsite(internal)
+            )
+        );
+        for (const result of refused) {
+            expect(result).toEqual({
                 state: false,
                 embeddable: false,
                 message: "URL is not reachable",
