@@ -422,6 +422,14 @@ describe("the spreadsheet reader", () => {
             expect(sheet.totalRows).toBe(12000);
         });
 
+        it("keeps the cell limit after rows written as one tag, which the reader does not move on past", async () => {
+            const bytes = await odsWithRows(
+                `<table:table-row table:number-rows-repeated="5000"/>` +
+                    `<table:table-row>${valueCell(101).repeat(40_000)}</table:table-row>`
+            );
+            await expect(readSpreadsheet(bytes)).rejects.toThrow("too big");
+        });
+
         it("keeps the cell limit when a sheet's name holds a '>'", async () => {
             const zip = await JSZip.loadAsync(
                 await odsWithRows(`<table:table-row>${valueCell(101).repeat(40_000)}</table:table-row>`)
