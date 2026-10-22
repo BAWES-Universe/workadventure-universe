@@ -143,6 +143,16 @@ describe("signing out", () => {
         expect(localStorage.getItem("playerName")).toBeNull();
     });
 
+    it("doesn't hand a name nothing marked to the next guest after signing out (#1293)", async () => {
+        // Orbit gave no name, so the one the device holds (from an older version) was never marked as the account's.
+        localUserStore.setName("Khalid");
+        localStorage.removeItem("guestTypedPlayerName");
+        mocks.me.mockResolvedValue(meAnswer("K", false));
+        await openTheGame();
+        connectionManager.logout();
+        expect(localUserStore.getName()).toBeNull();
+    });
+
     it("keeps a guest's own name when a guest is logged out (a refused token)", () => {
         localUserStore.setName("Nova");
         connectionManager.logout();

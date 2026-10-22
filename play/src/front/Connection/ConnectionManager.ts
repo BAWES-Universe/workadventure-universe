@@ -223,10 +223,12 @@ class ConnectionManager {
     public logout() {
         // save the current token to use it in the redirect logout url
         const tokenTmp = localUserStore.getAuthToken();
+        // Read before the token goes: a guest whose token was refused is not an account that signs out.
+        const wasSignedIn = localUserStore.isLogged();
         //remove token in localstorage
         localUserStore.setAuthToken(null);
         // The device kept the account's name: the next guest here gets their own back, or none, not this one (#1192).
-        localUserStore.restoreGuestName();
+        localUserStore.restoreGuestName(wasSignedIn);
         //user logout, set connected store for menu at false (actually don't do it because we are going to redirect and
         // it shortly displays the "sign in" button before redirect happens)
         //userIsConnected.set(false);
