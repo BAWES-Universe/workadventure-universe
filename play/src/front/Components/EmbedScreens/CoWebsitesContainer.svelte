@@ -2,7 +2,13 @@
     import { afterUpdate, onDestroy, onMount, setContext } from "svelte";
     import { get, writable, type Unsubscriber } from "svelte/store";
     import { titleBarHeightStore } from "../../TitleBar/WindowControlsOverlay";
-    import { coWebsiteRatio, coWebsites, fullScreenCowebsite, windowSize } from "../../Stores/CoWebsiteStore";
+    import {
+        activeCoWebsiteStore,
+        coWebsiteRatio,
+        coWebsites,
+        fullScreenCowebsite,
+        windowSize,
+    } from "../../Stores/CoWebsiteStore";
     import JitsiCowebsiteComponent from "../Cowebsites/JistiCowebsiteComponent.svelte";
     import SimpleCowebsiteComponent from "../Cowebsites/SimpleCowebsiteComponent.svelte";
     import FileViewerCowebsiteComponent from "../Cowebsites/FileViewerCowebsiteComponent.svelte";
@@ -14,7 +20,7 @@
     import type { CoWebsite } from "../../WebRtc/CoWebsite/CoWebsite";
     import { screenOrientationStore } from "../../Stores/ScreenOrientationStore";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
-    import { closeAllOpenItems } from "../../Stores/ClosedItemsStore";
+    import { closeAllOpenItems, pickedAfterUndoStore } from "../../Stores/ClosedItemsStore";
     import LL from "../../../i18n/i18n-svelte";
     import CoWebsiteTab from "./CoWebsiteTab.svelte";
     import OpenHereItemIcon from "./OpenHereItemIcon.svelte";
@@ -32,6 +38,8 @@
     let activeCowebsite: CoWebsite = $coWebsites[0];
     let resizeBar: HTMLElement | undefined;
     let unsubscribeCowebsitesUpdate: Unsubscriber | undefined;
+    let unsubscribePickedAfterUndo: Unsubscriber | undefined;
+    $: activeCoWebsiteStore.set(activeCowebsite);
 
     onMount(() => {
         let previous: Array<CoWebsite> = [];
@@ -44,6 +52,12 @@
                 activeCowebsite = arr[arr.length - 1];
             }
             previous = arr;
+        });
+        // After an undo the item that was picked is picked again, not the last one back.
+        unsubscribePickedAfterUndo = pickedAfterUndoStore.subscribe((picked) => {
+            if (picked === undefined) return;
+            if (get(coWebsites).includes(picked)) activeCowebsite = picked;
+            pickedAfterUndoStore.set(undefined);
         });
     });
 
@@ -157,6 +171,7 @@
         fullScreenCowebsite.set(false);
 
         unsubscribeCowebsitesUpdate?.();
+        unsubscribePickedAfterUndo?.();
 
         document.removeEventListener("mousemove", handleMouseMove);
         document.removeEventListener("mouseup", handleMouseUp);
@@ -263,8 +278,8 @@
         listOpen = false;
     }
 
-    // Esc closes the list first, and leaves the window alone.
-    function onContainerKeyDown(event: KeyboardEvent) {
+    // Esc closes the list first, and leaves the window alone, wherever the focus is (capture: before the window's own Esc).
+    function onWindowKeyDownCapture(event: KeyboardEvent) {
         if (event.key === "Escape" && listOpen) {
             event.preventDefault();
             listOpen = false;
@@ -273,12 +288,10 @@
     }
 </script>
 
-<svelte:window on:pointerdown={onWindowPointerDown} />
+<svelte:window on:pointerdown={onWindowPointerDown} on:keydown|capture={onWindowKeyDownCapture} />
 
-<!-- svelte-ignore a11y-no-static-element-interactions -->
 <div
     id="cowebsites-container"
-    on:keydown={onContainerKeyDown}
     class="w-full h-full relative {windowed
         ? 'cowebsite-window'
         : `bg-contrast/50 backdrop-blur ${!$fullScreenCowebsite ? 'cowebsite-normal' : 'cowebsite-fullscreen'}`}"

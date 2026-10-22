@@ -5,10 +5,11 @@ import {
     closedItemsStore,
     closeAllOpenItems,
     dismissClosedItems,
+    pickedAfterUndoStore,
     undoClosedItems,
     CLOSED_ITEMS_UNDO_MS,
 } from "./ClosedItemsStore";
-import { coWebsites } from "./CoWebsiteStore";
+import { activeCoWebsiteStore, coWebsites } from "./CoWebsiteStore";
 
 vi.mock("../Administration/AnalyticsClient", () => ({
     analyticsClient: { closeCowebsite: vi.fn() },
@@ -63,12 +64,13 @@ describe("closing several items at once", () => {
         expect(ids()).toEqual(["a", "kept", "b"]);
     });
 
-    it("leaves what was opened since after the restored items", () => {
-        [item("a"), item("b")].forEach((i) => coWebsites.add(i));
-        closeAllOpenItems();
+    it("leaves what was opened since after the restored items, when the store is asked to restore", () => {
+        const [a, b] = [item("a"), item("b")];
+        [a, b].forEach((i) => coWebsites.add(i));
+        coWebsites.removeAll();
         coWebsites.add(item("new"));
 
-        undoClosedItems();
+        coWebsites.restore([a, b], [a, b]);
         expect(ids()).toEqual(["a", "b", "new"]);
     });
 
@@ -89,5 +91,27 @@ describe("closing several items at once", () => {
         closeAllOpenItems();
         expect(ids()).toEqual([]);
         expect(get(closedItemsStore)).toBeUndefined();
+    });
+    it("hands the window the item that was picked, to pick again", () => {
+        const [a, b, c] = [item("a"), item("b"), item("c")];
+        [a, b, c].forEach((i) => coWebsites.add(i));
+        activeCoWebsiteStore.set(a);
+
+        closeAllOpenItems();
+        undoClosedItems();
+
+        expect(get(pickedAfterUndoStore)).toBe(a);
+        pickedAfterUndoStore.set(undefined);
+    });
+
+    it("is not offered any more once something else opened", () => {
+        [item("a"), item("b")].forEach((i) => coWebsites.add(i));
+
+        closeAllOpenItems();
+        expect(get(closedItemsStore)).toBeDefined();
+
+        coWebsites.add(item("meeting"));
+        expect(get(closedItemsStore)).toBeUndefined();
+        expect(ids()).toEqual(["meeting"]);
     });
 });

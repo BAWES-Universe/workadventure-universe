@@ -94,6 +94,9 @@ export const coWebsites = createCoWebsiteStore();
 
 export const fullScreenCowebsite = writable(false);
 
+/** The item picked in the window of files and links, kept here so closing everything can bring it back picked. */
+export const activeCoWebsiteStore = writable<CoWebsite | undefined>(undefined);
+
 const browserWindowSize = readable({ width: window.innerWidth, height: window.innerHeight }, (set) => {
     const handleResize = () => {
         set({ width: window.innerWidth, height: window.innerHeight });
