@@ -408,7 +408,7 @@
         {#if listOpen}
             <div class="open-list u-surface" bind:this={listElement} role="menu" data-testid="openHereListMenu">
                 {#each $coWebsites as coWebsite (coWebsite.getId())}
-                    {@const item = describeCoWebsite(coWebsite)}
+                    {@const item = describeCoWebsite(coWebsite, $LL)}
                     <div class="open-list-row" class:picked={coWebsite === activeCowebsite}>
                         <button
                             type="button"

@@ -9,7 +9,7 @@ import {
     undoClosedItems,
     CLOSED_ITEMS_UNDO_MS,
 } from "./ClosedItemsStore";
-import { activeCoWebsiteStore, coWebsites } from "./CoWebsiteStore";
+import { activeCoWebsiteStore, coWebsites, fullScreenCowebsite } from "./CoWebsiteStore";
 
 vi.mock("../Administration/AnalyticsClient", () => ({
     analyticsClient: { closeCowebsite: vi.fn() },
@@ -50,6 +50,18 @@ describe("closing several items at once", () => {
         undoClosedItems();
         expect(ids()).toEqual(["a", "b", "c"]);
         expect(get(closedItemsStore)).toBeUndefined();
+    });
+
+    it("brings the window back full screen when it was", () => {
+        [item("a"), item("b")].forEach((i) => coWebsites.add(i));
+        fullScreenCowebsite.set(true);
+
+        closeAllOpenItems();
+        expect(get(fullScreenCowebsite)).toBe(false);
+
+        undoClosedItems();
+        expect(get(fullScreenCowebsite)).toBe(true);
+        fullScreenCowebsite.set(false);
     });
 
     it("keeps a page that may not be closed, and counts only what it closed", () => {

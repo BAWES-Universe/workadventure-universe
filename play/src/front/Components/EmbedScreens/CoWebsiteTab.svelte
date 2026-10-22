@@ -10,7 +10,7 @@
     export let coWebsite: CoWebsite;
     export let active = false;
 
-    const item = describeCoWebsite(coWebsite);
+    $: item = describeCoWebsite(coWebsite, $LL);
     let pill: HTMLElement | undefined;
 
     const dispatch = createEventDispatcher<{

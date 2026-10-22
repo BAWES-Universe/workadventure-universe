@@ -1,5 +1,6 @@
 import { get } from "svelte/store";
 import LL from "../../../i18n/i18n-svelte";
+import type { TranslationFunctions } from "../../../i18n/i18n-types";
 import type { CoWebsite } from "../../WebRtc/CoWebsite/CoWebsite";
 import { JitsiCoWebsite } from "../../WebRtc/CoWebsite/JitsiCoWebsite";
 import { BBBCoWebsite } from "../../WebRtc/CoWebsite/BBBCoWebsite";
@@ -30,8 +31,8 @@ export function fileBadgeFor(name: string): { label: string; color: string } {
     return { label: (extension || "FILE").slice(0, 4).toUpperCase(), color: "#5b6b82" };
 }
 
-export function describeCoWebsite(coWebsite: CoWebsite): CoWebsiteDescription {
-    const texts = get(LL);
+/** `texts` is the current translations; pass `$LL` so the description follows a change of language. */
+export function describeCoWebsite(coWebsite: CoWebsite, texts: TranslationFunctions = get(LL)): CoWebsiteDescription {
     const line = coWebsite.getHideUrl() ? "" : coWebsite.getUrl().hostname;
     if (coWebsite instanceof FileViewerCoWebsite) {
         const { source } = coWebsite;

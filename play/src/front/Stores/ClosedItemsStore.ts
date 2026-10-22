@@ -13,6 +13,8 @@ interface ClosedItems {
     closed: Array<CoWebsite>;
     /** The one that was picked. */
     active: CoWebsite | undefined;
+    /** Whether the window was full screen. */
+    fullScreen: boolean;
 }
 
 const { subscribe, set } = writable<ClosedItems | undefined>(undefined);
@@ -42,12 +44,13 @@ export function closeAllOpenItems(): void {
     const before = get(coWebsites);
     const closed = before.filter((coWebsite) => coWebsite.isClosable());
     const active = get(activeCoWebsiteStore);
+    const fullScreen = get(fullScreenCowebsite);
     fullScreenCowebsite.set(false);
     coWebsites.keepOnly((coWebsite) => !coWebsite.isClosable());
     analyticsClient.closeCowebsite();
     dismissClosedItems();
     if (closed.length < 2) return;
-    set({ before, closed, active });
+    set({ before, closed, active, fullScreen });
     hideTimer = setTimeout(dismissClosedItems, CLOSED_ITEMS_UNDO_MS);
     // Something new opened (another meeting zone, a link): what was closed is not brought back over it.
     stopWatching = coWebsites.subscribe((open) => {
@@ -60,5 +63,6 @@ export function undoClosedItems(): void {
     dismissClosedItems();
     if (!items) return;
     coWebsites.restore(items.before, items.closed);
+    fullScreenCowebsite.set(items.fullScreen);
     pickedAfterUndoStore.set(items.active);
 }
