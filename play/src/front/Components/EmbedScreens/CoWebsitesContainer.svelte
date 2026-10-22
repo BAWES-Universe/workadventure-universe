@@ -152,8 +152,10 @@
     $: hasFileViewer = $coWebsites.some((coWebsite) => coWebsite instanceof FileViewerCoWebsite);
 
     // An item on its own has its own row (icon, name, its actions), so the strip of tabs would only add a second row
-    // above it. With other panels open the tabs come back, so the person can still switch between them.
-    $: soleItem = $coWebsites.length === 1;
+    // above it. With other panels open the tabs come back, so the person can still switch between them. Without the
+    // window's pill (the split panel on an upright phone) only a file keeps its own way back, so a lone website or
+    // meeting there keeps the tab with its close.
+    $: soleItem = $coWebsites.length === 1 && (windowed || $coWebsites[0] instanceof FileViewerCoWebsite);
 
     let tabsContainer: HTMLElement | undefined;
     let tabsContainerWidth = 0;
