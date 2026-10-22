@@ -210,7 +210,7 @@ export class MatrixChatMessage implements ChatMessage {
                 body:
                     this.type === "text"
                         ? content.formatted_body.replace(/^(<mx-reply>).*(<\/mx-reply>)/, "")
-                        : withoutReplyFallback(content.body),
+                        : withoutReplyFallback(content.body) ?? "",
                 url: undefined,
                 urls: undefined,
                 // A picture sent as a reply still tells its body from its name.
@@ -222,7 +222,7 @@ export class MatrixChatMessage implements ChatMessage {
         if (this.type !== "text") {
             return {
                 // A reply picture whose app sends no HTML form still has the quoted lines in its plain text.
-                body: withoutReplyFallback(content.body),
+                body: withoutReplyFallback(content.body) ?? "",
                 // Set by loadMediaUrl once the file is fetched.
                 url: undefined,
                 urls: undefined,
