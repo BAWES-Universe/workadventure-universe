@@ -20,6 +20,9 @@
     import type { CoWebsite } from "../../WebRtc/CoWebsite/CoWebsite";
     import { screenOrientationStore } from "../../Stores/ScreenOrientationStore";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
+    import { emoteMenuStore } from "../../Stores/EmoteStore";
+    import { expressTrayStore } from "../../Stores/ExpressStore";
+    import { lightboxOpenStore } from "../../Stores/UserInputStore";
     import { closeAllOpenItems, pickedAfterUndoStore } from "../../Stores/ClosedItemsStore";
     import LL from "../../../i18n/i18n-svelte";
     import CoWebsiteTab from "./CoWebsiteTab.svelte";
@@ -281,6 +284,8 @@
     // Esc closes the list first, and leaves the window alone, wherever the focus is (capture: before the window's own Esc).
     function onWindowKeyDownCapture(event: KeyboardEvent) {
         if (event.key === "Escape" && listOpen) {
+            // The emote picker, the express tray and a picture shown large take their own Esc, as the window leaves it to them.
+            if ($emoteMenuStore || $expressTrayStore !== "closed" || $lightboxOpenStore) return;
             event.preventDefault();
             // Nothing else takes this Esc, such as the find bar of a file.
             event.stopPropagation();
