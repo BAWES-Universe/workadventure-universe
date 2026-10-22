@@ -299,6 +299,46 @@ describe("the spreadsheet reader", () => {
         expect(sheet.rows[0].map((cell) => cell.text)).toEqual(["a", "2"]);
     });
 
+    describe("a workbook of many sheets", () => {
+        function sparseSheet(): XLSX.WorkSheet {
+            // A cell in A1 and one far down and to the right: the grid drawn for it is 1000 rows of 100 columns.
+            return {
+                A1: { t: "s", v: "x" },
+                CV1000: { t: "s", v: "y" },
+                "!ref": "A1:CV1000",
+            };
+        }
+        function workbookOf(sheets: XLSX.WorkSheet[]): ArrayBuffer {
+            const workbook = XLSX.utils.book_new();
+            sheets.forEach((sheet, index) => XLSX.utils.book_append_sheet(workbook, sheet, `S${index}`));
+            return XLSX.write(workbook, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
+        }
+
+        it("opens a few sparse sheets", async () => {
+            const sheets = await readSpreadsheet(workbookOf(Array.from({ length: 10 }, sparseSheet)));
+            expect(sheets).toHaveLength(10);
+            expect(sheets[9].rows[999][99].text).toBe("y");
+        });
+
+        it("refuses sparse sheets whose grids add up to far more than a sheet can draw", async () => {
+            const bytes = workbookOf(Array.from({ length: 30 }, sparseSheet));
+            await expect(readSpreadsheet(bytes)).rejects.toThrow("too big");
+        });
+
+        it("shares the text drawn between the sheets, and says so on the sheet that is cut", async () => {
+            const longRows = (): XLSX.WorkSheet =>
+                XLSX.utils.aoa_to_sheet(Array.from({ length: 1000 }, () => [1, 2, 3].map(() => "x".repeat(1000))));
+            const sheets = await readSpreadsheet(workbookOf(Array.from({ length: 7 }, longRows)));
+            const drawn = sheets.reduce(
+                (sum, sheet) => sum + sheet.rows.flat().reduce((n, c) => n + c.text.length, 0),
+                0
+            );
+            expect(drawn).toBeLessThan(10_100_000);
+            expect(sheets[0].textCut).toBe(true);
+            expect(sheets[6].textCut).toBe(true);
+        });
+    });
+
     describe("an OpenDocument sheet that repeats a cell", () => {
         async function odsWithRepeat(columns: number, rows: number): Promise<ArrayBuffer> {
             const zip = await JSZip.loadAsync(workbookBytes({ S: [[1]] }, "ods"));
