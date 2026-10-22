@@ -5,6 +5,7 @@ import { requestVisitCardsStore } from "./GameStore";
 import { menuVisiblilityStore, openedMenuStore } from "./MenuStore";
 import { roomListVisibilityStore } from "./ModalStore";
 import { cardOverWindow } from "./OpenHereCards";
+import { NEW_DEVICE_POPUP_ID } from "./NewDeviceStore";
 import { popupStore } from "./PopupStore";
 import { showReportScreenStore, userReportEmpty } from "./ShowReportScreenStore";
 import { actionsMenuStore } from "./ActionsMenuStore";
@@ -44,7 +45,7 @@ export const cardOverWindowStore = derived(
                 $wokaMenu !== undefined ||
                 $actionsMenu !== undefined ||
                 $showReportScreen !== userReportEmpty ||
-                $popups.length > 0 ||
+                $popups.some((popup) => popup.uuid === "popupFollow" || popup.uuid === NEW_DEVICE_POPUP_ID) ||
                 $incomingRing !== undefined,
         })
 );

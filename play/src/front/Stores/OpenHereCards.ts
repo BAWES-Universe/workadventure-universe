@@ -4,7 +4,7 @@ export type CardsOpen = {
     barMenu: boolean;
     /** Settings, the Explore list or the broadcast panel. */
     panel: boolean;
-    /** A person's card, a visit request, Block or report, a ring, a popup. */
+    /** A person's card, a visit request, Block or report, a ring, a follow request or a new device (not a toast like "link copied"). */
     card: boolean;
 };
 
