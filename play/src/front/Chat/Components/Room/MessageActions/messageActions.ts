@@ -79,6 +79,17 @@ export function getCopyableText(type: ChatMessageType, content: ChatMessageConte
     return text;
 }
 
+/**
+ * The text a sender typed under a picture or video. A Matrix file's body is its name when it equals the file name
+ * (or when there is no caption at all): that is not text to show under the picture.
+ */
+export function getMediaCaption(content: ChatMessageContent): string | undefined {
+    const body = content.body?.trim() ?? "";
+    if (body === "") return undefined;
+    if (content.filename !== undefined && content.filename.trim() === body) return undefined;
+    return content.body;
+}
+
 export type ReplySummary =
     | { kind: "text"; text: string }
     | { kind: "photos"; count: number; thumbnail: string; caption: string | undefined }

@@ -2830,7 +2830,7 @@ export class BotClient {
                     }
                     
                     if (senderId === 0) {
-                        console.warn(`[Bot ${this.config.botId}] Could not find userId for player "${senderName}" (senderUserId: ${senderUserId}). Available players:`, Array.from(this.players.entries()).map(([id, p]) => `${p.name} (${id})`));
+                        console.warn(`[Bot ${this.config.botId}] Could not find userId for a player (senderUserId: ${senderUserId}). Known players: ${this.players.size}`);
                     }
                     
                     // If we have senderId but no UUID tracked yet, register it as pending
@@ -2844,7 +2844,7 @@ export class BotClient {
                             }
                             
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                                console.warn(`[Bot ${this.config.botId}] UUID not tracked for userId ${senderId} (${senderName}, senderUserId: ${senderUserId}). Registered as pending, waiting for addSpaceUserMessage...`);
+                                console.warn(`[Bot ${this.config.botId}] UUID not tracked for userId ${senderId} (senderUserId: ${senderUserId}). Registered as pending, waiting for addSpaceUserMessage...`);
                                 const uuidMap = (this.behavior as any).userIdToUuid;
                                 if (uuidMap) {
                                     console.log(`[Bot ${this.config.botId}] Current UUID tracking map (${uuidMap.size} entries):`, Array.from(uuidMap.entries()).map(([id, uuid]) => `${id} -> ${uuid}`));

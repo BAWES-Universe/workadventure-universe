@@ -99,7 +99,7 @@ function hexToIpv4(high: string, low: string): string {
  * Resolves like the default lookup, but fails when any address is blocked. The connection uses the address checked
  * here, so a hostname can't pass the check and then resolve to an internal address (DNS rebinding).
  */
-const safeLookup: LookupFunction = (hostname, options, callback) => {
+export const safeLookup: LookupFunction = (hostname, options, callback) => {
     dns.lookup(hostname, { ...options, all: true }, (error, addresses) => {
         if (error) {
             callback(error, "", 4);

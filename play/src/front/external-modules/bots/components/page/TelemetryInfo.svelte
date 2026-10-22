@@ -1,9 +1,19 @@
 <script lang="ts">
     // "What's sent", the explainer for Bot chat telemetry, in the bot module's dialog style (a dimmed page
     // and the raised surface), moved to the page's body so the panel does not clip it.
+    import { onMount } from "svelte";
     import LL from "../../../../../i18n/i18n-svelte";
 
     export let onClose: () => void;
+
+    let closeButton: HTMLButtonElement | undefined;
+
+    // The popup sits at the end of the page, so keyboard focus moves into it and comes back to its opener on close
+    onMount(() => {
+        const opener = document.activeElement as HTMLElement | null;
+        closeButton?.focus();
+        return () => opener?.focus?.();
+    });
 
     $: info = $LL.mapEditor.edit.bots.page.telemetry.info;
 
@@ -16,11 +26,15 @@
         };
     }
 
-    // Caught before the bot page's own Escape handler, so Escape closes this popup and not the screen behind it
+    // Caught before the bot page's own Escape handler, so Escape closes this popup and not the screen behind it.
+    // Close is the only thing in the popup to reach, so Tab and Shift+Tab keep focus on it instead of leaving.
     function onKeydown(e: KeyboardEvent) {
         if (e.key === "Escape") {
             e.stopPropagation();
             onClose();
+        } else if (e.key === "Tab") {
+            e.preventDefault();
+            closeButton?.focus();
         }
     }
 </script>
@@ -72,6 +86,7 @@
         </div>
         <div class="tm-foot">
             <button
+                bind:this={closeButton}
                 type="button"
                 class="u-join-btn u-cta tm-close"
                 data-testid="bot-telemetry-info-close"
