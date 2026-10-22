@@ -75,6 +75,43 @@ describe("probeEmbeddableWebsite, with the real address guard", () => {
     });
 });
 
+describe("probeEmbeddableWebsite, a public site on a port other than 80 or 443", () => {
+    it("is checked like any other site, and the port does not let an internal host through", async () => {
+        const lookup = ((hostname, lookupOptions, callback) => {
+            const done = callback as (error: Error | null, address: unknown, family?: number) => void;
+            if (hostname !== "public.test") {
+                done(new Error(`unexpected lookup of ${hostname}`), "", 4);
+                return;
+            }
+            if (lookupOptions.all) {
+                done(null, [{ address: "127.0.0.1", family: 4 }]);
+                return;
+            }
+            done(null, "127.0.0.1", 4);
+        }) as LookupFunction;
+        // The default URL check lets public.test:<port> through; 127.0.0.1 and localhost stay refused with the same port.
+        expect(await probeEmbeddableWebsite(`http://public.test:${port}/ok`, { lookup })).toEqual({
+            state: true,
+            embeddable: true,
+        });
+        expect(requests).toEqual(["HEAD /ok"]);
+        requests.length = 0;
+        const refused = await Promise.all(
+            [`http://127.0.0.1:${port}/ok`, `http://localhost:${port}/ok`, `http://10.0.0.5:8443/`].map((internal) =>
+                probeEmbeddableWebsite(internal)
+            )
+        );
+        for (const result of refused) {
+            expect(result).toEqual({
+                state: false,
+                embeddable: false,
+                message: "URL is not reachable",
+            });
+        }
+        expect(requests).toEqual([]);
+    });
+});
+
 describe("probeEmbeddableWebsite, when a name passes the URL check", () => {
     it("still refuses it when DNS points it at an internal address", async () => {
         const passEverything = (raw: string) => new URL(raw);

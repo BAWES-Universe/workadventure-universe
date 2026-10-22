@@ -110,16 +110,22 @@ function limitedCell(cell: SheetCell, budget: { left: number; cut: boolean }): S
     return { ...cell, text: `${cell.text.slice(0, end)}…` };
 }
 
-/** The last column (from 0) that holds a cell in the rows that are shown, or -1 when they hold none. */
-function lastUsedColumn(XLSX: typeof SheetJs, sheet: SheetJs.WorkSheet): number {
-    let last = -1;
+/**
+ * The last row and the last column (from 0) that hold a cell, or -1 when there are none. The reader keeps the cells it
+ * reads whatever size the file claims, so the rows count from the cells too: a file that claims a smaller size than its
+ * cells fill would otherwise lose the rest of its rows without a word. Only the columns of the rows that are shown count.
+ */
+function usedExtent(XLSX: typeof SheetJs, sheet: SheetJs.WorkSheet): { row: number; column: number } {
+    let row = -1;
+    let column = -1;
     for (const address in sheet) {
         if (address.charCodeAt(0) === 33) continue; // "!ref", "!fullref", "!merges"...
         const cell = XLSX.utils.decode_cell(address);
+        row = Math.max(row, cell.r);
         // The reader keeps rows beyond the ones that are shown; they do not count.
-        if (cell.r < MAX_TABLE_ROWS) last = Math.max(last, cell.c);
+        if (cell.r < MAX_TABLE_ROWS) column = Math.max(column, cell.c);
     }
-    return last;
+    return { row, column };
 }
 
 function holdsCells(sheet: SheetJs.WorkSheet | undefined): boolean {
@@ -151,14 +157,16 @@ function viewOfSheet(
     // Reading stops two rows after the rows that are shown. A sheet that ends within them is as long as its cells say,
     // whatever size the file claims. One that fills them all goes on, and its length is the size the file claims, or
     // unknown when it claims none: a file that gives no size cannot be counted without reading all of it.
-    const stoppedEarly = range.e.r + 1 > MAX_TABLE_ROWS;
-    const readAll = range.e.r + 1 <= MAX_TABLE_ROWS + READ_BEYOND_SHOWN - 1;
+    const used = usedExtent(XLSX, sheet);
+    const lastKnownRow = Math.max(range.e.r, used.row);
+    const stoppedEarly = lastKnownRow + 1 > MAX_TABLE_ROWS;
+    const readAll = lastKnownRow + 1 <= MAX_TABLE_ROWS + READ_BEYOND_SHOWN - 1;
     const fullReference = sheet["!fullref"];
     const claimedRows = fullReference ? XLSX.utils.decode_range(fullReference).e.r + 1 : undefined;
-    const totalRows = readAll ? range.e.r + 1 : claimedRows;
-    const lastRow = Math.min(range.e.r, MAX_TABLE_ROWS - 1);
+    const totalRows = readAll ? lastKnownRow + 1 : claimedRows;
+    const lastRow = Math.min(lastKnownRow, MAX_TABLE_ROWS - 1);
     // The columns are the ones that hold cells: the size a file claims can reach column XFD over a sheet of three.
-    const usedColumns = lastUsedColumn(XLSX, sheet) + 1;
+    const usedColumns = used.column + 1;
     const lastColumn = Math.min(Math.max(usedColumns, 1), MAX_TABLE_COLUMNS) - 1;
     // Like Excel, a sheet always starts at A1, even when its first cells are further down or to the right.
     workbook.gridLeft -= (lastRow + 1) * (lastColumn + 1);

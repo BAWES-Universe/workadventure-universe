@@ -10,6 +10,7 @@
 
     let open = false;
     let closeButton: HTMLButtonElement | undefined;
+    let triggerButton: HTMLButtonElement | undefined;
     $: top = roles[0];
     $: more = roles.length - 1;
 
@@ -24,6 +25,8 @@
     } else if (openedStore) {
         lightboxOpenStore.set(false);
         openedStore = false;
+        // The Close button is gone: the keyboard goes back to the badge it came from
+        void tick().then(() => triggerButton?.focus());
     }
     onDestroy(() => {
         if (openedStore) lightboxOpenStore.set(false);
@@ -49,6 +52,7 @@
 
 {#if top}
     <button
+        bind:this={triggerButton}
         type="button"
         class="role-badge relative m-0 ms-1 flex min-w-0 max-w-[58%] shrink items-center gap-1 border-0 bg-transparent p-0 text-white"
         data-testid="role-badge"

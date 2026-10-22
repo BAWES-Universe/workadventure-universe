@@ -177,7 +177,7 @@ export class RemotePlayer extends Character implements ActivatableInterface {
      * answer, or an answer of none, leaves the card as it is.
      */
     private async addMembershipAction(opening: number): Promise<void> {
-        if (!canOpenOrbit() || this.getChatID() === undefined) return;
+        if (!canOpenOrbit()) return;
         await addMembershipCardButton({
             userUuid: this.userUuid,
             ask: (userUuid) => botApiService.getMembershipButton(userUuid),

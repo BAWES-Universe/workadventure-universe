@@ -1,6 +1,9 @@
 import { derived, get, readable, writable } from "svelte/store";
 import type { CoWebsite } from "../WebRtc/CoWebsite/CoWebsite";
 import { appViewportHeight, titleBarHeightStore } from "../TitleBar/WindowControlsOverlay";
+import { mobileLayoutStore } from "./MobileLayoutStore";
+import { bringOpenHereInFront, sideWindowInFrontStore, windowBehindCardStore } from "./SideWindowInFrontStore";
+import { clampOpenHereRatio, OPEN_HERE_START_RATIO } from "./OpenHereWidth";
 
 export function createCoWebsiteStore() {
     const { subscribe, set, update } = writable<Array<CoWebsite>>([]);
@@ -21,9 +24,15 @@ export function createCoWebsiteStore() {
         } else {
             update((currentArray) => [...currentArray, coWebsite]);
         }
+        bringOpenHereInFront();
         if (get({ subscribe }).length === 1) {
             const coWebsiteWidthPercent = coWebsite.getWidthPercent();
-            if (coWebsiteWidthPercent) {
+            if (get(openHereFloatsStore)) {
+                // The window opens at a third of the screen, or at the width the map asked for.
+                coWebsiteRatio.set(
+                    coWebsiteWidthPercent ? clampOpenHereRatio(coWebsiteWidthPercent / 100) : OPEN_HERE_START_RATIO
+                );
+            } else if (coWebsiteWidthPercent) {
                 coWebsiteRatio.set(coWebsiteWidthPercent / 100);
             } else {
                 coWebsiteRatio.set(0.5);
@@ -89,10 +98,29 @@ export const windowSize = derived([browserWindowSize, titleBarHeightStore], ([$s
 
 export const coWebsiteRatio = writable(0.5);
 
+/**
+ * Files and links open in a window that floats over the game, like Orbit's, and the map keeps its size. An upright
+ * phone is the exception: the game is split there for now.
+ */
+export const openHereFloatsStore = derived(
+    [mobileLayoutStore, windowSize],
+    ([$mobileLayout, $windowSize]) => !($mobileLayout && $windowSize.portrait)
+);
+
+/**
+ * The window of files and links is showing and is in front of Orbit, which opens in the same place: opened or tapped
+ * last, and no menu or card has sent it behind.
+ */
+export const openHereInFrontOfOrbitStore = derived(
+    [coWebsites, openHereFloatsStore, sideWindowInFrontStore, windowBehindCardStore],
+    ([$coWebsites, $openHereFloats, $sideWindowInFront, $windowBehindCard]) =>
+        $coWebsites.length > 0 && $openHereFloats && $sideWindowInFront === "openHere" && !$windowBehindCard
+);
+
 export const canvasSize = derived(
-    [coWebsites, windowSize, coWebsiteRatio, fullScreenCowebsite],
-    ([$coWebsites, $windowSize, $coWebsiteRatio, $fullScreenCowebsite]) => {
-        if ($coWebsites.length === 0) {
+    [coWebsites, windowSize, coWebsiteRatio, fullScreenCowebsite, openHereFloatsStore],
+    ([$coWebsites, $windowSize, $coWebsiteRatio, $fullScreenCowebsite, $openHereFloats]) => {
+        if ($coWebsites.length === 0 || $openHereFloats) {
             return { width: window.innerWidth, height: $windowSize.height };
         }
         if ($fullScreenCowebsite) {

@@ -162,6 +162,11 @@ test.describe("Map editor interacting with object @oidc @nomobile", () => {
     const uploadFileA1 = request.post(fileUrlA);
     expect((await uploadFileA1).ok()).toBeTruthy();
 
+    // The file's window floats over the right of the map, where the area's panel is: close it, as a person would, to
+    // reach the panel.
+    await page.getByTestId("openHereClose").click();
+    await expect(page.getByTestId("openHereWindow")).toBeHidden();
+
     await AreaEditor.deleteFile(page);
 
     // Check if the PDF file of the area is still accessible

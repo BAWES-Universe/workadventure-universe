@@ -89,7 +89,17 @@ describe("the account's name on this device", () => {
         mocks.me.mockResolvedValue({ data: { ...meAnswer("Nova", false).data, userUuid: "uuid-someone-else" } });
         await openTheGame();
         expect(mocks.setPlayerName).toHaveBeenLastCalledWith("Nova");
-        expect(localStorage.getItem("playerName")).toBe("Khalid");
+        // The first account's name is not left on the device for this one (#1295)
+        expect(localStorage.getItem("playerName")).toBeNull();
+    });
+
+    it("doesn't show another account's name when Orbit has no name at all for this one (#1291)", async () => {
+        mocks.me.mockResolvedValue(meAnswer("Khalid"));
+        await openTheGame();
+        mocks.me.mockResolvedValue({ data: { ...meAnswer(undefined).data, userUuid: "uuid-someone-else" } });
+        await openTheGame();
+        expect(mocks.setPlayerName).toHaveBeenLastCalledWith(null);
+        expect(localStorage.getItem("playerName")).toBeNull();
     });
 
     it("keeps the device's name when the answer has none (control)", async () => {
@@ -132,6 +142,16 @@ describe("signing out", () => {
         connectionManager.logout();
         expect(localUserStore.getName()).toBeNull();
         expect(localStorage.getItem("playerName")).toBeNull();
+    });
+
+    it("doesn't hand a name nothing marked to the next guest after signing out (#1293)", async () => {
+        // Orbit gave no name, so the one the device holds (from an older version) was never marked as the account's.
+        localUserStore.setName("Khalid");
+        localStorage.removeItem("guestTypedPlayerName");
+        mocks.me.mockResolvedValue(meAnswer("K", false));
+        await openTheGame();
+        connectionManager.logout();
+        expect(localUserStore.getName()).toBeNull();
     });
 
     it("keeps a guest's own name when a guest is logged out (a refused token)", () => {
