@@ -1,6 +1,6 @@
 <script lang="ts">
-    import { afterUpdate, onDestroy, onMount } from "svelte";
-    import { get, type Unsubscriber } from "svelte/store";
+    import { afterUpdate, onDestroy, onMount, setContext } from "svelte";
+    import { get, writable, type Unsubscriber } from "svelte/store";
     import { titleBarHeightStore } from "../../TitleBar/WindowControlsOverlay";
     import { coWebsiteRatio, coWebsites, fullScreenCowebsite, windowSize } from "../../Stores/CoWebsiteStore";
     import JitsiCowebsiteComponent from "../Cowebsites/JistiCowebsiteComponent.svelte";
@@ -19,6 +19,10 @@
 
     /** Inside the Open here window (its card, pill and grip are drawn around this), rather than the split beside the game. */
     export let windowed = false;
+    // A file in the split beside the game has no pill to close it: its row keeps the way back.
+    const windowedStore = writable(windowed);
+    $: windowedStore.set(windowed);
+    setContext("openHereWindowed", windowedStore);
 
     //let container: HTMLElement;
     let activeCowebsite: CoWebsite = $coWebsites[0];
@@ -151,9 +155,11 @@
     // Held to the screen's height on a phone held upright: a long file scrolls inside its panel instead of stretching it.
     $: hasFileViewer = $coWebsites.some((coWebsite) => coWebsite instanceof FileViewerCoWebsite);
 
-    // A file on its own has its own header (name, Download, Close or Back), so the strip of tabs would only add a second
-    // row above it. With other panels open the tabs come back, so the person can still switch between them.
-    $: soleFileViewer = $coWebsites.length === 1 && $coWebsites[0] instanceof FileViewerCoWebsite;
+    // An item on its own has its own row (icon, name, its actions), so the strip of tabs would only add a second row
+    // above it. With other panels open the tabs come back, so the person can still switch between them. Without the
+    // window's pill (the split panel on an upright phone) only a file keeps its own way back, so a lone website or
+    // meeting there keeps the tab with its close.
+    $: soleItem = $coWebsites.length === 1 && (windowed || $coWebsites[0] instanceof FileViewerCoWebsite);
 
     let tabsContainer: HTMLElement | undefined;
     let tabsContainerWidth = 0;
@@ -222,7 +228,7 @@
     class="w-full h-full relative {windowed
         ? 'cowebsite-window'
         : `bg-contrast/50 backdrop-blur ${!$fullScreenCowebsite ? 'cowebsite-normal' : 'cowebsite-fullscreen'}`}"
-    class:pill-over-header={windowed && $fullScreenCowebsite && soleFileViewer}
+    class:pill-over-header={windowed && $fullScreenCowebsite && soleItem}
     style={windowed ? undefined : "transition: background-color 0.2s ease-in-out, backdrop-filter 0.2s ease-in-out;"}
 >
     <div class="h-full w-full flex flex-col">
@@ -233,7 +239,7 @@
             class="flex pb-2 ms-3 items-center height-tab overflow-hidden flex-none {windowed
                 ? 'pt-2'
                 : 'pt-[calc(8px+env(safe-area-inset-top))]'}"
-            class:hidden={soleFileViewer}
+            class:hidden={soleItem}
             class:expanded-tabs={windowed && $fullScreenCowebsite}
         >
             {#if tabsOverflowing && tabsScrollX > 0}
@@ -309,10 +315,7 @@
                 ? "flex-1 mb-3"
                 : "h-full object-contain ms-3"}
             class:min-h-0={hasFileViewer}
-            class:file-viewer-alone={!windowed &&
-                soleFileViewer &&
-                $screenOrientationStore !== "portrait" &&
-                !$fullScreenCowebsite}
+            style={!windowed && soleItem ? "padding-top: env(safe-area-inset-top, 0px)" : undefined}
         >
             {#each $coWebsites as coWebsite (coWebsite.getId())}
                 {#if coWebsite instanceof JitsiCoWebsite}
@@ -367,14 +370,8 @@
     /* Expanded, the pill sits at the top right of the screen: the tabs, or a file's header with no tabs above it, keep
        clear of it. */
     .expanded-tabs,
-    .pill-over-header :global(.vbar) {
+    .pill-over-header :global(.open-here-row) {
         padding-inline-end: 136px;
-    }
-
-    /* Beside the map, a file on its own keeps the same gap around it as the mock shows. */
-    .file-viewer-alone {
-        padding: 12px 12px 12px 0;
-        box-sizing: border-box;
     }
 
     .cowebsite-normal {
