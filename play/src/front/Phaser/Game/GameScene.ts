@@ -2669,6 +2669,7 @@ export class GameScene extends DirtyScene {
                             gameManager.closeGameScene();
                         },
                         onPlayerMovementEnded: this.onPlayerMovementEnded.bind(this),
+                        reconnecting: this.isReconnecting === true,
                     });
 
                     if (defaultExtensionModule.calendarSynchronised) isCalendarActiveStore.set(true);

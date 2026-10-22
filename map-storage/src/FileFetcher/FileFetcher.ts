@@ -5,6 +5,10 @@ import { CACHE_CONTROL } from "../Enum/EnvironmentVariable";
 
 const staticFileExtensions = ["png", "css", "js", "jpg", "jpeg", "ico", "svg", "html", "htm", "jpeg"];
 
+// An SVG opened as a page (a map's "Open file", a new tab) could run code on this address. This rule only stops code:
+// the picture draws the same, and browsers ignore it where an SVG is used as a picture.
+export const SVG_NO_CODE_POLICY = "script-src 'none'; object-src 'none'";
+
 export function proxyFiles(fileSystem: FileSystemInterface) {
     return (req: Request, res: Response, next: NextFunction) => {
         const unescapedPath = decodeURIComponent(req.path.replace(/\+/g, " "));
@@ -31,6 +35,10 @@ export function proxyFiles(fileSystem: FileSystemInterface) {
             } else {
                 res.set("Cache-control", CACHE_CONTROL);
             }
+        }
+
+        if (/\.svgz?$/i.test(unescapedPath)) {
+            res.set("Content-Security-Policy", SVG_NO_CODE_POLICY);
         }
 
         fileSystem.serveStaticFile(virtualPath, res, next);

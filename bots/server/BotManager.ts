@@ -108,6 +108,11 @@ function instantiateBehavior(kind: LegacyBehaviorType, cfg: Record<string, unkno
 
 export class BotManager {
     private bots: Map<string, BotInstance> = new Map();
+    /**
+     * Every bot spawned since this server started. Its memory stays held here after it despawns (to come back when it
+     * respawns), so a Forget must reach it too (#435).
+     */
+    private botsHoldingMemory: Set<string> = new Set();
     private adminApiService: AdminApiService;
     /** Asks Orbit who may chat with a bot nearby or summon it, before the bot's AI is reached. */
     private accessGate: BotAccessGate;
@@ -157,6 +162,8 @@ export class BotManager {
                 immediateSaveEnabled: true,
             });
             this.conversationMemory = persistentMemory;
+            // Orbit tells the bot server who a manager asked a private bot to forget (#435)
+            this.adminApiService.setForgetHandler?.((botId, notice) => persistentMemory.forget(botId, notice));
             
             // Initialize AI service
             const adminApiUrl = process.env.ADMIN_API_URL || '';
@@ -262,6 +269,14 @@ export class BotManager {
 
         // Start room occupancy verification
         this.startRoomVerification();
+        // Hide bot conversations (#1166): a Forget reaches bots nobody is talking to
+        this.adminApiService.startPrivacySync?.(
+            () => new Set([...this.bots.keys(), ...this.botsHoldingMemory]),
+            // A bot Orbit no longer knows, and that is not running, has nothing left to Forget: stop asking about it
+            (botId) => {
+                if (!this.bots.has(botId)) this.botsHoldingMemory.delete(botId);
+            }
+        );
 
         // TODO: Load bots from storage (WAM files + Admin API)
         // This will be called on server startup
@@ -363,6 +378,10 @@ export class BotManager {
         const hasLoadMemories = 'loadMemories' in this.conversationMemory && typeof (this.conversationMemory as any).loadMemories === 'function';
         
         if (hasLoadMemories) {
+            this.botsHoldingMemory.add(botId);
+            // A Forget pressed while the bot was away is applied to what is still held for it before anyone can be
+            // remembered from it (Orbit's answer carries the Forget; this never throws)
+            await this.adminApiService.isBotPrivate?.(botId, { fresh: true });
             const MAX_LOAD_RETRIES = 2;
             for (let attempt = 1; attempt <= MAX_LOAD_RETRIES; attempt++) {
                 try {
@@ -1294,6 +1313,7 @@ export class BotManager {
 
         // Stop verification interval
         this.stopRoomVerification();
+        this.adminApiService.stopPrivacySync?.();
 
         const shutdownPromises = Array.from(this.bots.keys()).map(botId => this.despawnBot(botId));
         await Promise.all(shutdownPromises);

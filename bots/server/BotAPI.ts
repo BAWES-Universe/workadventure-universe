@@ -452,9 +452,9 @@ export class BotAPI {
                 }
 
                 // The owner may limit who can call this bot over (Orbit decides). A refusal says so in a line the game
-                // shows as it is. When Orbit cannot answer and there is no earlier answer, the bot still comes: calling a
-                // bot over is open to everyone unless an owner or role rule says otherwise, and no rule has been seen.
-                // The gate has already reported Orbit not answering.
+                // shows as it is. When Orbit cannot answer and there is no earlier answer for this person, the bot does
+                // not come: nothing is known about the owner's rules, and chat fails the same way, so a bot that came
+                // could not be talked to anyway. The gate has already reported Orbit not answering.
                 const allowed = await this.botManager.getAccessGate().check(
                     botId,
                     'summon',
@@ -467,6 +467,15 @@ export class BotAPI {
                         error: allowed.line,
                         reason: allowed.line,
                         code: 'not_allowed',
+                    });
+                    return;
+                }
+                if (allowed.kind === 'cannot_check') {
+                    res.status(503).json({
+                        summoned: false,
+                        error: allowed.line,
+                        reason: allowed.line,
+                        code: 'cannot_check',
                     });
                     return;
                 }
@@ -1220,72 +1229,6 @@ export class BotAPI {
                 res.json(result);
             } catch (error: any) {
                 console.error('[BotAPI] Error replaying conversation:', error);
-                res.status(500).json({ error: error.message });
-            }
-        });
-
-        // Get problematic conversations
-        this.app.get('/api/bots/:botId/conversations/problematic', requireManager, async (req: BotAPIRequest, res: Response) => {
-            try {
-                const { botId } = req.params;
-                const criteria = req.query.criteria ? JSON.parse(req.query.criteria as string) : undefined;
-
-                const conversationReplay = this.botManager.getConversationReplay();
-                if (!conversationReplay) {
-                    res.status(503).json({ error: 'Conversation replay not available' });
-                    return;
-                }
-
-                const problematic = conversationReplay.identifyProblematicConversations(botId, criteria);
-                res.json({ botId, conversations: problematic, count: problematic.length });
-            } catch (error: any) {
-                console.error('[BotAPI] Error getting problematic conversations:', error);
-                res.status(500).json({ error: error.message });
-            }
-        });
-
-        // Conversation storage endpoints (production)
-        // Get recent conversations for a bot
-        this.app.get('/api/bots/:botId/conversations', requireManager, async (req: BotAPIRequest, res: Response) => {
-            try {
-                const { botId } = req.params;
-                const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
-                const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : undefined;
-                const userId = req.query.userId ? (req.query.userId as string) : undefined; // Changed from playerId (number) to userId (string)
-                const startDate = req.query.startDate ? parseInt(req.query.startDate as string, 10) : undefined;
-                const endDate = req.query.endDate ? parseInt(req.query.endDate as string, 10) : undefined;
-
-                const conversationStorage = this.botManager.getConversationStorage();
-                if (!conversationStorage) {
-                    res.status(503).json({ error: 'Conversation storage not available' });
-                    return;
-                }
-
-                const conversations = await conversationStorage.getConversations({
-                    botId,
-                    limit,
-                    offset,
-                    userId,
-                    startDate,
-                    endDate,
-                });
-
-                res.json({ botId, conversations, count: conversations.length });
-            } catch (error: any) {
-                console.error('[BotAPI] Error getting conversations:', error);
-                res.status(500).json({ error: error.message });
-            }
-        });
-
-        // Get specific conversation
-        this.app.get('/api/bots/:botId/conversations/:conversationId', requireManager, async (req: BotAPIRequest, res: Response) => {
-            try {
-                const { botId, conversationId } = req.params;
-                
-                // This would fetch from Admin API in a real implementation
-                res.status(501).json({ error: 'Not implemented - fetch from Admin API' });
-            } catch (error: any) {
-                console.error('[BotAPI] Error getting conversation:', error);
                 res.status(500).json({ error: error.message });
             }
         });

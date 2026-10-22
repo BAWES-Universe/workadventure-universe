@@ -73,7 +73,7 @@ class AreaAccessRights {
     );
     await EntityEditor.addProperty(page, "openWebsite");
     await page
-      .getByPlaceholder("https://workadventu.re")
+      .getByPlaceholder("https://bawes.net")
       .first()
       .fill("https://workadventu.re");
     await Menu.closeMapEditor(page);
@@ -106,7 +106,7 @@ class AreaAccessRights {
     );
     await EntityEditor.addProperty(page, "openWebsite");
     await page
-      .getByPlaceholder("https://workadventu.re")
+      .getByPlaceholder("https://bawes.net")
       .first()
       .fill("https://workadventu.re");
     await Menu.closeMapEditor(page);
