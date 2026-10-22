@@ -105,6 +105,8 @@ describe("signing out", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         localStorage.clear();
+        // Forget the name an earlier test left in memory
+        localUserStore.setName("earlier test", true);
         localUserStore.restoreGuestName();
         // On a guest's game token, as before signing in
         localUserStore.setAuthToken(`header.${window.btoa(JSON.stringify({ identifier: "guest" }))}.signature`);
@@ -119,6 +121,13 @@ describe("signing out", () => {
 
         connectionManager.logout();
         expect(localUserStore.getName()).toBe("Nova");
+    });
+
+    it("keeps a guest's own name when a guest is logged out (a refused token)", () => {
+        localUserStore.setName("Nova");
+        connectionManager.logout();
+        expect(localUserStore.getName()).toBe("Nova");
+        expect(localStorage.getItem("playerName")).toBe("Nova");
     });
 
     it("leaves no name when there was no guest name before", async () => {

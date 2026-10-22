@@ -140,6 +140,9 @@ class LocalUserStore {
 
     /** On signing out: the device goes back to the guest's own name, or to none, never the account's. */
     restoreGuestName(): void {
+        // A guest's own name stays: it is only the account's name the device kept that goes (a guest can get here too,
+        // when their token is refused).
+        if (localStorage.getItem(playerNameIsAccountsKey) === null) return;
         const backup = localStorage.getItem(guestNameKey);
         if (backup && isUserNameValid(backup)) {
             this.setName(backup);
