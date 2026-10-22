@@ -5,6 +5,7 @@
     import LL from "../../../../i18n/i18n-svelte";
     import { loadPdfJs, pdfDocumentOptions, type PdfJs } from "../../../FileViewer/pdfjs";
     import { findCountOf } from "../../../FileViewer/pdfFind";
+    import { presetToApplyAgain } from "../../../FileViewer/pdfScale";
     import { printPdfPages } from "../../../FileViewer/printPdfPages";
     import type { ViewerController, ViewerPages } from "../../../FileViewer/viewerController";
 
@@ -48,9 +49,10 @@
 
     function applyPresetAgain(): void {
         if (!pdfViewer?.pdfDocument) return;
-        // A preset such as "auto" or "page-width" follows the panel's width: apply it again at the new width.
-        const value = pdfViewer.currentScaleValue;
-        if (value && Number.isNaN(Number(value))) pdfViewer.currentScaleValue = value;
+        // A preset such as "auto" or "page-width" follows the panel's width: apply it again at the new width, but not
+        // while the panel is hidden and has none.
+        const preset = presetToApplyAgain(pdfViewer.currentScaleValue, container.clientWidth);
+        if (preset) pdfViewer.currentScaleValue = preset;
     }
 
     function buildController(): ViewerController {
