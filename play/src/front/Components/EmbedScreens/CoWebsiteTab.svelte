@@ -1,158 +1,128 @@
 <script lang="ts">
-    import { createEventDispatcher, onMount } from "svelte";
-    import XIcon from "../Icons/XIcon.svelte";
+    import { createEventDispatcher } from "svelte";
     import type { CoWebsite } from "../../WebRtc/CoWebsite/CoWebsite";
-    import { JitsiCoWebsite } from "../../WebRtc/CoWebsite/JitsiCoWebsite";
-    import { BBBCoWebsite } from "../../WebRtc/CoWebsite/BBBCoWebsite";
-    import { FileViewerCoWebsite } from "../../WebRtc/CoWebsite/FileViewerCoWebsite";
-    import { ICON_URL } from "../../Enum/EnvironmentVariable";
-    import jitsiIcon from "../images/jitsi.png";
-    import meetingIcon from "../images/meeting.svg";
-    import LoaderIcon from "../Icons/LoaderIcon.svelte";
     import LL from "../../../i18n/i18n-svelte";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
-    import { IconFile } from "@wa-icons";
+    import OpenHereItemIcon from "./OpenHereItemIcon.svelte";
+    import { describeCoWebsite } from "./describeCoWebsite";
+    import { IconX } from "@wa-icons";
 
     export let coWebsite: CoWebsite;
-    export let isLoading = false;
     export let active = false;
 
-    let isJitsi: boolean = coWebsite instanceof JitsiCoWebsite;
-    let isBBB: boolean = coWebsite instanceof BBBCoWebsite;
-    // A file shown by the file viewer has no address of its own to show, copy or open.
-    const fileName: string | undefined = coWebsite instanceof FileViewerCoWebsite ? coWebsite.source.name : undefined;
-    let cowebsiteName: string;
-    let alt: string;
-    let srcSimpleCowebsite = `${ICON_URL}/icon?url=${encodeURIComponent(
-        coWebsite.getUrl().toString()
-    )}&size=64..96..256&fallback_icon_color=14304c`;
-    let srcJitsi = jitsiIcon;
-    let srcMeeting = meetingIcon;
+    const item = describeCoWebsite(coWebsite);
+    let pill: HTMLElement | undefined;
 
     const dispatch = createEventDispatcher<{
         close: void;
     }>();
 
-    onMount(() => {
-        if (!isJitsi && !isBBB) {
-            alt = coWebsite.getUrl().hostname;
-            cowebsiteName = coWebsite
-                .getUrl()
-                .toString()
-                .replace(/.+\/\/|www.|\..+/g, "");
-            cowebsiteName = cowebsiteName.charAt(0).toUpperCase() + cowebsiteName.slice(1);
-        }
-    });
+    // The picked tab always stays in view, however long the strip is.
+    $: if (active && pill) pill.scrollIntoView({ inline: "nearest", block: "nearest" });
 
     function closeTab() {
         dispatch("close");
         analyticsClient.closeCowebsite();
     }
 
-    function toggleActive() {
-        if (active === true) {
-            active = active;
-        } else {
-            active = !active;
-            analyticsClient.switchCowebsite();
-        }
+    function pick() {
+        if (!active) analyticsClient.switchCowebsite();
     }
 </script>
 
-<!-- svelte-ignore a11y-click-events-have-key-events -->
-<!-- svelte-ignore a11y-no-static-element-interactions -->
-<div
-    class="text flex items-center px-2 rounded transition-all hover:stroke-white {active
-        ? 'text-contrast bg-white hover:bg-white/90 tab justify-between bg-contrast/80' // translate-y-2 rounded-b-none for animation but not working inside dropdown
-        : 'text-white cursor-pointer bg-white/10 hover:bg-white/20 tab'}"
-    on:click={toggleActive}
-    on:click={() => (active = !active)}
->
-    {#if isLoading}
-        {#if isJitsi}
-            <img draggable="false" src={srcJitsi} {alt} class="h-6 w-6 bg-black rounded-lg align-middle" />
-        {:else if isBBB}
-            <img draggable="false" src={srcMeeting} {alt} class="h-6 w-6 bg-black rounded-lg align-middle" />
-        {:else if fileName !== undefined}
-            <IconFile font-size="24" class={active ? "text-contrast" : "text-white"} />
-        {:else}
-            <img draggable="false" src={srcSimpleCowebsite} {alt} class="h-6 w-6 bg-black rounded-lg align-middle" />
-        {/if}
-    {:else}
-        <div class="h-6 w-6 animate-pulse rounded-sm {active ? 'bg-contrast/10' : 'bg-white/20'}">
-            <LoaderIcon
-                size="24"
-                color1={active ? "stroke-contrast" : "stroke-white"}
-                color2={active ? "stroke-contrast" : "stroke-white"}
-            />
-        </div>
+<!-- A tab is a pill: the item's icon, its name, and a close. The picked one is soft violet with a ring (the gradient is
+     for go/on only), and a page its map says may not be closed has no close. -->
+<div class="tab" class:picked={active} bind:this={pill}>
+    <button type="button" class="tab-main" aria-current={active ? "true" : undefined} title={item.name} on:click={pick}>
+        <OpenHereItemIcon badge={item.badge} src={item.iconSrc} background={item.iconBackground} size={24} />
+        <span class="tab-name">{item.name}</span>
+    </button>
+    {#if coWebsite.isClosable()}
+        <button
+            type="button"
+            class="tab-close"
+            aria-label={$LL.cowebsite.closeItem({ name: item.name })}
+            title={$LL.cowebsite.close()}
+            on:click|stopPropagation={closeTab}
+        >
+            <IconX font-size="16" />
+        </button>
     {/if}
-
-    <div class="flex justify-around items-center w-full">
-        <div class="p-2 grow text-ellipsis overflow-hidden">
-            <div
-                class="bold leading-3 text-ellipsis pb-1 pt-1 max-w-[150px] whitespace-nowrap overflow-hidden {active
-                    ? 'fill-white'
-                    : ''}"
-            >
-                {#if isLoading}
-                    {#if isJitsi}
-                        {$LL.cowebsite.jitsi()}
-                    {:else if isBBB}
-                        {$LL.cowebsite.bigBlueButton()}
-                    {:else if fileName !== undefined}
-                        {fileName}
-                    {:else}
-                        {cowebsiteName}
-                    {/if}
-                {:else}
-                    <div class="w-[100px] h-2 animate-pulse rounded-sm {active ? 'bg-contrast/10' : 'bg-white/20'}" />
-                {/if}
-            </div>
-            {#if !coWebsite.getHideUrl() && fileName === undefined}
-                <div class="text-xxs opacity-50 text-ellipsis max-w-[150px] whitespace-nowrap overflow-hidden">
-                    {#if isLoading}
-                        {coWebsite.getUrl()}
-                    {:else}
-                        <div
-                            class="w-[150px] h-1 mt-1 animate-pulse rounded-sm {active
-                                ? 'bg-contrast/10'
-                                : 'bg-white/20'}"
-                        />
-                    {/if}
-                </div>
-            {/if}
-        </div>
-
-        <div class="flex gap-0.5">
-            {#if coWebsite.isClosable() === true}
-                <button
-                    class="group {active
-                        ? 'hover:bg-contrast/10'
-                        : 'hover:bg-white/10'} transition-all aspect-ratio h-8 w-8 rounded flex items-center justify-center"
-                    on:click={closeTab}
-                >
-                    <XIcon
-                        height="h-6"
-                        width="w-6"
-                        strokeColor={active ? "stroke-contrast" : "stroke-white"}
-                        hover={active ? "" : ""}
-                    />
-                </button>
-            {/if}
-        </div>
-    </div>
 </div>
 
 <style>
     .tab {
-        width: 300px;
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        height: 40px;
+        max-width: 220px;
+        padding-inline-start: 10px;
+        padding-inline-end: 6px;
+        border-radius: 999px;
+        color: #fff;
+        background: rgba(255, 255, 255, 0.08);
+        font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        font-size: 14px;
+        flex: none;
     }
 
-    @media (max-width: 768px) {
-        .tab {
-            width: 220px;
-            padding-right: 1.5rem;
-        }
+    .tab:hover {
+        background: rgba(255, 255, 255, 0.14);
+    }
+
+    .tab.picked {
+        background: rgba(134, 41, 252, 0.14);
+        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.7);
+    }
+
+    .tab-main {
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex: 1;
+        min-width: 0;
+        height: 100%;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+    }
+
+    .tab.picked .tab-main {
+        cursor: default;
+    }
+
+    .tab-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-weight: 600;
+    }
+
+    .tab-close {
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex: none;
+        width: 32px;
+        height: 32px;
+        padding: 0;
+        border: 0;
+        border-radius: 999px;
+        background: transparent;
+        color: #fff;
+        opacity: 0.8;
+        cursor: pointer;
+    }
+
+    .tab-close:hover {
+        background: rgba(255, 255, 255, 0.2);
+        opacity: 1;
     }
 </style>

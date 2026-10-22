@@ -57,6 +57,21 @@ export function createCoWebsiteStore() {
         update((currentArray) => currentArray.filter(predicate));
     };
 
+    /**
+     * Brings back items that were closed, each where it was among the others. Whatever was opened since stays after them.
+     */
+    const restore = (before: Array<CoWebsite>, closed: Array<CoWebsite>) => {
+        update((currentArray) => {
+            const current = new Set(currentArray);
+            const closedSet = new Set(closed);
+            const beforeSet = new Set(before);
+            return [
+                ...before.filter((coWebsite) => current.has(coWebsite) || closedSet.has(coWebsite)),
+                ...currentArray.filter((coWebsite) => !beforeSet.has(coWebsite)),
+            ];
+        });
+    };
+
     const findById = (id: string) => {
         return get({ subscribe }).find((coWebsite) => coWebsite.getId() === id);
     };
@@ -70,6 +85,7 @@ export function createCoWebsiteStore() {
         removeAll,
         empty,
         keepOnly,
+        restore,
         findById,
     };
 }

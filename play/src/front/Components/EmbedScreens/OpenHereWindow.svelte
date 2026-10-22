@@ -1,6 +1,7 @@
 <script lang="ts">
     import { onDestroy } from "svelte";
-    import { coWebsiteRatio, coWebsites, fullScreenCowebsite } from "../../Stores/CoWebsiteStore";
+    import { coWebsiteRatio, fullScreenCowebsite } from "../../Stores/CoWebsiteStore";
+    import { closeAllOpenItems } from "../../Stores/ClosedItemsStore";
     import { modalVisibilityStore } from "../../Stores/ModalStore";
     import { chatVisibilityStore } from "../../Stores/ChatStore";
     import { windowInFrontStore } from "../../Stores/WindowInFrontStore";
@@ -68,12 +69,9 @@
         }
     }
 
-    // The close closes the window and everything in it, except a page its map says may not be closed.
-    function closeWindow() {
-        fullScreenCowebsite.set(false);
-        coWebsites.keepOnly((coWebsite) => !coWebsite.isClosable());
-        analyticsClient.closeCowebsite();
-    }
+    // The close closes the window and everything in it, except a page its map says may not be closed. Two or more
+    // closed at once can be undone for a few seconds.
+    const closeWindow = closeAllOpenItems;
 
     // The emote picker, the express tray and a picture shown large close on Esc through their own listeners, which do
     // not mark the key as used. Whether one was open is read before any of them runs, as the one that closes it

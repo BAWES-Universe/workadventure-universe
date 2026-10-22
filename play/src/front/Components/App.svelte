@@ -44,6 +44,7 @@
     import { refreshPromptStore } from "../Stores/RefreshPromptStore";
     import BrowserNotSupported from "./BrowserNotSupported/BrowserNotSupported.svelte";
     import OpenHereWindow from "./EmbedScreens/OpenHereWindow.svelte";
+    import ClosedItemsToast from "./EmbedScreens/ClosedItemsToast.svelte";
     import GameOverlay from "./GameOverlay.svelte";
 
     let WebGLRenderer = Phaser.Renderer.WebGL.WebGLRenderer;
@@ -311,6 +312,7 @@
 {#if browserNotSupported}
     <BrowserNotSupported />
 {:else}
+    <ClosedItemsToast />
     <div
         class="h-dvh w-dvw flex landscape:flex-row portrait:flex-col-reverse"
         id="main-container"

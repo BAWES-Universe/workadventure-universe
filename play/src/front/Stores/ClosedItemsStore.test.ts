@@ -1,0 +1,93 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { get } from "svelte/store";
+import type { CoWebsite } from "../WebRtc/CoWebsite/CoWebsite";
+import {
+    closedItemsStore,
+    closeAllOpenItems,
+    dismissClosedItems,
+    undoClosedItems,
+    CLOSED_ITEMS_UNDO_MS,
+} from "./ClosedItemsStore";
+import { coWebsites } from "./CoWebsiteStore";
+
+vi.mock("../Administration/AnalyticsClient", () => ({
+    analyticsClient: { closeCowebsite: vi.fn() },
+}));
+
+function item(id: string, closable = true): CoWebsite {
+    return {
+        getId: () => id,
+        getUrl: () => new URL("about:blank"),
+        getIframe: () => undefined,
+        getLoadIframe: () => undefined,
+        getWidthPercent: () => undefined,
+        isClosable: () => closable,
+        getHideUrl: () => false,
+    };
+}
+
+const ids = () => get(coWebsites).map((c) => c.getId());
+
+describe("closing several items at once", () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        coWebsites.removeAll();
+        dismissClosedItems();
+    });
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it("can be undone, each item back where it was", () => {
+        const [a, b, c] = [item("a"), item("b"), item("c")];
+        [a, b, c].forEach((i) => coWebsites.add(i));
+
+        closeAllOpenItems();
+        expect(ids()).toEqual([]);
+        expect(get(closedItemsStore)?.closed).toHaveLength(3);
+
+        undoClosedItems();
+        expect(ids()).toEqual(["a", "b", "c"]);
+        expect(get(closedItemsStore)).toBeUndefined();
+    });
+
+    it("keeps a page that may not be closed, and counts only what it closed", () => {
+        const kept = item("kept", false);
+        [item("a"), kept, item("b")].forEach((i) => coWebsites.add(i));
+
+        closeAllOpenItems();
+        expect(ids()).toEqual(["kept"]);
+        expect(get(closedItemsStore)?.closed.map((i) => i.getId())).toEqual(["a", "b"]);
+
+        undoClosedItems();
+        expect(ids()).toEqual(["a", "kept", "b"]);
+    });
+
+    it("leaves what was opened since after the restored items", () => {
+        [item("a"), item("b")].forEach((i) => coWebsites.add(i));
+        closeAllOpenItems();
+        coWebsites.add(item("new"));
+
+        undoClosedItems();
+        expect(ids()).toEqual(["a", "b", "new"]);
+    });
+
+    it("goes away by itself after a few seconds", () => {
+        [item("a"), item("b")].forEach((i) => coWebsites.add(i));
+        closeAllOpenItems();
+        expect(get(closedItemsStore)).toBeDefined();
+
+        vi.advanceTimersByTime(CLOSED_ITEMS_UNDO_MS + 1);
+        expect(get(closedItemsStore)).toBeUndefined();
+
+        undoClosedItems();
+        expect(ids()).toEqual([]);
+    });
+
+    it("asks for no undo when only one item closes", () => {
+        coWebsites.add(item("a"));
+        closeAllOpenItems();
+        expect(ids()).toEqual([]);
+        expect(get(closedItemsStore)).toBeUndefined();
+    });
+});
