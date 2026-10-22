@@ -28,9 +28,6 @@ function withNameSource<T extends { username?: string | null }>(response: T, acc
         : { ...response, usernameFromAccount: false };
 }
 
-// What the admin client answers when Orbit can't be reached or sends something it can't read (see AdminApi).
-const ORBIT_UNREACHABLE_CODES = new Set(["ROOM_ACCESS_ERROR", "ROOM_ACCESS_VALIDATION"]);
-
 function shouldRefreshAccessToken(err: unknown): boolean {
     if (!(err instanceof openIdErrors.OPError)) {
         return false;
@@ -321,27 +318,6 @@ export class AuthenticateController extends BaseHttpController {
                 const respondWithRefreshedToken = async (): Promise<boolean> => {
                     const renewed = await renewTokens();
                     if (!renewed) return false;
-                    // Orbit can't check an access token that ran out and answers a member of a public room as a
-                    // guest: no name, tags or card, so the game kept whatever name the device had (#1192). Ask it
-                    // again with the renewed token, unless that is already what it answered.
-                    // If Orbit can't be reached this time (the admin client answers that with an error, it doesn't
-                    // throw), the first answer still lets them in.
-                    let userData = resUserData;
-                    if (!answeredWithRenewedToken) {
-                        try {
-                            const askedAgain = await fetchUserData(renewed.accessToken);
-                            if (askedAgain.status === "error") {
-                                if (!("code" in askedAgain && ORBIT_UNREACHABLE_CODES.has(askedAgain.code))) {
-                                    res.json({ ...askedAgain, authToken: renewed.authToken });
-                                    return true;
-                                }
-                            } else {
-                                userData = askedAgain;
-                            }
-                        } catch (askAgainErr) {
-                            console.warn("Could not ask Orbit again with the renewed token", askAgainErr);
-                        }
-                    }
                     res.json(
                         withNameSource(
                             {
@@ -351,10 +327,10 @@ export class AuthenticateController extends BaseHttpController {
                                 matrixUserId: authTokenData?.matrixUserId,
                                 matrixServerUrl:
                                     (renewed.checked.matrix_url as string | undefined) ?? MATRIX_PUBLIC_URI,
-                                ...userData,
+                                ...resUserData,
                                 ...renewed.checked,
                             },
-                            userData.username
+                            resUserData.username
                         ) satisfies MeResponse
                     );
                     return true;

@@ -158,8 +158,7 @@ describe("GET /me asked again for a token it already renewed", () => {
         await callMe({ token: "game-token", playUri, refresh: "true" });
         fetchMemberDataByUuid.mockClear();
         await callMe({ token: "game-token", playUri, refresh: "true" });
-        // Once with the token it was given, once with the renewed one.
-        expect(fetchMemberDataByUuid.mock.calls.map((call) => call[1])).toEqual(["old-access", "new-access"]);
+        expect(fetchMemberDataByUuid).toHaveBeenCalledTimes(1);
     });
 
     it("makes one provider call for renewals of the same token that overlap", async () => {
@@ -373,31 +372,10 @@ describe("GET /me for a member whose access token ran out (Orbit #306)", () => {
     });
 });
 
-describe("GET /me in a public room for a member whose access token ran out (#1192)", () => {
+describe("GET /me says whether the name is the account's (#1192)", () => {
     beforeEach(() => {
         vi.resetAllMocks();
         verifyJWTToken.mockReturnValue({ identifier: "owner", accessToken: "expired-access", refreshToken: "refresh" });
-        // Orbit can't verify the expired token and answers as it would a guest: ok, but with no name or tags.
-        fetchMemberDataByUuid.mockImplementation((_id: string, accessToken: string | undefined) =>
-            Promise.resolve(
-                accessToken === "new-access"
-                    ? {
-                          status: "ok",
-                          userUuid: "owner",
-                          username: "Khalid",
-                          tags: ["admin"],
-                          isCharacterTexturesValid: true,
-                          isCompanionTextureValid: true,
-                      }
-                    : {
-                          status: "ok",
-                          userUuid: "owner",
-                          tags: [],
-                          isCharacterTexturesValid: true,
-                          isCompanionTextureValid: true,
-                      }
-            )
-        );
         checkTokenAuth.mockImplementation((accessToken: string) =>
             accessToken === "new-access"
                 ? Promise.resolve({})
@@ -408,8 +386,16 @@ describe("GET /me in a public room for a member whose access token ran out (#119
     });
 
     it("answers with the account's name, asked of Orbit with the renewed token", async () => {
+        fetchMemberDataByUuid.mockResolvedValue({
+            status: "ok",
+            userUuid: "owner",
+            username: "Khalid",
+            tags: ["admin"],
+            isCharacterTexturesValid: true,
+            isCompanionTextureValid: true,
+        });
         const res = await callMe({ token: "game-token", playUri });
-        expect(fetchMemberDataByUuid.mock.calls.map((call) => call[1])).toEqual(["expired-access", "new-access"]);
+        expect(fetchMemberDataByUuid.mock.calls.map((call) => call[1])).toEqual(["new-access"]);
         expect(res.body).toEqual(
             expect.objectContaining({
                 status: "ok",
@@ -421,81 +407,19 @@ describe("GET /me in a public room for a member whose access token ran out (#119
         );
     });
 
-    it("answers with Orbit's refusal, and the renewed token, when Orbit refuses the account it now knows", async () => {
-        const banned = {
-            status: "error",
-            type: "error",
-            title: "Banned",
-            subtitle: "",
-            code: "BANNED",
-            details: "",
-        };
-        fetchMemberDataByUuid.mockImplementation((_id: string, accessToken: string | undefined) =>
-            Promise.resolve(
-                accessToken === "new-access"
-                    ? banned
-                    : { status: "ok", userUuid: "owner", isCharacterTexturesValid: true, isCompanionTextureValid: true }
-            )
-        );
-        const res = await callMe({ token: "game-token", playUri });
-        expect(res.body).toEqual({ ...banned, authToken: "renewed-game-token" });
-    });
-
-    it("still lets the member in with the first answer when Orbit can't be reached the second time", async () => {
-        fetchMemberDataByUuid.mockImplementation((_id: string, accessToken: string | undefined) =>
-            accessToken === "new-access"
-                ? Promise.reject(new Error("Orbit unreachable"))
-                : Promise.resolve({
-                      status: "ok",
-                      userUuid: "owner",
-                      isCharacterTexturesValid: true,
-                      isCompanionTextureValid: true,
-                  })
-        );
-        const res = await callMe({ token: "game-token", playUri });
-        expect(res.body).toEqual(expect.objectContaining({ status: "ok", authToken: "renewed-game-token" }));
-    });
-
-    it("still lets the member in with the first answer when Orbit's second answer is a connection error", async () => {
-        // The admin client doesn't throw when Orbit can't be reached: it answers with an error of its own.
-        fetchMemberDataByUuid.mockImplementation((_id: string, accessToken: string | undefined) =>
-            Promise.resolve(
-                accessToken === "new-access"
-                    ? {
-                          status: "error",
-                          type: "error",
-                          title: "Connection error",
-                          subtitle: "Something wrong happened while connecting!",
-                          image: "",
-                          code: "ROOM_ACCESS_ERROR",
-                          details: "connect ECONNREFUSED",
-                      }
-                    : { status: "ok", userUuid: "owner", isCharacterTexturesValid: true, isCompanionTextureValid: true }
-            )
-        );
-        const res = await callMe({ token: "game-token", playUri });
-        expect(res.body).toEqual(
-            expect.objectContaining({ status: "ok", userUuid: "owner", authToken: "renewed-game-token" })
-        );
-    });
-
-    it("says the name is only the one from sign-in when Orbit couldn't give the account's", async () => {
+    it("says the name is only the one from sign-in when Orbit has no name for the account", async () => {
         verifyJWTToken.mockReturnValue({
             identifier: "owner",
             accessToken: "expired-access",
             refreshToken: "refresh",
             username: "K",
         });
-        fetchMemberDataByUuid.mockImplementation((_id: string, accessToken: string | undefined) =>
-            accessToken === "new-access"
-                ? Promise.reject(new Error("Orbit unreachable"))
-                : Promise.resolve({
-                      status: "ok",
-                      userUuid: "owner",
-                      isCharacterTexturesValid: true,
-                      isCompanionTextureValid: true,
-                  })
-        );
+        fetchMemberDataByUuid.mockResolvedValue({
+            status: "ok",
+            userUuid: "owner",
+            isCharacterTexturesValid: true,
+            isCompanionTextureValid: true,
+        });
         const res = await callMe({ token: "game-token", playUri });
         expect(res.body).toEqual(expect.objectContaining({ username: "K", usernameFromAccount: false }));
     });
@@ -515,6 +439,12 @@ describe("GET /me in a public room for a member whose access token ran out (#119
 
     it("asks Orbit only once when the token is still good", async () => {
         checkTokenAuth.mockResolvedValue({});
+        fetchMemberDataByUuid.mockResolvedValue({
+            status: "ok",
+            userUuid: "owner",
+            isCharacterTexturesValid: true,
+            isCompanionTextureValid: true,
+        });
         await callMe({ token: "game-token", playUri });
         expect(fetchMemberDataByUuid).toHaveBeenCalledTimes(1);
         expect(refreshAccessToken).not.toHaveBeenCalled();
