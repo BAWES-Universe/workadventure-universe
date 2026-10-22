@@ -45,6 +45,12 @@ function accessTokenExpiry(accessToken: string): number | null {
     }
 }
 
+/** Whether an OIDC access token has run out (false when it doesn't say when). */
+export function orbitAccessTokenHasExpired(accessToken: string): boolean {
+    const expiry = accessTokenExpiry(accessToken);
+    return expiry !== null && expiry <= Date.now();
+}
+
 /** Don't hand out a token about to run out: Orbit's sign-in would fail a moment later. */
 const ACCESS_TOKEN_MARGIN_MS = 60_000;
 
