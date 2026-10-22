@@ -117,6 +117,16 @@ describe("a guest whose sign-in was refused at the start", () => {
         expect(mocks.setPlayerName).toHaveBeenCalledWith("Guesty");
     });
 
+    it("keeps a name an older version stored when the refused token was a guest's (#1298)", async () => {
+        localUserStore.setAuthToken(`header.${window.btoa(JSON.stringify({ identifier: "guest-old" }))}.signature`);
+        localUserStore.setName("Ada Legacy");
+        localStorage.removeItem("guestTypedPlayerName");
+
+        await connectionManager.initGameConnexion();
+
+        expect(localUserStore.getName()).toBe("Ada Legacy");
+    });
+
     it("does not keep a name an older version stored, which nothing says a guest typed (#1290)", async () => {
         // What an older version left: the name, without a mark and without the "guest typed it" note.
         localUserStore.setName("Ada Legacy");

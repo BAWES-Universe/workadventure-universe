@@ -479,6 +479,21 @@ class LocalUserStore {
         return this.jwt?.accessToken !== undefined && this.jwt?.accessToken !== null;
     }
 
+    /**
+     * Whether the token kept on this device was an account's, not a guest's. The page has not taken a stored token in
+     * until the pusher accepts it, so this reads the device.
+     */
+    storedTokenIsAccounts(): boolean {
+        const token = localStorage.getItem(authToken);
+        if (!token) return false;
+        try {
+            const accessToken = JwtAuthToken.parse(LocalUserStore.parseJwt(token)).accessToken;
+            return accessToken !== undefined && accessToken !== null;
+        } catch {
+            return false;
+        }
+    }
+
     private static parseJwt(token: string) {
         const base64Url = token.split(".")[1];
         const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");

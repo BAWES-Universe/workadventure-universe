@@ -471,8 +471,8 @@ class ConnectionManager {
                             }
                             return redirect;
                         } else {
-                            // The token was refused: this device was signed in.
-                            this.dropAccountName(true);
+                            // A guest's token that expired holds no account's name; an account's does.
+                            this.dropAccountName(localUserStore.storedTokenIsAccounts());
                             await this.anonymousLogin();
                         }
                     } else {
