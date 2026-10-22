@@ -4,6 +4,7 @@
     import { modalVisibilityStore } from "../../Stores/ModalStore";
     import { chatVisibilityStore } from "../../Stores/ChatStore";
     import { windowInFrontStore } from "../../Stores/WindowInFrontStore";
+    import { cardOverWindowStore } from "../../Stores/CardOverWindowStore";
     import { bringOpenHereInFront, sideWindowInFrontStore } from "../../Stores/SideWindowInFrontStore";
     import {
         clampOpenHereRatio,
@@ -24,7 +25,9 @@
     // Orbit and this window open in the same place: the one opened or tapped last is in front. Orbit lives inside the
     // main layout (z-index 10, or 2001 in front of the chat), so a window behind it sits just under that. The chat
     // (2000) and this window take turns the same way.
-    $: behindOrbit = $modalVisibilityStore && $sideWindowInFrontStore === "orbit";
+    // A menu, Settings, Explore or a card opened over it goes in front as well: the window sits under the main layout
+    // until it closes, and stays open.
+    $: behindOrbit = ($modalVisibilityStore && $sideWindowInFrontStore === "orbit") || $cardOverWindowStore;
     $: behindChat = $chatVisibilityStore && $windowInFrontStore === "chat";
 
     function bringForward() {
