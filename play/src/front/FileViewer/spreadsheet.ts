@@ -170,90 +170,41 @@ function attributeOf(attributes: string, name: string): string | undefined {
     return new RegExp(`(?:^|\\s)${name}\\s*=\\s*(["'])(.*?)\\1`).exec(attributes)?.[2];
 }
 
-/**
- * The sheets an OpenDocument file hides, and the rows a sheet repeats past the ones that are read. The reader leaves
- * hidden sheets out of its workbook properties, so they are found in the file: a sheet names a style, and that style says
- * "display false". The file is walked tag by tag, once, so a crafted file cannot make it slow.
- *
- * A row repeated more often than the rows read is cut before the reader sees it, so the rows it leaves out are counted
- * here, by sheet name, to keep the sheet's length right. Only the first such row counts: the reader stops there. The
- * cells with a value that the rows read repeat into are counted too, and a file past the limit throws.
- */
-function scanOpenDocument(xml: string): { hidden: Set<string>; cutRows: Map<string, number> } {
-    const cutRows = new Map<string, number>();
-    const hiddenStyles = new Set<string>();
-    const tables: { name: string; style: string }[] = [];
-    /** The table style whose properties are being read. */
-    let openStyle: string | undefined;
-    /** The sheet whose rows are being counted, and the rows before the tag being read; undefined once the reader stops. */
-    let rowsOf: { name: string; before: number } | undefined;
-    /** The row being read, if the reader goes through it: its cells with a value, and how often it is repeated. */
-    let openRow: { cells: number; repeated: number } | undefined;
-    let cells = 0;
-    const countCells = (): void => {
-        if (cells + (openRow ? openRow.cells * openRow.repeated : 0) > MAX_OPEN_DOCUMENT_CELLS) {
-            throw new Error("The file is too big to show");
-        }
-    };
-    let position = 0;
-    for (;;) {
-        const start = xml.indexOf("<", position);
-        if (start < 0) break;
-        const end = xml.indexOf(">", start);
-        if (end < 0) break;
-        position = end + 1;
-        const tag = xml.slice(start + 1, end);
-        const nameEnd = tag.search(/[\s/]|$/);
-        const name = tag.slice(0, nameEnd);
-        const attributes = tag.slice(nameEnd);
-        if (name === "style:style") {
-            const family = attributeOf(attributes, "style:family");
-            openStyle = tag.endsWith("/") || family !== "table" ? undefined : attributeOf(attributes, "style:name");
-        } else if (name === "/style:style") {
-            openStyle = undefined;
-        } else if (name === "style:table-properties") {
-            if (openStyle !== undefined && /table:display\s*=\s*["']false["']/.test(attributes)) {
-                hiddenStyles.add(openStyle);
-            }
-        } else if (name === "table:table") {
-            const tableName = attributeOf(attributes, "table:name");
-            const style = attributeOf(attributes, "table:style-name");
-            if (tableName !== undefined && style !== undefined) tables.push({ name: tableName, style });
-            rowsOf = tableName === undefined ? undefined : { name: tableName, before: 0 };
-        } else if (name === "table:table-row" && rowsOf) {
-            const repeated = Number(attributeOf(attributes, "table:number-rows-repeated") ?? 1);
-            openRow = tag.endsWith("/")
-                ? undefined
-                : { cells: 0, repeated: Math.min(repeated, OPEN_DOCUMENT_LIMITS.rows) };
-            if (repeated > OPEN_DOCUMENT_LIMITS.rows) {
-                const left = repeated - OPEN_DOCUMENT_LIMITS.rows;
-                cutRows.set(rowsOf.name, left);
-                cutRows.set(unescapeXml(rowsOf.name), left);
-                rowsOf = undefined;
-            } else {
-                rowsOf.before += repeated;
-                if (rowsOf.before >= MAX_TABLE_ROWS + READ_BEYOND_SHOWN) rowsOf = undefined;
-            }
-        } else if (name === "table:table-cell" && openRow) {
-            if (attributeOf(attributes, "office:value-type") !== undefined) {
-                const repeated = Number(attributeOf(attributes, "table:number-columns-repeated") ?? 1);
-                openRow.cells += Math.min(repeated, OPEN_DOCUMENT_LIMITS.columns);
-                countCells();
-            }
-        } else if (name === "/table:table-row" && openRow) {
-            cells += openRow.cells * openRow.repeated;
-            openRow = undefined;
-            countCells();
-        }
+/** The repeat attributes of a tag, whatever prefix the file gives them: the reader drops the prefix and reads the name. */
+const REPEAT_ATTRIBUTE = /(\bnumber-(columns|rows)-repeated\s*=\s*)(["'])(.*?)\3/g;
+
+/** How often the reader repeats, for a repeat attribute's text: the way it reads each (rows as a number, columns as an integer), and 1 when that is nothing. */
+function repeatCountOf(text: string, kind: "columns" | "rows"): number {
+    const count = kind === "rows" ? Number(text) : parseInt(text, 10);
+    return count >= 1 ? Math.floor(count) : 1;
+}
+
+/** The repeat of a row or a cell tag: the largest of its repeat attributes, 1 when it has none. */
+function repeatOf(tag: string, kind: "columns" | "rows"): number {
+    let repeated = 1;
+    for (const match of tag.matchAll(REPEAT_ATTRIBUTE)) {
+        if (match[2] === kind) repeated = Math.max(repeated, repeatCountOf(match[4], kind));
     }
-    const hidden = new Set<string>();
-    for (const { name, style } of tables) {
-        if (!hiddenStyles.has(style)) continue;
-        // The reader keeps an ampersand in a sheet's name as it is written in the file, so either spelling is hidden.
-        hidden.add(name);
-        hidden.add(unescapeXml(name));
-    }
-    return { hidden, cutRows };
+    return repeated;
+}
+
+/** A tag with its repeat attributes written as whole numbers no larger than the reader goes on to use. */
+function tagWithLimitedRepeats(tag: string): string {
+    return tag.replace(
+        REPEAT_ATTRIBUTE,
+        (whole, name: string, kind: "columns" | "rows", quote: string, text: string) => {
+            const limited = String(Math.min(repeatCountOf(text, kind), OPEN_DOCUMENT_LIMITS[kind]));
+            return limited === text ? whole : `${name}${quote}${limited}${quote}`;
+        }
+    );
+}
+
+/** A tag's name without its prefix and without the suffix the reader ignores, as the reader goes by it. */
+function localNameOf(name: string): string {
+    return name
+        .replace(/^\/?[^:]*:/, "")
+        .replace(/^\//, "")
+        .replace(/_[\s\S]*$/, "");
 }
 
 interface OpenDocument {
@@ -265,26 +216,124 @@ interface OpenDocument {
 
 /**
  * An OpenDocument sheet can write one cell as "repeated a hundred thousand times" in a few bytes, and the reader then
- * builds every one of them. Only the first columns are shown, so a repeat is cut to one cell more than that: the cells
- * after it are past the last column shown either way. The sheets the file hides are listed too. A file that is not
- * OpenDocument is returned as it is.
+ * builds every one of them. Only the first columns and rows are shown, so a repeat is cut to one more than that: what
+ * comes after it is past the last column or row shown either way. The file is walked tag by tag, once, so a crafted
+ * file cannot make it slow, and the repeat attributes of its tags are rewritten as whole numbers within the limit.
+ *
+ * The same walk finds the sheets the file hides (the reader leaves them out of its workbook properties: a sheet names a
+ * style, and that style says "display false"), counts the rows a repeat cut away from a sheet that goes on (by sheet
+ * name, to keep its length right; only the first such row counts, the reader stops there), and counts the cells with a
+ * value that the rows read repeat into: a file past the limit throws.
  */
+function scanOpenDocument(xml: string): { hidden: Set<string>; cutRows: Map<string, number>; limited?: string } {
+    const cutRows = new Map<string, number>();
+    const hiddenStyles = new Set<string>();
+    const tables: { name: string; style: string }[] = [];
+    /** The table style whose properties are being read. */
+    let openStyle: string | undefined;
+    /** The sheet whose rows are being counted, and the rows before the tag being read; undefined once the reader stops. */
+    let rowsOf: { name: string; before: number } | undefined;
+    /** The row being read, if the reader goes through it: its cells with a value, how often it is repeated, and the repeats cut away. */
+    let openRow: { cells: number; repeated: number; cutAway: number; sheet: string } | undefined;
+    let cells = 0;
+    const countCells = (): void => {
+        if (cells + (openRow ? openRow.cells * openRow.repeated : 0) > MAX_OPEN_DOCUMENT_CELLS) {
+            throw new Error("The file is too big to show");
+        }
+    };
+    /** The pieces of the file once a tag has been rewritten, and where the part not yet copied starts. */
+    const pieces: string[] = [];
+    let copied = 0;
+    let position = 0;
+    for (;;) {
+        const start = xml.indexOf("<", position);
+        if (start < 0) break;
+        const end = xml.indexOf(">", start);
+        if (end < 0) break;
+        position = end + 1;
+        const tag = xml.slice(start + 1, end);
+        if (tag.includes("-repeated")) {
+            const limited = tagWithLimitedRepeats(tag);
+            if (limited !== tag) {
+                pieces.push(xml.slice(copied, start + 1), limited);
+                copied = end;
+            }
+        }
+        // The name ends at the first space or slash, after the slash a closing tag starts with.
+        const nameStart = tag.startsWith("/") ? 1 : 0;
+        const nameEnd = nameStart + tag.slice(nameStart).search(/[\s/]|$/);
+        const name = tag.slice(0, nameEnd);
+        const attributes = tag.slice(nameEnd);
+        const closing = name.startsWith("/");
+        const local = localNameOf(name);
+        const selfClosing = tag.endsWith("/");
+        if (name === "style:style") {
+            const family = attributeOf(attributes, "style:family");
+            openStyle = selfClosing || family !== "table" ? undefined : attributeOf(attributes, "style:name");
+        } else if (name === "/style:style") {
+            openStyle = undefined;
+        } else if (name === "style:table-properties") {
+            if (openStyle !== undefined && /table:display\s*=\s*["']false["']/.test(attributes)) {
+                hiddenStyles.add(openStyle);
+            }
+        } else if ((local === "table" || local === "工作表") && !closing) {
+            const tableName = attributeOf(attributes, "table:name");
+            const style = attributeOf(attributes, "table:style-name");
+            if (tableName !== undefined && style !== undefined) tables.push({ name: tableName, style });
+            const sheet = tableName ?? /(?:^|\s)(?:[^\s=:]+:)?name\s*=\s*(["'])(.*?)\1/.exec(attributes)?.[2];
+            rowsOf = sheet === undefined ? undefined : { name: sheet, before: 0 };
+        } else if ((local === "table-row" || local === "行") && !closing && rowsOf) {
+            const repeated = repeatOf(tag, "rows");
+            openRow = selfClosing
+                ? undefined
+                : {
+                      cells: 0,
+                      repeated: Math.min(repeated, OPEN_DOCUMENT_LIMITS.rows),
+                      cutAway: Math.max(0, repeated - OPEN_DOCUMENT_LIMITS.rows),
+                      sheet: rowsOf.name,
+                  };
+            if (repeated > OPEN_DOCUMENT_LIMITS.rows) {
+                rowsOf = undefined;
+            } else {
+                rowsOf.before += repeated;
+                if (rowsOf.before >= MAX_TABLE_ROWS + READ_BEYOND_SHOWN) rowsOf = undefined;
+            }
+        } else if ((local === "table-cell" || local === "数据") && !closing && openRow) {
+            // A cell that is not empty: it names its type, or it has content (an empty cell is written without any).
+            if (!selfClosing || /(?:^|\s)(?:[^\s=:]+:)?value-type\s*=/.test(attributes)) {
+                openRow.cells += Math.min(repeatOf(tag, "columns"), OPEN_DOCUMENT_LIMITS.columns);
+                countCells();
+            }
+        } else if ((local === "table-row" || local === "行") && closing && openRow) {
+            cells += openRow.cells * openRow.repeated;
+            // Repeats cut from a row with nothing in it change nothing the reader would have counted.
+            if (openRow.cutAway > 0 && openRow.cells > 0) {
+                cutRows.set(openRow.sheet, openRow.cutAway);
+                cutRows.set(unescapeXml(openRow.sheet), openRow.cutAway);
+            }
+            openRow = undefined;
+            countCells();
+        }
+    }
+    const hidden = new Set<string>();
+    for (const { name, style } of tables) {
+        if (!hiddenStyles.has(style)) continue;
+        // The reader keeps an ampersand in a sheet's name as it is written in the file, so either spelling is hidden.
+        hidden.add(name);
+        hidden.add(unescapeXml(name));
+    }
+    if (pieces.length === 0) return { hidden, cutRows };
+    pieces.push(xml.slice(copied));
+    return { hidden, cutRows, limited: pieces.join("") };
+}
+
 async function prepareOpenDocument(bytes: ArrayBuffer): Promise<OpenDocument> {
     const { default: JSZip } = await import("jszip");
     const zip = await JSZip.loadAsync(bytes);
     const content = zip.file("content.xml");
     if (!content) return { data: new Uint8Array(bytes), hidden: new Set(), cutRows: new Map() };
-    const xml = await content.async("string");
-    const { hidden, cutRows } = scanOpenDocument(xml);
-    // A row repeated past the rows that are read is cut as well: the reader would fill every repeat with cells before
-    // it looks at how many rows it has, and a million repeats of a wide row never finishes.
-    const limits = OPEN_DOCUMENT_LIMITS;
-    const limited = xml.replace(
-        /(number-(columns|rows)-repeated\s*=\s*)(["'])(\d+)\3/g,
-        (whole, name: string, kind: "columns" | "rows", quote: string, count: string) =>
-            Number(count) > limits[kind] ? `${name}${quote}${limits[kind]}${quote}` : whole
-    );
-    if (limited === xml) return { data: new Uint8Array(bytes), hidden, cutRows };
+    const { hidden, cutRows, limited } = scanOpenDocument(await content.async("string"));
+    if (limited === undefined) return { data: new Uint8Array(bytes), hidden, cutRows };
     zip.file("content.xml", limited);
     return { data: await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" }), hidden, cutRows };
 }
