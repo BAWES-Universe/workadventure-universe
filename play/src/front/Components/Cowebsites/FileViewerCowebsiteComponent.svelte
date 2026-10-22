@@ -17,9 +17,9 @@
     import type { ViewerController } from "../../FileViewer/viewerController";
     import { MAX_SPREADSHEET_BYTES } from "../../FileViewer/spreadsheet";
     import { MAX_WORD_BYTES } from "../../FileViewer/wordDocument";
-    import FileViewerExcel from "./FileViewer/FileViewerExcel.svelte";
     import OpenHereRow from "../EmbedScreens/OpenHereRow.svelte";
     import OpenHereItemIcon from "../EmbedScreens/OpenHereItemIcon.svelte";
+    import FileViewerExcel from "./FileViewer/FileViewerExcel.svelte";
     import FileViewerPdf from "./FileViewer/FileViewerPdf.svelte";
     import FileViewerImage from "./FileViewer/FileViewerImage.svelte";
     import FileViewerText from "./FileViewer/FileViewerText.svelte";
