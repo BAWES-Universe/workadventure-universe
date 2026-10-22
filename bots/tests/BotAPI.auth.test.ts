@@ -246,7 +246,6 @@ describe('bot server control routes', () => {
         ['PUT', '/api/bots/b1', { name: 'Hijacked' }],
         ['DELETE', '/api/bots/b1', undefined],
         ['GET', '/api/bots/b1', undefined],
-        ['GET', '/api/bots/b1/conversations', undefined],
         ['DELETE', '/api/bots/b1/conversations/cleanup', undefined],
         ['GET', '/api/bots/b1/status', undefined],
         ['POST', '/api/bots/test/run-suite', { testSuite: 'basic', botId: 'b1' }],
@@ -261,6 +260,14 @@ describe('bot server control routes', () => {
         expect(adminApiService.saveBotConfiguration).not.toHaveBeenCalled();
         expect(adminApiService.deleteBotConfiguration).not.toHaveBeenCalled();
     });
+
+    it.each(['/api/bots/b1/conversations', '/api/bots/b1/conversations/problematic', '/api/bots/b1/conversations/c1'])(
+        'has no route that reads saved chats: GET %s is not found, even for a bot manager',
+        async (path) => {
+            const response = await call('GET', path);
+            expect(response.status).toBe(404);
+        }
+    );
 
     it('despawns through the per-bot route for a person who can manage the bot', async () => {
         const response = await call('POST', '/api/bots/b1/despawn');
