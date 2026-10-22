@@ -46,6 +46,16 @@ describe("the role names Orbit sends with room access", () => {
         }
     );
 
+    it("leaves out a badly formed role and keeps the others, so the player still joins (#1292)", () => {
+        const good = { key: "a", name: "A", color: "#38BDF8", visibleOnOthers: true };
+        const roles = [
+            { key: "b", name: null, color: "#38BDF8", visibleOnOthers: true },
+            good,
+            { key: "c", name: "C" },
+        ];
+        expect(isFetchMemberDataByUuidSuccessResponse.parse({ ...answer, roles }).roles).toEqual([good]);
+    });
+
     it("accepts an answer with no list, as older Orbit versions send", () => {
         expect(isFetchMemberDataByUuidSuccessResponse.parse(answer).roles).toBeUndefined();
     });
