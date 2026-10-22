@@ -507,6 +507,19 @@ describe("the spreadsheet reader", () => {
             expect(sheet.rows[0][0].text).toBe(`a${" ".repeat(32)}b`);
         });
 
+        it("reads covered cells (the rest of a merged cell) without building them, however often they repeat", async () => {
+            const covered = `<table:covered-table-cell table:number-columns-repeated="2000000000"/>`;
+            const bytes = await odsWithRows(
+                `<table:table-row table:number-rows-repeated="1000"><table:table-cell office:value-type="string"><text:p>a</text:p></table:table-cell>${covered.repeat(
+                    20_000
+                )}</table:table-row>`
+            );
+            const started = Date.now();
+            const [sheet] = await readSpreadsheet(bytes);
+            expect(sheet.rows[0][0].text).toBe("a");
+            expect(Date.now() - started).toBeLessThan(5000);
+        });
+
         it("keeps the cell limit after rows written as one tag, which the reader does not move on past", async () => {
             const bytes = await odsWithRows(
                 `<table:table-row table:number-rows-repeated="5000"/>` +
