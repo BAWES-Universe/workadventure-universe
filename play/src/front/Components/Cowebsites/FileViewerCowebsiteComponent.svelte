@@ -18,6 +18,8 @@
     import { MAX_SPREADSHEET_BYTES } from "../../FileViewer/spreadsheet";
     import { MAX_WORD_BYTES } from "../../FileViewer/wordDocument";
     import FileViewerExcel from "./FileViewer/FileViewerExcel.svelte";
+    import OpenHereRow from "../EmbedScreens/OpenHereRow.svelte";
+    import OpenHereItemIcon from "../EmbedScreens/OpenHereItemIcon.svelte";
     import FileViewerPdf from "./FileViewer/FileViewerPdf.svelte";
     import FileViewerImage from "./FileViewer/FileViewerImage.svelte";
     import FileViewerText from "./FileViewer/FileViewerText.svelte";
@@ -30,7 +32,6 @@
         IconMinus,
         IconPlus,
         IconSearch,
-        IconX,
     } from "@wa-icons";
 
     export let actualCowebsite: FileViewerCoWebsite;
@@ -38,8 +39,10 @@
 
     /** A file this big is not drawn in the page: it is offered as a download instead. */
     const MAX_VIEWER_BYTES = 100 * 1024 * 1024;
-    /** Below this panel width (a phone) the toolbar is the phone one: Back, name, Search, Download. */
-    const COMPACT_WIDTH = 480;
+    /** Below this panel width (a phone) the row is the phone one: Back, name, Search, Download. */
+    const COMPACT_WIDTH = 440;
+    /** Below this panel width the zoom hides, so the name keeps its room. */
+    const ZOOM_MIN_WIDTH = 600;
 
     const source = actualCowebsite.source;
 
@@ -83,7 +86,7 @@
             : rowCount !== undefined
             ? $LL.chat.fileViewer.rows({ count: rowCount })
             : "";
-    $: subtitle = compact && sender && pagesLabel ? `${sender} · ${pagesLabel}` : sender || pagesLabel;
+    $: subtitle = [sender, pagesLabel].filter(Boolean).join(" · ");
     // A text file has nothing to hand to a browser viewer: Ctrl or Cmd click on its card opens it as plain text.
     $: canOpenInNewTab =
         source.openInNewTab !== undefined &&
@@ -240,53 +243,60 @@
     on:keydown={onKeydown}
     data-testid="fileViewer"
 >
-    <header class="vbar">
-        {#if compact}
-            {#if closable}
-                <button
-                    type="button"
-                    class="ib"
-                    title={$LL.chat.fileViewer.back()}
-                    aria-label={$LL.chat.fileViewer.back()}
-                    on:click={close}
-                    data-testid="fileViewerBack"
-                >
-                    <IconArrowLeft font-size="20" />
-                </button>
+    <OpenHereRow name={source.name} line={subtitle}>
+        <svelte:fragment slot="icon">
+            {#if compact}
+                <!-- A narrow panel (a phone) keeps the way back until the phone has its own sheet. -->
+                {#if closable}
+                    <button
+                        type="button"
+                        class="open-here-action back"
+                        title={$LL.chat.fileViewer.back()}
+                        aria-label={$LL.chat.fileViewer.back()}
+                        on:click={close}
+                        data-testid="fileViewerBack"
+                    >
+                        <IconArrowLeft font-size="20" />
+                    </button>
+                {/if}
+            {:else}
+                <OpenHereItemIcon {badge} />
             {/if}
-        {:else if kind === "pdf" || phase === "opening"}
+        </svelte:fragment>
+
+        {#if !compact && (kind === "pdf" || phase === "opening")}
             <button
                 type="button"
-                class="ib"
+                class="open-here-action"
+                class:picked={$pageListShown}
                 title={$LL.chat.fileViewer.pageList()}
                 aria-label={$LL.chat.fileViewer.pageList()}
                 aria-pressed={$pageListShown}
                 disabled={controller?.pageList === undefined}
                 on:click={() => controller?.pageList?.toggle()}
             >
-                <IconLayoutSidebar font-size="16" />
+                <IconLayoutSidebar font-size="20" />
             </button>
-        {:else}
-            <span class="badge" style:background={badge.color}>{badge.label}</span>
         {/if}
 
-        <div class="vtitle">
-            <b>{source.name}</b>
-            {#if subtitle}<small>{subtitle}</small>{/if}
-        </div>
-
-        {#if phase === "ready" && !compact && controller?.zoomPercent}
+        {#if phase === "ready" && !compact && controller?.zoomPercent && panelWidth >= ZOOM_MIN_WIDTH}
             <div class="zoom">
                 <button
                     type="button"
+                    class="open-here-action"
                     aria-label={$LL.chat.fileViewer.zoomOut()}
                     on:click={() => controller?.zoomOut?.()}
                 >
-                    <IconMinus font-size="16" />
+                    <IconMinus font-size="18" />
                 </button>
                 <span aria-live="polite">{$zoomPercent}%</span>
-                <button type="button" aria-label={$LL.chat.fileViewer.zoomIn()} on:click={() => controller?.zoomIn?.()}>
-                    <IconPlus font-size="16" />
+                <button
+                    type="button"
+                    class="open-here-action"
+                    aria-label={$LL.chat.fileViewer.zoomIn()}
+                    on:click={() => controller?.zoomIn?.()}
+                >
+                    <IconPlus font-size="18" />
                 </button>
             </div>
         {/if}
@@ -294,14 +304,14 @@
         {#if phase === "ready" && controller?.search}
             <button
                 type="button"
-                class="ib"
+                class="open-here-action"
                 class:picked={findOpen}
                 title={$LL.chat.fileViewer.search()}
                 aria-label={$LL.chat.fileViewer.search()}
                 aria-pressed={findOpen}
                 on:click={toggleFind}
             >
-                <IconSearch font-size={compact ? 18 : 16} />
+                <IconSearch font-size="20" />
             </button>
         {/if}
 
@@ -309,14 +319,14 @@
             <div class="menu-anchor" data-file-menu>
                 <button
                     type="button"
-                    class="ib"
+                    class="open-here-action"
                     title={$LL.chat.fileViewer.more()}
                     aria-label={$LL.chat.fileViewer.more()}
                     aria-haspopup="menu"
                     aria-expanded={menuOpen}
                     on:click={() => (menuOpen = !menuOpen)}
                 >
-                    <IconDots font-size="16" />
+                    <IconDots font-size="20" />
                 </button>
                 {#if menuOpen}
                     <div class="menu" role="menu">
@@ -365,30 +375,16 @@
         {#if canDownload}
             <button
                 type="button"
-                class="ib"
+                class="open-here-action"
                 title={$LL.chat.fileViewer.download()}
                 aria-label={$LL.chat.fileViewer.downloadFile({ name: source.name })}
                 on:click={download}
                 data-testid="fileViewerDownload"
             >
-                <IconDownload font-size={compact ? 18 : 16} />
-                {#if !compact}{$LL.chat.fileViewer.download()}{/if}
+                <IconDownload font-size="20" />
             </button>
         {/if}
-
-        {#if !compact && closable}
-            <button
-                type="button"
-                class="ib"
-                title={$LL.chat.fileViewer.close()}
-                aria-label={$LL.chat.fileViewer.close()}
-                on:click={close}
-                data-testid="fileViewerClose"
-            >
-                <IconX font-size="16" />
-            </button>
-        {/if}
-    </header>
+    </OpenHereRow>
 
     {#if findOpen && phase === "ready" && controller?.search}
         <div class="findbar">
@@ -504,115 +500,16 @@
         display: none;
     }
 
-    .vbar {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        padding: 10px;
-        /* On a phone held upright the installed app's status bar is see-through: the toolbar starts under it. */
-        padding-top: calc(10px + env(safe-area-inset-top, 0px));
-        background: #201f33;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.07);
-        flex: none;
-    }
-
-    .badge {
-        width: 28px;
-        height: 28px;
-        border-radius: 6px;
-        color: #fff;
-        font-size: 8px;
-        font-weight: 700;
-        letter-spacing: 0.04em;
-        display: grid;
-        place-items: center;
-        flex: none;
-    }
-
-    .vtitle {
-        flex: 1;
-        min-width: 72px;
-    }
-
-    .vtitle b {
-        display: block;
-        font-size: 14px;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-
-    .vtitle small {
-        display: block;
-        color: #a3a1bd;
-        font-size: 11px;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-
-    .ib {
-        height: 36px;
-        min-width: 36px;
-        padding: 0 10px;
-        border: 0;
-        border-radius: 10px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        gap: 6px;
-        color: #fff;
-        background: rgba(255, 255, 255, 0.06);
-        font: inherit;
-        font-size: 13px;
-        font-weight: 600;
-        white-space: nowrap;
-        cursor: pointer;
-        flex: none;
-    }
-
-    .ib:hover:not(:disabled) {
-        background: rgba(255, 255, 255, 0.12);
-    }
-
-    .ib:disabled {
-        opacity: 0.4;
-        cursor: default;
-    }
-
-    /* On, like a picked option: soft violet, never the gradient (that is for the one main button). */
-    .ib.picked {
-        background: rgba(134, 41, 252, 0.16);
-        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.7);
-    }
-
-    .compact .ib {
-        height: 44px;
-        min-width: 44px;
-        padding: 0;
-    }
-
     .zoom {
         display: inline-flex;
         align-items: center;
-        gap: 2px;
-        background: rgba(255, 255, 255, 0.06);
-        border-radius: 10px;
         font-size: 12px;
-        color: #a3a1bd;
+        color: rgba(255, 255, 255, 0.6);
         flex: none;
     }
 
-    .zoom button {
-        width: 30px;
-        height: 36px;
-        padding: 0;
-        border: 0;
-        background: transparent;
-        color: #fff;
-        display: grid;
-        place-items: center;
-        cursor: pointer;
+    .zoom .open-here-action {
+        width: 40px;
     }
 
     .zoom span {

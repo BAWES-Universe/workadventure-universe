@@ -1,7 +1,5 @@
 <script lang="ts">
     import { createEventDispatcher, onMount } from "svelte";
-    import CopyIcon from "../Icons/CopyIcon.svelte";
-    import ExternalLinkIcon from "../Icons/ExternalLinkIcon.svelte";
     import XIcon from "../Icons/XIcon.svelte";
     import type { CoWebsite } from "../../WebRtc/CoWebsite/CoWebsite";
     import { JitsiCoWebsite } from "../../WebRtc/CoWebsite/JitsiCoWebsite";
@@ -12,8 +10,6 @@
     import meetingIcon from "../images/meeting.svg";
     import LoaderIcon from "../Icons/LoaderIcon.svelte";
     import LL from "../../../i18n/i18n-svelte";
-    import PopUpCopyUrl from "../PopUp/PopUpCopyUrl.svelte";
-    import { popupStore } from "../../Stores/PopupStore";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
     import { IconFile } from "@wa-icons";
 
@@ -21,7 +17,6 @@
     export let isLoading = false;
     export let active = false;
 
-    let isDuplicable = true;
     let isJitsi: boolean = coWebsite instanceof JitsiCoWebsite;
     let isBBB: boolean = coWebsite instanceof BBBCoWebsite;
     // A file shown by the file viewer has no address of its own to show, copy or open.
@@ -31,28 +26,21 @@
     let srcSimpleCowebsite = `${ICON_URL}/icon?url=${encodeURIComponent(
         coWebsite.getUrl().toString()
     )}&size=64..96..256&fallback_icon_color=14304c`;
-    let url: string;
     let srcJitsi = jitsiIcon;
     let srcMeeting = meetingIcon;
 
     const dispatch = createEventDispatcher<{
         close: void;
-        copy: void;
     }>();
 
     onMount(() => {
-        if (isJitsi) {
-            isDuplicable = true;
-        } else if (isBBB) {
-            isDuplicable = true;
-        } else {
+        if (!isJitsi && !isBBB) {
             alt = coWebsite.getUrl().hostname;
             cowebsiteName = coWebsite
                 .getUrl()
                 .toString()
                 .replace(/.+\/\/|www.|\..+/g, "");
             cowebsiteName = cowebsiteName.charAt(0).toUpperCase() + cowebsiteName.slice(1);
-            isDuplicable = true;
         }
     });
 
@@ -68,23 +56,6 @@
             active = !active;
             analyticsClient.switchCowebsite();
         }
-    }
-
-    function copyUrl() {
-        url = coWebsite.getUrl().toString();
-
-        navigator.clipboard.writeText(url).catch((e) => console.error(e));
-        analyticsClient.copyCowebsiteLink();
-        dispatch("copy");
-        popupStore.addPopup(PopUpCopyUrl, {}, "popupCopyUrl");
-    }
-
-    function handleClick() {
-        url = coWebsite.getUrl().toString();
-
-        window.open(url, "_blank");
-        analyticsClient.openCowebsiteInNewTab();
-        if (isJitsi) closeTab();
     }
 </script>
 
@@ -154,36 +125,6 @@
         </div>
 
         <div class="flex gap-0.5">
-            {#if isDuplicable && !coWebsite.getHideUrl() && fileName === undefined}
-                <button
-                    class="group {active
-                        ? 'hover:bg-contrast/10'
-                        : 'hover:bg-white/10'} transition-all aspect-ratio h-8 w-8 rounded flex items-center justify-center"
-                    on:click={copyUrl}
-                >
-                    <ExternalLinkIcon
-                        height="h-6"
-                        width="w-6"
-                        strokeColor={active ? "stroke-contrast" : "stroke-white"}
-                        hover={active ? "" : ""}
-                    />
-                </button>
-            {/if}
-            {#if !coWebsite.getHideUrl() && fileName === undefined}
-                <button
-                    class="group {active
-                        ? 'hover:bg-contrast/10'
-                        : 'hover:bg-white/10'} transition-all aspect-ratio h-8 w-8 rounded flex items-center justify-center"
-                    on:click={handleClick}
-                >
-                    <CopyIcon
-                        height="h-6"
-                        width="w-6"
-                        strokeColor={active ? "stroke-contrast" : "stroke-white"}
-                        hover={active ? "" : ""}
-                    />
-                </button>
-            {/if}
             {#if coWebsite.isClosable() === true}
                 <button
                     class="group {active
