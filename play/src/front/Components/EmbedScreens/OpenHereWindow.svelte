@@ -33,6 +33,21 @@
         windowInFrontStore.set("window");
     }
 
+    // A click on a page inside the window never reaches this window, but the game loses the focus to it (the way
+    // Orbit's window handles it): the window then comes in front. Switching to another app also blurs the game, with the
+    // focus left wherever it was, and nothing changes.
+    function onWindowBlur() {
+        setTimeout(() => {
+            if (
+                document.hasFocus() &&
+                document.activeElement instanceof HTMLIFrameElement &&
+                card?.contains(document.activeElement)
+            ) {
+                bringForward();
+            }
+        }, 0);
+    }
+
     function toggleExpanded() {
         if ($fullScreenCowebsite) {
             fullScreenCowebsite.set(false);
@@ -67,7 +82,8 @@
     let dragRatio: number | undefined;
     let dragStartX: number | undefined;
     let anchorX = 0;
-    $: ratio = dragRatio ?? $coWebsiteRatio;
+    // A split dragged on an upright phone has no limits: the window opened by turning the phone keeps within these.
+    $: ratio = dragRatio ?? clampOpenHereRatio($coWebsiteRatio);
 
     function startDrag(event: PointerEvent) {
         if (!card || event.button !== 0) return;
@@ -98,7 +114,7 @@
         if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
             event.preventDefault();
             const wider = (event.key === "ArrowLeft") !== rtl;
-            coWebsiteRatio.set(stepWidthStop($coWebsiteRatio, wider ? 1 : -1));
+            coWebsiteRatio.set(stepWidthStop(ratio, wider ? 1 : -1));
         }
     }
 
@@ -107,7 +123,7 @@
     });
 </script>
 
-<svelte:window on:keydown={onKeyDown} />
+<svelte:window on:keydown={onKeyDown} on:blur={onWindowBlur} />
 
 <!-- Looks like Orbit's window and sits where it sits: under the bar, a third of the screen wide, with the same pill
      (expand, close) outside the card. Taking a tap in front brings the window in front of Orbit or the chat. -->
