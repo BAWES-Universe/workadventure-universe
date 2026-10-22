@@ -440,7 +440,7 @@ export function createAreaProperty(
                 newTab: false,
                 hideButtonLabel: true,
                 application: subtype ?? "website",
-                placeholder: placeholders[subtype ?? ""] ?? "https://workadventu.re",
+                placeholder: placeholders[subtype ?? ""] ?? "https://bawes.net",
                 allowAPI: false,
                 forceNewTab: false,
                 policy:

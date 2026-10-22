@@ -385,7 +385,7 @@ export class IdleBehavior extends BaseBehavior {
         if (!userUuid) {
             // UUID not tracked yet - proceed anyway but log warning
             // This can happen if initSpaceUsersMessage hasn't been processed yet
-            console.warn(`[IdleBehavior] UUID not found for user ${senderId} (${userName}). Proceeding without conversation storage.`);
+            console.warn(`[IdleBehavior] UUID not found for user ${senderId}. Proceeding without conversation storage.`);
             // Continue to generate response - just skip storage
         }
         

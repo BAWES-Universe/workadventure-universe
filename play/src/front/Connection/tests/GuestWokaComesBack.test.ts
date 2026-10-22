@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { AxiosError } from "axios";
+import type { AxiosResponse } from "axios";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
     // The game reads its settings from window.env when it is loaded.
@@ -6,7 +8,7 @@ const mocks = vi.hoisted(() => {
         PUSHER_URL: "http://pusher.example.com",
         PUBLIC_MAP_STORAGE_URL: "http://map-storage.example.com",
     };
-    return { anonymLogin: vi.fn(), setCharacterTextureIds: vi.fn() };
+    return { anonymLogin: vi.fn(), setCharacterTextureIds: vi.fn(), setPlayerName: vi.fn() };
 });
 
 vi.mock("../AxiosUtils", () => ({
@@ -15,7 +17,7 @@ vi.mock("../AxiosUtils", () => ({
 }));
 vi.mock("../Capabilities", () => ({ hasCapability: () => true }));
 vi.mock("../../Phaser/Game/GameManager", () => ({
-    gameManager: { setCharacterTextureIds: mocks.setCharacterTextureIds },
+    gameManager: { setCharacterTextureIds: mocks.setCharacterTextureIds, setPlayerName: mocks.setPlayerName },
 }));
 vi.mock("../../Administration/AnalyticsClient", () => ({ analyticsClient: { identifyUser: vi.fn() } }));
 vi.mock("../../Url/UrlManager", () => ({
@@ -67,5 +69,114 @@ describe("a guest back from an abandoned sign-in", () => {
 
         expect(result).toMatchObject({ nextScene: "selectCharacterScene" });
         expect(mocks.setCharacterTextureIds).not.toHaveBeenCalled();
+    });
+});
+
+// A sign-in that is refused (the token is no longer valid) leaves the player a guest on a device that still holds the
+// account's name: it must not stay as the guest's name (#1284).
+describe("a guest whose sign-in was refused at the start", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        localStorage.clear();
+        const authToken = `header.${window.btoa(JSON.stringify({ identifier: "guest-uuid" }))}.signature`;
+        mocks.anonymLogin.mockResolvedValue({ data: { userUuid: "guest-uuid", email: null, authToken } });
+        // An account's game token that the pusher no longer accepts: three parts, the middle one a JSON payload
+        localUserStore.setAuthToken(
+            `header.${window.btoa(JSON.stringify({ identifier: "uuid-me", accessToken: "expired" }))}.signature`
+        );
+        vi.spyOn(
+            connectionManager as unknown as { checkAuthUserConnexion: () => Promise<never> },
+            "checkAuthUserConnexion"
+        ).mockRejectedValue(
+            new AxiosError("Unauthorized", "ERR_BAD_REQUEST", undefined, undefined, {
+                status: 401,
+            } as AxiosResponse)
+        );
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    it("does not keep the account's name as their own", async () => {
+        localUserStore.setName("Ada Account", true);
+
+        await connectionManager.initGameConnexion();
+
+        expect(localUserStore.getName()).toBeNull();
+        // And the game, which read the name when the page started, no longer holds it
+        expect(mocks.setPlayerName).toHaveBeenCalledWith(null);
+    });
+
+    it("keeps a name they typed themselves", async () => {
+        localUserStore.setName("Guesty");
+
+        await connectionManager.initGameConnexion();
+
+        expect(localUserStore.getName()).toBe("Guesty");
+        expect(mocks.setPlayerName).toHaveBeenCalledWith("Guesty");
+    });
+
+    it("keeps a name an older version stored when the refused token was a guest's (#1298)", async () => {
+        localUserStore.setAuthToken(`header.${window.btoa(JSON.stringify({ identifier: "guest-old" }))}.signature`);
+        localUserStore.setName("Ada Legacy");
+        localStorage.removeItem("guestTypedPlayerName");
+
+        await connectionManager.initGameConnexion();
+
+        expect(localUserStore.getName()).toBe("Ada Legacy");
+    });
+
+    it("does not keep a name an older version stored, which nothing says a guest typed (#1290)", async () => {
+        // What an older version left: the name, without a mark and without the "guest typed it" note.
+        localUserStore.setName("Ada Legacy");
+        localStorage.removeItem("guestTypedPlayerName");
+
+        await connectionManager.initGameConnexion();
+
+        expect(localUserStore.getName()).toBeNull();
+        expect(mocks.setPlayerName).toHaveBeenCalledWith(null);
+    });
+});
+
+// Back as a guest from a sign-in that was abandoned after the token was cleared, on a device that holds an account's
+// name (#1286).
+describe("a guest back from an abandoned sign-in, on a device that kept an account's name", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        localStorage.clear();
+        const authToken = `header.${window.btoa(JSON.stringify({ identifier: "guest-uuid" }))}.signature`;
+        mocks.anonymLogin.mockResolvedValue({ data: { userUuid: "guest-uuid", email: null, authToken } });
+    });
+
+    it("does not carry on under the account's name", async () => {
+        localUserStore.setName("Ada Account", true);
+        localUserStore.setAuthToken(null);
+
+        await connectionManager.initGameConnexion();
+
+        expect(localUserStore.getName()).toBeNull();
+        expect(mocks.setPlayerName).toHaveBeenCalledWith(null);
+    });
+
+    it("keeps a name the guest typed", async () => {
+        localUserStore.setName("Guesty");
+        localUserStore.setAuthToken(null);
+
+        await connectionManager.initGameConnexion();
+
+        expect(localUserStore.getName()).toBe("Guesty");
+        expect(mocks.setPlayerName).toHaveBeenCalledWith("Guesty");
+    });
+
+    it("keeps a name an older version stored for a guest who never signed in (#1290)", async () => {
+        localUserStore.setName("Old Guest");
+        localStorage.removeItem("guestTypedPlayerName");
+        localUserStore.setAuthToken(null);
+
+        await connectionManager.initGameConnexion();
+
+        expect(localUserStore.getName()).toBe("Old Guest");
+        expect(mocks.setPlayerName).toHaveBeenCalledWith("Old Guest");
     });
 });

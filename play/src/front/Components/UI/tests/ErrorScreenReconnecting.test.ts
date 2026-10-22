@@ -54,7 +54,7 @@ describe("ErrorScreen while reconnecting", () => {
     const text = () => target.textContent?.replace(/\s+/g, " ").trim() ?? "";
 
     it("says it is reconnecting, calmly, with the spinner under the text", async () => {
-        showReconnectingScreen(undefined);
+        showReconnectingScreen();
         component = new ErrorScreen({ target });
         await tick();
 
@@ -72,7 +72,7 @@ describe("ErrorScreen while reconnecting", () => {
     });
 
     it("says the device is offline only after a while without network, and goes back when online", async () => {
-        showReconnectingScreen(undefined);
+        showReconnectingScreen();
         component = new ErrorScreen({ target });
         await tick();
         setOnline(false);
@@ -93,7 +93,7 @@ describe("ErrorScreen while reconnecting", () => {
     });
 
     it("keeps saying reconnecting while the network is there, however long it takes", async () => {
-        showReconnectingScreen(undefined);
+        showReconnectingScreen();
         component = new ErrorScreen({ target });
         await tick();
 
