@@ -13,6 +13,7 @@
     import { isMediaBreakpointUp } from "../../Utils/BreakpointsUtils";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { canvasSize, openHereInFrontOfOrbitStore } from "../../Stores/CoWebsiteStore";
+    import { cardOverWindowStore } from "../../Stores/CardOverWindowStore";
     import { DESKTOP_LAYOUT_MIN_WIDTH } from "../../Stores/BarInViewStore";
     import { windowInFrontStore } from "../../Stores/WindowInFrontStore";
     import { sideWindowInFrontStore } from "../../Stores/SideWindowInFrontStore";
@@ -40,8 +41,10 @@
 
     // Esc closes the window in front. The Open here window, when it is the one in front, takes the key instead. Whichever
     // of the two answers first marks the key as used, so the other one leaves it alone, in whatever order they listen.
+    // A menu or card opened over the window sends it behind Orbit, so Orbit is the one in front then.
     function onKeyDown(e: KeyboardEvent) {
-        if (e.key === "Escape" && !e.defaultPrevented && !$openHereInFrontOfOrbitStore) {
+        const windowInFront = $openHereInFrontOfOrbitStore && !$cardOverWindowStore;
+        if (e.key === "Escape" && !e.defaultPrevented && !windowInFront) {
             e.preventDefault();
             close();
         }
