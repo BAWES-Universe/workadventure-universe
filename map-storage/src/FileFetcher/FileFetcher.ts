@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { Request, Response, NextFunction } from "express";
 import { mapPath } from "../Services/PathMapper";
 import type { FileSystemInterface } from "../Upload/FileSystemInterface";
@@ -37,7 +38,9 @@ export function proxyFiles(fileSystem: FileSystemInterface) {
             }
         }
 
-        if (/\.svgz?$/i.test(unescapedPath)) {
+        // The file system resolves "x.svg/", "x.svg/." and "dir/../x.svg" to the SVG: so the rule looks at that form.
+        const resolvedPath = path.posix.normalize(unescapedPath).replace(/\/+$/, "");
+        if (/\.svgz?$/i.test(resolvedPath)) {
             res.set("Content-Security-Policy", SVG_NO_CODE_POLICY);
         }
 
