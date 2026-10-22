@@ -28,6 +28,19 @@ const MAX_CELL_CHARS = 1024;
  * of ordinary cells is far below it.
  */
 const MAX_SHEET_TEXT_CHARS = 2_000_000;
+/**
+ * The same limits for a whole workbook, so that many sheets cannot add up to far more than one: the text its sheets
+ * draw, and the cells of the grids drawn (a sheet with a cell far down and to the right is drawn as a grid of 100,000).
+ * A workbook of ordinary sheets is far below them.
+ */
+const MAX_WORKBOOK_TEXT_CHARS = 10_000_000;
+const MAX_WORKBOOK_GRID_CELLS = 2_000_000;
+
+/** What is left of the limits of a whole workbook, taken from by each sheet drawn. */
+interface WorkbookBudget {
+    textLeft: number;
+    gridLeft: number;
+}
 
 export interface SheetCell {
     /** The cell as the file shows it (dates, percentages and currencies already formatted). Always drawn as text. */
@@ -108,7 +121,12 @@ function holdsCells(sheet: SheetJs.WorkSheet | undefined): boolean {
     return type === undefined || type === "sheet";
 }
 
-function viewOfSheet(XLSX: typeof SheetJs, name: string, sheet: SheetJs.WorkSheet): SheetView {
+function viewOfSheet(
+    XLSX: typeof SheetJs,
+    name: string,
+    sheet: SheetJs.WorkSheet,
+    workbook: WorkbookBudget
+): SheetView {
     const reference = sheet["!ref"];
     // A sheet with no cells is drawn like Excel draws it: the grid of one empty cell, A1.
     if (!reference) {
@@ -136,8 +154,11 @@ function viewOfSheet(XLSX: typeof SheetJs, name: string, sheet: SheetJs.WorkShee
     const usedColumns = lastUsedColumn(XLSX, sheet) + 1;
     const lastColumn = Math.min(Math.max(usedColumns, 1), MAX_TABLE_COLUMNS) - 1;
     // Like Excel, a sheet always starts at A1, even when its first cells are further down or to the right.
+    workbook.gridLeft -= (lastRow + 1) * (lastColumn + 1);
+    if (workbook.gridLeft < 0) throw new Error("The file is too big to show");
     const rows: SheetCell[][] = [];
-    const budget = { left: MAX_SHEET_TEXT_CHARS, cut: false };
+    const textRoom = Math.min(MAX_SHEET_TEXT_CHARS, workbook.textLeft);
+    const budget = { left: textRoom, cut: false };
     for (let row = 0; row <= lastRow; row++) {
         const cells: SheetCell[] = [];
         for (let column = 0; column <= lastColumn; column++) {
@@ -145,6 +166,7 @@ function viewOfSheet(XLSX: typeof SheetJs, name: string, sheet: SheetJs.WorkShee
         }
         rows.push(cells);
     }
+    workbook.textLeft -= textRoom - budget.left;
     return {
         name,
         rows,
@@ -408,8 +430,9 @@ export async function readSpreadsheet(bytes: ArrayBuffer): Promise<SheetView[]> 
     })).filter(({ name }) => holdsCells(workbook.Sheets[name]));
     // A workbook whose data sheets are all hidden still opens.
     const visible = sheets.filter(({ hidden }) => !hidden);
+    const budget: WorkbookBudget = { textLeft: MAX_WORKBOOK_TEXT_CHARS, gridLeft: MAX_WORKBOOK_GRID_CELLS };
     return (visible.length > 0 ? visible : sheets).map(({ name }) => {
-        const view = viewOfSheet(XLSX, name, workbook.Sheets[name]);
+        const view = viewOfSheet(XLSX, name, workbook.Sheets[name], budget);
         // The rows of a cut repeat still count in the sheet's length.
         const cut = opened.cutRows.get(name);
         if (cut !== undefined && view.rowsCut && view.totalRows !== undefined) view.totalRows += cut;
