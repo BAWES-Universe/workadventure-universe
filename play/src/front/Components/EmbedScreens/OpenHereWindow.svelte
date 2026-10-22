@@ -4,6 +4,9 @@
     import { modalVisibilityStore } from "../../Stores/ModalStore";
     import { chatVisibilityStore } from "../../Stores/ChatStore";
     import { windowInFrontStore } from "../../Stores/WindowInFrontStore";
+    import { emoteMenuStore } from "../../Stores/EmoteStore";
+    import { expressTrayStore } from "../../Stores/ExpressStore";
+    import { lightboxOpenStore } from "../../Stores/UserInputStore";
     import { cardOverWindowStore } from "../../Stores/CardOverWindowStore";
     import {
         bringOpenHereInFront,
@@ -72,11 +75,20 @@
         analyticsClient.closeCowebsite();
     }
 
+    // The emote picker, the express tray and a picture shown large close on Esc through their own listeners, which do
+    // not mark the key as used. Whether one was open is read before any of them runs, as the one that closes it
+    // empties its store: that Esc is theirs, and the window stays.
+    let overlayHadEscape = false;
+    function onKeyDownCapture(event: KeyboardEvent) {
+        if (event.key !== "Escape") return;
+        overlayHadEscape = $emoteMenuStore || $expressTrayStore !== "closed" || $lightboxOpenStore;
+    }
+
     // Esc closes the window when it is the one in front, like Orbit's. Esc inside a box (the file's search) belongs to
     // that box, and a key a page inside already used is left alone.
     function onKeyDown(event: KeyboardEvent) {
         if (!floating || event.key !== "Escape" || event.defaultPrevented) return;
-        if (behindOrbit) return;
+        if (behindOrbit || overlayHadEscape) return;
         const target = event.target as HTMLElement | null;
         if (target?.closest?.("input, textarea, select, [contenteditable='true']")) return;
         // Orbit leaves a key marked as used alone, so one press closes one window.
@@ -132,7 +144,7 @@
     });
 </script>
 
-<svelte:window on:keydown={onKeyDown} on:blur={onWindowBlur} />
+<svelte:window on:keydown|capture={onKeyDownCapture} on:keydown={onKeyDown} on:blur={onWindowBlur} />
 
 <!-- Looks like Orbit's window and sits where it sits: under the bar, a third of the screen wide, with the same pill
      (expand, close) outside the card. Taking a tap in front brings the window in front of Orbit or the chat. -->
