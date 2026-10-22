@@ -8,6 +8,7 @@ vi.mock("../Connection/LocalUserStore", () => ({
 }));
 vi.mock("../Stores/MapEditorStore", () => ({ mapEditorToolbarInUseStore: writable(false) }));
 vi.mock("../Stores/BarInViewStore", () => ({ DESKTOP_LAYOUT_MIN_WIDTH: 1024 }));
+vi.mock("../Stores/OpenHereSheetStore", () => ({ openHereSheetUpStore: writable(false) }));
 
 import { chatLeavesNoRoomForBar } from "./ChatSidebarWidthStore";
 

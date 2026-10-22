@@ -27,9 +27,6 @@ export interface FileViewerSource {
  * readable kinds. The viewer draws the file in the page itself from its bytes.
  */
 export class FileViewerCoWebsite extends SimpleCoWebsite {
-    /** True when opening this viewer made the panel fill a phone's screen: closing it gives the screen back. */
-    public openedFullScreen = false;
-
     constructor(
         public readonly source: FileViewerSource,
         widthPercent?: number,

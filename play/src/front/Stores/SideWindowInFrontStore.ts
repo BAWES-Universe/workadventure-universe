@@ -14,10 +14,17 @@ export const sideWindowInFrontStore = writable<"orbit" | "openHere">("openHere")
  */
 export const windowBehindCardStore = writable(false);
 
-/** Opening a file or a link brings the Open here window in front, over Orbit and the chat if they are open. */
+/**
+ * On an upright phone the window is a sheet, and dragging it down tucks it into a slim row above the bar instead of
+ * closing it: the bar and Orbit are back, and a tap on the row brings the sheet up again.
+ */
+export const openHereSheetTuckedStore = writable(false);
+
+/** Opening a file or a link brings the Open here window in front, over Orbit and the chat if they are open, and up from a tuck. */
 export function bringOpenHereInFront(): void {
     sideWindowInFrontStore.set("openHere");
     windowInFrontStore.set("window");
+    openHereSheetTuckedStore.set(false);
 }
 
 // The store lives as long as the page, so this subscription does too.

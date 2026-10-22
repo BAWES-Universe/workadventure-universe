@@ -27,6 +27,7 @@
         chatSheetRestingHeight,
     } from "./ChatSheetSizes";
     import { getLastChatOpenSource } from "./openChat";
+    import { openHereSheetHeightStore } from "../Stores/OpenHereSheetStore";
     import { IconX } from "@wa-icons";
 
     let container: HTMLElement;
@@ -221,8 +222,9 @@
                   inviteSheetHeight,
                   $windowSize.height
               ));
-    // The videos above the sheet follow its height, drag included.
-    $: chatSheetHeightStore.set(sheet && $chatVisibilityStore ? sheetHeight : 0);
+    // The videos above the sheet follow its height, drag included. With the chat closed they sit above the file sheet
+    // (Open here), if one is up.
+    $: chatSheetHeightStore.set(sheet ? ($chatVisibilityStore ? sheetHeight : $openHereSheetHeightStore) : 0);
 
     // Any other move of the sheet ("show everyone" lowering it) ends the bubble's own height.
     const unsubscribeRest = chatSheetSnapStore.subscribe(() => leaveBubbleHeight());

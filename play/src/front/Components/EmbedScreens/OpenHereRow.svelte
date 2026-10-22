@@ -2,8 +2,15 @@
     /**
      * The one row every item in the Open here window gets, built like chat's header: the item's icon, its name (16 px
      * bold) with a line under it (12 px), then the actions that make sense for the item as plain icons. Mark an action
-     * button with the class `open-here-action`; a picked one (the file's page list) also gets `picked`.
+     * button with the class `open-here-action`; a picked one (the file's page list) also gets `picked`. In a phone's
+     * sheet the row ends with the "N open" chip (with two or more open, it opens the list) and chat's own close.
      */
+    import LL from "../../../i18n/i18n-svelte";
+    import { coWebsites } from "../../Stores/CoWebsiteStore";
+    import { closeAllOpenItems } from "../../Stores/ClosedItemsStore";
+    import { openHereListOpenStore, openHereSheetLayoutStore } from "../../Stores/OpenHereSheetStore";
+    import { IconChevronDown, IconX } from "@wa-icons";
+
     export let name: string;
     export let line: string | undefined = undefined;
 </script>
@@ -15,6 +22,33 @@
         {#if line}<small>{line}</small>{/if}
     </div>
     <slot />
+    {#if $openHereSheetLayoutStore}
+        {#if $coWebsites.length > 1}
+            <button
+                type="button"
+                class="row-chip"
+                data-open-chip
+                aria-expanded={$openHereListOpenStore}
+                aria-haspopup="true"
+                aria-label={$LL.cowebsite.openCount({ count: $coWebsites.length })}
+                data-testid="openHereList"
+                on:click={() => openHereListOpenStore.update((open) => !open)}
+            >
+                {$coWebsites.length}
+                <IconChevronDown font-size="16" />
+            </button>
+        {/if}
+        <button
+            type="button"
+            class="u-close"
+            aria-label={$LL.chat.fileViewer.close()}
+            title={$LL.chat.fileViewer.close()}
+            data-testid="openHereSheetClose"
+            on:click={closeAllOpenItems}
+        >
+            <IconX font-size="20" />
+        </button>
+    {/if}
 </header>
 
 <style>
@@ -63,6 +97,37 @@
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+    }
+
+    /* "N open" on a phone: the count only, so the name keeps its room. Neutral; only its arrow turns. */
+    .row-chip {
+        box-sizing: border-box;
+        display: inline-flex;
+        flex: none;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        height: 40px;
+        min-width: 56px;
+        margin-inline: 4px;
+        padding: 0 8px 0 14px;
+        border: 0;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+        color: #fff;
+        font-family: inherit;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+    }
+
+    .row-chip[aria-expanded="true"] {
+        background: rgba(255, 255, 255, 0.14);
+    }
+
+    .row-chip[aria-expanded="true"] :global(svg) {
+        transform: rotate(180deg);
     }
 
     /* Plain icons with no box, 48 px to tap, a soft white on hover only where hovering exists. */

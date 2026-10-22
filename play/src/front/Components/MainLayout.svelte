@@ -40,6 +40,7 @@
         hideActionBarStoreBecauseOfChatBar,
     } from "../Chat/ChatSidebarWidthStore";
     import { chatSheetLayoutStore } from "../Chat/ChatSheetStore";
+    import { openHereSheetUpStore } from "../Stores/OpenHereSheetStore";
     import { incomingRingStore } from "../Chat/Stores/RingStore";
     import { streamableCollectionStore } from "../Stores/StreamableCollectionStore";
     import { inputFormFocusStore } from "../Stores/UserInputStore";
@@ -288,7 +289,7 @@
                 <EditMode />
             {/if}
 
-            {#if !($chatVisibilityStore && $hideActionBarStoreBecauseOfChatBar) && !($mapEditorToolbarInUseStore && !desktop)}
+            {#if !(($chatVisibilityStore || $openHereSheetUpStore) && $hideActionBarStoreBecauseOfChatBar) && !($mapEditorToolbarInUseStore && !desktop)}
                 <!-- Held inside the game's area: a room website opened beside or above the game covers the column as
                      it grows, instead of the column floating over the website. Above "Look around the map", so its
                      Places panel never covers the column. While Express is open it comes above the bar's layer
