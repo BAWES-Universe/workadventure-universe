@@ -19,11 +19,11 @@ export function nearestWidthStop(ratio: number): number {
     );
 }
 
-/** One stop wider (1) or narrower (-1) than the current width, for the grip's arrow keys. It stays on the last stop. */
+/** One stop wider (1) or narrower (-1) than the current width, for the grip's arrow keys. With no stop further that way, the width stays as it is. */
 export function stepWidthStop(ratio: number, direction: 1 | -1): number {
     const stops = OPEN_HERE_WIDTH_STOPS;
     if (direction === 1) {
-        return stops.find((stop) => stop > ratio + 0.001) ?? stops[stops.length - 1];
+        return stops.find((stop) => stop > ratio + 0.001) ?? ratio;
     }
-    return [...stops].reverse().find((stop) => stop < ratio - 0.001) ?? stops[0];
+    return [...stops].reverse().find((stop) => stop < ratio - 0.001) ?? ratio;
 }

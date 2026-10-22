@@ -24,6 +24,9 @@ describe("Open here window width", () => {
         expect(stepWidthStop(0.33, -1)).toBeCloseTo(0.33);
         // A width the map asked for (70%) is not a stop: narrower goes to the next stop below it.
         expect(stepWidthStop(0.7, -1)).toBeCloseTo(2 / 3);
+        // Past the last stop (a map asked for 80%) or before the first, an arrow never moves the window the other way.
+        expect(stepWidthStop(0.8, 1)).toBe(0.8);
+        expect(stepWidthStop(0.28, -1)).toBe(0.28);
         expect(OPEN_HERE_WIDTH_STOPS).toHaveLength(3);
     });
 
