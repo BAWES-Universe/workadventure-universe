@@ -469,7 +469,8 @@ class ConnectionManager {
                             }
                             return redirect;
                         } else {
-                            this.dropAccountName();
+                            // The token was refused: this device was signed in.
+                            this.dropAccountName(true);
                             await this.anonymousLogin();
                         }
                     } else {
@@ -523,8 +524,8 @@ class ConnectionManager {
      * sign-in abandoned), it and the game go back to the guest's own name, or none (#1192, as signing out does). The game
      * read the name when the page started, so it is told too. A name the guest typed stays.
      */
-    private dropAccountName(): void {
-        localUserStore.restoreGuestName();
+    private dropAccountName(wasSignedIn = false): void {
+        localUserStore.restoreGuestName(wasSignedIn);
         gameManager.setPlayerName(localUserStore.getName());
     }
 
@@ -895,6 +896,12 @@ class ConnectionManager {
 
         if (visitCardUrl) {
             gameManager.setVisitCardUrl(visitCardUrl);
+        }
+
+        // Another account's name stays on the device after a switch, and the game read it when it started: with no name
+        // for this account, neither may show it.
+        if (username === undefined && localUserStore.dropOtherAccountsName(userUuid)) {
+            gameManager.setPlayerName(localUserStore.getName());
         }
 
         const opidWokaNamePolicy = this.currentRoom?.opidWokaNamePolicy;

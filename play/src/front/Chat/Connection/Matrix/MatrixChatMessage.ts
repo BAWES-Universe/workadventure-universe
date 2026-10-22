@@ -23,13 +23,17 @@ interface MyReaction {
 /** Clicks closer together than this count as one burst: only where the burst ends is sent. */
 const REACTION_BURST_MS = 300;
 
-/** A Matrix reply's plain body starts with the quoted lines ("> <@name> text"), then a blank line, then the reply. */
+/** A Matrix reply's plain body can start with the quoted lines ("> <@name> text"), then a blank line, then the reply. */
+const REPLY_FALLBACK_START = /^> (?:\* )?<[^>\n]+>/;
+
 function withoutReplyFallback(body: unknown): string | undefined {
     if (typeof body !== "string") return undefined;
+    // Only a body that starts like a quote has one: a caption that merely starts with ">" is the sender's own text.
+    if (!REPLY_FALLBACK_START.test(body)) return body;
     const lines = body.split("\n");
     let first = 0;
     while (first < lines.length && lines[first].startsWith(">")) first++;
-    if (first > 0 && lines[first] === "") first++;
+    if (lines[first] === "") first++;
     return lines.slice(first).join("\n");
 }
 
@@ -236,7 +240,8 @@ export class MatrixChatMessage implements ChatMessage {
      */
     private getMediaFileName(content: IContent): string | undefined {
         if (typeof content.filename === "string") return content.filename;
-        return typeof content.body === "string" ? content.body : undefined;
+        // The body is shown without the quoted lines of a reply, so the name is read from it the same way.
+        return withoutReplyFallback(content.body);
     }
 
     public initReactions() {

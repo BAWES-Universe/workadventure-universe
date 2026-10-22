@@ -113,6 +113,17 @@ describe("a guest whose sign-in was refused at the start", () => {
         expect(localUserStore.getName()).toBe("Guesty");
         expect(mocks.setPlayerName).toHaveBeenCalledWith("Guesty");
     });
+
+    it("does not keep a name an older version stored, which nothing says a guest typed (#1290)", async () => {
+        // What an older version left: the name, without a mark and without the "guest typed it" note.
+        localUserStore.setName("Ada Legacy");
+        localStorage.removeItem("guestTypedPlayerName");
+
+        await connectionManager.initGameConnexion();
+
+        expect(localUserStore.getName()).toBeNull();
+        expect(mocks.setPlayerName).toHaveBeenCalledWith(null);
+    });
 });
 
 // Back as a guest from a sign-in that was abandoned after the token was cleared, on a device that holds an account's
@@ -143,5 +154,16 @@ describe("a guest back from an abandoned sign-in, on a device that kept an accou
 
         expect(localUserStore.getName()).toBe("Guesty");
         expect(mocks.setPlayerName).toHaveBeenCalledWith("Guesty");
+    });
+
+    it("keeps a name an older version stored for a guest who never signed in (#1290)", async () => {
+        localUserStore.setName("Old Guest");
+        localStorage.removeItem("guestTypedPlayerName");
+        localUserStore.setAuthToken(null);
+
+        await connectionManager.initGameConnexion();
+
+        expect(localUserStore.getName()).toBe("Old Guest");
+        expect(mocks.setPlayerName).toHaveBeenCalledWith("Old Guest");
     });
 });

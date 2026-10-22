@@ -141,6 +141,42 @@ describe("the caption of a Matrix picture or video", () => {
         expect(getMediaCaption(shown)).toBe("The new desk");
     });
 
+    it("keeps a caption that starts with > when the reply carries no quoted lines", () => {
+        const quoted = fakeEvent({ msgtype: "m.text", body: "Look at this" }, "$quoted");
+        const { shown } = contentOf(
+            {
+                msgtype: "m.image",
+                body: ">urgent",
+                formatted_body: "<mx-reply><blockquote>Look at this</blockquote></mx-reply><p>&gt;urgent</p>",
+                filename: "image.png",
+                url: "mxc://matrix.test/a",
+                "m.relates_to": { "m.in_reply_to": { event_id: "$quoted" } },
+            },
+            fakeRoom({ $quoted: quoted }),
+            "$quoted"
+        );
+
+        expect(getMediaCaption(shown)).toBe(">urgent");
+    });
+
+    it("is empty for a picture sent as a reply with quoted lines and no filename field", () => {
+        const quoted = fakeEvent({ msgtype: "m.text", body: "Look at this" }, "$quoted");
+        const { shown } = contentOf(
+            {
+                msgtype: "m.image",
+                body: "> <@ada:matrix.test> Look at this\n\nimage.png",
+                formatted_body: "<mx-reply><blockquote>Look at this</blockquote></mx-reply><p>image.png</p>",
+                url: "mxc://matrix.test/a",
+                "m.relates_to": { "m.in_reply_to": { event_id: "$quoted" } },
+            },
+            fakeRoom({ $quoted: quoted }),
+            "$quoted"
+        );
+
+        expect(shown.filename).toBe("image.png");
+        expect(getMediaCaption(shown)).toBeUndefined();
+    });
+
     it("keeps the name of a document, whether or not it is sent as a reply", () => {
         const plain = contentOf({ msgtype: "m.file", body: "Q4 roster.pdf", url: "mxc://matrix.test/a" });
         expect(plain.message.type).toBe("file");

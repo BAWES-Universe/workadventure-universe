@@ -146,11 +146,18 @@ class LocalUserStore {
         if (name !== null && localStorage.getItem(guestTypedNameKey) === name) localStorage.setItem(guestNameKey, name);
     }
 
-    /** On signing out: the device goes back to the guest's own name, or to none, never the account's. */
-    restoreGuestName(): void {
+    /**
+     * On signing out: the device goes back to the guest's own name, or to none, never the account's.
+     * wasSignedIn: this device held an account's sign-in. Then a name nothing marks (stored by an older version, and not
+     * one a guest typed) may be the account's too, and goes. Without it such a name stays: it is most likely a guest's.
+     */
+    restoreGuestName(wasSignedIn = false): void {
         // A guest's own name stays: it is only the account's name the device kept that goes (a guest can get here too,
         // when their token is refused).
-        if (localStorage.getItem(playerNameIsAccountsKey) === null) return;
+        if (localStorage.getItem(playerNameIsAccountsKey) === null) {
+            const name = this.getName();
+            if (!wasSignedIn || name === null || localStorage.getItem(guestTypedNameKey) === name) return;
+        }
         const backup = localStorage.getItem(guestNameKey);
         if (backup && isUserNameValid(backup)) {
             this.setName(backup);
@@ -160,6 +167,18 @@ class LocalUserStore {
         localStorage.removeItem(playerNameKey);
         localStorage.removeItem(playerNameIsAccountsKey);
         localStorage.removeItem(guestTypedNameKey);
+    }
+
+    /**
+     * Another account's name on this device, when this account is the one signed in now: the device goes back to the
+     * guest's own name, or none. True when it did, so the game can be told.
+     */
+    dropOtherAccountsName(userUuid: string): boolean {
+        const owner = localStorage.getItem(playerNameIsAccountsKey);
+        // "true" is a name marked when no user was saved yet: nothing says whose it is.
+        if (owner === null || owner === "true" || owner === userUuid) return false;
+        this.restoreGuestName();
+        return true;
     }
 
     getName(): string | null {
