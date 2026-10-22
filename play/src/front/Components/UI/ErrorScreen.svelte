@@ -10,7 +10,7 @@
     // Orbit's butterfly (2.7 KB): the build puts files under 4 KB inside the script itself, so the reconnecting
     // screen shows it without the network.
     import butterfly from "../images/butterfly.webp";
-    import { universeLogo } from "../images/universeLogo";
+    import { universeLogo, universeWordmark } from "../images/universeLogo";
     import LL from "../../../i18n/i18n-svelte";
 
     import LoaderIcon from "../Icons/LoaderIcon.svelte";
@@ -36,14 +36,14 @@
     let failedLogoSrc: string | undefined;
     let failedImageSrc: string | undefined;
     // Every screen but Reconnecting has a logo on top: the room's, else (no room yet, or it failed) Universe's own.
-    $: logoShown = errorScreen?.type !== "reconnecting";
+    // Reconnecting (and Connecting) shows the loading screen's wordmark instead.
+    $: isReconnecting = errorScreen?.type === "reconnecting";
+    $: logoShown = !isReconnecting;
     $: roomLogoShown = logoShown && !!logoErrorSrc && logoErrorSrc !== failedLogoSrc;
     $: logoSrc = roomLogoShown ? logoErrorSrc : universeLogo;
-    // The update screen shows the logo alone. So does any screen with the logo on top: the room's own picture is not
-    // repeated under it. The Reconnecting screen has no logo on top, so it shows that picture as its logo.
-    $: imageErrorSrc = isNewVersion
-        ? undefined
-        : errorScreen?.image || (logoShown ? undefined : gameManager?.currentStartedRoom?.errorSceneLogo) || undefined;
+    // The update and Reconnecting screens show their logo alone. Other screens show a picture the error itself brings,
+    // but not the room's own picture repeated under its logo.
+    $: imageErrorSrc = isNewVersion || isReconnecting ? undefined : errorScreen?.image || undefined;
     // When the image is the same picture as the logo shown above it, show it only once, as the logo.
     $: imageShown = !!imageErrorSrc && imageErrorSrc !== failedImageSrc && !(logoShown && imageErrorSrc === logoSrc);
 
@@ -152,8 +152,10 @@
                 {/if}
             </div>
 
-            {#if imageShown}
-                <div class="icon" class:reconnecting={$errorScreenStore.type === "reconnecting"}>
+            {#if isReconnecting}
+                <img class="wordmark" src={universeWordmark} alt="Universe" width="219" height="36" draggable="false" />
+            {:else if imageShown}
+                <div class="icon">
                     <img
                         src={imageErrorSrc}
                         alt="Error"
@@ -274,13 +276,13 @@
             img {
                 height: 125px;
             }
-            // The reconnecting screen shows the logo alone: a little bigger, as close to the title as before.
-            &.reconnecting {
-                margin-bottom: -24px;
-                img {
-                    height: 160px;
-                }
-            }
+        }
+        // The loading screen's size, so the logo stays the same when Connecting takes over from it.
+        .wordmark {
+            display: block;
+            width: 219px;
+            height: 36px;
+            margin: 0 auto;
         }
         .pulse {
             position: relative;
@@ -406,7 +408,7 @@
                 width: 90%;
                 max-width: 90vw;
             }
-            .icon:not(.reconnecting) {
+            .icon {
                 height: 60px;
             }
         }

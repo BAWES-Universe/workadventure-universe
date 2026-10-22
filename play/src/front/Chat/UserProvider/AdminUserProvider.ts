@@ -1,10 +1,11 @@
 import type { Writable } from "svelte/store";
-import { readable, writable } from "svelte/store";
+import { get, readable, writable } from "svelte/store";
 import type { ChatMember } from "@workadventure/messages";
 import { AvailabilityStatus } from "@workadventure/messages";
 import type { PartialChatUser } from "../Connection/ChatConnection";
 import type { RoomConnection } from "../../Connection/RoomConnection";
 import { storedWokaStore } from "../Stores/StoredWokaStore";
+import { resolveRoles, worldRolesStore } from "../Roles/WorldRoles";
 import type { UserProviderInterface } from "./UserProviderInterface";
 
 /**
@@ -54,6 +55,7 @@ export class AdminUserProvider implements UserProviderInterface {
                     gameName: currentMember.wokaName || undefined,
                     isAdmin: currentMember.tags.includes("admin"),
                     isMember: currentMember.tags.includes("member"),
+                    roles: resolveRoles(currentMember.tags, get(worldRolesStore)),
                     // Their account id, so an away member can still be invited, befriended or reported.
                     uuid: currentMember.uuid || undefined,
                     color: undefined,
