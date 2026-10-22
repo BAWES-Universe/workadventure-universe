@@ -462,6 +462,16 @@ describe("the spreadsheet reader", () => {
             expect(sheet.totalRows).toBe(12000);
         });
 
+        it("cuts a run of billions of spaces in a cell's text, which the reader would build one by one", async () => {
+            const bytes = await odsWithRows(
+                `<table:table-row><table:table-cell office:value-type="string"><text:p>a<text:s text:c="2000000000"/>b</text:p></table:table-cell></table:table-row>`
+            );
+            const started = Date.now();
+            const [sheet] = await readSpreadsheet(bytes);
+            expect(sheet.rows[0][0].text).toBe(`a${" ".repeat(32)}b`);
+            expect(Date.now() - started).toBeLessThan(5000);
+        });
+
         it("keeps the cell limit after rows written as one tag, which the reader does not move on past", async () => {
             const bytes = await odsWithRows(
                 `<table:table-row table:number-rows-repeated="5000"/>` +

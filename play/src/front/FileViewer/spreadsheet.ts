@@ -236,6 +236,14 @@ interface OpenDocument {
     cutRows: Map<string, number>;
 }
 
+/**
+ * A run of spaces in a cell's text is written as one tag with its length ("<text:s text:c="3"/>"), and the reader turns it
+ * into that many spaces. A run is cut to this many: a cell is drawn up to 1,024 characters, and a few bytes would
+ * otherwise make a string of billions.
+ */
+const MAX_SPACE_RUN = 32;
+const SPACE_RUN = /<text:s text:c="(\d+)"\/>/g;
+
 /** The tags the reader goes by in an OpenDocument sheet (its own pattern): a value in quotes may hold a ">". */
 const OPEN_DOCUMENT_TAG = /<([/]?)([^\s?><!/:"]*:|)([^\s?<>:/"]+)(?:\s+[^<>=?"'\s]+="[^"]*?")*\s*[/]?>/g;
 
@@ -382,7 +390,13 @@ async function prepareOpenDocument(bytes: ArrayBuffer): Promise<OpenDocument> {
     const zip = await JSZip.loadAsync(bytes);
     const content = zip.file("content.xml");
     if (!content) return { data: new Uint8Array(bytes), hidden: new Set(), cutRows: new Map() };
-    const { hidden, cutRows, limited } = scanOpenDocument(asReaderSees(await content.async("string")));
+    const text = asReaderSees(await content.async("string"));
+    const spaced = text.replace(SPACE_RUN, (whole, run: string) =>
+        Number(run) > MAX_SPACE_RUN ? `<text:s text:c="${MAX_SPACE_RUN}"/>` : whole
+    );
+    const scanned = scanOpenDocument(spaced);
+    const { hidden, cutRows } = scanned;
+    const limited = scanned.limited ?? (spaced !== text ? spaced : undefined);
     if (limited === undefined) return { data: new Uint8Array(bytes), hidden, cutRows };
     zip.file("content.xml", limited);
     return { data: await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" }), hidden, cutRows };
