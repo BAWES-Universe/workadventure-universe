@@ -397,6 +397,7 @@ class ConnectionManager {
             //todo: add here some kind of warning if authToken has expired.
             if (!this.authToken) {
                 if (!this._currentRoom.authenticationMandatory) {
+                    this.dropAccountName();
                     await this.anonymousLogin();
 
                     // Back as a guest after a logout or an abandoned login: reuse the guest's woka
@@ -468,11 +469,7 @@ class ConnectionManager {
                             }
                             return redirect;
                         } else {
-                            // Signed out without logging out: the device goes back to the guest's own name, or none,
-                            // not the account's it kept (#1192, as signing out does).
-                            localUserStore.restoreGuestName();
-                            // The game read the name when the page started: it joins with what it holds, so too.
-                            gameManager.setPlayerName(localUserStore.getName());
+                            this.dropAccountName();
                             await this.anonymousLogin();
                         }
                     } else {
@@ -519,6 +516,16 @@ class ConnectionManager {
             room: this._currentRoom,
             nextScene,
         });
+    }
+
+    /**
+     * About to carry on as a guest: if the device still holds an account's name (signed out without logging out, or a
+     * sign-in abandoned), it and the game go back to the guest's own name, or none (#1192, as signing out does). The game
+     * read the name when the page started, so it is told too. A name the guest typed stays.
+     */
+    private dropAccountName(): void {
+        localUserStore.restoreGuestName();
+        gameManager.setPlayerName(localUserStore.getName());
     }
 
     public async anonymousLogin(isBenchmark = false): Promise<void> {

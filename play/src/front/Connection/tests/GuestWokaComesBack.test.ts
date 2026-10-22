@@ -114,3 +114,34 @@ describe("a guest whose sign-in was refused at the start", () => {
         expect(mocks.setPlayerName).toHaveBeenCalledWith("Guesty");
     });
 });
+
+// Back as a guest from a sign-in that was abandoned after the token was cleared, on a device that holds an account's
+// name (#1286).
+describe("a guest back from an abandoned sign-in, on a device that kept an account's name", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        localStorage.clear();
+        const authToken = `header.${window.btoa(JSON.stringify({ identifier: "guest-uuid" }))}.signature`;
+        mocks.anonymLogin.mockResolvedValue({ data: { userUuid: "guest-uuid", email: null, authToken } });
+    });
+
+    it("does not carry on under the account's name", async () => {
+        localUserStore.setName("Ada Account", true);
+        localUserStore.setAuthToken(null);
+
+        await connectionManager.initGameConnexion();
+
+        expect(localUserStore.getName()).toBeNull();
+        expect(mocks.setPlayerName).toHaveBeenCalledWith(null);
+    });
+
+    it("keeps a name the guest typed", async () => {
+        localUserStore.setName("Guesty");
+        localUserStore.setAuthToken(null);
+
+        await connectionManager.initGameConnexion();
+
+        expect(localUserStore.getName()).toBe("Guesty");
+        expect(mocks.setPlayerName).toHaveBeenCalledWith("Guesty");
+    });
+});
