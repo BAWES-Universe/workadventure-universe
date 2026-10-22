@@ -19,7 +19,10 @@ const requestedCameraStateKey = "requestedCameraStateKey";
 const requestedMicrophoneStateKey = "requestedMicrophoneStateKey";
 const characterTexturesKey = "characterTextures";
 const guestCharacterTexturesKey = "guestCharacterTextures";
-const guestNameKey = "guestPlayerName";
+// Only names a guest typed are kept here. A new key, so no name an earlier build backed up can come back (#1271).
+const guestNameKey = "guestTypedPlayerNameBackup";
+// The name a guest typed last: the only name backupGuestName keeps aside (#1271).
+const guestTypedNameKey = "guestTypedPlayerName";
 const playerNameIsAccountsKey = "playerNameIsAccounts";
 const companionKey = "companion";
 const audioPlayerVolumeKey = "audioVolume";
@@ -117,8 +120,12 @@ class LocalUserStore {
     setName(name: string, fromAccount = false): void {
         this.name = name;
         localStorage.setItem(playerNameKey, name);
-        if (fromAccount) localStorage.setItem(playerNameIsAccountsKey, this.getLocalUser()?.uuid ?? "true");
-        else localStorage.removeItem(playerNameIsAccountsKey);
+        if (fromAccount) {
+            localStorage.setItem(playerNameIsAccountsKey, this.getLocalUser()?.uuid ?? "true");
+        } else {
+            localStorage.removeItem(playerNameIsAccountsKey);
+            localStorage.setItem(guestTypedNameKey, name);
+        }
     }
 
     /** The name this device last got as this account's own (see setName), if it holds one. */
@@ -134,8 +141,9 @@ class LocalUserStore {
         // Only a guest's: never the account's name the device kept, also once its sign-in was refused and the device
         // carried on as a guest.
         if (this.isLogged() || localStorage.getItem(playerNameIsAccountsKey) !== null) return;
+        // And only one a guest typed: a name an older version stored may be an account's, and nothing tells them apart.
         const name = this.getName();
-        if (name !== null) localStorage.setItem(guestNameKey, name);
+        if (name !== null && localStorage.getItem(guestTypedNameKey) === name) localStorage.setItem(guestNameKey, name);
     }
 
     /** On signing out: the device goes back to the guest's own name, or to none, never the account's. */
@@ -151,6 +159,7 @@ class LocalUserStore {
         this.name = undefined;
         localStorage.removeItem(playerNameKey);
         localStorage.removeItem(playerNameIsAccountsKey);
+        localStorage.removeItem(guestTypedNameKey);
     }
 
     getName(): string | null {
