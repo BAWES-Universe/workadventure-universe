@@ -472,6 +472,34 @@ describe("the spreadsheet reader", () => {
             expect(Date.now() - started).toBeLessThan(5000);
         });
 
+        it.each([
+            `<text:s text:c='2000000000'/>`,
+            `<text:s text:c="2000000000" />`,
+            `<text:s text:c="2000000000"></text:s>`,
+            `<x:s text:c="2000000000"/>`,
+            `<text:s text:style-name="a" text:c="2000000000"/>`,
+        ])("does not build spaces for a run written as %s, which the reader does not expand", async (run) => {
+            const bytes = await odsWithRows(
+                `<table:table-row><table:table-cell office:value-type="string"><text:p>a${run}b</text:p></table:table-cell></table:table-row>`
+            );
+            const started = Date.now();
+            const [sheet] = await readSpreadsheet(bytes);
+            expect(sheet.rows[0][0].text.length).toBeLessThan(40);
+            expect(Date.now() - started).toBeLessThan(5000);
+        });
+
+        it.each([
+            `<text:s  text:c="2000000000"/>`,
+            `<text:s\ttext:c="2000000000"/>`,
+            `<text:s\n text:c="2000000000"/>`,
+        ])("cuts a run of billions of spaces written as %j, which the reader reads the same way", async (run) => {
+            const bytes = await odsWithRows(
+                `<table:table-row><table:table-cell office:value-type="string"><text:p>a${run}b</text:p></table:table-cell></table:table-row>`
+            );
+            const [sheet] = await readSpreadsheet(bytes);
+            expect(sheet.rows[0][0].text).toBe(`a${" ".repeat(32)}b`);
+        });
+
         it("keeps the cell limit after rows written as one tag, which the reader does not move on past", async () => {
             const bytes = await odsWithRows(
                 `<table:table-row table:number-rows-repeated="5000"/>` +
