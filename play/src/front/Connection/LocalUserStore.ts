@@ -19,6 +19,8 @@ const requestedCameraStateKey = "requestedCameraStateKey";
 const requestedMicrophoneStateKey = "requestedMicrophoneStateKey";
 const characterTexturesKey = "characterTextures";
 const guestCharacterTexturesKey = "guestCharacterTextures";
+const guestNameKey = "guestPlayerName";
+const playerNameIsAccountsKey = "playerNameIsAccounts";
 const companionKey = "companion";
 const audioPlayerVolumeKey = "audioVolume";
 const audioPlayerMuteKey = "audioMute";
@@ -108,9 +110,47 @@ class LocalUserStore {
         return data ? JSON.parse(data) : null;
     }
 
-    setName(name: string): void {
+    /**
+     * fromAccount: the account's name (from Orbit, or a rename while signed in), not one a guest typed. It is kept
+     * against the signed-in user, so another account on this device doesn't take it.
+     */
+    setName(name: string, fromAccount = false): void {
         this.name = name;
         localStorage.setItem(playerNameKey, name);
+        if (fromAccount) localStorage.setItem(playerNameIsAccountsKey, this.getLocalUser()?.uuid ?? "true");
+        else localStorage.removeItem(playerNameIsAccountsKey);
+    }
+
+    /** The name this device last got as this account's own (see setName), if it holds one. */
+    getAccountName(userUuid: string): string | null {
+        return localStorage.getItem(playerNameIsAccountsKey) === userUuid ? this.getName() : null;
+    }
+
+    /**
+     * Keeps a guest's name aside before signing in. The device keeps the account's name while signed in (#1192), and
+     * signing out gives the guest's own back (restoreGuestName), as with the woka.
+     */
+    backupGuestName(): void {
+        // Only a guest's: never the account's name the device kept, also once its sign-in was refused and the device
+        // carried on as a guest.
+        if (this.isLogged() || localStorage.getItem(playerNameIsAccountsKey) !== null) return;
+        const name = this.getName();
+        if (name !== null) localStorage.setItem(guestNameKey, name);
+    }
+
+    /** On signing out: the device goes back to the guest's own name, or to none, never the account's. */
+    restoreGuestName(): void {
+        // A guest's own name stays: it is only the account's name the device kept that goes (a guest can get here too,
+        // when their token is refused).
+        if (localStorage.getItem(playerNameIsAccountsKey) === null) return;
+        const backup = localStorage.getItem(guestNameKey);
+        if (backup && isUserNameValid(backup)) {
+            this.setName(backup);
+            return;
+        }
+        this.name = undefined;
+        localStorage.removeItem(playerNameKey);
+        localStorage.removeItem(playerNameIsAccountsKey);
     }
 
     getName(): string | null {

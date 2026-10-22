@@ -12,7 +12,6 @@ import {
     modalVisibilityStore,
 } from "../../Stores/ModalStore";
 import { gameManager } from "../../Phaser/Game/GameManager";
-import { hasCapability } from "../../Connection/Capabilities";
 import { isUserNameValid, maxUserNameLength } from "../../Connection/LocalUserUtils";
 import type { ModalEvent } from "../../Api/Events/ModalEvent";
 import { analyticsClient } from "../../Administration/AnalyticsClient";
@@ -423,8 +422,8 @@ function applyPendingPlayerName() {
     pendingPlayerName = null;
     if (!name || name === gameManager.getPlayerName()) return;
     gameManager.setPlayerName(name);
-    // Signed-in players get their name from the server, which Orbit already updated; others keep it locally.
-    if (!hasCapability("api/save-name") || !localUserStore.isLogged()) localUserStore.setName(name);
+    // Orbit already has it; this device keeps a copy too, so it never comes back with an older name (#1192).
+    localUserStore.setName(name, localUserStore.isLogged());
     gameManager.rejoinCurrentRoom();
 }
 

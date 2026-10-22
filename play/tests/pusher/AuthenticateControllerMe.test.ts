@@ -371,3 +371,82 @@ describe("GET /me for a member whose access token ran out (Orbit #306)", () => {
         expect(fetchMemberDataByUuid.mock.calls[0][1]).toBe("new-access");
     });
 });
+
+describe("GET /me says whether the name is the account's (#1192)", () => {
+    beforeEach(() => {
+        vi.resetAllMocks();
+        verifyJWTToken.mockReturnValue({ identifier: "owner", accessToken: "expired-access", refreshToken: "refresh" });
+        checkTokenAuth.mockImplementation((accessToken: string) =>
+            accessToken === "new-access"
+                ? Promise.resolve({})
+                : Promise.reject(new openIdErrors.OPError({ error: "invalid_token" }))
+        );
+        refreshAccessToken.mockResolvedValue({ access_token: "new-access", refresh_token: "new-refresh" });
+        createAuthToken.mockReturnValue("renewed-game-token");
+    });
+
+    it("answers with the account's name, asked of Orbit with the renewed token", async () => {
+        fetchMemberDataByUuid.mockResolvedValue({
+            status: "ok",
+            userUuid: "owner",
+            username: "Khalid",
+            tags: ["admin"],
+            isCharacterTexturesValid: true,
+            isCompanionTextureValid: true,
+        });
+        const res = await callMe({ token: "game-token", playUri });
+        expect(fetchMemberDataByUuid.mock.calls.map((call) => call[1])).toEqual(["new-access"]);
+        expect(res.body).toEqual(
+            expect.objectContaining({
+                status: "ok",
+                authToken: "renewed-game-token",
+                username: "Khalid",
+                usernameFromAccount: true,
+                tags: ["admin"],
+            })
+        );
+    });
+
+    it("says the name is only the one from sign-in when Orbit has no name for the account", async () => {
+        verifyJWTToken.mockReturnValue({
+            identifier: "owner",
+            accessToken: "expired-access",
+            refreshToken: "refresh",
+            username: "K",
+        });
+        fetchMemberDataByUuid.mockResolvedValue({
+            status: "ok",
+            userUuid: "owner",
+            isCharacterTexturesValid: true,
+            isCompanionTextureValid: true,
+        });
+        const res = await callMe({ token: "game-token", playUri });
+        expect(res.body).toEqual(expect.objectContaining({ username: "K", usernameFromAccount: false }));
+    });
+
+    it("answers with the account's name from Orbit over a name the provider's user info carries", async () => {
+        checkTokenAuth.mockResolvedValue({ username: "provider-name" });
+        fetchMemberDataByUuid.mockResolvedValue({
+            status: "ok",
+            userUuid: "owner",
+            username: "Khalid",
+            isCharacterTexturesValid: true,
+            isCompanionTextureValid: true,
+        });
+        const res = await callMe({ token: "game-token", playUri });
+        expect(res.body).toEqual(expect.objectContaining({ username: "Khalid", usernameFromAccount: true }));
+    });
+
+    it("asks Orbit only once when the token is still good", async () => {
+        checkTokenAuth.mockResolvedValue({});
+        fetchMemberDataByUuid.mockResolvedValue({
+            status: "ok",
+            userUuid: "owner",
+            isCharacterTexturesValid: true,
+            isCompanionTextureValid: true,
+        });
+        await callMe({ token: "game-token", playUri });
+        expect(fetchMemberDataByUuid).toHaveBeenCalledTimes(1);
+        expect(refreshAccessToken).not.toHaveBeenCalled();
+    });
+});
