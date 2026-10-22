@@ -282,13 +282,28 @@
     function onWindowKeyDownCapture(event: KeyboardEvent) {
         if (event.key === "Escape" && listOpen) {
             event.preventDefault();
+            // Nothing else takes this Esc, such as the find bar of a file.
+            event.stopPropagation();
             listOpen = false;
             chipElement?.focus();
         }
     }
+
+    // A click on a page inside the window never reaches this window, but the game loses the focus to it: the list closes
+    // too. Switching to another app also blurs the game, with the focus left where it was, and nothing changes.
+    function onWindowBlur() {
+        if (!listOpen) return;
+        setTimeout(() => {
+            if (document.hasFocus() && document.activeElement instanceof HTMLIFrameElement) listOpen = false;
+        }, 0);
+    }
 </script>
 
-<svelte:window on:pointerdown={onWindowPointerDown} on:keydown|capture={onWindowKeyDownCapture} />
+<svelte:window
+    on:pointerdown={onWindowPointerDown}
+    on:keydown|capture={onWindowKeyDownCapture}
+    on:blur={onWindowBlur}
+/>
 
 <div
     id="cowebsites-container"
