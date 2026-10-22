@@ -15,7 +15,7 @@ vi.mock("../../../../src/front/Enum/EnvironmentVariable", () => ({
 vi.mock("../../../../src/front/Enum/ComputedConst", () => ({ ABSOLUTE_PUSHER_URL: "http://pusher.localhost/" }));
 vi.mock("../../../../src/front/WebRtc/LayoutManager", () => ({ ON_ACTION_TRIGGER_ENTER: "onaction" }));
 
-import { summarizeAreaProperty } from "../../../../src/front/Components/MapEditor/EditMode/areaProperties";
+import { createAreaProperty, summarizeAreaProperty } from "../../../../src/front/Components/MapEditor/EditMode/areaProperties";
 
 // The summary words, as the English dictionary has them.
 const LL = {
@@ -110,5 +110,12 @@ describe("summarizeAreaProperty", () => {
     it("keeps the fixed line for everything else", () => {
         expect(summary({ type: "silent" })).toBe(FALLBACK);
         expect(summary({ type: "highlight" })).toBe(FALLBACK);
+    });
+});
+
+describe("createAreaProperty", () => {
+    it("shows our own site as the example address of a new Open Link", () => {
+        const property = createAreaProperty(LL, "openWebsite") as AreaDataProperty & { placeholder?: string };
+        expect(property.placeholder).toBe("https://bawes.net");
     });
 });

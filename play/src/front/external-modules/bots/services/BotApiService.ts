@@ -74,6 +74,12 @@ export interface UpdateBotDto extends Partial<CreateBotDto> {
 /** What the bot server says to "may I?": yes, no with the owner's line, or not known (`signIn`: sign in again first) */
 type BotAccessAnswer = { allowed: true } | { allowed: false; reason: string } | { allowed: null; signIn?: true };
 
+/** The membership button on a player's card, as Orbit names it. */
+export interface MembershipButton {
+    kind: "membership" | "pending" | "roles";
+    label: string;
+}
+
 export class BotApiService {
     private accessToken: string | null = null;
     /** The game's token this service signs in with; renewed in place when its OIDC access token runs out. */
@@ -438,6 +444,30 @@ export class BotApiService {
             const response = await this.fetch("/api/me/attention");
             const data = (await response.json()) as { count?: unknown };
             return typeof data.count === "number" && Number.isFinite(data.count) ? Math.max(0, data.count) : null;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * What the membership button on another player's card says for this player, in the universe of the current room:
+     * Give membership, Pending invite, Roles or Membership. Null when Orbit says there is none, and when it can't be
+     * known: no Orbit, or Orbit didn't answer.
+     */
+    async getMembershipButton(userUuid: string): Promise<MembershipButton | null> {
+        if (!this.adminUrl || !this.accessToken || !this.roomId) return null;
+        try {
+            const response = await this.fetch(
+                `/api/me/membership-button?roomId=${encodeURIComponent(this.roomId)}&userUuid=${encodeURIComponent(
+                    userUuid
+                )}`
+            );
+            const data = (await response.json()) as { button?: { kind?: unknown; label?: unknown } | null };
+            const button = data.button;
+            if (!button || typeof button.label !== "string" || !button.label) return null;
+            const kind = button.kind;
+            if (kind !== "membership" && kind !== "pending" && kind !== "roles") return null;
+            return { kind, label: button.label };
         } catch {
             return null;
         }

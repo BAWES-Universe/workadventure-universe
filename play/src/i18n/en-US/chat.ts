@@ -71,6 +71,12 @@ const chat: BaseTranslation = {
         admin: "Administrator",
         member: "Member",
         visitor: "Visitor",
+        // The badge next to a person: their highest role, with the count of the rest
+        badgeLabel: "{name}: {role}",
+        badgeLabelMore: "{name}: {role} and {count} more",
+        rolesOf: "{name}'s roles",
+        memberNote: "Everyone who joined is also a Member.",
+        close: "Close",
     },
     status: {
         online: "Online",

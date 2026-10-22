@@ -44,15 +44,6 @@ export interface ConversationUpdateResponse {
     status: 'updated';
 }
 
-export interface ConversationQuery {
-    botId: string;
-    limit?: number;
-    offset?: number;
-    userId?: string; // Query by userUuid or userId
-    startDate?: number;
-    endDate?: number;
-}
-
 export interface ConversationStats {
     botId: string;
     totalConversations: number;
@@ -126,12 +117,6 @@ export class ConversationStorage {
     ): Promise<void> {
         const key = `${botId}_${userUuid}`;
 
-        // Hide bot conversations (#1166): a private bot writes no transcript, here or in Orbit. What it remembers about
-        // the person is saved by MemoryStorage, which this does not touch.
-        if (await this.isPrivateBot(botId)) {
-            return;
-        }
-
         let conversation = this.activeConversations.get(key);
 
         if (!conversation) {
@@ -160,15 +145,6 @@ export class ConversationStorage {
 
         // Immediately save to Admin API
         await this.saveToAdminAPI(key, conversation);
-    }
-
-    /** Does this bot hide its conversations (#1166)? Not private when Orbit cannot say, as before the setting existed. */
-    private async isPrivateBot(botId: string): Promise<boolean> {
-        try {
-            return (await this.adminApiService.isBotPrivate?.(botId)) === true;
-        } catch {
-            return false;
-        }
     }
 
     /**
@@ -332,13 +308,6 @@ export class ConversationStorage {
             return;
         }
 
-        // A bot that turned private mid-conversation sends nothing more; the transcript so far stays hidden in Orbit
-        if (await this.isPrivateBot(botId)) {
-            this.activeConversations.delete(key);
-            this.conversationIds.delete(key);
-            return;
-        }
-
         // Mark conversation as completed (endedAt > startedAt)
         conversation.endedAt = Date.now();
         conversation.endReason = endReason;
@@ -386,51 +355,6 @@ export class ConversationStorage {
         }
     }
 
-
-    /**
-     * Get conversations from Admin API
-     */
-    async getConversations(query: ConversationQuery): Promise<ConversationRecord[]> {
-        if (!this.adminApiService.isConfigured()) {
-            return [];
-        }
-
-        const adminApiUrl = this.adminApiService['adminApiUrl'] || process.env.ADMIN_API_URL;
-        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
-
-        if (!adminApiUrl || !botServiceToken) {
-            return [];
-        }
-
-        try {
-            const params: Record<string, any> = {};
-            if (query.limit) params.limit = query.limit;
-            if (query.offset) params.offset = query.offset;
-            if (query.userId) params.userId = query.userId;
-            if (query.startDate) params.startDate = query.startDate;
-            if (query.endDate) params.endDate = query.endDate;
-
-            const response = await axios.get(
-                `${adminApiUrl}/api/bots/${query.botId}/conversations`,
-                {
-                    headers: {
-                        Authorization: `Bearer ${botServiceToken}`,
-                    },
-                    params,
-                }
-            );
-
-            return response.data || [];
-        } catch (error: any) {
-            if (axios.isAxiosError(error) && error.response?.status === 404) {
-                return [];
-            }
-            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.error('[ConversationStorage] Error getting conversations:', error);
-            }
-            return [];
-        }
-    }
 
     /**
      * Get conversation statistics

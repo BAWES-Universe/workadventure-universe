@@ -160,6 +160,8 @@ class ConnectionManager {
      * @param providerScopes - The scopes to request from the OpenID provider.
      */
     public loadOpenIDScreen(manuallyTriggered: boolean, providerId?: string, providerScopes?: string[]): URL | null {
+        // A guest's name is kept aside too, for when they sign out again (not an account's: see backupGuestName).
+        localUserStore.backupGuestName();
         localUserStore.setAuthToken(null);
         // Clear guest-picked textures/name/companion so OIDC user's
         // saved data loads from DB via the /room/access fallback.
@@ -206,6 +208,7 @@ class ConnectionManager {
      * in comes back to this room with the account's token, as through /login.
      */
     public goToSignIn(): void {
+        localUserStore.backupGuestName();
         if (!ENABLE_OPENID || !this._currentRoom) {
             window.location.assign("/login");
             return;
@@ -222,6 +225,8 @@ class ConnectionManager {
         const tokenTmp = localUserStore.getAuthToken();
         //remove token in localstorage
         localUserStore.setAuthToken(null);
+        // The device kept the account's name: the next guest here gets their own back, or none, not this one (#1192).
+        localUserStore.restoreGuestName();
         //user logout, set connected store for menu at false (actually don't do it because we are going to redirect and
         // it shortly displays the "sign in" button before redirect happens)
         //userIsConnected.set(false);
@@ -740,10 +745,6 @@ class ConnectionManager {
                         code: "reconnecting",
                         title: get(LL).messageScreen.connecting(),
                         subtitle: get(LL).messageScreen.pleaseWait(),
-                        image:
-                            gameManager?.currentStartedRoom?.loadingLogo ??
-                            gameManager?.currentStartedRoom?.errorSceneLogo ??
-                            "",
                     })
                 );
             }
@@ -856,6 +857,7 @@ class ConnectionManager {
             userUuid,
             email,
             username,
+            usernameFromAccount,
             locale,
             visitCardUrl,
             matrixUserId,
@@ -886,7 +888,16 @@ class ConnectionManager {
         const opidWokaNamePolicy = this.currentRoom?.opidWokaNamePolicy;
         if (username != undefined && opidWokaNamePolicy != undefined) {
             if (hasCapability("api/save-name")) {
-                gameManager.setPlayerName(username);
+                if (usernameFromAccount) {
+                    gameManager.setPlayerName(username);
+                    // The account's name is the one that counts. The device keeps a copy so it never comes back with an
+                    // older name it held (#1192).
+                    localUserStore.setName(username, true);
+                } else {
+                    // Orbit didn't answer with the name this time, so this is only the name from sign-in, which can be
+                    // older than the account's name this device last got (#1192).
+                    gameManager.setPlayerName(localUserStore.getAccountName(userUuid) ?? username);
+                }
             } else {
                 if (opidWokaNamePolicy === "force_opid") {
                     gameManager.setPlayerName(username);
