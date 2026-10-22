@@ -371,6 +371,11 @@ export function openOrbitProfile(userUuid: string): boolean {
     return requestOrbitPage("user-profile", { userUuid });
 }
 
+/** Their profile in Orbit with the membership sheet already open, for the universe the player is in. */
+export function openOrbitMembership(userUuid: string): boolean {
+    return requestOrbitPage("user-profile", { userUuid, sheet: "membership" });
+}
+
 /**
  * The same page for someone the game only knows from a chat (a direct chat with a person who is away), by their exact
  * Matrix id. Orbit looks the account up itself and sends a Matrix id it has no account for to its home.
