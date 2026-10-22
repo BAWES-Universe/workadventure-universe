@@ -745,10 +745,6 @@ class ConnectionManager {
                         code: "reconnecting",
                         title: get(LL).messageScreen.connecting(),
                         subtitle: get(LL).messageScreen.pleaseWait(),
-                        image:
-                            gameManager?.currentStartedRoom?.loadingLogo ??
-                            gameManager?.currentStartedRoom?.errorSceneLogo ??
-                            "",
                     })
                 );
             }

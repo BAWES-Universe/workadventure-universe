@@ -76,7 +76,7 @@ describe("ErrorScreen when a new version is out", () => {
     const images = () => Array.from(target.querySelectorAll("img")).map((img) => img.getAttribute("src"));
 
     it("replaces the reconnecting screen cleanly: one logo, the update copy, no log out", async () => {
-        showReconnectingScreen("https://logos/error.png");
+        showReconnectingScreen();
         component = new ErrorScreen({ target });
         await tick();
         expect(text()).toContain("Getting you back in");
