@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { get } from "svelte/store";
-import { modalVisibilityStore } from "./ModalStore";
+import { modalIframeStore, modalVisibilityStore } from "./ModalStore";
 import { bringOpenHereInFront, sideWindowInFrontStore } from "./SideWindowInFrontStore";
 
 describe("sideWindowInFrontStore", () => {
@@ -22,6 +22,16 @@ describe("sideWindowInFrontStore", () => {
         modalVisibilityStore.set(false);
         modalVisibilityStore.set(true);
         modalVisibilityStore.set(false);
+        expect(get(sideWindowInFrontStore)).toBe("orbit");
+    });
+
+    it("puts Orbit in front when a script opens the modal again while it shows", () => {
+        modalVisibilityStore.set(true);
+        bringOpenHereInFront();
+
+        // The visibility does not change, but the modal is asked for again.
+        modalIframeStore.set({ src: "https://example.com", title: "Orbit", position: "right" } as never);
+        modalVisibilityStore.set(true);
         expect(get(sideWindowInFrontStore)).toBe("orbit");
     });
 });

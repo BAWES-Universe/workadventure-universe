@@ -2,7 +2,7 @@ import { derived, get, readable, writable } from "svelte/store";
 import type { CoWebsite } from "../WebRtc/CoWebsite/CoWebsite";
 import { appViewportHeight, titleBarHeightStore } from "../TitleBar/WindowControlsOverlay";
 import { mobileLayoutStore } from "./MobileLayoutStore";
-import { bringOpenHereInFront, sideWindowInFrontStore } from "./SideWindowInFrontStore";
+import { bringOpenHereInFront, sideWindowInFrontStore, windowBehindCardStore } from "./SideWindowInFrontStore";
 import { clampOpenHereRatio, OPEN_HERE_START_RATIO } from "./OpenHereWidth";
 
 export function createCoWebsiteStore() {
@@ -107,11 +107,14 @@ export const openHereFloatsStore = derived(
     ([$mobileLayout, $windowSize]) => !($mobileLayout && $windowSize.portrait)
 );
 
-/** The window of files and links is showing and is in front of Orbit, which opens in the same place. */
+/**
+ * The window of files and links is showing and is in front of Orbit, which opens in the same place: opened or tapped
+ * last, and no menu or card has sent it behind.
+ */
 export const openHereInFrontOfOrbitStore = derived(
-    [coWebsites, openHereFloatsStore, sideWindowInFrontStore],
-    ([$coWebsites, $openHereFloats, $sideWindowInFront]) =>
-        $coWebsites.length > 0 && $openHereFloats && $sideWindowInFront === "openHere"
+    [coWebsites, openHereFloatsStore, sideWindowInFrontStore, windowBehindCardStore],
+    ([$coWebsites, $openHereFloats, $sideWindowInFront, $windowBehindCard]) =>
+        $coWebsites.length > 0 && $openHereFloats && $sideWindowInFront === "openHere" && !$windowBehindCard
 );
 
 export const canvasSize = derived(

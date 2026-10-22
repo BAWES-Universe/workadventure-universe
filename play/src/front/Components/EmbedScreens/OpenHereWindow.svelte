@@ -5,7 +5,11 @@
     import { chatVisibilityStore } from "../../Stores/ChatStore";
     import { windowInFrontStore } from "../../Stores/WindowInFrontStore";
     import { cardOverWindowStore } from "../../Stores/CardOverWindowStore";
-    import { bringOpenHereInFront, sideWindowInFrontStore } from "../../Stores/SideWindowInFrontStore";
+    import {
+        bringOpenHereInFront,
+        sideWindowInFrontStore,
+        windowBehindCardStore,
+    } from "../../Stores/SideWindowInFrontStore";
     import {
         clampOpenHereRatio,
         nearestWidthStop,
@@ -27,6 +31,7 @@
     // (2000) and this window take turns the same way.
     // A menu, Settings, Explore or a card opened over it goes in front as well: the window sits under the main layout
     // until it closes, and stays open.
+    $: windowBehindCardStore.set(floating && $cardOverWindowStore);
     $: behindOrbit = ($modalVisibilityStore && $sideWindowInFrontStore === "orbit") || $cardOverWindowStore;
     $: behindChat = $chatVisibilityStore && $windowInFrontStore === "chat";
 
@@ -122,6 +127,7 @@
     }
 
     onDestroy(() => {
+        windowBehindCardStore.set(false);
         fullScreenCowebsite.set(false);
     });
 </script>

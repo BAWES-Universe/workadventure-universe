@@ -19,7 +19,7 @@ vi.mock("../../Api/IframeListener", () => ({
 
 const { reposition } = vi.hoisted(() => ({ reposition: vi.fn() }));
 
-const { gameSize, windowInFront, cardOver } = vi.hoisted(() => {
+const { gameSize, windowInFront } = vi.hoisted(() => {
     // Plain stores: the real ones read the game's settings from the page.
     const store = <T>(value: T) => {
         const subscribers = new Set<(v: T) => void>();
@@ -35,7 +35,7 @@ const { gameSize, windowInFront, cardOver } = vi.hoisted(() => {
             },
         };
     };
-    return { gameSize: store({ width: 1440, height: 900 }), windowInFront: store(false), cardOver: store(false) };
+    return { gameSize: store({ width: 1440, height: 900 }), windowInFront: store(false) };
 });
 
 vi.mock("../../Stores/CoWebsiteStore", () => ({
@@ -43,8 +43,6 @@ vi.mock("../../Stores/CoWebsiteStore", () => ({
     windowSize: gameSize,
     openHereInFrontOfOrbitStore: windowInFront,
 }));
-
-vi.mock("../../Stores/CardOverWindowStore", () => ({ cardOverWindowStore: cardOver }));
 
 vi.mock("../../Phaser/Game/GameManager", () => ({
     gameManager: {
@@ -86,7 +84,6 @@ describe("Orbit's live modal frame", () => {
         reposition.mockClear();
         gameSize.set({ width: 1440, height: 900 });
         windowInFront.set(false);
-        cardOver.set(false);
         modalVisibilityStore.set(false);
         vi.unstubAllGlobals();
     });
@@ -172,17 +169,6 @@ describe("Orbit's live modal frame", () => {
         expect(get(modalVisibilityStore)).toBe(true);
 
         windowInFront.set(false);
-        window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
-        expect(get(modalVisibilityStore)).toBe(false);
-    });
-
-    it("closes on Esc when a menu or card sent the window behind it", async () => {
-        modal = new Modal({ target });
-        await tick();
-        modalVisibilityStore.set(true);
-
-        windowInFront.set(true);
-        cardOver.set(true);
         window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
         expect(get(modalVisibilityStore)).toBe(false);
     });
