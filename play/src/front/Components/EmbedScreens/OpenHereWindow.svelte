@@ -1,6 +1,5 @@
 <script lang="ts">
     import { onDestroy } from "svelte";
-    import { fly } from "svelte/transition";
     import { coWebsiteRatio, fullScreenCowebsite, windowSize } from "../../Stores/CoWebsiteStore";
     import { closeAllOpenItems } from "../../Stores/ClosedItemsStore";
     import { modalVisibilityStore } from "../../Stores/ModalStore";
@@ -157,11 +156,6 @@
         if (tucked && !(event.target as Element | null)?.closest?.("button, a, input")) openHereTuckedStore.set(false);
     }
 
-    // The sheet slides up from the bottom as chat's does; the floating window has no such motion.
-    function sheetFly(node: Element, params: { sheet: boolean; height: number }) {
-        return params.sheet ? fly(node, { duration: 200, y: params.height }) : { duration: 0 };
-    }
-
     // The grip on the window's left edge: drag to widen it; it snaps to a third, a half or two thirds when let go.
     // Double tap goes back to a third.
     let card: HTMLElement | undefined;
@@ -230,7 +224,6 @@
     data-testid={floating ? "openHereWindow" : "openHereSheet"}
     on:pointerdown|capture={bringForward}
     on:click={onSheetClick}
-    transition:sheetFly={{ sheet: !floating, height: sheetHeight }}
 >
     {#if floating}
         <div
@@ -341,6 +334,15 @@
 
     // Upright on a phone the window is chat's own sheet (bottom-sheet.scss), over the game like chat: under the chat
     // while it is open, under Orbit and the cards that sit over the window, in front of everything else.
+    // The sheet rises from the bottom as chat's does. It is an animation, not a Svelte transition: a transition keeps
+    // the old window in the page for a frame after it is removed, and a desktop's window would show twice when an item
+    // is replaced.
+    @keyframes sheet-rise {
+        from {
+            transform: translateY(100%);
+        }
+    }
+
     .open-here-sheet {
         @include bottom-sheet;
         position: fixed;
@@ -348,6 +350,10 @@
         overflow: hidden;
         pointer-events: auto;
         color: #fff;
+
+        @media (prefers-reduced-motion: no-preference) {
+            animation: sheet-rise 200ms ease-out;
+        }
 
         &.behind-orbit {
             z-index: 9;
