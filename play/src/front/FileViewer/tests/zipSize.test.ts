@@ -91,6 +91,11 @@ describe("counting what a zip really holds", () => {
         await expect(assertUnpackedWithin(bytes, 5000)).resolves.toBeUndefined();
     });
 
+    it("lets a zip with empty files through (Word and Excel files carry some)", async () => {
+        const bytes = await zipOf({ "a.txt": "x".repeat(100), "customXml/empty.xml": "" });
+        await expect(assertUnpackedWithin(bytes, 5000)).resolves.toBeUndefined();
+    });
+
     it("refuses a list whose records and number do not agree", async () => {
         const bytes = (await zipOf({ "a.txt": "x".repeat(100), "b.txt": "y".repeat(100) })).slice(0);
         const view = new DataView(bytes);

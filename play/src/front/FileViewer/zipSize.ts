@@ -78,11 +78,13 @@ interface KeptEntry {
     _data?: { compressedSize?: number; uncompressedSize?: number };
 }
 
+/** JSZip keeps a file that has data as an object that knows its sizes, and an empty file as a bare placeholder. */
 function holdsData(entry: KeptEntry): boolean {
-    const kept = entry._data;
+    const compressed = entry._data?.compressedSize;
     return (
         !entry.dir &&
-        (kept?.compressedSize === undefined || kept.compressedSize > EMPTY_STREAM_BYTES || !!kept.uncompressedSize)
+        typeof compressed === "number" &&
+        (compressed > EMPTY_STREAM_BYTES || !!entry._data?.uncompressedSize)
     );
 }
 
