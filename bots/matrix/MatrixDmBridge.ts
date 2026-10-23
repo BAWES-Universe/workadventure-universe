@@ -74,6 +74,14 @@ const WAITING_CHECK_MS = 5 * 60 * 1000;
 const WAITING_BODY_MAX = 4000;
 /** A waiting message the bot fails to answer goes back in line this many times before the person is asked to resend it. */
 const WAITING_MAX_ATTEMPTS = 3;
+/**
+ * Orbit must say "no such bot" this many times, each at least BOT_GONE_SPACING_MS after the last, before a chat is
+ * closed as deleted: its proxy can answer "not found" for a while when Orbit restarts. The bot server's other "gone"
+ * rule (the privacy setting) waits for the same count.
+ */
+const BOT_GONE_AFTER = 3;
+/** As long as a bot's settings are cached, so each count is a fresh answer from Orbit. */
+const BOT_GONE_SPACING_MS = 60 * 1000;
 
 /** How many times answering this waiting message has already failed. */
 function attemptsOf(event: MatrixEvent): number {
@@ -103,6 +111,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
     private handledEvents = new Set<string>();
     /** Joined members per room, kept current from membership events so a reply needs no extra homeserver call. */
     private roomMembers = new Map<string, Set<string>>();
+    /** Bots Orbit last said don't exist: how many times in a row, and when that was last counted. */
+    private botNotFound = new Map<string, { inARow: number; at: number }>();
     private handledOrder: string[] = [];
     /** Waits between join attempts when the homeserver refuses or times out. */
     private joinRetryDelaysMs = [1000, 4000];
@@ -446,9 +456,12 @@ export class MatrixDmBridge implements MatrixEventHandler {
             return;
         }
         if (!config) {
-            await this.closeChat(botId, event.room_id, language);
+            // Until Orbit has said so often enough, a missing bot is Orbit not answering, never a deleted bot.
+            if (this.confirmedGone(botId)) await this.closeChat(botId, event.room_id, language);
+            else await couldNotAnswer();
             return;
         }
+        this.botNotFound.delete(botId);
 
         // A message that waited is checked afresh: the person may have lost access while the bot rested.
         const access = await this.access(botId, event.sender, catchUp);
@@ -540,6 +553,16 @@ export class MatrixDmBridge implements MatrixEventHandler {
         if (answered && !catchUp) void this.drainIfWaiting(botId).catch(() => undefined);
     }
 
+    /** Orbit said this bot doesn't exist. True once it has said so BOT_GONE_AFTER times, far enough apart to believe it. */
+    private confirmedGone(botId: string): boolean {
+        const now = Date.now();
+        const seen = this.botNotFound.get(botId);
+        if (!seen) this.botNotFound.set(botId, { inARow: 1, at: now });
+        else if (now - seen.at >= BOT_GONE_SPACING_MS) this.botNotFound.set(botId, { inARow: seen.inARow + 1, at: now });
+        if (this.botNotFound.size > NOTE_TIMES_MAX) this.botNotFound.delete(this.botNotFound.keys().next().value!);
+        return (this.botNotFound.get(botId)?.inARow ?? 0) >= BOT_GONE_AFTER;
+    }
+
     /** The bot was deleted: one goodbye note, then it leaves so the chat reads as closed. */
     private async closeChat(botId: string, roomId: string, language: NoteLanguage): Promise<void> {
         await this.sendNote(botId, roomId, 'gone', language);
@@ -622,14 +645,16 @@ export class MatrixDmBridge implements MatrixEventHandler {
         for (const botId of await this.waitingBots()) {
             const config = await this.deps.getBotConfig(botId, true).catch(() => undefined);
             if (config === undefined) continue;
+            if (config === null && !this.confirmedGone(botId)) continue;
             if (config === null) {
                 // Deleted: whoever left a message gets the goodbye now, and the bot leaves that chat.
                 for (const event of this.readWaiting(await this.takeWaiting(botId))) {
                     if ((await this.botForRoom(event.room_id)) !== botId) continue;
                     await this.closeChat(botId, event.room_id, detectLanguage(String(event.content?.body ?? '')));
                 }
-            } else if (config.enabled !== false && config.aiProviderRef) {
-                await this.drain(botId);
+            } else {
+                this.botNotFound.delete(botId);
+                if (config.enabled !== false && config.aiProviderRef) await this.drain(botId);
             }
         }
     }

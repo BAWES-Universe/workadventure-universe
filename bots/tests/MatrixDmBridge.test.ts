@@ -884,16 +884,53 @@ describe('MatrixDmBridge', () => {
         expect(client.sendText).not.toHaveBeenCalled();
     });
 
-    it('a deleted bot says goodbye once, leaves, and forgets the chat', async () => {
-        await bridge.onEvent(invite());
-        deps.getBotConfig.mockResolvedValue(null as never);
-        await bridge.onEvent(message('Hello?'));
-        expect(noteStates()).toEqual(['gone']);
-        expect(client.sendMessage.mock.calls[0][2].body).toBe(
-            "Guide isn't around anymore. The bot was removed, so this chat is closed."
-        );
-        expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
-        expect(deps.rooms!.forgetDmRoom).toHaveBeenCalledWith(ROOM);
+    /** Moves the clock past the spacing between two "no such bot" answers that count. */
+    const aMinuteLater = () => vi.setSystemTime(Date.now() + 61_000);
+
+    it('a deleted bot says goodbye once Orbit has said so three times a minute apart, then leaves and forgets the chat', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        try {
+            await bridge.onEvent(invite());
+            deps.getBotConfig.mockResolvedValue(null as never);
+            await bridge.onEvent(message('Hello?'));
+            await bridge.onEvent(message('Hello??'));
+            aMinuteLater();
+            await bridge.onEvent(message('Still there?'));
+            // Orbit restarting can answer "not found": until it has said so three times, the person hears "try again".
+            expect(noteStates()).toEqual(['trouble', 'trouble', 'trouble']);
+            expect(client.leaveRoom).not.toHaveBeenCalled();
+            aMinuteLater();
+            await bridge.onEvent(message('Anyone?'));
+            expect(noteStates()).toEqual(['trouble', 'trouble', 'trouble', 'gone']);
+            expect(client.sendMessage.mock.calls.at(-1)[2].body).toBe(
+                "Guide isn't around anymore. The bot was removed, so this chat is closed."
+            );
+            expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
+            expect(deps.rooms!.forgetDmRoom).toHaveBeenCalledWith(ROOM);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('keeps the chat when Orbit answers again after saying "not found", and starts counting afresh', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        try {
+            await bridge.onEvent(invite());
+            deps.getBotConfig.mockResolvedValue(null as never);
+            await bridge.onEvent(message('one'));
+            aMinuteLater();
+            await bridge.onEvent(message('two'));
+            deps.getBotConfig.mockResolvedValue({ botId: BOT, name: 'Guide', enabled: true, aiProviderRef: 'p' } as never);
+            await bridge.onEvent(message('three'));
+            expect(deps.reply).toHaveBeenCalledTimes(1);
+            deps.getBotConfig.mockResolvedValue(null as never);
+            aMinuteLater();
+            await bridge.onEvent(message('four'));
+            expect(client.leaveRoom).not.toHaveBeenCalled();
+            expect(noteStates()).toEqual(['trouble', 'trouble', 'trouble']);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('a bot deleted while someone waits says goodbye to them and leaves, without waiting for another message', async () => {
@@ -901,7 +938,19 @@ describe('MatrixDmBridge', () => {
         deps.getBotConfig.mockResolvedValue({ botId: BOT, name: 'Guide', enabled: false } as never);
         await bridge.onEvent(message('Hola, ¿estás ahí?'));
         deps.getBotConfig.mockResolvedValue(null as never);
-        await bridge.checkWaiting();
+        vi.useFakeTimers({ toFake: ['Date'] });
+        try {
+            await bridge.checkWaiting();
+            aMinuteLater();
+            await bridge.checkWaiting();
+            // Not sure yet: the message keeps waiting and nobody is told anything new.
+            expect(noteStates()).toEqual(['resting']);
+            expect(client.leaveRoom).not.toHaveBeenCalled();
+            aMinuteLater();
+            await bridge.checkWaiting();
+        } finally {
+            vi.useRealTimers();
+        }
         expect(noteStates()).toEqual(['resting', 'gone']);
         expect(client.sendMessage.mock.calls.at(-1)[2][BOT_STATUS_KEY].lang).toBe('es');
         expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
@@ -938,11 +987,20 @@ describe('MatrixDmBridge', () => {
     it('names a deleted bot from its Matrix profile after a restart', async () => {
         await bridge.onEvent(invite());
         const restarted = new MatrixDmBridge(config, client as never, deps);
-        client.getDisplayName.mockResolvedValueOnce('Captain Mira');
+        client.getDisplayName.mockResolvedValue('Captain Mira');
         deps.getBotConfig.mockResolvedValue(null as never);
-        await restarted.onEvent(message('Hello?'));
+        vi.useFakeTimers({ toFake: ['Date'] });
+        try {
+            await restarted.onEvent(message('Hello?'));
+            aMinuteLater();
+            await restarted.onEvent(message('Hello??'));
+            aMinuteLater();
+            await restarted.onEvent(message('Hello???'));
+        } finally {
+            vi.useRealTimers();
+        }
         expect(client.getDisplayName).toHaveBeenCalledWith(BOT_USER);
-        expect(client.sendMessage.mock.calls[0][2].body).toContain('Captain Mira');
+        expect(client.sendMessage.mock.calls.at(-1)[2].body).toContain('Captain Mira');
     });
 
     it('writes the note in the language of the message', async () => {
