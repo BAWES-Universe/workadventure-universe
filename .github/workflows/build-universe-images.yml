@@ -561,12 +561,13 @@ jobs:
             return 1
           }
 
+          # The services play talks to go first, so a new play never starts against an old back or map-storage.
           echo "Deploying v${{ needs.release.outputs.new_version }}..."
           failed=""
           for service in \
-            "play ${COOLIFY_PLAY_UUID}" \
             "back ${COOLIFY_BACK_UUID}" \
             "map-storage ${COOLIFY_MAP_STORAGE_UUID}" \
+            "play ${COOLIFY_PLAY_UUID}" \
             "bot-server ${COOLIFY_BOT_SERVER_UUID}" \
             "discord-bot ${COOLIFY_DISCORD_BOT_UUID}" \
             "uploader ${COOLIFY_UPLOADER_UUID}"; do
