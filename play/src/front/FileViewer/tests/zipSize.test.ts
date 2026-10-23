@@ -59,6 +59,27 @@ describe("counting what a zip really holds", () => {
         await expect(assertUnpackedWithin(bytes, 1000)).rejects.toThrow("too big");
     });
 
+    it("refuses a file whose attributes mark it as a folder though its name is a file's", async () => {
+        const bytes = (await zipOf({ "a.txt": "\0".repeat(5 * 1024 * 1024) })).slice(0);
+        const view = new DataView(bytes);
+        for (let at = 0; at < bytes.byteLength - 46; at++) {
+            if (view.getUint32(at, true) === 0x02014b50) {
+                // The DOS "folder" attribute, which JSZip trusts and then drops the file's data for.
+                view.setUint32(at + 38, 0x10, true);
+                break;
+            }
+        }
+        await expect(assertUnpackedWithin(bytes, 1024 * 1024)).rejects.toThrow("cannot be read");
+    });
+
+    it("lets a zip with real, empty folders through", async () => {
+        const zip = new JSZip();
+        zip.folder("word")?.file("document.xml", "x".repeat(100));
+        zip.folder("empty");
+        const bytes = await zip.generateAsync({ type: "arraybuffer", compression: "DEFLATE" });
+        await expect(assertUnpackedWithin(bytes, 5000)).resolves.toBeUndefined();
+    });
+
     it("refuses bytes that are not a zip", async () => {
         await expect(
             assertUnpackedWithin(new TextEncoder().encode("hello").buffer as ArrayBuffer, 10)

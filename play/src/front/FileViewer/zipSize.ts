@@ -38,6 +38,38 @@ export function zipUnpackedSize(bytes: ArrayBuffer): number | undefined {
     return total;
 }
 
+/**
+ * Whether the zip's list marks a file that holds data as a folder, by its name or by its attributes. JSZip trusts that
+ * mark and drops the file's data, so counting through JSZip would miss it, while a reader that unpacks by name (the
+ * spreadsheet reader does) would still inflate it. A real folder is empty, so no real document does this.
+ */
+export function zipHasFolderWithData(bytes: ArrayBuffer): boolean {
+    const view = new DataView(bytes);
+    let end = -1;
+    for (let at = bytes.byteLength - 22; at >= Math.max(0, bytes.byteLength - 22 - 0xffff); at--) {
+        if (view.getUint32(at, true) === END_OF_DIRECTORY) {
+            end = at;
+            break;
+        }
+    }
+    if (end < 0) return false;
+    const entries = view.getUint16(end + 10, true);
+    let at = view.getUint32(end + 16, true);
+    for (let entry = 0; entry < entries; entry++) {
+        if (at + 46 > bytes.byteLength || view.getUint32(at, true) !== DIRECTORY_ENTRY) return false;
+        const nameLength = view.getUint16(at + 28, true);
+        const attributes = view.getUint32(at + 38, true);
+        const madeByUnix = view.getUint16(at + 4, true) >> 8 === 3;
+        const folder =
+            (nameLength > 0 && view.getUint8(at + 46 + nameLength - 1) === 0x2f) ||
+            (attributes & 0x10) !== 0 ||
+            (madeByUnix && ((attributes >>> 16) & 0x4000) !== 0);
+        if (folder && (view.getUint32(at + 20, true) > 0 || view.getUint32(at + 24, true) > 0)) return true;
+        at += 46 + nameLength + view.getUint16(at + 30, true) + view.getUint16(at + 32, true);
+    }
+    return false;
+}
+
 /** The part of JSZip's stream of a file that is used here: its types leave it out, though the library ships it. */
 interface UnpackStream {
     on(event: "data", listener: (chunk: Uint8Array) => void): UnpackStream;
@@ -54,6 +86,7 @@ interface UnpackStream {
  * more than `limit`, or cannot be read.
  */
 export async function assertUnpackedWithin(bytes: ArrayBuffer, limit: number): Promise<void> {
+    if (zipHasFolderWithData(bytes)) throw new Error("The file cannot be read");
     const { default: JSZip } = await import("jszip");
     const zip = await JSZip.loadAsync(bytes);
     let total = 0;
