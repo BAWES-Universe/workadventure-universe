@@ -353,7 +353,7 @@
                         <div
                             on:click={() => setActiveCowebsite(coWebsite)}
                             data-testid="tab{index + 1}"
-                            class="snap-start"
+                            class="tab-slot snap-start"
                         >
                             <CoWebsiteTab
                                 {coWebsite}
@@ -518,6 +518,13 @@
     }
 
     /* "N open": neutral, and only its arrow turns when the list is showing. */
+    /* Tabs share the strip before it scrolls: on a phone two of them stay in view, each keeping its icon and its close. */
+    .tab-slot {
+        flex: 0 1 auto;
+        min-width: 104px;
+        max-width: 220px;
+    }
+
     .open-chip {
         box-sizing: border-box;
         display: inline-flex;

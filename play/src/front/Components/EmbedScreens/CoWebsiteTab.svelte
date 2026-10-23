@@ -57,6 +57,7 @@
         align-items: center;
         gap: 2px;
         height: 40px;
+        width: 100%;
         max-width: 220px;
         padding-inline-start: 10px;
         padding-inline-end: 6px;
