@@ -204,6 +204,19 @@ describe("OpenHereWindow as a phone's sheet", () => {
         expect(get(openHereSheetHeightStore)).toBe(0);
     });
 
+    it("is not tucked when its items are restored after the sheet was closed tucked", async () => {
+        await mount("plan.pdf");
+        dragHandle(handle()!, 300, 700);
+        await tick();
+        expect(get(openHereTuckedStore)).toBe(true);
+
+        // Closing the only item takes the sheet away, as the app does when nothing is open.
+        component?.$destroy();
+        component = undefined;
+
+        expect(get(openHereTuckedStore)).toBe(false);
+    });
+
     it("comes back up from the tuck when its row is tapped, but not when a button in it is", async () => {
         await mount("plan.pdf");
         openHereTuckedStore.set(true);

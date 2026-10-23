@@ -241,6 +241,8 @@
     onDestroy(() => {
         windowBehindCardStore.set(false);
         openHereSheetHeightStore.set(0);
+        // A sheet closed while tucked must not bring what Undo restores back tucked: it comes back up.
+        openHereTuckedStore.set(false);
         fullScreenCowebsite.set(false);
         // The sheet is gone, and the map has the space again. The chat goes back to the height it had before a file
         // took the screen above it.
