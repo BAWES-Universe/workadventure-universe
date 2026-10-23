@@ -9,6 +9,7 @@
     import { windowSize } from "../Stores/CoWebsiteStore";
     import SheetDragHandle from "../Components/Sheet/SheetDragHandle.svelte";
     import { clampHeight, getSnapHeights, nearestSnap, nextSnap } from "../Components/Sheet/BottomSheet";
+    import { openHereSheetHeightStore } from "../Stores/OpenHereSheetStore";
     import { chatFloatInsetStore, chatSidebarWidthStore, chatCarriesItsCloseStore } from "./ChatSidebarWidthStore";
     import Chat from "./Components/Chat.svelte";
     import { selectedRoomStore } from "./Stores/SelectRoomStore";
@@ -27,7 +28,6 @@
         chatSheetRestingHeight,
     } from "./ChatSheetSizes";
     import { getLastChatOpenSource } from "./openChat";
-    import { openHereSheetHeightStore } from "../Stores/OpenHereSheetStore";
     import { IconX } from "@wa-icons";
 
     let container: HTMLElement;
