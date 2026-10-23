@@ -1,6 +1,6 @@
 <script lang="ts">
     import type { ComponentType } from "svelte";
-    import { createEventDispatcher, getContext, hasContext } from "svelte";
+    import { createEventDispatcher, getContext, hasContext, setContext } from "svelte";
     import { derived, readable } from "svelte/store";
     import type { Readable } from "svelte/store";
     import type { PictureStore } from "../../../Stores/PictureStore";
@@ -20,6 +20,7 @@
     import MessageAudioFile from "./Message/MessageAudioFile.svelte";
     import MessageVideoFile from "./Message/MessageVideoFile.svelte";
     import MessageGallery from "./Message/MessageGallery.svelte";
+    import { MESSAGE_SENDER_CONTEXT, type MessageSenderInfo } from "./Message/messageSenderContext";
     import MessageEdition from "./MessageEdition.svelte";
     import MessageReactions from "./MessageReactions.svelte";
     import MessageIncoming from "./Message/MessageIncoming.svelte";
@@ -79,6 +80,9 @@
         isModified,
         reactions,
     } = message;
+
+    // File cards say who sent the file.
+    setContext<MessageSenderInfo>(MESSAGE_SENDER_CONTEXT, { name: sender?.username, isMine: isMyMessage });
 
     $: senderPicture = personPicture($wokaByChatId, sender?.chatId, sender?.pictureStore) ?? readable(undefined);
     $: senderColour = $colourOf(sender?.chatId, sender?.username);

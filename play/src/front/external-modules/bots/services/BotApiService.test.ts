@@ -214,3 +214,61 @@ describe("BotApiService once the OIDC access token has run out", () => {
         expect(mocks.setAuthToken).not.toHaveBeenCalled();
     });
 });
+
+describe("BotApiService bot chat telemetry", () => {
+    function serviceWithSession() {
+        const service = new BotApiService();
+        service.initialize(authToken("oidc-token"), "https://orbit.example.com", "room-1");
+        sessionStorage.setItem("orbit_admin_session_v2", `orb_sess_v2_${"a".repeat(64)}`);
+        sessionStorage.setItem("orbit_admin_session_v2_expires", String(Date.now() + 60 * 60 * 1000));
+        return service;
+    }
+
+    beforeEach(() => {
+        sessionStorage.clear();
+        vi.restoreAllMocks();
+    });
+
+    it("reads telemetry as on when Orbit does not hide the bot's chats", async () => {
+        const fetchMock = vi
+            .spyOn(globalThis, "fetch")
+            .mockResolvedValue(new Response(JSON.stringify({ universeHides: false, choice: "follow", hidden: false })));
+        await expect(serviceWithSession().getBotTelemetry("bot-1")).resolves.toEqual({
+            universeHides: false,
+            on: true,
+        });
+        expect(fetchMock.mock.calls[0][0]).toBe("https://orbit.example.com/api/bots/bot-1/privacy");
+    });
+
+    it("reads telemetry as locked off when the universe hides every bot", async () => {
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(
+            new Response(JSON.stringify({ universeHides: true, choice: "follow", hidden: true }))
+        );
+        await expect(serviceWithSession().getBotTelemetry("bot-1")).resolves.toEqual({
+            universeHides: true,
+            on: false,
+        });
+    });
+
+    it("turns it off with the bot's own choice, and back on by following the universe", async () => {
+        const fetchMock = vi
+            .spyOn(globalThis, "fetch")
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ universeHides: false, choice: "private", hidden: true }))
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ universeHides: false, choice: "follow", hidden: false }))
+            );
+        const service = serviceWithSession();
+        await expect(service.saveBotTelemetry("bot-1", false)).resolves.toEqual({ universeHides: false, on: false });
+        await expect(service.saveBotTelemetry("bot-1", true)).resolves.toEqual({ universeHides: false, on: true });
+        expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string)).toEqual({ choice: "private" });
+        expect(JSON.parse(fetchMock.mock.calls[1][1]?.body as string)).toEqual({ choice: "follow" });
+        expect(fetchMock.mock.calls[0][1]?.method).toBe("PUT");
+    });
+
+    it("refuses an answer it does not understand", async () => {
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ hello: "world" })));
+        await expect(serviceWithSession().getBotTelemetry("bot-1")).rejects.toThrow(/does not understand/);
+    });
+});

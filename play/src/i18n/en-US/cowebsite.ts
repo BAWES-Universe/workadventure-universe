@@ -6,6 +6,8 @@ const companion: DeepPartial<Translation["cowebsite"]> = {
     close: "Close",
     bigBlueButton: "BigBlueButton",
     jitsi: "Jitsi",
+    copyLink: "Copy link",
+    openInBrowserTab: "Open in browser tab",
 };
 
 export default companion;

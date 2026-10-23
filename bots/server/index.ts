@@ -10,6 +10,7 @@
  */
 
 import "./instrument";
+import { installAxiosErrorRedaction } from "./redactAxiosErrors";
 
 import { BotManager } from './BotManager';
 import { BotAPI } from './BotAPI';
@@ -25,6 +26,9 @@ import { uploadAttachment } from '../matrix/uploadAttachment';
 import { availabilityOf, type BotAvailability } from '../matrix/BotStatusNotes';
 import type { Router } from 'express';
 import * as path from 'path';
+
+// Before anything calls Orbit or an MCP server: a failed call must never put a token or a transcript in the logs
+installAxiosErrorRedaction();
 
 // Environment variables
 const BOT_SERVER_PORT = parseInt(process.env.BOT_SERVER_PORT || '3001', 10);

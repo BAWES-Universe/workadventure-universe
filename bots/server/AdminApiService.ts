@@ -6,6 +6,7 @@
 
 import axios, { type AxiosResponse } from 'axios';
 import * as Sentry from '@sentry/node';
+import { parseForgetNotice, type MemoryForgetHandler } from '../memory/ForgetNotice';
 
 // Optional Sentry integration (uncomment if @sentry/node is installed)
 // import * as Sentry from '@sentry/node';
@@ -149,6 +150,14 @@ export class AdminApiService {
     private roomMetadataCache: Map<string, { data: { universeName: string; worldName: string; roomName: string }; cachedAt: number }> = new Map();
     private readonly ROOM_METADATA_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
     private adminApiToken: string;
+    // Hide bot conversations (#1166): the answer per bot, asked of Orbit at most every 30 seconds
+    private botPrivacyCache: Map<string, { hidden: boolean; cachedAt: number; notFoundInARow?: number }> = new Map();
+    private botPrivacyRequests: Map<string, Promise<boolean>> = new Map();
+    private readonly BOT_PRIVACY_CACHE_TTL = 30 * 1000;
+    // "Not found" answers in a row (30 seconds apart) before a bot is taken as deleted
+    private readonly BOT_GONE_AFTER = 3;
+    private forgetHandler: MemoryForgetHandler | null = null;
+    private privacySyncTimer: NodeJS.Timeout | null = null;
 
     constructor(adminApiUrl?: string, adminApiToken?: string) {
         this.adminApiUrl = adminApiUrl || process.env.ADMIN_API_URL || '';
@@ -589,6 +598,115 @@ export class AdminApiService {
             console.error('[AdminApiService] Error getting available AI providers:', error);
             captureException(error as Error);
             return [];
+        }
+    }
+
+    /**
+     * Does this bot hide its conversations (Orbit "Hide bot conversations", #435)? The universe default and the
+     * bot's own choice are resolved by Orbit; this only asks. A private bot sends nothing to PostHog or Sentry
+     * spans; chats, memory, usage counts and everything else work as always.
+     *
+     * Orbit is asked at most every 30 seconds per bot. A bot Orbit does not know, or an Orbit without the setting
+     * yet, is "not private", as every bot was before this setting existed. If Orbit cannot answer (down, timeout,
+     * refused), the last answer is kept, and with none yet the bot counts as private until Orbit answers. Never throws. `fresh` skips the 30 second wait (the bot server's own check).
+     *
+     * Orbit's answer also carries the people a manager asked the bot to forget; those go to the forget handler.
+     */
+    async isBotPrivate(botId: string, options: { fresh?: boolean } = {}): Promise<boolean> {
+        const cached = this.botPrivacyCache.get(botId);
+        if (!options.fresh && cached && Date.now() - cached.cachedAt < this.BOT_PRIVACY_CACHE_TTL) {
+            return cached.hidden;
+        }
+        if (!this.isConfigured()) {
+            return cached?.hidden ?? false;
+        }
+        const inFlight = this.botPrivacyRequests.get(botId);
+        if (inFlight) return inFlight;
+
+        const request = this.fetchBotPrivacy(botId, cached?.hidden).finally(() => {
+            this.botPrivacyRequests.delete(botId);
+        });
+        this.botPrivacyRequests.set(botId, request);
+        return request;
+    }
+
+    /**
+     * Ask Orbit about each running bot every 30 seconds. The answer keeps the privacy setting fresh and carries the
+     * people a manager asked the bot to forget, so a Forget lands even while nobody is talking to the bot.
+     */
+    startPrivacySync(getBotIds: () => Iterable<string>, onGone?: (botId: string) => void): void {
+        if (this.privacySyncTimer || !this.isConfigured()) {
+            return;
+        }
+        this.privacySyncTimer = setInterval(() => {
+            for (const botId of getBotIds()) {
+                void this.isBotPrivate(botId, { fresh: true }).then(() => {
+                    // Orbit has said "not found" several times running (the bot was deleted, not a hiccup): stop asking,
+                    // and let the caller stop tracking it
+                    if ((this.botPrivacyCache.get(botId)?.notFoundInARow ?? 0) >= this.BOT_GONE_AFTER) {
+                        this.botPrivacyCache.delete(botId);
+                        onGone?.(botId);
+                    }
+                });
+            }
+        }, this.BOT_PRIVACY_CACHE_TTL);
+        // Never keep the process alive for this
+        this.privacySyncTimer.unref?.();
+    }
+
+    stopPrivacySync(): void {
+        if (this.privacySyncTimer) {
+            clearInterval(this.privacySyncTimer);
+            this.privacySyncTimer = null;
+        }
+    }
+
+    /** Called with the people Orbit asks the bot server to forget. */
+    setForgetHandler(handler: MemoryForgetHandler | null): void {
+        this.forgetHandler = handler;
+    }
+
+    private applyForgetNotice(botId: string, forget: unknown): void {
+        const notice = parseForgetNotice(forget);
+        if (!this.forgetHandler || !notice) return;
+        try {
+            this.forgetHandler(botId, notice);
+        } catch (error) {
+            console.error('[AdminApiService] Could not drop forgotten memories:', error);
+        }
+    }
+
+    private async fetchBotPrivacy(botId: string, lastKnown: boolean | undefined): Promise<boolean> {
+        // BOT_SERVICE_TOKEN is preferred, the admin token is the fallback (same as the memory endpoints)
+        const token = process.env.BOT_SERVICE_TOKEN || this.adminApiToken;
+        try {
+            const response: AxiosResponse = await axios.get(
+                `${this.adminApiUrl}/api/bots/${encodeURIComponent(botId)}/privacy`,
+                {
+                    headers: { Authorization: `Bearer ${token}` },
+                    timeout: 5000,
+                }
+            );
+            const hidden = response.data?.hidden === true;
+            this.botPrivacyCache.set(botId, { hidden, cachedAt: Date.now() });
+            this.applyForgetNotice(botId, response.data?.forget);
+            return hidden;
+        } catch (error) {
+            // Not found (or an Orbit without the setting yet) is a plain "not private", except for a bot last known as
+            // private: its proxy can answer "not found" while Orbit restarts, so it stays private until Orbit has said
+            // it BOT_GONE_AFTER times running, the same rule that decides the bot is gone. Anything else keeps what we knew.
+            // With nothing known yet (a bot server that just started, while Orbit restarts too), the bot counts as
+            // private until Orbit answers: a hidden bot must never send its text out because Orbit was slow to say so.
+            // Only telemetry waits; replies, memory and saved chats are the same either way.
+            const notFound = axios.isAxiosError(error) && (error.response?.status === 404 || error.response?.status === 405);
+            const notFoundInARow = notFound ? (this.botPrivacyCache.get(botId)?.notFoundInARow ?? 0) + 1 : 0;
+            const hidden = notFound ? lastKnown === true && notFoundInARow < this.BOT_GONE_AFTER : lastKnown ?? true;
+            // Retry soon, not after the full 30 seconds, when Orbit could not answer
+            this.botPrivacyCache.set(botId, { hidden, cachedAt: notFound ? Date.now() : Date.now() - this.BOT_PRIVACY_CACHE_TTL + 5000, ...(notFoundInARow ? { notFoundInARow } : {}) });
+            if (!notFound) {
+                console.warn('[AdminApiService] Could not read the bot privacy setting, keeping the last answer:', axios.isAxiosError(error) ? error.message : 'unknown error');
+            }
+            return hidden;
         }
     }
 

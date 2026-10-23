@@ -53,12 +53,32 @@ export interface CreateBotDto {
     companionTextureId?: string | null;
 }
 
+/** Bot chat telemetry of one bot: on unless the bot or its universe turned it off. The universe's choice locks the switch. */
+export interface BotTelemetry {
+    universeHides: boolean;
+    on: boolean;
+}
+
+function readTelemetry(value: unknown): BotTelemetry {
+    const answer = value as { universeHides?: unknown; hidden?: unknown } | null;
+    if (!answer || typeof answer.universeHides !== "boolean" || typeof answer.hidden !== "boolean") {
+        throw new Error("Orbit answered with something the game does not understand");
+    }
+    return { universeHides: answer.universeHides, on: !answer.hidden };
+}
+
 export interface UpdateBotDto extends Partial<CreateBotDto> {
     id: string;
 }
 
 /** What the bot server says to "may I?": yes, no with the owner's line, or not known (`signIn`: sign in again first) */
 type BotAccessAnswer = { allowed: true } | { allowed: false; reason: string } | { allowed: null; signIn?: true };
+
+/** The membership button on a player's card, as Orbit names it. */
+export interface MembershipButton {
+    kind: "membership" | "pending" | "roles";
+    label: string;
+}
 
 export class BotApiService {
     private accessToken: string | null = null;
@@ -424,6 +444,30 @@ export class BotApiService {
             const response = await this.fetch("/api/me/attention");
             const data = (await response.json()) as { count?: unknown };
             return typeof data.count === "number" && Number.isFinite(data.count) ? Math.max(0, data.count) : null;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * What the membership button on another player's card says for this player, in the universe of the current room:
+     * Give membership, Pending invite, Roles or Membership. Null when Orbit says there is none, and when it can't be
+     * known: no Orbit, or Orbit didn't answer.
+     */
+    async getMembershipButton(userUuid: string): Promise<MembershipButton | null> {
+        if (!this.adminUrl || !this.accessToken || !this.roomId) return null;
+        try {
+            const response = await this.fetch(
+                `/api/me/membership-button?roomId=${encodeURIComponent(this.roomId)}&userUuid=${encodeURIComponent(
+                    userUuid
+                )}`
+            );
+            const data = (await response.json()) as { button?: { kind?: unknown; label?: unknown } | null };
+            const button = data.button;
+            if (!button || typeof button.label !== "string" || !button.label) return null;
+            const kind = button.kind;
+            if (kind !== "membership" && kind !== "pending" && kind !== "roles") return null;
+            return { kind, label: button.label };
         } catch {
             return null;
         }
@@ -925,6 +969,26 @@ export class BotApiService {
                 signal,
             });
             return readPermissions(await response.json());
+        });
+    }
+
+    /** Bot chat telemetry of this bot: whether it is on, and whether its universe has turned it off for every bot */
+    async getBotTelemetry(botId: string): Promise<BotTelemetry> {
+        return this.withPermissionsTimeout(async (signal) => {
+            const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/privacy`, { signal });
+            return readTelemetry(await response.json());
+        });
+    }
+
+    /** Turn bot chat telemetry on (the bot follows its universe again) or off for this bot. Answers with how it stands. */
+    async saveBotTelemetry(botId: string, on: boolean): Promise<BotTelemetry> {
+        return this.withPermissionsTimeout(async (signal) => {
+            const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/privacy`, {
+                method: "PUT",
+                body: JSON.stringify({ choice: on ? "follow" : "private" }),
+                signal,
+            });
+            return readTelemetry(await response.json());
         });
     }
 

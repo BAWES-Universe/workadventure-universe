@@ -87,9 +87,17 @@
         // Move the cursor to the end of the inserted text
         selection.collapseToEnd();
         // The code above is adding on purpose an additional <br> at the end of the message.
-        // This way, we can scroll to the end of the message.
+        // This way, the field can scroll to the end of the message.
+        // Scroll the field itself, only as far as it takes to show the end of what was pasted: scrollIntoView() also
+        // scrolls every box around it, even the ones that don't show a scrollbar, and moved the whole game when
+        // pasting a picture in the installed computer app.
+        if (lastBrNode && messageInput) {
+            const field = messageInput.getBoundingClientRect();
+            const end = lastBrNode.getBoundingClientRect();
+            if (end.bottom > field.bottom) messageInput.scrollTop += end.bottom - field.bottom;
+            else if (end.top < field.top) messageInput.scrollTop -= field.top - end.top;
+        }
         // Once we have scrolled, we can remove the last <br> tag
-        lastBrNode?.scrollIntoView();
         lastBrNode?.remove();
     }
 </script>

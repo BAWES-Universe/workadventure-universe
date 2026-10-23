@@ -1173,8 +1173,8 @@ class AnalyticsClient {
             .catch((e) => console.error(e));
     }
 
-    /** Orbit opened, and what opened it (the button, a quest's Show me, the game asking for a page, or on its own). */
-    orbitOpened(properties: { source: "button" | "quest" | "link" | "auto" }): void {
+    /** Orbit opened, and what opened it (the button, a quest's Show me, the game asking for a page, on its own, or again after a reconnect). */
+    orbitOpened(properties: { source: "button" | "quest" | "link" | "auto" | "resume" }): void {
         this.posthogPromise
             ?.then((posthog) => {
                 posthog.capture("wa_orbit_opened", properties);

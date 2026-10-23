@@ -12,6 +12,11 @@ import { BotMetricsCollector } from '../metrics/BotMetricsCollector';
 import { ConversationMonitor } from '../monitoring/ConversationMonitor';
 import type { ResponseQualityMetrics } from '../metrics/types';
 
+/** The bot server's usual debug switch, read on each call. */
+function isResponseDebug(): boolean {
+    return process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true';
+}
+
 export interface ProcessedResponse {
     cleaned: string;
     issues: string[];
@@ -202,10 +207,14 @@ export class ResponseProcessor {
         const key = `${botId}_${playerId}`;
         const recent = this.recentResponses.get(key) || [];
         
-        // Debug logging for repetition detection (always log for debugging)
-        console.log(`[ResponseProcessor] Checking repetition for ${key}: ${recent.length} recent responses stored`);
-        if (recent.length > 0) {
-            console.log(`[ResponseProcessor] Recent responses:`, recent.map(r => r.substring(0, 50) + '...'));
+        // Debug only: these lines quote what the bot said, and every console line also rides to Sentry as a
+        // breadcrumb on the next event, including private bots' (Hide bot conversations, #1166)
+        const debug = isResponseDebug();
+        if (debug) {
+            console.log(`[ResponseProcessor] Checking repetition for ${key}: ${recent.length} recent responses stored`);
+            if (recent.length > 0) {
+                console.log(`[ResponseProcessor] Recent responses:`, recent.map(r => r.substring(0, 50) + '...'));
+            }
         }
         
         if (recent.length === 0) {
@@ -217,9 +226,11 @@ export class ResponseProcessor {
         for (let i = 0; i < recent.length; i++) {
             const normalizedRecent = recent[i].trim().toLowerCase();
             if (normalizedResponse === normalizedRecent) {
-                console.log(`[ResponseProcessor] 🚨 EXACT DUPLICATE DETECTED! Response matches recent[${i}]`);
-                console.log(`  Current: "${response.substring(0, 100)}..."`);
-                console.log(`  Recent:  "${recent[i].substring(0, 100)}..."`);
+                if (debug) {
+                    console.log(`[ResponseProcessor] 🚨 EXACT DUPLICATE DETECTED! Response matches recent[${i}]`);
+                    console.log(`  Current: "${response.substring(0, 100)}..."`);
+                    console.log(`  Recent:  "${recent[i].substring(0, 100)}..."`);
+                }
                 return 1.0; // Exact duplicate
             }
         }
@@ -235,7 +246,7 @@ export class ResponseProcessor {
             }
         }
         
-        if (maxSimilarity > 0.8) {
+        if (debug && maxSimilarity > 0.8) {
             console.log(`[ResponseProcessor] ⚠️ High similarity detected (${(maxSimilarity * 100).toFixed(1)}%)`);
             console.log(`  Current: "${response.substring(0, 100)}..."`);
             console.log(`  Similar: "${recent[mostSimilarIndex].substring(0, 100)}..."`);

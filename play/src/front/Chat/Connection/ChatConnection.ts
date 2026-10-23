@@ -5,6 +5,7 @@ import type { StateEvents } from "matrix-js-sdk";
 import type { BotStatusNote } from "../Bots/BotChatStatus";
 import type { RoomConnection } from "../../Connection/RoomConnection";
 import type { PictureStore } from "../../Stores/PictureStore";
+import type { HeldRole } from "../Roles/WorldRoles";
 
 export type memberTypingInformation = { id: string; name: string | null; pictureStore: PictureStore };
 export type ChatPresence = "online" | "away" | "offline";
@@ -23,6 +24,8 @@ export type ChatUser = {
     playUri: string | undefined;
     isAdmin?: boolean;
     isMember?: boolean;
+    /** The roles they hold that Orbit named, highest first (show them with rolesToShow). Member is automatic and not listed. */
+    roles?: HeldRole[];
     /** A bot (AI character) rather than a person. */
     isBot?: boolean;
     visitCardUrl?: string;
@@ -44,6 +47,8 @@ export type AdminUser = {
     playUri: string | undefined;
     isAdmin?: boolean;
     isMember?: boolean;
+    /** The roles they hold that Orbit named, highest first (show them with rolesToShow). Member is automatic and not listed. */
+    roles?: HeldRole[];
     /** A bot (AI character) rather than a person. */
     isBot?: boolean;
     visitCardUrl?: string;

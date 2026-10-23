@@ -99,7 +99,7 @@ function hexToIpv4(high: string, low: string): string {
  * Resolves like the default lookup, but fails when any address is blocked. The connection uses the address checked
  * here, so a hostname can't pass the check and then resolve to an internal address (DNS rebinding).
  */
-const safeLookup: LookupFunction = (hostname, options, callback) => {
+export const safeLookup: LookupFunction = (hostname, options, callback) => {
     dns.lookup(hostname, { ...options, all: true }, (error, addresses) => {
         if (error) {
             callback(error, "", 4);
@@ -122,8 +122,11 @@ const safeLookup: LookupFunction = (hostname, options, callback) => {
     });
 };
 
-/** A URL the server may fetch: http(s) on the default port, no credentials, a host that isn't an internal name. */
-export function parsePreviewableUrl(raw: string): URL | undefined {
+/**
+ * A URL the server may fetch: http(s) on the default port (any port with `allowPort`), no credentials, a host that isn't
+ * an internal name. A port never reaches an internal address: the address itself is checked here and again after DNS.
+ */
+export function parsePreviewableUrl(raw: string, allowPort = false): URL | undefined {
     if (raw.length > MAX_URL_LENGTH) return undefined;
     let url: URL;
     try {
@@ -133,7 +136,7 @@ export function parsePreviewableUrl(raw: string): URL | undefined {
     }
     if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
     if (url.username || url.password) return undefined;
-    if (url.port !== "") return undefined;
+    if (url.port !== "" && !allowPort) return undefined;
     const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
     if (net.isIP(host)) {
         if (isBlockedAddress(host)) return undefined;
