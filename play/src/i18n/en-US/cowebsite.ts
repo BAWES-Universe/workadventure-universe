@@ -15,6 +15,9 @@ const companion: DeepPartial<Translation["cowebsite"]> = {
     closedItems: "Closed {count} items",
     undo: "Undo",
     sheetHandle: "Window height: drag to resize, or drag down to tuck it away",
+    compactView: "Return to compact view",
+    fullScreenView: "Open full-screen view",
+    resize: "Resize",
 };
 
 export default companion;

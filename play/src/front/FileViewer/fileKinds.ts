@@ -69,9 +69,10 @@ export function extensionOf(name: string | undefined): string {
     return lastDot > lastSlash ? name.slice(lastDot + 1).toLowerCase() : "";
 }
 
-/** The lower-case extension a link ends with, without its query or fragment. */
+/** The lower-case extension a link's path ends with, without its host, query or fragment. */
 export function extensionOfLink(link: string | undefined): string {
-    return extensionOf(link?.split(/[?#]/)[0]);
+    const path = link?.split(/[?#]/)[0].replace(/^(?:[a-z][a-z0-9+.-]*:)?\/\/[^/]*/i, "");
+    return extensionOf(path);
 }
 
 /** The kind of reader a file name asks for, or undefined when the viewer has none for it. */
