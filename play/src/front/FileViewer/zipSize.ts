@@ -3,6 +3,10 @@ export const MAX_UNPACKED_BYTES = 150 * 1024 * 1024;
 
 const END_OF_DIRECTORY = 0x06054b50;
 const DIRECTORY_ENTRY = 0x02014b50;
+const LOCAL_HEADER = 0x04034b50;
+/** The extra field that carries 64-bit sizes, which the spreadsheet reader lets override the 32-bit ones. */
+const ZIP64_FIELD = 0x0001;
+const HAS_DATA_DESCRIPTOR = 0x0008;
 const NOT_IN_THIS_FIELD = 0xffffffff;
 
 /**
@@ -72,6 +76,57 @@ export function zipDataEntryCount(bytes: ArrayBuffer): number | undefined {
     return count;
 }
 
+/** Whether the extra fields of a header (a run of id, length, data) include `id`. Fields that run past `end` count as present. */
+function hasExtraField(view: DataView, from: number, length: number, end: number, id: number): boolean {
+    if (from + length > end) return true;
+    for (let at = from; at + 4 <= from + length; at += 4 + view.getUint16(at + 2, true)) {
+        if (view.getUint16(at, true) === id) return true;
+    }
+    return false;
+}
+
+/**
+ * Whether every file's own header, in front of its data, agrees with the zip's list at the end. JSZip believes the
+ * list; the spreadsheet reader believes each file's own header and unpacks as many bytes as that says. A file that
+ * is empty in the list but holds a big stream in its own header is invisible to every count made from the list, so
+ * the two must say the same thing. A file written with a data descriptor leaves the sizes in its own header at
+ * zero, which is fine. 64-bit size fields are refused: no document of the size shown here needs them, and the
+ * spreadsheet reader lets them override the sizes above.
+ */
+export function zipHeadersAgree(bytes: ArrayBuffer): boolean {
+    const view = new DataView(bytes);
+    let end = -1;
+    for (let at = bytes.byteLength - 22; at >= Math.max(0, bytes.byteLength - 22 - 0xffff); at--) {
+        if (view.getUint32(at, true) === END_OF_DIRECTORY) {
+            end = at;
+            break;
+        }
+    }
+    if (end < 0) return false;
+    let at = view.getUint32(end + 16, true);
+    while (at + 46 <= end && view.getUint32(at, true) === DIRECTORY_ENTRY) {
+        const local = view.getUint32(at + 42, true);
+        if (local + 30 > bytes.byteLength || view.getUint32(local, true) !== LOCAL_HEADER) return false;
+        const described = (view.getUint16(local + 6, true) & HAS_DATA_DESCRIPTOR) !== 0;
+        for (const size of [20, 24]) {
+            const listed = view.getUint32(at + size, true);
+            const own = view.getUint32(local + size - 2, true);
+            if (own !== listed && !(described && own === 0)) return false;
+        }
+        const nameLength = view.getUint16(at + 28, true);
+        const extraLength = view.getUint16(at + 30, true);
+        const ownExtraAt = local + 30 + view.getUint16(local + 26, true);
+        if (
+            hasExtraField(view, at + 46 + nameLength, extraLength, bytes.byteLength, ZIP64_FIELD) ||
+            hasExtraField(view, ownExtraAt, view.getUint16(local + 28, true), bytes.byteLength, ZIP64_FIELD)
+        ) {
+            return false;
+        }
+        at += 46 + nameLength + extraLength + view.getUint16(at + 32, true);
+    }
+    return true;
+}
+
 /** What JSZip keeps of an entry it read from the list (private, but stable in the pinned version and covered by the tests). */
 interface KeptEntry {
     dir: boolean;
@@ -106,6 +161,7 @@ interface UnpackStream {
 export async function assertUnpackedWithin(bytes: ArrayBuffer, limit: number): Promise<void> {
     const { default: JSZip } = await import("jszip");
     const zip = await JSZip.loadAsync(bytes);
+    if (!zipHeadersAgree(bytes)) throw new Error("The file cannot be read");
     // Every entry in the zip's list that holds data must have survived as a file here, or it is being hidden from the count.
     const listed = zipDataEntryCount(bytes);
     if (

@@ -1,6 +1,7 @@
+import { deflateRawSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import JSZip from "jszip";
-import { MAX_UNPACKED_BYTES, assertUnpackedWithin, zipUnpackedSize } from "../zipSize";
+import { MAX_UNPACKED_BYTES, assertUnpackedWithin, zipHeadersAgree, zipUnpackedSize } from "../zipSize";
 
 async function zipOf(files: Record<string, string>): Promise<ArrayBuffer> {
     const zip = new JSZip();
@@ -20,6 +21,88 @@ function claimSize(bytes: ArrayBuffer, size: number): ArrayBuffer {
     }
     throw new Error("no list in the zip");
 }
+
+interface RawEntry {
+    name: string;
+    data: Uint8Array;
+    /** What the list at the end says, and what the file's own header says; both default to the real sizes. */
+    listed?: { compressed: number; unpacked: number };
+    own?: { compressed: number; unpacked: number };
+    flags?: number;
+    ownExtra?: number[];
+    listedExtra?: number[];
+}
+
+/** Writes a zip by hand, so that the file's own header and the list at the end can say different things. */
+function rawZip(entries: RawEntry[]): ArrayBuffer {
+    const parts: number[][] = [];
+    const list: number[][] = [];
+    const u16 = (n: number) => [n & 0xff, (n >> 8) & 0xff];
+    const u32 = (n: number) => [n & 0xff, (n >>> 8) & 0xff, (n >>> 16) & 0xff, (n >>> 24) & 0xff];
+    let offset = 0;
+    for (const entry of entries) {
+        const compressed = Array.from(deflateRawSync(entry.data));
+        const name = Array.from(new TextEncoder().encode(entry.name));
+        const real = { compressed: compressed.length, unpacked: entry.data.length };
+        const listed = entry.listed ?? real;
+        const own = entry.own ?? real;
+        const flags = entry.flags ?? 0;
+        const ownExtra = entry.ownExtra ?? [];
+        const listedExtra = entry.listedExtra ?? [];
+        const header = [
+            ...u32(0x04034b50),
+            ...u16(20),
+            ...u16(flags),
+            ...u16(8),
+            ...u32(0),
+            ...u32(0),
+            ...u32(own.compressed),
+            ...u32(own.unpacked),
+            ...u16(name.length),
+            ...u16(ownExtra.length),
+            ...name,
+            ...ownExtra,
+            ...compressed,
+        ];
+        list.push([
+            ...u32(0x02014b50),
+            ...u16(20),
+            ...u16(20),
+            ...u16(flags),
+            ...u16(8),
+            ...u32(0),
+            ...u32(0),
+            ...u32(listed.compressed),
+            ...u32(listed.unpacked),
+            ...u16(name.length),
+            ...u16(listedExtra.length),
+            ...u16(0),
+            ...u16(0),
+            ...u16(0),
+            ...u32(0),
+            ...u32(offset),
+            ...name,
+            ...listedExtra,
+        ]);
+        parts.push(header);
+        offset += header.length;
+    }
+    const directory = list.flat();
+    const end = [
+        ...u32(0x06054b50),
+        ...u16(0),
+        ...u16(0),
+        ...u16(entries.length),
+        ...u16(entries.length),
+        ...u32(directory.length),
+        ...u32(offset),
+        ...u16(0),
+    ];
+    return new Uint8Array([...parts.flat(), ...directory, ...end]).buffer;
+}
+
+/** A zip64 extra field: its id, its length, and eight bytes of size. */
+const ZIP64_EXTRA = [0x01, 0x00, 0x08, 0x00, 0, 0, 0, 0, 0, 0, 0, 0];
 
 describe("measuring a zip before it is unpacked", () => {
     it("adds up the size of every file inside", async () => {
@@ -49,7 +132,16 @@ describe("counting what a zip really holds", () => {
     });
 
     it("stops a zip that claims a few bytes and holds far more, which the list of sizes cannot tell", async () => {
-        const bomb = claimSize(await zipOf({ "a.txt": "\0".repeat(5 * 1024 * 1024) }), 10);
+        const real = new Uint8Array(5 * 1024 * 1024);
+        const compressed = deflateRawSync(real).length;
+        const bomb = rawZip([
+            {
+                name: "a.txt",
+                data: real,
+                listed: { compressed, unpacked: 10 },
+                own: { compressed, unpacked: 10 },
+            },
+        ]);
         expect(zipUnpackedSize(bomb)).toBe(10);
         await expect(assertUnpackedWithin(bomb, 1024 * 1024)).rejects.toThrow("too big");
     });
@@ -86,6 +178,7 @@ describe("counting what a zip really holds", () => {
                 view.getUint8(at + 46 + view.getUint16(at + 28, true) - 1) === 0x2f
             ) {
                 view.setUint32(at + 20, 2, true);
+                view.setUint32(view.getUint32(at + 42, true) + 18, 2, true);
             }
         }
         await expect(assertUnpackedWithin(bytes, 5000)).resolves.toBeUndefined();
@@ -114,6 +207,58 @@ describe("counting what a zip really holds", () => {
         shifted.set(new Uint8Array(zip), 10);
         await expect(JSZip.loadAsync(shifted.buffer)).resolves.toBeDefined();
         await expect(assertUnpackedWithin(shifted.buffer, 5000)).rejects.toThrow("cannot be read");
+    });
+
+    it("refuses a file that is empty in the list but holds a big stream in its own header", async () => {
+        const real = new Uint8Array(5 * 1024 * 1024);
+        const hidden = rawZip([
+            { name: "a.txt", data: real, listed: { compressed: 0, unpacked: 0 } },
+            { name: "b.txt", data: new TextEncoder().encode("hello") },
+        ]);
+        // The list is all that JSZip and every count made from it see: nothing there is big.
+        expect(zipUnpackedSize(hidden)).toBe(5);
+        await expect(JSZip.loadAsync(hidden)).resolves.toBeDefined();
+        await expect(assertUnpackedWithin(hidden, 1024 * 1024)).rejects.toThrow("cannot be read");
+    });
+
+    it("refuses a file whose own header and the list disagree about either size", async () => {
+        const data = new TextEncoder().encode("hello".repeat(100));
+        const compressed = deflateRawSync(data).length;
+        for (const own of [
+            { compressed: compressed + 1, unpacked: data.length },
+            { compressed, unpacked: data.length + 1 },
+            { compressed: 0, unpacked: 0 },
+        ]) {
+            expect(zipHeadersAgree(rawZip([{ name: "a.txt", data, own }]))).toBe(false);
+        }
+    });
+
+    it("refuses 64-bit size fields, in the list or in a file's own header", async () => {
+        const data = new TextEncoder().encode("hello".repeat(100));
+        expect(zipHeadersAgree(rawZip([{ name: "a.txt", data }]))).toBe(true);
+        expect(zipHeadersAgree(rawZip([{ name: "a.txt", data, ownExtra: ZIP64_EXTRA }]))).toBe(false);
+        expect(zipHeadersAgree(rawZip([{ name: "a.txt", data, listedExtra: ZIP64_EXTRA }]))).toBe(false);
+        // Other extra fields (timestamps, for one) are harmless.
+        const timestamp = [0x55, 0x54, 0x05, 0x00, 0x01, 0, 0, 0, 0];
+        expect(zipHeadersAgree(rawZip([{ name: "a.txt", data, ownExtra: timestamp, listedExtra: timestamp }]))).toBe(
+            true
+        );
+    });
+
+    it("lets a file through that was written with a data descriptor, whose own header has no sizes", async () => {
+        const data = new TextEncoder().encode("hello".repeat(100));
+        const bytes = rawZip([{ name: "a.txt", data, flags: 0x0008, own: { compressed: 0, unpacked: 0 } }]);
+        expect(zipHeadersAgree(bytes)).toBe(true);
+        const zip = new JSZip();
+        zip.file("a.txt", "hello".repeat(100));
+        const streamed = await zip.generateAsync({ type: "arraybuffer", compression: "DEFLATE", streamFiles: true });
+        await expect(assertUnpackedWithin(streamed, 5000)).resolves.toBeUndefined();
+    });
+
+    it("refuses a list that points at something that is not a file's header", async () => {
+        const bytes = rawZip([{ name: "a.txt", data: new TextEncoder().encode("hello") }]).slice(0);
+        new DataView(bytes).setUint32(0, 0, true);
+        expect(zipHeadersAgree(bytes)).toBe(false);
     });
 
     it("refuses bytes that are not a zip", async () => {
