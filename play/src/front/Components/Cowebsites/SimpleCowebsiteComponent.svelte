@@ -6,6 +6,7 @@
     import OpenHereRow from "../EmbedScreens/OpenHereRow.svelte";
     import OpenHereItemIcon from "../EmbedScreens/OpenHereItemIcon.svelte";
     import {
+        coWebsiteIconBackground,
         coWebsiteIconUrl,
         coWebsiteSiteName,
         copyCoWebsiteLink,
@@ -39,7 +40,11 @@
         name={coWebsiteSiteName(actualCowebsite)}
         line={hideUrl ? undefined : actualCowebsite.getUrl().toString()}
     >
-        <OpenHereItemIcon slot="icon" src={coWebsiteIconUrl(actualCowebsite)} />
+        <OpenHereItemIcon
+            slot="icon"
+            src={coWebsiteIconUrl(actualCowebsite)}
+            background={coWebsiteIconBackground(actualCowebsite)}
+        />
         {#if !hideUrl}
             <button
                 type="button"
