@@ -72,11 +72,22 @@ describe("counting what a zip really holds", () => {
         await expect(assertUnpackedWithin(bytes, 1024 * 1024)).rejects.toThrow("cannot be read");
     });
 
-    it("lets a zip with real, empty folders through", async () => {
+    it("lets a zip with real, empty folders through, even when a folder carries an empty compressed stream", async () => {
         const zip = new JSZip();
         zip.folder("word")?.file("document.xml", "x".repeat(100));
         zip.folder("empty");
-        const bytes = await zip.generateAsync({ type: "arraybuffer", compression: "DEFLATE" });
+        const bytes = (await zip.generateAsync({ type: "arraybuffer", compression: "DEFLATE" })).slice(0);
+        await expect(assertUnpackedWithin(bytes, 5000)).resolves.toBeUndefined();
+        // Some zip tools (Java's) write 2 bytes of empty deflate stream for a folder.
+        const view = new DataView(bytes);
+        for (let at = 0; at < bytes.byteLength - 46; at++) {
+            if (
+                view.getUint32(at, true) === 0x02014b50 &&
+                view.getUint8(at + 46 + view.getUint16(at + 28, true) - 1) === 0x2f
+            ) {
+                view.setUint32(at + 20, 2, true);
+            }
+        }
         await expect(assertUnpackedWithin(bytes, 5000)).resolves.toBeUndefined();
     });
 
