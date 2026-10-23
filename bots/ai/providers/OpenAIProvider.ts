@@ -93,6 +93,24 @@ export class OpenAIProvider implements AIProvider {
     }
 
     /**
+     * Whether the provider refused the request because of stream_options / include_usage,
+     * so it is worth asking again without stream_options.
+     */
+    private rejectsStreamOptions(
+        status: number,
+        errorData: any,
+        errorText: string,
+        requestBody: Record<string, any>
+    ): boolean {
+        if (!requestBody.stream_options) return false;
+        const param = errorData?.error?.param;
+        if (typeof param === 'string' && (param === 'stream_options' || param.startsWith('stream_options.'))) {
+            return true;
+        }
+        return status === 400 && /stream_options|include_usage/i.test(errorText);
+    }
+
+    /**
      * Build request body with correct token limit parameter
      */
     private buildRequestBody(
@@ -111,6 +129,12 @@ export class OpenAIProvider implements AIProvider {
             ],
             stream,
         };
+
+        if (stream) {
+            body.stream_options = {
+                include_usage: true,
+            };
+        }
 
         // Vision: when the model supports image_url blocks and images are present,
         // send the user message as multipart content (text + image_url blocks).
@@ -174,6 +198,9 @@ export class OpenAIProvider implements AIProvider {
         let tokensUsed = 0;
         let promptTokens = 0;
         let completionTokens = 0;
+        let cachedTokens = 0;
+        let reasoningTokens = 0;
+        let upstreamCost: number | undefined;
         let responseModel = '';
         let streamEnded = false;
         let finishReason: string | undefined;
@@ -275,6 +302,34 @@ export class OpenAIProvider implements AIProvider {
                     }
 
                     finalResponse = retryResponse;
+                }
+                // Retry without stream_options if provider rejects stream_options / include_usage
+                else if (this.rejectsStreamOptions(response.status, errorData, errorText, requestBody)) {
+                    const retryBody = { ...requestBody };
+                    delete retryBody.stream_options;
+
+                    const retryController = new AbortController();
+                    externalAbortCleanups.push(linkExternalAbort(externalSignal, retryController));
+                    streamController = retryController; // update for active stream
+                    timeoutId = setTimeout(() => retryController.abort(), timeout);
+                    const retryResponse = await fetch(endpoint, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${apiKey}`,
+                        },
+                        body: JSON.stringify(retryBody),
+                        signal: retryController.signal,
+                    });
+
+                    clearTimeout(timeoutId);
+
+                    if (!retryResponse.ok) {
+                        const retryErrorText = await retryResponse.text();
+                        throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
+                    }
+
+                    finalResponse = retryResponse;
                 } else {
                     throw new Error(`OpenAI API error: ${response.status} ${errorText}`);
                 }
@@ -322,7 +377,7 @@ export class OpenAIProvider implements AIProvider {
                                 finishReason = choice.finish_reason;
                             }
 
-                            // Extract token usage
+                            // Extract token usage (including cached input, reasoning tokens, and OpenRouter cost)
                             if (json.usage) {
                                 const usage = json.usage;
                                 if (usage.prompt_tokens !== undefined) {
@@ -331,7 +386,24 @@ export class OpenAIProvider implements AIProvider {
                                 if (usage.completion_tokens !== undefined) {
                                     completionTokens = usage.completion_tokens;
                                 }
-                                tokensUsed = (usage.prompt_tokens || 0) + (usage.completion_tokens || 0);
+                                const rawCached =
+                                    usage.prompt_cache_hit_tokens ??
+                                    usage.prompt_tokens_details?.cached_tokens ??
+                                    usage.cache_read_input_tokens;
+                                if (typeof rawCached === 'number' && Number.isFinite(rawCached)) {
+                                    cachedTokens = rawCached;
+                                }
+                                const rawReasoning =
+                                    usage.completion_tokens_details?.reasoning_tokens ??
+                                    usage.reasoning_tokens;
+                                if (typeof rawReasoning === 'number' && Number.isFinite(rawReasoning)) {
+                                    reasoningTokens = rawReasoning;
+                                }
+                                const rawCost = usage.cost ?? usage.total_cost;
+                                if (typeof rawCost === 'number' && Number.isFinite(rawCost)) {
+                                    upstreamCost = rawCost;
+                                }
+                                tokensUsed = (promptTokens || 0) + (completionTokens || 0) || (usage.total_tokens || 0);
                             }
 
                             // Track response model
@@ -376,6 +448,9 @@ export class OpenAIProvider implements AIProvider {
                     tokensUsed,
                     promptTokens,
                     completionTokens,
+                    cachedTokens,
+                    reasoningTokens,
+                    ...(upstreamCost !== undefined ? { upstreamCost } : {}),
                     latency,
                     error: !streamEnded,
                     truncated: finishReason === 'length',
@@ -531,11 +606,37 @@ export class OpenAIProvider implements AIProvider {
                     }
                 }
 
-                const data = await finalResponse.json() as { choices?: Array<{ message?: { content?: string }; finish_reason?: string }>; usage?: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number }; model?: string };
+                const data = await finalResponse.json() as {
+                    choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
+                    usage?: {
+                        total_tokens?: number;
+                        prompt_tokens?: number;
+                        completion_tokens?: number;
+                        prompt_cache_hit_tokens?: number;
+                        cache_read_input_tokens?: number;
+                        prompt_tokens_details?: { cached_tokens?: number };
+                        reasoning_tokens?: number;
+                        completion_tokens_details?: { reasoning_tokens?: number };
+                        cost?: number;
+                        total_cost?: number;
+                    };
+                    model?: string;
+                };
                 const content = data.choices?.[0]?.message?.content || '';
-                const tokensUsed = data.usage?.total_tokens || 0;
                 const promptTokens = data.usage?.prompt_tokens || 0;
                 const completionTokens = data.usage?.completion_tokens || 0;
+                const tokensUsed = data.usage?.total_tokens || (promptTokens + completionTokens);
+                const rawCached =
+                    data.usage?.prompt_cache_hit_tokens ??
+                    data.usage?.prompt_tokens_details?.cached_tokens ??
+                    data.usage?.cache_read_input_tokens;
+                const cachedTokens = typeof rawCached === 'number' && Number.isFinite(rawCached) ? rawCached : 0;
+                const rawReasoning =
+                    data.usage?.completion_tokens_details?.reasoning_tokens ??
+                    data.usage?.reasoning_tokens;
+                const reasoningTokens = typeof rawReasoning === 'number' && Number.isFinite(rawReasoning) ? rawReasoning : 0;
+                const rawCost = data.usage?.cost ?? data.usage?.total_cost;
+                const upstreamCost = typeof rawCost === 'number' && Number.isFinite(rawCost) ? rawCost : undefined;
                 const latency = Date.now() - startTime;
 
                 span.setAttribute("gen_ai.response.model", data.model || config.model);
@@ -546,6 +647,11 @@ export class OpenAIProvider implements AIProvider {
                 return {
                     content,
                     tokensUsed,
+                    promptTokens,
+                    completionTokens,
+                    cachedTokens,
+                    reasoningTokens,
+                    ...(upstreamCost !== undefined ? { upstreamCost } : {}),
                     latency,
                     error: false,
                     truncated: data.choices?.[0]?.finish_reason === 'length',

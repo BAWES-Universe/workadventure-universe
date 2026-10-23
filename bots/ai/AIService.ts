@@ -627,6 +627,9 @@ Everything above is technical guidance. Follow your personality as defined in th
             let tokensUsed = 0;
             let promptTokens = 0;
             let completionTokens = 0;
+            let cachedTokens = 0;
+            let reasoningTokens = 0;
+            let upstreamCost: number | undefined;
             let error = false;
             let streamCompleted = false;
             let accumulatedContent = '';
@@ -635,6 +638,9 @@ Everything above is technical guidance. Follow your personality as defined in th
             let followUpTokens = 0;
             let followUpPromptTokens = 0;
             let followUpCompletionTokens = 0;
+            let followUpCachedTokens = 0;
+            let followUpReasoningTokens = 0;
+            let followUpUpstreamCost: number | undefined;
             let followUpStartTime = 0;
             let firstCallStartTime = 0;
             let hadToolCalls = false;
@@ -848,6 +854,15 @@ Everything above is technical guidance. Follow your personality as defined in th
                         if (chunk.metadata?.completionTokens) {
                             completionTokens = chunk.metadata.completionTokens;
                         }
+                        if (chunk.metadata?.cachedTokens) {
+                            cachedTokens = chunk.metadata.cachedTokens;
+                        }
+                        if (chunk.metadata?.reasoningTokens) {
+                            reasoningTokens = chunk.metadata.reasoningTokens;
+                        }
+                        if (chunk.metadata?.upstreamCost !== undefined) {
+                            upstreamCost = chunk.metadata.upstreamCost;
+                        }
 
                         // Capture $ai_generation for the initial LLM call NOW —
                         // before tool execution distorts its latency and before
@@ -871,6 +886,9 @@ Everything above is technical guidance. Follow your personality as defined in th
                                     tokensUsed,
                                     promptTokens,
                                     completionTokens,
+                                    cachedTokens,
+                                    reasoningTokens,
+                                    upstreamCost,
                                     latency: Date.now() - firstCallStartTime,
                                     error,
                                 }),
@@ -943,6 +961,11 @@ Everything above is technical guidance. Follow your personality as defined in th
                                     if (retryChunk.metadata?.tokensUsed) tokensUsed += retryChunk.metadata.tokensUsed;
                                     if (retryChunk.metadata?.promptTokens) promptTokens += retryChunk.metadata.promptTokens;
                                     if (retryChunk.metadata?.completionTokens) completionTokens += retryChunk.metadata.completionTokens;
+                                    if (retryChunk.metadata?.cachedTokens) cachedTokens += retryChunk.metadata.cachedTokens;
+                                    if (retryChunk.metadata?.reasoningTokens) reasoningTokens += retryChunk.metadata.reasoningTokens;
+                                    if (retryChunk.metadata?.upstreamCost !== undefined) {
+                                        upstreamCost = (upstreamCost ?? 0) + retryChunk.metadata.upstreamCost;
+                                    }
                                     if (retryChunk.done) {
                                         retryTruncated = !!retryChunk.metadata?.truncated;
                                         retryMeta = retryChunk.metadata;
@@ -1146,6 +1169,18 @@ Everything above is technical guidance. Follow your personality as defined in th
                                 if (resultChunk.metadata?.completionTokens) {
                                     completionTokens += resultChunk.metadata.completionTokens;
                                     followUpCompletionTokens += resultChunk.metadata.completionTokens;
+                                }
+                                if (resultChunk.metadata?.cachedTokens) {
+                                    cachedTokens += resultChunk.metadata.cachedTokens;
+                                    followUpCachedTokens += resultChunk.metadata.cachedTokens;
+                                }
+                                if (resultChunk.metadata?.reasoningTokens) {
+                                    reasoningTokens += resultChunk.metadata.reasoningTokens;
+                                    followUpReasoningTokens += resultChunk.metadata.reasoningTokens;
+                                }
+                                if (resultChunk.metadata?.upstreamCost !== undefined) {
+                                    upstreamCost = (upstreamCost ?? 0) + resultChunk.metadata.upstreamCost;
+                                    followUpUpstreamCost = (followUpUpstreamCost ?? 0) + resultChunk.metadata.upstreamCost;
                                 }
                                 if (resultChunk.metadata?.error) {
                                     followUpError = true;
@@ -1621,6 +1656,15 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     if (chunk.metadata?.completionTokens) {
                         completionTokens = chunk.metadata.completionTokens;
                     }
+                    if (chunk.metadata?.cachedTokens) {
+                        cachedTokens = chunk.metadata.cachedTokens;
+                    }
+                    if (chunk.metadata?.reasoningTokens) {
+                        reasoningTokens = chunk.metadata.reasoningTokens;
+                    }
+                    if (chunk.metadata?.upstreamCost !== undefined) {
+                        upstreamCost = chunk.metadata.upstreamCost;
+                    }
 
                     if (chunk.metadata?.error) {
                         error = true;
@@ -1699,6 +1743,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 tokensUsed,
                                 promptTokens: followUpPromptTokens > 0 ? (promptTokens - followUpPromptTokens) : promptTokens,
                                 completionTokens: followUpCompletionTokens > 0 ? (completionTokens - followUpCompletionTokens) : completionTokens,
+                                cachedTokens: followUpCachedTokens > 0 ? (cachedTokens - followUpCachedTokens) : cachedTokens,
+                                reasoningTokens: followUpReasoningTokens > 0 ? (reasoningTokens - followUpReasoningTokens) : reasoningTokens,
+                                upstreamCost,
                                 latency: Date.now() - firstCallStartTime,
                                 error,
                             }),
@@ -1725,6 +1772,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 tokensUsed: followUpTokens,
                                 promptTokens: followUpPromptTokens,
                                 completionTokens: followUpCompletionTokens,
+                                cachedTokens: followUpCachedTokens,
+                                reasoningTokens: followUpReasoningTokens,
+                                upstreamCost: followUpUpstreamCost,
                                 latency: Date.now() - followUpStartTime,
                                 error: followUpError,
                             }),
@@ -1752,6 +1802,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 tokensUsed,
                                 promptTokens,
                                 completionTokens,
+                                cachedTokens,
+                                reasoningTokens,
+                                upstreamCost,
                                 latency: Date.now() - startTime,
                                 error,
                             }),
@@ -1800,6 +1853,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     tokensUsed,
                     promptTokens,
                     completionTokens,
+                    cachedTokens,
+                    reasoningTokens,
+                    upstreamCost,
                     latency,
                     error,
                 }).catch(err => {
@@ -1866,12 +1922,16 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         metadata: AIUsageMetadata
     ): Promise<void> {
         try {
-            // Calculate cost
-            const cost = this.calculateCost(providerId, metadata);
+            // Resolve cost, priceSource, and priceVersion
+            const resolved = this.resolveCost(providerId, metadata);
 
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.log(`[AIService] trackUsage called: botId=${botId}, providerId=${providerId}, tokensUsed=${metadata.tokensUsed}, cost=${cost}`);
+                console.log(`[AIService] trackUsage called: botId=${botId}, providerId=${providerId}, tokensUsed=${metadata.tokensUsed}, cost=${resolved.cost}, priceSource=${resolved.priceSource}`);
             }
+
+            const timestampStr = metadata.timestamp
+                ? (typeof metadata.timestamp === 'string' ? metadata.timestamp : metadata.timestamp.toISOString())
+                : new Date().toISOString();
 
             // Track via Admin API
             await this.adminApiService.trackAIUsage({
@@ -1880,12 +1940,16 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 tokensUsed: metadata.tokensUsed || 0,
                 promptTokens: metadata.promptTokens || 0,
                 completionTokens: metadata.completionTokens || 0,
+                cachedTokens: metadata.cachedTokens || 0,
+                reasoningTokens: metadata.reasoningTokens || 0,
                 apiCalls: 1,
                 durationSeconds: metadata.durationSeconds ?? null,
-                cost,
+                cost: resolved.cost,
+                priceSource: resolved.priceSource,
+                priceVersion: resolved.priceVersion,
                 latency: metadata.latency,
                 error: metadata.error || false,
-                timestamp: new Date().toISOString(),
+                timestamp: timestampStr,
             });
 
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -1902,30 +1966,171 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     }
 
     /**
-     * Per-model pricing table (USD per 1K tokens)
-     * Sourced from official provider pricing pages.
-     * Cache-miss pricing used for DeepSeek (we can't detect cache hits from API response).
+     * Whether a UTC timestamp falls within DeepSeek peak hours:
+     * Weekdays (Monday–Friday) 01:00–04:00 UTC and 06:00–10:00 UTC.
+     * Source: https://api-docs.deepseek.com/quick_start/pricing
      */
-    private static readonly MODEL_PRICING: Record<string, { in: number; out: number }> = {
-        // DeepSeek (official: https://api-docs.deepseek.com/quick_start/pricing/)
-        'deepseek-v4-flash':          { in: 0.00014,   out: 0.00028 },
-        'deepseek-v4-pro':            { in: 0.000435,  out: 0.00087 },
-        'deepseek-chat':              { in: 0.00014,   out: 0.00028 },   // deprecated, maps to v4-flash
-        'deepseek-reasoner':          { in: 0.00014,   out: 0.00028 },   // deprecated, maps to v4-flash thinking
-        'deepseek/deepseek-v4-flash': { in: 0.00014,   out: 0.00028 },   // OpenRouter prefix
-        'deepseek/deepseek-v4-pro':   { in: 0.000435,  out: 0.00087 },
-        'deepseek/deepseek-chat':     { in: 0.00014,   out: 0.00028 },
-        // OpenAI
-        'gpt-4o':            { in: 0.0025,   out: 0.01 },
-        'gpt-4o-mini':       { in: 0.00015,  out: 0.0006 },
-        'gpt-3.5-turbo':     { in: 0.0015,   out: 0.002 },
-        // Anthropic
-        'claude-sonnet-4':   { in: 0.003,    out: 0.015 },
-        'claude-3.5-haiku':  { in: 0.0008,   out: 0.004 },
-        'claude-3-haiku':    { in: 0.00025,  out: 0.00125 },
-        'claude-3-sonnet':   { in: 0.003,    out: 0.015 },
-        'claude-3-opus':     { in: 0.015,    out: 0.075 },
+    public static isDeepSeekPeakUtc(date: Date = new Date()): boolean {
+        const day = date.getUTCDay();
+        if (day === 0 || day === 6) return false;
+        const hour = date.getUTCHours();
+        return (hour >= 1 && hour < 4) || (hour >= 6 && hour < 10);
+    }
+
+    /**
+     * Per-model pricing table (USD per 1K tokens).
+     * Sourced from models.dev (@opencode-ai/models) and official provider pricing pages,
+     * with DeepSeek peak/off-peak and cached input overrides.
+     */
+    private static readonly MODEL_PRICING: Record<
+        string,
+        {
+            in: number;
+            out: number;
+            cachedIn?: number;
+            peakIn?: number;
+            peakOut?: number;
+            peakCachedIn?: number;
+            contextThreshold?: number;
+            inAbove?: number;
+            outAbove?: number;
+            cachedInAbove?: number;
+            source?: string;
+            version?: string;
+        }
+    > = {
+        // DeepSeek (https://api-docs.deepseek.com/quick_start/pricing)
+        // Off-peak: $0.15/1M in, $0.60/1M out, $0.003/1M cached in
+        // Peak (weekdays 01:00–04:00 & 06:00–10:00 UTC): $0.30/1M in, $1.20/1M out, $0.006/1M cached in
+        'deepseek-v4-flash':          { in: 0.00015,  out: 0.0006,   cachedIn: 0.000003, peakIn: 0.0003,  peakOut: 0.0012,  peakCachedIn: 0.000006, source: 'deepseek' },
+        'deepseek-v4-pro':            { in: 0.000435, out: 0.00087,  cachedIn: 0.0000435, peakIn: 0.00087, peakOut: 0.00174, peakCachedIn: 0.000087, source: 'deepseek' },
+        'deepseek-chat':              { in: 0.00015,  out: 0.0006,   cachedIn: 0.000003, peakIn: 0.0003,  peakOut: 0.0012,  peakCachedIn: 0.000006, source: 'deepseek' },
+        'deepseek-reasoner':          { in: 0.00015,  out: 0.0006,   cachedIn: 0.000003, peakIn: 0.0003,  peakOut: 0.0012,  peakCachedIn: 0.000006, source: 'deepseek' },
+        'deepseek-v3':                { in: 0.00015,  out: 0.0006,   cachedIn: 0.000003, peakIn: 0.0003,  peakOut: 0.0012,  peakCachedIn: 0.000006, source: 'deepseek' },
+        'deepseek-r1':                { in: 0.00015,  out: 0.0006,   cachedIn: 0.000003, peakIn: 0.0003,  peakOut: 0.0012,  peakCachedIn: 0.000006, source: 'deepseek' },
+        'deepseek/deepseek-v4-flash': { in: 0.00015,  out: 0.0006,   cachedIn: 0.000003, peakIn: 0.0003,  peakOut: 0.0012,  peakCachedIn: 0.000006, source: 'deepseek' },
+        'deepseek/deepseek-v4-pro':   { in: 0.000435, out: 0.00087,  cachedIn: 0.0000435, peakIn: 0.00087, peakOut: 0.00174, peakCachedIn: 0.000087, source: 'deepseek' },
+        'deepseek/deepseek-chat':     { in: 0.00015,  out: 0.0006,   cachedIn: 0.000003, peakIn: 0.0003,  peakOut: 0.0012,  peakCachedIn: 0.000006, source: 'deepseek' },
+        'deepseek/deepseek-reasoner': { in: 0.00015,  out: 0.0006,   cachedIn: 0.000003, peakIn: 0.0003,  peakOut: 0.0012,  peakCachedIn: 0.000006, source: 'deepseek' },
+
+        // OpenAI (models.dev)
+        'gpt-5':                      { in: 0.00125,  out: 0.01,     cachedIn: 0.000125 },
+        'gpt-5-mini':                 { in: 0.00025,  out: 0.002,    cachedIn: 0.000025 },
+        'gpt-5-nano':                 { in: 0.00005,  out: 0.0004,   cachedIn: 0.000005 },
+        'gpt-4.1':                    { in: 0.002,    out: 0.008,    cachedIn: 0.0005 },
+        'gpt-4.1-mini':               { in: 0.0004,   out: 0.0016,   cachedIn: 0.0001 },
+        'gpt-4.1-nano':               { in: 0.0001,   out: 0.0004,   cachedIn: 0.000025 },
+        'gpt-4o':                     { in: 0.0025,   out: 0.01,     cachedIn: 0.00125 },
+        'gpt-4o-mini':                { in: 0.00015,  out: 0.0006,   cachedIn: 0.000075 },
+        'gpt-3.5-turbo':              { in: 0.0015,   out: 0.002 },
+        'o1':                         { in: 0.015,    out: 0.06,     cachedIn: 0.0075 },
+        'o1-mini':                    { in: 0.0011,   out: 0.0044,   cachedIn: 0.00055 },
+        'o3':                         { in: 0.002,    out: 0.008,    cachedIn: 0.0005 },
+        'o3-mini':                    { in: 0.0011,   out: 0.0044,   cachedIn: 0.00055 },
+        'o4-mini':                    { in: 0.0011,   out: 0.0044,   cachedIn: 0.000275 },
+
+        // Google Gemini (models.dev)
+        'gemini-2.5-flash':           { in: 0.0003,   out: 0.0025,   cachedIn: 0.000075 },
+        'gemini-2.5-flash-lite':      { in: 0.0001,   out: 0.0004,   cachedIn: 0.000025 },
+        'gemini-2.5-pro':             { in: 0.00125,  out: 0.01,     cachedIn: 0.0003125, contextThreshold: 200000, inAbove: 0.0025, outAbove: 0.015, cachedInAbove: 0.000625 },
+        'gemini-2.0-flash':           { in: 0.0001,   out: 0.0004,   cachedIn: 0.000025 },
+        'gemini-1.5-pro':             { in: 0.00125,  out: 0.005,    cachedIn: 0.0003125 },
+        'gemini-1.5-flash':           { in: 0.000075, out: 0.0003,   cachedIn: 0.00001875 },
+
+        // Anthropic Claude (models.dev)
+        'claude-opus-4-5':            { in: 0.005,    out: 0.025,    cachedIn: 0.0005 },
+        'claude-opus-4.5':            { in: 0.005,    out: 0.025,    cachedIn: 0.0005 },
+        'claude-opus-4-1':            { in: 0.015,    out: 0.075,    cachedIn: 0.0015 },
+        'claude-opus-4':              { in: 0.015,    out: 0.075,    cachedIn: 0.0015 },
+        'claude-4-opus':              { in: 0.015,    out: 0.075,    cachedIn: 0.0015 },
+        'claude-sonnet-4-5':          { in: 0.003,    out: 0.015,    cachedIn: 0.0003, contextThreshold: 200000, inAbove: 0.006, outAbove: 0.0225, cachedInAbove: 0.0006 },
+        'claude-sonnet-4.5':          { in: 0.003,    out: 0.015,    cachedIn: 0.0003, contextThreshold: 200000, inAbove: 0.006, outAbove: 0.0225, cachedInAbove: 0.0006 },
+        'claude-sonnet-4':            { in: 0.003,    out: 0.015,    cachedIn: 0.0003, contextThreshold: 200000, inAbove: 0.006, outAbove: 0.0225, cachedInAbove: 0.0006 },
+        'claude-4-sonnet':            { in: 0.003,    out: 0.015,    cachedIn: 0.0003, contextThreshold: 200000, inAbove: 0.006, outAbove: 0.0225, cachedInAbove: 0.0006 },
+        'claude-3-7-sonnet':          { in: 0.003,    out: 0.015,    cachedIn: 0.0003 },
+        'claude-3.7-sonnet':          { in: 0.003,    out: 0.015,    cachedIn: 0.0003 },
+        'claude-3-5-sonnet':          { in: 0.003,    out: 0.015,    cachedIn: 0.0003 },
+        'claude-3.5-sonnet':          { in: 0.003,    out: 0.015,    cachedIn: 0.0003 },
+        'claude-haiku-4-5':           { in: 0.001,    out: 0.005,    cachedIn: 0.0001 },
+        'claude-haiku-4.5':           { in: 0.001,    out: 0.005,    cachedIn: 0.0001 },
+        'claude-3.5-haiku':           { in: 0.0008,   out: 0.004,    cachedIn: 0.00008 },
+        'claude-3-5-haiku':           { in: 0.0008,   out: 0.004,    cachedIn: 0.00008 },
+        'claude-3-haiku':             { in: 0.00025,  out: 0.00125,  cachedIn: 0.00003 },
+        'claude-3-sonnet':            { in: 0.003,    out: 0.015,    cachedIn: 0.0003 },
+        'claude-3-opus':              { in: 0.015,    out: 0.075,    cachedIn: 0.0015 },
+
+        // Qwen (models.dev)
+        'qwen-max':                   { in: 0.0016,   out: 0.0064 },
+        'qwen2.5-max':                { in: 0.0016,   out: 0.0064 },
+        'qwen-plus':                  { in: 0.0004,   out: 0.0012 },
+        'qwen-turbo':                 { in: 0.00005,  out: 0.0002 },
+        'qwen-flash':                 { in: 0.00005,  out: 0.0002 },
+        'qwen3-235b-a22b':            { in: 0.0002,   out: 0.0006 },
+        'qwen3-32b':                  { in: 0.0002,   out: 0.0006 },
+        'qwen3-coder':                { in: 0.0003,   out: 0.0015 },
+        'qwen3-coder-plus':           { in: 0.0003,   out: 0.0015 },
+        'qwen2.5-72b-instruct':       { in: 0.0002,   out: 0.0006 },
+        'qwen2.5-coder-32b-instruct': { in: 0.0003,   out: 0.0015 },
+
+        // Kimi / Moonshot (models.dev)
+        'kimi-k2':                    { in: 0.0006,   out: 0.0025,   cachedIn: 0.00015 },
+        'kimi-k2-0711-preview':       { in: 0.0006,   out: 0.0025,   cachedIn: 0.00015 },
+        'kimi-k2-0905-preview':       { in: 0.0006,   out: 0.0025,   cachedIn: 0.00015 },
+        'kimi-k2-instruct':           { in: 0.0006,   out: 0.0025,   cachedIn: 0.00015 },
+        'kimi-k2-thinking':           { in: 0.0006,   out: 0.0025,   cachedIn: 0.00015 },
+        'kimi-latest':                { in: 0.0006,   out: 0.0025,   cachedIn: 0.00015 },
+        'moonshot-v1-8k':             { in: 0.0002,   out: 0.002 },
+        'moonshot-v1-32k':            { in: 0.001,    out: 0.003 },
+        'moonshot-v1-128k':           { in: 0.002,    out: 0.005 },
+
+        // GLM / Zhipu (models.dev)
+        'glm-4.6':                    { in: 0.0006,   out: 0.0022,   cachedIn: 0.00011 },
+        'glm-4.5':                    { in: 0.0006,   out: 0.0022,   cachedIn: 0.00011 },
+        'glm-4.5-air':                { in: 0.0002,   out: 0.0011,   cachedIn: 0.00003 },
+        'glm-4.5-flash':              { in: 0.0001,   out: 0.0001 },
+        'glm-4-plus':                 { in: 0.0006,   out: 0.0022,   cachedIn: 0.00011 },
+        'glm-4-air':                  { in: 0.0002,   out: 0.0011,   cachedIn: 0.00003 },
+        'glm-4-flash':                { in: 0.0001,   out: 0.0001 },
     };
+
+    /**
+     * Look up a model's pricing entry, normalizing provider prefixes (e.g. `google/gemini-2.5-flash`),
+     * date suffixes (e.g. `gpt-4o-2024-08-06`, `claude-sonnet-4-20250514`), and known model families.
+     */
+    private static lookupModelPricing(modelName: string) {
+        const raw = (modelName || '').trim().toLowerCase();
+        if (!raw) return null;
+
+        if (AIService.MODEL_PRICING[raw]) {
+            return AIService.MODEL_PRICING[raw];
+        }
+
+        const slashIdx = raw.indexOf('/');
+        const afterSlash = slashIdx >= 0 ? raw.slice(slashIdx + 1) : raw;
+        const bare = afterSlash.split(':')[0];
+
+        if (AIService.MODEL_PRICING[bare]) {
+            return AIService.MODEL_PRICING[bare];
+        }
+
+        const withoutDate = bare
+            .replace(/-\d{4}-\d{2}-\d{2}$/, '')
+            .replace(/-\d{8}$/, '')
+            .replace(/-latest$/, '');
+        if (AIService.MODEL_PRICING[withoutDate]) {
+            return AIService.MODEL_PRICING[withoutDate];
+        }
+
+        // Prefix match (longest key first so e.g. `gpt-4o-mini` matches before `gpt-4o`)
+        const keys = Object.keys(AIService.MODEL_PRICING).sort((a, b) => b.length - a.length);
+        for (const key of keys) {
+            if (withoutDate.startsWith(key + '-')) {
+                return AIService.MODEL_PRICING[key];
+            }
+        }
+
+        return null;
+    }
 
     /**
      * Continue a response that hit finish_reason='length' (max_tokens cap).
@@ -2038,59 +2243,156 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     }
 
     /**
-     * Calculate cost based on provider and model pricing
-     * Uses per-model rates when available, falls back to config/default flat rate.
+     * Resolve cost, priceSource, and priceVersion for a reply.
+     *
+     * Priority:
+     * 1. Voice AI (`ultravox`, `gpt-voice`): per-minute pricing.
+     * 2. Local / own-computer models (`lmstudio`, `ollama`, `llamacpp`, `local`): $0, priceSource `"own computer"`.
+     * 3. Explicit super-admin `settings.costPerToken` override: `tokensUsed * costPerToken * markup`.
+     * 4. OpenRouter `usage.cost` (`metadata.upstreamCost`): exact cost returned by OpenRouter.
+     * 5. Known model in `MODEL_PRICING` (DeepSeek peak/off-peak + cached tokens, or models.dev table).
+     * 6. Unknown model: `cost: null`, `priceSource: "unknown"` (never guesses $30/1M).
      */
-    private calculateCost(providerId: string, metadata: AIUsageMetadata): number {
+    public resolveCost(
+        providerId: string,
+        metadata: AIUsageMetadata,
+        now?: Date
+    ): { cost: number | null; priceSource: string; priceVersion: string | null } {
         try {
             const cached = this.credentialCache.get(providerId);
             if (!cached) {
-                return 0;
+                return { cost: null, priceSource: 'unknown', priceVersion: null };
             }
 
             const config = cached.credentials;
-            const promptTokens = metadata.promptTokens || 0;
-            const completionTokens = metadata.completionTokens || 0;
             const durationSeconds = metadata.durationSeconds;
 
-            // Voice AI: per-minute pricing (unchanged)
+            // 1. Voice AI: per-minute pricing (unchanged)
             if (config.type === 'ultravox' || config.type === 'gpt-voice') {
-                if (!durationSeconds) return 0;
+                if (!durationSeconds) {
+                    return { cost: 0, priceSource: 'voice', priceVersion: null };
+                }
                 const costPerMinute = config.settings?.costPerMinute || 0.05;
                 const durationMinutes = Math.ceil(durationSeconds / 60);
                 const minimumMinutes = config.settings?.minimumMinutes || 1;
                 const actualMinutes = Math.max(minimumMinutes, durationMinutes);
-                return actualMinutes * costPerMinute;
+                return {
+                    cost: Number((actualMinutes * costPerMinute).toFixed(12)),
+                    priceSource: 'voice',
+                    priceVersion: null,
+                };
             }
 
-            // LMStudio: always $0 (local models)
-            if (config.type === 'lmstudio') {
-                return 0;
+            // 2. Own-computer / local models (LM Studio, Ollama, llama.cpp): always $0
+            const typeLower = (config.type as string || '').toLowerCase();
+            if (
+                typeLower === 'lmstudio' ||
+                typeLower === 'ollama' ||
+                typeLower === 'llamacpp' ||
+                typeLower === 'local' ||
+                config.settings?.runsOn === 'own-computer'
+            ) {
+                return { cost: 0, priceSource: 'own computer', priceVersion: null };
             }
 
-            // Try per-model pricing lookup
-            const modelName = config.model || '';
-            const pricing = AIService.MODEL_PRICING[modelName];
+            const markup = config.settings?.markup ?? 1.0;
 
-            if (pricing && (promptTokens > 0 || completionTokens > 0)) {
-                return (promptTokens / 1000 * pricing.in) + (completionTokens / 1000 * pricing.out);
+            // 3. Explicit super-admin override via settings.costPerToken
+            if (typeof config.settings?.costPerToken === 'number' && config.settings.costPerToken > 0) {
+                const tokensUsed =
+                    metadata.tokensUsed ||
+                    (metadata.promptTokens || 0) + (metadata.completionTokens || 0);
+                const cost = Number((tokensUsed * config.settings.costPerToken * markup).toFixed(12));
+                return { cost, priceSource: 'custom', priceVersion: null };
             }
 
-            // Fallback: existing flat rate from config or default
-            const tokensUsed = metadata.tokensUsed || 0;
-            if (config.type === 'openai' || config.type === 'anthropic') {
-                const costPerToken = config.settings?.costPerToken || 0.00003;
-                const markup = config.settings?.markup || 1.0;
-                return (tokensUsed * costPerToken) * markup;
+            // 4. OpenRouter upstream usage.cost
+            if (typeof metadata.upstreamCost === 'number' && Number.isFinite(metadata.upstreamCost)) {
+                const cost = Number((metadata.upstreamCost * markup).toFixed(12));
+                return { cost, priceSource: 'openrouter', priceVersion: null };
             }
 
-            return 0;
+            // 5. Known model pricing (DeepSeek peak/off-peak or models.dev table)
+            const pricing = AIService.lookupModelPricing(config.model || '');
+            if (pricing) {
+                const ts =
+                    now ??
+                    (metadata.timestamp
+                        ? typeof metadata.timestamp === 'string'
+                            ? new Date(metadata.timestamp)
+                            : metadata.timestamp
+                        : new Date());
+                const isPeak = pricing.peakIn !== undefined && AIService.isDeepSeekPeakUtc(ts);
+                const rawPrompt = metadata.promptTokens || 0;
+                const rawCached = Math.max(0, metadata.cachedTokens || 0);
+                const cachedInput = rawPrompt > 0 ? Math.min(rawPrompt, rawCached) : rawCached;
+                const uncachedInput = Math.max(0, rawPrompt - cachedInput);
+                const rawCompletion = metadata.completionTokens || 0;
+                const rawReasoning = Math.max(0, metadata.reasoningTokens || 0);
+                const outputTokens = Math.max(rawCompletion, rawReasoning);
+
+                const isAboveContext =
+                    pricing.contextThreshold !== undefined &&
+                    (rawPrompt || cachedInput) > pricing.contextThreshold;
+
+                const inRate = isPeak
+                    ? pricing.peakIn!
+                    : isAboveContext && pricing.inAbove !== undefined
+                        ? pricing.inAbove
+                        : pricing.in;
+                const outRate = isPeak
+                    ? pricing.peakOut!
+                    : isAboveContext && pricing.outAbove !== undefined
+                        ? pricing.outAbove
+                        : pricing.out;
+                const cachedInRate = isPeak
+                    ? (pricing.peakCachedIn ?? inRate)
+                    : isAboveContext && pricing.cachedInAbove !== undefined
+                        ? pricing.cachedInAbove
+                        : (pricing.cachedIn ?? inRate);
+
+                let rawCost =
+                    (uncachedInput / 1000) * inRate +
+                    (cachedInput / 1000) * cachedInRate +
+                    (outputTokens / 1000) * outRate;
+
+                if (
+                    rawPrompt === 0 &&
+                    cachedInput === 0 &&
+                    outputTokens === 0 &&
+                    (metadata.tokensUsed || 0) > 0
+                ) {
+                    rawCost = ((metadata.tokensUsed || 0) / 1000) * inRate;
+                }
+
+                const cost = Number((rawCost * markup).toFixed(12));
+                const priceSource = pricing.source || 'models.dev';
+                const priceVersion =
+                    pricing.peakIn !== undefined
+                        ? isPeak
+                            ? 'deepseek-2026-10-peak'
+                            : 'deepseek-2026-10-offpeak'
+                        : pricing.version || 'models.dev-2026-10';
+
+                return { cost, priceSource, priceVersion };
+            }
+
+            // 6. Unknown model: never guess $30/1M
+            return { cost: null, priceSource: 'unknown', priceVersion: null };
         } catch (error) {
             if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.error('[AIService] Error calculating cost:', error);
+                console.error('[AIService] Error resolving cost:', error);
             }
-            return 0;
+            return { cost: null, priceSource: 'unknown', priceVersion: null };
         }
+    }
+
+    /**
+     * Calculate numeric cost based on provider and model pricing (returns 0 when unknown).
+     */
+    private calculateCost(providerId: string, metadata: AIUsageMetadata): number {
+        const resolved = this.resolveCost(providerId, metadata);
+        return resolved.cost ?? 0;
     }
 
     /**
