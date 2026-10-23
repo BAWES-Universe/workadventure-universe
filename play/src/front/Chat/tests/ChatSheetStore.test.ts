@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { get } from "svelte/store";
+import { get, type Writable } from "svelte/store";
 
 // An upright phone: the browser window is taller than it is wide, and it is a small touch screen.
 vi.hoisted(() => {
@@ -49,7 +49,7 @@ describe("lowerChatSheet", () => {
     afterEach(() => {
         chatVisibilityStore.set(false);
         chatSheetSnapStore.set("half");
-        mobileLayoutStore.set(true);
+        (mobileLayoutStore as Writable<boolean>).set(true);
     });
 
     it("drops the chat sheet to its lowest height, so a file shows above it", () => {
@@ -73,7 +73,7 @@ describe("lowerChatSheet", () => {
     it("leaves the chat beside the game alone", () => {
         chatVisibilityStore.set(true);
         chatSheetSnapStore.set("full");
-        (mobileLayoutStore as unknown as { set: (value: boolean) => void }).set(false);
+        (mobileLayoutStore as Writable<boolean>).set(false);
 
         lowerChatSheet();
 
