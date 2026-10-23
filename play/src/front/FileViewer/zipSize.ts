@@ -38,6 +38,56 @@ export function zipUnpackedSize(bytes: ArrayBuffer): number | undefined {
     return total;
 }
 
+/** An empty file or folder can still carry a few bytes of compressed stream (an empty deflate stream is 2). */
+const EMPTY_STREAM_BYTES = 16;
+
+/**
+ * How many entries in the zip's own list hold data, whatever they are named or marked as. JSZip may read an entry as a
+ * folder from its attributes or from an extra name field and then drop its data, while a reader that unpacks by name
+ * (the spreadsheet reader does) would still inflate it; comparing this count with what JSZip kept catches any such
+ * entry without having to guess how it was disguised. Returns undefined when the list cannot be read.
+ */
+export function zipDataEntryCount(bytes: ArrayBuffer): number | undefined {
+    const view = new DataView(bytes);
+    let end = -1;
+    for (let at = bytes.byteLength - 22; at >= Math.max(0, bytes.byteLength - 22 - 0xffff); at--) {
+        if (view.getUint32(at, true) === END_OF_DIRECTORY) {
+            end = at;
+            break;
+        }
+    }
+    if (end < 0) return undefined;
+    const entries = view.getUint16(end + 10, true);
+    let at = view.getUint32(end + 16, true);
+    let listed = 0;
+    let count = 0;
+    // JSZip reads every record it finds in a row, whatever number the end record gives, so this does too, and a list
+    // whose records and number disagree (no real zip has one) is refused.
+    while (at + 46 <= end && view.getUint32(at, true) === DIRECTORY_ENTRY) {
+        listed++;
+        if (view.getUint32(at + 20, true) > EMPTY_STREAM_BYTES || view.getUint32(at + 24, true) > 0) count++;
+        at += 46 + view.getUint16(at + 28, true) + view.getUint16(at + 30, true) + view.getUint16(at + 32, true);
+    }
+    if (listed !== entries) return undefined;
+    return count;
+}
+
+/** What JSZip keeps of an entry it read from the list (private, but stable in the pinned version and covered by the tests). */
+interface KeptEntry {
+    dir: boolean;
+    _data?: { compressedSize?: number; uncompressedSize?: number };
+}
+
+/** JSZip keeps a file that has data as an object that knows its sizes, and an empty file as a bare placeholder. */
+function holdsData(entry: KeptEntry): boolean {
+    const compressed = entry._data?.compressedSize;
+    return (
+        !entry.dir &&
+        typeof compressed === "number" &&
+        (compressed > EMPTY_STREAM_BYTES || !!entry._data?.uncompressedSize)
+    );
+}
+
 /** The part of JSZip's stream of a file that is used here: its types leave it out, though the library ships it. */
 interface UnpackStream {
     on(event: "data", listener: (chunk: Uint8Array) => void): UnpackStream;
@@ -56,6 +106,14 @@ interface UnpackStream {
 export async function assertUnpackedWithin(bytes: ArrayBuffer, limit: number): Promise<void> {
     const { default: JSZip } = await import("jszip");
     const zip = await JSZip.loadAsync(bytes);
+    // Every entry in the zip's list that holds data must have survived as a file here, or it is being hidden from the count.
+    const listed = zipDataEntryCount(bytes);
+    if (
+        listed === undefined ||
+        listed !== Object.values(zip.files).filter((entry) => holdsData(entry as unknown as KeptEntry)).length
+    ) {
+        throw new Error("The file cannot be read");
+    }
     let total = 0;
     // Every file is counted into the same total, so the files together are held to the limit. Once it is passed,
     // each file that is still being unpacked stops at its next piece.

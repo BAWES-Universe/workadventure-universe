@@ -59,6 +59,63 @@ describe("counting what a zip really holds", () => {
         await expect(assertUnpackedWithin(bytes, 1000)).rejects.toThrow("too big");
     });
 
+    it("refuses a file whose attributes mark it as a folder though its name is a file's", async () => {
+        const bytes = (await zipOf({ "a.txt": "\0".repeat(5 * 1024 * 1024) })).slice(0);
+        const view = new DataView(bytes);
+        for (let at = 0; at < bytes.byteLength - 46; at++) {
+            if (view.getUint32(at, true) === 0x02014b50) {
+                // The DOS "folder" attribute, which JSZip trusts and then drops the file's data for.
+                view.setUint32(at + 38, 0x10, true);
+                break;
+            }
+        }
+        await expect(assertUnpackedWithin(bytes, 1024 * 1024)).rejects.toThrow("cannot be read");
+    });
+
+    it("lets a zip with real, empty folders through, even when a folder carries an empty compressed stream", async () => {
+        const zip = new JSZip();
+        zip.folder("word")?.file("document.xml", "x".repeat(100));
+        zip.folder("empty");
+        const bytes = (await zip.generateAsync({ type: "arraybuffer", compression: "DEFLATE" })).slice(0);
+        await expect(assertUnpackedWithin(bytes, 5000)).resolves.toBeUndefined();
+        // Some zip tools (Java's) write 2 bytes of empty deflate stream for a folder.
+        const view = new DataView(bytes);
+        for (let at = 0; at < bytes.byteLength - 46; at++) {
+            if (
+                view.getUint32(at, true) === 0x02014b50 &&
+                view.getUint8(at + 46 + view.getUint16(at + 28, true) - 1) === 0x2f
+            ) {
+                view.setUint32(at + 20, 2, true);
+            }
+        }
+        await expect(assertUnpackedWithin(bytes, 5000)).resolves.toBeUndefined();
+    });
+
+    it("lets a zip with empty files through (Word and Excel files carry some)", async () => {
+        const bytes = await zipOf({ "a.txt": "x".repeat(100), "customXml/empty.xml": "" });
+        await expect(assertUnpackedWithin(bytes, 5000)).resolves.toBeUndefined();
+    });
+
+    it("refuses a list whose records and number do not agree", async () => {
+        const bytes = (await zipOf({ "a.txt": "x".repeat(100), "b.txt": "y".repeat(100) })).slice(0);
+        const view = new DataView(bytes);
+        for (let at = bytes.byteLength - 22; at >= 0; at--) {
+            if (view.getUint32(at, true) === 0x06054b50) {
+                view.setUint16(at + 10, 1, true);
+                break;
+            }
+        }
+        await expect(assertUnpackedWithin(bytes, 5000)).rejects.toThrow("cannot be read");
+    });
+
+    it("refuses a zip with data in front of it, which JSZip reads by shifting its offsets", async () => {
+        const zip = await zipOf({ "a.txt": "x".repeat(100) });
+        const shifted = new Uint8Array(zip.byteLength + 10);
+        shifted.set(new Uint8Array(zip), 10);
+        await expect(JSZip.loadAsync(shifted.buffer)).resolves.toBeDefined();
+        await expect(assertUnpackedWithin(shifted.buffer, 5000)).rejects.toThrow("cannot be read");
+    });
+
     it("refuses bytes that are not a zip", async () => {
         await expect(
             assertUnpackedWithin(new TextEncoder().encode("hello").buffer as ArrayBuffer, 10)
