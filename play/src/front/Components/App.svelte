@@ -45,6 +45,7 @@
     import BrowserNotSupported from "./BrowserNotSupported/BrowserNotSupported.svelte";
     import OpenHereWindow from "./EmbedScreens/OpenHereWindow.svelte";
     import ClosedItemsToast from "./EmbedScreens/ClosedItemsToast.svelte";
+    import LinkCopiedToast from "./EmbedScreens/LinkCopiedToast.svelte";
     import GameOverlay from "./GameOverlay.svelte";
 
     let WebGLRenderer = Phaser.Renderer.WebGL.WebGLRenderer;
@@ -313,6 +314,7 @@
     <BrowserNotSupported />
 {:else}
     <ClosedItemsToast />
+    <LinkCopiedToast />
     <div
         class="h-dvh w-dvw flex landscape:flex-row portrait:flex-col-reverse"
         id="main-container"
