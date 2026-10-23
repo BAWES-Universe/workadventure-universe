@@ -9,11 +9,13 @@ import { writable } from "svelte/store";
 
 vi.mock("../../Administration/AnalyticsClient", () => ({ analyticsClient: new Proxy({}, { get: () => () => {} }) }));
 vi.mock("../../Stores/CardOverWindowStore", () => ({ cardOverWindowStore: writable(false) }));
-// The window's close is the "Close all" of the open items, which has nothing to close here.
+// The window's close is the "Close all" of the open items, and Esc closes the item in front: neither has anything to close here.
 const closeAllOpenItems = vi.hoisted(() => vi.fn());
+const closeFrontItem = vi.hoisted(() => vi.fn());
 vi.mock("../../Stores/ClosedItemsStore", async (importOriginal) => ({
     ...(await importOriginal<Record<string, unknown>>()),
     closeAllOpenItems,
+    closeFrontItem,
 }));
 
 import { emoteMenuStore } from "../../Stores/EmoteStore";
@@ -30,6 +32,7 @@ describe("OpenHereWindow Esc", () => {
         document.body.append(target);
         component = new OpenHereWindow({ target, props: { floating: true } });
         closeAllOpenItems.mockClear();
+        closeFrontItem.mockClear();
     });
 
     afterEach(() => {
@@ -41,10 +44,11 @@ describe("OpenHereWindow Esc", () => {
         lightboxOpenStore.set(false);
     });
 
-    it("closes on Esc", async () => {
+    it("closes the item in front on Esc, not everything", async () => {
         await tick();
         window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", cancelable: true }));
-        expect(closeAllOpenItems).toHaveBeenCalledTimes(1);
+        expect(closeFrontItem).toHaveBeenCalledTimes(1);
+        expect(closeAllOpenItems).not.toHaveBeenCalled();
     });
 
     it("leaves an Esc to the emote picker, the express tray or a picture shown large, even when they close on it", async () => {
@@ -60,7 +64,7 @@ describe("OpenHereWindow Esc", () => {
             window.addEventListener("keydown", close);
             window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", cancelable: true }));
             window.removeEventListener("keydown", close);
-            expect(closeAllOpenItems).not.toHaveBeenCalled();
+            expect(closeFrontItem).not.toHaveBeenCalled();
         }
     });
 });

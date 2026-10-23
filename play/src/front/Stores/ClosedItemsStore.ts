@@ -78,6 +78,17 @@ export function closeAllOpenItems(): void {
     };
 }
 
+/**
+ * Closes the item in front (the picked tab). When it was the last one, the window closes with it. A page its map says may
+ * not be closed stays. One item closing is not asked about and has no Undo, like the tab's own X.
+ */
+export function closeFrontItem(): void {
+    const front = get(activeCoWebsiteStore);
+    if (!front || !front.isClosable() || !get(coWebsites).includes(front)) return;
+    coWebsites.remove(front);
+    analyticsClient.closeCowebsite();
+}
+
 export function undoClosedItems(): void {
     const items = get(closedItemsStore);
     dismissClosedItems();

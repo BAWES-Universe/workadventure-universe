@@ -4,6 +4,7 @@ import type { CoWebsite } from "../WebRtc/CoWebsite/CoWebsite";
 import {
     closedItemsStore,
     closeAllOpenItems,
+    closeFrontItem,
     dismissClosedItems,
     pickedAfterUndoStore,
     undoClosedItems,
@@ -169,5 +170,47 @@ describe("closing several items at once", () => {
         coWebsites.add(item("meeting"));
         expect(get(closedItemsStore)).toBeUndefined();
         expect(ids()).toEqual(["meeting"]);
+    });
+});
+
+describe("closing the item in front", () => {
+    beforeEach(() => {
+        coWebsites.removeAll();
+        dismissClosedItems();
+        activeCoWebsiteStore.set(undefined);
+    });
+
+    it("closes only the picked item, and the others stay open", () => {
+        const [a, b, c] = [item("a"), item("b"), item("c")];
+        [a, b, c].forEach((i) => coWebsites.add(i));
+        activeCoWebsiteStore.set(b);
+
+        closeFrontItem();
+        expect(ids()).toEqual(["a", "c"]);
+        expect(get(closedItemsStore)).toBeUndefined();
+    });
+
+    it("empties the window when the last item closes", () => {
+        const a = item("a");
+        coWebsites.add(a);
+        activeCoWebsiteStore.set(a);
+
+        closeFrontItem();
+        expect(ids()).toEqual([]);
+    });
+
+    it("leaves a page its map says may not be closed, and the others, alone", () => {
+        const [a, kept] = [item("a"), item("kept", false)];
+        [a, kept].forEach((i) => coWebsites.add(i));
+        activeCoWebsiteStore.set(kept);
+
+        closeFrontItem();
+        expect(ids()).toEqual(["a", "kept"]);
+    });
+
+    it("does nothing when no item is picked", () => {
+        coWebsites.add(item("a"));
+        closeFrontItem();
+        expect(ids()).toEqual(["a"]);
     });
 });
