@@ -47,6 +47,14 @@ describe("MapListService.readWamFile", () => {
         expect((thrown as Error).cause).toBe(original);
     });
 
+    it("keeps the fields of a caught object that is not an Error, such as a file system code and path", async () => {
+        const readWamFile = createReadWamFile({ code: "ENOENT", path: "/map.wam" });
+
+        const thrown = await readWamFile("missing.wam", "example.com").catch((e: unknown) => e);
+
+        expect((thrown as Error).message).toContain('{"code":"ENOENT","path":"/map.wam"}');
+    });
+
     it("does not fail with a circular JSON error when the caught value is a circular object", async () => {
         const circular: Record<string, unknown> = {};
         circular.self = circular;
@@ -56,8 +64,8 @@ describe("MapListService.readWamFile", () => {
 
         expect(thrown).toBeInstanceOf(Error);
         expect((thrown as Error).message).toContain('Error while trying to read WAM file "broken.wam"');
-        expect((thrown as Error).message).toContain("[object Object]");
-        expect((thrown as Error).message).not.toMatch(/circular/i);
+        expect((thrown as Error).message).toContain('{"self":"[Circular]"}');
+        expect((thrown as Error).message).not.toMatch(/circular structure/i);
         expect((thrown as Error).cause).toBe(circular);
     });
 });

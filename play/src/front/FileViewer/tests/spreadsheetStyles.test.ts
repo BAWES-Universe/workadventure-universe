@@ -132,6 +132,24 @@ describe("the look of an Excel file", () => {
         expect(Math.abs(b - 0xe7)).toBeLessThanOrEqual(2);
     });
 
+    it("reads a tint written in exponent form, as Excel writes a small one", async () => {
+        const [sheet] = await readSpreadsheet(
+            await xlsxBytes({
+                styles:
+                    '<fonts><font><sz val="11"/></font></fonts>' +
+                    '<fills><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="solid"><fgColor theme="0" tint="-4.9989318521683403E-2"/></patternFill></fill></fills>' +
+                    '<cellXfs><xf fontId="0" fillId="0"/><xf fontId="0" fillId="1"/></cellXfs>',
+                sheet: `<sheetData><row r="1">${text("A1", "x", 1)}</row></sheetData>`,
+            })
+        );
+        // White, Background 1, Darker 5% is #f2f2f2: without the tint it would be a plain white.
+        const fill = sheet.rows[0][0].style?.fill ?? "";
+        expect(fill).toMatch(/^#[0-9a-f]{6}$/);
+        expect(fill).not.toBe("#ffffff");
+        const [r, g, b] = [1, 3, 5].map((at) => parseInt(fill.slice(at, at + 2), 16));
+        for (const channel of [r, g, b]) expect(Math.abs(channel - 0xf2)).toBeLessThanOrEqual(2);
+    });
+
     it("takes a theme colour from the file's own theme", async () => {
         const [sheet] = await readSpreadsheet(
             await xlsxBytes({

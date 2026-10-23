@@ -213,10 +213,16 @@ export class SuperLoaderPlugin {
 
             callback();
 
+            // A listener of the loader's "addfile" event can destroy the scene while the resource is being queued.
+            // Nothing would start the loader then, and the promise would stay pending.
+            if (this.isSceneDestroyed()) {
+                return rej(new Error("Trying to load a " + type + " in a Scene that is already destroyed."));
+            }
+
             this.scene.load.once("filecomplete-" + type + "-" + key, successCallback);
             this.scene.load.on("loaderror", errorCallback);
             this.scene.load.on(Phaser.Loader.Events.COMPLETE, loaderCompleteCallback);
-            if (!this.isSceneDestroyed() && this.scene.scene.settings.status > Phaser.Scenes.LOADING) {
+            if (this.scene.scene.settings.status > Phaser.Scenes.LOADING) {
                 // When the scene is destroyed, let's remove our callbacks.
                 // We only need to register this destroy event is the scene is not in loading state (otherwise, Phaser
                 // will take care of that for us).

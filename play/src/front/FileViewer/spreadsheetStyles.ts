@@ -121,8 +121,9 @@ function attributeOf(attributes: string, name: string): string | undefined {
     return match?.[1];
 }
 
+/** A plain number, or one in exponent form: Excel writes a small tint as `-4.9989318521683403E-2`. */
 function numberOf(value: string | undefined): number | undefined {
-    if (value === undefined || !/^-?\d{1,9}(\.\d{1,20})?$/.test(value)) return undefined;
+    if (value === undefined || !/^-?\d{1,9}(\.\d{1,20})?([eE][-+]?\d{1,3})?$/.test(value)) return undefined;
     return Number(value);
 }
 

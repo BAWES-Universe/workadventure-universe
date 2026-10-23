@@ -15,6 +15,27 @@ import type { WebHookService } from "./WebHookService";
  * Manages the cache file containing the list of maps.
  * Also, will call the webhook automatically when an update is made to the cache file.
  */
+/**
+ * What a caught value says, for an error message. An Error says its message and a primitive its text; any other
+ * object (a file system error that is not an Error) says its fields, with a circular reference shown as
+ * "[Circular]" instead of making the formatting itself throw.
+ */
+function describeCaught(caught: unknown): string {
+    if (caught instanceof Error) return caught.message;
+    if (typeof caught !== "object" || caught === null) return String(caught);
+    const seen = new WeakSet<object>();
+    try {
+        return JSON.stringify(caught, (_key, value: unknown) => {
+            if (typeof value !== "object" || value === null) return value;
+            if (seen.has(value)) return "[Circular]";
+            seen.add(value);
+            return value;
+        });
+    } catch {
+        return Object.prototype.toString.call(caught);
+    }
+}
+
 export class MapListService {
     /**
      * A map containing a limiter. For a given cache file, one cannot modify if another modification is in process.
@@ -89,9 +110,9 @@ export class MapListService {
             };
         } catch (e) {
             throw new Error(
-                `Error while trying to read WAM file "${wamFilePath}" to generate cache: ${
-                    e instanceof Error ? e.message : String(e)
-                }. Skipping this file for cache generation.`,
+                `Error while trying to read WAM file "${wamFilePath}" to generate cache: ${describeCaught(
+                    e
+                )}. Skipping this file for cache generation.`,
                 { cause: e }
             );
         }
