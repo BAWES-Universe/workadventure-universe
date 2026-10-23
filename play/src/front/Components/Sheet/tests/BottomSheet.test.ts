@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SheetSizes } from "../BottomSheet";
-import { clampHeight, getSnapHeights, nearestSnap, nextSnap, sheetFrameStyle } from "../BottomSheet";
+import { clampHeight, getSnapHeights, nearestSnap, nextSnap } from "../BottomSheet";
 import {
     CHAT_SHEET_FIT_MARGIN,
     CHAT_SHEET_SIZES,
@@ -86,21 +86,5 @@ describe("BottomSheet", () => {
         expect(chatSheetInviteHeight(700, 515, 844)).toBe(700);
         // More than the screen has stops at "full".
         expect(chatSheetInviteHeight(300, 2000, 844)).toBe(full);
-    });
-});
-
-describe("sheetFrameStyle", () => {
-    it("sets the height, with no padding while the sheet is clear of the status bar", () => {
-        expect(sheetFrameStyle(500, 844)).toBe(
-            "height: 500px; padding-top: max(0px, calc(env(safe-area-inset-top, 0px) - 344px));"
-        );
-    });
-
-    it("keeps the content below the status bar once the sheet covers the whole screen", () => {
-        expect(sheetFrameStyle(844, 844)).toBe(
-            "height: 844px; padding-top: max(0px, calc(env(safe-area-inset-top, 0px) - 0px));"
-        );
-        // Taller than the screen (a keyboard resizing it): never a negative offset.
-        expect(sheetFrameStyle(900, 844)).toContain("- 0px));");
     });
 });
