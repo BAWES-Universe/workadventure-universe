@@ -12,23 +12,22 @@ import { mapPathUsingDomain } from "./PathMapper";
 import type { WebHookService } from "./WebHookService";
 
 /**
- * Manages the cache file containing the list of maps.
- * Also, will call the webhook automatically when an update is made to the cache file.
- */
-/**
  * What a caught value says, for an error message. An Error says its message and a primitive its text; any other
- * object (a file system error that is not an Error) says its fields, with a circular reference shown as
- * "[Circular]" instead of making the formatting itself throw.
+ * object (a file system error that is not an Error) says its fields. A reference back to one of its own parents shows
+ * as "[Circular]" instead of making the formatting itself throw; the same object met twice in different places is
+ * not a cycle and is written out both times.
  */
 function describeCaught(caught: unknown): string {
     if (caught instanceof Error) return caught.message;
     if (typeof caught !== "object" || caught === null) return String(caught);
-    const seen = new WeakSet<object>();
+    const ancestors: unknown[] = [];
     try {
-        return JSON.stringify(caught, (_key, value: unknown) => {
+        return JSON.stringify(caught, function (this: unknown, _key, value: unknown) {
             if (typeof value !== "object" || value === null) return value;
-            if (seen.has(value)) return "[Circular]";
-            seen.add(value);
+            // `this` is the object holding this value: whatever was entered after it has been left.
+            while (ancestors.length > 0 && ancestors[ancestors.length - 1] !== this) ancestors.pop();
+            if (ancestors.includes(value)) return "[Circular]";
+            ancestors.push(value);
             return value;
         });
     } catch {
@@ -36,6 +35,10 @@ function describeCaught(caught: unknown): string {
     }
 }
 
+/**
+ * Manages the cache file containing the list of maps.
+ * Also, will call the webhook automatically when an update is made to the cache file.
+ */
 export class MapListService {
     /**
      * A map containing a limiter. For a given cache file, one cannot modify if another modification is in process.

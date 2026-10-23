@@ -55,6 +55,28 @@ describe("MapListService.readWamFile", () => {
         expect((thrown as Error).message).toContain('{"code":"ENOENT","path":"/map.wam"}');
     });
 
+    it("writes out an object that appears twice in different places, as it is not a cycle", async () => {
+        const shared = { code: "EACCES" };
+        const readWamFile = createReadWamFile({ first: shared, second: shared, nested: { again: shared } });
+
+        const thrown = await readWamFile("shared.wam", "example.com").catch((e: unknown) => e);
+
+        expect((thrown as Error).message).toContain(
+            '{"first":{"code":"EACCES"},"second":{"code":"EACCES"},"nested":{"again":{"code":"EACCES"}}}'
+        );
+        expect((thrown as Error).message).not.toContain("[Circular]");
+    });
+
+    it("shows a reference to a parent that is two levels up as circular", async () => {
+        const root: Record<string, unknown> = { child: { name: "inner" } };
+        (root.child as Record<string, unknown>).back = root;
+        const readWamFile = createReadWamFile(root);
+
+        const thrown = await readWamFile("deep.wam", "example.com").catch((e: unknown) => e);
+
+        expect((thrown as Error).message).toContain('{"child":{"name":"inner","back":"[Circular]"}}');
+    });
+
     it("does not fail with a circular JSON error when the caught value is a circular object", async () => {
         const circular: Record<string, unknown> = {};
         circular.self = circular;
