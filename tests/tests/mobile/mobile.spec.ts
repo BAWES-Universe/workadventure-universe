@@ -102,7 +102,7 @@ test.describe('Mobile @nowebkit @nodesktop', () => {
         
         // On an upright phone the cowebsite is a bottom sheet, with one close for everything open in it
         await expect(page.getByTestId('openHereSheet')).toBeVisible();
-        await page.getByTestId('openHereSheetClose').click();
+        await page.locator('[data-testid="openHereSheetClose"]:visible').click();
 
         // Check that the cowebsite is hidden
         await expect(page.getByTestId('openHereSheet')).toBeHidden({

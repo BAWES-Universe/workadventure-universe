@@ -11,7 +11,8 @@ test.describe('Scripting WA.nav.openCoWebsite function', () => {
         // On an upright phone the items are in the sheet's list, behind the "N open" chip, not in a tab strip
         const openTab = async (n: number) => {
             if (testInfo.project.name.startsWith('mobile')) {
-                await page.getByTestId('openHereList').click();
+                // Every item keeps its own row (loaded, hidden when not shown): only the shown row's chip counts.
+                await page.locator('[data-testid="openHereList"]:visible').click();
                 await page.getByTestId(`openHereListItem${n}`).click();
             } else {
                 await page.getByTestId(`tab${n}`).click();
