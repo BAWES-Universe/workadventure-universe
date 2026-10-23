@@ -1,8 +1,7 @@
 import { ICON_URL } from "../../Enum/EnvironmentVariable";
 import type { CoWebsite } from "../../WebRtc/CoWebsite/CoWebsite";
 import { analyticsClient } from "../../Administration/AnalyticsClient";
-import { popupStore } from "../../Stores/PopupStore";
-import PopUpCopyUrl from "../PopUp/PopUpCopyUrl.svelte";
+import { showLinkCopiedToast } from "../../Stores/LinkCopiedToastStore";
 
 /** The site's name as its tab always showed it: the host without "www" and the ending, with a capital. */
 export function coWebsiteSiteName(coWebsite: CoWebsite): string {
@@ -23,7 +22,7 @@ export function coWebsiteIconUrl(coWebsite: CoWebsite): string {
 export function copyCoWebsiteLink(coWebsite: CoWebsite): void {
     navigator.clipboard.writeText(coWebsite.getUrl().toString()).catch((e) => console.error(e));
     analyticsClient.copyCowebsiteLink();
-    popupStore.addPopup(PopUpCopyUrl, {}, "popupCopyUrl");
+    showLinkCopiedToast();
 }
 
 export function openCoWebsiteInBrowserTab(coWebsite: CoWebsite): void {
