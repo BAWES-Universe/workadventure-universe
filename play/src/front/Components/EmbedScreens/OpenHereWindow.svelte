@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onDestroy } from "svelte";
+    import { onDestroy, tick } from "svelte";
     import { coWebsiteRatio, fullScreenCowebsite, windowSize } from "../../Stores/CoWebsiteStore";
     import { closeAllOpenItems } from "../../Stores/ClosedItemsStore";
     import { modalVisibilityStore } from "../../Stores/ModalStore";
@@ -24,6 +24,7 @@
     } from "../../Stores/OpenHereWidth";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
     import { gameManager } from "../../Phaser/Game/GameManager";
+    import { prefersReducedMotion } from "../../Phaser/Components/prefersReducedMotion";
     import { chatSheetLayoutStore, openHereSheetHeightStore } from "../../Chat/ChatSheetStore";
     import { CHAT_SHEET_SIZES } from "../../Chat/ChatSheetSizes";
     import { clampHeight, nearestSnap, nextSnap, sheetFrameStyle } from "../Sheet/BottomSheet";
@@ -141,6 +142,17 @@
     function onSheetTransitionEnd(event: TransitionEvent) {
         if (!floating && event.target === event.currentTarget && event.propertyName === "height") reposition();
     }
+
+    // With reduced motion the sheet does not animate or transition, so nothing ends: it has settled as soon as it is drawn
+    // (a finger dragging it has not).
+    async function repositionWhenDrawn() {
+        if (!prefersReducedMotion()) return;
+        await tick();
+        reposition();
+    }
+
+    $: settled = !floating && sheetDragHeight === undefined ? `${sheetHeight} ${tucked}` : undefined;
+    $: if (settled !== undefined) void repositionWhenDrawn();
 
     function onSheetDrag(height: number) {
         if (chatOverSheet) return;

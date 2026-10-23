@@ -275,4 +275,20 @@ describe("OpenHereWindow as a phone's sheet", () => {
         component = undefined;
         expect(reposition).toHaveBeenCalledTimes(3);
     });
+
+    it("centres the map again at once when motion is reduced, as no animation or transition ends then", async () => {
+        window.matchMedia = vi.fn(() => ({ matches: true })) as unknown as typeof window.matchMedia;
+        try {
+            await mount("plan.pdf");
+            await tick();
+            expect(reposition).toHaveBeenCalledTimes(1);
+
+            openHereSheetRestStore.set("full");
+            await tick();
+            await tick();
+            expect(reposition).toHaveBeenCalledTimes(2);
+        } finally {
+            Reflect.deleteProperty(window, "matchMedia");
+        }
+    });
 });
