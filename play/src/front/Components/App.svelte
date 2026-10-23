@@ -20,7 +20,13 @@
     import { HtmlUtils } from "../WebRtc/HtmlUtils";
     import { iframeListener } from "../Api/IframeListener";
     import { desktopApi } from "../Api/Desktop";
-    import { canvasSize, coWebsiteManager, coWebsites, fullScreenCowebsite } from "../Stores/CoWebsiteStore";
+    import {
+        canvasSize,
+        coWebsiteManager,
+        coWebsites,
+        fullScreenCowebsite,
+        openHereFloatsStore,
+    } from "../Stores/CoWebsiteStore";
     import { gameSceneIsLoadedStore } from "../Stores/GameSceneStore";
     import { softReconnect } from "../Connection/SoftReconnect";
     import { urlManager } from "../Url/UrlManager";
@@ -37,7 +43,8 @@
     import { wokaRefusedStore } from "../Stores/WokaRefusedStore";
     import { refreshPromptStore } from "../Stores/RefreshPromptStore";
     import BrowserNotSupported from "./BrowserNotSupported/BrowserNotSupported.svelte";
-    import CoWebsitesContainer from "./EmbedScreens/CoWebsitesContainer.svelte";
+    import OpenHereWindow from "./EmbedScreens/OpenHereWindow.svelte";
+    import ClosedItemsToast from "./EmbedScreens/ClosedItemsToast.svelte";
     import GameOverlay from "./GameOverlay.svelte";
 
     let WebGLRenderer = Phaser.Renderer.WebGL.WebGLRenderer;
@@ -305,6 +312,7 @@
 {#if browserNotSupported}
     <BrowserNotSupported />
 {:else}
+    <ClosedItemsToast />
     <div
         class="h-dvh w-dvw flex landscape:flex-row portrait:flex-col-reverse"
         id="main-container"
@@ -312,27 +320,17 @@
     >
         <div
             id="game"
-            class="relative {$fullScreenCowebsite ? 'hidden' : ''}"
+            class="relative {$fullScreenCowebsite && !$openHereFloatsStore ? 'hidden' : ''}"
             class:game-scene-loaded={$gameSceneIsLoadedStore}
             bind:this={gameDiv}
         >
             <GameOverlay {game} />
         </div>
         {#if $coWebsites.length > 0}
-            <div class="flex-1">
-                <!-- Transitions are breaking the onDestroy lifecycle of cowebsites -->
-                <!--            transition:fly={{-->
-                <!--            duration: 200,-->
-                <!--            x:-->
-                <!--                $screenOrientationStore === "portrait"-->
-                <!--                    ? 0-->
-                <!--                    : document.documentElement.dir === "rtl"-->
-                <!--                        ? -$coWebsitesSize.width-->
-                <!--                        : $coWebsitesSize.width,-->
-                <!--            y: $screenOrientationStore === "portrait" ? -$coWebsitesSize.height : 0,-->
-                <!--        }}-->
-                <CoWebsitesContainer />
-            </div>
+            <!-- Files and links open in a window over the game, like Orbit's: the map keeps its size. An upright phone
+                 still splits the game with the panel. It is one component either way, so turning the phone does not
+                 unload what is open (a file, a page, a meeting). -->
+            <OpenHereWindow floating={$openHereFloatsStore} />
         {/if}
     </div>
 {/if}
