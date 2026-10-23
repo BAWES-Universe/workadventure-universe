@@ -574,9 +574,15 @@ jobs:
             "uploader ${COOLIFY_UPLOADER_UUID}"; do
             # shellcheck disable=SC2086
             set -- $service
+            # play is the only service that depends on the ones before it: never start it against an old back or map-storage.
+            if [ "$1" = "play" ] && [ -n "$failed" ]; then
+              echo "::error::play not deployed: it needs${failed} deployed first"
+              failed="$failed play"
+              continue
+            fi
             deploy_one "$1" "$2" || failed="$failed $1"
           done
-          # Every service is still attempted; the job fails at the end if any did not finish.
+          # The other services are still attempted; the job fails at the end if any did not finish.
           if [ -n "$failed" ]; then
             echo "::error::Not deployed:$failed"
             exit 1
