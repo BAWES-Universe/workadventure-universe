@@ -1,6 +1,7 @@
 import type { Readable } from "svelte/store";
 import { get, derived, readable, writable } from "svelte/store";
 import type { DesktopCapturerSource } from "../Interfaces/DesktopAppInterfaces";
+import { isNativeMobileApp } from "../WebRtc/DeviceUtils";
 import { localUserStore } from "../Connection/LocalUserStore";
 import LL from "../../i18n/i18n-svelte";
 import { isSpeakerStore, type LocalStreamStoreValue } from "./MediaStore";
@@ -140,6 +141,10 @@ export const screenSharingConstraintsStore = derived(
 );
 
 export function isScreenSharingSupported(): boolean {
+    if (isNativeMobileApp()) {
+        return false;
+    }
+
     if (window.WAD?.getDesktopCapturerSources) {
         return true;
     }
