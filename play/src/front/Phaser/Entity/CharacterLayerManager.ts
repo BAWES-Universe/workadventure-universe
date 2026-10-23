@@ -31,33 +31,40 @@ export class CharacterLayerManager {
         const textureRefs = characterTextures.map((texture) => ({ id: texture.id, url: texture.url }));
         return lazyLoadPlayerCharacterTextures(scene.superLoad, textureRefs)
             .then(async (textures) => {
-                // Wait 0 seconds to force the promise to be async and let Phaser frames update
+                // Wait 0 seconds to force the promise to be async and let Phaser frames update.
+                // The scene may be destroyed or reset during this yield, so re-acquire it afterward
+                // to guarantee we always operate on a live, initialised scene.
                 await new Promise((resolve) => {
                     setTimeout(resolve, 0);
                 });
-                return this.getSnapshot(scene, this.getSprites(scene, textures)).then((htmlImageElementSrc) => {
+                const liveScene = await waitForGameScene();
+                return this.getSnapshot(liveScene, this.getSprites(liveScene, textures)).then((htmlImageElementSrc) => {
                     return htmlImageElementSrc;
                 });
             })
             .catch((error) => {
                 // Without a stand-in the caller has its own plan B (the chat picture): nothing to report here.
                 if (!standIn) throw error;
-                return lazyLoadPlayerCharacterTextures(scene.superLoad, [
-                    {
-                        id: "color_22",
-                        url: "resources/customisation/character_color/character_color21.png",
-                    },
-                    {
-                        id: "eyes_23",
-                        url: "resources/customisation/character_eyes/character_eyes23.png",
-                    },
-                ])
-                    .then((textures) => {
-                        return this.getSnapshot(scene, this.getSprites(scene, textures)).then((htmlImageElementSrc) => {
-                            reportWokaLoadFailure("snapshot", error, { textures: textureRefs });
-                            return htmlImageElementSrc;
-                        });
-                    })
+                return waitForGameScene()
+                    .then((liveScene) =>
+                        lazyLoadPlayerCharacterTextures(liveScene.superLoad, [
+                            {
+                                id: "color_22",
+                                url: "resources/customisation/character_color/character_color21.png",
+                            },
+                            {
+                                id: "eyes_23",
+                                url: "resources/customisation/character_eyes/character_eyes23.png",
+                            },
+                        ]).then((textures) => {
+                            return this.getSnapshot(liveScene, this.getSprites(liveScene, textures)).then(
+                                (htmlImageElementSrc) => {
+                                    reportWokaLoadFailure("snapshot", error, { textures: textureRefs });
+                                    return htmlImageElementSrc;
+                                }
+                            );
+                        })
+                    )
                     .catch((e) => {
                         reportWokaLoadFailure("snapshot", error, { textures: textureRefs, standInError: e });
                         throw e;
@@ -92,6 +99,9 @@ export class CharacterLayerManager {
         const sprites = new Map<string, Phaser.GameObjects.Sprite>();
         if (textures.length < 1) {
             throw new CharacterTextureError("no texture given");
+        }
+        if (!scene.sys?.displayList) {
+            throw new CharacterTextureError("scene not ready");
         }
 
         for (const texture of textures) {
