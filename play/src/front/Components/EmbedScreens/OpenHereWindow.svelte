@@ -165,8 +165,8 @@
                 type="button"
                 class="u-ab-btn u-ab-icon h-12 w-12 p-0 m-0 rounded-none flex items-center justify-center"
                 on:click={toggleExpanded}
-                aria-label={expanded ? "Return to compact view" : "Open full-screen view"}
-                title={expanded ? "Return to compact view" : "Open full-screen view"}
+                aria-label={expanded ? $LL.cowebsite.compactView() : $LL.cowebsite.fullScreenView()}
+                title={expanded ? $LL.cowebsite.compactView() : $LL.cowebsite.fullScreenView()}
                 data-testid="openHereExpand"
             >
                 <span class="u-ab-state" aria-hidden="true" />
@@ -203,7 +203,7 @@
             class="open-here-grip"
             role="separator"
             aria-orientation="vertical"
-            aria-label="Resize"
+            aria-label={$LL.cowebsite.resize()}
             aria-valuenow={Math.round(ratio * 100)}
             aria-valuemin={25}
             aria-valuemax={90}

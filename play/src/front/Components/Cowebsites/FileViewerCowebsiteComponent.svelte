@@ -201,8 +201,14 @@
     // A browser may not say that a focused control left (the search box closing, the menu closing). The panel keeps
     // the focus then, so the game's keys do not stay switched off with nothing focused.
     afterUpdate(() => {
-        if (panelFocused && root && !root.contains(document.activeElement)) root.focus();
+        if (visible && panelFocused && root && !root.contains(document.activeElement)) root.focus();
     });
+
+    // A hidden panel cannot hold the focus, whether or not the browser reports that it left.
+    $: if (!visible && panelFocused) {
+        panelFocused = false;
+        inputFormFocusStore.set(false);
+    }
 
     onMount(() => {
         void open();
