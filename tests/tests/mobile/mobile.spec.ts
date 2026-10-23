@@ -100,14 +100,12 @@ test.describe('Mobile @nowebkit @nodesktop', () => {
         await page.locator('#body').press('ArrowRight', { delay: 3000 });
         // Now, let's move player 2 to the speaker zone
         
-        // Click on the button to close the cowebsite
-        await page.getByTestId('tab1').getByRole('button', {name: 'Close'}).click();
-
-        // Click on the button to close the Jitsi
-        await page.getByTestId('tab1').getByRole('button', {name: 'Close'}).click();
+        // On an upright phone the cowebsite is a bottom sheet, with one close for everything open in it
+        await expect(page.getByTestId('openHereSheet')).toBeVisible();
+        await page.getByTestId('openHereSheetClose').click();
 
         // Check that the cowebsite is hidden
-        await expect(page.getByTestId('tab1').getByRole('button', {name: 'Close'})).toBeHidden({
+        await expect(page.getByTestId('openHereSheet')).toBeHidden({
             timeout: 10000
         });
 

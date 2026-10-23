@@ -293,13 +293,14 @@
                 {#if sheet}
                     <span class="open-list-grabber" aria-hidden="true" />
                 {/if}
-                {#each $coWebsites as coWebsite (coWebsite.getId())}
+                {#each $coWebsites as coWebsite, index (coWebsite.getId())}
                     {@const item = describeCoWebsite(coWebsite, $LL)}
                     <div class="open-list-row" class:picked={coWebsite === activeCowebsite}>
                         <button
                             type="button"
                             class="open-list-main"
                             role="menuitem"
+                            data-testid="openHereListItem{index + 1}"
                             on:click={() => pickFromList(coWebsite)}
                         >
                             <OpenHereItemIcon
