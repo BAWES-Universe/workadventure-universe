@@ -784,8 +784,9 @@ export class BotAPI {
         });
 
         // Bot states for the game's chat header and People list. Signed in only; it says nothing but the state of bots
-        // the caller already names, never their names or rooms.
-        this.app.get('/api/bots/dm-status', requireSession, async (req: Request, res: Response) => {
+        // the caller already names, never their names or rooms. A bot the caller may not message reads as unknown, so
+        // someone refused never learns it is resting or not ready. Gone needs no check: there is no bot left to ask about.
+        this.app.get('/api/bots/dm-status', requireSession, async (req: BotAPIRequest, res: Response) => {
             if (!this.dmStatus) {
                 res.status(404).json({ error: 'Direct messages are off' });
                 return;
@@ -803,7 +804,16 @@ export class BotAPI {
                 return;
             }
             try {
-                res.json({ bots: await this.dmStatus(ids) });
+                const states = await this.dmStatus(ids);
+                const gate = this.botManager.getAccessGate();
+                const person = { signedIn: true, identifier: req.sessionUuid };
+                await Promise.all(
+                    ids.map(async (botId) => {
+                        if (states[botId] === 'gone' || states[botId] === 'unknown') return;
+                        if (!(await gate.check(botId, 'dm', person)).allowed) states[botId] = 'unknown';
+                    })
+                );
+                res.json({ bots: states });
             } catch (error) {
                 console.error('[BotAPI] Error reading bot states:', error);
                 res.status(500).json({ error: 'Could not read bot states' });
