@@ -13,6 +13,7 @@ vi.mock("../../Stores/MobileLayoutStore", async () => {
 
 import { mobileLayoutStore } from "../../Stores/MobileLayoutStore";
 import { chatVisibilityStore } from "../../Stores/ChatStore";
+import { openHereFloatsStore } from "../../Stores/CoWebsiteStore";
 import {
     chatOwnSheetHeightStore,
     chatSheetHeightStore,
@@ -78,5 +79,25 @@ describe("lowerChatSheet", () => {
         lowerChatSheet();
 
         expect(get(chatSheetSnapStore)).toBe("full");
+    });
+});
+
+describe("an exactly square window", () => {
+    function resizeTo(width: number, height: number) {
+        window.innerWidth = width;
+        window.innerHeight = height;
+        window.dispatchEvent(new Event("resize"));
+    }
+
+    afterEach(() => resizeTo(390, 844));
+
+    it("gets the sheet for the chat and the window alike, never one of each", () => {
+        const unsubscribe = [chatSheetLayoutStore.subscribe(() => {}), openHereFloatsStore.subscribe(() => {})];
+        resizeTo(600, 600);
+
+        expect(get(chatSheetLayoutStore)).toBe(true);
+        expect(get(openHereFloatsStore)).toBe(false);
+
+        unsubscribe.forEach((stop) => stop());
     });
 });
