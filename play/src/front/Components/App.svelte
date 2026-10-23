@@ -44,6 +44,7 @@
     import { refreshPromptStore } from "../Stores/RefreshPromptStore";
     import BrowserNotSupported from "./BrowserNotSupported/BrowserNotSupported.svelte";
     import OpenHereWindow from "./EmbedScreens/OpenHereWindow.svelte";
+    import OpenHereChatButton from "./EmbedScreens/OpenHereChatButton.svelte";
     import ClosedItemsToast from "./EmbedScreens/ClosedItemsToast.svelte";
     import LinkCopiedToast from "./EmbedScreens/LinkCopiedToast.svelte";
     import GameOverlay from "./GameOverlay.svelte";
@@ -320,19 +321,15 @@
         id="main-container"
         bind:this={gameContainer}
     >
-        <div
-            id="game"
-            class="relative {$fullScreenCowebsite && !$openHereFloatsStore ? 'hidden' : ''}"
-            class:game-scene-loaded={$gameSceneIsLoadedStore}
-            bind:this={gameDiv}
-        >
+        <div id="game" class="relative" class:game-scene-loaded={$gameSceneIsLoadedStore} bind:this={gameDiv}>
             <GameOverlay {game} />
         </div>
         {#if $coWebsites.length > 0}
             <!-- Files and links open in a window over the game, like Orbit's: the map keeps its size. An upright phone
-                 still splits the game with the panel. It is one component either way, so turning the phone does not
-                 unload what is open (a file, a page, a meeting). -->
+                 gets chat's own sheet instead. It is one component either way, so turning the phone does not unload
+                 what is open (a file, a page, a meeting). -->
             <OpenHereWindow floating={$openHereFloatsStore} />
+            <OpenHereChatButton />
         {/if}
     </div>
 {/if}

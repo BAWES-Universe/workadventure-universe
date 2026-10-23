@@ -4,9 +4,10 @@ import { get, readable } from "svelte/store";
 import { Marked } from "marked";
 
 vi.mock("../../../Connection/ConnectionManager", () => ({
-    connectionManager: { applications: [] },
+    connectionManager: { applications: [], youtubeToolActivated: true },
 }));
 vi.mock("../../../Stores/CoWebsiteStore", () => ({ coWebsites: { add: vi.fn() } }));
+vi.mock("../../ChatSheetStore", () => ({ lowerChatSheet: vi.fn() }));
 vi.mock("../../../WebRtc/CoWebsite/SimpleCoWebsite", () => ({ SimpleCoWebsite: class {} }));
 vi.mock("../LinkPreviewFetcher", async () => {
     const { writable } = await import("svelte/store");
@@ -42,6 +43,8 @@ vi.mock("../../../../i18n/i18n-svelte", async () => {
 });
 
 import { lightboxOpenStore } from "../../../Stores/UserInputStore";
+import { coWebsites } from "../../../Stores/CoWebsiteStore";
+import { lowerChatSheet } from "../../ChatSheetStore";
 import type { ChatMessageContent } from "../../Connection/ChatConnection";
 import MessageImage from "../../Components/Room/Message/MessageImage.svelte";
 import { sanitizeHTML } from "../../Components/Room/Message/WA-HTML-Sanitizer";
@@ -175,6 +178,22 @@ describe("a picture in a chat message", () => {
         expect(click(card.querySelector("img") ?? card).defaultPrevented).toBe(false);
         await tick();
         expect(document.querySelector("[data-lightbox]")).toBeNull();
+    });
+
+    it("lowers the chat sheet before a link opens in the window, so the page is not behind the chat", async () => {
+        preview = new LinkPreview({
+            target,
+            props: { body: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", alone: true },
+        });
+        await vi.waitFor(() => expect(target.querySelector('[data-testid="linkPreviewOpenHere"]')).not.toBeNull());
+
+        target.querySelector<HTMLElement>('[data-testid="linkPreviewOpenHere"]')?.click();
+
+        expect(lowerChatSheet).toHaveBeenCalledTimes(1);
+        expect(coWebsites.add).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(lowerChatSheet).mock.invocationCallOrder[0]).toBeLessThan(
+            vi.mocked(coWebsites.add).mock.invocationCallOrder[0]
+        );
     });
 
     it("keeps a link in the message text a link to a new tab", () => {

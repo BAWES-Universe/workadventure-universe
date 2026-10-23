@@ -58,6 +58,14 @@
         }
     }
 
+    // The handle is a button: Enter and Space tap it, as a finger does, so a keyboard can step the sheet's heights too
+    // (and bring a tucked one back).
+    function onKeyDown(event: KeyboardEvent) {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        onTap();
+    }
+
     onDestroy(() => {
         activePointerId = undefined;
     });
@@ -74,6 +82,7 @@
     on:pointerup={onPointerUp}
     on:pointercancel={onPointerCancel}
     on:lostpointercapture={onPointerCancel}
+    on:keydown={onKeyDown}
 >
     <slot />
 </button>
