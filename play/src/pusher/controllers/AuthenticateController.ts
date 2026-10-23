@@ -28,6 +28,14 @@ function withNameSource<T extends { username?: string | null }>(response: T, acc
         : { ...response, usernameFromAccount: false };
 }
 
+// What the admin client answers when Orbit can't be reached or sends something it can't read (see AdminApi).
+const ORBIT_UNREACHABLE_CODES = new Set(["ROOM_ACCESS_ERROR", "ROOM_ACCESS_VALIDATION"]);
+
+/** Orbit let them in without the account: it sends an account's email, never a guest's. */
+function answeredAsGuest(userData: { email: string | null }): boolean {
+    return !userData.email;
+}
+
 function shouldRefreshAccessToken(err: unknown): boolean {
     if (!(err instanceof openIdErrors.OPError)) {
         return false;
@@ -295,9 +303,34 @@ export class AuthenticateController extends BaseHttpController {
                     res.json(renewedFirst ? { ...firstUserData, authToken: renewedFirst.authToken } : firstUserData);
                     return;
                 }
-                const resUserData = firstUserData;
-                // Orbit knew the player with the renewed token: answer with that token, no need to check the old one.
-                const answeredWithRenewedToken = renewedFirst !== null;
+                let resUserData = firstUserData;
+                // Orbit can still answer a signed-in player as a guest, with no email, name or tags, though the provider
+                // accepted the token here: Orbit checks it on its own, a moment later, and a token about to run out can
+                // be refused there. The game then shows whatever name the device kept (game #1232). Renew the token and
+                // ask Orbit once more; if Orbit can't be reached this time (the admin client answers that with an
+                // error, it doesn't throw), the first answer still lets them in.
+                const renewedAfterGuestAnswer =
+                    !renewedFirst && authTokenData.accessToken && refreshToken && answeredAsGuest(firstUserData)
+                        ? await renewTokens()
+                        : null;
+                if (renewedAfterGuestAnswer) {
+                    try {
+                        const askedAgain = await fetchUserData(renewedAfterGuestAnswer.accessToken);
+                        if (askedAgain.status === "error") {
+                            if (!("code" in askedAgain && ORBIT_UNREACHABLE_CODES.has(askedAgain.code))) {
+                                res.json({ ...askedAgain, authToken: renewedAfterGuestAnswer.authToken });
+                                return;
+                            }
+                        } else {
+                            resUserData = askedAgain;
+                        }
+                    } catch (askAgainErr) {
+                        console.warn("Could not ask Orbit again with the renewed token", askAgainErr);
+                    }
+                }
+                // The token was renewed: answer with the renewed one (a provider may have cancelled the old refresh
+                // token), no need to check the old one.
+                const answeredWithRenewedToken = renewedFirst !== null || renewedAfterGuestAnswer !== null;
 
                 if (authTokenData.accessToken == undefined) {
                     //if not nonce and code, anonymous user connected
