@@ -36,14 +36,17 @@ import { openHereTuckedStore, sideWindowInFrontStore } from "../../Stores/SideWi
 import OpenHereChatButton from "./OpenHereChatButton.svelte";
 
 // The sheet is up while the sheet store says so.
-const { sheetUp } = vi.hoisted(() => ({
+const { sheetUp, listOpen } = vi.hoisted(() => ({
     sheetUp: { store: undefined as undefined | { set: (value: boolean) => void } },
+    listOpen: { store: undefined as undefined | { set: (value: boolean) => void } },
 }));
 vi.mock("../../Stores/OpenHereSheetStore", async () => {
     const { writable } = await import("svelte/store");
     const store = writable(true);
     sheetUp.store = store;
-    return { openHereSheetUpStore: store };
+    const list = writable(false);
+    listOpen.store = list;
+    return { openHereSheetUpStore: store, openHereListOpenStore: list };
 });
 
 describe("the chat button that floats over a phone's sheet", () => {
@@ -57,6 +60,7 @@ describe("the chat button that floats over a phone's sheet", () => {
         document.body.append(target);
         openChat.mockClear();
         sheetUp.store?.set(true);
+        listOpen.store?.set(false);
         component = new OpenHereChatButton({ target });
         await tick();
     });
@@ -98,6 +102,16 @@ describe("the chat button that floats over a phone's sheet", () => {
         sheetUp.store?.set(false);
         await tick();
         expect(button()).toBeNull();
+    });
+
+    it("waits while the list of open items is up, where it would cover Close all", async () => {
+        listOpen.store?.set(true);
+        await tick();
+        expect(button()).toBeNull();
+
+        listOpen.store?.set(false);
+        await tick();
+        expect(button()).not.toBeNull();
     });
 
     it("stays under Orbit when it is in front of the sheet", async () => {

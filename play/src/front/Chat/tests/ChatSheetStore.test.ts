@@ -22,6 +22,7 @@ import {
     chatSheetSnapStore,
     lowerChatSheet,
     openHereSheetHeightStore,
+    restoreChatAfterFile,
 } from "../ChatSheetStore";
 
 describe("the sheets' heights", () => {
@@ -48,6 +49,8 @@ describe("the sheets' heights", () => {
 
 describe("lowerChatSheet", () => {
     afterEach(() => {
+        // Settle what a test left pending.
+        restoreChatAfterFile();
         chatVisibilityStore.set(false);
         chatSheetSnapStore.set("half");
         (mobileLayoutStore as Writable<boolean>).set(true);
@@ -61,6 +64,38 @@ describe("lowerChatSheet", () => {
         lowerChatSheet();
 
         expect(get(chatSheetSnapStore)).toBe("peek");
+    });
+
+    it("puts the chat back where it was when the file goes", () => {
+        chatVisibilityStore.set(true);
+        chatSheetSnapStore.set("full");
+
+        lowerChatSheet();
+        expect(get(chatSheetSnapStore)).toBe("peek");
+
+        restoreChatAfterFile();
+        expect(get(chatSheetSnapStore)).toBe("full");
+    });
+
+    it("leaves a chat a person moved since where they put it", () => {
+        chatVisibilityStore.set(true);
+        lowerChatSheet();
+
+        chatSheetSnapStore.set(0.7);
+        restoreChatAfterFile();
+
+        expect(get(chatSheetSnapStore)).toBe(0.7);
+    });
+
+    it("keeps the height from before the first file when a second one is tapped", () => {
+        chatVisibilityStore.set(true);
+        chatSheetSnapStore.set("full");
+
+        lowerChatSheet();
+        lowerChatSheet();
+        restoreChatAfterFile();
+
+        expect(get(chatSheetSnapStore)).toBe("full");
     });
 
     it("leaves the height of a chat that is closed alone", () => {

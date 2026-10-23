@@ -25,7 +25,7 @@
     import { analyticsClient } from "../../Administration/AnalyticsClient";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { prefersReducedMotion } from "../../Phaser/Components/prefersReducedMotion";
-    import { chatSheetLayoutStore, openHereSheetHeightStore } from "../../Chat/ChatSheetStore";
+    import { chatSheetLayoutStore, openHereSheetHeightStore, restoreChatAfterFile } from "../../Chat/ChatSheetStore";
     import { CHAT_SHEET_SIZES } from "../../Chat/ChatSheetSizes";
     import { clampHeight, nearestSnap, nextSnap, sheetFrameStyle } from "../Sheet/BottomSheet";
     import SheetHandle from "../Sheet/SheetHandle.svelte";
@@ -110,12 +110,12 @@
     // It opens at chat's height and rests where it was left. The chat opens in front of it at its lowest height, with
     // the window rising to the top behind it; closing the chat gives the height back. Dragged down past its lowest
     // height it tucks into a slim row above the bar, so the bar and Orbit are back, instead of closing: a window may
-    // hold several items.
+    // hold several items. A tucked sheet stays tucked when the chat opens: it was put away to see the map.
     // Height while the handle is dragged; undefined while the sheet rests.
     let sheetDragHeight: number | undefined;
-    $: chatOverSheet = !floating && $chatVisibilityStore && $chatSheetLayoutStore;
-    // Chat in front hides the tucked row: the sheet waits behind it at full height and comes back tucked once chat closes.
-    $: tucked = !floating && $openHereTuckedStore && !chatOverSheet;
+    $: tucked = !floating && $openHereTuckedStore;
+    // The chat is open over a sheet that is up; a tucked one stays as it is, under the chat.
+    $: chatOverSheet = !floating && !tucked && $chatVisibilityStore && $chatSheetLayoutStore;
     $: sheetHeight =
         sheetDragHeight ??
         openHereSheetHeight({
@@ -242,8 +242,10 @@
         windowBehindCardStore.set(false);
         openHereSheetHeightStore.set(0);
         fullScreenCowebsite.set(false);
-        // The sheet is gone, and the map has the space again.
+        // The sheet is gone, and the map has the space again. The chat goes back to the height it had before a file
+        // took the screen above it.
         if (!floating) reposition();
+        restoreChatAfterFile();
     });
 </script>
 

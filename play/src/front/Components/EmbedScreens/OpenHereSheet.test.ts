@@ -32,7 +32,11 @@ import { chatSheetLayoutStore, openHereSheetHeightStore } from "../../Chat/ChatS
 import { CHAT_SHEET_SIZES } from "../../Chat/ChatSheetSizes";
 import { chatVisibilityStore } from "../../Stores/ChatStore";
 import { coWebsites } from "../../Stores/CoWebsiteStore";
-import { openHereSheetRestStore } from "../../Stores/OpenHereSheetStore";
+import {
+    OPEN_HERE_TUCKED_HEIGHT,
+    openHereListOpenStore,
+    openHereSheetRestStore,
+} from "../../Stores/OpenHereSheetStore";
 import { openHereTuckedStore } from "../../Stores/SideWindowInFrontStore";
 import type { GameScene } from "../../Phaser/Game/GameScene";
 import { FileViewerCoWebsite } from "../../WebRtc/CoWebsite/FileViewerCoWebsite";
@@ -42,14 +46,18 @@ import OpenHereWindow from "./OpenHereWindow.svelte";
 const heights = getSnapHeights(844, CHAT_SHEET_SIZES);
 const reposition = vi.fn();
 
-function file(name: string): FileViewerCoWebsite {
+function fileSource(name: string) {
     // The file never arrives: only the window's own frame and row are under test.
-    return new FileViewerCoWebsite({
+    return {
         key: `chat:blob:http://play/${name}`,
         name,
         load: () => new Promise<ArrayBuffer>(() => {}),
         download: () => Promise.resolve(),
-    });
+    };
+}
+
+function file(name: string): FileViewerCoWebsite {
+    return new FileViewerCoWebsite(fileSource(name));
 }
 
 function sendPointer(handle: Element, type: string, clientY: number): void {
@@ -227,7 +235,7 @@ describe("OpenHereWindow as a phone's sheet", () => {
         expect(sheet()?.classList.contains("behind-chat")).toBe(false);
     });
 
-    it("waits behind the chat at full height when chat opens over a tucked sheet, and tucks again after", async () => {
+    it("stays tucked when chat opens over a tucked sheet: it was put away to see the map", async () => {
         await mount("plan.pdf");
         openHereTuckedStore.set(true);
         await tick();
@@ -235,18 +243,17 @@ describe("OpenHereWindow as a phone's sheet", () => {
         chatVisibilityStore.set(true);
         await tick();
 
-        expect(sheet()?.classList.contains("tucked")).toBe(false);
-        expect(sheet()?.classList.contains("behind-chat")).toBe(true);
-        expect(sheet()?.style.height).toBe(`${heights.full}px`);
-
-        // A tap while the chat is over it does not bring it up.
-        sheet()?.click();
-        await tick();
+        expect(sheet()?.classList.contains("tucked")).toBe(true);
+        expect(sheet()?.classList.contains("screen-blocker")).toBe(false);
+        expect(sheet()?.style.height).toBe(`${OPEN_HERE_TUCKED_HEIGHT}px`);
         expect(get(openHereTuckedStore)).toBe(true);
+        // Tucked, the videos have all the room, whatever the chat does with it.
+        expect(get(openHereSheetHeightStore)).toBe(0);
 
         chatVisibilityStore.set(false);
         await tick();
         expect(sheet()?.classList.contains("tucked")).toBe(true);
+        expect(sheet()?.style.height).toBe(`${OPEN_HERE_TUCKED_HEIGHT}px`);
     });
 
     it("does not follow a drag while the chat is over it", async () => {
@@ -336,5 +343,57 @@ describe("OpenHereWindow as a phone's sheet", () => {
         await tick();
         expect(get(openHereTuckedStore)).toBe(true);
         expect(reposition).not.toHaveBeenCalled();
+    });
+
+    it("brings a tucked sheet back up from the keyboard, with Enter or Space on its handle", async () => {
+        await mount("plan.pdf");
+        openHereTuckedStore.set(true);
+        await tick();
+
+        handle()?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+        await tick();
+        expect(get(openHereTuckedStore)).toBe(false);
+
+        openHereTuckedStore.set(true);
+        await tick();
+        handle()?.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
+        await tick();
+        expect(get(openHereTuckedStore)).toBe(false);
+
+        // Other keys do nothing.
+        openHereTuckedStore.set(true);
+        await tick();
+        handle()?.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true }));
+        await tick();
+        expect(get(openHereTuckedStore)).toBe(true);
+    });
+
+    it("has no close when the only page open is one a map keeps open", async () => {
+        coWebsites.add(new FileViewerCoWebsite(fileSource("kept.pdf"), undefined, false));
+        component = new OpenHereWindow({ target, props: { floating: false } });
+        await tick();
+        expect(target.querySelector('[data-testid="openHereSheetClose"]')).toBeNull();
+
+        // Something that can be closed beside it brings the close back.
+        coWebsites.add(file("plan.pdf"));
+        await tick();
+        expect(target.querySelector('[data-testid="openHereSheetClose"]')).not.toBeNull();
+    });
+
+    it("shows the list of open items on the sheet's own flat surface, and tells the chat button it is up", async () => {
+        await mount("plan.pdf", "visits.pdf");
+        expect(get(openHereListOpenStore)).toBe(false);
+
+        target.querySelector<HTMLElement>('[data-testid="openHereList"]')?.click();
+        await tick();
+
+        const list = target.querySelector('[data-testid="openHereListMenu"]');
+        expect(list?.classList.contains("u-surface-flat")).toBe(true);
+        expect(list?.classList.contains("u-surface")).toBe(false);
+        expect(get(openHereListOpenStore)).toBe(true);
+
+        component?.$destroy();
+        component = undefined;
+        expect(get(openHereListOpenStore)).toBe(false);
     });
 });

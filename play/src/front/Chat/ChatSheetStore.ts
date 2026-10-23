@@ -56,10 +56,23 @@ export const chatSheetHeightStore = derived(
 /** A sheet is open: the videos share the space above it, with no room to show one of them big. */
 export const chatSheetOpenStore = derived(chatSheetHeightStore, ($height) => $height > 0);
 
+/** Where the chat rested before a file took the screen above it, so it goes back there when the file goes. */
+let chatRestBeforeFile: ChatSheetRest | undefined;
+
 /**
  * A file tapped in the chat shows above it: the chat sheet drops to its lowest height, so the window has the room. Only
  * for a chat that is open as the sheet; a closed chat keeps the height it was left at.
  */
 export function lowerChatSheet(): void {
-    if (get(chatVisibilityStore) && get(chatSheetLayoutStore)) chatSheetSnapStore.set("peek");
+    if (!get(chatVisibilityStore) || !get(chatSheetLayoutStore)) return;
+    chatRestBeforeFile ??= get(chatSheetSnapStore);
+    chatSheetSnapStore.set("peek");
+}
+
+/** The file is gone: the chat goes back to where it was, unless a person moved it since. */
+export function restoreChatAfterFile(): void {
+    if (chatRestBeforeFile === undefined) return;
+    const rest = chatRestBeforeFile;
+    chatRestBeforeFile = undefined;
+    if (get(chatSheetSnapStore) === "peek") chatSheetSnapStore.set(rest);
 }

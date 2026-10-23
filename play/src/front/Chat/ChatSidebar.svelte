@@ -193,6 +193,12 @@
     // (the store subscription calls back at once).
     let latestMessageObserver: MutationObserver | undefined;
     let fitFrame: number | undefined;
+    // The chat sits at its lowest height only because the window's sheet is up: it goes back to its rest once that is gone.
+    let lowForSheet = false;
+    $: if (lowForSheet && !$openHereSheetUpStore) {
+        lowForSheet = false;
+        leaveBubbleHeight();
+    }
     // Before the height below, so a chat opened by a bubble starts low without a pass at its old height.
     let wasVisible = false;
     $: onVisibilityChange($chatVisibilityStore);
@@ -205,13 +211,17 @@
                 watchLatestMessage();
             } else if ($openHereSheetUpStore) {
                 bubbleHeight = getSnapHeights($windowSize.height, CHAT_SHEET_SIZES).peek;
+                lowForSheet = true;
             } else {
                 bubbleHeight = undefined;
                 // "Show everyone" lowers it to make room for the videos; opened again on purpose, it is readable.
                 if ($chatSheetSnapStore === "peek") chatSheetSnapStore.set("half");
             }
         }
-        if (!visible) stopWatchingLatestMessage();
+        if (!visible) {
+            stopWatchingLatestMessage();
+            lowForSheet = false;
+        }
         wasVisible = visible;
     }
 

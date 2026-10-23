@@ -8,13 +8,14 @@
     import { activeSubMenuStore, menuVisiblilityStore } from "../../Stores/MenuStore";
     import { modalVisibilityStore } from "../../Stores/ModalStore";
     import { cardOverWindowStore } from "../../Stores/CardOverWindowStore";
-    import { openHereSheetUpStore } from "../../Stores/OpenHereSheetStore";
+    import { openHereListOpenStore, openHereSheetUpStore } from "../../Stores/OpenHereSheetStore";
     import { sideWindowInFrontStore } from "../../Stores/SideWindowInFrontStore";
     import LL from "../../../i18n/i18n-svelte";
     import MessageCircleIcon from "../Icons/MessageCircleIcon.svelte";
 
     // On a phone the window's sheet hides the bar, and with it the chat button: this one floats in its place, so the
-    // chat is one tap away. It opens the chat as the bar's button does, in front of the sheet.
+    // chat is one tap away. It opens the chat as the bar's button does, in front of the sheet. The sheet's list of open
+    // items rises over the same corner, so the button waits while it is open.
     $: behindOrbit = ($modalVisibilityStore && $sideWindowInFrontStore === "orbit") || $cardOverWindowStore;
 
     function openChatOverSheet() {
@@ -32,7 +33,7 @@
     }
 </script>
 
-{#if $openHereSheetUpStore && !$chatVisibilityStore && !behindOrbit}
+{#if $openHereSheetUpStore && !$openHereListOpenStore && !$chatVisibilityStore && !behindOrbit}
     <button
         type="button"
         class="open-here-chat u-surface-flat"
@@ -41,7 +42,7 @@
         data-testid="openHereChatButton"
         on:click={openChatOverSheet}
     >
-        <MessageCircleIcon hover="" />
+        <MessageCircleIcon hover="" height="h-7" width="w-7" />
     </button>
 {/if}
 
@@ -50,7 +51,7 @@
     .open-here-chat {
         position: fixed;
         z-index: 2002;
-        inset-inline-end: 8px;
+        inset-inline-end: max(16px, env(safe-area-inset-right, 0px));
         bottom: calc(16px + env(safe-area-inset-bottom, 0px));
         display: flex;
         align-items: center;

@@ -29,17 +29,19 @@
         {#if $end.count > 1}
             <OpenHereCountChip short count={$end.count} open={$end.listOpen} on:click={$end.toggleList} />
         {/if}
-        <!-- Neutral: closing the window is not a destructive act, so it is not red. -->
-        <button
-            type="button"
-            class="open-here-action open-here-close"
-            title={$LL.chat.fileViewer.close()}
-            aria-label={$LL.chat.fileViewer.close()}
-            data-testid="openHereSheetClose"
-            on:click={$end.close}
-        >
-            <IconX font-size="20" />
-        </button>
+        {#if $end.closable}
+            <!-- Neutral: closing the window is not a destructive act, so it is not red. -->
+            <button
+                type="button"
+                class="open-here-action open-here-close"
+                title={$LL.chat.fileViewer.close()}
+                aria-label={$LL.chat.fileViewer.close()}
+                data-testid="openHereSheetClose"
+                on:click={$end.close}
+            >
+                <IconX font-size="20" />
+            </button>
+        {/if}
     {/if}
 </header>
 

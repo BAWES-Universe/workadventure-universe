@@ -30,6 +30,9 @@ export const openHereSheetUpStore = derived(
     ([$sheet, $tucked]) => $sheet && !$tucked
 );
 
+/** The "N open" list is showing as a sheet of its own over the window's sheet. */
+export const openHereListOpenStore = writable(false);
+
 /** The tucked sheet is a grabber (28px) and one row (64px) above the bar. */
 export const OPEN_HERE_TUCKED_HEIGHT = 92;
 

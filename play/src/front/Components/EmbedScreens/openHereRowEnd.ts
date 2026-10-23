@@ -9,5 +9,7 @@ export interface OpenHereRowEnd {
     count: number;
     listOpen: boolean;
     toggleList: () => void;
+    /** Something open may be closed: a page a map keeps open leaves nothing to close. */
+    closable: boolean;
     close: () => void;
 }

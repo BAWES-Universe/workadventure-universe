@@ -17,6 +17,7 @@
     import { lightboxOpenStore } from "../../Stores/UserInputStore";
     import { closeAllOpenItems, pickedAfterUndoStore } from "../../Stores/ClosedItemsStore";
     import { openHereTuckedStore } from "../../Stores/SideWindowInFrontStore";
+    import { openHereListOpenStore } from "../../Stores/OpenHereSheetStore";
     import LL from "../../../i18n/i18n-svelte";
     import CoWebsiteTab from "./CoWebsiteTab.svelte";
     import OpenHereItemIcon from "./OpenHereItemIcon.svelte";
@@ -34,7 +35,18 @@
     // The row of every item (OpenHereRow) ends with the chip and the close in the sheet, where there is no strip.
     const rowEnd = writable<OpenHereRowEnd | undefined>(undefined);
     setContext(OPEN_HERE_ROW_END, rowEnd);
-    $: rowEnd.set(sheet ? { count: $coWebsites.length, listOpen, toggleList, close: closeAllOpenItems } : undefined);
+    // A page that may not be closed leaves nothing for the close to do: it is not drawn then.
+    $: rowEnd.set(
+        sheet
+            ? {
+                  count: $coWebsites.length,
+                  listOpen,
+                  toggleList,
+                  closable: $coWebsites.some((coWebsite) => coWebsite.isClosable()),
+                  close: closeAllOpenItems,
+              }
+            : undefined
+    );
 
     //let container: HTMLElement;
     let activeCowebsite: CoWebsite = $coWebsites[0];
@@ -69,6 +81,7 @@
 
     onDestroy(() => {
         fullScreenCowebsite.set(false);
+        openHereListOpenStore.set(false);
 
         unsubscribeCowebsitesUpdate?.();
         unsubscribePickedAfterUndo?.();
@@ -144,6 +157,9 @@
     let listOpen = false;
     let listElement: HTMLElement | undefined;
     $: if ($coWebsites.length < 2) listOpen = false;
+    // The chat button floats over the bottom corner of the sheet, where the list's Close all is: it waits while the list
+    // is open.
+    $: openHereListOpenStore.set(sheet && listOpen);
 
     // The chip is the strip's on a desktop and the row's in the sheet, so it is told apart by its mark.
     const CHIP_SELECTOR = "[data-open-chip]";
@@ -220,6 +236,7 @@
     bind:this={containerElement}
     class="w-full h-full relative cowebsite-window"
     class:pill-over-header={!sheet && $fullScreenCowebsite && soleItem}
+    class:in-sheet={sheet}
 >
     <div class="h-full w-full flex flex-col">
         <!-- The window's card sits under the bar and starts below the inset itself; expanded, the pill sits at the top
@@ -284,7 +301,9 @@
 
         {#if listOpen}
             <div
-                class="open-list u-surface"
+                class="open-list"
+                class:u-surface={!sheet}
+                class:u-surface-flat={sheet}
                 class:in-sheet={sheet}
                 bind:this={listElement}
                 role="menu"
@@ -363,6 +382,11 @@
         box-shadow: none;
     }
 
+    /* In the phone's sheet the sheet is the surface: the row sits on it, and only the file's own stage has a colour. */
+    .cowebsite-window.in-sheet :global(.viewer) {
+        background: transparent;
+    }
+
     /* Expanded, the pill sits at the top right of the screen: the tabs, or a file's header with no tabs above it, keep
        clear of it. */
     .expanded-tabs,
@@ -403,7 +427,7 @@
         inset-inline: 0;
         width: auto;
         max-height: 100%;
-        padding: 0 16px 16px;
+        padding: 0 16px calc(16px + env(safe-area-inset-bottom, 0px));
         border-radius: 24px 24px 0 0;
     }
 
