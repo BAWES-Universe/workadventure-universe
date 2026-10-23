@@ -4,7 +4,7 @@
 
     /**
      * "N open": the chip that opens the list of everything open. Neutral whether the list is showing or not; only its
-     * arrow turns. On a phone's sheet it is just the number, in the item's row.
+     * arrow turns. On a phone's sheet it sits in the item's row, a little taller to tap.
      */
     export let count: number;
     export let open: boolean;
@@ -22,7 +22,7 @@
     data-open-chip
     on:click
 >
-    {short ? count : $LL.cowebsite.openCount({ count })}
+    {$LL.cowebsite.openCount({ count })}
     <IconChevronDown font-size="16" />
 </button>
 

@@ -133,7 +133,7 @@ describe("OpenHereWindow as a phone's sheet", () => {
         await tick();
 
         const chip = target.querySelector('[data-testid="openHereList"]');
-        expect(chip?.textContent?.trim()).toBe("2");
+        expect(chip?.textContent?.trim()).toBe("2 open");
         // No strip of tabs in the sheet: the chip lists everything.
         expect(target.querySelector(".height-tab")?.classList.contains("hidden")).toBe(true);
     });
