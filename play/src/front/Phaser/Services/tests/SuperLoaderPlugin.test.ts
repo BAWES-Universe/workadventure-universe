@@ -102,6 +102,24 @@ describe("SuperLoaderPlugin", () => {
         await expect(unreadable).rejects.toMatchObject({ reason: "not-decoded", resourceKey: "eyes" });
     });
 
+    it("rejects, without touching the loader, when the scene was destroyed and its settings are gone", async () => {
+        const { SuperLoaderPlugin } = await import("../SuperLoaderPlugin");
+        const load = new FakeLoader();
+        // What Phaser leaves behind after a destroy: the scene plugin's `settings` is emptied.
+        const destroyed = { load, events: new EventEmitter(), scene: { settings: undefined } };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const plugin = new SuperLoaderPlugin(destroyed as any);
+
+        const promise = plugin.spritesheet("body", "https://example.test/body.png");
+
+        await expect(promise).rejects.toThrow("Trying to load a spritesheet in a Scene that is already destroyed.");
+        expect(load.spritesheet).not.toHaveBeenCalled();
+        expect(load.start).not.toHaveBeenCalled();
+        expect(load.update).not.toHaveBeenCalled();
+        expect(load.listenerCount("complete")).toBe(0);
+        expect(load.listenerCount("loaderror")).toBe(0);
+    });
+
     describe("isSceneDestroyed", () => {
         it("is false while the room runs", async () => {
             const { plugin } = await createPlugin();

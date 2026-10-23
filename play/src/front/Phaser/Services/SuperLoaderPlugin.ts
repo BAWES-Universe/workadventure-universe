@@ -144,8 +144,8 @@ export class SuperLoaderPlugin {
         }
 
         return new CancelablePromise<T>((res, rej, cancel) => {
-            if (this.scene.scene.settings.status === Phaser.Scenes.DESTROYED) {
-                rej(new Error("Trying to load a " + type + " in a Scene that is already destroyed."));
+            if (this.isSceneDestroyed()) {
+                return rej(new Error("Trying to load a " + type + " in a Scene that is already destroyed."));
             }
 
             const resource = fromCache();
@@ -216,7 +216,7 @@ export class SuperLoaderPlugin {
             this.scene.load.once("filecomplete-" + type + "-" + key, successCallback);
             this.scene.load.on("loaderror", errorCallback);
             this.scene.load.on(Phaser.Loader.Events.COMPLETE, loaderCompleteCallback);
-            if (this.scene.scene.settings.status > Phaser.Scenes.LOADING) {
+            if (!this.isSceneDestroyed() && this.scene.scene.settings.status > Phaser.Scenes.LOADING) {
                 // When the scene is destroyed, let's remove our callbacks.
                 // We only need to register this destroy event is the scene is not in loading state (otherwise, Phaser
                 // will take care of that for us).
