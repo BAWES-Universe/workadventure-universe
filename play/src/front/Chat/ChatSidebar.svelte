@@ -9,6 +9,7 @@
     import { windowSize } from "../Stores/CoWebsiteStore";
     import SheetDragHandle from "../Components/Sheet/SheetDragHandle.svelte";
     import { clampHeight, getSnapHeights, nearestSnap, nextSnap } from "../Components/Sheet/BottomSheet";
+    import { openHereSheetHeightStore } from "../Stores/OpenHereSheetStore";
     import { chatFloatInsetStore, chatSidebarWidthStore, chatCarriesItsCloseStore } from "./ChatSidebarWidthStore";
     import Chat from "./Components/Chat.svelte";
     import { selectedRoomStore } from "./Stores/SelectRoomStore";
@@ -221,8 +222,9 @@
                   inviteSheetHeight,
                   $windowSize.height
               ));
-    // The videos above the sheet follow its height, drag included.
-    $: chatSheetHeightStore.set(sheet && $chatVisibilityStore ? sheetHeight : 0);
+    // The videos above the sheet follow its height, drag included. With the chat closed they sit above the file sheet
+    // (Open here), if one is up.
+    $: chatSheetHeightStore.set(sheet ? ($chatVisibilityStore ? sheetHeight : $openHereSheetHeightStore) : 0);
 
     // Any other move of the sheet ("show everyone" lowering it) ends the bubble's own height.
     const unsubscribeRest = chatSheetSnapStore.subscribe(() => leaveBubbleHeight());

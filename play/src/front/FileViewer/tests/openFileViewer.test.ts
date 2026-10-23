@@ -3,6 +3,7 @@ import { get } from "svelte/store";
 
 const { saveMessageFiles } = vi.hoisted(() => ({ saveMessageFiles: vi.fn(() => Promise.resolve()) }));
 vi.mock("../../Chat/Components/Room/MessageActions/availableActions", () => ({ saveMessageFiles }));
+vi.mock("../../Administration/AnalyticsClient", () => ({ analyticsClient: { chatPanelOpened: vi.fn() } }));
 
 import { coWebsites, fullScreenCowebsite } from "../../Stores/CoWebsiteStore";
 import { FileViewerCoWebsite } from "../../WebRtc/CoWebsite/FileViewerCoWebsite";
@@ -15,15 +16,6 @@ import {
     openFileViewerKeys,
 } from "../openFileViewer";
 
-function setPhoneScreen(isPhone: boolean) {
-    window.matchMedia = vi.fn((query: string) => ({
-        matches: isPhone && query === "(max-width: 640px)",
-        media: query,
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn(),
-    })) as unknown as typeof window.matchMedia;
-}
-
 function opened(): FileViewerCoWebsite[] {
     return get(coWebsites).filter(
         (coWebsite): coWebsite is FileViewerCoWebsite => coWebsite instanceof FileViewerCoWebsite
@@ -32,7 +24,6 @@ function opened(): FileViewerCoWebsite[] {
 
 describe("opening a chat file in the viewer", () => {
     beforeEach(() => {
-        setPhoneScreen(false);
         coWebsites.removeAll();
         fullScreenCowebsite.set(false);
         saveMessageFiles.mockClear();
@@ -69,14 +60,6 @@ describe("opening a chat file in the viewer", () => {
 
         coWebsites.remove(opened()[0]);
         expect(get(openFileViewerKeys).has("chat:blob:http://play/abc")).toBe(false);
-    });
-
-    it("fills a phone's screen, and says so, so closing gives the screen back", () => {
-        setPhoneScreen(true);
-        openChatFileInViewer({ url: "blob:http://play/abc", name: "plan.pdf" });
-
-        expect(get(fullScreenCowebsite)).toBe(true);
-        expect(opened()[0].openedFullScreen).toBe(true);
     });
 
     it("reads the bytes chat already fetched, with no token in any link", async () => {

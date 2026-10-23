@@ -1,9 +1,8 @@
 <script lang="ts">
-    import { afterUpdate, onDestroy, onMount, getContext } from "svelte";
-    import { readable, type Readable } from "svelte/store";
+    import { afterUpdate, onDestroy, onMount } from "svelte";
+    import { readable } from "svelte/store";
     import LL from "../../../i18n/i18n-svelte";
     import type { FileViewerCoWebsite } from "../../WebRtc/CoWebsite/FileViewerCoWebsite";
-    import { coWebsites, fullScreenCowebsite } from "../../Stores/CoWebsiteStore";
     import { inputFormFocusStore } from "../../Stores/UserInputStore";
     import {
         NO_BROWSER_VIEWER_KINDS,
@@ -23,22 +22,14 @@
     import FileViewerImage from "./FileViewer/FileViewerImage.svelte";
     import FileViewerText from "./FileViewer/FileViewerText.svelte";
     import FileViewerWord from "./FileViewer/FileViewerWord.svelte";
-    import {
-        IconArrowLeft,
-        IconDots,
-        IconDownload,
-        IconLayoutSidebar,
-        IconMinus,
-        IconPlus,
-        IconSearch,
-    } from "@wa-icons";
+    import { IconDots, IconDownload, IconLayoutSidebar, IconMinus, IconPlus, IconSearch } from "@wa-icons";
 
     export let actualCowebsite: FileViewerCoWebsite;
     export let visible: boolean;
 
     /** A file this big is not drawn in the page: it is offered as a download instead. */
     const MAX_VIEWER_BYTES = 100 * 1024 * 1024;
-    /** Below this panel width (a phone) the row is the phone one: Back, name, Search, Download. */
+    /** Below this panel width (a phone) the row is the phone one: name, Search, Download, then the sheet's chip and close. */
     const COMPACT_WIDTH = 440;
     /** Below this panel width the zoom hides, so the name keeps its room. */
     const ZOOM_MIN_WIDTH = 600;
@@ -64,8 +55,6 @@
     const abort = new AbortController();
 
     $: compact = panelWidth > 0 && panelWidth < COMPACT_WIDTH;
-    const closable = actualCowebsite.isClosable();
-    const windowedStore = getContext<Readable<boolean> | undefined>("openHereWindowed") ?? readable(false);
 
     $: zoomPercent = controller?.zoomPercent ?? readable(100);
     $: pageListShown = controller?.pageList?.shown ?? readable(false);
@@ -121,10 +110,6 @@
     function onReaderFailed(): void {
         controller = undefined;
         phase = "failed";
-    }
-
-    function close(): void {
-        coWebsites.remove(actualCowebsite);
     }
 
     $: canDownload = !source.downloadNeedsFile || bytes !== undefined;
@@ -219,8 +204,6 @@
         clearTimeout(findTimer);
         // Only a panel that had the focus gives the keys back: another box (the chat) may be using them now.
         if (panelFocused) inputFormFocusStore.set(false);
-        // The panel that filled a phone's screen gives it back.
-        if (actualCowebsite.openedFullScreen) fullScreenCowebsite.set(false);
     });
 </script>
 
@@ -243,25 +226,7 @@
     data-testid="fileViewer"
 >
     <OpenHereRow name={source.name} line={subtitle}>
-        <svelte:fragment slot="icon">
-            {#if compact || !$windowedStore}
-                <!-- The split panel of an upright phone keeps the way back until the phone has its own sheet. -->
-                {#if closable}
-                    <button
-                        type="button"
-                        class="open-here-action back"
-                        title={$LL.chat.fileViewer.back()}
-                        aria-label={$LL.chat.fileViewer.back()}
-                        on:click={close}
-                        data-testid="fileViewerBack"
-                    >
-                        <IconArrowLeft font-size="20" />
-                    </button>
-                {/if}
-            {:else}
-                <OpenHereItemIcon {badge} />
-            {/if}
-        </svelte:fragment>
+        <OpenHereItemIcon slot="icon" {badge} />
 
         {#if !compact && (kind === "pdf" || phase === "opening")}
             <button

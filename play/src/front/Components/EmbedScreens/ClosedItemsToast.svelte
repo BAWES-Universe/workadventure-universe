@@ -1,6 +1,7 @@
 <script lang="ts">
     import { closedItemsStore, undoClosedItems } from "../../Stores/ClosedItemsStore";
     import { bringOpenHereInFront } from "../../Stores/SideWindowInFrontStore";
+    import { openHereSheetLayoutStore } from "../../Stores/OpenHereSheetStore";
     import LL from "../../../i18n/i18n-svelte";
 
     function undo() {
@@ -11,7 +12,12 @@
 
 {#if $closedItemsStore}
     <!-- Closing two or more items at once is not asked about first: it can be undone for a few seconds. -->
-    <div class="closed-items u-surface" role="status" data-testid="closedItemsToast">
+    <div
+        class="closed-items u-surface"
+        class:above-bar={$openHereSheetLayoutStore}
+        role="status"
+        data-testid="closedItemsToast"
+    >
         <span>{$LL.cowebsite.closedItems({ count: $closedItemsStore.closed.length })}</span>
         <button type="button" on:click={undo} data-testid="closedItemsUndo">{$LL.cowebsite.undo()}</button>
     </div>
@@ -35,6 +41,11 @@
         font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
         font-size: 14px;
         white-space: nowrap;
+    }
+
+    /* On an upright phone the bar is at the bottom: the toast sits just above it. */
+    .closed-items.above-bar {
+        bottom: calc(104px + env(safe-area-inset-bottom, 0px));
     }
 
     :global(html[dir="rtl"]) .closed-items {

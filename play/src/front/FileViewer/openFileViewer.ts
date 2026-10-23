@@ -1,6 +1,7 @@
 import { derived, get, type Readable } from "svelte/store";
-import { coWebsites, fullScreenCowebsite } from "../Stores/CoWebsiteStore";
+import { coWebsites } from "../Stores/CoWebsiteStore";
 import { bringOpenHereInFront } from "../Stores/SideWindowInFrontStore";
+import { showFileOnPhone } from "../Stores/OpenHereSheetStore";
 import { FileViewerCoWebsite, type FileViewerSource } from "../WebRtc/CoWebsite/FileViewerCoWebsite";
 import { saveMessageFiles } from "../Chat/Components/Room/MessageActions/availableActions";
 import { extensionOf, fileKindOfLink, MAP_VIEWER_KINDS, textEncodingOf } from "./fileKinds";
@@ -13,11 +14,6 @@ export const openFileViewerKeys: Readable<ReadonlySet<string>> = derived(coWebsi
     }
     return keys;
 });
-
-/** A phone held upright: the viewer takes the whole screen there, and Back gives it back. */
-function isPhoneScreen(): boolean {
-    return window.matchMedia?.("(max-width: 640px)").matches ?? false;
-}
 
 async function readBytes(response: Response): Promise<ArrayBuffer> {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -109,6 +105,7 @@ export function openChatFileInViewer(file: ChatFileToOpen): void {
         }
         // Tapped again with Orbit in front of the window: the window comes forward with the file.
         bringOpenHereInFront();
+        showFileOnPhone();
         return;
     }
     const source: FileViewerSource = {
@@ -123,12 +120,8 @@ export function openChatFileInViewer(file: ChatFileToOpen): void {
             if (bytes) openBytesInNewTab(file.name, bytes);
         },
     };
-    const coWebsite = new FileViewerCoWebsite(source);
-    if (isPhoneScreen() && !get(fullScreenCowebsite)) {
-        coWebsite.openedFullScreen = true;
-        fullScreenCowebsite.set(true);
-    }
-    coWebsites.add(coWebsite);
+    coWebsites.add(new FileViewerCoWebsite(source));
+    showFileOnPhone();
 }
 
 export interface MapFileToOpen {

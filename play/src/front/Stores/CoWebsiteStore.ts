@@ -140,8 +140,8 @@ export const windowSize = derived([browserWindowSize, titleBarHeightStore], ([$s
 export const coWebsiteRatio = writable(0.5);
 
 /**
- * Files and links open in a window that floats over the game, like Orbit's, and the map keeps its size. An upright
- * phone is the exception: the game is split there for now.
+ * Files and links open in a window that floats over the game, like Orbit's. On an upright phone they open in a sheet
+ * that rises from the bottom, like the chat's. Either way the map keeps its size.
  */
 export const openHereFloatsStore = derived(
     [mobileLayoutStore, windowSize],
@@ -158,31 +158,11 @@ export const openHereInFrontOfOrbitStore = derived(
         $coWebsites.length > 0 && $openHereFloats && $sideWindowInFront === "openHere" && !$windowBehindCard
 );
 
-export const canvasSize = derived(
-    [coWebsites, windowSize, coWebsiteRatio, fullScreenCowebsite, openHereFloatsStore],
-    ([$coWebsites, $windowSize, $coWebsiteRatio, $fullScreenCowebsite, $openHereFloats]) => {
-        if ($coWebsites.length === 0 || $openHereFloats) {
-            return { width: window.innerWidth, height: $windowSize.height };
-        }
-        if ($fullScreenCowebsite) {
-            return {
-                width: 0,
-                height: 0,
-            };
-        }
-        if ($windowSize.portrait) {
-            return {
-                width: $windowSize.width,
-                height: $windowSize.height * (1 - $coWebsiteRatio),
-            };
-        } else {
-            return {
-                width: $windowSize.width * (1 - $coWebsiteRatio),
-                height: $windowSize.height,
-            };
-        }
-    }
-);
+/** The game keeps the whole screen: files and links open over it, in a window or, on an upright phone, in a sheet. */
+export const canvasSize = derived(windowSize, ($windowSize) => ({
+    width: window.innerWidth,
+    height: $windowSize.height,
+}));
 
 export const coWebsitesSize = derived(
     [coWebsites, windowSize, coWebsiteRatio],

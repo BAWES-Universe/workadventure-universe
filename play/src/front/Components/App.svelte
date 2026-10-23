@@ -318,18 +318,13 @@
         id="main-container"
         bind:this={gameContainer}
     >
-        <div
-            id="game"
-            class="relative {$fullScreenCowebsite && !$openHereFloatsStore ? 'hidden' : ''}"
-            class:game-scene-loaded={$gameSceneIsLoadedStore}
-            bind:this={gameDiv}
-        >
+        <div id="game" class="relative" class:game-scene-loaded={$gameSceneIsLoadedStore} bind:this={gameDiv}>
             <GameOverlay {game} />
         </div>
         {#if $coWebsites.length > 0}
-            <!-- Files and links open in a window over the game, like Orbit's: the map keeps its size. An upright phone
-                 still splits the game with the panel. It is one component either way, so turning the phone does not
-                 unload what is open (a file, a page, a meeting). -->
+            <!-- Files and links open in a window over the game, like Orbit's, or in a sheet from the bottom on an upright
+                 phone, like the chat's: the map keeps its size either way. It is one component either way, so turning
+                 the phone does not unload what is open (a file, a page, a meeting). -->
             <OpenHereWindow floating={$openHereFloatsStore} />
         {/if}
     </div>
