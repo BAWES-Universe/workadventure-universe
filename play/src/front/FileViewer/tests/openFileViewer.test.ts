@@ -3,6 +3,8 @@ import { get } from "svelte/store";
 
 const { saveMessageFiles } = vi.hoisted(() => ({ saveMessageFiles: vi.fn(() => Promise.resolve()) }));
 vi.mock("../../Chat/Components/Room/MessageActions/availableActions", () => ({ saveMessageFiles }));
+const { lowerChatSheet } = vi.hoisted(() => ({ lowerChatSheet: vi.fn() }));
+vi.mock("../../Chat/ChatSheetStore", () => ({ lowerChatSheet }));
 
 import { coWebsites, fullScreenCowebsite } from "../../Stores/CoWebsiteStore";
 import { FileViewerCoWebsite } from "../../WebRtc/CoWebsite/FileViewerCoWebsite";
@@ -36,6 +38,7 @@ describe("opening a chat file in the viewer", () => {
         coWebsites.removeAll();
         fullScreenCowebsite.set(false);
         saveMessageFiles.mockClear();
+        lowerChatSheet.mockClear();
     });
 
     afterEach(() => {
@@ -71,12 +74,21 @@ describe("opening a chat file in the viewer", () => {
         expect(get(openFileViewerKeys).has("chat:blob:http://play/abc")).toBe(false);
     });
 
-    it("fills a phone's screen, and says so, so closing gives the screen back", () => {
+    it("does not fill a phone's screen: the window there is chat's own sheet", () => {
         setPhoneScreen(true);
         openChatFileInViewer({ url: "blob:http://play/abc", name: "plan.pdf" });
 
-        expect(get(fullScreenCowebsite)).toBe(true);
-        expect(opened()[0].openedFullScreen).toBe(true);
+        expect(get(fullScreenCowebsite)).toBe(false);
+    });
+
+    it("drops the chat sheet to its lowest height for a file, and again for the same file tapped twice", () => {
+        const file = { url: "blob:http://play/abc", name: "plan.pdf" };
+        openChatFileInViewer(file);
+        expect(lowerChatSheet).toHaveBeenCalledTimes(1);
+
+        openChatFileInViewer(file);
+        expect(lowerChatSheet).toHaveBeenCalledTimes(2);
+        expect(opened()).toHaveLength(1);
     });
 
     it("reads the bytes chat already fetched, with no token in any link", async () => {

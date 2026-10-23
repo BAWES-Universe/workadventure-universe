@@ -14,9 +14,16 @@ export const sideWindowInFrontStore = writable<"orbit" | "openHere">("openHere")
  */
 export const windowBehindCardStore = writable(false);
 
+/**
+ * On a phone, the window's sheet is tucked into a slim row above the bar instead of closed, so the bar and Orbit are
+ * back. Opening or tapping a file or a link brings it up again.
+ */
+export const openHereTuckedStore = writable(false);
+
 /** Opening a file or a link brings the Open here window in front, over Orbit and the chat if they are open. */
 export function bringOpenHereInFront(): void {
     sideWindowInFrontStore.set("openHere");
+    openHereTuckedStore.set(false);
     windowInFrontStore.set("window");
 }
 

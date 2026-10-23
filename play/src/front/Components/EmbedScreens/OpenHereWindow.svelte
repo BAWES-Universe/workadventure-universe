@@ -1,6 +1,7 @@
 <script lang="ts">
     import { onDestroy } from "svelte";
-    import { coWebsiteRatio, fullScreenCowebsite } from "../../Stores/CoWebsiteStore";
+    import { fly } from "svelte/transition";
+    import { coWebsiteRatio, fullScreenCowebsite, windowSize } from "../../Stores/CoWebsiteStore";
     import { closeAllOpenItems } from "../../Stores/ClosedItemsStore";
     import { modalVisibilityStore } from "../../Stores/ModalStore";
     import { chatVisibilityStore } from "../../Stores/ChatStore";
@@ -11,9 +12,11 @@
     import { cardOverWindowStore } from "../../Stores/CardOverWindowStore";
     import {
         bringOpenHereInFront,
+        openHereTuckedStore,
         sideWindowInFrontStore,
         windowBehindCardStore,
     } from "../../Stores/SideWindowInFrontStore";
+    import { openHereSheetHeight, openHereSheetRelease, openHereSheetRestStore } from "../../Stores/OpenHereSheetStore";
     import {
         clampOpenHereRatio,
         nearestWidthStop,
@@ -21,11 +24,18 @@
         stepWidthStop,
     } from "../../Stores/OpenHereWidth";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
+    import { chatSheetLayoutStore, openHereSheetHeightStore } from "../../Chat/ChatSheetStore";
+    import { CHAT_SHEET_SIZES } from "../../Chat/ChatSheetSizes";
+    import { clampHeight, nearestSnap, nextSnap, sheetFrameStyle } from "../Sheet/BottomSheet";
+    import SheetHandle from "../Sheet/SheetHandle.svelte";
     import LL from "../../../i18n/i18n-svelte";
     import CoWebsitesContainer from "./CoWebsitesContainer.svelte";
     import { IconX, IconArrowsMaximize, IconArrowsMinimize } from "@wa-icons";
 
-    /** False on an upright phone, where the panel still splits the game: the same component, so turning the phone keeps what is open. */
+    /**
+     * False on an upright phone, where the window is chat's own sheet instead: the same component, so turning the phone
+     * keeps what is open.
+     */
     export let floating = true;
 
     $: expanded = floating && $fullScreenCowebsite;
@@ -37,7 +47,8 @@
     // until it closes, and stays open.
     $: windowBehindCardStore.set(floating && $cardOverWindowStore);
     $: behindOrbit = ($modalVisibilityStore && $sideWindowInFrontStore === "orbit") || $cardOverWindowStore;
-    $: behindChat = $chatVisibilityStore && $windowInFrontStore === "chat";
+    // The sheet is under the chat whenever the chat is open: chat opens in front, and the window rises behind it.
+    $: behindChat = $chatVisibilityStore && ($windowInFrontStore === "chat" || !floating);
 
     function bringForward() {
         if (!floating) return;
@@ -94,6 +105,62 @@
         closeWindow();
     }
 
+    // ---- Phones held upright: the window is chat's own sheet (Sheet/BottomSheet.ts, SheetHandle.svelte) ----
+    // It opens at chat's height and rests where it was left. The chat opens in front of it at its lowest height, with
+    // the window rising to the top behind it; closing the chat gives the height back. Dragged down past its lowest
+    // height it tucks into a slim row above the bar, so the bar and Orbit are back, instead of closing: a window may
+    // hold several items.
+    // Height while the handle is dragged; undefined while the sheet rests.
+    let sheetDragHeight: number | undefined;
+    $: tucked = !floating && $openHereTuckedStore;
+    $: chatOverSheet = !floating && $chatVisibilityStore && $chatSheetLayoutStore;
+    $: sheetHeight =
+        sheetDragHeight ??
+        openHereSheetHeight({
+            rest: $openHereSheetRestStore,
+            tucked,
+            chatOver: chatOverSheet,
+            viewportHeight: $windowSize.height,
+        });
+    // The videos above the sheet follow its height, drag included. Tucked, they have all the room again; with the chat
+    // open, they sit above the chat, behind the window.
+    $: openHereSheetHeightStore.set(!floating && !tucked && !chatOverSheet ? sheetHeight : 0);
+
+    function onSheetDrag(height: number) {
+        if (chatOverSheet) return;
+        // A tucked sheet dragged up is up again from where the finger is.
+        if (tucked) openHereTuckedStore.set(false);
+        // It follows the finger below its lowest height too, so letting go there tucks it.
+        sheetDragHeight = clampHeight(height, $windowSize.height, CHAT_SHEET_SIZES, 0);
+    }
+
+    function onSheetRelease(height: number) {
+        if (chatOverSheet) return;
+        const release = openHereSheetRelease(height, $windowSize.height);
+        sheetDragHeight = undefined;
+        if (release === "tuck") openHereTuckedStore.set(true);
+        else openHereSheetRestStore.set(release);
+    }
+
+    function onSheetTap() {
+        if (chatOverSheet) return;
+        if (tucked) {
+            openHereTuckedStore.set(false);
+            return;
+        }
+        openHereSheetRestStore.set(nextSnap(nearestSnap(sheetHeight, $windowSize.height, CHAT_SHEET_SIZES)));
+    }
+
+    // A tap on the tucked row (not on one of its buttons) brings the sheet back.
+    function onSheetClick(event: MouseEvent) {
+        if (tucked && !(event.target as Element | null)?.closest?.("button, a, input")) openHereTuckedStore.set(false);
+    }
+
+    // The sheet slides up from the bottom as chat's does; the floating window has no such motion.
+    function sheetFly(node: Element, params: { sheet: boolean; height: number }) {
+        return params.sheet ? fly(node, { duration: 200, y: params.height }) : { duration: 0 };
+    }
+
     // The grip on the window's left edge: drag to widen it; it snaps to a third, a half or two thirds when let go.
     // Double tap goes back to a third.
     let card: HTMLElement | undefined;
@@ -138,6 +205,7 @@
 
     onDestroy(() => {
         windowBehindCardStore.set(false);
+        openHereSheetHeightStore.set(0);
         fullScreenCowebsite.set(false);
     });
 </script>
@@ -145,17 +213,23 @@
 <svelte:window on:keydown|capture={onKeyDownCapture} on:keydown={onKeyDown} on:blur={onWindowBlur} />
 
 <!-- Looks like Orbit's window and sits where it sits: under the bar, a third of the screen wide, with the same pill
-     (expand, close) outside the card. Taking a tap in front brings the window in front of Orbit or the chat. -->
+     (expand, close) outside the card. Taking a tap in front brings the window in front of Orbit or the chat. On an
+     upright phone it is chat's own sheet instead. -->
 <!-- svelte-ignore a11y-no-static-element-interactions -->
+<!-- svelte-ignore a11y-click-events-have-key-events -->
 <div
-    class={floating ? "open-here" : "flex-1"}
+    class={floating ? "open-here" : "open-here-sheet u-surface-flat"}
     class:expanded
-    class:behind-orbit={floating && behindOrbit}
-    class:behind-chat={floating && !behindOrbit && behindChat}
-    class:dragging={dragRatio !== undefined}
-    style={floating ? `--open-here-ratio: ${ratio}` : undefined}
-    data-testid={floating ? "openHereWindow" : undefined}
+    class:tucked
+    class:screen-blocker={!floating && !tucked}
+    class:behind-orbit={behindOrbit}
+    class:behind-chat={!behindOrbit && behindChat}
+    class:dragging={dragRatio !== undefined || sheetDragHeight !== undefined}
+    style={floating ? `--open-here-ratio: ${ratio}` : sheetFrameStyle(sheetHeight, $windowSize.height)}
+    data-testid={floating ? "openHereWindow" : "openHereSheet"}
     on:pointerdown|capture={bringForward}
+    on:click={onSheetClick}
+    transition:sheetFly={{ sheet: !floating, height: sheetHeight }}
 >
     {#if floating}
         <div
@@ -191,8 +265,19 @@
         </div>
     {/if}
 
-    <div bind:this={card} class:open-here-card={floating} class:split-card={!floating} id="cowebsites-window">
-        <CoWebsitesContainer windowed={floating} />
+    {#if !floating}
+        <SheetHandle
+            {sheetHeight}
+            onDrag={onSheetDrag}
+            onRelease={onSheetRelease}
+            onTap={onSheetTap}
+            label={$LL.cowebsite.sheetHandle()}
+            testId="openHereSheetHandle"
+        />
+    {/if}
+
+    <div bind:this={card} class:open-here-card={floating} class:sheet-card={!floating} id="cowebsites-window">
+        <CoWebsitesContainer sheet={!floating} />
     </div>
 
     {#if floating && !expanded}
@@ -222,6 +307,8 @@
 </div>
 
 <style lang="scss">
+    @use "../../style/bottom-sheet.scss" as *;
+
     .open-here {
         position: fixed;
         z-index: 2001;
@@ -251,9 +338,43 @@
         }
     }
 
-    // Upright on a phone the panel is not a card: it sits in the split, as it always did.
-    .split-card {
-        display: contents;
+    // Upright on a phone the window is chat's own sheet (bottom-sheet.scss), over the game like chat: under the chat
+    // while it is open, under Orbit and the cards that sit over the window, in front of everything else.
+    .open-here-sheet {
+        @include bottom-sheet;
+        position: fixed;
+        z-index: 2001;
+        overflow: hidden;
+        pointer-events: auto;
+        color: #fff;
+
+        &.behind-orbit {
+            z-index: 9;
+        }
+        &.behind-chat {
+            z-index: 1999;
+        }
+
+        // Tucked: one row above the bar, left of Express. The page is behind it, out of sight.
+        &.tucked {
+            z-index: 9;
+            bottom: calc(96px + max(0px, env(safe-area-inset-bottom, 0px) - 21px));
+            inset-inline: 8px 76px;
+            width: auto !important;
+            border-radius: 20px;
+            cursor: pointer;
+
+            :global(.open-here-row .open-here-action:not(.open-here-close)) {
+                display: none;
+            }
+        }
+    }
+
+    .sheet-card {
+        position: relative;
+        flex: 1 1 0;
+        min-height: 0;
+        overflow: hidden;
     }
 
     .open-here-card {

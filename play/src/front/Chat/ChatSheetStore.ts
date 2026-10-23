@@ -1,6 +1,7 @@
-import { derived, writable } from "svelte/store";
+import { derived, get, writable } from "svelte/store";
 import { mobileLayoutStore } from "../Stores/MobileLayoutStore";
 import { windowSize } from "../Stores/CoWebsiteStore";
+import { chatVisibilityStore } from "../Stores/ChatStore";
 import { parseChatSheetRest, type ChatSheetRest } from "./ChatSheetSizes";
 
 /**
@@ -39,8 +40,25 @@ export function keepChatSheetRest(rest: ChatSheetRest): void {
     }
 }
 
-/** The sheet's height on screen right now (it follows a drag), 0 while there is no sheet. The videos fit above it. */
-export const chatSheetHeightStore = writable(0);
+/** The chat's own sheet height on screen right now (it follows a drag), 0 while there is no chat sheet. */
+export const chatOwnSheetHeightStore = writable(0);
 
-/** The chat is open as the sheet: the videos share the space above it, with no room to show one of them big. */
+/** The same for the Open here window's sheet (files and links on a phone), which is built the same way. */
+export const openHereSheetHeightStore = writable(0);
+
+/** The height of the tallest sheet on screen, the chat's or the window's: the videos fit above it. */
+export const chatSheetHeightStore = derived(
+    [chatOwnSheetHeightStore, openHereSheetHeightStore],
+    ([$chatHeight, $windowHeight]) => Math.max($chatHeight, $windowHeight)
+);
+
+/** A sheet is open: the videos share the space above it, with no room to show one of them big. */
 export const chatSheetOpenStore = derived(chatSheetHeightStore, ($height) => $height > 0);
+
+/**
+ * A file tapped in the chat shows above it: the chat sheet drops to its lowest height, so the window has the room. Only
+ * for a chat that is open as the sheet; a closed chat keeps the height it was left at.
+ */
+export function lowerChatSheet(): void {
+    if (get(chatVisibilityStore) && get(chatSheetLayoutStore)) chatSheetSnapStore.set("peek");
+}

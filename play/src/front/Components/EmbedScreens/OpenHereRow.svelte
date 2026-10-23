@@ -1,4 +1,11 @@
 <script lang="ts">
+    import { getContext } from "svelte";
+    import { readable, type Readable } from "svelte/store";
+    import LL from "../../../i18n/i18n-svelte";
+    import OpenHereCountChip from "./OpenHereCountChip.svelte";
+    import { OPEN_HERE_ROW_END, type OpenHereRowEnd } from "./openHereRowEnd";
+    import { IconX } from "@wa-icons";
+
     /**
      * The one row every item in the Open here window gets, built like chat's header: the item's icon, its name (16 px
      * bold) with a line under it (12 px), then the actions that make sense for the item as plain icons. Mark an action
@@ -6,6 +13,9 @@
      */
     export let name: string;
     export let line: string | undefined = undefined;
+
+    // In a phone's sheet the row ends with the chip and the close, as chat's header ends with its close.
+    const end = getContext<Readable<OpenHereRowEnd | undefined> | undefined>(OPEN_HERE_ROW_END) ?? readable(undefined);
 </script>
 
 <header class="open-here-row" data-testid="openHereRow">
@@ -15,6 +25,22 @@
         {#if line}<small>{line}</small>{/if}
     </div>
     <slot />
+    {#if $end}
+        {#if $end.count > 1}
+            <OpenHereCountChip short count={$end.count} open={$end.listOpen} on:click={$end.toggleList} />
+        {/if}
+        <!-- Neutral: closing the window is not a destructive act, so it is not red. -->
+        <button
+            type="button"
+            class="open-here-action open-here-close"
+            title={$LL.chat.fileViewer.close()}
+            aria-label={$LL.chat.fileViewer.close()}
+            data-testid="openHereSheetClose"
+            on:click={$end.close}
+        >
+            <IconX font-size="20" />
+        </button>
+    {/if}
 </header>
 
 <style>

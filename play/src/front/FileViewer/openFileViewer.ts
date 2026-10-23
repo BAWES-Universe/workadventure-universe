@@ -1,5 +1,6 @@
 import { derived, get, type Readable } from "svelte/store";
-import { coWebsites, fullScreenCowebsite } from "../Stores/CoWebsiteStore";
+import { coWebsites } from "../Stores/CoWebsiteStore";
+import { lowerChatSheet } from "../Chat/ChatSheetStore";
 import { bringOpenHereInFront } from "../Stores/SideWindowInFrontStore";
 import { FileViewerCoWebsite, type FileViewerSource } from "../WebRtc/CoWebsite/FileViewerCoWebsite";
 import { saveMessageFiles } from "../Chat/Components/Room/MessageActions/availableActions";
@@ -13,11 +14,6 @@ export const openFileViewerKeys: Readable<ReadonlySet<string>> = derived(coWebsi
     }
     return keys;
 });
-
-/** A phone held upright: the viewer takes the whole screen there, and Back gives it back. */
-function isPhoneScreen(): boolean {
-    return window.matchMedia?.("(max-width: 640px)").matches ?? false;
-}
 
 async function readBytes(response: Response): Promise<ArrayBuffer> {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -95,9 +91,13 @@ export interface ChatFileToOpen {
     sentByMe?: boolean;
 }
 
-/** Opens a chat file beside the map. Calling it again for the file that is open brings that panel back instead. */
+/**
+ * Opens a chat file in the window. Calling it again for the file that is open brings that panel back instead. On a
+ * phone the chat sheet drops to its lowest height either way, so the file shows above it.
+ */
 export function openChatFileInViewer(file: ChatFileToOpen): void {
     const key = `chat:${file.url}`;
+    lowerChatSheet();
     const existing = get(coWebsites).find(
         (coWebsite) => coWebsite instanceof FileViewerCoWebsite && coWebsite.source.key === key
     );
@@ -123,12 +123,7 @@ export function openChatFileInViewer(file: ChatFileToOpen): void {
             if (bytes) openBytesInNewTab(file.name, bytes);
         },
     };
-    const coWebsite = new FileViewerCoWebsite(source);
-    if (isPhoneScreen() && !get(fullScreenCowebsite)) {
-        coWebsite.openedFullScreen = true;
-        fullScreenCowebsite.set(true);
-    }
-    coWebsites.add(coWebsite);
+    coWebsites.add(new FileViewerCoWebsite(source));
 }
 
 export interface MapFileToOpen {
