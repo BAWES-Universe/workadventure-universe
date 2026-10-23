@@ -223,14 +223,15 @@ describe("counting what a zip really holds", () => {
         const none = { compressed: 0, unpacked: 0 };
         // A stream of two bytes in the list is just as empty to JSZip, and the reader unpacks the real one
         const two = { compressed: 2, unpacked: 0 };
-        for (const sizes of [none, two]) {
-            for (const flags of [0, 0x0008]) {
+        const cases = [none, two].flatMap((sizes) => [0, 0x0008].map((flags) => ({ sizes, flags })));
+        await Promise.all(
+            cases.map(async ({ sizes, flags }) => {
                 const hidden = rawZip([{ name: "a.txt", data: real, listed: sizes, own: sizes, flags }]);
                 expect(zipUnpackedSize(hidden)).toBe(0);
                 await expect(JSZip.loadAsync(hidden)).resolves.toBeDefined();
                 await expect(assertUnpackedWithin(hidden, 1024 * 1024)).rejects.toThrow("cannot be read");
-            }
-        }
+            })
+        );
     });
 
     it("refuses a file whose own header and the list say it is packed in different ways", async () => {
@@ -249,10 +250,12 @@ describe("counting what a zip really holds", () => {
         // Listed as a few bytes in and a few hundred out, with a data descriptor that leaves the own header at zero
         const small = { compressed: 20, unpacked: 300 };
         const none = { compressed: 0, unpacked: 0 };
-        for (const own of [none, small]) {
-            const hidden = rawZip([{ name: "a.txt", data: real, listed: small, own, flags: 0x0008 }]);
-            await expect(assertUnpackedWithin(hidden, 1024 * 1024)).rejects.toThrow();
-        }
+        await Promise.all(
+            [none, small].map(async (own) => {
+                const hidden = rawZip([{ name: "a.txt", data: real, listed: small, own, flags: 0x0008 }]);
+                await expect(assertUnpackedWithin(hidden, 1024 * 1024)).rejects.toThrow();
+            })
+        );
     });
 
     it("lets an empty file through, however a writer spells it", async () => {
@@ -262,13 +265,15 @@ describe("counting what a zip really holds", () => {
         zip.file("empty.txt", "");
         zip.folder("folder");
         zip.file("a.txt", "hello");
-        for (const streamFiles of [false, true]) {
-            const bytes = await zip.generateAsync({ type: "arraybuffer", compression: "DEFLATE", streamFiles });
-            await expect(assertUnpackedWithin(bytes, 5000)).resolves.toBeUndefined();
-        }
+        await Promise.all(
+            [false, true].map(async (streamFiles) => {
+                const bytes = await zip.generateAsync({ type: "arraybuffer", compression: "DEFLATE", streamFiles });
+                await expect(assertUnpackedWithin(bytes, 5000)).resolves.toBeUndefined();
+            })
+        );
     });
 
-    it("refuses a file whose own header and the list disagree about either size", async () => {
+    it("refuses a file whose own header and the list disagree about either size", () => {
         const data = new TextEncoder().encode("hello".repeat(100));
         const compressed = deflateRawSync(data).length;
         for (const own of [
@@ -280,7 +285,7 @@ describe("counting what a zip really holds", () => {
         }
     });
 
-    it("refuses 64-bit size fields, in the list or in a file's own header", async () => {
+    it("refuses 64-bit size fields, in the list or in a file's own header", () => {
         const data = new TextEncoder().encode("hello".repeat(100));
         expect(zipHeadersAgree(rawZip([{ name: "a.txt", data }]))).toBe(true);
         expect(zipHeadersAgree(rawZip([{ name: "a.txt", data, ownExtra: ZIP64_EXTRA }]))).toBe(false);
@@ -302,7 +307,7 @@ describe("counting what a zip really holds", () => {
         await expect(assertUnpackedWithin(streamed, 5000)).resolves.toBeUndefined();
     });
 
-    it("refuses a list that points at something that is not a file's header", async () => {
+    it("refuses a list that points at something that is not a file's header", () => {
         const bytes = rawZip([{ name: "a.txt", data: new TextEncoder().encode("hello") }]).slice(0);
         new DataView(bytes).setUint32(0, 0, true);
         expect(zipHeadersAgree(bytes)).toBe(false);
