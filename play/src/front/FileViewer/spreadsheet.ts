@@ -1,6 +1,7 @@
 import type * as SheetJs from "xlsx";
 import { MAX_TABLE_COLUMNS, MAX_TABLE_ROWS } from "./textFiles";
 import { assertUnpackedWithin, zipUnpackedSize } from "./zipSize";
+import { readXlsxLook, type CellStyle, type SheetLook } from "./spreadsheetStyles";
 
 /** A spreadsheet is read in memory; a file far bigger than any sheet people share is offered as a download instead. */
 export const MAX_SPREADSHEET_BYTES = 30 * 1024 * 1024;
@@ -47,6 +48,13 @@ export interface SheetCell {
     text: string;
     /** A number, a date or a formula result of those: aligned to the right, as in Excel. */
     number: boolean;
+    /** How the file draws the cell (an .xlsx only): bold, italic, size, text colour and fill. */
+    style?: CellStyle;
+    /** A merged cell that is the top left of its cells: how many columns and rows it spans, within what is shown. */
+    colSpan?: number;
+    rowSpan?: number;
+    /** A cell another cell is merged over: it is not drawn. */
+    covered?: boolean;
 }
 
 export interface SheetView {
@@ -60,6 +68,10 @@ export interface SheetView {
     columnsCut: boolean;
     /** A cell's text was drawn shorter than the file has it (a very long text, or the sheet's text budget ran out). */
     textCut: boolean;
+    /** The file styles some of the cells, so its own look is drawn and not the viewer's bold first row. */
+    styled: boolean;
+    /** The width in pixels the file gives each column, where it gives one. */
+    columnWidths: (number | undefined)[];
 }
 
 /** "A", "B", ... "Z", "AA": the column letters over a sheet. */
@@ -134,11 +146,58 @@ function holdsCells(sheet: SheetJs.WorkSheet | undefined): boolean {
     return type === undefined || type === "sheet";
 }
 
+/** The most merged ranges of a sheet that are looked at, and the most cells they are checked over, so a file cannot make this slow. */
+const MAX_MERGES = 20_000;
+const MAX_MERGE_CELL_VISITS = 1_000_000;
+
+/** Merged cells: the top left cell spans the range (within what is shown), the others under it are not drawn. */
+function applyMerges(
+    merges: SheetJs.Range[] | undefined,
+    rows: SheetCell[][],
+    lastRow: number,
+    lastColumn: number
+): void {
+    if (!merges) return;
+    let visits = 0;
+    for (const merge of merges.slice(0, MAX_MERGES)) {
+        const lastMergedRow = Math.min(merge.e.r, lastRow);
+        const lastMergedColumn = Math.min(merge.e.c, lastColumn);
+        if (merge.s.r < 0 || merge.s.c < 0 || merge.s.r > lastRow || merge.s.c > lastColumn) continue;
+        const rowSpan = lastMergedRow - merge.s.r + 1;
+        const colSpan = lastMergedColumn - merge.s.c + 1;
+        if (rowSpan * colSpan <= 1) continue;
+        visits += rowSpan * colSpan;
+        if (visits > MAX_MERGE_CELL_VISITS) return;
+        // A range that overlaps one already merged is a damaged file: it is left as it is.
+        let free = true;
+        for (let row = merge.s.r; row <= lastMergedRow && free; row++) {
+            for (let column = merge.s.c; column <= lastMergedColumn; column++) {
+                const cell = rows[row][column];
+                if (cell.covered || cell.colSpan !== undefined) {
+                    free = false;
+                    break;
+                }
+            }
+        }
+        if (!free) continue;
+        for (let row = merge.s.r; row <= lastMergedRow; row++) {
+            for (let column = merge.s.c; column <= lastMergedColumn; column++) {
+                if (row === merge.s.r && column === merge.s.c) continue;
+                rows[row][column] = { text: "", number: false, covered: true };
+            }
+        }
+        const origin = rows[merge.s.r][merge.s.c];
+        origin.colSpan = colSpan;
+        origin.rowSpan = rowSpan;
+    }
+}
+
 function viewOfSheet(
     XLSX: typeof SheetJs,
     name: string,
     sheet: SheetJs.WorkSheet,
-    workbook: WorkbookBudget
+    workbook: WorkbookBudget,
+    look: SheetLook | undefined
 ): SheetView {
     const reference = sheet["!ref"];
     // A sheet with no cells is drawn like Excel draws it: the grid of one empty cell, A1.
@@ -151,6 +210,8 @@ function viewOfSheet(
             rowsCut: false,
             columnsCut: false,
             textCut: false,
+            styled: false,
+            columnWidths: [],
         };
     }
     const range = XLSX.utils.decode_range(reference);
@@ -166,7 +227,7 @@ function viewOfSheet(
     const totalRows = readAll ? lastKnownRow + 1 : claimedRows;
     const lastRow = Math.min(lastKnownRow, MAX_TABLE_ROWS - 1);
     // The columns are the ones that hold cells: the size a file claims can reach column XFD over a sheet of three.
-    const usedColumns = used.column + 1;
+    const usedColumns = Math.max(used.column, look?.lastFilledColumn ?? -1) + 1;
     const lastColumn = Math.min(Math.max(usedColumns, 1), MAX_TABLE_COLUMNS) - 1;
     // Like Excel, a sheet always starts at A1, even when its first cells are further down or to the right.
     workbook.gridLeft -= (lastRow + 1) * (lastColumn + 1);
@@ -177,11 +238,15 @@ function viewOfSheet(
     for (let row = 0; row <= lastRow; row++) {
         const cells: SheetCell[] = [];
         for (let column = 0; column <= lastColumn; column++) {
-            cells.push(limitedCell(textOfCell(sheet[XLSX.utils.encode_cell({ r: row, c: column })]), budget));
+            const cell = textOfCell(sheet[XLSX.utils.encode_cell({ r: row, c: column })]);
+            const style = look?.cells.get(row * MAX_TABLE_COLUMNS + column);
+            if (style) cell.style = style;
+            cells.push(limitedCell(cell, budget));
         }
         rows.push(cells);
     }
     workbook.textLeft -= textRoom - budget.left;
+    applyMerges(sheet["!merges"], rows, lastRow, lastColumn);
     return {
         name,
         rows,
@@ -190,6 +255,8 @@ function viewOfSheet(
         rowsCut: stoppedEarly,
         columnsCut: usedColumns > MAX_TABLE_COLUMNS,
         textCut: budget.cut,
+        styled: look !== undefined && look.cells.size > 0,
+        columnWidths: look ? look.columnWidths.slice(0, lastColumn + 1) : [],
     };
 }
 
@@ -419,9 +486,10 @@ async function prepareOpenDocument(bytes: ArrayBuffer): Promise<OpenDocument> {
 }
 
 /**
- * The sheets of an Excel (.xlsx, .xls) or OpenDocument (.ods) file, as plain text cells. Only values are read:
- * formulas, macros, links, styles, pictures and charts are left out, and a cell is never turned into HTML. A damaged
- * or password-locked file throws.
+ * The sheets of an Excel (.xlsx, .xls) or OpenDocument (.ods) file, as plain text cells. Values are read, and merged
+ * cells; an .xlsx also gives its columns' widths and its cells' bold, italic, size, text colour and fill. Formulas,
+ * macros, links, pictures and charts are left out, and a cell is never turned into HTML. A damaged or password-locked
+ * file throws.
  */
 export async function readSpreadsheet(bytes: ArrayBuffer): Promise<SheetView[]> {
     // The reader also takes plain text and web pages as sheets; only the real file types are accepted here.
@@ -461,8 +529,10 @@ export async function readSpreadsheet(bytes: ArrayBuffer): Promise<SheetView[]> 
     // A workbook whose data sheets are all hidden still opens.
     const visible = sheets.filter(({ hidden }) => !hidden);
     const budget: WorkbookBudget = { textLeft: MAX_WORKBOOK_TEXT_CHARS, gridLeft: MAX_WORKBOOK_GRID_CELLS };
+    // An .xlsx also has the look of its cells: bold, italic, size, colours, fills and widths. Without it, the grid is plain.
+    const looks = head[0] === 0x50 ? await readXlsxLook(bytes) : undefined;
     return (visible.length > 0 ? visible : sheets).map(({ name }) => {
-        const view = viewOfSheet(XLSX, name, workbook.Sheets[name], budget);
+        const view = viewOfSheet(XLSX, name, workbook.Sheets[name], budget, looks?.[workbook.SheetNames.indexOf(name)]);
         // The rows of a cut repeat still count in the sheet's length.
         const cut = opened.cutRows.get(name);
         if (cut !== undefined && view.rowsCut && view.totalRows !== undefined) view.totalRows += cut;
