@@ -23,42 +23,41 @@ import { MapListService } from "../MapListService";
 import type { FileSystemInterface } from "../../Upload/FileSystemInterface";
 import type { WebHookService } from "../WebHookService";
 
+type ReadWamFile = (wamFilePath: string, domain: string) => Promise<unknown>;
+
+function createReadWamFile(readError: unknown): ReadWamFile {
+    const fileSystem = {
+        readFileAsString: vi.fn().mockRejectedValue(readError),
+    } as unknown as FileSystemInterface;
+    const service = new MapListService(fileSystem, {} as unknown as WebHookService);
+    const { readWamFile } = service as unknown as { readWamFile: ReadWamFile };
+    return readWamFile.bind(service);
+}
+
 describe("MapListService.readWamFile", () => {
-    it("wraps a normal Error without throwing a secondary JSON error", async () => {
-        const mockFs = {
-            readFileAsString: vi.fn().mockRejectedValue(new Error("connection refused")),
-        } as unknown as FileSystemInterface;
+    it("wraps an Error using its message and keeps it as the cause", async () => {
+        const original = new Error("connection refused");
+        const readWamFile = createReadWamFile(original);
 
-        const mockWebHook = {} as unknown as WebHookService;
-        const service = new MapListService(mockFs, mockWebHook);
+        const thrown = await readWamFile("test.wam", "example.com").catch((e: unknown) => e);
 
-        // Access the private method via cast
-        const readWamFile = (service as unknown as Record<string, Function>)["readWamFile"].bind(service);
-
-        await expect(readWamFile("test.wam", "example.com")).rejects.toThrow(
-            /Error while trying to read WAM file "test\.wam".*connection refused/
-        );
+        expect(thrown).toBeInstanceOf(Error);
+        expect((thrown as Error).message).toContain('Error while trying to read WAM file "test.wam"');
+        expect((thrown as Error).message).toContain("connection refused");
+        expect((thrown as Error).cause).toBe(original);
     });
 
-    it("does not throw when the caught error contains circular references", async () => {
-        // Build a circular-reference error object (simulates TLSSocket graph)
-        const circularError: Record<string, unknown> = { message: "tls handshake failed" };
-        circularError["self"] = circularError; // circular!
+    it("does not fail with a circular JSON error when the caught value is a circular object", async () => {
+        const circular: Record<string, unknown> = {};
+        circular.self = circular;
+        const readWamFile = createReadWamFile(circular);
 
-        const mockFs = {
-            readFileAsString: vi.fn().mockRejectedValue(circularError),
-        } as unknown as FileSystemInterface;
+        const thrown = await readWamFile("broken.wam", "example.com").catch((e: unknown) => e);
 
-        const mockWebHook = {} as unknown as WebHookService;
-        const service = new MapListService(mockFs, mockWebHook);
-
-        const readWamFile = (service as unknown as Record<string, Function>)["readWamFile"].bind(service);
-
-        // Should throw an Error whose message does NOT cause a secondary TypeError
-        await expect(readWamFile("circular.wam", "example.com")).rejects.toThrow(Error);
-
-        // The thrown error should itself be serializable (no circular refs)
-        const thrown = await readWamFile("circular.wam", "example.com").catch((e: unknown) => e);
-        expect(() => JSON.stringify(thrown)).not.toThrow();
+        expect(thrown).toBeInstanceOf(Error);
+        expect((thrown as Error).message).toContain('Error while trying to read WAM file "broken.wam"');
+        expect((thrown as Error).message).toContain("[object Object]");
+        expect((thrown as Error).message).not.toMatch(/circular/i);
+        expect((thrown as Error).cause).toBe(circular);
     });
 });
