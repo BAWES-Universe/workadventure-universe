@@ -112,8 +112,9 @@
     // hold several items.
     // Height while the handle is dragged; undefined while the sheet rests.
     let sheetDragHeight: number | undefined;
-    $: tucked = !floating && $openHereTuckedStore;
     $: chatOverSheet = !floating && $chatVisibilityStore && $chatSheetLayoutStore;
+    // Chat in front hides the tucked row: the sheet waits behind it at full height and comes back tucked once chat closes.
+    $: tucked = !floating && $openHereTuckedStore && !chatOverSheet;
     $: sheetHeight =
         sheetDragHeight ??
         openHereSheetHeight({

@@ -215,6 +215,28 @@ describe("OpenHereWindow as a phone's sheet", () => {
         expect(sheet()?.classList.contains("behind-chat")).toBe(false);
     });
 
+    it("waits behind the chat at full height when chat opens over a tucked sheet, and tucks again after", async () => {
+        await mount("plan.pdf");
+        openHereTuckedStore.set(true);
+        await tick();
+
+        chatVisibilityStore.set(true);
+        await tick();
+
+        expect(sheet()?.classList.contains("tucked")).toBe(false);
+        expect(sheet()?.classList.contains("behind-chat")).toBe(true);
+        expect(sheet()?.style.height).toBe(`${heights.full}px`);
+
+        // A tap while the chat is over it does not bring it up.
+        sheet()?.click();
+        await tick();
+        expect(get(openHereTuckedStore)).toBe(true);
+
+        chatVisibilityStore.set(false);
+        await tick();
+        expect(sheet()?.classList.contains("tucked")).toBe(true);
+    });
+
     it("does not follow a drag while the chat is over it", async () => {
         await mount("plan.pdf");
         chatVisibilityStore.set(true);
