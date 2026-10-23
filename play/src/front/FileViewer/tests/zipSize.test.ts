@@ -244,6 +244,17 @@ describe("counting what a zip really holds", () => {
         expect(zipHeadersAgree(rawZip([{ name: "a.txt", data: plain, listedMethod: 0 }]))).toBe(false);
     });
 
+    it("refuses a big stream that the list gives a small size, whatever its own header says", async () => {
+        const real = new Uint8Array(5 * 1024 * 1024);
+        // Listed as a few bytes in and a few hundred out, with a data descriptor that leaves the own header at zero
+        const small = { compressed: 20, unpacked: 300 };
+        const none = { compressed: 0, unpacked: 0 };
+        for (const own of [none, small]) {
+            const hidden = rawZip([{ name: "a.txt", data: real, listed: small, own, flags: 0x0008 }]);
+            await expect(assertUnpackedWithin(hidden, 1024 * 1024)).rejects.toThrow();
+        }
+    });
+
     it("lets an empty file through, however a writer spells it", async () => {
         const empty = new Uint8Array(0);
         expect(zipHeadersAgree(rawZip([{ name: "empty.txt", data: empty }]))).toBe(true);
