@@ -103,6 +103,14 @@ describe("counting what a zip really holds", () => {
         await expect(assertUnpackedWithin(bytes, 5000)).rejects.toThrow("cannot be read");
     });
 
+    it("refuses a zip with data in front of it, which JSZip reads by shifting its offsets", async () => {
+        const zip = await zipOf({ "a.txt": "x".repeat(100) });
+        const shifted = new Uint8Array(zip.byteLength + 10);
+        shifted.set(new Uint8Array(zip), 10);
+        await expect(JSZip.loadAsync(shifted.buffer)).resolves.toBeDefined();
+        await expect(assertUnpackedWithin(shifted.buffer, 5000)).rejects.toThrow("cannot be read");
+    });
+
     it("refuses bytes that are not a zip", async () => {
         await expect(
             assertUnpackedWithin(new TextEncoder().encode("hello").buffer as ArrayBuffer, 10)
