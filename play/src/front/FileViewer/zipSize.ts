@@ -85,6 +85,22 @@ function hasExtraField(view: DataView, from: number, length: number, end: number
     return false;
 }
 
+/** The two ways a zip writer spells an empty deflate stream: a final empty fixed block, or a final empty stored block. */
+const EMPTY_DEFLATE_STREAMS = [
+    [0x03, 0x00],
+    [0x01, 0x00, 0x00, 0xff, 0xff],
+];
+
+/** Whether a file that the list gives no data is really empty: stored with nothing, or deflated to an empty stream. */
+function isEmptyStream(bytes: ArrayBuffer, start: number, method: number, compressed: number): boolean {
+    if (method === 0) return compressed === 0;
+    if (method !== 8 || start + compressed > bytes.byteLength) return false;
+    const data = new Uint8Array(bytes, start, compressed);
+    return EMPTY_DEFLATE_STREAMS.some(
+        (empty) => empty.length === compressed && empty.every((byte, index) => data[index] === byte)
+    );
+}
+
 /**
  * Whether every file's own header, in front of its data, agrees with the zip's list at the end. JSZip believes the
  * list; the spreadsheet reader believes each file's own header and unpacks as many bytes as that says. A file that
@@ -116,6 +132,21 @@ export function zipHeadersAgree(bytes: ArrayBuffer): boolean {
         const nameLength = view.getUint16(at + 28, true);
         const extraLength = view.getUint16(at + 30, true);
         const ownExtraAt = local + 30 + view.getUint16(local + 26, true);
+        // A file the list calls empty is never unpacked by JSZip, but the spreadsheet reader unpacks whatever stream
+        // starts there, whatever sizes either header gives (they may both be zero, with or without a data descriptor).
+        // So it must really be empty: nothing stored, or one of the two ways to write an empty deflate stream.
+        if (
+            view.getUint32(at + 20, true) <= EMPTY_STREAM_BYTES &&
+            view.getUint32(at + 24, true) === 0 &&
+            !isEmptyStream(
+                bytes,
+                ownExtraAt + view.getUint16(local + 28, true),
+                view.getUint16(at + 10, true),
+                view.getUint32(at + 20, true)
+            )
+        ) {
+            return false;
+        }
         if (
             hasExtraField(view, at + 46 + nameLength, extraLength, bytes.byteLength, ZIP64_FIELD) ||
             hasExtraField(view, ownExtraAt, view.getUint16(local + 28, true), bytes.byteLength, ZIP64_FIELD)

@@ -171,17 +171,12 @@ describe("counting what a zip really holds", () => {
         const bytes = (await zip.generateAsync({ type: "arraybuffer", compression: "DEFLATE" })).slice(0);
         await expect(assertUnpackedWithin(bytes, 5000)).resolves.toBeUndefined();
         // Some zip tools (Java's) write 2 bytes of empty deflate stream for a folder.
-        const view = new DataView(bytes);
-        for (let at = 0; at < bytes.byteLength - 46; at++) {
-            if (
-                view.getUint32(at, true) === 0x02014b50 &&
-                view.getUint8(at + 46 + view.getUint16(at + 28, true) - 1) === 0x2f
-            ) {
-                view.setUint32(at + 20, 2, true);
-                view.setUint32(view.getUint32(at + 42, true) + 18, 2, true);
-            }
-        }
-        await expect(assertUnpackedWithin(bytes, 5000)).resolves.toBeUndefined();
+        const twoBytes = rawZip([
+            { name: "empty/", data: new Uint8Array(0) },
+            { name: "word/document.xml", data: new TextEncoder().encode("x".repeat(100)) },
+        ]);
+        expect(zipUnpackedSize(twoBytes)).toBe(100);
+        await expect(assertUnpackedWithin(twoBytes, 5000)).resolves.toBeUndefined();
     });
 
     it("lets a zip with empty files through (Word and Excel files carry some)", async () => {
@@ -219,6 +214,34 @@ describe("counting what a zip really holds", () => {
         expect(zipUnpackedSize(hidden)).toBe(5);
         await expect(JSZip.loadAsync(hidden)).resolves.toBeDefined();
         await expect(assertUnpackedWithin(hidden, 1024 * 1024)).rejects.toThrow("cannot be read");
+    });
+
+    it("refuses a big stream that the list and the file's own header both call empty, with or without a data descriptor", async () => {
+        const real = new Uint8Array(5 * 1024 * 1024);
+        const none = { compressed: 0, unpacked: 0 };
+        // A stream of two bytes in the list is just as empty to JSZip, and the reader unpacks the real one
+        const two = { compressed: 2, unpacked: 0 };
+        for (const sizes of [none, two]) {
+            for (const flags of [0, 0x0008]) {
+                const hidden = rawZip([{ name: "a.txt", data: real, listed: sizes, own: sizes, flags }]);
+                expect(zipUnpackedSize(hidden)).toBe(0);
+                await expect(JSZip.loadAsync(hidden)).resolves.toBeDefined();
+                await expect(assertUnpackedWithin(hidden, 1024 * 1024)).rejects.toThrow("cannot be read");
+            }
+        }
+    });
+
+    it("lets an empty file through, however a writer spells it", async () => {
+        const empty = new Uint8Array(0);
+        expect(zipHeadersAgree(rawZip([{ name: "empty.txt", data: empty }]))).toBe(true);
+        const zip = new JSZip();
+        zip.file("empty.txt", "");
+        zip.folder("folder");
+        zip.file("a.txt", "hello");
+        for (const streamFiles of [false, true]) {
+            const bytes = await zip.generateAsync({ type: "arraybuffer", compression: "DEFLATE", streamFiles });
+            await expect(assertUnpackedWithin(bytes, 5000)).resolves.toBeUndefined();
+        }
     });
 
     it("refuses a file whose own header and the list disagree about either size", async () => {
