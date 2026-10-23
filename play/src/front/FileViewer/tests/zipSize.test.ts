@@ -29,6 +29,8 @@ interface RawEntry {
     listed?: { compressed: number; unpacked: number };
     own?: { compressed: number; unpacked: number };
     flags?: number;
+    /** The way of packing the list gives, when it differs from the file's own header (deflate, 8). */
+    listedMethod?: number;
     ownExtra?: number[];
     listedExtra?: number[];
 }
@@ -69,7 +71,7 @@ function rawZip(entries: RawEntry[]): ArrayBuffer {
             ...u16(20),
             ...u16(20),
             ...u16(flags),
-            ...u16(8),
+            ...u16(entry.listedMethod ?? 8),
             ...u32(0),
             ...u32(0),
             ...u32(listed.compressed),
@@ -229,6 +231,17 @@ describe("counting what a zip really holds", () => {
                 await expect(assertUnpackedWithin(hidden, 1024 * 1024)).rejects.toThrow("cannot be read");
             }
         }
+    });
+
+    it("refuses a file whose own header and the list say it is packed in different ways", async () => {
+        const real = new Uint8Array(5 * 1024 * 1024);
+        const none = { compressed: 0, unpacked: 0 };
+        // Stored and empty in the list, deflated in the file's own header, where the spreadsheet reader looks
+        const hidden = rawZip([{ name: "a.txt", data: real, listed: none, own: none, listedMethod: 0 }]);
+        expect(zipUnpackedSize(hidden)).toBe(0);
+        await expect(assertUnpackedWithin(hidden, 1024 * 1024)).rejects.toThrow("cannot be read");
+        const plain = new TextEncoder().encode("hello".repeat(100));
+        expect(zipHeadersAgree(rawZip([{ name: "a.txt", data: plain, listedMethod: 0 }]))).toBe(false);
     });
 
     it("lets an empty file through, however a writer spells it", async () => {

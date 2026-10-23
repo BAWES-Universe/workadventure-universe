@@ -123,6 +123,8 @@ export function zipHeadersAgree(bytes: ArrayBuffer): boolean {
     while (at + 46 <= end && view.getUint32(at, true) === DIRECTORY_ENTRY) {
         const local = view.getUint32(at + 42, true);
         if (local + 30 > bytes.byteLength || view.getUint32(local, true) !== LOCAL_HEADER) return false;
+        // The spreadsheet reader takes the way a file is packed from its own header, JSZip from the list.
+        if (view.getUint16(local + 8, true) !== view.getUint16(at + 10, true)) return false;
         const described = (view.getUint16(local + 6, true) & HAS_DATA_DESCRIPTOR) !== 0;
         for (const size of [20, 24]) {
             const listed = view.getUint32(at + size, true);
