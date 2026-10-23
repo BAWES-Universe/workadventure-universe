@@ -8,9 +8,7 @@
     import {
         NO_BROWSER_VIEWER_KINDS,
         TEXT_KINDS,
-        badgeOfKind,
         bytesMatchKind,
-        extensionOf,
         fileKindOf,
         type FileViewerKind,
     } from "../../FileViewer/fileKinds";
@@ -19,6 +17,7 @@
     import { MAX_WORD_BYTES } from "../../FileViewer/wordDocument";
     import OpenHereRow from "../EmbedScreens/OpenHereRow.svelte";
     import OpenHereItemIcon from "../EmbedScreens/OpenHereItemIcon.svelte";
+    import { fileBadgeFor } from "../EmbedScreens/describeCoWebsite";
     import FileViewerExcel from "./FileViewer/FileViewerExcel.svelte";
     import FileViewerPdf from "./FileViewer/FileViewerPdf.svelte";
     import FileViewerImage from "./FileViewer/FileViewerImage.svelte";
@@ -72,7 +71,7 @@
     $: pageListShown = controller?.pageList?.shown ?? readable(false);
     $: matches = controller?.search?.matches ?? readable(undefined);
 
-    const badge = badgeFor(source.name);
+    const badge = fileBadgeFor(source.name);
     const isOldWord = fileKindOf(source.name) === "oldword";
     $: sender = source.sentByMe
         ? $LL.chat.fileViewer.fromYou()
@@ -93,13 +92,6 @@
         source.openInNewTab !== undefined &&
         (phase === "ready" || source.openInNewTabFromLink === true) &&
         !(kind && NO_BROWSER_VIEWER_KINDS.has(kind));
-
-    function badgeFor(name: string): { label: string; color: string } {
-        const fileKind = fileKindOf(name);
-        if (fileKind) return badgeOfKind(fileKind, name);
-        const extension = extensionOf(name);
-        return { label: (extension || "FILE").slice(0, 4).toUpperCase(), color: "#5b6b82" };
-    }
 
     async function open(): Promise<void> {
         try {

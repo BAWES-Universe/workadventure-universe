@@ -40,13 +40,30 @@ export function createCoWebsiteStore() {
         }
     };
 
+    const removalListeners = new Set<(removes: (coWebsite: CoWebsite) => boolean) => void>();
+
+    /**
+     * Tells when something asks for items to go (a zone left, a map script, a close), whether or not they are open: what
+     * was closed a moment ago and could be brought back must not come back after its owner asked for it to go.
+     */
+    const onRemoval = (listener: (removes: (coWebsite: CoWebsite) => boolean) => void): (() => void) => {
+        removalListeners.add(listener);
+        return () => removalListeners.delete(listener);
+    };
+
+    const announceRemoval = (removes: (coWebsite: CoWebsite) => boolean) => {
+        removalListeners.forEach((listener) => listener(removes));
+    };
+
     const remove = (coWebsite: CoWebsite) => {
+        announceRemoval((other) => other.getId() === coWebsite.getId());
         update((currentArray) =>
             currentArray.filter((currentCoWebsite) => currentCoWebsite.getId() !== coWebsite.getId())
         );
     };
 
     const removeAll = () => {
+        announceRemoval(() => true);
         set([]);
     };
 
@@ -54,14 +71,33 @@ export function createCoWebsiteStore() {
      * Only keep the cowebsites matching the predicate.
      */
     const keepOnly = (predicate: (coWebsite: CoWebsite) => boolean) => {
+        announceRemoval((coWebsite) => !predicate(coWebsite));
         update((currentArray) => currentArray.filter(predicate));
+    };
+
+    /**
+     * Brings back items that were closed, each where it was among the others. Whatever was opened since stays after them.
+     */
+    const restore = (before: Array<CoWebsite>, closed: Array<CoWebsite>) => {
+        update((currentArray) => {
+            const current = new Set(currentArray);
+            const closedSet = new Set(closed);
+            const beforeSet = new Set(before);
+            return [
+                ...before.filter((coWebsite) => current.has(coWebsite) || closedSet.has(coWebsite)),
+                ...currentArray.filter((coWebsite) => !beforeSet.has(coWebsite)),
+            ];
+        });
     };
 
     const findById = (id: string) => {
         return get({ subscribe }).find((coWebsite) => coWebsite.getId() === id);
     };
 
-    const empty = () => set([]);
+    const empty = () => {
+        announceRemoval(() => true);
+        set([]);
+    };
 
     return {
         subscribe,
@@ -70,13 +106,18 @@ export function createCoWebsiteStore() {
         removeAll,
         empty,
         keepOnly,
+        restore,
         findById,
+        onRemoval,
     };
 }
 
 export const coWebsites = createCoWebsiteStore();
 
 export const fullScreenCowebsite = writable(false);
+
+/** The item picked in the window of files and links, kept here so closing everything can bring it back picked. */
+export const activeCoWebsiteStore = writable<CoWebsite | undefined>(undefined);
 
 const browserWindowSize = readable({ width: window.innerWidth, height: window.innerHeight }, (set) => {
     const handleResize = () => {

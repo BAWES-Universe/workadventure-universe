@@ -7,17 +7,43 @@
     export let src: string | undefined = undefined;
     /** What shows through a transparent icon. */
     export let background = "#fff";
+    /** 32 in a row, smaller in a tab. */
+    export let size = 32;
 
     let failed = false;
     $: if (src) failed = false;
 </script>
 
 {#if badge}
-    <span class="icon badge" style:background={badge.color} aria-hidden="true">{badge.label}</span>
+    <span
+        class="icon badge"
+        style:background={badge.color}
+        style:width="{size}px"
+        style:height="{size}px"
+        style:border-radius="{size / 4}px"
+        style:font-size="{size < 32 ? 8 : 9}px"
+        aria-hidden="true">{badge.label}</span
+    >
 {:else if src && !failed}
-    <img class="icon" style:background {src} alt="" draggable="false" on:error={() => (failed = true)} />
+    <img
+        class="icon"
+        style:background
+        style:width="{size}px"
+        style:height="{size}px"
+        style:border-radius="{size / 4}px"
+        {src}
+        alt=""
+        draggable="false"
+        on:error={() => (failed = true)}
+    />
 {:else}
-    <span class="icon globe" aria-hidden="true"><IconWorld font-size="20" /></span>
+    <span
+        class="icon globe"
+        style:width="{size}px"
+        style:height="{size}px"
+        style:border-radius="{size / 4}px"
+        aria-hidden="true"><IconWorld font-size={Math.round(size * 0.62)} /></span
+    >
 {/if}
 
 <style>
@@ -26,15 +52,11 @@
         align-items: center;
         justify-content: center;
         box-sizing: border-box;
-        width: 32px;
-        height: 32px;
-        border-radius: 8px;
         flex: none;
     }
 
     .badge {
         color: #fff;
-        font-size: 9px;
         font-weight: 700;
         letter-spacing: 0.04em;
     }

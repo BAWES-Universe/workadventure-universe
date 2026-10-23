@@ -2,7 +2,13 @@
     import { afterUpdate, onDestroy, onMount, setContext } from "svelte";
     import { get, writable, type Unsubscriber } from "svelte/store";
     import { titleBarHeightStore } from "../../TitleBar/WindowControlsOverlay";
-    import { coWebsiteRatio, coWebsites, fullScreenCowebsite, windowSize } from "../../Stores/CoWebsiteStore";
+    import {
+        activeCoWebsiteStore,
+        coWebsiteRatio,
+        coWebsites,
+        fullScreenCowebsite,
+        windowSize,
+    } from "../../Stores/CoWebsiteStore";
     import JitsiCowebsiteComponent from "../Cowebsites/JistiCowebsiteComponent.svelte";
     import SimpleCowebsiteComponent from "../Cowebsites/SimpleCowebsiteComponent.svelte";
     import FileViewerCowebsiteComponent from "../Cowebsites/FileViewerCowebsiteComponent.svelte";
@@ -14,8 +20,15 @@
     import type { CoWebsite } from "../../WebRtc/CoWebsite/CoWebsite";
     import { screenOrientationStore } from "../../Stores/ScreenOrientationStore";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
+    import { emoteMenuStore } from "../../Stores/EmoteStore";
+    import { expressTrayStore } from "../../Stores/ExpressStore";
+    import { lightboxOpenStore } from "../../Stores/UserInputStore";
+    import { closeAllOpenItems, pickedAfterUndoStore } from "../../Stores/ClosedItemsStore";
+    import LL from "../../../i18n/i18n-svelte";
     import CoWebsiteTab from "./CoWebsiteTab.svelte";
-    import { IconChevronLeft, IconChevronRight, IconArrowsMinimize } from "@wa-icons";
+    import OpenHereItemIcon from "./OpenHereItemIcon.svelte";
+    import { describeCoWebsite } from "./describeCoWebsite";
+    import { IconChevronLeft, IconChevronRight, IconChevronDown, IconArrowsMinimize, IconX } from "@wa-icons";
 
     /** Inside the Open here window (its card, pill and grip are drawn around this), rather than the split beside the game. */
     export let windowed = false;
@@ -28,10 +41,26 @@
     let activeCowebsite: CoWebsite = $coWebsites[0];
     let resizeBar: HTMLElement | undefined;
     let unsubscribeCowebsitesUpdate: Unsubscriber | undefined;
+    let unsubscribePickedAfterUndo: Unsubscriber | undefined;
+    $: activeCoWebsiteStore.set(activeCowebsite);
 
     onMount(() => {
+        let previous: Array<CoWebsite> = [];
         unsubscribeCowebsitesUpdate = coWebsites.subscribe((arr) => {
-            activeCowebsite = arr[arr.length - 1];
+            // The newest item opens picked. Closing another one leaves the picked one where it is.
+            const added = arr.filter((coWebsite) => !previous.includes(coWebsite));
+            if (added.length > 0) {
+                activeCowebsite = added[added.length - 1];
+            } else if (!arr.includes(activeCowebsite)) {
+                activeCowebsite = arr[arr.length - 1];
+            }
+            previous = arr;
+        });
+        // After an undo the item that was picked is picked again, not the last one back.
+        unsubscribePickedAfterUndo = pickedAfterUndoStore.subscribe((picked) => {
+            if (picked === undefined) return;
+            if (get(coWebsites).includes(picked)) activeCowebsite = picked;
+            pickedAfterUndoStore.set(undefined);
         });
     });
 
@@ -145,6 +174,7 @@
         fullScreenCowebsite.set(false);
 
         unsubscribeCowebsitesUpdate?.();
+        unsubscribePickedAfterUndo?.();
 
         document.removeEventListener("mousemove", handleMouseMove);
         document.removeEventListener("mouseup", handleMouseUp);
@@ -221,7 +251,64 @@
     function onTabsScroll() {
         tabsScrollX = tabsContainer?.scrollLeft ?? 0;
     }
+
+    // The "N open" list: every open item in one place, so the seventh tab is one tap away.
+    let listOpen = false;
+    let listElement: HTMLElement | undefined;
+    let chipElement: HTMLElement | undefined;
+    $: if ($coWebsites.length < 2) listOpen = false;
+
+    function pickFromList(coWebsite: CoWebsite) {
+        if (activeCowebsite !== coWebsite) analyticsClient.switchCowebsite();
+        setActiveCowebsite(coWebsite);
+        listOpen = false;
+    }
+
+    function closeFromList(coWebsite: CoWebsite) {
+        coWebsites.remove(coWebsite);
+        analyticsClient.closeCowebsite();
+    }
+
+    function closeAllFromList() {
+        listOpen = false;
+        closeAllOpenItems();
+    }
+
+    function onWindowPointerDown(event: PointerEvent) {
+        if (!listOpen) return;
+        const target = event.target as Node | null;
+        if (target && (listElement?.contains(target) || chipElement?.contains(target))) return;
+        listOpen = false;
+    }
+
+    // Esc closes the list first, and leaves the window alone, wherever the focus is (capture: before the window's own Esc).
+    function onWindowKeyDownCapture(event: KeyboardEvent) {
+        if (event.key === "Escape" && listOpen) {
+            // The emote picker, the express tray and a picture shown large take their own Esc, as the window leaves it to them.
+            if ($emoteMenuStore || $expressTrayStore !== "closed" || $lightboxOpenStore) return;
+            event.preventDefault();
+            // Nothing else takes this Esc, such as the find bar of a file.
+            event.stopPropagation();
+            listOpen = false;
+            chipElement?.focus();
+        }
+    }
+
+    // A click on a page inside the window never reaches this window, but the game loses the focus to it: the list closes
+    // too. Switching to another app also blurs the game, with the focus left where it was, and nothing changes.
+    function onWindowBlur() {
+        if (!listOpen) return;
+        setTimeout(() => {
+            if (document.hasFocus() && document.activeElement instanceof HTMLIFrameElement) listOpen = false;
+        }, 0);
+    }
 </script>
+
+<svelte:window
+    on:pointerdown={onWindowPointerDown}
+    on:keydown|capture={onWindowKeyDownCapture}
+    on:blur={onWindowBlur}
+/>
 
 <div
     id="cowebsites-container"
@@ -266,11 +353,10 @@
                         <div
                             on:click={() => setActiveCowebsite(coWebsite)}
                             data-testid="tab{index + 1}"
-                            class="snap-start"
+                            class="tab-slot snap-start"
                         >
                             <CoWebsiteTab
                                 {coWebsite}
-                                isLoading={true}
                                 active={activeCowebsite === coWebsite}
                                 on:close={() => coWebsites.remove(coWebsite)}
                             />
@@ -290,6 +376,22 @@
                 </div>
             {/if}
 
+            {#if $coWebsites.length > 1}
+                <button
+                    type="button"
+                    class="open-chip"
+                    bind:this={chipElement}
+                    aria-expanded={listOpen}
+                    aria-haspopup="true"
+                    aria-label={$LL.cowebsite.openList()}
+                    data-testid="openHereList"
+                    on:click={() => (listOpen = !listOpen)}
+                >
+                    {$LL.cowebsite.openCount({ count: $coWebsites.length })}
+                    <IconChevronDown font-size="16" />
+                </button>
+            {/if}
+
             {#if !windowed}
                 <!-- svelte-ignore a11y-click-events-have-key-events -->
                 <!-- svelte-ignore a11y-no-static-element-interactions -->
@@ -307,6 +409,47 @@
                 </div>
             {/if}
         </div>
+
+        {#if listOpen}
+            <div class="open-list u-surface" bind:this={listElement} role="menu" data-testid="openHereListMenu">
+                {#each $coWebsites as coWebsite (coWebsite.getId())}
+                    {@const item = describeCoWebsite(coWebsite, $LL)}
+                    <div class="open-list-row" class:picked={coWebsite === activeCowebsite}>
+                        <button
+                            type="button"
+                            class="open-list-main"
+                            role="menuitem"
+                            on:click={() => pickFromList(coWebsite)}
+                        >
+                            <OpenHereItemIcon
+                                badge={item.badge}
+                                src={item.iconSrc}
+                                background={item.iconBackground}
+                                size={28}
+                            />
+                            <span class="open-list-text">
+                                <b>{item.name}</b>
+                                {#if item.line}<small>{item.line}</small>{/if}
+                            </span>
+                        </button>
+                        {#if coWebsite.isClosable()}
+                            <button
+                                type="button"
+                                class="open-list-x"
+                                aria-label={$LL.cowebsite.closeItem({ name: item.name })}
+                                title={$LL.cowebsite.close()}
+                                on:click={() => closeFromList(coWebsite)}
+                            >
+                                <IconX font-size="16" />
+                            </button>
+                        {/if}
+                    </div>
+                {/each}
+                <button type="button" class="open-list-all" on:click={closeAllFromList}>
+                    {$LL.cowebsite.closeAll()}
+                </button>
+            </div>
+        {/if}
 
         <div
             class={windowed
@@ -372,6 +515,161 @@
     .expanded-tabs,
     .pill-over-header :global(.open-here-row) {
         padding-inline-end: 136px;
+    }
+
+    /* "N open": neutral, and only its arrow turns when the list is showing. */
+    /* Tabs share the strip before it scrolls: on a phone two of them stay in view, each keeping its icon and its close. */
+    .tab-slot {
+        flex: 0 1 auto;
+        min-width: 104px;
+        max-width: 220px;
+    }
+
+    .open-chip {
+        box-sizing: border-box;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        flex: none;
+        height: 40px;
+        margin-inline: 8px;
+        padding: 0 10px 0 14px;
+        border: 0;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+        color: #fff;
+        font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        font-size: 14px;
+        font-weight: 600;
+        white-space: nowrap;
+        cursor: pointer;
+    }
+
+    .open-chip:hover,
+    .open-chip[aria-expanded="true"] {
+        background: rgba(255, 255, 255, 0.14);
+    }
+
+    .open-chip[aria-expanded="true"] :global(svg) {
+        transform: rotate(180deg);
+    }
+
+    /* The list: a menu under the chip, on the window's surface. */
+    .open-list {
+        position: absolute;
+        top: 60px;
+        inset-inline-end: 8px;
+        z-index: 5;
+        box-sizing: border-box;
+        width: min(320px, calc(100% - 16px));
+        max-height: calc(100% - 76px);
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        padding: 8px;
+        border-radius: 18px;
+        color: #fff;
+        font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+
+    .open-list-row {
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        min-height: 48px;
+        border-radius: 12px;
+    }
+
+    .open-list-row:hover {
+        background: rgba(255, 255, 255, 0.08);
+    }
+
+    .open-list-row.picked {
+        background: rgba(134, 41, 252, 0.14);
+        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.7);
+    }
+
+    .open-list-main {
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex: 1;
+        min-width: 0;
+        min-height: 48px;
+        padding: 4px 6px 4px 8px;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        text-align: start;
+        cursor: pointer;
+    }
+
+    .open-list-text {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        line-height: 1.2;
+    }
+
+    .open-list-text b {
+        font-size: 14px;
+        font-weight: 600;
+        text-transform: none;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .open-list-text small {
+        font-size: 11px;
+        opacity: 0.6;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .open-list-x {
+        box-sizing: border-box;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex: none;
+        width: 44px;
+        height: 44px;
+        padding: 0;
+        border: 0;
+        border-radius: 999px;
+        background: transparent;
+        color: #fff;
+        opacity: 0.8;
+        cursor: pointer;
+    }
+
+    .open-list-x:hover {
+        background: rgba(255, 255, 255, 0.14);
+        opacity: 1;
+    }
+
+    .open-list-all {
+        box-sizing: border-box;
+        margin-top: 6px;
+        height: 44px;
+        border: 0;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+        color: #fff;
+        font-family: inherit;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+    }
+
+    .open-list-all:hover {
+        background: rgba(255, 255, 255, 0.14);
     }
 
     .cowebsite-normal {
