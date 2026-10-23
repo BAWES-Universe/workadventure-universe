@@ -15,8 +15,6 @@ import { errorScreenStore } from "../../Stores/ErrorScreenStore";
 import {
     OFFLINE_NOTICE_AFTER_MS,
     RECONNECTING_CODE,
-    keepLogoInMemory,
-    logoFromMemory,
     reconnectingCopy,
     showReconnectingScreen,
     waitForNetwork,
@@ -59,15 +57,15 @@ const settled = async (promise: Promise<void>) => {
 describe("ReconnectScreen", () => {
     afterEach(() => errorScreenStore.delete());
 
-    it("shows the calm reconnecting screen with the room's logo", () => {
-        showReconnectingScreen("https://example.test/logo.png");
+    it("shows the calm reconnecting screen, with no picture from the room (it shows Universe's wordmark)", () => {
+        showReconnectingScreen();
 
         const screen = get(errorScreenStore);
         expect(screen?.type).toBe("reconnecting");
         expect(screen?.code).toBe(RECONNECTING_CODE);
         expect(screen?.title).toBe("Reconnecting");
         expect(screen?.details).toBe("Getting you back in");
-        expect(screen?.image).toBe("https://example.test/logo.png");
+        expect(screen?.image).toBeFalsy();
     });
 
     it("keeps a screen already up, such as a real error", () => {
@@ -85,7 +83,7 @@ describe("ReconnectScreen", () => {
             urlToRedirect: undefined,
         });
 
-        showReconnectingScreen(undefined);
+        showReconnectingScreen();
 
         expect(get(errorScreenStore)?.code).toBe("BANNED");
     });
@@ -133,73 +131,5 @@ describe("ReconnectScreen", () => {
         expect(reconnectingCopy(OFFLINE_NOTICE_AFTER_MS - 1, false)).toBe("reconnecting");
         expect(reconnectingCopy(OFFLINE_NOTICE_AFTER_MS, false)).toBe("offline");
         expect(reconnectingCopy(OFFLINE_NOTICE_AFTER_MS * 4, true)).toBe("reconnecting");
-    });
-
-    describe("the room's logo, kept in memory", () => {
-        // Lets the download's promise chain finish.
-        const flush = () =>
-            new Promise<void>((resolve) => {
-                setTimeout(resolve, 0);
-            });
-
-        afterEach(() => vi.unstubAllGlobals());
-
-        it("is copied while the network is up, so the screen shows it without the network", async () => {
-            const fetchLogo = vi.fn(() => Promise.resolve(new Response(new Blob(["png"]), { status: 200 })));
-            vi.stubGlobal("fetch", fetchLogo);
-            // The test page has no object URLs: a URL class that has them.
-            vi.stubGlobal(
-                "URL",
-                class extends URL {
-                    static createObjectURL = () => "blob:logo-copy";
-                }
-            );
-
-            keepLogoInMemory("https://example.test/kept.png");
-            keepLogoInMemory("https://example.test/kept.png");
-            await flush();
-
-            expect(fetchLogo).toHaveBeenCalledTimes(1);
-            expect(logoFromMemory("https://example.test/kept.png")).toBe("blob:logo-copy");
-            showReconnectingScreen("https://example.test/kept.png");
-            expect(get(errorScreenStore)?.image).toBe("blob:logo-copy");
-        });
-
-        it("keeps the address, and the picture loaded, when no copy can be made", async () => {
-            vi.stubGlobal(
-                "fetch",
-                vi.fn(() => Promise.reject(new TypeError("CORS")))
-            );
-            const loaded: string[] = [];
-            vi.stubGlobal(
-                "Image",
-                class {
-                    set src(value: string) {
-                        loaded.push(value);
-                    }
-                    decode() {
-                        return Promise.resolve();
-                    }
-                }
-            );
-
-            keepLogoInMemory("https://example.test/no-cors.png");
-            await flush();
-
-            expect(loaded).toEqual(["https://example.test/no-cors.png"]);
-            expect(logoFromMemory("https://example.test/no-cors.png")).toBe("https://example.test/no-cors.png");
-        });
-
-        it("leaves a logo that needs no network, or no logo, as it is", () => {
-            const fetchLogo = vi.fn();
-            vi.stubGlobal("fetch", fetchLogo);
-
-            keepLogoInMemory("data:image/png;base64,AAAA");
-            keepLogoInMemory(undefined);
-
-            expect(fetchLogo).not.toHaveBeenCalled();
-            expect(logoFromMemory("data:image/png;base64,AAAA")).toBe("data:image/png;base64,AAAA");
-            expect(logoFromMemory(undefined)).toBeUndefined();
-        });
     });
 });

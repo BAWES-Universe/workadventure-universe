@@ -404,6 +404,10 @@
         width: auto;
         height: auto;
         contain: layout;
+        /* `contain` stops the page's overflow: hidden from reaching the window, so the body is a box of its own, and
+           a hidden box can still be scrolled by script: scrollIntoView() (pasting into the chat, jumping to a
+           message) moved the whole game up under the strip. A clipped box cannot be scrolled at all. */
+        overflow: clip;
     }
 
     .u-title-bar {

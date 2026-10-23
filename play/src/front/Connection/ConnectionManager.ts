@@ -160,6 +160,8 @@ class ConnectionManager {
      * @param providerScopes - The scopes to request from the OpenID provider.
      */
     public loadOpenIDScreen(manuallyTriggered: boolean, providerId?: string, providerScopes?: string[]): URL | null {
+        // A guest's name is kept aside too, for when they sign out again (not an account's: see backupGuestName).
+        localUserStore.backupGuestName();
         localUserStore.setAuthToken(null);
         // Clear guest-picked textures/name/companion so OIDC user's
         // saved data loads from DB via the /room/access fallback.
@@ -206,6 +208,7 @@ class ConnectionManager {
      * in comes back to this room with the account's token, as through /login.
      */
     public goToSignIn(): void {
+        localUserStore.backupGuestName();
         if (!ENABLE_OPENID || !this._currentRoom) {
             window.location.assign("/login");
             return;
@@ -220,8 +223,12 @@ class ConnectionManager {
     public logout() {
         // save the current token to use it in the redirect logout url
         const tokenTmp = localUserStore.getAuthToken();
+        // Read before the token goes: a guest whose token was refused is not an account that signs out.
+        const wasSignedIn = localUserStore.isLogged();
         //remove token in localstorage
         localUserStore.setAuthToken(null);
+        // The device kept the account's name: the next guest here gets their own back, or none, not this one (#1192).
+        localUserStore.restoreGuestName(wasSignedIn);
         //user logout, set connected store for menu at false (actually don't do it because we are going to redirect and
         // it shortly displays the "sign in" button before redirect happens)
         //userIsConnected.set(false);
@@ -392,6 +399,7 @@ class ConnectionManager {
             //todo: add here some kind of warning if authToken has expired.
             if (!this.authToken) {
                 if (!this._currentRoom.authenticationMandatory) {
+                    this.dropAccountName();
                     await this.anonymousLogin();
 
                     // Back as a guest after a logout or an abandoned login: reuse the guest's woka
@@ -463,6 +471,8 @@ class ConnectionManager {
                             }
                             return redirect;
                         } else {
+                            // A guest's token that expired holds no account's name; an account's does.
+                            this.dropAccountName(localUserStore.storedTokenIsAccounts());
                             await this.anonymousLogin();
                         }
                     } else {
@@ -509,6 +519,16 @@ class ConnectionManager {
             room: this._currentRoom,
             nextScene,
         });
+    }
+
+    /**
+     * About to carry on as a guest: if the device still holds an account's name (signed out without logging out, or a
+     * sign-in abandoned), it and the game go back to the guest's own name, or none (#1192, as signing out does). The game
+     * read the name when the page started, so it is told too. A name the guest typed stays.
+     */
+    private dropAccountName(wasSignedIn = false): void {
+        localUserStore.restoreGuestName(wasSignedIn);
+        gameManager.setPlayerName(localUserStore.getName());
     }
 
     public async anonymousLogin(isBenchmark = false): Promise<void> {
@@ -740,10 +760,6 @@ class ConnectionManager {
                         code: "reconnecting",
                         title: get(LL).messageScreen.connecting(),
                         subtitle: get(LL).messageScreen.pleaseWait(),
-                        image:
-                            gameManager?.currentStartedRoom?.loadingLogo ??
-                            gameManager?.currentStartedRoom?.errorSceneLogo ??
-                            "",
                     })
                 );
             }
@@ -856,6 +872,7 @@ class ConnectionManager {
             userUuid,
             email,
             username,
+            usernameFromAccount,
             locale,
             visitCardUrl,
             matrixUserId,
@@ -883,10 +900,25 @@ class ConnectionManager {
             gameManager.setVisitCardUrl(visitCardUrl);
         }
 
+        // Another account's name stays on the device after a switch, and the game read it when it started: neither may
+        // show it for this account (the name this account does have is set below).
+        if (localUserStore.dropOtherAccountsName(userUuid)) {
+            gameManager.setPlayerName(localUserStore.getName());
+        }
+
         const opidWokaNamePolicy = this.currentRoom?.opidWokaNamePolicy;
         if (username != undefined && opidWokaNamePolicy != undefined) {
             if (hasCapability("api/save-name")) {
-                gameManager.setPlayerName(username);
+                if (usernameFromAccount) {
+                    gameManager.setPlayerName(username);
+                    // The account's name is the one that counts. The device keeps a copy so it never comes back with an
+                    // older name it held (#1192).
+                    localUserStore.setName(username, true);
+                } else {
+                    // Orbit didn't answer with the name this time, so this is only the name from sign-in, which can be
+                    // older than the account's name this device last got (#1192).
+                    gameManager.setPlayerName(localUserStore.getAccountName(userUuid) ?? username);
+                }
             } else {
                 if (opidWokaNamePolicy === "force_opid") {
                     gameManager.setPlayerName(username);

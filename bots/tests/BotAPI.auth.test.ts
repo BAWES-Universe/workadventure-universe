@@ -9,6 +9,7 @@ vi.mock('../utils/MovementLogger', () => ({ movementLogger: {} }));
 
 import jwt from 'jsonwebtoken';
 import { BotAPI } from '../server/BotAPI';
+import { BotBusyError, BotUnavailableError } from '../utils/summonErrors';
 
 const SESSION = `orb_sess_v2_${'a'.repeat(64)}`;
 const SECRET_KEY = 'test-secret-key';
@@ -25,6 +26,7 @@ const botManager = {
     despawnBot: vi.fn(),
     updateBot: vi.fn(),
     summonBot: vi.fn(),
+    getAccessGate: vi.fn(),
 };
 const adminApiService = {
     validateSessionToken: vi.fn(),
@@ -56,7 +58,8 @@ beforeEach(() => {
     vi.clearAllMocks();
     adminApiService.validateSessionToken.mockResolvedValue({ userId: 'u1', uuid: 'uuid-1', email: 'a@b.c' });
     adminApiService.canSessionManageBot.mockResolvedValue(true);
-    botManager.getBot.mockReturnValue({});
+    botManager.getBot.mockReturnValue({ getName: () => 'Nora' });
+    botManager.getAccessGate.mockReturnValue({ check: vi.fn().mockResolvedValue({ allowed: true, kind: 'allowed' }) });
     botManager.hasPlayersIn.mockResolvedValue(true);
     botManager.despawnBot.mockResolvedValue(undefined);
     botManager.updateBot.mockResolvedValue({ updated: true, changes: [] });
@@ -243,7 +246,6 @@ describe('bot server control routes', () => {
         ['PUT', '/api/bots/b1', { name: 'Hijacked' }],
         ['DELETE', '/api/bots/b1', undefined],
         ['GET', '/api/bots/b1', undefined],
-        ['GET', '/api/bots/b1/conversations', undefined],
         ['DELETE', '/api/bots/b1/conversations/cleanup', undefined],
         ['GET', '/api/bots/b1/status', undefined],
         ['POST', '/api/bots/test/run-suite', { testSuite: 'basic', botId: 'b1' }],
@@ -258,6 +260,14 @@ describe('bot server control routes', () => {
         expect(adminApiService.saveBotConfiguration).not.toHaveBeenCalled();
         expect(adminApiService.deleteBotConfiguration).not.toHaveBeenCalled();
     });
+
+    it.each(['/api/bots/b1/conversations', '/api/bots/b1/conversations/problematic', '/api/bots/b1/conversations/c1'])(
+        'has no route that reads saved chats: GET %s is not found, even for a bot manager',
+        async (path) => {
+            const response = await call('GET', path);
+            expect(response.status).toBe(404);
+        }
+    );
 
     it('despawns through the per-bot route for a person who can manage the bot', async () => {
         const response = await call('POST', '/api/bots/b1/despawn');
@@ -333,5 +343,160 @@ describe('starting a bot by hand', () => {
         expect(response.status).toBe(200);
         expect(botManager.hasPlayersIn).not.toHaveBeenCalled();
         expect(botManager.spawnBot).toHaveBeenCalled();
+    });
+});
+
+describe('Summon for every player, guests included', () => {
+    const summon = (body: unknown, headers: Record<string, string> = {}, botId = 'b1') =>
+        fetch(`${base}/api/bots/${botId}/summon`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...headers },
+            body: JSON.stringify(body),
+        });
+    const asGuest = { 'X-WA-Auth': GAME_TOKEN };
+    const guestBody = { playerUuid: 'guest-uuid', playerX: 1, playerY: 2 };
+
+    it('summons the bot for a guest with a valid game token, to where the bot sees them', async () => {
+        const response = await summon(guestBody, asGuest);
+        expect(response.status).toBe(200);
+        expect(botManager.summonBot).toHaveBeenCalledWith('b1', { playerUuid: 'guest-uuid' });
+        expect(((await response.json()) as { summoned: boolean }).summoned).toBe(true);
+        // A guest has no Orbit session, so nothing is asked of the Admin API.
+        expect(adminApiService.validateSessionToken).not.toHaveBeenCalled();
+    });
+
+    it('refuses a guest with no token at all', async () => {
+        const response = await summon(guestBody);
+        expect(response.status).toBe(401);
+        expect(botManager.summonBot).not.toHaveBeenCalled();
+    });
+
+    it('refuses a game token the game did not sign', async () => {
+        const forged = jwt.sign({ identifier: 'guest-uuid' }, 'another-key');
+        const response = await summon(guestBody, { 'X-WA-Auth': forged });
+        expect(response.status).toBe(401);
+        expect(botManager.summonBot).not.toHaveBeenCalled();
+    });
+
+    it('refuses a token that carries no identifier', async () => {
+        const anonymous = jwt.sign({ something: 'else' }, SECRET_KEY);
+        const response = await summon(guestBody, { 'X-WA-Auth': anonymous });
+        expect(response.status).toBe(403);
+        expect(botManager.summonBot).not.toHaveBeenCalled();
+    });
+
+    it('does not let a guest summon a bot to somebody else', async () => {
+        const response = await summon({ ...guestBody, playerUuid: 'someone-else' }, asGuest);
+        expect(response.status).toBe(403);
+        expect(((await response.json()) as { code: string }).code).toBe('not_you');
+        expect(botManager.summonBot).not.toHaveBeenCalled();
+    });
+
+    it('does not let a guest summon a bot to a signed-in member by naming their uuid', async () => {
+        const response = await summon({ ...guestBody, playerUuid: 'uuid-1' }, asGuest);
+        expect(response.status).toBe(403);
+        expect(botManager.summonBot).not.toHaveBeenCalled();
+    });
+
+    it('still summons for a signed-in player with an Orbit session, with or without the game token', async () => {
+        const body = { playerUuid: 'uuid-1', playerX: 1, playerY: 2 };
+        expect((await summon(body, { Authorization: `Bearer ${SESSION}` })).status).toBe(200);
+        expect((await summon(body, { Authorization: `Bearer ${SESSION}`, ...asGuest })).status).toBe(200);
+        expect(botManager.summonBot).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not let a signed-in player summon a bot to somebody else, with or without the game token', async () => {
+        const body = { playerUuid: 'someone-else', playerX: 1, playerY: 2 };
+        expect((await summon(body, { Authorization: `Bearer ${SESSION}` })).status).toBe(403);
+        expect((await summon(body, { Authorization: `Bearer ${SESSION}`, ...asGuest })).status).toBe(403);
+        expect(botManager.summonBot).not.toHaveBeenCalled();
+    });
+
+    it('does not take a member\'s game token (their email) as proof of their uuid', async () => {
+        const member = jwt.sign({ identifier: 'a@b.c' }, SECRET_KEY);
+        const response = await summon({ playerUuid: 'uuid-1', playerX: 1, playerY: 2 }, { 'X-WA-Auth': member });
+        expect(response.status).toBe(403);
+        expect(botManager.summonBot).not.toHaveBeenCalled();
+    });
+
+    it('answers 401 when the Orbit session ran out, so the game renews it and tries again', async () => {
+        adminApiService.validateSessionToken.mockResolvedValue(null);
+        const member = jwt.sign({ identifier: 'a@b.c' }, SECRET_KEY);
+        const response = await summon(
+            { playerUuid: 'uuid-1', playerX: 1, playerY: 2 },
+            { Authorization: `Bearer ${SESSION}`, 'X-WA-Auth': member }
+        );
+        expect(response.status).toBe(401);
+        expect(((await response.json()) as { code: string }).code).toBe('session_expired');
+        expect(botManager.summonBot).not.toHaveBeenCalled();
+    });
+
+    it('lets a guest summon even if they send a bad Orbit session', async () => {
+        adminApiService.validateSessionToken.mockResolvedValue(null);
+        const response = await summon(guestBody, { Authorization: `Bearer ${SESSION}`, ...asGuest });
+        expect(response.status).toBe(200);
+    });
+
+    it('treats a session the Admin API cannot check as no session', async () => {
+        adminApiService.validateSessionToken.mockRejectedValue(new Error('down'));
+        const response = await summon({ playerUuid: 'uuid-1' }, { Authorization: `Bearer ${SESSION}` });
+        expect(response.status).toBe(401);
+    });
+
+    it('rejects a malformed bearer token', async () => {
+        const response = await summon(guestBody, { Authorization: 'Bearer not-a-session' });
+        expect(response.status).toBe(401);
+    });
+
+    it('asks for the player to summon', async () => {
+        const response = await summon({ playerX: 1 }, asGuest);
+        expect(response.status).toBe(400);
+    });
+
+    describe('every refusal says why', () => {
+        const codeOf = async (response: Response) => ((await response.json()) as { code: string }).code;
+
+        it('404 not_here when the bot is not spawned', async () => {
+            botManager.getBot.mockReturnValue(undefined);
+            const response = await summon(guestBody, asGuest);
+            expect(response.status).toBe(404);
+            expect(await codeOf(response)).toBe('not_here');
+        });
+
+        it('404 not_here when the bot is spawned but not connected', async () => {
+            botManager.summonBot.mockRejectedValue(new BotUnavailableError('Bot b1 is not connected'));
+            const response = await summon(guestBody, asGuest);
+            expect(response.status).toBe(404);
+            expect(await codeOf(response)).toBe('not_here');
+        });
+
+        it('409 cannot_see_you when the bot does not see the player', async () => {
+            botManager.summonBot.mockResolvedValue(undefined);
+            const response = await summon(guestBody, asGuest);
+            expect(response.status).toBe(409);
+            expect(await codeOf(response)).toBe('cannot_see_you');
+        });
+
+        it('409 busy when the bot is with someone, talking, leading or already called over', async () => {
+            botManager.summonBot.mockRejectedValue(new BotBusyError());
+            const response = await summon(guestBody, asGuest);
+            expect(response.status).toBe(409);
+            expect(await codeOf(response)).toBe('busy');
+        });
+
+        it('409 already_with_you when the bot is with the player asking', async () => {
+            botManager.summonBot.mockRejectedValue(new BotBusyError(true));
+            const response = await summon(guestBody, asGuest);
+            expect(response.status).toBe(409);
+            expect(await codeOf(response)).toBe('already_with_you');
+        });
+
+        it('500 failed for anything else', async () => {
+            vi.spyOn(console, 'error').mockImplementation(() => undefined);
+            botManager.summonBot.mockRejectedValue(new Error('Pathfinding not initialized for bot'));
+            const response = await summon(guestBody, asGuest);
+            expect(response.status).toBe(500);
+            expect(await codeOf(response)).toBe('failed');
+        });
     });
 });

@@ -1,6 +1,7 @@
 import { get } from "svelte/store";
 import { describe, expect, it, vi } from "vitest";
 import type { RoomConnection } from "../../Connection/RoomConnection";
+import { worldRolesStore } from "../Roles/WorldRoles";
 import { AdminUserProvider, MEMBERS_REFRESH_AFTER_MS } from "./AdminUserProvider";
 
 function member(name: string, characterTextures: { id: string; url: string }[] = []) {
@@ -8,6 +9,27 @@ function member(name: string, characterTextures: { id: string; url: string }[] =
 }
 
 describe("AdminUserProvider", () => {
+    it("carries the roles Orbit named for each away member, for the badge", async () => {
+        worldRolesStore.set([
+            { key: "customer-service", name: "Customer Service", color: "#38BDF8", visibleOnOthers: true },
+        ]);
+        const connection = {
+            queryChatMembers: () =>
+                Promise.resolve({
+                    members: [{ ...member("Sara"), tags: ["customer-service", "member"] }, member("Bob")],
+                }),
+        } as unknown as RoomConnection;
+        const provider = new AdminUserProvider(connection);
+        const unsubscribe = provider.users.subscribe(() => undefined);
+        await provider.setFilter("");
+
+        const [sara, bob] = get(provider.users);
+        expect(sara.roles?.map((role) => role.name)).toEqual(["Customer Service"]);
+        expect(bob.roles).toEqual([]);
+        unsubscribe();
+        worldRolesStore.set(undefined);
+    });
+
     it("shows the latest search's members even when an older search answers last", async () => {
         const pending = new Map<string, (members: ReturnType<typeof member>[]) => void>();
         const connection = {
