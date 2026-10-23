@@ -23,6 +23,7 @@
         stepWidthStop,
     } from "../../Stores/OpenHereWidth";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
+    import { gameManager } from "../../Phaser/Game/GameManager";
     import { chatSheetLayoutStore, openHereSheetHeightStore } from "../../Chat/ChatSheetStore";
     import { CHAT_SHEET_SIZES } from "../../Chat/ChatSheetSizes";
     import { clampHeight, nearestSnap, nextSnap, sheetFrameStyle } from "../Sheet/BottomSheet";
@@ -126,6 +127,21 @@
     // open, they sit above the chat, behind the window.
     $: openHereSheetHeightStore.set(!floating && !tucked && !chatOverSheet ? sheetHeight : 0);
 
+    // The map is centred in the space the sheet leaves free, which is measured from the sheet as it is at that moment:
+    // once more as the sheet stops moving, whether it rose, or was tucked, untucked or snapped to another height. The
+    // scene of the moment, as chat's own sheet does it.
+    function reposition() {
+        gameManager.tryGetCurrentGameScene()?.reposition();
+    }
+
+    function onSheetAnimationEnd(event: AnimationEvent) {
+        if (!floating && event.target === event.currentTarget) reposition();
+    }
+
+    function onSheetTransitionEnd(event: TransitionEvent) {
+        if (!floating && event.target === event.currentTarget && event.propertyName === "height") reposition();
+    }
+
     function onSheetDrag(height: number) {
         if (chatOverSheet) return;
         // A tucked sheet dragged up is up again from where the finger is.
@@ -202,6 +218,8 @@
         windowBehindCardStore.set(false);
         openHereSheetHeightStore.set(0);
         fullScreenCowebsite.set(false);
+        // The sheet is gone, and the map has the space again.
+        if (!floating) reposition();
     });
 </script>
 
@@ -224,6 +242,8 @@
     data-testid={floating ? "openHereWindow" : "openHereSheet"}
     on:pointerdown|capture={bringForward}
     on:click={onSheetClick}
+    on:animationend={onSheetAnimationEnd}
+    on:transitionend={onSheetTransitionEnd}
 >
     {#if floating}
         <div

@@ -20,6 +20,10 @@ vi.mock("../../Stores/MobileLayoutStore", async () => {
     return { mobileLayoutStore: writable(true) };
 });
 vi.mock("../../../i18n/i18n-svelte", async () => (await import("../Woka/tests/i18nStub")).i18nStub);
+const reposition = vi.hoisted(() => vi.fn());
+vi.mock("../../Phaser/Game/GameManager", () => ({
+    gameManager: { tryGetCurrentGameScene: () => ({ reposition }) },
+}));
 const closeAllOpenItems = vi.hoisted(() => vi.fn());
 vi.mock("../../Stores/ClosedItemsStore", async (importOriginal) => ({
     ...(await importOriginal<Record<string, unknown>>()),
@@ -79,6 +83,7 @@ describe("OpenHereWindow as a phone's sheet", () => {
         target = document.createElement("div");
         document.body.append(target);
         closeAllOpenItems.mockClear();
+        reposition.mockClear();
     });
 
     afterEach(() => {
@@ -247,5 +252,27 @@ describe("OpenHereWindow as a phone's sheet", () => {
 
         expect(sheet()?.style.height).toBe(`${heights.full}px`);
         expect(get(openHereTuckedStore)).toBe(false);
+    });
+
+    it("centres the map again once the sheet has stopped moving, and when it is gone", async () => {
+        await mount("plan.pdf");
+        reposition.mockClear();
+
+        // Rising, or changing height: not before it ends, and not for a child's animation or another property.
+        sheet()?.dispatchEvent(new Event("animationend", { bubbles: true }));
+        expect(reposition).toHaveBeenCalledTimes(1);
+        const height = new Event("transitionend", { bubbles: true });
+        Object.defineProperty(height, "propertyName", { value: "height" });
+        sheet()?.dispatchEvent(height);
+        expect(reposition).toHaveBeenCalledTimes(2);
+        const padding = new Event("transitionend", { bubbles: true });
+        Object.defineProperty(padding, "propertyName", { value: "padding-top" });
+        sheet()?.dispatchEvent(padding);
+        handle()?.dispatchEvent(new Event("animationend", { bubbles: true }));
+        expect(reposition).toHaveBeenCalledTimes(2);
+
+        component?.$destroy();
+        component = undefined;
+        expect(reposition).toHaveBeenCalledTimes(3);
     });
 });
