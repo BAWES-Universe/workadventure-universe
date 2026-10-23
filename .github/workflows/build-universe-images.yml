@@ -496,8 +496,8 @@ jobs:
     if: needs.release.outputs.created == 'true'
     needs: release
     runs-on: ubuntu-latest
-    # Six services one after another, each waited on up to 20 minutes.
-    timeout-minutes: 90
+    # Six services one after another, each waited on up to 20 minutes (120 in the worst case).
+    timeout-minutes: 150
     # Recording the deployment uses the deployments API; nothing here reads repository files.
     permissions:
       contents: read
