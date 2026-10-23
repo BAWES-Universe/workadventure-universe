@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 
 vi.hoisted(() => {
     // The game reads its settings from window.env when it is loaded.
@@ -20,27 +20,27 @@ vi.mock("../../Stores/MobileLayoutStore", async () => {
     return { mobileLayoutStore: writable(true) };
 });
 vi.mock("../../../i18n/i18n-svelte", async () => (await import("../Woka/tests/i18nStub")).i18nStub);
-const reposition = vi.hoisted(() => vi.fn());
-vi.mock("../../Phaser/Game/GameManager", () => ({
-    gameManager: { tryGetCurrentGameScene: () => ({ reposition }) },
-}));
 const closeAllOpenItems = vi.hoisted(() => vi.fn());
 vi.mock("../../Stores/ClosedItemsStore", async (importOriginal) => ({
     ...(await importOriginal<Record<string, unknown>>()),
     closeAllOpenItems,
 }));
 
+// The game manager loads first, as it does in the game: its scene and the Api it listens to depend on that order.
+import { gameManager } from "../../Phaser/Game/GameManager";
 import { chatSheetLayoutStore, openHereSheetHeightStore } from "../../Chat/ChatSheetStore";
 import { CHAT_SHEET_SIZES } from "../../Chat/ChatSheetSizes";
 import { chatVisibilityStore } from "../../Stores/ChatStore";
 import { coWebsites } from "../../Stores/CoWebsiteStore";
 import { openHereSheetRestStore } from "../../Stores/OpenHereSheetStore";
 import { openHereTuckedStore } from "../../Stores/SideWindowInFrontStore";
+import type { GameScene } from "../../Phaser/Game/GameScene";
 import { FileViewerCoWebsite } from "../../WebRtc/CoWebsite/FileViewerCoWebsite";
 import { getSnapHeights } from "../Sheet/BottomSheet";
 import OpenHereWindow from "./OpenHereWindow.svelte";
 
 const heights = getSnapHeights(844, CHAT_SHEET_SIZES);
+const reposition = vi.fn();
 
 function file(name: string): FileViewerCoWebsite {
     // The file never arrives: only the window's own frame and row are under test.
@@ -67,6 +67,7 @@ function dragHandle(handle: Element, from: number, to: number): void {
 describe("OpenHereWindow as a phone's sheet", () => {
     let component: OpenHereWindow | undefined;
     let target: HTMLDivElement;
+    let sceneSpy: MockInstance | undefined;
 
     const sheet = () => target.querySelector<HTMLElement>('[data-testid="openHereSheet"]');
     const handle = () => target.querySelector<HTMLElement>('[data-testid="openHereSheetHandle"]');
@@ -84,11 +85,16 @@ describe("OpenHereWindow as a phone's sheet", () => {
         document.body.append(target);
         closeAllOpenItems.mockClear();
         reposition.mockClear();
+        // The real game manager stays, so the modules load as they always did; only the scene it hands out is a stand-in.
+        sceneSpy = vi
+            .spyOn(gameManager, "tryGetCurrentGameScene")
+            .mockReturnValue({ reposition } as unknown as GameScene);
     });
 
     afterEach(() => {
         component?.$destroy();
         component = undefined;
+        sceneSpy?.mockRestore();
         target.remove();
         coWebsites.removeAll();
         chatVisibilityStore.set(false);
