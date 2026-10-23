@@ -1,7 +1,7 @@
 <script lang="ts">
     import { onDestroy, tick } from "svelte";
     import { coWebsiteRatio, fullScreenCowebsite, windowSize } from "../../Stores/CoWebsiteStore";
-    import { closeAllOpenItems } from "../../Stores/ClosedItemsStore";
+    import { closeAllOpenItems, closeFrontItem } from "../../Stores/ClosedItemsStore";
     import { modalVisibilityStore } from "../../Stores/ModalStore";
     import { chatVisibilityStore } from "../../Stores/ChatStore";
     import { windowInFrontStore } from "../../Stores/WindowInFrontStore";
@@ -94,8 +94,8 @@
         overlayHadEscape = $emoteMenuStore || $expressTrayStore !== "closed" || $lightboxOpenStore;
     }
 
-    // Esc closes the window when it is the one in front, like Orbit's. Esc inside a box (the file's search) belongs to
-    // that box, and a key a page inside already used is left alone.
+    // Esc closes the item in front when the window is the one in front, like Orbit's (the last item takes the window with
+    // it). Esc inside a box (the file's search) belongs to that box, and a key a page inside already used is left alone.
     function onKeyDown(event: KeyboardEvent) {
         if (!floating || event.key !== "Escape" || event.defaultPrevented) return;
         if (behindOrbit || overlayHadEscape) return;
@@ -103,7 +103,7 @@
         if (target?.closest?.("input, textarea, select, [contenteditable='true']")) return;
         // Orbit leaves a key marked as used alone, so one press closes one window.
         event.preventDefault();
-        closeWindow();
+        closeFrontItem();
     }
 
     // ---- Phones held upright: the window is chat's own sheet (Sheet/BottomSheet.ts, SheetHandle.svelte) ----
