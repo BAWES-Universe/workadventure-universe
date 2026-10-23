@@ -83,9 +83,11 @@ describe("GET /me with refresh", () => {
     beforeEach(() => {
         vi.resetAllMocks();
         verifyJWTToken.mockReturnValue({ identifier: "u", accessToken: "old-access", refreshToken: "refresh" });
+        // Orbit sends a member's email; without it the answer is a guest's (see the #1232 tests below).
         fetchMemberDataByUuid.mockResolvedValue({
             status: "ok",
             userUuid: "u",
+            email: "u@example.test",
             isCharacterTexturesValid: true,
             isCompanionTextureValid: true,
         });
@@ -130,9 +132,11 @@ describe("GET /me asked again for a token it already renewed", () => {
         vi.resetAllMocks();
         vi.useFakeTimers({ toFake: ["Date"] });
         verifyJWTToken.mockReturnValue({ identifier: "u", accessToken: "old-access", refreshToken: "refresh" });
+        // Orbit sends a member's email; without it the answer is a guest's (see the #1232 tests below).
         fetchMemberDataByUuid.mockResolvedValue({
             status: "ok",
             userUuid: "u",
+            email: "u@example.test",
             isCharacterTexturesValid: true,
             isCompanionTextureValid: true,
         });
@@ -442,11 +446,125 @@ describe("GET /me says whether the name is the account's (#1192)", () => {
         fetchMemberDataByUuid.mockResolvedValue({
             status: "ok",
             userUuid: "owner",
+            email: "owner@example.test",
             isCharacterTexturesValid: true,
             isCompanionTextureValid: true,
         });
         await callMe({ token: "game-token", playUri });
         expect(fetchMemberDataByUuid).toHaveBeenCalledTimes(1);
         expect(refreshAccessToken).not.toHaveBeenCalled();
+    });
+});
+
+describe("GET /me for a signed-in player Orbit answers as a guest though the provider accepted the token (#1232)", () => {
+    const account = {
+        status: "ok",
+        userUuid: "owner",
+        email: "owner@example.test",
+        username: "Khalid",
+        tags: ["admin"],
+        isCharacterTexturesValid: true,
+        isCompanionTextureValid: true,
+    };
+    // What Orbit answers when it can't verify the access token in a public room: let in, without the account.
+    const asGuest = {
+        status: "ok",
+        userUuid: "owner",
+        email: null,
+        tags: [],
+        isCharacterTexturesValid: true,
+        isCompanionTextureValid: true,
+    };
+
+    beforeEach(() => {
+        vi.resetAllMocks();
+        verifyJWTToken.mockReturnValue({ identifier: "owner", accessToken: "old-access", refreshToken: "refresh" });
+        checkTokenAuth.mockResolvedValue({});
+        fetchMemberDataByUuid.mockImplementation((_id: string, accessToken: string | undefined) =>
+            Promise.resolve(accessToken === "new-access" ? account : asGuest)
+        );
+        refreshAccessToken.mockResolvedValue({ access_token: "new-access", refresh_token: "new-refresh" });
+        createAuthToken.mockReturnValue("renewed-game-token");
+    });
+
+    it("renews the token and asks Orbit again, so the player gets the account's name", async () => {
+        const res = await callMe({ token: "game-token", playUri });
+        expect(fetchMemberDataByUuid.mock.calls.map((call) => call[1])).toEqual(["old-access", "new-access"]);
+        expect(res.body).toEqual(
+            expect.objectContaining({
+                status: "ok",
+                authToken: "renewed-game-token",
+                email: "owner@example.test",
+                username: "Khalid",
+                usernameFromAccount: true,
+                tags: ["admin"],
+            })
+        );
+    });
+
+    it("lets them in with Orbit's first answer and the token they have when it can't be renewed", async () => {
+        refreshAccessToken.mockRejectedValue(new Error("provider down"));
+        const res = await callMe({ token: "game-token", playUri });
+        expect(fetchMemberDataByUuid).toHaveBeenCalledTimes(1);
+        expect(res.body).toEqual(
+            expect.objectContaining({ status: "ok", authToken: "game-token", usernameFromAccount: false })
+        );
+    });
+
+    it("keeps the first answer, with the renewed token, when Orbit can't be reached the second time", async () => {
+        fetchMemberDataByUuid.mockImplementation((_id: string, accessToken: string | undefined) =>
+            Promise.resolve(
+                accessToken === "new-access"
+                    ? {
+                          status: "error",
+                          type: "error",
+                          title: "Connection error",
+                          subtitle: "Something wrong happened while connecting!",
+                          image: "",
+                          code: "ROOM_ACCESS_ERROR",
+                          details: "Unknown error",
+                      }
+                    : asGuest
+            )
+        );
+        const res = await callMe({ token: "game-token", playUri });
+        expect(fetchMemberDataByUuid).toHaveBeenCalledTimes(2);
+        expect(res.body).toEqual(
+            expect.objectContaining({ status: "ok", authToken: "renewed-game-token", email: null })
+        );
+    });
+
+    it("answers with Orbit's refusal, and the renewed token, when Orbit refuses the account itself", async () => {
+        const banned = {
+            status: "error",
+            type: "error",
+            title: "Banned",
+            subtitle: "You can't enter this world",
+            code: "USER_BANNED",
+            details: "",
+        };
+        fetchMemberDataByUuid.mockImplementation((_id: string, accessToken: string | undefined) =>
+            Promise.resolve(accessToken === "new-access" ? banned : asGuest)
+        );
+        const res = await callMe({ token: "game-token", playUri });
+        expect(res.body).toEqual({ ...banned, authToken: "renewed-game-token" });
+    });
+
+    it("asks Orbit only twice when it still answers as a guest with the renewed token", async () => {
+        fetchMemberDataByUuid.mockResolvedValue(asGuest);
+        const res = await callMe({ token: "game-token", playUri });
+        expect(fetchMemberDataByUuid).toHaveBeenCalledTimes(2);
+        expect(refreshAccessToken).toHaveBeenCalledTimes(1);
+        expect(res.body).toEqual(
+            expect.objectContaining({ status: "ok", authToken: "renewed-game-token", usernameFromAccount: false })
+        );
+    });
+
+    it("doesn't ask again for a guest, who has no account to be known by", async () => {
+        verifyJWTToken.mockReturnValue({ identifier: "guest" });
+        const res = await callMe({ token: "guest-token", playUri });
+        expect(fetchMemberDataByUuid).toHaveBeenCalledTimes(1);
+        expect(refreshAccessToken).not.toHaveBeenCalled();
+        expect(res.body).toEqual(expect.objectContaining({ authToken: "guest-token" }));
     });
 });
