@@ -59,12 +59,16 @@ export function zipDataEntryCount(bytes: ArrayBuffer): number | undefined {
     if (end < 0) return undefined;
     const entries = view.getUint16(end + 10, true);
     let at = view.getUint32(end + 16, true);
+    let listed = 0;
     let count = 0;
-    for (let entry = 0; entry < entries; entry++) {
-        if (at + 46 > bytes.byteLength || view.getUint32(at, true) !== DIRECTORY_ENTRY) return undefined;
+    // JSZip reads every record it finds in a row, whatever number the end record gives, so this does too, and a list
+    // whose records and number disagree (no real zip has one) is refused.
+    while (at + 46 <= end && view.getUint32(at, true) === DIRECTORY_ENTRY) {
+        listed++;
         if (view.getUint32(at + 20, true) > EMPTY_STREAM_BYTES || view.getUint32(at + 24, true) > 0) count++;
         at += 46 + view.getUint16(at + 28, true) + view.getUint16(at + 30, true) + view.getUint16(at + 32, true);
     }
+    if (listed !== entries) return undefined;
     return count;
 }
 

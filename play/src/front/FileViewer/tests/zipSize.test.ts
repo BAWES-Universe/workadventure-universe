@@ -91,6 +91,18 @@ describe("counting what a zip really holds", () => {
         await expect(assertUnpackedWithin(bytes, 5000)).resolves.toBeUndefined();
     });
 
+    it("refuses a list whose records and number do not agree", async () => {
+        const bytes = (await zipOf({ "a.txt": "x".repeat(100), "b.txt": "y".repeat(100) })).slice(0);
+        const view = new DataView(bytes);
+        for (let at = bytes.byteLength - 22; at >= 0; at--) {
+            if (view.getUint32(at, true) === 0x06054b50) {
+                view.setUint16(at + 10, 1, true);
+                break;
+            }
+        }
+        await expect(assertUnpackedWithin(bytes, 5000)).rejects.toThrow("cannot be read");
+    });
+
     it("refuses bytes that are not a zip", async () => {
         await expect(
             assertUnpackedWithin(new TextEncoder().encode("hello").buffer as ArrayBuffer, 10)
