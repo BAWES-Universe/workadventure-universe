@@ -52,16 +52,17 @@ function file(name: string): FileViewerCoWebsite {
     });
 }
 
+function sendPointer(handle: Element, type: string, clientY: number): void {
+    const event = new MouseEvent(type, { clientY, button: 0, bubbles: true });
+    Object.defineProperty(event, "pointerId", { value: 1 });
+    handle.dispatchEvent(event);
+}
+
 /** A finger on the sheet's handle: pressed at `from`, moved to `to`, let go. */
 function dragHandle(handle: Element, from: number, to: number): void {
-    const send = (type: string, clientY: number) => {
-        const event = new MouseEvent(type, { clientY, button: 0, bubbles: true });
-        Object.defineProperty(event, "pointerId", { value: 1 });
-        handle.dispatchEvent(event);
-    };
-    send("pointerdown", from);
-    send("pointermove", to);
-    send("pointerup", to);
+    sendPointer(handle, "pointerdown", from);
+    sendPointer(handle, "pointermove", to);
+    sendPointer(handle, "pointerup", to);
 }
 
 describe("OpenHereWindow as a phone's sheet", () => {
@@ -296,5 +297,44 @@ describe("OpenHereWindow as a phone's sheet", () => {
         } finally {
             Reflect.deleteProperty(window, "matchMedia");
         }
+    });
+
+    it("ends a drag when the chat opens over the sheet, so the rest height is back once it closes", async () => {
+        await mount("plan.pdf");
+
+        sendPointer(handle()!, "pointerdown", 500);
+        sendPointer(handle()!, "pointermove", 400);
+        await tick();
+        expect(sheet()?.style.height).toBe(`${heights.half + 100}px`);
+
+        // A message arrives and the chat opens, and then the finger lifts.
+        chatVisibilityStore.set(true);
+        await tick();
+        sendPointer(handle()!, "pointerup", 400);
+        chatVisibilityStore.set(false);
+        await tick();
+
+        expect(sheet()?.style.height).toBe(`${heights.half}px`);
+        expect(get(openHereSheetRestStore)).toBe("half");
+    });
+
+    it("centres the map as soon as a drag is let go where the sheet already is, as no height changes then", async () => {
+        await mount("plan.pdf");
+        reposition.mockClear();
+
+        dragHandle(handle()!, 500, 400);
+        await tick();
+        await tick();
+
+        expect(sheet()?.style.height).toBe(`${heights.half + 100}px`);
+        expect(reposition).toHaveBeenCalledTimes(1);
+
+        // Tucked, the height does change, and the transition's end does it.
+        reposition.mockClear();
+        dragHandle(handle()!, 300, 700);
+        await tick();
+        await tick();
+        expect(get(openHereTuckedStore)).toBe(true);
+        expect(reposition).not.toHaveBeenCalled();
     });
 });

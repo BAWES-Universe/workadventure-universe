@@ -162,12 +162,24 @@
         sheetDragHeight = clampHeight(height, $windowSize.height, CHAT_SHEET_SIZES, 0);
     }
 
+    // Chat taking over mid-drag ends the drag: the finger no longer moves the sheet.
+    $: if (chatOverSheet) sheetDragHeight = undefined;
+
     function onSheetRelease(height: number) {
+        const dragged = sheetDragHeight;
+        sheetDragHeight = undefined;
         if (chatOverSheet) return;
         const release = openHereSheetRelease(height, $windowSize.height);
-        sheetDragHeight = undefined;
         if (release === "tuck") openHereTuckedStore.set(true);
         else openHereSheetRestStore.set(release);
+        // A sheet let go where it already is has no height to change, so no transition ends: it has settled now.
+        const settledHeight = openHereSheetHeight({
+            rest: release === "tuck" ? $openHereSheetRestStore : release,
+            tucked: release === "tuck",
+            chatOver: false,
+            viewportHeight: $windowSize.height,
+        });
+        if (dragged !== undefined && Math.abs(settledHeight - dragged) < 1) void tick().then(reposition);
     }
 
     function onSheetTap() {
