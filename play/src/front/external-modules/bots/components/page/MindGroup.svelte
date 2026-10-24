@@ -5,10 +5,10 @@
     import { botApiService } from "../../services/BotApiService";
     import { resolveVisionSupport } from "../../visionModels";
     import { canOpenOrbit, openOrbitPage } from "../../../admin-api/index";
-    import { canPick, mindBriefName, runsOnCards, type RunsOnCard } from "../../mindModel";
+    import { canPick, cardIcon, mindBriefName, runsOnCards, type RunsOnCard } from "../../mindModel";
     import PageGroup from "./PageGroup.svelte";
     import PageButton from "./PageButton.svelte";
-    import { IconChevronDown, IconExternalLink, IconKey, IconSparkles } from "@wa-icons";
+    import { IconChevronDown, IconCpu, IconExternalLink, IconKey, IconPlug, IconSparkles } from "@wa-icons";
 
     export let bot: BotData;
     export let open: boolean;
@@ -166,6 +166,7 @@
         <div class="bp-cap" id="bot-runs-on-label">{page.mind.runsOn()}</div>
         <div class="bp-cards" role="radiogroup" aria-labelledby="bot-runs-on-label" data-testid="bot-runs-on">
             {#each cards as card (card.kind + card.id)}
+                {@const icon = cardIcon(card)}
                 <button
                     type="button"
                     role="radio"
@@ -177,9 +178,16 @@
                     on:click={() => chooseCard(card)}
                 >
                     <span class="bp-cico">
-                        {#if card.kind === "universe-ai"}<IconSparkles font-size="20" />{:else}<IconKey
-                                font-size="20"
-                            />{/if}
+                        {#if icon?.kind === "logo"}
+                            <span
+                                class="bp-logo"
+                                data-testid="bot-runs-on-logo"
+                                style="-webkit-mask-image: url({icon.url}); mask-image: url({icon.url});"
+                            />
+                        {:else if icon?.kind === "plug"}<IconPlug font-size="22" />
+                        {:else if icon?.kind === "chip"}<IconCpu font-size="22" />
+                        {:else if card.kind === "universe-ai"}<IconSparkles font-size="22" />
+                        {:else}<IconKey font-size="22" />{/if}
                     </span>
                     <span class="bp-ctx">
                         <span class="bp-ct"
@@ -300,7 +308,23 @@
     .bp-cico {
         flex: none;
         display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        /* One slot for every card, so the names start in the same place whatever the icon */
+        width: 28px;
         color: #fff;
+    }
+    /* The logo is a one-colour picture drawn as a mask, so it takes the card's ink */
+    .bp-logo {
+        width: 24px;
+        height: 24px;
+        background: currentColor;
+        -webkit-mask-repeat: no-repeat;
+        mask-repeat: no-repeat;
+        -webkit-mask-position: center;
+        mask-position: center;
+        -webkit-mask-size: contain;
+        mask-size: contain;
     }
     .bp-ctx {
         flex: 1;
