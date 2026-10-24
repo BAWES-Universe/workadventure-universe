@@ -40,6 +40,18 @@
         }
     }
 
+    /** A column is at least as wide as the file makes it; a longer text still widens it. */
+    function widthOf(view: SheetView, column: number): string | undefined {
+        const width = view.columnWidths[column];
+        return width ? `${width}px` : undefined;
+    }
+
+    /** The viewer cuts a long text at 360px; a column the file makes wider than that is cut at its own width. */
+    function maxWidthOf(view: SheetView, column: number): string | undefined {
+        const width = view.columnWidths[column];
+        return width && width > 360 ? `${width}px` : undefined;
+    }
+
     $: sheet = sheets[current] as SheetView | undefined;
     $: note = sheet
         ? [
@@ -65,19 +77,35 @@
                         <tr>
                             <th class="corner" />
                             {#each { length: sheet.columnCount } as _, column (column)}
-                                <th class="letter">{columnLetters(column)}</th>
+                                <th class="letter" style:min-width={widthOf(sheet, column)}>{columnLetters(column)}</th>
                             {/each}
                         </tr>
                     </thead>
                     <tbody>
                         {#each sheet.rows as row, line (line)}
-                            <tr class:first={line === 0}>
+                            <!-- A file with its own look is drawn as it has it; a plain one gets a bold first row. -->
+                            <tr class:first={line === 0 && !sheet.styled}>
                                 <th class="number">{line + 1}</th>
                                 {#each row as cell, column (column)}
-                                    <!-- A cell is text, never HTML. A long value is cut with "..." and kept whole in the tooltip. -->
-                                    <td class:num={cell.number} title={cell.text.length > 40 ? cell.text : undefined}
-                                        >{cell.text}</td
-                                    >
+                                    {#if !cell.covered}
+                                        <!-- A cell is text, never HTML. A long value is cut with "..." and kept whole in the tooltip.
+                                             The look comes from numbers and "#rrggbb" colours the reader made, set as style properties. -->
+                                        <td
+                                            class:num={cell.number}
+                                            colspan={cell.colSpan}
+                                            rowspan={cell.rowSpan}
+                                            title={cell.text.length > 40 ? cell.text : undefined}
+                                            style:font-weight={cell.style?.bold ? "700" : undefined}
+                                            style:font-style={cell.style?.italic ? "italic" : undefined}
+                                            style:font-size={cell.style?.fontSize
+                                                ? `${cell.style.fontSize}px`
+                                                : undefined}
+                                            style:color={cell.style?.color}
+                                            style:background={cell.style?.fill}
+                                            style:min-width={widthOf(sheet, column)}
+                                            style:max-width={maxWidthOf(sheet, column)}>{cell.text}</td
+                                        >
+                                    {/if}
                                 {/each}
                             </tr>
                         {/each}

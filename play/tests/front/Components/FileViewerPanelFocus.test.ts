@@ -27,7 +27,7 @@ describe("the file panel and the game's keys", () => {
         inputFormFocusStore.set(false);
     });
 
-    function mountPanel(): { $destroy(): void } {
+    function mountPanel(): FileViewerCowebsiteComponent {
         target = document.createElement("div");
         document.body.appendChild(target);
         const coWebsite = new FileViewerCoWebsite({
@@ -61,5 +61,20 @@ describe("the file panel and the game's keys", () => {
         panel.$destroy();
 
         expect(get(inputFormFocusStore)).toBe(false);
+    });
+
+    it("hands the keys back to the game when the panel that had the focus is hidden", async () => {
+        const panel = mountPanel();
+        await tick();
+        const frame = target?.firstElementChild as HTMLElement;
+        frame.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+        expect(get(inputFormFocusStore)).toBe(true);
+
+        // Hiding the panel reports no focusout in some browsers.
+        panel.$set({ visible: false });
+        await tick();
+
+        expect(get(inputFormFocusStore)).toBe(false);
+        panel.$destroy();
     });
 });

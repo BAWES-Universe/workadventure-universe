@@ -146,17 +146,16 @@ test.describe("Map editor @oidc @nomobile @nowebkit", () => {
         // teleport on the area position and open the popup
         await Map.teleportToPosition(page, 9 * 32, 9 * 32);
 
-        // check if the iframe was opened and button thumbnail is visible
+        // check if the iframe was opened and button thumbnail is visible: the four apps are four tabs
         await page.getByTestId('tab1').getByText('Docs', { exact: true }).click();
         await page.getByTestId('tab2').getByText('Docs', { exact: true }).click();
-        await page.locator('.flex-0 > .w-10').click();
-        await page.getByTestId('tab2').getByText('Docs', { exact: true }).click();
         await page.getByTestId('tab3').getByText('Docs', { exact: true }).click();
-        await page.locator('div:nth-child(3) > .w-10').click();
-        await page.locator('[data-testid^="tab"]').getByText('Drive', { exact: true }).click();
-        await page.locator('div:nth-child(3) > .w-10').click();
-        await page.locator('[data-testid^="tab"]').getByText('Drive', { exact: true }).click();
+        await page.getByTestId('tab4').getByText('Drive', { exact: true }).click();
 
+        // the "4 open" list reaches every item, and picking one in it picks its tab
+        await page.getByTestId('openHereList').click();
+        await page.getByTestId('openHereListMenu').getByText('Docs', { exact: true }).first().click();
+        await expect(page.getByTestId('openHereListMenu')).toBeHidden();
 
         await page.context().close();
     });
