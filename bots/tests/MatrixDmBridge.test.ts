@@ -1240,6 +1240,21 @@ describe('DmReplyService resting line', () => {
     });
 });
 
+describe('DmReplyService bot settings', () => {
+    it('gives Orbit a time limit, so a stalled Orbit cannot hold a chat back', async () => {
+        const { DmReplyService } = await import('../server/DmReplyService');
+        const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
+        const getBotConfiguration = vi.fn(async () => ({ botId: BOT, name: 'Guide' }));
+        const admin = { isConfigured: () => true, getBotConfiguration };
+        Object.assign(service, {
+            botManager: { getBot: () => undefined, getAdminApiService: () => admin },
+            configCache: new Map(),
+        });
+        await service.getBotConfig(BOT);
+        expect(getBotConfiguration).toHaveBeenCalledWith(BOT, 10_000);
+    });
+});
+
 describe('MatrixDmBridge waiting messages', () => {
     it('forgets messages kept in this process after a day, even if the bot stays off', async () => {
         const client = makeClient();

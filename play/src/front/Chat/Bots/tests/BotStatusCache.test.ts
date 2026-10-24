@@ -93,6 +93,37 @@ describe("BotStatusCache trust time", () => {
         after();
     });
 
+    it("asks again about a bot still on screen once its answer is a minute old, and stops when nothing shows it", async () => {
+        vi.useFakeTimers();
+        try {
+            let now = 0;
+            const fetchStatus = vi.fn(() => Promise.resolve({ a: "gone" }));
+            const cache = new BotStatusCache(fetchStatus, () => now);
+            const values: unknown[] = [];
+            const stop = cache.store("a").subscribe((value) => values.push(value));
+            await vi.advanceTimersByTimeAsync(0);
+            expect(fetchStatus).toHaveBeenCalledTimes(1);
+            expect(values.at(-1)).toBe("gone");
+
+            // A wrong "gone" (Orbit restarting) does not stay: the open chat hears the real state within the minute after
+            fetchStatus.mockResolvedValue({ a: "online" } as never);
+            now = 30_000;
+            await vi.advanceTimersByTimeAsync(30_000);
+            expect(fetchStatus).toHaveBeenCalledTimes(1);
+            now = 60_000;
+            await vi.advanceTimersByTimeAsync(30_000);
+            expect(fetchStatus).toHaveBeenCalledTimes(2);
+            expect(values.at(-1)).toBe("online");
+
+            stop();
+            now = 200_000;
+            await vi.advanceTimersByTimeAsync(120_000);
+            expect(fetchStatus).toHaveBeenCalledTimes(2);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it("keeps showing what it knew when a lookup fails, and asks again on the next look", async () => {
         let now = 0;
         const fetchStatus = vi.fn((): Promise<Answer> => Promise.resolve({ a: "resting" }));

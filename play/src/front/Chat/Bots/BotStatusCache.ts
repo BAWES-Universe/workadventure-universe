@@ -5,6 +5,8 @@ import type { BotAvailability } from "./BotChatStatus";
 const STATUS_TTL_MS = 60 * 1000;
 /** Most bots one lookup asks about; it is the bot server's limit too. */
 const BATCH_MAX = 50;
+/** How often the bots still on screen are checked for an answer older than a minute. */
+const REFRESH_EVERY_MS = STATUS_TTL_MS / 2;
 
 type Fetch = (botIds: string[]) => Promise<Record<string, string> | null>;
 
@@ -28,6 +30,9 @@ export class BotStatusCache {
     private entries = new Map<string, Entry>();
     private pending = new Set<string>();
     private flushing: Promise<void> | undefined;
+    /** Re-asks while anything is shown, so an open chat moves on from a state that changed (or was wrong) by itself. */
+    private refresher: ReturnType<typeof setInterval> | undefined;
+    private watching = 0;
 
     constructor(private fetchStatus: Fetch, private now: () => number = Date.now) {}
 
@@ -37,8 +42,24 @@ export class BotStatusCache {
             entry.listeners.add(set);
             set(entry.value);
             if (this.now() - entry.askedAt >= STATUS_TTL_MS) this.request(botId, entry);
-            return () => entry.listeners.delete(set);
+            this.watching++;
+            this.refresher ??= setInterval(() => this.refresh(), REFRESH_EVERY_MS);
+            return () => {
+                entry.listeners.delete(set);
+                this.watching--;
+                if (this.watching === 0 && this.refresher) {
+                    clearInterval(this.refresher);
+                    this.refresher = undefined;
+                }
+            };
         });
+    }
+
+    /** Every bot still on screen whose answer is a minute old is asked about again, in one lookup. */
+    private refresh(): void {
+        for (const [botId, entry] of this.entries) {
+            if (entry.listeners.size > 0 && this.now() - entry.askedAt >= STATUS_TTL_MS) this.request(botId, entry);
+        }
     }
 
     /**

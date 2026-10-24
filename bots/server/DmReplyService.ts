@@ -20,6 +20,8 @@ const DEFAULT_INSTRUCTIONS = 'You are a helpful bot.';
 /** A direct message after this long counts as a new conversation, like walking up to the bot again. */
 const NEW_CONVERSATION_AFTER_MS = 30 * 60 * 1000;
 const CONFIG_CACHE_MS = 60 * 1000;
+/** Orbit gets this long to send a bot's settings before the lookup counts as failed (the person hears "couldn't answer"). */
+const CONFIG_TIMEOUT_MS = 10 * 1000;
 const MAX_TRACKED_PEOPLE = 10000;
 const MAX_CACHED_CONFIGS = 1000;
 
@@ -121,7 +123,8 @@ export class DmReplyService extends BaseBehavior {
         const admin = this.botManager.getAdminApiService();
         // Without the admin API settings the answer would read as "no such bot", which counts toward closing chats
         if (!admin.isConfigured()) throw new Error('The admin API is not configured, so bot settings cannot be loaded');
-        const config = await admin.getBotConfiguration(botId);
+        // Bounded, as every caller waits on it: a chat's next events, and the game's bot states
+        const config = await admin.getBotConfiguration(botId, CONFIG_TIMEOUT_MS);
         this.configCache.delete(botId);
         this.configCache.set(botId, { config, at: Date.now() });
         if (this.configCache.size > MAX_CACHED_CONFIGS) this.configCache.delete(this.configCache.keys().next().value!);
