@@ -1273,9 +1273,29 @@ describe('DmReplyService bot settings', () => {
         Object.assign(service, {
             botManager: { getBot: () => undefined, getAdminApiService: () => admin },
             configCache: new Map(),
+            missingCache: new Map(),
         });
         await service.getBotConfig(BOT);
         expect(getBotConfiguration).toHaveBeenCalledWith(BOT, 10_000);
+    });
+
+    it('keeps real bots cached when many ids that are not bots are looked up', async () => {
+        const { DmReplyService } = await import('../server/DmReplyService');
+        const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
+        const getBotConfiguration = vi.fn(async (botId: string) => (botId === BOT ? ({ botId: BOT, name: 'Guide' } as never) : null));
+        Object.assign(service, {
+            configCache: new Map(),
+            missingCache: new Map(),
+            botManager: { getBot: () => undefined, getAdminApiService: () => ({ isConfigured: () => true, getBotConfiguration }) },
+        });
+        expect(await service.getBotConfig(BOT)).toMatchObject({ botId: BOT });
+        for (let i = 0; i < 1500; i++) expect(await service.getBotConfig(`not-a-bot-${i}`)).toBeNull();
+        getBotConfiguration.mockClear();
+        expect(await service.getBotConfig(BOT)).toMatchObject({ botId: BOT });
+        // A recent "not a bot" answer is kept too, so asking again does not reach Orbit
+        expect(await service.getBotConfig('not-a-bot-1499')).toBeNull();
+        expect(getBotConfiguration).not.toHaveBeenCalled();
+        expect((service as any).missingCache.size).toBe(1000);
     });
 });
 

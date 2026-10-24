@@ -66,7 +66,9 @@ export class DmReplyService extends BaseBehavior {
     private playerIds = new Map<string, number>();
     private nextPlayerId = -1;
     private loadedBots = new Set<string>();
-    private configCache = new Map<string, { config: BotConfiguration | null; at: number }>();
+    private configCache = new Map<string, { config: BotConfiguration; at: number }>();
+    // Kept apart, so lookups of ids that are not bots cannot push real bots out of the cache above
+    private missingCache = new Map<string, number>();
 
     constructor(private botManager: BotManager) {
         super({ type: 'dm' });
@@ -118,16 +120,26 @@ export class DmReplyService extends BaseBehavior {
     async getBotConfig(botId: string, fresh = false): Promise<BotConfiguration | null> {
         const live = this.botManager.getBot(botId)?.getFullConfig();
         if (live) return live;
-        const cached = this.configCache.get(botId);
-        if (!fresh && cached && Date.now() - cached.at < CONFIG_CACHE_MS) return cached.config;
+        if (!fresh) {
+            const cached = this.configCache.get(botId);
+            if (cached && Date.now() - cached.at < CONFIG_CACHE_MS) return cached.config;
+            const missingAt = this.missingCache.get(botId);
+            if (missingAt !== undefined && Date.now() - missingAt < CONFIG_CACHE_MS) return null;
+        }
         const admin = this.botManager.getAdminApiService();
         // Without the admin API settings the answer would read as "no such bot", which counts toward closing chats
         if (!admin.isConfigured()) throw new Error('The admin API is not configured, so bot settings cannot be loaded');
         // Bounded, as every caller waits on it: a chat's next events, and the game's bot states
         const config = await admin.getBotConfiguration(botId, CONFIG_TIMEOUT_MS);
         this.configCache.delete(botId);
-        this.configCache.set(botId, { config, at: Date.now() });
-        if (this.configCache.size > MAX_CACHED_CONFIGS) this.configCache.delete(this.configCache.keys().next().value!);
+        this.missingCache.delete(botId);
+        if (config) {
+            this.configCache.set(botId, { config, at: Date.now() });
+            if (this.configCache.size > MAX_CACHED_CONFIGS) this.configCache.delete(this.configCache.keys().next().value!);
+        } else {
+            this.missingCache.set(botId, Date.now());
+            if (this.missingCache.size > MAX_CACHED_CONFIGS) this.missingCache.delete(this.missingCache.keys().next().value!);
+        }
         return config;
     }
 
