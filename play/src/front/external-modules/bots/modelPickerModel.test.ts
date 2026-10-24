@@ -3,12 +3,17 @@ import type { BotAiOptions, KeyModelOption } from "./types";
 import {
     aiModelPlan,
     botModelOf,
+    factVaries,
     filterModels,
     groupModels,
     keyChoice,
+    listNote,
+    makerFacts,
     makerOf,
     modelRow,
     preselectedModel,
+    rowFacts,
+    sharedFacts,
     shortName,
     visibleMakers,
 } from "./modelPickerModel";
@@ -247,5 +252,72 @@ describe("the list", () => {
         expect(visibleMakers(many, { showAll: false, filtering: false, keep: new Set(["m10"]) })).toHaveLength(9);
         expect(visibleMakers(many, { showAll: true, filtering: false, keep: new Set() })).toHaveLength(12);
         expect(visibleMakers(many, { showAll: false, filtering: true, keep: new Set() })).toHaveLength(12);
+    });
+});
+
+describe("what the list says once", () => {
+    const v = (id: string, over: Partial<KeyModelOption> = {}): KeyModelOption => ({ id, ...over });
+    const allVision = [v("a", { vision: true }), v("b", { vision: true }), v("c", { vision: true })];
+
+    it("says what every model has: all have Vision", () => {
+        expect(sharedFacts(allVision)).toEqual(["vision"]);
+        expect(listNote(allVision, allVision, false)).toEqual({ kind: "all", count: 3, facts: ["vision"] });
+    });
+
+    it("says both when every model has Tools and Vision", () => {
+        const both = [v("a", { tools: true, vision: true }), v("b", { tools: true, vision: true })];
+        expect(listNote(both, both, false)).toEqual({ kind: "all", count: 2, facts: ["tools", "vision"] });
+    });
+
+    it("says nothing when only some models have it", () => {
+        const some = [v("a", { vision: true }), v("b"), v("c", { vision: false })];
+        expect(sharedFacts(some)).toEqual([]);
+        expect(listNote(some, some, false)).toBeNull();
+    });
+
+    it("says nothing when none have it, or the list has one model", () => {
+        expect(listNote([v("a"), v("b")], [v("a"), v("b")], false)).toBeNull();
+        expect(sharedFacts([v("a", { vision: true })])).toEqual([]);
+        expect(listNote([v("a", { vision: true })], [v("a", { vision: true })], false)).toBeNull();
+    });
+
+    it("counts what is left instead while searching or filtering", () => {
+        const list = ids("google/a", "google/b", "deepseek/c", "plain");
+        expect(listNote(list, list.slice(0, 3), true)).toEqual({ kind: "found", models: 3, makers: 2 });
+        expect(listNote(ids("x", "y"), ids("x"), true)).toEqual({ kind: "found", models: 1, makers: null });
+        expect(listNote(list, [], true)).toBeNull();
+    });
+
+    it("offers a filter only when it would sort the list", () => {
+        expect(factVaries(allVision, "vision")).toBe(false);
+        expect(factVaries([v("a", { vision: true }), v("b")], "vision")).toBe(true);
+        expect(factVaries([v("a"), v("b")], "tools")).toBe(false);
+    });
+
+    it("a maker row says what only its models share, not what the list said already", () => {
+        const google = [v("google/a", { tools: true, vision: true }), v("google/b", { tools: true, vision: true })];
+        expect(makerFacts(google, [])).toEqual(["tools", "vision"]);
+        expect(makerFacts(google, ["vision"])).toEqual(["tools"]);
+        expect(makerFacts([v("deepseek/a", { tools: true, vision: true })], [])).toEqual([]);
+    });
+
+    it("rows show only what is different", () => {
+        const group = [
+            v("d/flash", { tools: true, vision: true }),
+            v("d/v4", { tools: true }),
+            v("d/v3", { tools: true }),
+            v("d/r1", { tools: false }),
+        ];
+        // Vision on the one model that has it, nothing for Tools (most have it), No tools on the one that doesn't
+        expect(rowFacts(group[0], group, [])).toEqual({ facts: ["vision"], noTools: false });
+        expect(rowFacts(group[1], group, [])).toEqual({ facts: [], noTools: false });
+        expect(rowFacts(group[3], group, [])).toEqual({ facts: [], noTools: true });
+        // What was said once above is not repeated on rows
+        expect(rowFacts(group[0], group, ["vision"])).toEqual({ facts: [], noTools: false });
+    });
+
+    it("a model alone in its group shows what it has", () => {
+        const alone = [v("deepseek/deepseek-flash", { tools: true, vision: true })];
+        expect(rowFacts(alone[0], alone, [])).toEqual({ facts: ["tools", "vision"], noTools: false });
     });
 });

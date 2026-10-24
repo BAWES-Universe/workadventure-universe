@@ -176,6 +176,66 @@ export function visibleMakers(
     return makers.filter((maker, index) => index < MAKERS_FIRST || options.keep.has(maker.id));
 }
 
+export type Fact = "tools" | "vision";
+const FACTS: readonly Fact[] = ["tools", "vision"];
+
+/** What every model of a group has, said once (two or more models: "All 10 have Vision"). */
+export function sharedFacts(models: readonly KeyModelOption[]): Fact[] {
+    if (models.length < 2) return [];
+    return FACTS.filter((fact) => models.every((model) => model[fact] === true));
+}
+
+/** Whether a filter on this fact would sort the list: some models have it and some don't. */
+export function factVaries(models: readonly KeyModelOption[], fact: Fact): boolean {
+    const have = models.filter((model) => model[fact] === true).length;
+    return have > 0 && have < models.length;
+}
+
+/**
+ * The line above the list: what every model has ("All 10 have Vision"), or, while the person searches or filters, how many
+ * models are left and from how many makers. Nothing otherwise.
+ */
+export type ListNote =
+    | { kind: "all"; count: number; facts: Fact[] }
+    | { kind: "found"; models: number; makers: number | null };
+
+export function listNote(
+    models: readonly KeyModelOption[],
+    shown: readonly KeyModelOption[],
+    filtering: boolean
+): ListNote | null {
+    if (filtering) {
+        if (shown.length === 0) return null;
+        const makers = groupModels(shown).makers.length;
+        return { kind: "found", models: shown.length, makers: makers > 0 ? makers : null };
+    }
+    const facts = sharedFacts(models);
+    return facts.length > 0 ? { kind: "all", count: models.length, facts } : null;
+}
+
+/** What a maker's row says once for its own models, apart from what the whole list already said. */
+export function makerFacts(models: readonly KeyModelOption[], saidAbove: readonly Fact[]): Fact[] {
+    return sharedFacts(models).filter((fact) => !saidAbove.includes(fact));
+}
+
+/**
+ * What one row shows: only what is different. A fact said once above is not repeated; "No tools" always shows; Tools shows
+ * on a model only when most of its group doesn't have it (or it is alone), and Vision wherever it isn't said once.
+ */
+export function rowFacts(
+    model: KeyModelOption,
+    group: readonly KeyModelOption[],
+    said: readonly Fact[]
+): { facts: Fact[]; noTools: boolean } {
+    const facts = FACTS.filter((fact) => {
+        if (said.includes(fact) || model[fact] !== true) return false;
+        if (fact === "vision") return true;
+        const have = group.filter((entry) => entry.tools === true).length;
+        return group.length < 2 || have * 2 < group.length;
+    });
+    return { facts, noTools: model.tools === false };
+}
+
 /** The maker holding this model, to open its row first. */
 export function makerHolding(id: string | null | undefined): string | null {
     return id ? makerOf(id) : null;

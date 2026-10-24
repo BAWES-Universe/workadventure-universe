@@ -2,9 +2,13 @@
     // One model in the radio list: its name, what the provider says is different about it, and the radio.
     import LL from "../../../../../i18n/i18n-svelte";
     import type { KeyModelOption } from "../../types";
-    import { IconAlertTriangle, IconEye } from "@wa-icons";
+    import type { Fact } from "../../modelPickerModel";
+    import { IconAlertTriangle, IconEye, IconTool } from "@wa-icons";
 
     export let entry: KeyModelOption;
+    /** What is different about this model: the facts it shows (what the list says once is left out) */
+    export let facts: Fact[] = [];
+    export let noTools = false;
     /** What is shown as its name (the list drops a maker's name from its models) */
     export let name: string;
     export let picked: boolean;
@@ -22,14 +26,19 @@
 >
     <span class="mc-t">
         <span class="mc-id">{name}</span>
-        {#if entry.vision === true || entry.tools === false}
+        {#if facts.length > 0 || noTools}
             <span class="mc-tags">
-                {#if entry.vision === true}
+                {#if facts.includes("tools")}
+                    <span class="mc-tag"
+                        ><IconTool font-size="14" />{$LL.mapEditor.edit.bots.page.mind.model.tools()}</span
+                    >
+                {/if}
+                {#if facts.includes("vision")}
                     <span class="mc-tag"
                         ><IconEye font-size="14" />{$LL.mapEditor.edit.bots.page.mind.seesPictures()}</span
                     >
                 {/if}
-                {#if entry.tools === false}
+                {#if noTools}
                     <span class="mc-tag warn"
                         ><IconAlertTriangle font-size="14" />{$LL.mapEditor.edit.bots.page.mind.model.noTools()}</span
                     >

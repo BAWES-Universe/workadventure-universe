@@ -5,16 +5,30 @@
     import LL from "../../../../../i18n/i18n-svelte";
     import type { KeyModelOption } from "../../types";
     import {
+        factVaries,
         filterModels,
         groupModels,
         isFiltering,
+        listNote,
+        makerFacts,
         makerHolding,
+        rowFacts,
+        sharedFacts,
         shortName,
         visibleMakers,
+        type Fact,
         type ModelFilter,
     } from "../../modelPickerModel";
     import ModelChoice from "./ModelChoice.svelte";
-    import { IconChevronDown, IconChevronLeft, IconChevronRight, IconEye, IconSearch, IconTool } from "@wa-icons";
+    import {
+        IconCheck,
+        IconChevronDown,
+        IconChevronLeft,
+        IconChevronRight,
+        IconEye,
+        IconSearch,
+        IconTool,
+    } from "@wa-icons";
 
     export let botName: string;
     export let keyName: string;
@@ -44,8 +58,21 @@
     $: keep = new Set([...opened, ...(makerHolding(draft) ? [makerHolding(draft) as string] : [])]);
     $: makers = visibleMakers(grouped.makers, { showAll, filtering, keep });
     $: hiddenMakers = grouped.makers.length - makers.length;
-    $: hasTools = models.some((entry) => entry.tools === true);
-    $: hasVision = models.some((entry) => entry.vision === true);
+    // A filter is offered when it would sort the list: some models have the fact and some don't
+    $: hasTools = factVaries(models, "tools");
+    $: hasVision = factVaries(models, "vision");
+    $: hasMakers = allMakers.length > 0;
+    $: note = listNote(models, shown, filtering);
+    // What every model has is said once above the list; a maker's row says what only its own models share
+    $: listSaid = filtering ? [] : sharedFacts(models);
+    $: foundText =
+        note?.kind === "found"
+            ? [model.makerCount({ count: note.models }), note.makers ? model.fromMakers({ count: note.makers }) : ""]
+                  .filter(Boolean)
+                  .join(" ")
+            : "";
+    const factText = (fact: Fact) =>
+        fact === "tools" ? model.tools() : $LL.mapEditor.edit.bots.page.mind.seesPictures();
 
     function toggleMaker(id: string) {
         const next = new Set(opened);
@@ -77,8 +104,12 @@
         <input
             type="search"
             bind:value={query}
-            placeholder={model.search({ count: models.length })}
-            aria-label={model.search({ count: models.length })}
+            placeholder={hasMakers
+                ? model.searchMakers({ count: models.length })
+                : model.search({ count: models.length })}
+            aria-label={hasMakers
+                ? model.searchMakers({ count: models.length })
+                : model.search({ count: models.length })}
             data-testid="bot-model-search"
         />
     </label>
@@ -92,7 +123,7 @@
                     data-testid="bot-model-filter-tools"
                     on:click={() => (tools = !tools)}
                 >
-                    <IconTool font-size="16" />
+                    {#if tools}<IconCheck font-size="16" />{:else}<IconTool font-size="16" />{/if}
                     {model.tools()}
                 </button>
             {/if}
@@ -104,20 +135,44 @@
                     data-testid="bot-model-filter-vision"
                     on:click={() => (vision = !vision)}
                 >
-                    <IconEye font-size="16" />
+                    {#if vision}<IconCheck font-size="16" />{:else}<IconEye font-size="16" />{/if}
                     {$LL.mapEditor.edit.bots.page.mind.seesPictures()}
                 </button>
             {/if}
         </div>
     {/if}
+    {#if note}
+        <p class="ml-note" data-testid="bot-model-note">
+            {#if note.kind === "all"}
+                {model.allHave({ count: note.count })}
+                {#each note.facts as fact (fact)}
+                    <span class="ml-fact">
+                        {#if fact === "tools"}<IconTool font-size="14" />{:else}<IconEye font-size="14" />{/if}
+                        {factText(fact)}
+                    </span>
+                {/each}
+            {:else}
+                {foundText}
+            {/if}
+        </p>
+    {/if}
 
     <div class="ml-list" role="radiogroup" aria-label={model.listFor({ bot: botName, key: keyName })}>
         {#each grouped.flat as entry (entry.id)}
-            <ModelChoice {entry} name={entry.id} picked={draft === entry.id} onPick={pick} />
+            {@const shownFacts = rowFacts(entry, grouped.flat, listSaid)}
+            <ModelChoice
+                {entry}
+                name={entry.id}
+                facts={shownFacts.facts}
+                noTools={shownFacts.noTools}
+                picked={draft === entry.id}
+                onPick={pick}
+            />
         {/each}
 
         {#each makers as maker (maker.id)}
             {@const open = isOpen(maker.id, opened, filtering)}
+            {@const said = makerFacts(maker.models, listSaid)}
             <div class="ml-maker" class:open data-testid="bot-model-maker-{maker.id}">
                 <button
                     type="button"
@@ -133,13 +188,36 @@
                                 ? ` · ${model.picked()}`
                                 : ""}
                         </span>
+                        {#if open && said.length > 0}
+                            <span class="ml-mcount ml-allhave">
+                                {model.allHaveMaker()}
+                                {#each said as fact (fact)}
+                                    <span class="ml-fact">
+                                        {#if fact === "tools"}<IconTool font-size="14" />{:else}<IconEye
+                                                font-size="14"
+                                            />{/if}
+                                        {factText(fact)}
+                                    </span>
+                                {/each}
+                            </span>
+                        {/if}
                     </span>
-                    {#if open}<IconChevronDown font-size="18" />{:else}<IconChevronRight font-size="18" />{/if}
+                    {#if !filtering}
+                        {#if open}<IconChevronDown font-size="18" />{:else}<IconChevronRight font-size="18" />{/if}
+                    {/if}
                 </button>
                 {#if open}
                     <div class="ml-mbody">
                         {#each maker.models as entry (entry.id)}
-                            <ModelChoice {entry} name={shortName(entry.id)} picked={draft === entry.id} onPick={pick} />
+                            {@const shownFacts = rowFacts(entry, maker.models, [...listSaid, ...said])}
+                            <ModelChoice
+                                {entry}
+                                name={shortName(entry.id)}
+                                facts={shownFacts.facts}
+                                noTools={shownFacts.noTools}
+                                picked={draft === entry.id}
+                                onPick={pick}
+                            />
                         {/each}
                     </div>
                 {/if}
@@ -313,6 +391,27 @@
     .ml-mcount {
         font-size: 12.5px;
         color: rgba(244, 242, 250, 0.64);
+    }
+    .ml-note {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 4px 10px;
+        margin: 0;
+        font-size: 12.5px;
+        color: rgba(244, 242, 250, 0.64);
+    }
+    .ml-allhave {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 2px 10px;
+    }
+    .ml-fact {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-weight: 600;
     }
     .ml-empty {
         margin: 0;
