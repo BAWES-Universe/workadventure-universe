@@ -251,7 +251,7 @@
     }
 
     function putBackPlace(): void {
-        if (!destroyed && container && view?.scrollY !== undefined) container.scrollTop = view.scrollY;
+        if (!destroyed && container && view?.scrollY !== undefined) container.scrollTop = view.scrollY * container.scrollHeight;
     }
 
     function onFirstPageRendered(): void {
@@ -263,7 +263,13 @@
     /** What the reader needs to look the same when it is brought back. */
     export function getView(): ViewerView | undefined {
         if (!placed) return undefined;
-        return { zoom: pdfViewer?.currentScaleValue ?? undefined, scrollY: container?.scrollTop ?? 0 };
+        // As a share of the file's height: the panel may have been turned or resized by the time it is back, and the
+        // file then draws at another size.
+        const height = container?.scrollHeight ?? 0;
+        return {
+            zoom: pdfViewer?.currentScaleValue ?? undefined,
+            scrollY: height > 0 ? container.scrollTop / height : 0,
+        };
     }
 
     function onPageChanging(event: { pageNumber: number }): void {
