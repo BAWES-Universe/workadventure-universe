@@ -65,11 +65,14 @@ describe('checking the Matrix registration at startup', () => {
             .fn()
             .mockRejectedValueOnce(new Error('ECONNREFUSED'))
             .mockResolvedValueOnce({ ok: false, status: 502 })
+            .mockResolvedValueOnce({ ok: false, status: 404 })
+            .mockResolvedValueOnce({ ok: false, status: 429, errcode: 'M_LIMIT_EXCEEDED' })
             .mockResolvedValueOnce({ ok: true, userId: '@universe-bots:matrix.example' });
         const verified = m.verifyMatrixRegistration({ whoami }, CONFIG);
-        await vi.advanceTimersByTimeAsync(2_000 + 4_000);
+        await vi.advanceTimersByTimeAsync(2_000 + 4_000 + 8_000 + 15_000);
         expect(await verified).toBe(true);
-        expect(whoami).toHaveBeenCalledTimes(3);
+        expect(whoami).toHaveBeenCalledTimes(5);
+        expect(m.captureMessage).not.toHaveBeenCalled();
         expect(m.activeMatrixConfig(ENV)).toEqual(CONFIG);
     });
 

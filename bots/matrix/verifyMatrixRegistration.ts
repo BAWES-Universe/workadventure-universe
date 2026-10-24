@@ -8,6 +8,8 @@ const RETRY_DELAYS_MS = [2_000, 4_000, 8_000, 15_000, 15_000, 15_000];
 const ATTEMPT_TIMEOUT_MS = 5_000;
 /** Startup waits on this check (map bots included), so it never takes longer than this in all. */
 const DEADLINE_MS = 60_000;
+/** Answers that say "not now" rather than "not you": timed out, too early, too many requests, or no route yet. */
+const RETRY_STATUSES = new Set([404, 408, 425, 429]);
 
 export const MATRIX_REJECTED_MESSAGE =
     '[BotServer] Matrix direct messages are OFF: Synapse does not accept MATRIX_AS_TOKEN (check the registration file on Synapse and MATRIX_AS_TOKEN / MATRIX_HS_TOKEN / MATRIX_DOMAIN)';
@@ -36,8 +38,9 @@ export async function verifyMatrixRegistration(
             }
             return reject(MATRIX_REJECTED_MESSAGE, `Synapse answered as ${answer.userId}, not on ${config.domain}`);
         }
-        // Not reachable yet, or Synapse still starting: try again. Any other answer is a registration it refuses.
-        if (answer && answer.status < 500) {
+        // Not reachable yet, Synapse (or the proxy in front of it) still starting, or busy: try again. Any other answer
+        // is a registration it refuses.
+        if (answer && answer.status < 500 && !RETRY_STATUSES.has(answer.status)) {
             return reject(MATRIX_REJECTED_MESSAGE, `${answer.status} ${answer.errcode ?? ''}`.trim());
         }
         const delay = RETRY_DELAYS_MS[attempt];
