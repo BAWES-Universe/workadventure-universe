@@ -1,6 +1,6 @@
 <script lang="ts">
     import { createEventDispatcher, onDestroy, onMount } from "svelte";
-    import { writable } from "svelte/store";
+    import { get, writable } from "svelte/store";
     import type { PDFDocumentProxy } from "pdfjs-dist";
     import LL from "../../../../i18n/i18n-svelte";
     import { loadPdfJs, pdfDocumentOptions, type PdfJs } from "../../../FileViewer/pdfjs";
@@ -26,7 +26,7 @@
     const pages = writable<ViewerPages>({ page: 1, count: 0 });
     const zoomPercent = writable(100);
     const matches = writable<{ current: number; total: number } | undefined>(undefined);
-    const thumbsShown = writable(true);
+    const thumbsShown = writable(view?.thumbs ?? true);
     /** The hint under the page number goes once the person has found their way around (scrolled or zoomed). */
     let pinchHint = true;
     let preparingToPrint = false;
@@ -235,6 +235,7 @@
     let placed = false;
 
     function onPagesInit(): void {
+        if (view?.rotation) pdfViewer.pagesRotation = view.rotation;
         pdfViewer.currentScaleValue = view?.zoom !== undefined ? String(view.zoom) : "auto";
         pages.set({ page: 1, count: pdfViewer.pagesCount });
         restoreScroll();
@@ -269,6 +270,8 @@
         const height = container?.scrollHeight ?? 0;
         return {
             zoom: pdfViewer?.currentScaleValue ?? undefined,
+            rotation: pdfViewer?.pagesRotation,
+            thumbs: get(thumbsShown),
             scrollY: height > 0 ? container.scrollTop / height : 0,
         };
     }

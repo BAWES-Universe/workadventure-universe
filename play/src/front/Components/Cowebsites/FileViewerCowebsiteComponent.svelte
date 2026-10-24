@@ -86,6 +86,8 @@
     }
     // Only a reader that is taken down loses its controls; a picture stays mounted, and sets them only once.
     $: if (putAway) controller = undefined;
+    // The search goes with the reader that found the matches: back in front, the box is not left holding old text.
+    $: if (putAway) closeFind();
 
     $: zoomPercent = controller?.zoomPercent ?? readable(100);
     $: pageListShown = controller?.pageList?.shown ?? readable(false);
@@ -154,13 +156,16 @@
         source.openInNewTab?.(bytes);
     }
 
+    function closeFind(): void {
+        findOpen = false;
+        controller?.search?.clear();
+        findQuery = "";
+        searchedQuery = "";
+    }
+
     function toggleFind(): void {
-        findOpen = !findOpen;
-        if (!findOpen) {
-            controller?.search?.clear();
-            findQuery = "";
-            searchedQuery = "";
-        }
+        if (findOpen) closeFind();
+        else findOpen = true;
     }
 
     function startSearch(): void {

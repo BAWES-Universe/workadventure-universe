@@ -48,4 +48,7 @@ export interface ViewerView {
     scrollY?: number;
     /** The sheet in view, for a workbook. */
     sheet?: number;
+    /** How far the pages are turned (0, 90, 180 or 270), and whether the list of small pages is shown, for a PDF. */
+    rotation?: number;
+    thumbs?: boolean;
 }
