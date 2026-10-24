@@ -1602,6 +1602,8 @@ export abstract class BaseBehavior {
         images?: string[];
         /** 'dm' when regenerating a direct message reply, so the retry keeps the direct message prompt. */
         channel?: 'world' | 'dm';
+        /** The bot's Patience for tools, for a caller with no bot client (a direct message). */
+        toolTimeoutSeconds?: number | null;
     }): Promise<{ processed: ProcessedResponse; processedMessage: string; responseId: string }> {
         const {
             botId,
@@ -1670,7 +1672,8 @@ export abstract class BaseBehavior {
                     this.adminApiService,
                     abortSignal,
                     images,
-                    params.channel ?? 'world'
+                    params.channel ?? 'world',
+                    params.toolTimeoutSeconds
                 )) {
                     if (chunk.reset) {
                         const showToolCalls = chunk.toolNames?.length ? await this.shouldShowToolCalls(botId) : false;

@@ -285,6 +285,7 @@ export class DmReplyService extends BaseBehavior {
                 debugLabel: 'DmReplyService',
                 images: images.length ? images : undefined,
                 channel: 'dm',
+                toolTimeoutSeconds: config.toolTimeoutSeconds,
             });
             replyText = regenerated.processedMessage;
         }
