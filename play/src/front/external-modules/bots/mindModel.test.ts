@@ -303,7 +303,7 @@ describe("cardIcon", () => {
     it("only a plain file name becomes an address, so Orbit's word can't reach into the style", () => {
         expect(aiLogoUrl("fireworks-ai")).toBe("/static/ai-providers/fireworks-ai.svg");
         for (const bad of ["", null, undefined, "../x", "a/b", "a.svg", "x);y", "A", "a b"]) {
-            expect(aiLogoUrl(bad as string | null | undefined)).toBeNull();
+            expect(aiLogoUrl(bad)).toBeNull();
         }
     });
 });
