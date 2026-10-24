@@ -1,12 +1,16 @@
 <script lang="ts">
-    import { createEventDispatcher, onMount } from "svelte";
+    import { createEventDispatcher, onMount, tick } from "svelte";
     import LL from "../../../../i18n/i18n-svelte";
     import { MAX_TABLE_COLUMNS, MAX_TABLE_ROWS } from "../../../FileViewer/textFiles";
     import { columnLetters, readSpreadsheet, type SheetView } from "../../../FileViewer/spreadsheet";
+    import { listenForPinch, type PinchCentre } from "../../../FileViewer/pinchGesture";
+    import type { ViewerView } from "../../../FileViewer/viewerController";
     import FileViewerLimitNote from "./FileViewerLimitNote.svelte";
     import FileViewerOpening from "./FileViewerOpening.svelte";
 
     export let bytes: ArrayBuffer;
+    /** Where the reader was left when it was put away: the sheet and how far it was scrolled. */
+    export let view: ViewerView | undefined = undefined;
 
     const dispatch = createEventDispatcher<{ loaded: { sheetCount: number }; failed: void; download: void }>();
 
@@ -23,6 +27,7 @@
                 }
                 sheets = read;
                 dispatch("loaded", { sheetCount: read.length });
+                void restoreView(read.length);
             },
             (error) => {
                 // A damaged or password-locked file.
@@ -31,6 +36,58 @@
             }
         );
     });
+
+    /** What the reader needs to look the same when it is brought back. */
+    export function getView(): ViewerView | undefined {
+        // Still being read: there is no place to report yet, and what was saved stays.
+        if (!sheet) return undefined;
+        return { zoom, sheet: current, scrollX: scroller?.scrollLeft ?? 0, scrollY: scroller?.scrollTop ?? 0 };
+    }
+
+    async function restoreView(sheetCount: number): Promise<void> {
+        if (!view) return;
+        current = Math.min(Math.max(0, view.sheet ?? 0), sheetCount - 1);
+        // The zoom first: the place is measured on the sheet as it is drawn at that zoom.
+        if (typeof view.zoom === "number") zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, view.zoom));
+        await tick();
+        if (!scroller) return;
+        scroller.scrollLeft = view.scrollX ?? 0;
+        scroller.scrollTop = view.scrollY ?? 0;
+    }
+
+    // --- Pinch (two fingers) and Ctrl + wheel zoom: the sheet is drawn bigger or smaller, where the fingers are ---
+    const MIN_ZOOM = 0.5;
+    const MAX_ZOOM = 4;
+    let zoom = 1;
+
+    async function zoomBy(factor: number, centre?: PinchCentre): Promise<void> {
+        const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom * factor));
+        if (next === zoom || !scroller) return;
+        const box = scroller.getBoundingClientRect();
+        // The point of the sheet under the fingers (or the middle of the panel) stays under them.
+        const atX = centre ? centre.x - box.left : box.width / 2;
+        const atY = centre ? centre.y - box.top : box.height / 2;
+        const ratio = next / zoom;
+        const sheetX = scroller.scrollLeft + atX;
+        const sheetY = scroller.scrollTop + atY;
+        zoom = next;
+        await tick();
+        if (!scroller) return;
+        scroller.scrollLeft = sheetX * ratio - atX;
+        scroller.scrollTop = sheetY * ratio - atY;
+    }
+
+    /** Two fingers on the sheet zoom it, from the sheet's own scroller (it exists once the file is read). */
+    function pinchable(node: HTMLElement) {
+        return { destroy: listenForPinch(node, (factor, centre) => void zoomBy(factor, centre)) };
+    }
+
+    function onWheel(event: WheelEvent): void {
+        // A trackpad pinch arrives as Ctrl + wheel: it zooms the sheet, not the whole game page.
+        if (!event.ctrlKey) return;
+        event.preventDefault();
+        void zoomBy(Math.exp(-event.deltaY * 0.01), { x: event.clientX, y: event.clientY });
+    }
 
     function pick(index: number): void {
         current = index;
@@ -71,8 +128,8 @@
 {#if sheet}
     <div class="sheetwrap" data-testid="fileViewerSheet">
         <div class="sheet">
-            <div class="scroller" bind:this={scroller}>
-                <table>
+            <div class="scroller" bind:this={scroller} use:pinchable on:wheel={onWheel}>
+                <table style:--sheet-zoom={zoom === 1 ? undefined : zoom}>
                     <thead>
                         <tr>
                             <th class="corner" />
@@ -163,6 +220,8 @@
         inset: 0;
         overflow: auto;
         -webkit-overflow-scrolling: touch;
+        /* One finger scrolls and two pinch: the sheet decides pinch itself. */
+        touch-action: pan-x pan-y;
     }
 
     table {
@@ -177,6 +236,8 @@
         min-width: 0;
         font-size: 12px;
         color: #202124;
+        /* Pinched bigger or smaller: the layout follows, so the sticky headers stay where they are. */
+        zoom: var(--sheet-zoom, 1);
     }
 
     th,

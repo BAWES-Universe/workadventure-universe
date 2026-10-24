@@ -2,6 +2,7 @@
     // Personality: who the bot is when it talks, what it is told before every chat.
     import LL from "../../../../../i18n/i18n-svelte";
     import type { BotData } from "../../types";
+    import { sayBrief } from "../../sayBrief";
     import PageGroup from "./PageGroup.svelte";
     import { IconMoodSmile } from "@wa-icons";
 
@@ -12,8 +13,7 @@
     export let onChange: (bot: BotData, typing: boolean) => void;
 
     $: page = $LL.mapEditor.edit.bots.page;
-    $: text = bot.chatInstructions?.trim() ?? "";
-    $: brief = text ? `"${text.split("\n")[0]}"` : page.say.none();
+    $: brief = sayBrief(bot.chatInstructions, page.say.none());
 
     function type(event: Event) {
         onChange({ ...bot, chatInstructions: (event.currentTarget as HTMLTextAreaElement).value }, true);
