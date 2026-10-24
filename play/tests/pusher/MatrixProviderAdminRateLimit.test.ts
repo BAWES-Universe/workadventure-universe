@@ -2,10 +2,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { post, instancePost, create } = vi.hoisted(() => {
     const instancePost = vi.fn();
-    return { post: vi.fn(), instancePost, create: vi.fn(() => ({ post: instancePost, get: vi.fn() })) };
+    return {
+        post: vi.fn(),
+        instancePost,
+        create: vi.fn(() => ({
+            post: instancePost,
+            get: vi.fn(),
+            request: vi.fn(),
+            interceptors: { response: { use: vi.fn() } },
+        })),
+    };
 });
 
-vi.mock("axios", () => ({ default: { post, create } }));
+vi.mock("axios", () => ({
+    default: { post, create, isAxiosError: (error: { isAxiosError?: boolean }) => error?.isAxiosError === true },
+}));
 
 const OVERRIDE_PATH = "override_ratelimit";
 
