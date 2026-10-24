@@ -73,7 +73,8 @@
         if (!visible) view = reader?.getView?.() ?? view;
         wasVisible = visible;
     }
-    $: if (parked) controller = undefined;
+    // Only a reader that is taken down loses its controls; a picture stays mounted, and sets them only once.
+    $: if (parked && kind && PARKABLE_KINDS.has(kind)) controller = undefined;
 
     $: zoomPercent = controller?.zoomPercent ?? readable(100);
     $: pageListShown = controller?.pageList?.shown ?? readable(false);
