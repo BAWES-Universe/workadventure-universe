@@ -6,7 +6,7 @@
  */
 
 import WebSocket from 'ws';
-import { readMatrixConfig, botMatrixId } from '../matrix/MatrixConfig';
+import { activeMatrixConfig, botMatrixId } from '../matrix/MatrixConfig';
 import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
 import {
@@ -194,7 +194,7 @@ export class BotClient {
             params.set('availabilityStatus', '1');
             params.set('version', apiVersionHash); // Imported from @workadventure/messages
             // With Matrix direct messages on, the bot shows its Matrix ID so people get the Message button for it.
-            const matrixConfig = readMatrixConfig();
+            const matrixConfig = activeMatrixConfig();
             params.set('chatID', (matrixConfig && botMatrixId(matrixConfig.domain, this.config.botId)) || '');
             params.set('roomName', '');
             params.set('cameraState', 'false');

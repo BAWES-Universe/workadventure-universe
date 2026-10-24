@@ -120,4 +120,16 @@ export class MatrixAppServiceClient {
         );
         return { data: Buffer.from(response.data), contentType: String(response.headers['content-type'] || 'application/octet-stream') };
     }
+
+    /**
+     * Who the homeserver says the application service is. A registered as_token answers 200 with the sender's ID
+     * (@universe-bots:<domain>); a token Synapse does not know answers 401 M_UNKNOWN_TOKEN. Network errors throw.
+     */
+    async whoami(): Promise<{ ok: true; userId: string } | { ok: false; status: number; errcode?: string }> {
+        const response = await this.http.get('/_matrix/client/v3/account/whoami', { validateStatus: () => true });
+        if (response.status === 200 && typeof response.data?.user_id === 'string') {
+            return { ok: true, userId: response.data.user_id };
+        }
+        return { ok: false, status: response.status, errcode: response.data?.errcode };
+    }
 }

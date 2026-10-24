@@ -30,6 +30,19 @@ export function readMatrixConfig(env: NodeJS.ProcessEnv = process.env): MatrixAp
     return { homeserverUrl, domain, asToken, hsToken };
 }
 
+// Set once at startup when Synapse refuses the registration: direct messages then stay off for the whole process.
+let rejectedReason: string | null = null;
+
+/** Synapse did not accept this bot server's registration. Bots then show no Message button anywhere. */
+export function markMatrixRejected(reason: string): void {
+    rejectedReason = reason;
+}
+
+/** The settings to use for direct messages: none when they are unset, or when Synapse refused them at startup. */
+export function activeMatrixConfig(env: NodeJS.ProcessEnv = process.env): MatrixAppServiceConfig | null {
+    return rejectedReason === null ? readMatrixConfig(env) : null;
+}
+
 /** The Matrix ID of a bot, or undefined when its id cannot be a Matrix localpart. */
 export function botMatrixId(domain: string, botId: string): string | undefined {
     if (!LOCALPART_SAFE.test(botId)) return undefined;
