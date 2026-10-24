@@ -34,10 +34,7 @@ jobs:
         working-directory: "libs/room-api-clients/room-api-client-js"
 
       - name: Install Protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          version: '3.x'
+        uses: ./.github/actions/install-protoc
 
       - name: "Install play dependencies"
         run: npm ci
