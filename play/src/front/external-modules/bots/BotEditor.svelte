@@ -277,8 +277,9 @@
                     })();
                 });
             }
-        } else {
-            // Reset when no bot selected
+        } else if (!bot) {
+            // Reset when no bot selected. A rename keeps them: it saves nothing here, and the provider check
+            // above needs what was saved.
             lastSavedBotConfig = null;
             lastSavedAIConfig = null;
         }
