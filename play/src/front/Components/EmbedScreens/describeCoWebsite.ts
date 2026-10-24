@@ -8,7 +8,7 @@ import { FileViewerCoWebsite } from "../../WebRtc/CoWebsite/FileViewerCoWebsite"
 import { badgeOfKind, extensionOf, fileKindOf } from "../../FileViewer/fileKinds";
 import jitsiIcon from "../images/jitsi.png";
 import meetingIcon from "../images/meeting.svg";
-import { coWebsiteIconUrl, coWebsiteSiteName } from "./coWebsiteRow";
+import { coWebsiteIconBackground, coWebsiteIconUrl, coWebsiteSiteName } from "./coWebsiteRow";
 
 /** What the tabs and the "N open" list show about an open item. */
 export interface CoWebsiteDescription {
@@ -52,5 +52,10 @@ export function describeCoWebsite(coWebsite: CoWebsite, texts: TranslationFuncti
     if (coWebsite instanceof BBBCoWebsite) {
         return { name: texts.cowebsite.bigBlueButton(), line, iconSrc: meetingIcon, iconBackground: "#000" };
     }
-    return { name: coWebsiteSiteName(coWebsite), line, iconSrc: coWebsiteIconUrl(coWebsite) };
+    return {
+        name: coWebsiteSiteName(coWebsite),
+        line,
+        iconSrc: coWebsiteIconUrl(coWebsite),
+        iconBackground: coWebsiteIconBackground(coWebsite),
+    };
 }

@@ -37,6 +37,14 @@
         white-space: nowrap;
     }
 
+    /* Phones: the bar is at the bottom, so the toast sits above it, like the popups (MainLayout.svelte). Same query. */
+    @media (max-height: 960px) and (max-width: 480px) and (pointer: coarse),
+        (max-height: 480px) and (max-width: 960px) and (pointer: coarse) {
+        .closed-items {
+            bottom: calc(6rem + max(0px, env(safe-area-inset-bottom, 0px) - 21px));
+        }
+    }
+
     :global(html[dir="rtl"]) .closed-items {
         transform: translateX(50%);
     }
