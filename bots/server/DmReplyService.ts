@@ -195,6 +195,11 @@ export class DmReplyService extends BaseBehavior {
             memory.addMessage(botId, playerId, original, 'person', DM_SPACE_NAME);
             memory.extractPersonalInfo(botId, playerId, original);
         }
+        // A first message creates the memory after the uuid was set, so it starts as "temp-<id>": name it now, before
+        // tools see it.
+        if (memory.getMemory(botId, playerId)?.userUuid !== person.uuid) {
+            withUuid.setUserUuid?.(botId, playerId, person.uuid, !person.isGuest);
+        }
 
         const context = memory.getConversationContext(botId, playerId);
         const startTime = Date.now();
