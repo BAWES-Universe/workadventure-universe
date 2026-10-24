@@ -37,7 +37,9 @@
     });
 
     /** What the reader needs to look the same when it is brought back. */
-    export function getView(): ViewerView {
+    export function getView(): ViewerView | undefined {
+        // Still being read: there is no place to report yet, and what was saved stays.
+        if (!sheet) return undefined;
         return { sheet: current, scrollX: scroller?.scrollLeft ?? 0, scrollY: scroller?.scrollTop ?? 0 };
     }
 

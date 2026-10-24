@@ -231,10 +231,14 @@
         return () => undefined;
     });
 
+    /** The file has its size and its place: before that, what the reader would report is not where the reader was. */
+    let placed = false;
+
     function onPagesInit(): void {
         pdfViewer.currentScaleValue = view?.zoom !== undefined ? String(view.zoom) : "auto";
         pages.set({ page: 1, count: pdfViewer.pagesCount });
         restoreScroll();
+        placed = true;
     }
 
     // Brought back after being put away: the file goes back to where it was left. PDF.js moves to the first page as it
@@ -255,8 +259,9 @@
     }
 
     /** What the reader needs to look the same when it is brought back. */
-    export function getView(): ViewerView {
-        return { zoom: pdfViewer?.currentScaleValue, scrollY: container?.scrollTop ?? 0 };
+    export function getView(): ViewerView | undefined {
+        if (!placed) return undefined;
+        return { zoom: pdfViewer?.currentScaleValue ?? undefined, scrollY: container?.scrollTop ?? 0 };
     }
 
     function onPageChanging(event: { pageNumber: number }): void {

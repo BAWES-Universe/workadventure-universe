@@ -50,7 +50,7 @@
     let bytes: ArrayBuffer | undefined;
     let kind: FileViewerKind | undefined;
     let controller: ViewerController | undefined;
-    let reader: { getView?: () => ViewerView } | undefined;
+    let reader: { getView?: () => ViewerView | undefined } | undefined;
     /** Where the reader was when this item left the front, so a reader read again goes back there. */
     let view: ViewerView | undefined;
     let wasVisible = visible;
