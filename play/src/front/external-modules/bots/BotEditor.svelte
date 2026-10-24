@@ -247,8 +247,9 @@
                 const savedAIConfig = () => (pageRecordIsThisBots() ? lastSavedAIConfig : savedAIOnSchedule);
                 scheduleSave("ai", () => {
                     void (async () => {
-                        // The provider saved when the request went out: what a refusal puts back
+                        // The provider (and its model) saved when the request went out: what a refusal puts back
                         let savedRefWhenSent: string | undefined | null = null;
+                        let savedAiWhenSent: { ref?: string | null; model?: string | null } = {};
                         try {
                             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                                 console.log("[BotEditor] Sending AI config update to API:", {
@@ -266,6 +267,7 @@
                                 // Orbit has since moved the bot off (a key that was pulled).
                                 const savedRef = savedProviderRef(savedAIConfig());
                                 savedRefWhenSent = savedRef;
+                                savedAiWhenSent = pageRecordIsThisBots() ? lastSavedAi : savedAiOnSchedule;
                                 const providerChanged = savedRef === null || bot.aiProviderRef !== savedRef;
                                 const currentBot = get(botPreviewsStore).get(bot.id) ?? bot;
                                 const behaviorType =
@@ -316,7 +318,13 @@
                                     currentBot.aiProviderRef === bot.aiProviderRef &&
                                     currentBot.aiProviderRef !== savedRef
                                 ) {
-                                    upsertBot({ ...currentBot, aiProviderRef: savedRef });
+                                    // The model goes back too: the refused key's model kept on the saved key is an edit
+                                    // nobody made, and would be saved next
+                                    const savedModel =
+                                        (savedAiWhenSent.ref ?? null) === (savedRef ?? null)
+                                            ? savedAiWhenSent.model ?? null
+                                            : null;
+                                    upsertBot({ ...currentBot, aiProviderRef: savedRef, aiModel: savedModel });
                                 }
                                 return;
                             }
