@@ -25,6 +25,12 @@ let unsubscribeUserConnected: (() => void) | null = null;
 let unsubscribeMapEditor: (() => void) | null = null;
 let unsubscribeMapEditorVisibility: (() => void) | null = null;
 let unsubscribeSelectedTool: (() => void) | null = null;
+let summonStartTimeout: ReturnType<typeof setTimeout> | null = null;
+let summonInitTimeout: ReturnType<typeof setTimeout> | null = null;
+let summonRoomEnterTimeout: ReturnType<typeof setTimeout> | null = null;
+let summonFallbackTimeout: ReturnType<typeof setTimeout> | null = null;
+let summonRetryInterval: ReturnType<typeof setInterval> | null = null;
+let summonRefreshInterval: ReturnType<typeof setInterval> | null = null;
 // Lifecycle generation: bumped in destroy() so delayed setupBotEditor callbacks
 // scheduled before a navigation can never run against the previous room's state.
 let botEditorLifecycle = 0;
@@ -816,13 +822,19 @@ function notifyRoomEnterForAllUsers(options: ExtensionModuleOptions) {
         // Notify bot-server that a player entered the room (spawns bots)
         // This should happen for ALL users, not just authenticated ones
         console.log(`[Bot Extension] Notifying room enter for: ${options.roomId}`);
+        const lifecycle = botEditorLifecycle;
         botApiService
             .notifyRoomEnter(options.roomId)
             .then(() => {
                 console.log("[Bot Extension] Room enter notified");
+                if (lifecycle !== botEditorLifecycle) return;
                 // After bots spawn, try to register summon buttons
                 // Give it a moment for bots to appear in the game scene
-                setTimeout(() => {
+                if (summonRoomEnterTimeout !== null) {
+                    clearTimeout(summonRoomEnterTimeout);
+                }
+                summonRoomEnterTimeout = setTimeout(() => {
+                    summonRoomEnterTimeout = null;
                     registerSummonButtonsForBots();
                 }, 3000);
             })
@@ -1086,13 +1098,54 @@ function setupWokaMenuHook() {
     });
 }
 
+function clearSummonPollingTimers(): void {
+    if (summonStartTimeout !== null) {
+        clearTimeout(summonStartTimeout);
+        summonStartTimeout = null;
+    }
+    if (summonRetryInterval !== null) {
+        clearInterval(summonRetryInterval);
+        summonRetryInterval = null;
+    }
+    if (summonRefreshInterval !== null) {
+        clearInterval(summonRefreshInterval);
+        summonRefreshInterval = null;
+    }
+}
+
+function stopSummonButtonRegistration(): void {
+    clearSummonPollingTimers();
+    if (summonInitTimeout !== null) {
+        clearTimeout(summonInitTimeout);
+        summonInitTimeout = null;
+    }
+    if (summonRoomEnterTimeout !== null) {
+        clearTimeout(summonRoomEnterTimeout);
+        summonRoomEnterTimeout = null;
+    }
+    if (summonFallbackTimeout !== null) {
+        clearTimeout(summonFallbackTimeout);
+        summonFallbackTimeout = null;
+    }
+}
+
+function scheduleSummonFallbackRetry(): void {
+    if (summonFallbackTimeout !== null) {
+        clearTimeout(summonFallbackTimeout);
+    }
+    summonFallbackTimeout = setTimeout(() => {
+        summonFallbackTimeout = null;
+        registerSummonButtonsForBots();
+    }, 3000);
+}
+
 // Function to register summon button for bots
 function registerSummonButtonsForBots() {
     try {
         const scene = gameManager.getCurrentGameScene();
         if (!scene) {
             // Retry after a delay if scene isn't ready (but don't spam logs)
-            setTimeout(registerSummonButtonsForBots, 3000);
+            scheduleSummonFallbackRetry();
             return;
         }
 
@@ -1108,7 +1161,7 @@ function registerSummonButtonsForBots() {
 
         if (!localUser) {
             // Retry if player not ready (but don't spam logs)
-            setTimeout(registerSummonButtonsForBots, 3000);
+            scheduleSummonFallbackRetry();
             return;
         }
 
@@ -1260,27 +1313,36 @@ function showSummonFailure(failure: SummonFailure, botName: string | undefined, 
 function initializeBotEditor(options: ExtensionModuleOptions) {
     console.log("[Bot Extension] Initializing bot editor, waiting for user connection...");
 
+    clearSummonPollingTimers();
+
     // Start registering summon buttons immediately (don't wait for userIsConnected)
     // This ensures buttons are available as soon as bots spawn
     const startSummonButtonRegistration = () => {
+        summonStartTimeout = null;
         // Try immediately
         registerSummonButtonsForBots();
         // Then retry every 3 seconds for the first 15 seconds (to catch bots as they spawn)
         let retries = 0;
         const maxRetries = 5;
-        const retryInterval = setInterval(() => {
+        summonRetryInterval = setInterval(() => {
             retries++;
             registerSummonButtonsForBots();
             if (retries >= maxRetries) {
-                clearInterval(retryInterval);
+                if (summonRetryInterval !== null) {
+                    clearInterval(summonRetryInterval);
+                    summonRetryInterval = null;
+                }
                 // Then switch to less frequent polling (every 10 seconds)
-                setInterval(registerSummonButtonsForBots, 10000);
+                if (summonRefreshInterval !== null) {
+                    clearInterval(summonRefreshInterval);
+                }
+                summonRefreshInterval = setInterval(registerSummonButtonsForBots, 10000);
             }
         }, 3000);
     };
 
     // Start registration after a short delay
-    setTimeout(startSummonButtonRegistration, 2000);
+    summonStartTimeout = setTimeout(startSummonButtonRegistration, 2000);
 
     // Wait for user to be connected, then set up bot editor UI (for authenticated users only)
     unsubscribeUserConnected = userIsConnected.subscribe((connected) => {
@@ -1333,6 +1395,8 @@ const botExtensionModule: ExtensionModule = {
     init(roomMetadata: unknown, options: ExtensionModuleOptions) {
         console.log("Bot Extension Module initialized");
 
+        stopSummonButtonRegistration();
+
         // Check if room changed (before storing new options or initializing service)
         // Compare with current roomId in BotApiService if it's already initialized
         const previousRoomId = _extensionOptions?.roomId || botApiService.getRoomId();
@@ -1361,7 +1425,8 @@ const botExtensionModule: ExtensionModule = {
         }
 
         // Also start summon button registration after bots have time to spawn
-        setTimeout(() => {
+        summonInitTimeout = setTimeout(() => {
+            summonInitTimeout = null;
             registerSummonButtonsForBots();
         }, 3000);
 
@@ -1448,6 +1513,8 @@ const botExtensionModule: ExtensionModule = {
                 console.warn("[Bot Editor] Failed to notify room leave:", e);
             });
         }
+
+        stopSummonButtonRegistration();
 
         if (unsubscribeUserConnected) {
             unsubscribeUserConnected();
