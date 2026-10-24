@@ -3,12 +3,15 @@ import { readable, type Readable } from "svelte/store";
 /** As long as the bot server keeps Orbit's answer, so an owner's change reaches Message within the same time. */
 export const DM_ACCESS_TTL_MS = 30 * 1000;
 
-type Ask = (botId: string) => Promise<boolean>;
+/** Yes, no, or null when it could not be found out (the bot server or Orbit too slow, or down). */
+type Ask = (botId: string) => Promise<boolean | null>;
 
 /**
  * Whether you may message a bot, for its Message button. The owner picks who may (Orbit decides), and people who may
  * not never see the button. Asked only for bots someone looks at, once per bot at a time, and kept for 30 seconds.
  * Until the answer comes, and whenever it can't be found out, the answer is no: the bot could not answer anyway.
+ * Only a real yes or no is kept: "could not find out" is asked again on the next look, so a slow moment does not hide
+ * Message for 30 seconds.
  */
 export class BotDmAccessCache {
     private answers = new Map<string, { allowed: boolean; at: number }>();
@@ -36,8 +39,9 @@ export class BotDmAccessCache {
         const pending = this.asking.get(botId);
         if (pending) return pending;
         const question = this.ask(botId)
-            .catch(() => false)
+            .catch(() => null)
             .then((allowed) => {
+                if (allowed === null) return false;
                 this.answers.set(botId, { allowed, at: this.now() });
                 return allowed;
             })

@@ -8,6 +8,5 @@ export const botStatusCache = new BotStatusCache((ids) => botApiService.getDmSta
 
 /** Whether you may message a bot: its Message button shows only on a yes. */
 export const botDmAccessCache = new BotDmAccessCache(
-    async (botId) =>
-        (await botApiService.getBotAccess(botId, "dm", localUserStore.getLocalUser()?.uuid)).allowed === true
+    async (botId) => (await botApiService.getBotAccess(botId, "dm", localUserStore.getLocalUser()?.uuid)).allowed
 );

@@ -33,6 +33,17 @@ describe("BotDmAccessCache", () => {
         expect(ask).toHaveBeenCalledTimes(2);
     });
 
+    it("does not keep 'could not find out', so a slow moment does not hide Message for 30 seconds", async () => {
+        const ask = vi
+            .fn<(botId: string) => Promise<boolean | null>>()
+            .mockResolvedValueOnce(null)
+            .mockResolvedValueOnce(true);
+        const cache = new BotDmAccessCache(ask, () => 0);
+        await expect(cache.get("b1")).resolves.toBe(false);
+        await expect(cache.get("b1")).resolves.toBe(true);
+        expect(ask).toHaveBeenCalledTimes(2);
+    });
+
     it("an answer it could not get is a no, so Message never shows for a bot that could not answer", async () => {
         const cache = new BotDmAccessCache(() => Promise.reject(new Error("bot server down")));
         await expect(cache.get("b1")).resolves.toBe(false);
