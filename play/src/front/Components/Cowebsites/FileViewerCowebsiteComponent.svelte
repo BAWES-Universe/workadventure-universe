@@ -68,13 +68,24 @@
 
     $: compact = panelWidth > 0 && panelWidth < COMPACT_WIDTH;
 
+    /** Left the front before its file was read: see below. */
+    let abandoned = false;
+    $: putAway = (parked || abandoned) && kind !== undefined && PARKABLE_KINDS.has(kind);
+
     // Leaving the front: the place is taken now, while the reader still has its size (hidden, it reads nothing).
     $: if (visible !== wasVisible) {
-        if (!visible) view = reader?.getView?.() ?? view;
+        if (visible) abandoned = false;
+        else {
+            const place = reader?.getView?.();
+            if (place) view = place;
+            // A reader that has not found its place yet would read hidden, with no size to put it back by: it is put
+            // away, and read again from the place saved before, once it is back in front.
+            else if (kind !== undefined && PARKABLE_KINDS.has(kind)) abandoned = true;
+        }
         wasVisible = visible;
     }
     // Only a reader that is taken down loses its controls; a picture stays mounted, and sets them only once.
-    $: if (parked && kind && PARKABLE_KINDS.has(kind)) controller = undefined;
+    $: if (putAway) controller = undefined;
 
     $: zoomPercent = controller?.zoomPercent ?? readable(100);
     $: pageListShown = controller?.pageList?.shown ?? readable(false);
@@ -424,7 +435,7 @@
                 {/if}
             </div>
         </div>
-    {:else if parked && kind && PARKABLE_KINDS.has(kind)}
+    {:else if putAway}
         <!-- Put away: see `parked`. -->
     {:else if bytes && kind === "pdf"}
         <FileViewerPdf
