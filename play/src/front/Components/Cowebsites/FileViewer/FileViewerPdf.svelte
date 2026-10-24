@@ -251,7 +251,8 @@
     }
 
     function putBackPlace(): void {
-        if (!destroyed && container && view?.scrollY !== undefined) container.scrollTop = view.scrollY * container.scrollHeight;
+        if (!destroyed && container && view?.scrollY !== undefined)
+            container.scrollTop = view.scrollY * container.scrollHeight;
     }
 
     function onFirstPageRendered(): void {
