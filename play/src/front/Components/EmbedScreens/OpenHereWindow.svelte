@@ -211,11 +211,27 @@
         if (dragged !== undefined && Math.abs(settledHeight - dragged) < 1) void tick().then(reposition);
     }
 
+    /** How high the window stands behind the chat when it rests at `rest`. */
+    function behindHeightOf(rest: ChatSheetRest): number {
+        return openHereSheetHeight({
+            rest: $openHereSheetRestStore,
+            tucked: false,
+            chatOver: true,
+            behindRest: rest,
+            chatHeight: $chatOwnSheetHeightStore,
+            viewportHeight: $windowSize.height,
+        });
+    }
+
     function onSheetTap() {
         if (chatOverSheet) {
             // At the lowest it can be over the chat, it is at "peek" as far as the next step goes.
             const atLowest = sheetHeight <= openHereBehindChatMin($chatOwnSheetHeightStore, $windowSize.height);
-            behindRest = nextSnap(atLowest ? "peek" : nearestSnap(sheetHeight, $windowSize.height, CHAT_SHEET_SIZES));
+            let step = nextSnap(atLowest ? "peek" : nearestSnap(sheetHeight, $windowSize.height, CHAT_SHEET_SIZES));
+            // A tall chat holds a step that would not move the window (peek and half both at its lowest) where it is:
+            // the tap goes on to the first step that does.
+            for (let tries = 0; tries < 2 && behindHeightOf(step) === sheetHeight; tries++) step = nextSnap(step);
+            behindRest = step;
             return;
         }
         if (tucked) {

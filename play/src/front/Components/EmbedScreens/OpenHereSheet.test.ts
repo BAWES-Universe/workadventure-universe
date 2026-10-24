@@ -328,6 +328,21 @@ describe("OpenHereWindow as a phone's sheet", () => {
             expect(sheet()?.style.height).toBe(`${heights.half}px`);
         });
 
+        it("keeps stepping when a tall chat holds two of its heights at the same place", async () => {
+            chatOwnSheetHeightStore.set(heights.half);
+            await tick();
+            const lowest = heights.half + OPEN_HERE_BEHIND_CHAT_STRIP;
+
+            dragHandle(handle()!, 300, 300);
+            await tick();
+            expect(sheet()?.style.height).toBe(`${lowest}px`);
+
+            // Peek and half are both the lowest here: the tap goes on to the top rather than staying put.
+            dragHandle(handle()!, 300, 300);
+            await tick();
+            expect(sheet()?.style.height).toBe(`${heights.full}px`);
+        });
+
         it("keeps the strip above a taller chat", async () => {
             chatOwnSheetHeightStore.set(heights.half);
             dragHandle(handle()!, 100, 800);
