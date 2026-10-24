@@ -7,13 +7,15 @@
     import { findCountOf } from "../../../FileViewer/pdfFind";
     import { presetToApplyAgain } from "../../../FileViewer/pdfScale";
     import { printPdfPages } from "../../../FileViewer/printPdfPages";
-    import type { ViewerController, ViewerPages } from "../../../FileViewer/viewerController";
+    import type { ViewerController, ViewerPages, ViewerView } from "../../../FileViewer/viewerController";
 
     /** The PDF's bytes. A copy is given to the reader, so these stay whole for Download and Open in new tab. */
     export let bytes: ArrayBuffer;
     /** A narrow panel (a phone): no page list, and the page pill hints at pinching. */
     export let compact: boolean;
     export let controller: ViewerController | undefined = undefined;
+    /** Where the reader was left when it was put away: the zoom and how far it was scrolled. */
+    export let view: ViewerView | undefined = undefined;
 
     const dispatch = createEventDispatcher<{ loaded: { pageCount: number }; failed: void }>();
 
@@ -230,8 +232,31 @@
     });
 
     function onPagesInit(): void {
-        pdfViewer.currentScaleValue = "auto";
+        pdfViewer.currentScaleValue = view?.zoom !== undefined ? String(view.zoom) : "auto";
         pages.set({ page: 1, count: pdfViewer.pagesCount });
+        restoreScroll();
+    }
+
+    // Brought back after being put away: the file goes back to where it was left. PDF.js moves to the first page as it
+    // starts, so the place is put back once that has happened, and again when the first page is drawn.
+    function restoreScroll(): void {
+        if (view?.scrollY === undefined) return;
+        requestAnimationFrame(putBackPlace);
+        eventBus?.on("pagerendered", onFirstPageRendered);
+    }
+
+    function putBackPlace(): void {
+        if (!destroyed && container && view?.scrollY !== undefined) container.scrollTop = view.scrollY;
+    }
+
+    function onFirstPageRendered(): void {
+        eventBus?.off("pagerendered", onFirstPageRendered);
+        putBackPlace();
+    }
+
+    /** What the reader needs to look the same when it is brought back. */
+    export function getView(): ViewerView {
+        return { zoom: pdfViewer?.currentScaleValue, scrollY: container?.scrollTop ?? 0 };
     }
 
     function onPageChanging(event: { pageNumber: number }): void {
@@ -313,6 +338,7 @@
     onDestroy(() => {
         destroyed = true;
         eventBus?.off("pagesinit", onPagesInit);
+        eventBus?.off("pagerendered", onFirstPageRendered);
         eventBus?.off("pagechanging", onPageChanging);
         eventBus?.off("scalechanging", onScaleChanging);
         eventBus?.off("updatefindmatchescount", onMatchesCount);

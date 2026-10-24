@@ -35,3 +35,17 @@ export interface ViewerController {
     /** The page list, shown or hidden. Only readers with pages have one. */
     pageList?: { shown: Readable<boolean>; toggle: () => void };
 }
+
+/**
+ * Where a reader had the file when it was put away (its heavy reader is let go while other files are in front), so
+ * the same reader looks the same when it is brought back. A reader fills in what it has.
+ */
+export interface ViewerView {
+    /** How big the file is drawn: a number, or a preset such as "auto" or "page-width". */
+    zoom?: number | string;
+    /** How far the file is scrolled, in pixels, or as a share of the file's height for a reader that re-fits itself. */
+    scrollX?: number;
+    scrollY?: number;
+    /** The sheet in view, for a workbook. */
+    sheet?: number;
+}

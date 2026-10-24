@@ -11,7 +11,7 @@
         fileKindOf,
         type FileViewerKind,
     } from "../../FileViewer/fileKinds";
-    import type { ViewerController } from "../../FileViewer/viewerController";
+    import type { ViewerController, ViewerView } from "../../FileViewer/viewerController";
     import { MAX_SPREADSHEET_BYTES } from "../../FileViewer/spreadsheet";
     import { MAX_WORD_BYTES } from "../../FileViewer/wordDocument";
     import OpenHereRow from "../EmbedScreens/OpenHereRow.svelte";
@@ -26,6 +26,11 @@
 
     export let actualCowebsite: FileViewerCoWebsite;
     export let visible: boolean;
+    /**
+     * Put away: another item is in front and this one was not the last used. The file's bytes stay, but its reader (its
+     * pages, its frame, its rows) is let go, and read again from the bytes when it is brought back, to where it was.
+     */
+    export let parked = false;
 
     /** A file this big is not drawn in the page: it is offered as a download instead. */
     const MAX_VIEWER_BYTES = 100 * 1024 * 1024;
@@ -33,6 +38,9 @@
     const COMPACT_WIDTH = 440;
     /** Below this panel width the zoom hides, so the name keeps its room. */
     const ZOOM_MIN_WIDTH = 600;
+
+    /** The heavy readers: their pages, frames and rows are let go while the item is put away. */
+    const PARKABLE_KINDS = new Set<FileViewerKind>(["pdf", "word", "excel"]);
 
     const source = actualCowebsite.source;
 
@@ -42,6 +50,10 @@
     let bytes: ArrayBuffer | undefined;
     let kind: FileViewerKind | undefined;
     let controller: ViewerController | undefined;
+    let reader: { getView?: () => ViewerView } | undefined;
+    /** Where the reader was when this item left the front, so a reader read again goes back there. */
+    let view: ViewerView | undefined;
+    let wasVisible = visible;
     let pageCount = 0;
     let rowCount: number | undefined;
     let sheetCount = 0;
@@ -55,6 +67,13 @@
     const abort = new AbortController();
 
     $: compact = panelWidth > 0 && panelWidth < COMPACT_WIDTH;
+
+    // Leaving the front: the place is taken now, while the reader still has its size (hidden, it reads nothing).
+    $: if (visible !== wasVisible) {
+        if (!visible) view = reader?.getView?.() ?? view;
+        wasVisible = visible;
+    }
+    $: if (parked) controller = undefined;
 
     $: zoomPercent = controller?.zoomPercent ?? readable(100);
     $: pageListShown = controller?.pageList?.shown ?? readable(false);
@@ -404,8 +423,12 @@
                 {/if}
             </div>
         </div>
+    {:else if parked && kind && PARKABLE_KINDS.has(kind)}
+        <!-- Put away: see `parked`. -->
     {:else if bytes && kind === "pdf"}
         <FileViewerPdf
+            bind:this={reader}
+            {view}
             {bytes}
             {compact}
             bind:controller
@@ -414,6 +437,8 @@
         />
     {:else if bytes && kind === "word"}
         <FileViewerWord
+            bind:this={reader}
+            {view}
             {bytes}
             name={source.name}
             {compact}
@@ -423,6 +448,8 @@
         />
     {:else if bytes && kind === "excel"}
         <FileViewerExcel
+            bind:this={reader}
+            {view}
             {bytes}
             on:loaded={(event) => (sheetCount = event.detail.sheetCount)}
             on:failed={onReaderFailed}

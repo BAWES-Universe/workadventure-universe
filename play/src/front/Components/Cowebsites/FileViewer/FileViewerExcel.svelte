@@ -1,12 +1,15 @@
 <script lang="ts">
-    import { createEventDispatcher, onMount } from "svelte";
+    import { createEventDispatcher, onMount, tick } from "svelte";
     import LL from "../../../../i18n/i18n-svelte";
     import { MAX_TABLE_COLUMNS, MAX_TABLE_ROWS } from "../../../FileViewer/textFiles";
     import { columnLetters, readSpreadsheet, type SheetView } from "../../../FileViewer/spreadsheet";
+    import type { ViewerView } from "../../../FileViewer/viewerController";
     import FileViewerLimitNote from "./FileViewerLimitNote.svelte";
     import FileViewerOpening from "./FileViewerOpening.svelte";
 
     export let bytes: ArrayBuffer;
+    /** Where the reader was left when it was put away: the sheet and how far it was scrolled. */
+    export let view: ViewerView | undefined = undefined;
 
     const dispatch = createEventDispatcher<{ loaded: { sheetCount: number }; failed: void; download: void }>();
 
@@ -23,6 +26,7 @@
                 }
                 sheets = read;
                 dispatch("loaded", { sheetCount: read.length });
+                void restoreView(read.length);
             },
             (error) => {
                 // A damaged or password-locked file.
@@ -31,6 +35,20 @@
             }
         );
     });
+
+    /** What the reader needs to look the same when it is brought back. */
+    export function getView(): ViewerView {
+        return { sheet: current, scrollX: scroller?.scrollLeft ?? 0, scrollY: scroller?.scrollTop ?? 0 };
+    }
+
+    async function restoreView(sheetCount: number): Promise<void> {
+        if (!view) return;
+        current = Math.min(Math.max(0, view.sheet ?? 0), sheetCount - 1);
+        await tick();
+        if (!scroller) return;
+        scroller.scrollLeft = view.scrollX ?? 0;
+        scroller.scrollTop = view.scrollY ?? 0;
+    }
 
     function pick(index: number): void {
         current = index;
