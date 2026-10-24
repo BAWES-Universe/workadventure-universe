@@ -5,6 +5,7 @@
     import remend from "remend";
     import type { ChatMessageContent } from "../../../Connection/ChatConnection";
     import { linkifyBareDomains } from "../../../LinkPreview/ChatLinks";
+    import { classifyChatLink } from "../../../LinkPreview/ChatLinkKind";
     import { isPlainClick, opensHere } from "../../../LinkPreview/EmbeddableLinks";
     import { openChatLinkHere } from "../../../LinkPreview/openChatLinkHere";
     import { sanitizeHTML } from "./WA-HTML-Sanitizer";
@@ -85,12 +86,14 @@
     });
 
     /**
-     * A plain click on a link whose page the game may show opens it in the window, as its card's Open here does. Other
-     * links, and other clicks, keep opening a new tab.
+     * A plain click on a web page link whose page the game may show opens it in the window, as its card's Open here
+     * does. Video and app links (their Open here shows an embed, not the link), other links, and other clicks keep
+     * opening a new tab.
      */
     function openLinkHere(event: MouseEvent) {
         const anchor = event.target instanceof Element ? event.target.closest("a") : null;
         if (!anchor || !isPlainClick(event) || !opensHere(anchor.href)) return;
+        if (classifyChatLink(anchor.href).kind !== "web") return;
         event.preventDefault();
         openChatLinkHere(anchor.href);
     }
