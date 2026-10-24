@@ -239,16 +239,18 @@
         pdfViewer.currentScaleValue = view?.zoom !== undefined ? String(view.zoom) : "auto";
         pages.set({ page: 1, count: pdfViewer.pagesCount });
         restoreScroll();
-        // With a place to go back to, the file has its place once that is put back (see `onFirstPageRendered`).
+        // With a place to go back to, the file has its place once that is put back (see `onPagesLoaded`).
         if (view?.scrollY === undefined) placed = true;
     }
 
     // Brought back after being put away: the file goes back to where it was left. PDF.js moves to the first page as it
-    // starts, so the place is put back once that has happened, and again when the first page is drawn.
+    // starts, so the place is put back once that has happened, when the first page is drawn, and once more when every
+    // page has its real size (pages of other sizes change the file's height after the first page is drawn).
     function restoreScroll(): void {
         if (view?.scrollY === undefined) return;
         requestAnimationFrame(putBackPlace);
         eventBus?.on("pagerendered", onFirstPageRendered);
+        eventBus?.on("pagesloaded", onPagesLoaded);
     }
 
     function putBackPlace(): void {
@@ -258,6 +260,11 @@
 
     function onFirstPageRendered(): void {
         eventBus?.off("pagerendered", onFirstPageRendered);
+        putBackPlace();
+    }
+
+    function onPagesLoaded(): void {
+        eventBus?.off("pagesloaded", onPagesLoaded);
         putBackPlace();
         placed = true;
     }
@@ -356,6 +363,7 @@
         destroyed = true;
         eventBus?.off("pagesinit", onPagesInit);
         eventBus?.off("pagerendered", onFirstPageRendered);
+        eventBus?.off("pagesloaded", onPagesLoaded);
         eventBus?.off("pagechanging", onPageChanging);
         eventBus?.off("scalechanging", onScaleChanging);
         eventBus?.off("updatefindmatchescount", onMatchesCount);
