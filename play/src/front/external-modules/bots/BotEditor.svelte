@@ -76,6 +76,8 @@
     const pendingSaves = new Map<SaveKind, { timeout: ReturnType<typeof setTimeout>; save: () => void }>();
     let lastSavedBotConfig: string | null = null;
     let lastSavedAIConfig: string | null = null;
+    // Counts the bots shown (back to the list counts too), so a save can tell the page's record above was reset since
+    let shownBotCount = 0;
     /** The key and the model on it the bot is saved with, to send a model only when it changed */
     let lastSavedAi: { ref?: string | null; model?: string | null } = {};
 
@@ -90,6 +92,19 @@
         });
     }
 
+    /** The provider in a saved AI config (see aiConfigOf); undefined when the bot had none, null when nothing is saved yet */
+    function savedProviderRef(savedAIConfig: string | null): string | undefined | null {
+        if (savedAIConfig === null) return null;
+        try {
+            return (JSON.parse(savedAIConfig) as { aiProviderRef?: string }).aiProviderRef;
+        } catch {
+            return null;
+        }
+    }
+
+    /** Whether the banner shows a save Orbit refused, so the next save that goes through clears it */
+    let refusedSave = false;
+
     /** Debounce a save (wait 1 second after the last change), replacing the pending save of the same kind */
     function scheduleSave(kind: SaveKind, save: () => void): void {
         const pending = pendingSaves.get(kind);
@@ -101,6 +116,24 @@
             save();
         }, 1000);
         pendingSaves.set(kind, { timeout, save });
+    }
+
+    /** Drop the pending save of this kind: the page is back to what is saved, so the edit it would send is undone */
+    function cancelSave(kind: SaveKind): void {
+        const pending = pendingSaves.get(kind);
+        if (pending) {
+            clearTimeout(pending.timeout);
+            pendingSaves.delete(kind);
+        }
+    }
+
+    /** Send the pending saves now rather than dropping them */
+    function flushSaves(): void {
+        for (const { timeout, save } of pendingSaves.values()) {
+            clearTimeout(timeout);
+            save();
+        }
+        pendingSaves.clear();
     }
 
     const unsubscribeSelectedBot = selectedBotStore.subscribe((bot) => {
@@ -117,6 +150,13 @@
         // Picking a different bot (the list and the map both end up here) ends a note about another one
         const notice = get(botTelemetryNoticeStore);
         if (notice && bot && bot.id !== notice.botId) botTelemetryNoticeStore.set(null);
+
+        // Leaving a bot (another bot, or back to the list) sends its waiting saves now. Left waiting, coming back to it
+        // within the second would take its edit as already saved and drop it, or a save would cross into another bot.
+        if (previousBot?.id !== bot?.id) {
+            shownBotCount++;
+            if (previousBot) flushSaves();
+        }
 
         // Initialize lastSaved values when bot first selected or changes
         if (bot && (!previousBot || previousBot.id !== bot.id)) {
@@ -168,7 +208,8 @@
                                     behaviorConfig: bot.behaviorConfig,
                                 })
                             );
-                            lastSavedBotConfig = currentConfig;
+                            // Only while the page still shows this bot: the record is the shown bot's
+                            if (selectedBot?.id === bot.id) lastSavedBotConfig = currentConfig;
                         } catch (e) {
                             console.error("[BotEditor] Failed to auto-save bot:", e);
 
@@ -185,6 +226,8 @@
                         }
                     })();
                 });
+            } else {
+                cancelSave("config");
             }
 
             // Auto-save when AI config changes (provider, instructions) - debounced
@@ -195,8 +238,18 @@
                         aiProviderRef: bot.aiProviderRef,
                     });
                 }
+                // What is saved for this bot, if its save runs after the page left it: the page's record is then
+                // another bot's, or this bot's reset to what it showed on coming back (edits not saved yet)
+                const savedAIOnSchedule = lastSavedAIConfig;
+                const savedAiOnSchedule = lastSavedAi;
+                const shownBotCountOnSchedule = shownBotCount;
+                const pageRecordIsThisBots = () => shownBotCount === shownBotCountOnSchedule;
+                const savedAIConfig = () => (pageRecordIsThisBots() ? lastSavedAIConfig : savedAIOnSchedule);
                 scheduleSave("ai", () => {
                     void (async () => {
+                        // The provider (and its model) saved when the request went out: what a refusal puts back
+                        let savedRefWhenSent: string | undefined | null = null;
+                        let savedAiWhenSent: { ref?: string | null; model?: string | null } = {};
                         try {
                             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                                 console.log("[BotEditor] Sending AI config update to API:", {
@@ -209,12 +262,19 @@
                             // snapshot: the behavior may have been switched in the meantime, and a stale type would
                             // switch it back.
                             await queueBotSave(bot.id, () => {
+                                // The provider is sent only when it was changed here, against what the saves before
+                                // this one stored. Sent with every save, a page left open would put back a provider
+                                // Orbit has since moved the bot off (a key that was pulled).
+                                const savedRef = savedProviderRef(savedAIConfig());
+                                savedRefWhenSent = savedRef;
+                                savedAiWhenSent = pageRecordIsThisBots() ? lastSavedAi : savedAiOnSchedule;
+                                const providerChanged = savedRef === null || bot.aiProviderRef !== savedRef;
                                 const currentBot = get(botPreviewsStore).get(bot.id) ?? bot;
                                 const behaviorType =
                                     currentBot.behaviorType || currentBot.behaviorConfig?.behaviorType || "idle";
                                 return botApiService.updateBot(bot.id, {
                                     behaviorType, // Include behaviorType explicitly to ensure it's saved
-                                    aiProviderRef: bot.aiProviderRef,
+                                    ...(providerChanged ? { aiProviderRef: bot.aiProviderRef } : {}),
                                     chatInstructions: bot.chatInstructions,
                                     toolTimeoutSeconds: bot.toolTimeoutSeconds ?? null,
                                     description: bot.description ?? "",
@@ -222,20 +282,52 @@
                             });
                             // The bot's own model on its key goes to Orbit, once the key it is on is saved (Orbit puts a bot
                             // that changes key back on the key's check model), and only when it changed
-                            const modelPlan = aiModelPlan({ ref: bot.aiProviderRef, model: bot.aiModel }, lastSavedAi);
-                            lastSavedAi = { ref: bot.aiProviderRef, model: modelPlan.base };
+                            const modelPlan = aiModelPlan(
+                                { ref: bot.aiProviderRef, model: bot.aiModel },
+                                pageRecordIsThisBots() ? lastSavedAi : savedAiOnSchedule
+                            );
+                            if (pageRecordIsThisBots()) lastSavedAi = { ref: bot.aiProviderRef, model: modelPlan.base };
                             if (modelPlan.send) {
                                 const model = modelPlan.send;
                                 await queueBotSave(bot.id, () => botApiService.saveBotModel(bot.id, model));
                                 // eslint-disable-next-line require-atomic-updates
-                                lastSavedAi = { ref: bot.aiProviderRef, model };
+                                if (pageRecordIsThisBots()) lastSavedAi = { ref: bot.aiProviderRef, model };
                             }
                             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                                 console.log("[BotEditor] AI config update successful");
                             }
-                            lastSavedAIConfig = currentAIConfig;
+                            if (selectedBot?.id === bot.id) lastSavedAIConfig = currentAIConfig;
+                            if (refusedSave) {
+                                refusedSave = false;
+                                error = null;
+                            }
                         } catch (e) {
                             console.error("[BotEditor] Failed to auto-save bot AI config:", e);
+
+                            // Orbit refused the save and said why (a key that isn't theirs, or isn't lent here): say so,
+                            // and put the provider back to the one that is really saved, so the page doesn't show a move that didn't happen.
+                            // Only while the page still shows the refused one: a provider picked since has its own save coming.
+                            if ((e as Error & { status?: number })?.status === 400) {
+                                error = (e as Error).message;
+                                refusedSave = true;
+                                const savedRef = savedRefWhenSent;
+                                const currentBot = get(botPreviewsStore).get(bot.id);
+                                if (
+                                    savedRef !== null &&
+                                    currentBot &&
+                                    currentBot.aiProviderRef === bot.aiProviderRef &&
+                                    currentBot.aiProviderRef !== savedRef
+                                ) {
+                                    // The model goes back too: the refused key's model kept on the saved key is an edit
+                                    // nobody made, and would be saved next
+                                    const savedModel =
+                                        (savedAiWhenSent.ref ?? null) === (savedRef ?? null)
+                                            ? savedAiWhenSent.model ?? null
+                                            : null;
+                                    upsertBot({ ...currentBot, aiProviderRef: savedRef, aiModel: savedModel });
+                                }
+                                return;
+                            }
 
                             // Check if it's an authentication error - show error for auth issues
                             const isAuthError = (e as Error & { isAuthError?: boolean })?.isAuthError === true;
@@ -250,9 +342,13 @@
                         }
                     })();
                 });
+            } else {
+                // Changed and changed back within the debounce (a provider picked, then the saved one again)
+                cancelSave("ai");
             }
-        } else {
-            // Reset when no bot selected
+        } else if (!bot) {
+            // Reset when no bot selected. A rename keeps them: it saves nothing here, and the provider check
+            // above needs what was saved.
             lastSavedBotConfig = null;
             lastSavedAIConfig = null;
             lastSavedAi = {};
@@ -421,11 +517,7 @@
         // detail view's own debounced edits go first, while this component still listens for them (a parent's
         // onDestroy runs before its children's).
         detailView?.flushPendingSaves();
-        for (const { timeout, save } of pendingSaves.values()) {
-            clearTimeout(timeout);
-            save();
-        }
-        pendingSaves.clear();
+        flushSaves();
 
         // Deactivate the Phaser tool
         botEditorTool.deactivate();
