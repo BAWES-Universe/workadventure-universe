@@ -351,7 +351,7 @@
     }
     .bp-select select {
         width: 100%;
-        height: 40px;
+        height: 44px;
         margin: 0;
         padding: 0 36px 0 12px;
         border: 0;
