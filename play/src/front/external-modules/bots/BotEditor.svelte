@@ -241,9 +241,10 @@
                 // What is saved for this bot, if its save runs after the page left it: the page's record is then
                 // another bot's, or this bot's reset to what it showed on coming back (edits not saved yet)
                 const savedAIOnSchedule = lastSavedAIConfig;
+                const savedAiOnSchedule = lastSavedAi;
                 const shownBotCountOnSchedule = shownBotCount;
-                const savedAIConfig = () =>
-                    shownBotCount === shownBotCountOnSchedule ? lastSavedAIConfig : savedAIOnSchedule;
+                const pageRecordIsThisBots = () => shownBotCount === shownBotCountOnSchedule;
+                const savedAIConfig = () => (pageRecordIsThisBots() ? lastSavedAIConfig : savedAIOnSchedule);
                 scheduleSave("ai", () => {
                     void (async () => {
                         // The provider saved when the request went out: what a refusal puts back
@@ -279,13 +280,16 @@
                             });
                             // The bot's own model on its key goes to Orbit, once the key it is on is saved (Orbit puts a bot
                             // that changes key back on the key's check model), and only when it changed
-                            const modelPlan = aiModelPlan({ ref: bot.aiProviderRef, model: bot.aiModel }, lastSavedAi);
-                            lastSavedAi = { ref: bot.aiProviderRef, model: modelPlan.base };
+                            const modelPlan = aiModelPlan(
+                                { ref: bot.aiProviderRef, model: bot.aiModel },
+                                pageRecordIsThisBots() ? lastSavedAi : savedAiOnSchedule
+                            );
+                            if (pageRecordIsThisBots()) lastSavedAi = { ref: bot.aiProviderRef, model: modelPlan.base };
                             if (modelPlan.send) {
                                 const model = modelPlan.send;
                                 await queueBotSave(bot.id, () => botApiService.saveBotModel(bot.id, model));
                                 // eslint-disable-next-line require-atomic-updates
-                                lastSavedAi = { ref: bot.aiProviderRef, model };
+                                if (pageRecordIsThisBots()) lastSavedAi = { ref: bot.aiProviderRef, model };
                             }
                             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                                 console.log("[BotEditor] AI config update successful");
