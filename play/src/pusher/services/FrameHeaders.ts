@@ -1,12 +1,14 @@
 /**
  * The game's own address: the page every Open here frame sits in. Read straight from the environment (FRONT_URL, as
- * EnvironmentVariable reads it) so this check loads without the pusher's whole configuration.
+ * EnvironmentVariable reads it) so this check loads without the pusher's whole configuration. FRONT_URL can be a path
+ * such as "/" (the front and the pusher share one host, as in docker-compose.prod.yaml), so it is read against
+ * PUSHER_URL.
  */
-export const GAME_ORIGIN = originOf(process.env.FRONT_URL ?? "");
+export const GAME_ORIGIN = originOf(process.env.FRONT_URL ?? "", process.env.PUSHER_URL);
 
-function originOf(raw: string): string | undefined {
+export function originOf(raw: string, base?: string): string | undefined {
     try {
-        return new URL(raw).origin;
+        return new URL(raw, base || undefined).origin;
     } catch {
         return undefined;
     }

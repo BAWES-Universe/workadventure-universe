@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isFrameable } from "../../src/pusher/services/FrameHeaders";
+import { isFrameable, originOf } from "../../src/pusher/services/FrameHeaders";
 
 const GAME = "https://play.bawes.net";
 const page = new URL("https://en.wikipedia.org/wiki/Kuwait");
@@ -63,5 +63,22 @@ describe("isFrameable", () => {
     it("refuses a page that names its ancestors when the game's address is unknown", () => {
         expect(framed({ "content-security-policy": "frame-ancestors https://play.bawes.net" }, "")).toBe(false);
         expect(framed({}, "")).toBe(true);
+    });
+});
+
+describe("originOf", () => {
+    it("reads a full FRONT_URL as it is", () => {
+        expect(originOf("https://play.bawes.net/", "https://other.example/")).toBe(GAME);
+    });
+
+    it("reads a path FRONT_URL against PUSHER_URL", () => {
+        expect(originOf("/", "https://play.bawes.net/")).toBe(GAME);
+        expect(originOf("", "https://play.bawes.net/")).toBe(GAME);
+    });
+
+    it("knows no origin when neither is a full address", () => {
+        expect(originOf("/", "/")).toBeUndefined();
+        expect(originOf("/", undefined)).toBeUndefined();
+        expect(originOf("", "")).toBeUndefined();
     });
 });

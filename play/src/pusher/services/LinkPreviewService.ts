@@ -300,6 +300,7 @@ async function loadPreview(url: URL): Promise<LinkPreview> {
             continue;
         }
         if (!result.html) {
+            // No page to show (a file, an empty answer): no embeddable, so its card opens a new tab as before.
             return { url: url.toString(), siteName: siteNameOf(url) };
         }
         return {
