@@ -28,11 +28,12 @@ vi.mock("../../Stores/ClosedItemsStore", async (importOriginal) => ({
 
 // The game manager loads first, as it does in the game: its scene and the Api it listens to depend on that order.
 import { gameManager } from "../../Phaser/Game/GameManager";
-import { chatSheetLayoutStore, openHereSheetHeightStore } from "../../Chat/ChatSheetStore";
+import { chatOwnSheetHeightStore, chatSheetLayoutStore, openHereSheetHeightStore } from "../../Chat/ChatSheetStore";
 import { CHAT_SHEET_SIZES } from "../../Chat/ChatSheetSizes";
 import { chatVisibilityStore } from "../../Stores/ChatStore";
 import { coWebsites } from "../../Stores/CoWebsiteStore";
 import {
+    OPEN_HERE_BEHIND_CHAT_STRIP,
     OPEN_HERE_TUCKED_HEIGHT,
     openHereListOpenStore,
     openHereSheetRestStore,
@@ -269,16 +270,71 @@ describe("OpenHereWindow as a phone's sheet", () => {
         expect(sheet()?.style.height).toBe(`${OPEN_HERE_TUCKED_HEIGHT}px`);
     });
 
-    it("does not follow a drag while the chat is over it", async () => {
-        await mount("plan.pdf");
-        chatVisibilityStore.set(true);
-        await tick();
+    describe("with the chat open over it", () => {
+        const chatHeight = heights.peek;
+        const strip = chatHeight + OPEN_HERE_BEHIND_CHAT_STRIP;
 
-        dragHandle(handle()!, 100, 300);
-        await tick();
+        beforeEach(async () => {
+            await mount("plan.pdf");
+            chatOwnSheetHeightStore.set(chatHeight);
+            chatVisibilityStore.set(true);
+            await tick();
+        });
 
-        expect(sheet()?.style.height).toBe(`${heights.full}px`);
-        expect(get(openHereTuckedStore)).toBe(false);
+        afterEach(() => {
+            chatOwnSheetHeightStore.set(0);
+        });
+
+        it("follows a drag down, never lower than a strip above the chat, and is not tucked", async () => {
+            sendPointer(handle()!, "pointerdown", 100);
+            sendPointer(handle()!, "pointermove", 400);
+            await tick();
+            expect(sheet()?.style.height).toBe(`${heights.full - 300}px`);
+
+            sendPointer(handle()!, "pointermove", 800);
+            await tick();
+            expect(sheet()?.style.height).toBe(`${strip}px`);
+            sendPointer(handle()!, "pointerup", 800);
+            await tick();
+
+            expect(sheet()?.style.height).toBe(`${strip}px`);
+            expect(get(openHereTuckedStore)).toBe(false);
+            expect(get(openHereSheetRestStore)).toBe("half");
+        });
+
+        it("stays where it is let go, and goes back to where it rested when the chat closes", async () => {
+            dragHandle(handle()!, 100, 300);
+            await tick();
+            expect(sheet()?.style.height).toBe(`${heights.full - 200}px`);
+
+            chatVisibilityStore.set(false);
+            await tick();
+            expect(sheet()?.style.height).toBe(`${heights.half}px`);
+
+            // Opened again, it rises to the top again.
+            chatVisibilityStore.set(true);
+            await tick();
+            expect(sheet()?.style.height).toBe(`${heights.full}px`);
+        });
+
+        it("steps through its heights when its handle is tapped", async () => {
+            dragHandle(handle()!, 300, 300);
+            await tick();
+            // From the top, down to the lowest it can be over the chat.
+            expect(sheet()?.style.height).toBe(`${strip}px`);
+
+            dragHandle(handle()!, 300, 300);
+            await tick();
+            expect(sheet()?.style.height).toBe(`${heights.half}px`);
+        });
+
+        it("keeps the strip above a taller chat", async () => {
+            chatOwnSheetHeightStore.set(heights.half);
+            dragHandle(handle()!, 100, 800);
+            await tick();
+
+            expect(sheet()?.style.height).toBe(`${heights.half + OPEN_HERE_BEHIND_CHAT_STRIP}px`);
+        });
     });
 
     it("centres the map again once the sheet has stopped moving, and when it is gone", async () => {

@@ -15,7 +15,12 @@
         sideWindowInFrontStore,
         windowBehindCardStore,
     } from "../../Stores/SideWindowInFrontStore";
-    import { openHereSheetHeight, openHereSheetRelease, openHereSheetRestStore } from "../../Stores/OpenHereSheetStore";
+    import {
+        openHereBehindChatMin,
+        openHereSheetHeight,
+        openHereSheetRelease,
+        openHereSheetRestStore,
+    } from "../../Stores/OpenHereSheetStore";
     import {
         clampOpenHereRatio,
         nearestWidthStop,
@@ -25,8 +30,13 @@
     import { analyticsClient } from "../../Administration/AnalyticsClient";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { prefersReducedMotion } from "../../Phaser/Components/prefersReducedMotion";
-    import { chatSheetLayoutStore, openHereSheetHeightStore, restoreChatAfterFile } from "../../Chat/ChatSheetStore";
-    import { CHAT_SHEET_SIZES } from "../../Chat/ChatSheetSizes";
+    import {
+        chatOwnSheetHeightStore,
+        chatSheetLayoutStore,
+        openHereSheetHeightStore,
+        restoreChatAfterFile,
+    } from "../../Chat/ChatSheetStore";
+    import { CHAT_SHEET_SIZES, type ChatSheetRest } from "../../Chat/ChatSheetSizes";
     import { clampHeight, nearestSnap, nextSnap, sheetFrameStyle } from "../Sheet/BottomSheet";
     import SheetHandle from "../Sheet/SheetHandle.svelte";
     import LL from "../../../i18n/i18n-svelte";
@@ -116,12 +126,18 @@
     $: tucked = !floating && $openHereTuckedStore;
     // The chat is open over a sheet that is up; a tucked one stays as it is, under the chat.
     $: chatOverSheet = !floating && !tucked && $chatVisibilityStore && $chatSheetLayoutStore;
+    // Where the handle put the sheet while the chat is open over it (it rises to the top until then). The chat closing
+    // gives the height it rested at back, so this is forgotten.
+    let behindRest: ChatSheetRest | undefined;
+    $: if (!chatOverSheet) behindRest = undefined;
     $: sheetHeight =
         sheetDragHeight ??
         openHereSheetHeight({
             rest: $openHereSheetRestStore,
             tucked,
             chatOver: chatOverSheet,
+            behindRest,
+            chatHeight: $chatOwnSheetHeightStore,
             viewportHeight: $windowSize.height,
         });
     // The videos above the sheet follow its height, drag included. Tucked, they have all the room again; with the chat
@@ -155,7 +171,16 @@
     $: if (settled !== undefined) void repositionWhenDrawn();
 
     function onSheetDrag(height: number) {
-        if (chatOverSheet) return;
+        if (chatOverSheet) {
+            // The chat stays where it is: the window goes no lower than a strip above it, and is not tucked.
+            sheetDragHeight = clampHeight(
+                height,
+                $windowSize.height,
+                CHAT_SHEET_SIZES,
+                openHereBehindChatMin($chatOwnSheetHeightStore, $windowSize.height)
+            );
+            return;
+        }
         // A tucked sheet dragged up is up again from where the finger is.
         if (tucked) openHereTuckedStore.set(false);
         // It follows the finger below its lowest height too, so letting go there tucks it.
@@ -168,7 +193,11 @@
     function onSheetRelease(height: number) {
         const dragged = sheetDragHeight;
         sheetDragHeight = undefined;
-        if (chatOverSheet) return;
+        if (chatOverSheet) {
+            const behind = openHereSheetRelease(height, $windowSize.height);
+            behindRest = behind === "tuck" ? "peek" : behind;
+            return;
+        }
         const release = openHereSheetRelease(height, $windowSize.height);
         if (release === "tuck") openHereTuckedStore.set(true);
         else openHereSheetRestStore.set(release);
@@ -183,7 +212,12 @@
     }
 
     function onSheetTap() {
-        if (chatOverSheet) return;
+        if (chatOverSheet) {
+            // At the lowest it can be over the chat, it is at "peek" as far as the next step goes.
+            const atLowest = sheetHeight <= openHereBehindChatMin($chatOwnSheetHeightStore, $windowSize.height);
+            behindRest = nextSnap(atLowest ? "peek" : nearestSnap(sheetHeight, $windowSize.height, CHAT_SHEET_SIZES));
+            return;
+        }
         if (tucked) {
             openHereTuckedStore.set(false);
             return;
