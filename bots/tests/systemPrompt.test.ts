@@ -62,10 +62,14 @@ describe('buildSystemPrompt layout', () => {
         expect(p).not.toContain('**YOUR PERSONALITY:**');
     });
 
-    it('points the memory rules at the memory below, not above', () => {
-        const p = buildSystemPrompt({ chatInstructions: INSTRUCTIONS, conversationContext: ALICE, now: NOW });
-        expect(p).toContain('The context below is YOUR MEMORY');
-        expect(p).not.toContain('The context above is YOUR MEMORY');
+    it('words the memory rules so they hold with and without a memory section', () => {
+        for (const conversationContext of [ALICE, '']) {
+            const p = buildSystemPrompt({ chatInstructions: INSTRUCTIONS, conversationContext, now: NOW });
+            expect(p).toContain('If a "Conversation Context" section appears below, it is YOUR MEMORY');
+            expect(p).toContain("you have not talked with this person before - don't invent shared history");
+            expect(p).not.toContain('The context below is YOUR MEMORY');
+            expect(p).not.toContain('The context above is YOUR MEMORY');
+        }
     });
 });
 
