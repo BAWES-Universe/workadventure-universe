@@ -19,6 +19,23 @@ describe("BotDmAccessCache", () => {
         expect(seen).toEqual([false, true]);
     });
 
+    it("does not start from an old yes, which the owner may have taken back since", async () => {
+        let now = 0;
+        const ask = vi
+            .fn<(botId: string) => Promise<boolean | null>>()
+            .mockResolvedValueOnce(true)
+            .mockResolvedValueOnce(false);
+        const cache = new BotDmAccessCache(ask, () => now);
+        await cache.get("b1");
+        expect(get(cache.store("b1"))).toBe(true);
+        now = DM_ACCESS_TTL_MS;
+        const seen: boolean[] = [];
+        const stop = cache.store("b1").subscribe((value) => seen.push(value));
+        await settle();
+        stop();
+        expect(seen).toEqual([false]);
+    });
+
     it("asks once for everyone looking at the same bot, and keeps the answer for 30 seconds", async () => {
         let now = 0;
         const ask = vi.fn(yes);

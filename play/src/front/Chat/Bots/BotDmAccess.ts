@@ -20,7 +20,10 @@ export class BotDmAccessCache {
     constructor(private ask: Ask, private now: () => number = Date.now) {}
 
     store(botId: string): Readable<boolean> {
-        return readable(this.answers.get(botId)?.allowed ?? false, (set) => {
+        // Start from a kept answer only while it is fresh: an old yes may have been taken back since
+        const known = this.answers.get(botId);
+        const fresh = known !== undefined && this.now() - known.at < DM_ACCESS_TTL_MS;
+        return readable(fresh ? known.allowed : false, (set) => {
             let live = true;
             this.get(botId)
                 .then((allowed) => {

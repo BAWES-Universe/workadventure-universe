@@ -88,6 +88,24 @@ describe('checking the Matrix registration at startup', () => {
         expect(m.activeMatrixConfig(ENV)).toBeNull();
     });
 
+    it('holds startup no longer than a minute when Synapse hangs instead of refusing', async () => {
+        vi.useFakeTimers();
+        const m = await load();
+        // Stands in for the HTTP client: no answer, until the time limit it was given runs out
+        const whoami = vi.fn(
+            (timeoutMs: number) => new Promise<never>((_resolve, rejectLater) => setTimeout(() => rejectLater(new Error('timeout')), timeoutMs))
+        );
+        let done = false;
+        const verified = m.verifyMatrixRegistration({ whoami }, CONFIG).finally(() => {
+            done = true;
+        });
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(done).toBe(true);
+        expect(await verified).toBe(false);
+        expect(Math.max(...whoami.mock.calls.map(([timeoutMs]) => timeoutMs))).toBeLessThanOrEqual(5_000);
+        expect(m.activeMatrixConfig(ENV)).toBeNull();
+    });
+
     it('does nothing when direct messages are not set up', async () => {
         const m = await load();
         expect(m.readMatrixConfig({} as NodeJS.ProcessEnv)).toBeNull();
@@ -106,6 +124,9 @@ describe('asking Synapse who we are', () => {
         get.mockResolvedValueOnce({ status: 200, data: { user_id: '@universe-bots:matrix.example' } });
         expect(await client.whoami()).toEqual({ ok: true, userId: '@universe-bots:matrix.example' });
         expect(get).toHaveBeenCalledWith('/_matrix/client/v3/account/whoami', expect.objectContaining({ validateStatus: expect.any(Function) }));
+        get.mockResolvedValueOnce({ status: 200, data: { user_id: '@universe-bots:matrix.example' } });
+        await client.whoami(5_000);
+        expect(get).toHaveBeenLastCalledWith('/_matrix/client/v3/account/whoami', expect.objectContaining({ timeout: 5_000 }));
         get.mockResolvedValueOnce({ status: 401, data: { errcode: 'M_UNKNOWN_TOKEN' } });
         expect(await client.whoami()).toEqual({ ok: false, status: 401, errcode: 'M_UNKNOWN_TOKEN' });
     });
