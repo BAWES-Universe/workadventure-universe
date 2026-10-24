@@ -738,6 +738,16 @@ const chat: BaseTranslation = {
         people: "People",
         bots: "Bots",
     },
+    botStatus: {
+        online: "Online",
+        resting: "Resting",
+        unready: "Not ready yet",
+        gone: "Left",
+        restingPlaceholder: "Replies are paused",
+        unreadyPlaceholder: "Can't reply yet",
+        closed: "This chat is closed",
+        left: "{name} left",
+    },
     friends: {
         chipsLabel: "Show",
         everyone: "Everyone",

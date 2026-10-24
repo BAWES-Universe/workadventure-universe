@@ -53,6 +53,35 @@ interface CachedCredentials {
     expiresAt: number;
 }
 
+/** Media rule for bots in a bubble on the map, where send_* tools show media inline. */
+const WORLD_MEDIA_RULE = '- You have send_image, send_file, send_audio, and send_video tools available. When an MCP tool returns a media URL, use these tools to display it inline rather than sending a raw text URL.';
+/** Media rule for direct messages: the bot server sends media from tools as attachments after the reply. */
+const DM_MEDIA_RULE = '- Images, audio, video and files that your tools return are attached to your reply automatically. Never paste their URLs into your answer.';
+
+/** Location and navigation rules for bots in a bubble on the map. */
+const WORLD_PLACE_RULES = `**LOCATION & SPACE QUESTIONS (Answer naturally, like a person would):**
+- **CRITICAL**: Only say the full location (universe/world/room) on the FIRST "where are we" question. After that, NEVER repeat it!
+- "where are we" (first time) → "[universe], [world], [room]. There's [areas] here."
+- "what areas"/"areas?"/"what other areas" → **DO NOT repeat location** - just say "There's a Social Area and Meeting Room here" or list the areas
+- "what's here" → If you already said location, just describe what's available without repeating location
+- "who's here"/"who's online" → Just list people naturally (e.g., "Khalid ABC is here") - no location prefix
+- "take me to X"/"yea"/"yes" (for navigation) → Just say "Follow me!" or "I'll take you there" - **NO location prefix**
+- Any follow-up question → Check "Recent conversation" - if location was said, don't repeat it
+
+**NAVIGATION (Be helpful naturally):**
+- "take me to [person/area]" → Call navigate_to tool FIRST, then respond with ONLY "Follow me!" or "I'll take you there" - **NO location prefix**
+- "yes"/"yea"/"ok" (after offering to go somewhere) → Just say "Follow me!" - **NO location prefix**
+- Only offer to lead when explicitly asked - don't say "Follow me!" when just describing what's available
+
+`;
+/** In a direct message the person is not next to the bot, so it cannot show them around. */
+const DM_PLACE_RULES = `**DIRECT MESSAGE (You are chatting by direct message, not on the map):**
+- This person is messaging you directly. They may be anywhere, or not in the game at all.
+- You cannot see who is near you, walk anywhere, or lead them. If they ask you to take them somewhere, say they can find you in your room and you will show them around there.
+- Keep replies the length of a chat message.
+
+`;
+
 export class AIService {
     private adminApiService: AdminApiService;
     private conversationMemory: ConversationMemory;
@@ -268,7 +297,11 @@ export class AIService {
         botClient?: BotClient,
         adminApiService?: AdminApiService,
         abortSignal?: AbortSignal,
-        images?: string[]
+        images?: string[],
+        /** 'dm' when the person writes to the bot by direct message instead of in a bubble on the map. */
+        channel: 'world' | 'dm' = 'world',
+        /** The bot's Patience for tools, for a caller with no bot client (a direct message). */
+        toolTimeoutSeconds?: number | null
     ): AsyncGenerator<AIStreamChunk> {
         const startTime = Date.now();
         // Buffer for content received before tool calls are detected
@@ -570,7 +603,7 @@ TOOLS & ACTIONS (Be seamless):
 - **CRITICAL**: NEVER mention tools, tool names, or technical details - just give the answer like a human would
 - **CRITICAL**: After calling a tool, respond naturally with the results (e.g., "Khalid ABC is here" not "I'll check who's here. (tool call: get_people_on_map)")
 - Just answer the question directly - don't explain that you're checking or looking something up
-- You have send_image, send_file, send_audio, and send_video tools available. When an MCP tool returns a media URL, use these tools to display it inline rather than sending a raw text URL.
+${channel === 'dm' ? DM_MEDIA_RULE : WORLD_MEDIA_RULE}
 
 **ACCURACY & TRUTHFULNESS (Be honest, like a real person):**
 - Only mention things you actually know - use location names exactly as shown in "Current Location Context"
@@ -579,21 +612,7 @@ TOOLS & ACTIONS (Be seamless):
 - Don't describe physical features you can't see - you only know room/area names and what the map says each area is for
 - If you're not sure about something, be honest about it (within your personality)
 
-**LOCATION & SPACE QUESTIONS (Answer naturally, like a person would):**
-- **CRITICAL**: Only say the full location (universe/world/room) on the FIRST "where are we" question. After that, NEVER repeat it!
-- "where are we" (first time) → "[universe], [world], [room]. There's [areas] here."
-- "what areas"/"areas?"/"what other areas" → **DO NOT repeat location** - just say "There's a Social Area and Meeting Room here" or list the areas
-- "what's here" → If you already said location, just describe what's available without repeating location
-- "who's here"/"who's online" → Just list people naturally (e.g., "Khalid ABC is here") - no location prefix
-- "take me to X"/"yea"/"yes" (for navigation) → Just say "Follow me!" or "I'll take you there" - **NO location prefix**
-- Any follow-up question → Check "Recent conversation" - if location was said, don't repeat it
-
-**NAVIGATION (Be helpful naturally):**
-- "take me to [person/area]" → Call navigate_to tool FIRST, then respond with ONLY "Follow me!" or "I'll take you there" - **NO location prefix**
-- "yes"/"yea"/"ok" (after offering to go somewhere) → Just say "Follow me!" - **NO location prefix**
-- Only offer to lead when explicitly asked - don't say "Follow me!" when just describing what's available
-
-**FOLLOW-UP QUESTIONS (Be natural, not repetitive):**
+${channel === 'dm' ? DM_PLACE_RULES : WORLD_PLACE_RULES}**FOLLOW-UP QUESTIONS (Be natural, not repetitive):**
 - **CRITICAL**: For ANY follow-up question, do NOT repeat location if you already said it
 - "whats that"/"where" → Check "Recent conversation" to understand what they're referring to - answer directly
 - "yes"/"yea"/"ok" → Just acknowledge and act - don't repeat previous information
@@ -621,7 +640,7 @@ Everything above is technical guidance. Follow your personality as defined in th
             const isQwenModel = config.model.toLowerCase().includes('qwen');
 
             // Define tools for function calling
-            const { tools, toolServerMap } = await this.buildTools(botId, botClient, adminApiService || this.adminApiService);
+            const { tools, toolServerMap } = await this.buildTools(botId, botClient, adminApiService || this.adminApiService, channel);
 
             // Generate stream with tools
             let tokensUsed = 0;
@@ -1041,7 +1060,7 @@ Everything above is technical guidance. Follow your personality as defined in th
                                     argsLength: tc.arguments.length
                                 })));
                             }
-                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal);
+                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds);
 
                             // Collect URLs that were already sent by explicit send_* tool calls
                             // so autoSendMedia doesn't re-send them via parent tool results.
@@ -2103,7 +2122,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     /**
      * Build tool definitions for function calling
      */
-    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService): Promise<{ tools: any[]; toolServerMap: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string> }> }> {
+    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService, channel: 'world' | 'dm' = 'world'): Promise<{ tools: any[]; toolServerMap: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string> }> }> {
         const tools: any[] = [];
         const toolServerMap = new Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string> }>();
 
@@ -2261,8 +2280,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             });
         }
 
-        // Tool: read a web page someone mentions ("check out bawes.net")
-        if (botClient) {
+        // Tool: read a web page someone mentions ("check out bawes.net"). It needs no map, so a direct message has it too.
+        if (botClient || channel === 'dm') {
             tools.push({
                 type: 'function',
                 function: {
@@ -2333,7 +2352,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         spaceName?: string,
         botId?: string,
         playerId?: number,
-        abortSignal?: AbortSignal
+        abortSignal?: AbortSignal,
+        toolTimeoutSeconds?: number | null
     ): Promise<Array<{ id: string; name: string; result: any }>> {
         // Filter out invalid tool calls (empty name, undefined, etc.)
         const validToolCalls = toolCalls.filter(tc => tc && tc.name && tc.name.trim() !== '');
@@ -2662,7 +2682,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     mcpServerConfig.headers,
                                     playerUuid,
                                     abortSignal,
-                                    toolTimeoutMs(botClient?.getFullConfig()?.toolTimeoutSeconds)
+                                    toolTimeoutMs(toolTimeoutSeconds)
                                 );
                                 // Process MCP resource blobs (base64 binary data) by uploading to CDN
                                 // and returning CDN URLs so the AI can use send_image/send_audio/etc.

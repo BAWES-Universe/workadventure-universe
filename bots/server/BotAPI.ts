@@ -233,6 +233,14 @@ async function identifyForAccessMiddleware(
     requireGameToken(req, res, next);
 }
 
+export interface BotAPIOptions {
+    /** Each bot's state for direct messages (online, resting, unready, gone); only when Matrix DMs are on. */
+    dmStatus?: (botIds: string[]) => Promise<Record<string, string>>;
+}
+
+/** Most bots one state lookup may ask about: a chat list's worth. */
+const DM_STATUS_MAX_IDS = 50;
+
 /** Whether two room addresses name the same room: the same /@/universe/world/room path, whatever the host or scheme. */
 function sameRoomAddress(a: string, b: string): boolean {
     const pathOf = (address: string): string => {
@@ -251,13 +259,26 @@ export class BotAPI {
     private adminApiService: AdminApiService;
     private botRegistry: BotRegistry;
     private server: any = null;
+    private dmStatus: BotAPIOptions['dmStatus'];
 
-    constructor(botManager: BotManager, adminApiService: AdminApiService, botRegistry: BotRegistry) {
+    constructor(
+        botManager: BotManager,
+        adminApiService: AdminApiService,
+        botRegistry: BotRegistry,
+        preRouters: express.Router[] = [],
+        options: BotAPIOptions = {}
+    ) {
         console.log('[BotAPI] Constructor called');
         this.app = express();
         this.botManager = botManager;
         this.adminApiService = adminApiService;
         this.botRegistry = botRegistry;
+        this.dmStatus = options.dmStatus;
+
+        // Routers with their own auth and body limits (the Matrix application service) go before the shared parser.
+        for (const router of preRouters) {
+            this.app.use(router);
+        }
 
         // Keep constructor simple - no route registration here
         this.setupMiddleware();
@@ -372,16 +393,16 @@ export class BotAPI {
             }
         });
 
-        // May I do this with this bot? The game asks before it shows a bot's Summon button, so a person the owner has
-        // refused never sees it. Signed-in players prove who they are with the Orbit session, everyone else with the
+        // May I do this with this bot? The game asks before it shows a bot's Summon or Message button, so a person the
+        // owner has refused never sees it. Signed-in players prove who they are with the Orbit session, everyone else with the
         // game token (a guest is asked about as a guest). Orbit decides; a no is a 200, and Orbit not answering with
         // nothing earlier to go on is a 503, which the game treats as "don't know" and shows the button.
         this.app.post('/api/bots/:botId/access', identifyForAccess, async (req: BotAPIRequest, res: Response) => {
             try {
                 const { botId } = req.params;
                 const action = req.body?.action;
-                if (action !== 'summon' && action !== 'chat') {
-                    res.status(400).json({ error: 'action must be "summon" or "chat"' });
+                if (action !== 'summon' && action !== 'chat' && action !== 'dm') {
+                    res.status(400).json({ error: 'action must be "summon", "chat" or "dm"' });
                     return;
                 }
 
@@ -759,6 +780,43 @@ export class BotAPI {
             } catch (error: any) {
                 console.error('[BotAPI] Error updating bot:', error);
                 res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Bot states for the game's chat header and People list. Signed in only; it says nothing but the state of bots
+        // the caller already names, never their names or rooms. A bot the caller may not message reads as unknown, so
+        // someone refused never learns it is resting or not ready. Gone needs no check: there is no bot left to ask about.
+        this.app.get('/api/bots/dm-status', requireSession, async (req: BotAPIRequest, res: Response) => {
+            if (!this.dmStatus) {
+                res.status(404).json({ error: 'Direct messages are off' });
+                return;
+            }
+            const ids = [
+                ...new Set(
+                    String(req.query.ids ?? '')
+                        .split(',')
+                        .map((id) => id.trim())
+                        .filter((id) => /^[A-Za-z0-9_-]{1,64}$/.test(id))
+                ),
+            ];
+            if (ids.length === 0 || ids.length > DM_STATUS_MAX_IDS) {
+                res.status(400).json({ error: `Send 1 to ${DM_STATUS_MAX_IDS} bot ids` });
+                return;
+            }
+            try {
+                const states = await this.dmStatus(ids);
+                const gate = this.botManager.getAccessGate();
+                const person = { signedIn: true, identifier: req.sessionUuid };
+                await Promise.all(
+                    ids.map(async (botId) => {
+                        if (states[botId] === 'gone' || states[botId] === 'unknown') return;
+                        if (!(await gate.check(botId, 'dm', person)).allowed) states[botId] = 'unknown';
+                    })
+                );
+                res.json({ bots: states });
+            } catch (error) {
+                console.error('[BotAPI] Error reading bot states:', error);
+                res.status(500).json({ error: 'Could not read bot states' });
             }
         });
 

@@ -193,6 +193,16 @@ describe("getPersonActions", () => {
         expect(actions.hasMenu).toBe(false);
     });
 
+    it("gives a bot with a chat id Message only when its owner lets you message it", () => {
+        const bot = { isBot: true, chatId: "@bot_b1:matrix.test" };
+        expect(getPersonActions(input({ ...bot, mayMessageBot: true })).message).toBe("enabled");
+        expect(getPersonActions(input({ ...bot, mayMessageBot: false })).message).toBe("hidden");
+        // Not known yet, or Orbit could not say: no button, since the bot could not answer either.
+        expect(getPersonActions(input(bot)).message).toBe("hidden");
+        // A person's Message does not depend on any bot answer.
+        expect(getPersonActions(input({ mayMessageBot: false })).message).toBe("enabled");
+    });
+
     it("never shows a Locate button for people, who keep Locate in the menu", () => {
         const actions = getPersonActions(input());
         expect(actions.locateButton).toBe(false);
