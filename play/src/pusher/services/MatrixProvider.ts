@@ -182,6 +182,11 @@ class MatrixProvider {
     }
 
     private async overrideRateLimitForAdminAccount() {
+        if (!MATRIX_DOMAIN) {
+            // Without the domain the admin id would end in ":undefined" and Synapse would answer 400.
+            console.warn("MATRIX_DOMAIN is not set: the chat admin account keeps the default Synapse rate limits");
+            return;
+        }
         const axiosInstance = await this.getAxios();
         const response = await axiosInstance.post(`_synapse/admin/v1/users/${ADMIN_CHAT_ID}/override_ratelimit`, {
             message_per_second: 0,
