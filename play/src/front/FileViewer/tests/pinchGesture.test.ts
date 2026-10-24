@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { listenForPinch } from "../pinchGesture";
 
-function touch(type: string, points: Array<[number, number]>): Event {
+/** Fingers at `points` on the screen; inside a page drawn `frameScale` times as big, the page's own coordinates are smaller. */
+function touch(type: string, points: Array<[number, number]>, frameScale = 1): Event {
     const event = new Event(type, { bubbles: true, cancelable: true });
-    Object.defineProperty(event, "touches", { value: points.map(([clientX, clientY]) => ({ clientX, clientY })) });
+    Object.defineProperty(event, "touches", {
+        value: points.map(([x, y]) => ({ screenX: x, screenY: y, clientX: x / frameScale, clientY: y / frameScale })),
+    });
     return event;
 }
 
@@ -44,6 +47,35 @@ describe("listenForPinch", () => {
             ])
         );
         expect(onPinch).toHaveBeenLastCalledWith(0.75, { x: 150, y: 200 });
+    });
+
+    it("reads the distance on the screen, so a page drawn bigger or smaller does not swing the factor", () => {
+        const onPinch = vi.fn();
+        stop = listenForPinch(element, onPinch);
+
+        element.dispatchEvent(
+            touch(
+                "touchstart",
+                [
+                    [100, 200],
+                    [200, 200],
+                ],
+                2
+            )
+        );
+        // The page was zoomed by the last step: the same fingers read at another scale in its own coordinates.
+        element.dispatchEvent(
+            touch(
+                "touchmove",
+                [
+                    [75, 200],
+                    [225, 200],
+                ],
+                0.5
+            )
+        );
+
+        expect(onPinch).toHaveBeenCalledWith(1.5, expect.anything());
     });
 
     it("leaves one finger alone: it scrolls", () => {

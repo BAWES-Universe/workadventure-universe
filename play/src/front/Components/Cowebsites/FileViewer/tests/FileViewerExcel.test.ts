@@ -27,7 +27,9 @@ import FileViewerExcel from "../FileViewerExcel.svelte";
 
 function touch(target: Element, type: string, points: Array<[number, number]>): Event {
     const event = new Event(type, { bubbles: true, cancelable: true });
-    Object.defineProperty(event, "touches", { value: points.map(([clientX, clientY]) => ({ clientX, clientY })) });
+    Object.defineProperty(event, "touches", {
+        value: points.map(([x, y]) => ({ clientX: x, clientY: y, screenX: x, screenY: y })),
+    });
     target.dispatchEvent(event);
     return event;
 }

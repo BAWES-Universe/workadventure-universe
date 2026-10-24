@@ -19,10 +19,12 @@ export function listenForPinch(
 ): () => void {
     let last = 0;
 
+    // The distance is read on the screen: inside a page that is drawn scaled (a document in a frame), the page's own
+    // coordinates change with every zoom step, and the factor would swing from one step to the next.
     const distance = (event: TouchEvent): number =>
         Math.hypot(
-            event.touches[0].clientX - event.touches[1].clientX,
-            event.touches[0].clientY - event.touches[1].clientY
+            event.touches[0].screenX - event.touches[1].screenX,
+            event.touches[0].screenY - event.touches[1].screenY
         );
 
     const onStart = (event: Event): void => {
