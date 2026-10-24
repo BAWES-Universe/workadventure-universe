@@ -5,7 +5,7 @@
     import { renderWordDocument, type RenderedWord } from "../../../FileViewer/wordDocument";
     import { pageInView } from "../../../FileViewer/wordPages";
     import { listenForPinch } from "../../../FileViewer/pinchGesture";
-    import type { ViewerController, ViewerPages } from "../../../FileViewer/viewerController";
+    import type { ViewerController, ViewerPages, ViewerView } from "../../../FileViewer/viewerController";
     import FileViewerOpening from "./FileViewerOpening.svelte";
 
     export let bytes: ArrayBuffer;
@@ -13,6 +13,8 @@
     /** A narrow panel (a phone): the page pill hints at pinching. */
     export let compact: boolean;
     export let controller: ViewerController | undefined = undefined;
+    /** Where the reader was left when it was put away: the zoom and how far down the document it was. */
+    export let view: ViewerView | undefined = undefined;
 
     const dispatch = createEventDispatcher<{ loaded: { pageCount: number }; failed: void }>();
 
@@ -28,7 +30,7 @@
     let contentHeight = 0;
     let sheetTops: number[] = [];
     /** 100% is the page fitted to the panel's width; the plus and minus buttons and a pinch change this. */
-    let userZoom = 1;
+    let userZoom = typeof view?.zoom === "number" ? view.zoom : 1;
     let pinchHint = true;
     const pages = writable<ViewerPages>({ page: 1, count: 0 });
     const zoomPercent = writable(100);
@@ -54,6 +56,16 @@
             else if (lastAreaWidth === 0 && areaWidth > 0) scrollAnchor = lastPlace;
         }
         lastAreaWidth = areaWidth;
+    }
+
+    /** What the reader needs to look the same when it is brought back. */
+    export function getView(): ViewerView | undefined {
+        // Still being read: there is no place to report yet, and what was saved stays.
+        if (!frameDocument) return undefined;
+        // The place to go back to has not been reached yet (the document is still being measured): it is the place.
+        if (scrollAnchor !== undefined) return { zoom: userZoom, scrollY: scrollAnchor };
+        const height = area?.scrollHeight ?? 0;
+        return { zoom: userZoom, scrollY: height > 0 ? area.scrollTop / height : lastPlace ?? 0 };
     }
 
     function setZoom(next: number): void {
@@ -147,6 +159,8 @@
         const loadedDocument = frame?.contentDocument;
         if (!loadedDocument || !rendered) return;
         frameDocument = loadedDocument;
+        // Brought back after being put away: the reader goes back to where the reader was, once it has its size.
+        if (view?.scrollY !== undefined && scrollAnchor === undefined) scrollAnchor = view.scrollY;
         measure(loadedDocument);
         listen(loadedDocument);
         pages.set({ page: 1, count: rendered.pageCount });
