@@ -24,6 +24,8 @@ const OPAQUE_SESSION_PATTERN = /^orb_sess_v2_[0-9a-f]{64}$/;
 const ACCESS_CHECK_TIMEOUT_MS = 3000;
 /** How long a read or change of who may use a bot waits for Orbit before it counts as failed */
 const PERMISSIONS_TIMEOUT_MS = 20000;
+/** How long a lookup of bot states waits before it counts as failed (and is asked again on the next look) */
+const DM_STATUS_TIMEOUT_MS = 10000;
 
 export function isOrbitSessionResponse(value: unknown): value is { version: 2; sessionId: string; expiresAt: number } {
     if (!value || typeof value !== "object") return false;
@@ -528,19 +530,35 @@ export class BotApiService {
 
     /**
      * Each bot's state for direct messages (online, resting, unready, gone), for the chat header and People list.
-     * Null when the bot server can't say (not signed in, direct messages off, or unreachable).
+     * Null when the bot server can't say (not signed in, direct messages off, unreachable, or stalled): one lookup
+     * runs at a time, so one that hung would hold back every later state.
      */
     async getDmStatus(botIds: string[]): Promise<Record<string, string> | null> {
         if (!this.botServerUrl || botIds.length === 0) return null;
-        try {
-            const response = await this.fetchBotServer(
-                `/api/bots/dm-status?ids=${botIds.map(encodeURIComponent).join(",")}`
-            );
-            const data = (await response.json()) as { bots?: Record<string, string> };
-            return data.bots ?? null;
-        } catch {
-            return null;
-        }
+        const stop = new AbortController();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        // Raced as well as aborted: the Orbit sign-in that comes first in a request does not listen for the abort
+        const late = new Promise<null>((resolve) => {
+            timer = setTimeout(() => {
+                stop.abort();
+                resolve(null);
+            }, DM_STATUS_TIMEOUT_MS);
+        });
+        const asking = (async () => {
+            try {
+                const response = await this.fetchBotServer(
+                    `/api/bots/dm-status?ids=${botIds.map(encodeURIComponent).join(",")}`,
+                    { signal: stop.signal }
+                );
+                const data = (await response.json()) as { bots?: Record<string, string> };
+                return data.bots ?? null;
+            } catch {
+                return null;
+            }
+        })();
+        return Promise.race([asking, late]).finally(() => {
+            clearTimeout(timer);
+        });
     }
 
     /**
