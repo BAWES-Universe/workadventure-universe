@@ -38,6 +38,8 @@
         type BotEditorMode,
     } from "./stores/BotEditorStore";
     import { routeStops } from "./behaviorModel";
+    import { newBotRef } from "./mindModel";
+    import { aiModelPlan } from "./modelPickerModel";
     import { botPermissionsStore } from "./stores/BotPermissionsStore";
     import { botTelemetryNoticeStore, botTelemetryStore } from "./stores/BotTelemetryStore";
     import { ruleName } from "./accessModel";
@@ -74,11 +76,14 @@
     const pendingSaves = new Map<SaveKind, { timeout: ReturnType<typeof setTimeout>; save: () => void }>();
     let lastSavedBotConfig: string | null = null;
     let lastSavedAIConfig: string | null = null;
+    /** The key and the model on it the bot is saved with, to send a model only when it changed */
+    let lastSavedAi: { ref?: string | null; model?: string | null } = {};
 
     /** What the "ai" save sends besides the behavior: the bot's mind, chat instructions, Patience and description */
     function aiConfigOf(bot: BotData): string {
         return JSON.stringify({
             aiProviderRef: bot.aiProviderRef,
+            aiModel: bot.aiModel ?? null,
             chatInstructions: bot.chatInstructions,
             toolTimeoutSeconds: bot.toolTimeoutSeconds ?? null,
             description: bot.description ?? "",
@@ -120,6 +125,7 @@
             }
             lastSavedBotConfig = JSON.stringify(bot.behaviorConfig);
             lastSavedAIConfig = aiConfigOf(bot);
+            lastSavedAi = { ref: bot.aiProviderRef, model: bot.aiModel };
             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                 console.log("[BotEditor] Initialized lastSavedAIConfig:", lastSavedAIConfig.substring(0, 100));
             }
@@ -214,6 +220,16 @@
                                     description: bot.description ?? "",
                                 });
                             });
+                            // The bot's own model on its key goes to Orbit, once the key it is on is saved (Orbit puts a bot
+                            // that changes key back on the key's check model), and only when it changed
+                            const modelPlan = aiModelPlan({ ref: bot.aiProviderRef, model: bot.aiModel }, lastSavedAi);
+                            lastSavedAi = { ref: bot.aiProviderRef, model: modelPlan.base };
+                            if (modelPlan.send) {
+                                const model = modelPlan.send;
+                                await queueBotSave(bot.id, () => botApiService.saveBotModel(bot.id, model));
+                                // eslint-disable-next-line require-atomic-updates
+                                lastSavedAi = { ref: bot.aiProviderRef, model };
+                            }
                             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                                 console.log("[BotEditor] AI config update successful");
                             }
@@ -239,6 +255,7 @@
             // Reset when no bot selected
             lastSavedBotConfig = null;
             lastSavedAIConfig = null;
+            lastSavedAi = {};
         }
     });
 
@@ -454,10 +471,11 @@
         const createdInRoomId = botApiService.getRoomId();
 
         try {
-            // Get first available AI provider to auto-select
-            let aiProviderRef: string | undefined = undefined;
+            // A new bot starts on Universe AI when Orbit says it is ready (#374). If Orbit can't say (an older Orbit), or
+            // Universe AI isn't set up, it gets the first available provider, as it always did.
+            let aiProviderRef: string | undefined = newBotRef(await botApiService.getBotAiOptions());
             try {
-                const providers = await botApiService.getAvailableAIProviders(true);
+                const providers = aiProviderRef ? [] : await botApiService.getAvailableAIProviders(true);
                 if (providers.length > 0) {
                     // Select first available provider (prefer enabled, but allow disabled if that's all we have)
                     const enabledProvider = providers.find((p) => p.enabled);
@@ -620,6 +638,7 @@
                     assignedSpace: { center: { x: 0, y: 0 }, radius: 0 },
                 },
                 aiProviderRef: updatedBot.aiProviderRef,
+                aiModel: selectedBot.aiModel,
                 chatInstructions: updatedBot.chatInstructions || "",
                 createdAt: updatedBot.createdAt || new Date().toISOString(),
                 updatedAt: updatedBot.updatedAt || new Date().toISOString(),

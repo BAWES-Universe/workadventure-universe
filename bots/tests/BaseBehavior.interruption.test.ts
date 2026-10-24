@@ -93,6 +93,7 @@ function createAiMock() {
         quickClassify: vi.fn(),
         quickGenerate: vi.fn(),
         generateBotResponseStream: vi.fn(),
+        isRestingLine: vi.fn((_text: string) => false),
     };
 }
 
@@ -348,6 +349,31 @@ describe('BaseBehavior interruption routing', () => {
         expect(call[12]).toBe(300);
     });
 
+    it('regenerateOnRepetition: leaves a resting bot’s fixed line alone, so the second message still gets its reply', async () => {
+        const line = 'I’m resting right now. Try me again later.';
+        ai.isRestingLine.mockImplementation((text: string) => text === line);
+        behavior.setServices(ai as any, {} as any);
+        const processed = { cleaned: line, metrics: { repetitionScore: 1 } };
+        const result = await behavior.testRegenerateOnRepetition({
+            botId: 'bot-1',
+            playerId: SENDER,
+            playerMessage: 'hello again',
+            chatInstructions: 'You are a test bot.',
+            aiProviderRef: 'key-abc',
+            spaceName: SPACE,
+            context: '',
+            processed,
+            processedMessage: line,
+            fullMessage: line,
+            responseId: 'resp-orig',
+            debugLabel: 'TestBehavior',
+        });
+        expect(result).toEqual({ processed, processedMessage: line, responseId: 'resp-orig' });
+        expect(ai.generateBotResponseStream).not.toHaveBeenCalled();
+        expect(ai.quickGenerate).not.toHaveBeenCalled();
+        expect(bot.sendStreamMessage).not.toHaveBeenCalled();
+    });
+
     it('regenerateOnRepetition: generates the exhausted-attempts fallback via LLM (no hardcoded strings)', async () => {
         // Repetition stays high across ALL regeneration attempts → fallback path.
         const processed = {
@@ -393,8 +419,8 @@ describe('BaseBehavior interruption routing', () => {
         expect(result.processedMessage).toBe('Let me look at this from a completely different angle.');
         // The repetition cycle was cleared so the next turn starts fresh.
         expect(mockResponseProcessor.clearRecentResponses).toHaveBeenCalledWith('bot-1', SENDER);
-        // quickGenerate received the persona chat instructions as its system prompt.
-        expect(ai.quickGenerate).toHaveBeenCalledWith('provider-1', 'You are a test bot.', expect.any(String));
+        // quickGenerate received the persona chat instructions as its system prompt, and the bot id so Orbit can say whose AI runs it (#374).
+        expect(ai.quickGenerate).toHaveBeenCalledWith('provider-1', 'You are a test bot.', expect.any(String), 'bot-1');
     });
 
     it('regenerateOnRepetition: stays silent (empty message) when the LLM fallback also fails', async () => {

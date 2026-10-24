@@ -151,7 +151,8 @@ export class DmReplyService extends BaseBehavior {
         if (!config.aiProviderRef || !this.aiService || !text.trim()) return '';
         const instructions = `${config.chatInstructions || DEFAULT_INSTRUCTIONS}\n\n${RESTING_PROMPT}`;
         try {
-            const line = await this.aiService.quickGenerate(config.aiProviderRef, instructions, text.slice(0, 500));
+            // With the bot id, so a bot on Universe AI or on a lent key reaches its key the way its replies do
+            const line = await this.aiService.quickGenerate(config.aiProviderRef, instructions, text.slice(0, 500), config.botId);
             return parseEmotionsFromResponse(line).cleanedResponse.trim().slice(0, 300);
         } catch (error) {
             console.warn(`[DmReplyService] Resting line failed for bot ${config.botId}:`, (error as Error)?.message ?? error);

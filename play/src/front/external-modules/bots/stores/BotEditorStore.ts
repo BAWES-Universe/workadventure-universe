@@ -874,6 +874,7 @@ export function loadBotPreviews(apiBots: Array<Record<string, unknown>>): void {
             enabled: (apiBot.enabled as boolean) ?? true,
             behaviorConfig,
             aiProviderRef: (apiBot.aiProviderRef as string) || undefined,
+            aiModel: typeof apiBot.aiModel === "string" ? apiBot.aiModel : undefined,
             toolTimeoutSeconds: typeof apiBot.toolTimeoutSeconds === "number" ? apiBot.toolTimeoutSeconds : null,
             companionTextureId: typeof apiBot.companionTextureId === "string" ? apiBot.companionTextureId : null,
             chatInstructions: (apiBot.chatInstructions as string) || "",

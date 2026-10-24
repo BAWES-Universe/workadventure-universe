@@ -1368,7 +1368,8 @@ export class GameScene extends DirtyScene {
         this.playSound(`audio-webrtc-out-${bubbleSound}`);
     }
 
-    public cleanupClosingScene(): void {
+    /** `reconnecting`: the same room is entered again, so what the person opened in the window stays open. */
+    public cleanupClosingScene(reconnecting = false): void {
         this.unsubscribeChatBlockSync?.();
         this.unsubscribeChatBlockSync = undefined;
         // No broadcast join may land on a destroyed registry.
@@ -1386,7 +1387,7 @@ export class GameScene extends DirtyScene {
         mediaManager.disableMyCamera();
         mediaManager.disableMyMicrophone();
         // stop playing audio, close any open website, stop any open Jitsi, unsubscribe
-        coWebsiteManager.cleanup();
+        coWebsiteManager.cleanup(reconnecting);
         // What was closed belongs to this map: Undo is not offered in the next one.
         dismissClosedItems();
 
@@ -2355,7 +2356,7 @@ export class GameScene extends DirtyScene {
                         })
                         .finally(() => {
                             if (this.cleanupDone) return;
-                            this.cleanupClosingScene();
+                            this.cleanupClosingScene(true);
                             this.createSuccessorGameScene(true, true);
                         });
                 });

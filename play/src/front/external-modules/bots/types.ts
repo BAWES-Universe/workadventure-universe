@@ -33,6 +33,8 @@ export interface BotData {
     };
     chatInstructions?: string;
     aiProviderRef?: string; // Reference to AI provider config in Admin API
+    /** The bot's own model on its own AI key (null: the key's check model). Undefined: not known here. */
+    aiModel?: string | null;
     toolTimeoutSeconds?: number | null; // "Patience": how long the bot waits for a tool, null = the server's 90 s
     companionTextureId?: string | null; // The companion (pet) that walks with it, a companion texture id; null = none
     enabled?: boolean; // Whether bot is active
@@ -41,4 +43,51 @@ export interface BotData {
     createdBy?: BotUser | null;
     updatedBy?: BotUser | null;
     [key: string]: unknown;
+}
+
+/**
+ * What the bot page offers under "Runs on" for one bot (Orbit GET /api/me/bot-ai, #374). Nobody is shown the server's
+ * provider list: the choices are Universe AI and the viewer's own keys lent to this bot's universe. A key that isn't
+ * the viewer's is shown only as what the bot is on now. A super admin also gets `providers`, to pin a bot to one.
+ */
+/** One model of a key that the lend here allows, with what the provider says about it (left out when it said nothing). */
+export interface KeyModelOption {
+    id: string;
+    tools?: boolean;
+    vision?: boolean;
+}
+
+export interface BotAiOptions {
+    /** The bot's current ref ("universe-ai", a provider id, a key id, or null). */
+    current: string | null;
+    /** The bot's own model on its key (null: the key's check model, or not on a key). Missing on an older Orbit. */
+    currentModel?: string | null;
+    universeAi: { available: boolean };
+    maker: { id: string; name: string | null } | null;
+    viewerIsMaker: boolean;
+    keys: Array<{
+        id: string;
+        name: string;
+        kind: string | null;
+        kindLabel: string;
+        group: "own-computer" | "hosted" | null;
+        universeName: string;
+        status: "working" | "down";
+        ifDown: "universe-ai" | "stop";
+        /** The key's check model: what a bot on it replies with until it picks its own. */
+        model?: string | null;
+        /** The models the lend here allows (null when the provider's list could not be loaded). Missing on an older Orbit. */
+        models?: KeyModelOption[] | null;
+        /** The lend here allows only some of the key's models. */
+        limited?: boolean;
+    }>;
+    currentKey: {
+        id: string;
+        name: string;
+        ownerName: string | null;
+        mine: boolean;
+        status: "working" | "down";
+        ifDown: "universe-ai" | "stop";
+    } | null;
+    providers: Array<{ id: string; name: string; type: string; model: string | null; enabled: boolean }> | null;
 }

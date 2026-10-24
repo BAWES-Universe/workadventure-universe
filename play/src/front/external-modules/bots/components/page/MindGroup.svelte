@@ -1,13 +1,16 @@
 <script lang="ts">
     // Mind: which AI the bot thinks with. A provider whose model has vision (can look at pictures) says so.
-    import { onMount } from "svelte";
     import LL from "../../../../../i18n/i18n-svelte";
-    import type { BotData } from "../../types";
+    import type { BotAiOptions, BotData } from "../../types";
     import { botApiService } from "../../services/BotApiService";
     import { resolveVisionSupport } from "../../visionModels";
+    import { canOpenOrbit, openOrbitPage } from "../../../admin-api/index";
+    import { canPick, mindBriefName, runsOnCards, type RunsOnCard } from "../../mindModel";
+    import { allowedModelsOf, botModelOf, keyChoice, keyOfRef, modelRow, shortName } from "../../modelPickerModel";
     import PageGroup from "./PageGroup.svelte";
     import PageButton from "./PageButton.svelte";
-    import { IconChevronDown, IconSparkles } from "@wa-icons";
+    import ModelList from "./ModelList.svelte";
+    import { IconChevronDown, IconExternalLink, IconEye, IconKey, IconSparkles, IconTool } from "@wa-icons";
 
     export let bot: BotData;
     export let open: boolean;
@@ -19,8 +22,21 @@
     let providers: Provider[] = [];
     let loading = true;
     let failed = false;
+    /**
+     * What Orbit offers this bot under "Runs on" (Universe AI and the viewer's own keys lent here). Null when Orbit can't
+     * say (an older Orbit, offline): the page then keeps the provider list it always had.
+     */
+    let options: BotAiOptions | null = null;
 
-    async function load() {
+    /** The model list is open: for the key the bot is on (Change), or for a key it is about to go on (nothing picked yet). */
+    let choosing: { keyId: string; pending: boolean } | null = null;
+
+    let loadedFor: string | undefined | null = null;
+    let loadCount = 0;
+
+    async function load(botId: string | undefined) {
+        // Only the newest load may answer: a slow reply for the bot the panel was on before must not show on this one
+        const mine = ++loadCount;
         loading = true;
         failed = false;
         if (!botApiService.isInitialized()) {
@@ -29,18 +45,33 @@
             return;
         }
         try {
-            providers = await botApiService.getAvailableAIProviders(true);
+            // The provider names (to show what a pinned bot is on) and what Orbit offers, together
+            const [loadedProviders, loadedOptions] = await Promise.all([
+                botApiService.getAvailableAIProviders(true),
+                botApiService.getBotAiOptions(botId ? { botId } : {}),
+            ]);
+            if (mine !== loadCount) return;
+            providers = loadedProviders;
+            options = loadedOptions;
         } catch (e) {
+            if (mine !== loadCount) return;
             console.error("[MindGroup] Failed to load AI providers:", e);
             failed = true;
         } finally {
-            loading = false;
+            if (mine === loadCount) loading = false;
         }
     }
 
-    onMount(() => {
-        void load();
-    });
+    function showFor(botId: string | undefined) {
+        if (loadedFor === botId) return;
+        loadedFor = botId;
+        options = null;
+        choosing = null;
+        void load(botId);
+    }
+
+    // On first show, and again whenever the panel moves to another bot (it stays mounted when the bot changes)
+    $: showFor(bot.id);
 
     // A provider can see pictures when its model can (by its setting or its model's name), or when it has a
     // separate model for pictures.
@@ -54,7 +85,37 @@
     $: page = $LL.mapEditor.edit.bots.page;
     $: ref = bot.aiProviderRef ?? "";
     $: current = providers.find((p) => p.providerId.toLowerCase() === ref.toLowerCase());
-    $: brief = !ref
+    $: names = new Map(providers.map((p) => [p.providerId.toLowerCase(), p.name]));
+    $: cards = options ? runsOnCards(options, ref || null, names) : [];
+    $: runsOnBrief = options ? mindBriefName(options, ref || null, names) : null;
+    // The model the bot is on, when it is on one of the person's own keys
+    $: rowKey = options ? keyOfRef(options, ref || options.current) : undefined;
+    $: row = options ? modelRow(options, ref || options.current, botModelOf(options, bot)) : null;
+    $: rowModel = row?.kind === "choose" ? row.model : row?.kind === "single" ? row.model : null;
+    $: rowModelId = rowModel ? rowModel.id : row?.kind === "unlisted" ? row.model : null;
+    $: choosingKey = options && choosing ? keyOfRef(options, choosing.keyId) : undefined;
+    $: chooseModels = choosingKey ? allowedModelsOf(choosingKey) : null;
+    $: brief = options
+        ? runsOnBrief?.kind === "universe-ai"
+            ? page.mind.universeAi()
+            : runsOnBrief?.kind === "key"
+            ? [runsOnBrief.name, rowModelId ? shortName(rowModelId) : ""].filter(Boolean).join(" · ")
+            : runsOnBrief?.kind === "gone"
+            ? page.mind.keyGoneTitle()
+            : runsOnBrief?.kind === "provider" && current
+            ? [
+                  current.enabled
+                      ? current.name
+                      : `${current.name} ${$LL.actionbar.botEditorModule.providerDisabled()}`,
+                  current.model,
+                  seesPictures(current) ? page.mind.seesPictures() : "",
+              ]
+                  .filter(Boolean)
+                  .join(" · ")
+            : runsOnBrief?.kind === "provider"
+            ? runsOnBrief.name ?? runsOnBrief.ref
+            : page.mind.none()
+        : !ref
         ? page.mind.none()
         : current
         ? [
@@ -66,19 +127,179 @@
               .join(" · ")
         : ref;
 
+    function chooseCard(card: RunsOnCard) {
+        if (!options || !canPick(options, card)) return;
+        // Another key or Universe AI starts the bot off on its own model: the only one, the provider's suggested one, or
+        // none yet. A key that needs a pick opens its list first, and the bot moves only when a model is saved.
+        const key = card.kind === "mine" ? keyOfRef(options, card.id) : undefined;
+        const choice = key ? keyChoice(key) : { model: null, needsPick: false };
+        if (choice.needsPick) {
+            choosing = { keyId: card.id, pending: true };
+            return;
+        }
+        onChange({ ...bot, aiProviderRef: card.id, aiModel: choice.model });
+    }
+
+    function saveModel(model: string) {
+        if (!choosing) return;
+        onChange({ ...bot, aiProviderRef: choosing.keyId, aiModel: model });
+        choosing = null;
+    }
+
+    function noteOf(card: RunsOnCard): string {
+        switch (card.kind) {
+            case "universe-ai":
+                return card.available ? page.mind.universeAiNote() : page.mind.universeAiMissing();
+            case "mine":
+                return card.group === "own-computer"
+                    ? page.mind.keyComputer({ universe: card.universe })
+                    : page.mind.keyHosted({ universe: card.universe });
+            case "theirs":
+                return card.owner
+                    ? page.mind.othersKey({ owner: card.owner, bot: bot.name ?? "" })
+                    : card.title && options?.currentKey?.mine
+                    ? page.mind.keyUnlent()
+                    : page.mind.othersKeyUnknown({ bot: bot.name ?? "" });
+            case "pinned":
+                return page.mind.pinned();
+            case "gone":
+                return page.mind.keyGone();
+        }
+    }
+
+    function downNoteOf(card: RunsOnCard): string | null {
+        if ((card.kind !== "mine" && card.kind !== "theirs") || card.status !== "down") return null;
+        return card.ifDown === "stop" ? page.mind.downStops() : page.mind.downUseUniverseAi();
+    }
+
+    function pinProvider(event: Event) {
+        const select = event.currentTarget as HTMLSelectElement;
+        const value = select.value;
+        // Back to the prompt, so the same provider can be pinned again after the bot moves off it
+        select.value = "";
+        if (value) onChange({ ...bot, aiProviderRef: value, aiModel: null });
+    }
+
     function pick(event: Event) {
         const value = (event.currentTarget as HTMLSelectElement).value;
-        onChange({ ...bot, aiProviderRef: value || undefined });
+        onChange({ ...bot, aiProviderRef: value || undefined, aiModel: null });
     }
 </script>
 
 <PageGroup id="mind" icon={IconSparkles} title={page.mind.title()} {brief} {open} {onToggle}>
     {#if loading}
         <p class="bp-m">{$LL.actionbar.botEditorModule.loadingProviders()}</p>
+    {:else if options && choosing && choosingKey && chooseModels}
+        <ModelList
+            botName={bot.name ?? ""}
+            keyName={choosingKey.name}
+            models={chooseModels}
+            selected={choosing.pending ? null : rowModelId}
+            onSave={saveModel}
+            onBack={() => (choosing = null)}
+        />
+    {:else if options}
+        <div class="bp-cap" id="bot-runs-on-label">{page.mind.runsOn()}</div>
+        <div class="bp-cards" role="radiogroup" aria-labelledby="bot-runs-on-label" data-testid="bot-runs-on">
+            {#each cards as card (card.kind + card.id)}
+                <button
+                    type="button"
+                    role="radio"
+                    class="bp-card"
+                    class:picked={card.picked}
+                    aria-checked={card.picked}
+                    disabled={!card.picked && !canPick(options, card)}
+                    data-testid="bot-runs-on-{card.kind}"
+                    on:click={() => chooseCard(card)}
+                >
+                    <span class="bp-cico">
+                        {#if card.kind === "universe-ai"}<IconSparkles font-size="20" />{:else}<IconKey
+                                font-size="20"
+                            />{/if}
+                    </span>
+                    <span class="bp-ctx">
+                        <span class="bp-ct"
+                            >{card.kind === "universe-ai"
+                                ? page.mind.universeAi()
+                                : card.kind === "gone"
+                                ? page.mind.keyGoneTitle()
+                                : card.title}</span
+                        >
+                        <span class="bp-cn">
+                            {noteOf(card)}
+                            {#if downNoteOf(card)}
+                                <span class="bp-down">{page.mind.downNow()}</span>{downNoteOf(card)}
+                            {/if}
+                        </span>
+                    </span>
+                    <span class="bp-radio" class:on={card.picked} aria-hidden="true" />
+                </button>
+            {/each}
+        </div>
+        {#if row}
+            <div class="bp-model" data-testid="bot-model-row">
+                <div class="bp-mtx">
+                    <span class="bp-cap">{page.mind.model.title()}</span>
+                    <span class="bp-mid">{rowModelId ?? page.mind.model.notPicked()}</span>
+                    {#if row.kind === "single"}
+                        <span class="bp-cn">
+                            {page.mind.model.only({ key: rowKey?.name ?? "", universe: rowKey?.universeName ?? "" })}
+                        </span>
+                    {:else if row.kind === "unlisted"}
+                        <span class="bp-cn">{page.mind.model.unlisted()}</span>
+                    {:else if rowModel && (rowModel.tools === true || rowModel.vision === true)}
+                        <span class="bp-facts">
+                            {#if rowModel.tools === true}
+                                <span class="bp-fact"><IconTool font-size="14" />{page.mind.model.tools()}</span>
+                            {/if}
+                            {#if rowModel.vision === true}
+                                <span class="bp-fact"><IconEye font-size="14" />{page.mind.seesPictures()}</span>
+                            {/if}
+                        </span>
+                    {/if}
+                </div>
+                {#if row.kind === "choose"}
+                    <PageButton
+                        testId="bot-model-change"
+                        tall
+                        on:click={() => (choosing = { keyId: ref || options?.current || "", pending: false })}
+                    >
+                        {page.mind.model.change()}
+                    </PageButton>
+                {/if}
+            </div>
+        {/if}
+        {#if options.viewerIsMaker && canOpenOrbit()}
+            <div class="bp-line">
+                <PageButton testId="bot-runs-on-ai-keys" tall on:click={() => openOrbitPage("/admin/you/ai-keys")}>
+                    {page.mind.aiKeys()}
+                    <IconExternalLink font-size="14" />
+                </PageButton>
+            </div>
+        {/if}
+        {#if options.providers && options.providers.length > 0}
+            <label class="bp-select">
+                <span class="sr-only">{page.mind.pinTo()}</span>
+                <select value="" on:change={pinProvider} data-testid="bot-mind-provider">
+                    <option value="">{page.mind.pinTo()}</option>
+                    {#each options.providers as provider (provider.id)}
+                        <option value={provider.id}>
+                            {provider.name}{provider.enabled
+                                ? ""
+                                : ` ${$LL.actionbar.botEditorModule.providerDisabled()}`}
+                        </option>
+                    {/each}
+                </select>
+                <IconChevronDown font-size="16" />
+            </label>
+        {/if}
+        <p class="bp-m">
+            {options.viewerIsMaker ? page.mind.makerHint() : page.mind.managerHint({ bot: bot.name ?? "" })}
+        </p>
     {:else if failed}
         <div class="bp-line">
             <p class="bp-m">{$LL.actionbar.botEditorModule.errorLoadFailed()}</p>
-            <PageButton on:click={() => void load()}>{$LL.actionbar.botEditorModule.retry()}</PageButton>
+            <PageButton on:click={() => void load(bot.id)}>{$LL.actionbar.botEditorModule.retry()}</PageButton>
         </div>
     {:else if providers.length === 0}
         <p class="bp-m">{$LL.actionbar.botEditorModule.noProvidersConfigured()}</p>
@@ -104,6 +325,117 @@
 </PageGroup>
 
 <style>
+    .bp-cap {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: rgba(244, 242, 250, 0.64);
+    }
+    .bp-cards {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+    .bp-card {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        width: 100%;
+        min-height: 56px;
+        margin: 0;
+        padding: 12px;
+        border: 0;
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.05);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+        font: inherit;
+        color: #fff;
+        text-align: left;
+        cursor: pointer;
+    }
+    .bp-card.picked {
+        background: rgba(134, 41, 252, 0.16);
+        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.7);
+    }
+    .bp-card:disabled:not(.picked) {
+        opacity: 0.55;
+        cursor: default;
+    }
+    .bp-card:focus-visible {
+        outline: 2px solid #a78bfa;
+        outline-offset: 2px;
+    }
+    .bp-cico {
+        flex: none;
+        display: inline-flex;
+        color: #fff;
+    }
+    .bp-ctx {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+    .bp-ct {
+        font-size: 15px;
+        font-weight: 700;
+        overflow-wrap: anywhere;
+    }
+    .bp-cn {
+        font-size: 12.5px;
+        line-height: 1.35;
+        color: rgba(244, 242, 250, 0.64);
+    }
+    .bp-down {
+        color: #f5c451;
+    }
+    .bp-radio {
+        flex: none;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.35);
+    }
+    .bp-radio.on {
+        background: radial-gradient(circle, #fff 0 4px, #6d4aff 5px);
+        box-shadow: none;
+    }
+    .bp-model {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px;
+        border-radius: 14px;
+        background: #0a0814;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+    }
+    .bp-mtx {
+        display: flex;
+        flex: 1;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+    }
+    .bp-mid {
+        font-size: 15px;
+        font-weight: 700;
+        overflow-wrap: anywhere;
+    }
+    .bp-facts {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+    .bp-fact {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 12.5px;
+        font-weight: 600;
+        color: rgba(244, 242, 250, 0.64);
+    }
     .bp-m {
         margin: 0;
         font-size: 12.5px;

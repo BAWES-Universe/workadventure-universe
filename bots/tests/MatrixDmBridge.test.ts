@@ -1257,7 +1257,8 @@ describe('DmReplyService resting line', () => {
         Object.assign(service, { aiService: { quickGenerate } });
         const config = { botId: BOT, name: 'Mira', aiProviderRef: 'p', chatInstructions: 'You are a pirate.' } as never;
         expect(await service.restingLine(config, 'Are you around?')).toBe('Not now, sailor!');
-        expect(quickGenerate).toHaveBeenCalledWith('p', expect.stringContaining('You are a pirate.'), 'Are you around?');
+        // With the bot id, so a bot on Universe AI or a lent key reaches its key
+        expect(quickGenerate).toHaveBeenCalledWith('p', expect.stringContaining('You are a pirate.'), 'Are you around?', BOT);
         quickGenerate.mockRejectedValueOnce(new Error('provider down'));
         expect(await service.restingLine(config, 'hi')).toBe('');
         expect(await service.restingLine({ botId: BOT } as never, 'hi')).toBe('');
