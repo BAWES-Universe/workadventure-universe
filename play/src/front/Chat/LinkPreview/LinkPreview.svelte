@@ -2,8 +2,6 @@
     import { onDestroy } from "svelte";
     import { v4 as uuid } from "uuid";
     import LL from "../../../i18n/i18n-svelte";
-    import { coWebsites } from "../../Stores/CoWebsiteStore";
-    import { SimpleCoWebsite } from "../../WebRtc/CoWebsite/SimpleCoWebsite";
     import Lightbox from "../Components/Room/Message/Lightbox.svelte";
     import type { LinkKind } from "./LinkKind";
     import { APP_ICONS, youtubeSvg } from "./appIcons";
@@ -11,6 +9,8 @@
     import { isGifSiteImage } from "./LinkKind";
     import type { WebPreview, YoutubePreview } from "./LinkPreviewFetcher";
     import { fetchWebPreview, fetchYoutubePreview, playingChatVideoStore } from "./LinkPreviewFetcher";
+    import { isPlainClick, opensHere } from "./EmbeddableLinks";
+    import { openChatLinkHere } from "./openChatLinkHere";
     import { IconExternalLink, IconPlayerPlayFilled } from "@wa-icons";
 
     /** The message text: its first link gets a preview, unless it was sent without one (<link>). */
@@ -85,12 +85,17 @@
 
     function openHere(url: string, allowPolicy?: string) {
         if ($playingChatVideoStore === previewId) playingChatVideoStore.set(undefined);
-        try {
-            coWebsites.add(new SimpleCoWebsite(new URL(url), false, allowPolicy));
-        } catch (error) {
-            console.error("Could not open a chat link beside the map", error);
-        }
+        openChatLinkHere(url, allowPolicy);
     }
+
+    /** A plain click on a web card the page allows opens it in the window; other clicks follow the link to a new tab. */
+    function openWebCard(event: MouseEvent) {
+        if (link?.kind !== "web" || !isPlainClick(event)) return;
+        event.preventDefault();
+        openHere(link.url);
+    }
+
+    $: webHere = link?.kind === "web" && web?.embeddable === true && opensHere(link.url);
 
     /**
      * A plain click on a picture opens the picture viewer, as an uploaded picture does. A Ctrl, Cmd, Shift or Alt click
@@ -243,6 +248,57 @@
 {:else if link?.kind === "image" && (alone || isGifSiteImage(link.url))}
     <!-- The picture didn't load and its address is not shown above (a lone image link, or a GIF): show it here so it is never lost. -->
     <a class="link-preview-fallback" href={link.url} target="_blank" rel="noopener noreferrer">{link.url}</a>
+{:else if link?.kind === "web" && web && (web.title || web.description) && webHere}
+    <!-- A page the game may show: today's card, plus Open here and New tab like an app's card. -->
+    <div
+        class="link-preview"
+        class:link-preview-mine={mine}
+        class:link-preview-alone={alone}
+        data-testid="webLinkPreview"
+    >
+        <a
+            class="link-preview-card block !no-underline !opacity-100"
+            href={link.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            on:click={openWebCard}
+            data-testid="webLinkPreviewCard"
+        >
+            {#if web.image && !imageFailed}
+                <img
+                    class="block w-full aspect-[1.91/1] object-cover bg-white/5"
+                    src={web.image}
+                    alt=""
+                    loading="lazy"
+                    draggable="false"
+                    referrerpolicy="no-referrer"
+                    on:error={() => (imageFailed = true)}
+                />
+            {/if}
+            <div class="link-preview-meta">
+                <div class="link-preview-site"><span class="truncate">{web.siteName || siteOf(link.url)}</span></div>
+                {#if web.title}
+                    <div class="link-preview-title">{web.title}</div>
+                {/if}
+                {#if web.description}
+                    <div class="link-preview-description">{web.description}</div>
+                {/if}
+            </div>
+        </a>
+        <div class="link-preview-actions">
+            <button
+                class="u-cta link-preview-button"
+                on:click={() => link?.kind === "web" && openHere(link.url)}
+                data-testid="linkPreviewOpenHere"
+            >
+                {$LL.chat.linkPreview.openHere()}
+            </button>
+            <a class="u-cta-secondary link-preview-button" href={link.url} target="_blank" rel="noopener noreferrer">
+                {$LL.chat.linkPreview.newTab()}
+                <IconExternalLink font-size={13} />
+            </a>
+        </div>
+    </div>
 {:else if link?.kind === "web" && web && (web.title || web.description)}
     <a
         class="link-preview block !no-underline !opacity-100"
@@ -286,6 +342,11 @@
         background: rgba(255, 255, 255, 0.05);
         border: 1px solid rgba(255, 255, 255, 0.1);
         color: white;
+    }
+    /* The page's part of a card with buttons under it: the card's own white text, not a link's colour. */
+    .link-preview-card,
+    .link-preview-card:hover {
+        color: inherit;
     }
     .link-preview-alone {
         margin-top: 8px;

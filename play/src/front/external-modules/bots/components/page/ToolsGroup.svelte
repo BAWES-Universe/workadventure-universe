@@ -20,8 +20,11 @@
     export let onChange: (bot: BotData) => void;
     /** Room for a fifth choice (10 min) on a wide panel. */
     export let wide = false;
+    /** How many tools the bot has, each time that is known or changes */
+    export let onToolCount: ((count: number) => void) | undefined = undefined;
 
     let servers: McpServer[] | undefined;
+    $: if (servers) onToolCount?.(servers.length);
 
     onMount(() => {
         // The group's one-line summary names the tools while it is closed

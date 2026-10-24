@@ -929,7 +929,7 @@
             bind:this={fileInputElement}
             hidden
             multiple
-            accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.json,.zip"
+            accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ods,.ppt,.pptx,.txt,.md,.csv,.json,.zip"
             on:change={(e) => {
                 if (fileInputElement?.files) {
                     handleFiles(new CustomEvent("files", { detail: fileInputElement.files }));

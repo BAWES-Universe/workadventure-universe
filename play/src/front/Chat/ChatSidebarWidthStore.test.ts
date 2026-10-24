@@ -2,7 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import { readable, writable } from "svelte/store";
 
 vi.mock("../Stores/ChatStore", () => ({ chatVisibilityStore: writable(false) }));
-vi.mock("../Stores/CoWebsiteStore", () => ({ windowSize: readable({ width: 1440, height: 900 }) }));
+vi.mock("../Stores/CoWebsiteStore", () => ({
+    windowSize: readable({ width: 1440, height: 900 }),
+    coWebsites: writable([]),
+    openHereFloatsStore: writable(true),
+}));
 vi.mock("../Connection/LocalUserStore", () => ({
     localUserStore: { getChatSideBarWidth: () => 335, setChatSideBarWidth: () => {} },
 }));

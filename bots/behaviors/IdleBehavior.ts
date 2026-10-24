@@ -385,7 +385,7 @@ export class IdleBehavior extends BaseBehavior {
         if (!userUuid) {
             // UUID not tracked yet - proceed anyway but log warning
             // This can happen if initSpaceUsersMessage hasn't been processed yet
-            console.warn(`[IdleBehavior] UUID not found for user ${senderId} (${userName}). Proceeding without conversation storage.`);
+            console.warn(`[IdleBehavior] UUID not found for user ${senderId}. Proceeding without conversation storage.`);
             // Continue to generate response - just skip storage
         }
         
@@ -1516,6 +1516,11 @@ export class IdleBehavior extends BaseBehavior {
         const botConfig = this.bot.getFullConfig();
         if (!botConfig?.aiProviderRef) {
             // No AI provider configured - don't send greeting
+            return;
+        }
+
+        // Greeting is a chat too: a person the owner refused is not greeted (and the AI is not asked)
+        if (!(await this.bot.mayGreet(spaceName, playerId))) {
             return;
         }
 

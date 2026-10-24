@@ -8,6 +8,7 @@ import type {
     AvailabilityStatus,
     CharacterTextureMessage,
     CompanionTextureMessage,
+    RoleLabel,
     BatchMessage,
     SubMessage,
 } from "@workadventure/messages";
@@ -49,6 +50,8 @@ export type SocketData = {
     canEdit: boolean;
     // What this player may do in the world (see permissionsFrom)
     permissions: number;
+    // What each role key is called, for the badge next to people; undefined when Orbit sent no list
+    roleCatalogue?: RoleLabel[];
     spaceUserId: string;
     emitInBatch: (payload: SubMessage) => void;
     batchedMessages: BatchMessage;

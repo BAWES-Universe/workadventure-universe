@@ -7032,12 +7032,12 @@
       "area": "Orbit and map scripts",
       "topic": "Cowebsite: on enter",
       "action": "Phone portrait: same map/area.",
-      "expected": "The cowebsite opens above the map (portrait split) with a horizontal drag bar under it.",
+      "expected": "The cowebsite opens in a bottom sheet over the map, with a drag handle on top of it.",
       "source": "prod",
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "`CoWebsitesContainer.svelte:286-299` (`cursor-row-resize` bar in portrait)."
+      "hooks": "`OpenHereWindow.svelte` (`data-testid=\"openHereSheet\"`, handle `openHereSheetHandle`)."
     },
     {
       "id": "OR-079",

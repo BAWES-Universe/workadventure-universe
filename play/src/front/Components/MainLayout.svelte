@@ -33,6 +33,7 @@
     import { highlightedEmbedScreen } from "../Stores/HighlightedEmbedScreenStore";
     import { highlightFullScreen } from "../Stores/ActionsCamStore";
     import { chatVisibilityStore } from "../Stores/ChatStore";
+    import { openHereSheetUpStore } from "../Stores/OpenHereSheetStore";
     import { windowInFrontStore } from "../Stores/WindowInFrontStore";
     import {
         chatFloatInsetStore,
@@ -288,7 +289,8 @@
                 <EditMode />
             {/if}
 
-            {#if !($chatVisibilityStore && $hideActionBarStoreBecauseOfChatBar) && !($mapEditorToolbarInUseStore && !desktop)}
+            <!-- The window's sheet on a phone covers the bottom of the screen, where the column is: it goes with the bar. -->
+            {#if !($chatVisibilityStore && $hideActionBarStoreBecauseOfChatBar) && !$openHereSheetUpStore && !($mapEditorToolbarInUseStore && !desktop)}
                 <!-- Held inside the game's area: a room website opened beside or above the game covers the column as
                      it grows, instead of the column floating over the website. Above "Look around the map", so its
                      Places panel never covers the column. While Express is open it comes above the bar's layer

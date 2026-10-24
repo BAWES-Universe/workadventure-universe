@@ -14,6 +14,7 @@ import type { ConversationMemory } from '../memory/ConversationMemory';
 import type { ResponseProcessor, ProcessedResponse } from '../ai/ResponseProcessor';
 import { parseEmotionsFromResponse, appendStreamedChunk, detectEmotionPrefixAtEnd } from '../ai/EmotionParser';
 import type { BotMetricsCollector } from '../metrics/BotMetricsCollector';
+import { BotBusyError } from '../utils/summonErrors';
 
 /**
  * Per-player conversation state for mid-stream interruption handling.
@@ -146,6 +147,20 @@ export abstract class BaseBehavior {
     }
     // Authentication tracking - map userId (number) to isLogged (boolean)
     protected userIdToIsLogged: Map<number, boolean> = new Map();
+
+    /** Whether the game has told this bot who the person is yet (their join can arrive just after their first message) */
+    isPersonKnown(userId: number): boolean {
+        return this.userIdToUuid.has(userId) || this.userIdToIsLogged.has(userId);
+    }
+
+    /**
+     * Who someone in the room is, for Orbit's bot access check: signed in only when the game says so and their uuid is
+     * known (Orbit looks a signed-in person up by it). Anyone else is asked about as a guest.
+     */
+    getPersonForAccess(userId: number): { signedIn: boolean; identifier: string | null } {
+        const identifier = this.userIdToUuid.get(userId) ?? null;
+        return { signedIn: !!identifier && this.userIdToIsLogged.get(userId) === true, identifier };
+    }
     // Pending UUID tracking - map spaceUserId (string) to userId (number) for users we've seen but don't have UUID yet
     // This helps match addSpaceUserMessage when it arrives after a chat message
     protected pendingSpaceUserIdToUserId: Map<string, number> = new Map();
@@ -469,6 +484,15 @@ export abstract class BaseBehavior {
     }
 
     /**
+     * Who is around, as the game told this bot. A rebuilt behavior is not told about people already there, so without
+     * this a signed-in person already chatting would be asked about as a stranger (and could be refused).
+     */
+    carryPeopleFrom(previous: BaseBehavior): void {
+        for (const [userId, uuid] of previous.userIdToUuid) this.userIdToUuid.set(userId, uuid);
+        for (const [userId, isLogged] of previous.userIdToIsLogged) this.userIdToIsLogged.set(userId, isLogged);
+    }
+
+    /**
      * The direction a bot that stays put faces when nobody is around: its saved facing, else down (what the editor
      * shows). Null for a bot that wanders or walks a route: it faces the way it walks.
      */
@@ -755,7 +779,11 @@ export abstract class BaseBehavior {
             // Only check the actual size, not the stale isEngaged flag
             if (actualEngagedCount > 0) {
                 console.log(`[Behavior] Bot cannot be summoned - currently engaged with ${actualEngagedCount} user(s)`);
-                throw new Error('Bot is currently engaged with another player and cannot be summoned');
+                // Only the player asking? Then the bot is already with them.
+                const summonerId = this.getUserIdForUuid(playerUuid);
+                throw new BotBusyError(
+                    summonerId !== undefined && actualEngagedCount === 1 && this.engagedWithUsers.has(summonerId)
+                );
             }
             // If we get here, bot is not engaged - ensure isEngaged is false
             this.isEngaged = false;

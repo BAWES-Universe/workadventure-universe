@@ -501,6 +501,7 @@ export class IoSocketController {
                             applications: userData.applications,
                             canEdit: userData.canEdit ?? false,
                             permissions: permissionsFrom(userData.permissions ?? undefined, memberTags),
+                            roleCatalogue: userData.roles,
                             spaceUserId: "",
                             emitInBatch: (payload: SubMessage): void => {},
                             batchedMessages: {

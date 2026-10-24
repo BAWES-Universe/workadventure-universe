@@ -4,6 +4,7 @@ import { windowSize } from "../Stores/CoWebsiteStore";
 import { localUserStore } from "../Connection/LocalUserStore";
 import { mapEditorToolbarInUseStore } from "../Stores/MapEditorStore";
 import { DESKTOP_LAYOUT_MIN_WIDTH } from "../Stores/BarInViewStore";
+import { openHereSheetUpStore } from "../Stores/OpenHereSheetStore";
 import { chatSheetLayoutStore } from "./ChatSheetStore";
 
 export const chatSidebarWidthStore = writable(localUserStore.getChatSideBarWidth());
@@ -58,6 +59,7 @@ export const hideActionBarStoreBecauseOfChatBar = derived(
         mapEditorToolbarInUseStore,
         chatFloatInsetStore,
         chatSheetLayoutStore,
+        openHereSheetUpStore,
     ],
     ([
         $chatVisibilityStore,
@@ -66,10 +68,11 @@ export const hideActionBarStoreBecauseOfChatBar = derived(
         $mapEditorToolbarInUseStore,
         $chatFloatInsetStore,
         $chatSheetLayout,
+        $openHereSheetUp,
     ]) => {
         // On a phone held upright the chat is a sheet over the bottom of the screen: the bar goes while it is open,
-        // and comes back when it closes.
-        if ($chatVisibilityStore && $chatSheetLayout) {
+        // and comes back when it closes. Files and links open in a sheet of the same kind, which does the same.
+        if (($chatVisibilityStore && $chatSheetLayout) || $openHereSheetUp) {
             return true;
         }
         return chatLeavesNoRoomForBar(

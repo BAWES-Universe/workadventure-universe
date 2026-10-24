@@ -1,6 +1,7 @@
 import { writable } from "svelte/store";
 import { ABSOLUTE_PUSHER_URL } from "../../Enum/ComputedConst";
 import { localUserStore } from "../../Connection/LocalUserStore";
+import { rememberEmbeddable } from "./EmbeddableLinks";
 
 export interface WebPreview {
     url: string;
@@ -8,6 +9,8 @@ export interface WebPreview {
     title?: string;
     description?: string;
     image?: string;
+    /** The game may show the page in its Open here window. */
+    embeddable?: boolean;
 }
 
 export interface YoutubePreview {
@@ -33,7 +36,9 @@ export function fetchWebPreview(url: string): Promise<WebPreview | undefined> {
                 // Only "this page can't be previewed" (422) is remembered as a failure. Anything else (signed out,
                 // too many previews, the server restarting) is tried again the next time the link is shown.
                 if (!response.ok && response.status !== 422) webPreviews.delete(url);
-                return response.ok ? ((await response.json()) as WebPreview) : undefined;
+                const result = response.ok ? ((await response.json()) as WebPreview) : undefined;
+                rememberEmbeddable(url, result);
+                return result;
             })
             .catch((error) => {
                 console.warn("Could not load a link preview", error);

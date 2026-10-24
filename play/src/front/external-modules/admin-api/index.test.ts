@@ -54,6 +54,27 @@ const mocks = vi.hoisted(() => ({
     ring: vi.fn((): Promise<boolean> => Promise.resolve(true)),
     whenConnected: vi.fn((): Promise<boolean> => Promise.resolve(true)),
     openDirectChatRoom: vi.fn((): Promise<void> => Promise.resolve()),
+    // Whether the room is loaded and shown (false while the game gets back in after a reconnect), as a small store.
+    gameLoaded: (() => {
+        let value = true;
+        const subscribers = new Set<(value: boolean) => void>();
+        return {
+            set(next: boolean) {
+                value = next;
+                subscribers.forEach((subscriber) => subscriber(value));
+            },
+            subscribe(subscriber: (value: boolean) => void) {
+                subscribers.add(subscriber);
+                subscriber(value);
+                return () => subscribers.delete(subscriber);
+            },
+            reset() {
+                subscribers.clear();
+                value = true;
+            },
+        };
+    })(),
+    canvasWidth: 1280,
 }));
 
 /** The browser's history, small enough to see through: entries and the one being shown. */
@@ -125,6 +146,17 @@ vi.mock("../../Phaser/Game/GameManager", () => ({
         rejoinCurrentRoom: mocks.rejoinCurrentRoom,
     },
 }));
+
+vi.mock("../../Stores/GameSceneStore", () => ({ gameSceneIsLoadedStore: mocks.gameLoaded }));
+vi.mock("../../Stores/CoWebsiteStore", () => ({
+    canvasSize: {
+        subscribe: (subscriber: (value: { width: number; height: number }) => void) => {
+            subscriber({ width: mocks.canvasWidth, height: 800 });
+            return () => undefined;
+        },
+    },
+}));
+vi.mock("../../Stores/BarInViewStore", () => ({ DESKTOP_LAYOUT_MIN_WIDTH: 1024 }));
 
 vi.mock("../../Stores/ModalStore", () => ({
     modalFullScreenStore: mocks.fullScreen,
@@ -451,6 +483,7 @@ describe("The Orbit bridge", () => {
         return (await import("./index")) as unknown as {
             default: AdminModuleLike;
             requestOrbitPage(intent: string, params?: Record<string, string>): boolean;
+            openOrbitMembership(userUuid: string): boolean;
             notifyOrbitChanged(topic: string): void;
             openAdminModalFromMenu(): void;
         };
@@ -498,6 +531,29 @@ describe("The Orbit bridge", () => {
             expect.objectContaining({ type: "orbit-navigate", intent: "new-universe", roomRevision: revision }),
             ADMIN
         );
+    });
+
+    it("opens a player's profile with the membership sheet when their card's membership button is tapped", async () => {
+        const index = await freshIndex();
+        index.default.init({}, makeOptions());
+        vi.advanceTimersByTime(3000);
+
+        expect(index.openOrbitMembership("ali@example.com")).toBe(true);
+        fromOrbit({ type: "orbit-bridge-ready", version: 1, capabilities: ["navigate", "event"] });
+        expect(frame.postMessage).toHaveBeenNthCalledWith(
+            2,
+            expect.objectContaining({
+                type: "orbit-navigate",
+                intent: "user-profile",
+                params: { userUuid: "ali@example.com", sheet: "membership" },
+            }),
+            ADMIN
+        );
+    });
+
+    it("cannot open a player's membership sheet when Orbit cannot be opened", async () => {
+        const index = await freshIndex();
+        expect(index.openOrbitMembership("ali@example.com")).toBe(false);
     });
 
     it("ignores a ready message from another window or origin", async () => {
@@ -569,8 +625,8 @@ describe("The Orbit bridge", () => {
         close();
         expect(mocks.setPlayerName).toHaveBeenCalledWith("Khalid A");
         expect(mocks.rejoinCurrentRoom).toHaveBeenCalledTimes(1);
-        // Signed in: the server already has it.
-        expect(mocks.setLocalName).not.toHaveBeenCalled();
+        // Orbit already has it; the device keeps a copy so it never comes back with an older name (#1192).
+        expect(mocks.setLocalName).toHaveBeenCalledWith("Khalid A", true);
     });
 
     it("doesn't rejoin for the same name, a name the game refuses, or another visit's frame", async () => {
@@ -1363,5 +1419,286 @@ describe("Signing Orbit in when the OIDC access token has run out", () => {
         await vi.runAllTimersAsync();
         expect(stranger.postMessage).not.toHaveBeenCalled();
         expect(frame.postMessage).not.toHaveBeenCalled();
+    });
+});
+
+describe("Orbit opens again after a reconnect", () => {
+    const ADMIN = "https://admin.example.com";
+    let frame: { postMessage: ReturnType<typeof vi.fn> };
+    let listeners: ((event: MessageEvent<unknown>) => void)[];
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.clearAllMocks();
+        mocks.isLogged.mockReturnValue(true);
+        mocks.fullScreen.reset();
+        mocks.gameLoaded.reset();
+        mocks.canvasWidth = 1280;
+        mocks.getAuthToken.mockReturnValue("game-token");
+        mocks.pusherGet.mockReset();
+        frame = { postMessage: vi.fn() };
+        mocks.frame = frame;
+        listeners = [];
+        vi.stubGlobal("history", makeHistory());
+        vi.stubGlobal("window", {
+            addEventListener: vi.fn((type: string, listener: (event: Event) => void) => {
+                if (type === "message") listeners.push(listener as (event: MessageEvent<unknown>) => void);
+            }),
+            removeEventListener: vi.fn((type: string, listener: (event: Event) => void) => {
+                listeners = listeners.filter((candidate) => candidate !== listener);
+            }),
+            location: { href: "https://play.example.com/@/room" },
+        });
+    });
+
+    afterEach(() => {
+        mocks.frame = undefined;
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+    });
+
+    // The game's token is the one stored on the device, as it is after a real join.
+    const reconnected = (userAccessToken = makeAccessTokenJwt()) => {
+        mocks.getAuthToken.mockReturnValue(userAccessToken);
+        return { ...(makeOptions(userAccessToken) as object), reconnecting: true };
+    };
+
+    function resumeOpenings() {
+        return mocks.modalIframeSet.mock.calls
+            .map((call) => call[0] as { src: string } | null)
+            .filter((event): event is { src: string } => event !== null && event.src.includes("resume=1"));
+    }
+
+    /** Orbit open in a room, the connection dropped: the room is rebuilt (destroy) and joined again (init). */
+    async function dropWithOrbitOpen(options: { open?: boolean } = {}) {
+        const exports = await freshExports();
+        exports.default.init({}, makeOptions());
+        vi.advanceTimersByTime(3000);
+        if (options.open !== false) exports.openAdminModalFromMenu();
+        mocks.modalIframeSet.mockClear();
+        mocks.modalVisibilitySet.mockClear();
+        mocks.orbitOpened.mockClear();
+        exports.default.destroy();
+        return exports;
+    }
+
+    it("opens Orbit again, signing in on the page it was on, when it was open at the drop", async () => {
+        const exports = await dropWithOrbitOpen();
+        exports.default.init({}, reconnected());
+        await vi.advanceTimersByTimeAsync(5000);
+
+        const openings = resumeOpenings();
+        expect(openings).toHaveLength(1);
+        const url = new URL(openings[0].src);
+        expect(url.pathname).toBe("/admin/login");
+        expect(url.searchParams.get("playUri")).toBe("https://play.example.com/@/room");
+        expect(url.searchParams.get("redirect")).toBeNull();
+        expect(mocks.modalVisibilitySet).toHaveBeenCalledWith(true);
+        expect(mocks.orbitOpened).toHaveBeenCalledTimes(1);
+        expect(mocks.orbitOpened).toHaveBeenCalledWith({ source: "resume" });
+    });
+
+    it("keeps Orbit closed when it was closed at the drop (negative control)", async () => {
+        const exports = await dropWithOrbitOpen({ open: false });
+        exports.default.init({}, reconnected());
+        await vi.advanceTimersByTimeAsync(10_000);
+
+        expect(mocks.adminDashboardActivatedSet).toHaveBeenLastCalledWith(true);
+        expectOrbitNotOpened();
+    });
+
+    it("keeps Orbit closed after a change of room, though it was open", async () => {
+        const exports = await dropWithOrbitOpen();
+        exports.default.init({}, makeOptions());
+        await vi.advanceTimersByTimeAsync(10_000);
+
+        expect(mocks.adminDashboardActivatedSet).toHaveBeenLastCalledWith(true);
+        expect(resumeOpenings()).toHaveLength(0);
+        expect(mocks.orbitOpened).not.toHaveBeenCalled();
+    });
+
+    it("does not carry a request over a change of room into a later reconnect", async () => {
+        const exports = await dropWithOrbitOpen();
+        exports.default.init({}, makeOptions());
+        vi.advanceTimersByTime(3000);
+        exports.default.destroy();
+        exports.default.init({}, reconnected());
+        await vi.advanceTimersByTimeAsync(10_000);
+
+        expect(resumeOpenings()).toHaveLength(0);
+    });
+
+    it("does not open Orbit in another room than the one it was open in", async () => {
+        const exports = await dropWithOrbitOpen();
+        exports.default.init({}, { ...reconnected(), roomId: "https://play.example.com/@/other" });
+        await vi.advanceTimersByTimeAsync(10_000);
+
+        expect(resumeOpenings()).toHaveLength(0);
+    });
+
+    it("waits for the room to be back in and shown before opening", async () => {
+        const exports = await dropWithOrbitOpen();
+        mocks.gameLoaded.set(false);
+        exports.default.init({}, reconnected());
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(resumeOpenings()).toHaveLength(0);
+
+        mocks.gameLoaded.set(true);
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(resumeOpenings()).toHaveLength(1);
+    });
+
+    it("waits for the page to be on screen when the person left again", async () => {
+        const exports = await dropWithOrbitOpen();
+        const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+        exports.default.init({}, reconnected());
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(resumeOpenings()).toHaveLength(0);
+
+        visibility.mockReturnValue("visible");
+        document.dispatchEvent(new Event("visibilitychange"));
+        await vi.advanceTimersByTimeAsync(1000);
+        visibility.mockRestore();
+        expect(resumeOpenings()).toHaveLength(1);
+    });
+
+    it("opens once when the module's two start-up timers both run", async () => {
+        const exports = await dropWithOrbitOpen();
+        exports.default.init({}, reconnected());
+        await vi.advanceTimersByTimeAsync(10_000);
+
+        expect(mocks.orbitOpened).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the request when the connection drops again before Orbit has opened", async () => {
+        const exports = await dropWithOrbitOpen();
+        exports.default.init({}, reconnected());
+        await vi.advanceTimersByTimeAsync(1200);
+        expect(resumeOpenings()).toHaveLength(0);
+        exports.default.destroy();
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(resumeOpenings()).toHaveLength(0);
+
+        exports.default.init({}, reconnected());
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(resumeOpenings()).toHaveLength(1);
+    });
+
+    it("opens again a second time when the connection drops while the reopened Orbit is open", async () => {
+        const exports = await dropWithOrbitOpen();
+        exports.default.init({}, reconnected());
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(resumeOpenings()).toHaveLength(1);
+
+        exports.default.destroy();
+        exports.default.init({}, reconnected());
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(resumeOpenings()).toHaveLength(2);
+    });
+
+    it("does not open Orbit a second time when the person opened it by hand while it waited", async () => {
+        const exports = await dropWithOrbitOpen();
+        exports.default.init({}, reconnected());
+        vi.advanceTimersByTime(1200);
+        exports.openAdminModalFromMenu();
+        await vi.advanceTimersByTimeAsync(10_000);
+
+        expect(resumeOpenings()).toHaveLength(0);
+        expect(mocks.orbitOpened).toHaveBeenCalledTimes(1);
+        expect(mocks.orbitOpened).toHaveBeenCalledWith({ source: "button" });
+    });
+
+    it("stays closed when the sign-in cannot be renewed", async () => {
+        const exports = await dropWithOrbitOpen();
+        const expired = makeAccessTokenJwt(makeOidcToken(Math.floor(Date.now() / 1000) - 10));
+        mocks.getAuthToken.mockReturnValue(expired);
+        mocks.pusherGet.mockRejectedValue(new Error("pusher down"));
+        exports.default.init({}, reconnected(expired));
+        await vi.advanceTimersByTimeAsync(10_000);
+
+        expect(resumeOpenings()).toHaveLength(0);
+        expect(mocks.orbitOpened).not.toHaveBeenCalled();
+    });
+
+    it("opens with a renewed sign-in when the old one had run out", async () => {
+        const exports = await dropWithOrbitOpen();
+        const nowSeconds = Math.floor(Date.now() / 1000);
+        const expired = makeAccessTokenJwt(makeOidcToken(nowSeconds - 10));
+        const renewed = makeAccessTokenJwt(makeOidcToken(nowSeconds + 3600));
+        mocks.getAuthToken.mockReturnValue(expired);
+        mocks.pusherGet.mockResolvedValue({
+            data: {
+                status: "ok",
+                authToken: renewed,
+                userUuid: "user-1",
+                isCharacterTexturesValid: true,
+                isCompanionTextureValid: true,
+            },
+        });
+        exports.default.init({}, reconnected(expired));
+        await vi.advanceTimersByTimeAsync(10_000);
+
+        expect(resumeOpenings()).toHaveLength(1);
+    });
+
+    it("opens the full-screen view again when the game is still wide", async () => {
+        const exports = await freshExports();
+        exports.default.init({}, makeOptions());
+        vi.advanceTimersByTime(3000);
+        exports.openAdminModalFromMenu();
+        mocks.fullScreen.set(true);
+        exports.default.destroy();
+        mocks.fullScreen.set.mockClear();
+        exports.default.init({}, reconnected());
+        await vi.advanceTimersByTimeAsync(5000);
+
+        expect(resumeOpenings()).toHaveLength(1);
+        expect(mocks.fullScreen.set).toHaveBeenLastCalledWith(true);
+    });
+
+    it("opens the compact view when the game became too narrow for the full-screen one", async () => {
+        const exports = await freshExports();
+        exports.default.init({}, makeOptions());
+        vi.advanceTimersByTime(3000);
+        exports.openAdminModalFromMenu();
+        mocks.fullScreen.set(true);
+        exports.default.destroy();
+        mocks.fullScreen.set.mockClear();
+        mocks.canvasWidth = 700;
+        exports.default.init({}, reconnected());
+        await vi.advanceTimersByTimeAsync(5000);
+
+        expect(resumeOpenings()).toHaveLength(1);
+        expect(mocks.fullScreen.set).not.toHaveBeenCalledWith(true);
+    });
+
+    describe("when Orbit cannot sign in again", () => {
+        it("closes the reopened Orbit again after a while, without asking anything of the person", async () => {
+            const exports = await dropWithOrbitOpen();
+            exports.default.init({}, reconnected());
+            await vi.advanceTimersByTimeAsync(5000);
+            expect(resumeOpenings()).toHaveLength(1);
+            mocks.modalVisibilitySet.mockClear();
+
+            await vi.advanceTimersByTimeAsync(21_000);
+            expect(mocks.modalVisibilitySet).toHaveBeenCalledWith(false);
+        });
+
+        it("keeps Orbit open once it has signed in (its bridge is ready)", async () => {
+            const exports = await dropWithOrbitOpen();
+            exports.default.init({}, reconnected());
+            await vi.advanceTimersByTimeAsync(5000);
+            for (const listener of listeners) {
+                listener({
+                    data: { type: "orbit-bridge-ready", version: 1, capabilities: [] },
+                    source: frame,
+                    origin: ADMIN,
+                } as unknown as MessageEvent<unknown>);
+            }
+            mocks.modalVisibilitySet.mockClear();
+
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(mocks.modalVisibilitySet).not.toHaveBeenCalledWith(false);
+        });
     });
 });
