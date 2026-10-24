@@ -150,6 +150,73 @@ describe("OpenHereWindow as a phone's sheet", () => {
         expect(list?.querySelector(".open-list-row.picked")?.textContent).toContain("visits.pdf");
     });
 
+    describe("the list of open items", () => {
+        const listHandle = () => target.querySelector<HTMLElement>('[data-testid="openHereListHandle"]');
+        const list = () => target.querySelector<HTMLElement>('[data-testid="openHereListMenu"]');
+        const chip = () => target.querySelector<HTMLElement>('[data-testid="openHereList"]');
+        let clientHeight: PropertyDescriptor | undefined;
+
+        beforeEach(async () => {
+            // There is no layout under test: the list is 400px tall.
+            clientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+            Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, value: 400 });
+            await mount("plan.pdf", "visits.pdf");
+            chip()?.click();
+            await tick();
+        });
+
+        afterEach(() => {
+            if (clientHeight) Object.defineProperty(HTMLElement.prototype, "clientHeight", clientHeight);
+            else Reflect.deleteProperty(HTMLElement.prototype, "clientHeight");
+        });
+
+        it("has a handle, and a tap on it puts the list away", async () => {
+            expect(listHandle()).not.toBeNull();
+
+            dragHandle(listHandle()!, 300, 300);
+            await tick();
+
+            expect(list()).toBeNull();
+        });
+
+        it("follows the finger down and goes when it is let go far enough, and springs back when not", async () => {
+            sendPointer(listHandle()!, "pointerdown", 300);
+            sendPointer(listHandle()!, "pointermove", 360);
+            await tick();
+            expect(list()?.style.transform).toBe("translateY(60px)");
+            sendPointer(listHandle()!, "pointerup", 360);
+            await tick();
+            expect(list()).not.toBeNull();
+            expect(list()?.style.transform).toBe("");
+
+            dragHandle(listHandle()!, 300, 500);
+            await tick();
+            expect(list()).toBeNull();
+        });
+
+        it("does not move up past where it rests", async () => {
+            sendPointer(listHandle()!, "pointerdown", 300);
+            sendPointer(listHandle()!, "pointermove", 200);
+            await tick();
+            expect(list()?.style.transform).toBe("");
+            sendPointer(listHandle()!, "pointerup", 200);
+        });
+
+        it("comes in front of the chat while it is up, and goes back behind it when it is put away", async () => {
+            chatVisibilityStore.set(true);
+            await tick();
+            expect(sheet()?.classList.contains("behind-chat")).toBe(false);
+
+            dragHandle(listHandle()!, 300, 300);
+            await tick();
+            expect(sheet()?.classList.contains("behind-chat")).toBe(true);
+
+            chip()?.click();
+            await tick();
+            expect(sheet()?.classList.contains("behind-chat")).toBe(false);
+        });
+    });
+
     it("brings a tucked sheet back up with its list when the chip is tapped", async () => {
         await mount("plan.pdf", "visits.pdf");
         openHereTuckedStore.set(true);

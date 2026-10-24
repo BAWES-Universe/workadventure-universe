@@ -18,6 +18,7 @@
     import { closeAllOpenItems, pickedAfterUndoStore } from "../../Stores/ClosedItemsStore";
     import { openHereTuckedStore } from "../../Stores/SideWindowInFrontStore";
     import { openHereListOpenStore } from "../../Stores/OpenHereSheetStore";
+    import SheetHandle from "../Sheet/SheetHandle.svelte";
     import LL from "../../../i18n/i18n-svelte";
     import CoWebsiteTab from "./CoWebsiteTab.svelte";
     import OpenHereItemIcon from "./OpenHereItemIcon.svelte";
@@ -160,6 +161,28 @@
     // The chat button floats over the bottom corner of the sheet, where the list's Close all is: it waits while the list
     // is open.
     $: openHereListOpenStore.set(sheet && listOpen);
+
+    // The list sheet's handle: drag it down to put the list away, or tap it. The list follows the finger, and goes
+    // when it is let go far enough down; otherwise it springs back.
+    const LIST_DISMISS_SHARE = 0.3;
+    let listHeight = 0;
+    let listDragOffset: number | undefined;
+
+    function onListDrag(height: number) {
+        listDragOffset = Math.max(0, listHeight - height);
+    }
+
+    function onListRelease(height: number) {
+        const offset = Math.max(0, listHeight - height);
+        listDragOffset = undefined;
+        if (offset > listHeight * LIST_DISMISS_SHARE) listOpen = false;
+    }
+
+    function onListTap() {
+        listOpen = false;
+    }
+
+    $: if (!listOpen) listDragOffset = undefined;
 
     // The chip is the strip's on a desktop and the row's in the sheet, so it is told apart by its mark.
     const CHIP_SELECTOR = "[data-open-chip]";
@@ -305,12 +328,24 @@
                 class:u-surface={!sheet}
                 class:u-surface-flat={sheet}
                 class:in-sheet={sheet}
+                class:dragging={listDragOffset !== undefined}
+                style={listDragOffset ? `transform: translateY(${listDragOffset}px)` : undefined}
                 bind:this={listElement}
+                bind:clientHeight={listHeight}
                 role="menu"
                 data-testid="openHereListMenu"
             >
                 {#if sheet}
-                    <span class="open-list-grabber" aria-hidden="true" />
+                    <div class="open-list-handle">
+                        <SheetHandle
+                            sheetHeight={listHeight}
+                            onDrag={onListDrag}
+                            onRelease={onListRelease}
+                            onTap={onListTap}
+                            label={$LL.cowebsite.sheetHandle()}
+                            testId="openHereListHandle"
+                        />
+                    </div>
                 {/if}
                 {#each $coWebsites as coWebsite, index (coWebsite.getId())}
                     {@const item = describeCoWebsite(coWebsite, $LL)}
@@ -431,14 +466,24 @@
         border-radius: 24px 24px 0 0;
     }
 
-    .open-list-grabber {
-        display: block;
+    /* The handle takes the whole width of the sheet, past the list's own side padding. */
+    .open-list-handle {
         flex: none;
-        width: 40px;
-        height: 5px;
-        margin: 11px auto 12px;
-        border-radius: 9999px;
-        background: rgba(255, 255, 255, 0.28);
+        margin: 0 -16px 4px;
+    }
+
+    .open-list.in-sheet {
+        transition: transform 160ms ease-out;
+    }
+
+    .open-list.in-sheet.dragging {
+        transition: none;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .open-list.in-sheet {
+            transition: none;
+        }
     }
 
     .open-list-row {
