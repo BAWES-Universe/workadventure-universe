@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { tick } from "svelte";
-import { modalFullScreenStore, modalIframeStore, modalIframeWindowStore } from "../../Stores/ModalStore";
+import { get } from "svelte/store";
+import {
+    modalFullScreenStore,
+    modalIframeStore,
+    modalIframeWindowStore,
+    modalVisibilityStore,
+} from "../../Stores/ModalStore";
 import Modal from "./Modal.svelte";
 
 vi.mock("../../Api/IframeListener", () => ({
@@ -13,7 +19,7 @@ vi.mock("../../Api/IframeListener", () => ({
 
 const { reposition } = vi.hoisted(() => ({ reposition: vi.fn() }));
 
-const { gameSize } = vi.hoisted(() => {
+const { gameSize, windowInFront } = vi.hoisted(() => {
     // Plain stores: the real ones read the game's settings from the page.
     const store = <T>(value: T) => {
         const subscribers = new Set<(v: T) => void>();
@@ -29,10 +35,14 @@ const { gameSize } = vi.hoisted(() => {
             },
         };
     };
-    return { gameSize: store({ width: 1440, height: 900 }) };
+    return { gameSize: store({ width: 1440, height: 900 }), windowInFront: store(false) };
 });
 
-vi.mock("../../Stores/CoWebsiteStore", () => ({ canvasSize: gameSize, windowSize: gameSize }));
+vi.mock("../../Stores/CoWebsiteStore", () => ({
+    canvasSize: gameSize,
+    windowSize: gameSize,
+    openHereInFrontOfOrbitStore: windowInFront,
+}));
 
 vi.mock("../../Phaser/Game/GameManager", () => ({
     gameManager: {
@@ -73,6 +83,8 @@ describe("Orbit's live modal frame", () => {
         modalFullScreenStore.set(false);
         reposition.mockClear();
         gameSize.set({ width: 1440, height: 900 });
+        windowInFront.set(false);
+        modalVisibilityStore.set(false);
         vi.unstubAllGlobals();
     });
 
@@ -145,5 +157,31 @@ describe("Orbit's live modal frame", () => {
         gameSize.set({ width: 900, height: 900 });
         await tick();
         expect(fullScreenButton()?.classList.contains("hidden")).toBe(true);
+    });
+
+    it("closes on Esc, unless the window of files and links is in front, which takes the key", async () => {
+        modal = new Modal({ target });
+        await tick();
+        modalVisibilityStore.set(true);
+
+        windowInFront.set(true);
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+        expect(get(modalVisibilityStore)).toBe(true);
+
+        windowInFront.set(false);
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+        expect(get(modalVisibilityStore)).toBe(false);
+    });
+
+    it("leaves an Esc another window already used alone", async () => {
+        modal = new Modal({ target });
+        await tick();
+        modalVisibilityStore.set(true);
+
+        const used = new KeyboardEvent("keydown", { key: "Escape", cancelable: true });
+        used.preventDefault();
+        window.dispatchEvent(used);
+
+        expect(get(modalVisibilityStore)).toBe(true);
     });
 });

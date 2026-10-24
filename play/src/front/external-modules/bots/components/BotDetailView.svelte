@@ -23,16 +23,25 @@
         ensureBotCompanionCatalog,
         findCompanion,
     } from "../stores/BotCompanionCatalogStore";
+    import { botPermissionsStore } from "../stores/BotPermissionsStore";
+    import { isOpenToEveryone } from "../accessModel";
+    import { botTelemetryStore, loadBotTelemetry, setBotTelemetry } from "../stores/BotTelemetryStore";
     import BotWokaPicker from "./BotWokaPicker.svelte";
     import BotCompanionPicker from "./BotCompanionPicker.svelte";
+    import BotRuleScreen from "./BotRuleScreen.svelte";
+    import BotRuleAdd from "./BotRuleAdd.svelte";
     import PageSwitch from "./page/PageSwitch.svelte";
     import PageGroup from "./page/PageGroup.svelte";
     import BehaviorGroup from "./page/BehaviorGroup.svelte";
     import MindGroup from "./page/MindGroup.svelte";
     import SayGroup from "./page/SayGroup.svelte";
     import ToolsGroup from "./page/ToolsGroup.svelte";
+    import PermissionsGroup from "./page/PermissionsGroup.svelte";
+    import LimitSuggestion from "./page/LimitSuggestion.svelte";
     import BotFooter from "./page/BotFooter.svelte";
-    import { IconCurrentLocation, IconPaw, IconPencil } from "@wa-icons";
+    import PageNote from "./page/PageNote.svelte";
+    import TelemetryCard from "./page/TelemetryCard.svelte";
+    import { IconAdjustmentsHorizontal, IconCurrentLocation, IconPaw, IconPencil } from "@wa-icons";
 
     export let bot: BotData | null = null;
     export let onSave: () => void;
@@ -44,6 +53,42 @@
     export let editingTexture = false;
     /** The companion picker fills the panel in place of the page (BotEditor puts its title and back circle up) */
     export let editingCompanion = false;
+    /** One role's or person's rules fill the panel in place of the page (BotEditor puts its title and back circle up) */
+    export let editingRuleId: string | null = null;
+    /** Adding a role or person fills the panel in place of the page */
+    export let addingRule = false;
+    /** Advanced settings (Bot chat telemetry) fill the panel in place of the page */
+    export let editingAdvanced = false;
+    $: telemetryState = $botTelemetryStore && $botTelemetryStore.botId === bot?.id ? $botTelemetryStore : undefined;
+    $: telemetryLocked = telemetryState?.data?.universeHides === true;
+    $: advancedBrief = !telemetryState
+        ? $LL.mapEditor.edit.bots.page.telemetry.briefLoading()
+        : telemetryState.status === "failed"
+        ? $LL.mapEditor.edit.bots.page.telemetry.briefFailed()
+        : !telemetryState.data
+        ? $LL.mapEditor.edit.bots.page.telemetry.briefLoading()
+        : telemetryLocked
+        ? $LL.mapEditor.edit.bots.page.telemetry.briefLocked()
+        : telemetryState.data.on
+        ? $LL.mapEditor.edit.bots.page.telemetry.briefOn()
+        : $LL.mapEditor.edit.bots.page.telemetry.briefOff();
+    function changeTelemetry(next: boolean) {
+        if (currentBot) void setBotTelemetry(currentBot.id, next);
+    }
+    let telemetryLoadedFor: string | undefined;
+    $: if (bot && bot.id !== telemetryLoadedFor) {
+        telemetryLoadedFor = bot.id;
+        void loadBotTelemetry(bot.id);
+    }
+    // Opening Advanced settings after the read failed asks Orbit again (once per opening), so there is no need to leave
+    // the bot to retry
+    let advancedWasOpen = false;
+    $: {
+        if (editingAdvanced && !advancedWasOpen && bot && telemetryState?.status === "failed") {
+            void loadBotTelemetry(bot.id);
+        }
+        advancedWasOpen = editingAdvanced;
+    }
     let switching = false;
     let switchError: string | null = null;
     let openGroup: string | undefined = lastOpenGroup;
@@ -57,8 +102,52 @@
         if (e.key === "Escape") {
             editingTexture = false;
             editingCompanion = false;
+            editingRuleId = null;
+            addingRule = false;
+            editingAdvanced = false;
         }
     }
+
+    // Asked once per bot, when the owner gives an open bot a tool (anyone who can walk up to it could make it use that tool)
+    let toolBaseline: number | undefined;
+    let toolAdded = false;
+    function limitAsked(botId: string, set?: boolean): boolean {
+        const key = `bot-limit-asked:${botId}`;
+        try {
+            if (set) localStorage.setItem(key, "1");
+            return localStorage.getItem(key) === "1";
+        } catch {
+            return false;
+        }
+    }
+    // Tried again for as long as this page is open: without storage the card still closes once answered
+    let askedNow = false;
+    function onToolCount(count: number) {
+        if (toolBaseline === undefined || count < toolBaseline) {
+            toolBaseline = count;
+        } else if (count > toolBaseline) {
+            toolBaseline = count;
+            toolAdded = true;
+        }
+    }
+    function answerLimit(choose: boolean) {
+        if (currentBot) limitAsked(currentBot.id, true);
+        askedNow = true;
+        toolAdded = false;
+        if (choose) {
+            openGroup = "access";
+            lastOpenGroup = openGroup;
+        }
+    }
+    $: permissions = $botPermissionsStore;
+    $: openData = currentBot && permissions?.botId === currentBot.id ? permissions.data : undefined;
+    $: askLimit =
+        toolAdded &&
+        !askedNow &&
+        !!currentBot &&
+        !!openData &&
+        isOpenToEveryone(openData) &&
+        !limitAsked(currentBot.id);
 
     // Subscribe to store for real-time updates from map
     const unsubscribe = selectedBotStore.subscribe((storeBot) => {
@@ -104,6 +193,12 @@
             // Another bot: its page opens, not the last one's pickers
             editingCompanion = false;
             editingTexture = false;
+            editingRuleId = null;
+            addingRule = false;
+            editingAdvanced = false;
+            toolBaseline = undefined;
+            toolAdded = false;
+            askedNow = false;
             // Ensure behaviorType is never undefined - check both top-level and behaviorConfig
             const behaviorType = bot.behaviorType || bot.behaviorConfig?.behaviorType || "idle";
 
@@ -448,6 +543,33 @@
         onSave={handleCompanionSelect}
         onCancel={() => (editingCompanion = false)}
     />
+{:else if currentBot && addingRule}
+    <BotRuleAdd
+        botId={currentBot.id}
+        onAdded={(rule) => {
+            addingRule = false;
+            editingRuleId = rule.id;
+        }}
+    />
+{:else if currentBot && editingRuleId}
+    <BotRuleScreen botId={currentBot.id} ruleId={editingRuleId} onClose={() => (editingRuleId = null)} />
+{:else if currentBot && editingAdvanced}
+    <div class="bot-page" data-testid="bot-advanced">
+        {#if telemetryState?.data}
+            <TelemetryCard
+                on={telemetryState.data.on}
+                locked={telemetryLocked}
+                error={telemetryState.saveError}
+                onChange={changeTelemetry}
+            />
+        {:else}
+            <PageNote
+                >{telemetryState?.status === "failed"
+                    ? page.telemetry.loadFailed()
+                    : page.telemetry.briefLoading()}</PageNote
+            >
+        {/if}
+    </div>
 {:else if currentBot}
     <div class="bot-page" data-testid="bot-page">
         <div class="bp-hd">
@@ -535,6 +657,21 @@
                 onToggle={toggleGroup}
                 onChange={(next) => apply(next)}
                 wide={!$mobileLayoutStore}
+                {onToolCount}
+            />
+            {#if askLimit && currentBot}
+                <LimitSuggestion
+                    name={currentBot.name || "Bot"}
+                    onChoose={() => answerLimit(true)}
+                    onKeep={() => answerLimit(false)}
+                />
+            {/if}
+            <PermissionsGroup
+                bot={currentBot}
+                open={openGroup === "access"}
+                onToggle={toggleGroup}
+                onOpenRule={(rule) => (editingRuleId = rule.id)}
+                onAdd={() => (addingRule = true)}
             />
             <!-- An extra, after the bot's own parts: the pet that walks with it -->
             <PageGroup
@@ -544,6 +681,15 @@
                 brief={companionLine}
                 link
                 onToggle={() => (editingCompanion = true)}
+            />
+            <!-- Settings most owners never need, on a screen of their own -->
+            <PageGroup
+                id="advanced"
+                icon={IconAdjustmentsHorizontal}
+                title={page.telemetry.title()}
+                brief={advancedBrief}
+                link
+                onToggle={() => (editingAdvanced = true)}
             />
         </div>
         <BotFooter bot={currentBot} {onDelete} />

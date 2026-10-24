@@ -1,15 +1,29 @@
-import type { BotData } from "../types";
+import type { BotAiOptions, BotData } from "../types";
+import {
+    readPermissions,
+    readRule,
+    type BotPermissions,
+    type BotRule,
+    type RuleAction,
+    type RuleValue,
+} from "../accessModel";
 import { resolveCredentialUrl } from "../../admin-api/iframeAuth";
 import { freshOrbitAccessToken, type GameTokenHolder } from "../../admin-api/orbitAccessToken";
+import { classifySummonFailure, type SummonResult } from "./summonFailure";
 
 interface AuthError extends Error {
     isAuthError: boolean;
     isSessionExpired: boolean;
+    status?: number;
 }
 
 const SESSION_KEY = "orbit_admin_session_v2";
 const SESSION_EXPIRES_KEY = "orbit_admin_session_v2_expires";
 const OPAQUE_SESSION_PATTERN = /^orb_sess_v2_[0-9a-f]{64}$/;
+/** How long the game waits to learn whether Summon is allowed before it shows the button anyway */
+const ACCESS_CHECK_TIMEOUT_MS = 3000;
+/** How long a read or change of who may use a bot waits for Orbit before it counts as failed */
+const PERMISSIONS_TIMEOUT_MS = 20000;
 
 export function isOrbitSessionResponse(value: unknown): value is { version: 2; sessionId: string; expiresAt: number } {
     if (!value || typeof value !== "object") return false;
@@ -39,8 +53,31 @@ export interface CreateBotDto {
     companionTextureId?: string | null;
 }
 
+/** Bot chat telemetry of one bot: on unless the bot or its universe turned it off. The universe's choice locks the switch. */
+export interface BotTelemetry {
+    universeHides: boolean;
+    on: boolean;
+}
+
+function readTelemetry(value: unknown): BotTelemetry {
+    const answer = value as { universeHides?: unknown; hidden?: unknown } | null;
+    if (!answer || typeof answer.universeHides !== "boolean" || typeof answer.hidden !== "boolean") {
+        throw new Error("Orbit answered with something the game does not understand");
+    }
+    return { universeHides: answer.universeHides, on: !answer.hidden };
+}
+
 export interface UpdateBotDto extends Partial<CreateBotDto> {
     id: string;
+}
+
+/** What the bot server says to "may I?": yes, no with the owner's line, or not known (`signIn`: sign in again first) */
+type BotAccessAnswer = { allowed: true } | { allowed: false; reason: string } | { allowed: null; signIn?: true };
+
+/** The membership button on a player's card, as Orbit names it. */
+export interface MembershipButton {
+    kind: "membership" | "pending" | "roles";
+    label: string;
 }
 
 export class BotApiService {
@@ -413,6 +450,53 @@ export class BotApiService {
     }
 
     /**
+     * What the bot page offers under "Runs on" (#374): Universe AI and the viewer's own keys lent to this universe.
+     * Pass the bot's id, or nothing (this room) for a bot not made yet. Null when Orbit can't say (an older Orbit, no
+     * permission, offline): the page then keeps the provider list it always had.
+     */
+    async getBotAiOptions(target: { botId?: string; roomId?: string } = {}): Promise<BotAiOptions | null> {
+        const roomId = target.roomId ?? this.roomId;
+        const query = target.botId
+            ? `botId=${encodeURIComponent(target.botId)}`
+            : roomId
+            ? `roomId=${encodeURIComponent(roomId)}`
+            : null;
+        if (!query) return null;
+        try {
+            const response = await this.fetch(`/api/me/bot-ai?${query}`);
+            const data: unknown = await response.json();
+            if (typeof data !== "object" || data === null || !Array.isArray((data as BotAiOptions).keys)) return null;
+            return data as BotAiOptions;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * What the membership button on another player's card says for this player, in the universe of the current room:
+     * Give membership, Pending invite, Roles or Membership. Null when Orbit says there is none, and when it can't be
+     * known: no Orbit, or Orbit didn't answer.
+     */
+    async getMembershipButton(userUuid: string): Promise<MembershipButton | null> {
+        if (!this.adminUrl || !this.accessToken || !this.roomId) return null;
+        try {
+            const response = await this.fetch(
+                `/api/me/membership-button?roomId=${encodeURIComponent(this.roomId)}&userUuid=${encodeURIComponent(
+                    userUuid
+                )}`
+            );
+            const data = (await response.json()) as { button?: { kind?: unknown; label?: unknown } | null };
+            const button = data.button;
+            if (!button || typeof button.label !== "string" || !button.label) return null;
+            const kind = button.kind;
+            if (kind !== "membership" && kind !== "pending" && kind !== "roles") return null;
+            return { kind, label: button.label };
+        } catch {
+            return null;
+        }
+    }
+
+    /**
      * List all bots for the current room
      */
     async listBots(roomId?: string): Promise<BotData[]> {
@@ -521,7 +605,11 @@ export class BotApiService {
             "Content-Type": "application/json",
             ...(options.headers as Record<string, string>),
         };
-        const isPublicRoomLifecycle = endpoint === "/api/bots/room-enter" || endpoint === "/api/bots/room-leave";
+        // Room enter/leave, Summon and "may I?" are for every player, guests included: the game token is enough for them.
+        const isPublicRoomLifecycle =
+            endpoint === "/api/bots/room-enter" ||
+            endpoint === "/api/bots/room-leave" ||
+            /^\/api\/bots\/[^/]+\/(summon|access)$/.test(endpoint);
         const gameToken = this.getGameToken();
         if (gameToken) {
             headers["X-WA-Auth"] = gameToken;
@@ -542,10 +630,12 @@ export class BotApiService {
             const errorText = await response.text();
             let errorMessage = `Bot-server API error: ${response.status}`;
             let isSessionExpired = false;
+            let errorCode: string | undefined;
 
             try {
                 const errorJson = JSON.parse(errorText);
                 errorMessage = errorJson.message || errorJson.error || errorMessage;
+                errorCode = typeof errorJson.code === "string" ? errorJson.code : undefined;
                 // Check if it's a session expiration error
                 if (
                     errorMessage.toLowerCase().includes("session expired") ||
@@ -596,10 +686,14 @@ export class BotApiService {
                 ) as AuthError;
                 authError.isAuthError = true;
                 authError.isSessionExpired = isSessionExpired;
+                authError.status = response.status;
                 throw authError;
             }
 
-            throw new Error(errorMessage);
+            const failure = new Error(errorMessage) as Error & { status?: number; code?: string };
+            failure.status = response.status;
+            failure.code = errorCode;
+            throw failure;
         }
 
         return response;
@@ -728,13 +822,9 @@ export class BotApiService {
      * Summon a bot to the player's position
      * The bot will pathfind to the player, stop at their position, and initiate a bubble
      * When the player leaves, the bot will return to its original position
+     * Never throws: a refusal comes back as `failure`, so the caller can tell the player why.
      */
-    async summonBot(
-        botId: string,
-        playerUuid: string,
-        playerX: number,
-        playerY: number
-    ): Promise<{ summoned: boolean; reason?: string }> {
+    async summonBot(botId: string, playerUuid: string, playerX: number, playerY: number): Promise<SummonResult> {
         try {
             const response = await this.fetchBotServer(`/api/bots/${botId}/summon`, {
                 method: "POST",
@@ -744,12 +834,18 @@ export class BotApiService {
                     playerY,
                 }),
             });
-            return response.json();
+            const body = (await response.json()) as { summoned?: boolean } | null;
+            return body?.summoned === false ? { summoned: false, failure: "failed" } : { summoned: true };
         } catch (error) {
             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                 console.error("[BotApiService] Error summoning bot:", error);
             }
-            return { summoned: false, reason: String(error) };
+            // The owner's limits (or Orbit not answering) come back as a line meant for the person: pass it on as it is
+            const failure = classifySummonFailure(error);
+            if ((failure === "not_allowed" || failure === "cannot_check") && error instanceof Error) {
+                return { summoned: false, failure, reason: error.message };
+            }
+            return { summoned: false, failure };
         }
     }
 
@@ -780,6 +876,160 @@ export class BotApiService {
             }
             return [];
         }
+    }
+
+    // ─── Who may use a bot ────────────────────────────────────────────────────────────
+
+    /**
+     * Whether the local player may do this with a bot, asked of the bot server (which asks Orbit): the game uses it to
+     * hide Summon from people the owner has refused. `allowed: null` means it could not be found out (a guest with no
+     * Orbit session, Orbit not answering): the caller shows the button, and the real answer comes when it is used.
+     * `playerUuid` is who is asking. A signed-in player whose Orbit session did not come along is then told so
+     * (`signIn`) instead of being asked about as a guest.
+     */
+    async getBotAccess(botId: string, action: "summon" | "chat", playerUuid?: string): Promise<BotAccessAnswer> {
+        // A bot server or sign-in that stalls must not hold the Summon button back: after a few seconds it is "unknown"
+        const stop = new AbortController();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const unknown = new Promise<{ allowed: null }>((resolve) => {
+            timer = setTimeout(() => {
+                stop.abort();
+                resolve({ allowed: null });
+            }, ACCESS_CHECK_TIMEOUT_MS);
+        });
+        return Promise.race([this.askBotAccess(botId, action, playerUuid, stop.signal), unknown]).finally(() => {
+            clearTimeout(timer);
+        });
+    }
+
+    private async askBotAccess(
+        botId: string,
+        action: "summon" | "chat",
+        playerUuid: string | undefined,
+        signal: AbortSignal
+    ): Promise<BotAccessAnswer> {
+        try {
+            const response = await this.fetchBotServer(`/api/bots/${encodeURIComponent(botId)}/access`, {
+                method: "POST",
+                body: JSON.stringify(playerUuid ? { action, playerUuid } : { action }),
+                signal,
+            });
+            const body = (await response.json()) as { allowed?: unknown; reason?: unknown };
+            if (body.allowed === true) return { allowed: true };
+            if (body.allowed === false) {
+                return { allowed: false, reason: typeof body.reason === "string" ? body.reason : "" };
+            }
+            return { allowed: null };
+        } catch (error) {
+            if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                console.warn("[BotApiService] Could not check bot access:", error);
+            }
+            // The server could not tell who this is without their Orbit session: they need to sign in again
+            if ((error as { code?: unknown } | undefined)?.code === "not_you") return { allowed: null, signIn: true };
+            return { allowed: null };
+        }
+    }
+
+    /**
+     * Run one request about who may use a bot, and give up when Orbit does not answer. The page queues these one after
+     * another, so a request that hangs would otherwise hold back every change after it.
+     */
+    private async withPermissionsTimeout<T>(run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+        const stop = new AbortController();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        // Raced as well as aborted: the Orbit sign-in that comes first in a request does not listen for the abort
+        const late = new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => {
+                stop.abort();
+                reject(new Error("Orbit did not answer in time. Check again in a moment."));
+            }, PERMISSIONS_TIMEOUT_MS);
+        });
+        const running = run(stop.signal);
+        // When the timeout wins, the request that was left behind may still fail later: nobody waits for it
+        running.catch(() => undefined);
+        try {
+            return await Promise.race([running, late]);
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    /** Who may use this bot: Private bot, the line refused people hear, every rule, and the roles a rule can name */
+    async getBotPermissions(botId: string): Promise<BotPermissions> {
+        return this.withPermissionsTimeout(async (signal) => {
+            const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/permissions`, { signal });
+            return readPermissions(await response.json());
+        });
+    }
+
+    /** Private bot and the line refused people hear; only what is sent changes. Answers with all of it. */
+    async saveBotPermissions(
+        botId: string,
+        change: { privateBot?: boolean; refusalReply?: string | null }
+    ): Promise<BotPermissions> {
+        return this.withPermissionsTimeout(async (signal) => {
+            const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/permissions`, {
+                method: "PUT",
+                body: JSON.stringify(change),
+                signal,
+            });
+            return readPermissions(await response.json());
+        });
+    }
+
+    /** Bot chat telemetry of this bot: whether it is on, and whether its universe has turned it off for every bot */
+    async getBotTelemetry(botId: string): Promise<BotTelemetry> {
+        return this.withPermissionsTimeout(async (signal) => {
+            const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/privacy`, { signal });
+            return readTelemetry(await response.json());
+        });
+    }
+
+    /** Turn bot chat telemetry on (the bot follows its universe again) or off for this bot. Answers with how it stands. */
+    async saveBotTelemetry(botId: string, on: boolean): Promise<BotTelemetry> {
+        return this.withPermissionsTimeout(async (signal) => {
+            const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/privacy`, {
+                method: "PUT",
+                body: JSON.stringify({ choice: on ? "follow" : "private" }),
+                signal,
+            });
+            return readTelemetry(await response.json());
+        });
+    }
+
+    /**
+     * Set a role's or a person's No / Default / Yes for this bot. Only the actions named change; a row that does not
+     * exist yet is added. A person is named by their identifier (what the members search gives).
+     */
+    async saveBotRule(
+        botId: string,
+        subject: { roleId: string } | { identifier: string } | { userId: string },
+        values: Partial<Record<RuleAction, RuleValue>>
+    ): Promise<BotRule> {
+        return this.withPermissionsTimeout(async (signal) => {
+            const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/permissions/rules`, {
+                method: "PUT",
+                body: JSON.stringify({ ...subject, ...values }),
+                signal,
+            });
+            const rule = readRule(await response.json());
+            if (!rule) throw new Error("Orbit answered with something the game does not understand");
+            return rule;
+        });
+    }
+
+    /** Take a role's or a person's row off this bot: they follow the roles again */
+    async deleteBotRule(botId: string, subject: { roleId: string } | { userId: string }): Promise<void> {
+        const query =
+            "roleId" in subject
+                ? `roleId=${encodeURIComponent(subject.roleId)}`
+                : `userId=${encodeURIComponent(subject.userId)}`;
+        await this.withPermissionsTimeout((signal) =>
+            this.fetch(`/api/bots/${encodeURIComponent(botId)}/permissions/rules?${query}`, {
+                method: "DELETE",
+                signal,
+            })
+        );
     }
 
     // ─── MCP Server management ──────────────────────────────────────────────────────

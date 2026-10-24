@@ -152,6 +152,7 @@ export { default as IconRoute } from "~icons/tabler/route";
 export { default as IconScript } from "~icons/tabler/script";
 export { default as IconDoor } from "~icons/tabler/door";
 export { default as IconPlanet } from "~icons/tabler/planet";
+export { default as IconUserCog } from "~icons/tabler/user-cog";
 export { default as IconRocket } from "~icons/tabler/rocket";
 export { default as IconLayoutNavbar } from "~icons/tabler/layout-navbar";
 export { default as IconZoomOutArea } from "~icons/tabler/zoom-out-area";
@@ -189,3 +190,4 @@ export { default as IconDeviceMobileDown } from "~icons/tabler/device-mobile-dow
 export { default as IconDeviceMobilePlus } from "~icons/tabler/device-mobile-plus";
 export { default as IconDeviceDesktopDown } from "~icons/tabler/device-desktop-down";
 export { default as IconLoader2 } from "~icons/tabler/loader-2";
+export { default as IconLayoutSidebar } from "~icons/tabler/layout-sidebar";

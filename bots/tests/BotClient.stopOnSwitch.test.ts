@@ -33,19 +33,25 @@ function joinedBotWithFakeSocket() {
 }
 
 class FakeWalking {
+    userIdToUuid = new Map();
+    userIdToIsLogged = new Map();
     setBot() {}
     update() {}
     lookAtPassersBy() {}
     carryLookFrom() {}
+    carryPeopleFrom() {}
     getConfiguredFacing() {
         return null;
     }
 }
 class FakeIdle {
+    userIdToUuid = new Map();
+    userIdToIsLogged = new Map();
     setBot() {}
     update() {}
     lookAtPassersBy() {}
     carryLookFrom() {}
+    carryPeopleFrom() {}
     getConfiguredFacing() {
         return null;
     }

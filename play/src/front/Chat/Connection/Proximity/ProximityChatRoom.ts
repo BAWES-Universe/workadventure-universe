@@ -1185,6 +1185,9 @@ export class ProximityChatRoom implements ChatRoom {
 
         // TODO: we need to move that elsewhere.
         // Set up manager of audio streams received by the scripting API (useful for bots)
+        // The previous space may have been torn down without going through leaveSpace() (e.g. left directly
+        // through the space registry), so release any managers still registered before creating new ones.
+        this.closeScriptingAudioStreamManagers();
         this.scriptingOutputAudioStreamManager = new ScriptingOutputAudioStreamManager(this._space);
         this.scriptingInputAudioStreamManager = new ScriptingInputAudioStreamManager(this._space);
 
@@ -1472,6 +1475,7 @@ export class ProximityChatRoom implements ChatRoom {
                 this.spaceMessageReactionSubscription?.unsubscribe();
                 this.spaceStreamMessageSubscription?.unsubscribe();
                 this.streamMessages.clear();
+                this.closeScriptingAudioStreamManagers();
                 if (this._space) {
                     this.spaceRegistry.leaveSpace(this._space).catch((error) => {
                         console.error("Error leaving space: ", error);
@@ -1694,10 +1698,7 @@ export class ProximityChatRoom implements ChatRoom {
         this.spaceStreamMessageSubscription?.unsubscribe();
         this.streamMessages.clear();
 
-        this.scriptingOutputAudioStreamManager?.close();
-        this.scriptingInputAudioStreamManager?.close();
-        this.scriptingOutputAudioStreamManager = undefined;
-        this.scriptingInputAudioStreamManager = undefined;
+        this.closeScriptingAudioStreamManagers();
 
         try {
             await this.spaceRegistry.leaveSpace(space);
@@ -1706,6 +1707,17 @@ export class ProximityChatRoom implements ChatRoom {
             Sentry.captureException(error);
         }
         return undefined;
+    }
+
+    /**
+     * Releases the scripting audio stream managers. Closing the output manager unregisters its iframe answerers,
+     * which must happen before a new manager registers them again.
+     */
+    private closeScriptingAudioStreamManagers(): void {
+        this.scriptingOutputAudioStreamManager?.close();
+        this.scriptingInputAudioStreamManager?.close();
+        this.scriptingOutputAudioStreamManager = undefined;
+        this.scriptingInputAudioStreamManager = undefined;
     }
 
     private restoreChatState() {
@@ -1765,8 +1777,7 @@ export class ProximityChatRoom implements ChatRoom {
         this.streamMessages.clear();
         this.clearTypingMembers();
 
-        this.scriptingOutputAudioStreamManager?.close();
-        this.scriptingInputAudioStreamManager?.close();
+        this.closeScriptingAudioStreamManagers();
         this.spaceWatcherUserJoinedObserver?.unsubscribe();
         this.spaceWatcherUserLeftObserver?.unsubscribe();
         this.observeUserJoinedSubscription?.unsubscribe();

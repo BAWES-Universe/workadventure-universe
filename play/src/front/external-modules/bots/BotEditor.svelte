@@ -38,6 +38,10 @@
         type BotEditorMode,
     } from "./stores/BotEditorStore";
     import { routeStops } from "./behaviorModel";
+    import { newBotRef } from "./mindModel";
+    import { botPermissionsStore } from "./stores/BotPermissionsStore";
+    import { botTelemetryNoticeStore, botTelemetryStore } from "./stores/BotTelemetryStore";
+    import { ruleName } from "./accessModel";
     import { getBotEditorTool } from "./phaser/BotEditorTool";
     import { botApiService } from "./services/BotApiService";
     import { IconMapPin } from "@wa-icons";
@@ -46,6 +50,15 @@
     let botEditorTool = getBotEditorTool();
     let isLoading = false;
     let error: string | null = null;
+    // A new bot was made but its bot chat telemetry "off" was not saved: said until the person sets it, dismisses it or
+    // moves to another bot (kept in botTelemetryNoticeStore, so it outlives the editor)
+    $: if (
+        $botTelemetryNoticeStore &&
+        $botTelemetryStore?.botId === $botTelemetryNoticeStore.botId &&
+        $botTelemetryStore.data?.on === false
+    ) {
+        botTelemetryNoticeStore.set(null);
+    }
 
     // Subscribe to stores
     let currentMode: BotEditorMode = "list";
@@ -97,6 +110,9 @@
         }
         const previousBot = selectedBot;
         selectedBot = bot || null;
+        // Picking a different bot (the list and the map both end up here) ends a note about another one
+        const notice = get(botTelemetryNoticeStore);
+        if (notice && bot && bot.id !== notice.botId) botTelemetryNoticeStore.set(null);
 
         // Initialize lastSaved values when bot first selected or changes
         if (bot && (!previousBot || previousBot.id !== bot.id)) {
@@ -261,6 +277,17 @@
         const capturedPreviousBot = previousPlacingBot;
         previousPlacingBot = bot;
 
+        // Placement ended without the bot being picked (cancelled by the button or Escape): the bot exists in Orbit
+        // with telemetry still on, so it is listed and its note stays, instead of the person's "off" going unsaid
+        if (
+            capturedPreviousBot &&
+            !bot &&
+            get(botTelemetryNoticeStore)?.botId === capturedPreviousBot.id &&
+            get(selectedBotStore)?.id !== capturedPreviousBot.id
+        ) {
+            upsertBot(capturedPreviousBot);
+        }
+
         // If placement was just completed (bot went from defined to undefined)
         if (capturedPreviousBot && !bot && botApiService.isInitialized()) {
             // Find the bot that was just placed
@@ -293,7 +320,10 @@
         // Load bots from API (tool will create previews via store subscription).
         // Reopening the editor in the same room keeps the current list on screen while it refreshes.
         const loadedRoomId = get(botsLoadedForRoomIdStore);
-        await loadBots({ keepCurrent: loadedRoomId !== null && loadedRoomId === botApiService.getRoomId() });
+        const sameRoom = loadedRoomId !== null && loadedRoomId === botApiService.getRoomId();
+        // A note kept from another room points at a bot that is not here
+        if (!sameRoom) botTelemetryNoticeStore.set(null);
+        await loadBots({ keepCurrent: sameRoom });
 
         // The editor was closed while loading: don't reactivate the tool or leave a subscription nothing removes
         if (destroyed) {
@@ -314,6 +344,7 @@
                 return; // Skip initial value
             }
             // Room changed - reload bots for the new room
+            botTelemetryNoticeStore.set(null);
             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                 console.log(`[BotEditor] Room change detected (trigger: ${triggerValue}), reloading bots...`);
             }
@@ -396,14 +427,23 @@
     }
 
     function handleSelectBot(bot: BotData | null) {
+        const notice = get(botTelemetryNoticeStore);
+        if (notice && bot?.id !== notice.botId) botTelemetryNoticeStore.set(null);
         selectBot(bot || undefined);
     }
 
+    // What New bot's Advanced settings hold. Here and not in the form, because the form is rebuilt when the first bot
+    // of a room fails to create.
+    let newBotAdvancedOpen = false;
+    let newBotTelemetryOn = true;
+
     function handleCreateBot() {
+        newBotAdvancedOpen = false;
+        newBotTelemetryOn = true;
         botEditorModeStore.set("create");
     }
 
-    async function handleCreateBotSubmit(name: string, textureId: string) {
+    async function handleCreateBotSubmit(name: string, textureId: string, telemetryOn: boolean) {
         if (!botApiService.isInitialized()) {
             error = "API service not initialized";
             return;
@@ -411,12 +451,15 @@
 
         isLoading = true;
         error = null;
+        // The room the bot is made in: the person may move to another room while it is being made
+        const createdInRoomId = botApiService.getRoomId();
 
         try {
-            // Get first available AI provider to auto-select
-            let aiProviderRef: string | undefined = undefined;
+            // A new bot starts on Universe AI when Orbit says it is ready (#374). If Orbit can't say (an older Orbit), or
+            // Universe AI isn't set up, it gets the first available provider, as it always did.
+            let aiProviderRef: string | undefined = newBotRef(await botApiService.getBotAiOptions());
             try {
-                const providers = await botApiService.getAvailableAIProviders(true);
+                const providers = aiProviderRef ? [] : await botApiService.getAvailableAIProviders(true);
                 if (providers.length > 0) {
                     // Select first available provider (prefer enabled, but allow disabled if that's all we have)
                     const enabledProvider = providers.find((p) => p.enabled);
@@ -473,10 +516,47 @@
                 updatedBy: createdBot.updatedBy || null,
             };
 
+            // Bot chat telemetry is on for a new bot; only an off needs saving. If that cannot be saved the bot still
+            // exists, so say so (its Advanced settings can set it) instead of leaving it on without a word.
+            let telemetryNotSaved = false;
+            if (!telemetryOn) {
+                try {
+                    await botApiService.saveBotTelemetry(createdBot.id, false);
+                } catch (e) {
+                    console.error("[BotEditor] Failed to save bot chat telemetry for the new bot:", e);
+                    telemetryNotSaved = true;
+                }
+            }
+
+            // The person is in another room now: the bot belongs to the room it was made in, so this room's list and
+            // notes are not touched
+            if (botApiService.getRoomId() !== createdInRoomId) {
+                return;
+            }
+
+            // The person may have left the form while the bot was being made: the bot exists, so it is listed (and the
+            // note shown if its telemetry off was not saved), but placement is not theirs to resume
+            if (destroyed || get(botEditorModeStore) !== "create") {
+                upsertBot(newBot);
+                if (telemetryNotSaved) {
+                    botTelemetryNoticeStore.set({
+                        botId: newBot.id,
+                        text: get(LL).mapEditor.edit.bots.page.telemetry.createdButNotSaved(),
+                    });
+                }
+                return;
+            }
+
             // Close modal
 
             // Start placement mode - user will click on map to set position
             startPlacingBot(newBot);
+            if (telemetryNotSaved) {
+                botTelemetryNoticeStore.set({
+                    botId: newBot.id,
+                    text: get(LL).mapEditor.edit.bots.page.telemetry.createdButNotSaved(),
+                });
+            }
         } catch (e) {
             console.error("[BotEditor] Failed to create bot:", e);
             error = e instanceof Error ? e.message : "Failed to create bot";
@@ -486,6 +566,7 @@
     }
 
     function handleBackToList() {
+        botTelemetryNoticeStore.set(null);
         selectBot(undefined);
         botEditorModeStore.set("list");
     }
@@ -626,13 +707,44 @@
     let editingCompanion = false;
     // Its WOKA the same way: the bot's name over "Body", and the back circle returns to the page
     let editingTexture = false;
+    // Who may use it the same way: the bot's name over a role's or person's name (or "Add role or person"), and the
+    // back circle returns to the bot's page
+    let editingRuleId: string | null = null;
+    let addingRule = false;
+    // Advanced settings the same way
+    let editingAdvanced = false;
+    function editedRuleName(ruleId: string | null, botId: string | undefined, someone: string): string | undefined {
+        const held = get(botPermissionsStore);
+        const rule = ruleId && held && held.botId === botId ? held.data?.rules.find((r) => r.id === ruleId) : undefined;
+        return rule ? ruleName(rule, someone) : undefined;
+    }
     $: editPanelBackStore.set(
-        currentMode === "detail" && selectedBot && editingTexture
+        currentMode === "detail" && selectedBot && (addingRule || editingRuleId)
+            ? {
+                  onBack: () => {
+                      addingRule = false;
+                      editingRuleId = null;
+                  },
+                  label: $LL.mapEditor.edit.bots.page.access.back({ name: selectedBot.name ?? "" }),
+                  title: selectedBot.name || undefined,
+                  subtitle: addingRule
+                      ? $LL.mapEditor.edit.bots.page.access.addTitle()
+                      : editedRuleName(editingRuleId, selectedBot.id, $LL.mapEditor.edit.bots.page.access.someone()) ??
+                        $LL.mapEditor.edit.bots.page.access.title(),
+              }
+            : currentMode === "detail" && selectedBot && editingTexture
             ? {
                   onBack: () => (editingTexture = false),
                   label: $LL.mapEditor.edit.bots.page.companion.back({ name: selectedBot.name ?? "" }),
                   title: selectedBot.name || undefined,
                   subtitle: $LL.mapEditor.edit.bots.page.body.title(),
+              }
+            : currentMode === "detail" && selectedBot && editingAdvanced
+            ? {
+                  onBack: () => (editingAdvanced = false),
+                  label: $LL.mapEditor.edit.bots.page.companion.back({ name: selectedBot.name ?? "" }),
+                  title: $LL.mapEditor.edit.bots.page.telemetry.title(),
+                  subtitle: selectedBot.name || undefined,
               }
             : currentMode === "detail" && selectedBot && editingCompanion
             ? {
@@ -734,6 +846,17 @@
 </script>
 
 <div class="bot-editor flex flex-col h-full min-h-0">
+    {#if $botTelemetryNoticeStore}
+        <div class="bg-red-500/20 border border-red-500/50 rounded-lg p-4 m-4" data-testid="bot-telemetry-notice">
+            <p class="text-red-200 text-sm">{$botTelemetryNoticeStore.text}</p>
+            <button
+                class="mt-2 px-3 py-1 bg-red-500/20 text-red-200 rounded hover:bg-red-500/30 text-xs"
+                on:click={() => botTelemetryNoticeStore.set(null)}
+            >
+                {$LL.mapEditor.edit.bots.page.telemetry.dismiss()}
+            </button>
+        </div>
+    {/if}
     {#if error}
         <div class="bg-red-500/20 border border-red-500/50 rounded-lg p-4 m-4">
             <p class="text-red-200 text-sm">{error}</p>
@@ -756,13 +879,22 @@
     {:else if currentMode === "list" || currentMode === "placing"}
         <BotList {bots} onSelectBot={handleSelectBot} onCreateBot={handleCreateBot} />
     {:else if currentMode === "create"}
-        <NewBotView busy={isLoading} onCreate={handleCreateBotSubmit} onCancel={handleBackToList} />
+        <NewBotView
+            busy={isLoading}
+            bind:advancedOpen={newBotAdvancedOpen}
+            bind:telemetryOn={newBotTelemetryOn}
+            onCreate={handleCreateBotSubmit}
+            onCancel={handleBackToList}
+        />
     {:else if currentMode === "detail" || currentMode === "waypoint-edit"}
         {#if selectedBot}
             <BotDetailView
                 bind:this={detailView}
                 bind:editingCompanion
                 bind:editingTexture
+                bind:editingRuleId
+                bind:addingRule
+                bind:editingAdvanced
                 bot={selectedBot}
                 onSave={handleSave}
                 onDelete={handleDelete}
