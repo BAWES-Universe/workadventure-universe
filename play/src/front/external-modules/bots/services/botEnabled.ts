@@ -2,8 +2,8 @@
  * Turning a bot on or off: the switch flips right away, the change is saved, and the bot is spawned or despawned to
  * match. A failed save flips the switch back and throws, for the caller to show.
  */
-import type { BotData } from "../types";
 import { get } from "svelte/store";
+import type { BotData } from "../types";
 import { botPreviewsStore, upsertBot } from "../stores/BotEditorStore";
 import { botApiService } from "./BotApiService";
 
