@@ -9,7 +9,7 @@
  */
 
 import type { ConversationMemory } from '../memory/ConversationMemory';
-import type { AdminApiService } from '../server/AdminApiService';
+import type { AdminApiService, AIProviderCredentials, BotAiCredentialsAnswer } from '../server/AdminApiService';
 import { BotClient } from '../client/BotClient';
 import type { AIProviderConfig, AIStreamChunk, AIUsageMetadata, ToolCall } from './types';
 import type { AIProvider } from './AIProvider';
@@ -48,6 +48,16 @@ const sentrySetSpan: ((scope: any, span: any) => void) | undefined =
 // PostHog LLM Analytics — captures $ai_trace + $ai_generation events alongside Sentry
 import { captureAiGeneration, captureAiTrace, flushPostHog } from './PostHogClient';
 
+/** A bot's provider, resolved by bot id (#374): the settings to call, where they came from, or "resting". */
+type ResolvedProvider =
+    | { resting: false; config: AIProviderConfig; source: 'provider' | 'universe-ai' | 'own-key' }
+    | { resting: true; line: string };
+
+/** Refs that only Orbit can resolve for a bot: Universe AI (follows the Default) and a person's own key (`key-…`). */
+const UNIVERSE_AI_REF = 'universe-ai';
+const OWN_KEY_PREFIX = 'key-';
+const needsBotRoute = (ref: string): boolean => ref === UNIVERSE_AI_REF || ref.startsWith(OWN_KEY_PREFIX);
+
 interface CachedCredentials {
     credentials: AIProviderConfig;
     expiresAt: number;
@@ -59,6 +69,17 @@ export class AIService {
     private adminApiUrl: string;
     private credentialCache: Map<string, CachedCredentials> = new Map();
     private readonly CREDENTIAL_TTL = 60 * 60 * 1000; // 1 hour
+    /**
+     * What Orbit says for a bot on Universe AI or a person's own key is kept only briefly: the Default can change, a
+     * key can go down or be pulled, and each of those must reach the bot's next reply, not the next hour.
+     */
+    private botCredentialCache: Map<string, { resolved: ResolvedProvider; expiresAt: number; staleUntil: number }> = new Map();
+    private readonly BOT_CREDENTIAL_TTL = 30 * 1000;
+    /** How long the last answer is still used while Orbit cannot be reached, and how soon Orbit is tried again meanwhile */
+    private readonly BOT_CREDENTIAL_STALE_GRACE = 10 * 60 * 1000;
+    private readonly BOT_CREDENTIAL_RETRY = 15 * 1000;
+    /** The latest config Orbit gave for each provider id on the bot route, so usage can still be priced. */
+    private botRoutePricing: Map<string, AIProviderConfig> = new Map();
     private providerRegistry: AIProviderRegistry;
     private mapDataService?: MapDataService;
 
@@ -111,25 +132,76 @@ export class AIService {
 
     /**
      * Get provider credentials (with caching)
+     *
+     * With a bot id, a bot on Universe AI or a person's own key is resolved by Orbit for that bot (#374). Every other
+     * provider, and every call without a bot id, is fetched by provider id exactly as before. A bot that is resting
+     * has no provider to give, so this throws for it: the quick helper paths treat that as "unavailable".
      */
-    private async getProviderCredentials(providerId: string): Promise<AIProviderConfig> {
-        // Check cache
-        const cached = this.credentialCache.get(providerId);
-        if (cached && Date.now() < cached.expiresAt) {
-            return cached.credentials;
+    private async getProviderCredentials(providerId: string, botId?: string): Promise<AIProviderConfig> {
+        const resolved = await this.resolveProvider(providerId, botId);
+        if (resolved.resting) {
+            throw new Error(`Bot ${botId} is resting: its AI key is down`);
         }
+        return resolved.config;
+    }
 
-        // Fetch from Admin API
-        const credentialsData = await this.adminApiService.getAIProviderCredentials(providerId);
-        if (!credentialsData) {
-            throw new Error(`Provider ${providerId} not found or not enabled`);
+    /**
+     * Resolve a bot's provider. Orbit is asked by bot id only for Universe AI and a person's own key; if it does not
+     * know the bot (or is an older Orbit without the route) the provider is fetched by id as before.
+     */
+    private async resolveProvider(providerId: string, botId?: string): Promise<ResolvedProvider> {
+        if (botId && needsBotRoute(providerId)) {
+            const cacheKey = `${botId}:${providerId}`;
+            const cached = this.botCredentialCache.get(cacheKey);
+            if (cached && Date.now() < cached.expiresAt) {
+                return cached.resolved;
+            }
+            let answer: BotAiCredentialsAnswer | null;
+            try {
+                answer = await this.adminApiService.getBotAiCredentials(botId);
+            } catch (error) {
+                // Orbit could not be reached: carry on with its last answer for a while, trying again soon, rather than
+                // failing every reply (and waiting out its timeout each time) for as long as the outage lasts
+                if (cached && Date.now() < cached.staleUntil) {
+                    cached.expiresAt = Date.now() + this.BOT_CREDENTIAL_RETRY;
+                    return cached.resolved;
+                }
+                throw error;
+            }
+            if (answer) {
+                const resolved = this.resolvedFromAnswer(answer);
+                this.botCredentialCache.set(cacheKey, {
+                    resolved,
+                    expiresAt: Date.now() + this.BOT_CREDENTIAL_TTL,
+                    staleUntil: Date.now() + this.BOT_CREDENTIAL_TTL + this.BOT_CREDENTIAL_STALE_GRACE,
+                });
+                if (!resolved.resting) {
+                    // Usage is priced by the provider that answered, and by the ref the bot is on ("universe-ai", "key-…")
+                    this.botRoutePricing.set(resolved.config.providerId, resolved.config);
+                    this.botRoutePricing.set(providerId, resolved.config);
+                }
+                return resolved;
+            }
         }
+        return { resting: false, config: await this.getProviderConfigById(providerId), source: 'provider' };
+    }
 
-        // Decrypt API key
-        const apiKey = decryptApiKey(credentialsData.apiKeyEncrypted);
+    private resolvedFromAnswer(answer: BotAiCredentialsAnswer): ResolvedProvider {
+        if (answer.source === 'resting') {
+            return { resting: true, line: answer.restingLine };
+        }
+        const config = this.buildProviderConfig(answer);
+        if (answer.source === 'own-key') {
+            // Orbit always says; if it ever didn't, the safe reading is that the person typed the address
+            config.ownKey = { addressTyped: answer.keyAddressTyped !== false };
+        }
+        return { resting: false, config, source: answer.source };
+    }
 
-        // Build config
-        const config: AIProviderConfig = {
+    private buildProviderConfig(credentialsData: AIProviderCredentials): AIProviderConfig {
+        // Decrypt API key (fails early on a bad key or a missing ENCRYPTION_KEY, as it always did)
+        decryptApiKey(credentialsData.apiKeyEncrypted);
+        return {
             providerId: credentialsData.providerId,
             name: credentialsData.name,
             type: credentialsData.type as AIProviderConfig['type'],
@@ -145,12 +217,32 @@ export class AIService {
             defaultVision: credentialsData.defaultVision ?? false,
             settings: credentialsData.settings,
         };
+    }
+
+    /** A provider fetched by its id, cached for an hour: every server provider, as before. */
+    private async getProviderConfigById(providerId: string): Promise<AIProviderConfig> {
+        // Check cache
+        const cached = this.credentialCache.get(providerId);
+        if (cached && Date.now() < cached.expiresAt) {
+            return cached.credentials;
+        }
+
+        // Fetch from Admin API
+        const credentialsData = await this.adminApiService.getAIProviderCredentials(providerId);
+        if (!credentialsData) {
+            throw new Error(`Provider ${providerId} not found or not enabled`);
+        }
+
+        const config = this.buildProviderConfig(credentialsData);
 
         // Cache
         this.credentialCache.set(providerId, {
             credentials: config,
-            expiresAt: Date.now() + this.CREDENTIAL_TTL,
+            // "universe-ai" names whatever the Default is now, so it is not kept for an hour
+            expiresAt: Date.now() + (providerId === UNIVERSE_AI_REF ? this.BOT_CREDENTIAL_TTL : this.CREDENTIAL_TTL),
         });
+        // Usage is priced by the provider that answered, which "universe-ai" is not
+        if (config.providerId !== providerId) this.botRoutePricing.set(config.providerId, config);
 
         return config;
     }
@@ -254,6 +346,13 @@ export class AIService {
         return this.getProviderCredentials(selected.providerId);
     }
 
+    /** The fixed lines resting bots have said (#374): the same line twice in a row is not a repetition to fix. */
+    private readonly restingLines = new Set<string>();
+
+    isRestingLine(text: string): boolean {
+        return this.restingLines.has(text.trim());
+    }
+
     /**
      * Generate streaming bot response with function calling support
      */
@@ -275,10 +374,24 @@ export class AIService {
         // Discarded if tool calls arrive (was filler/thinking text);
         // flushed as final response if no tool calls.
         let preToolBuffer = '';
+        let usageProviderId = providerId;
+        // A reply through a person's own key tells Orbit how it went, so a key that keeps failing is marked Down
+        let reportHealth = false;
 
         try {
-            // Get provider credentials
-            let config = await this.getProviderCredentials(providerId);
+            // Get provider credentials. A bot on Universe AI or a person's own key is resolved by Orbit for this bot (#374).
+            const resolved = await this.resolveProvider(providerId, botId);
+            if (resolved.resting) {
+                // The key is down and its owner chose Stop replying: say the one fixed line, call no AI, track nothing
+                this.restingLines.add(resolved.line.trim());
+                yield { content: resolved.line, done: false };
+                yield { content: '', done: true, metadata: { tokensUsed: 0, latency: Date.now() - startTime } };
+                return;
+            }
+            let config = resolved.config;
+            // Usage is recorded against the provider that really answered (Universe AI is its Default, a key is the key)
+            usageProviderId = config.providerId;
+            reportHealth = resolved.source === 'own-key';
 
             // Vision routing (per-request decision tree):
             // - Main model itself can see images (supports vision) -> send the
@@ -298,10 +411,12 @@ export class AIService {
                 // be the one answering (persona, chat instructions, tools).
                 const visionCapable = this.providerRegistry.supportsVision(config);
                 if (!visionCapable) {
-                    const description = await this.describeImagesViaDefaultVision(
-                        visionImages,
-                        abortSignal
-                    );
+                    // A person's own key without Vision never has its images described by Universe AI: the image would
+                    // leave their key (or their own computer) and Universe would pay for it. The link stays in the text.
+                    const description =
+                        resolved.source === 'own-key'
+                            ? ''
+                            : await this.describeImagesViaDefaultVision(visionImages, abortSignal);
                     if (description) {
                         message = `${message}\n[The user sent an image. Description from a vision model: ${description}]`;
                         // Persist the description into conversation history so
@@ -628,6 +743,7 @@ Everything above is technical guidance. Follow your personality as defined in th
             let promptTokens = 0;
             let completionTokens = 0;
             let error = false;
+            let errorStatus: number | undefined;
             let streamCompleted = false;
             let accumulatedContent = '';
             let firstCallContent = '';
@@ -642,6 +758,10 @@ Everything above is technical guidance. Follow your personality as defined in th
             let initialGenCaptured = false;
             let followUpGenCaptured = false;
             let followUpError = false;
+            // Whether any follow-up call (after a tool ran) failed. `followUpError` is reset per round for telemetry; the key's
+            // health report needs the reply as a whole, and the provider's status when it gave one.
+            let followUpFailedForHealth = false;
+            let followUpErrorStatus: number | undefined;
             // skipping code after the loop but still reaching the finally block.
             let followUpInput = '';
             let overallFollowUpStartTime = 0;
@@ -848,6 +968,11 @@ Everything above is technical guidance. Follow your personality as defined in th
                         if (chunk.metadata?.completionTokens) {
                             completionTokens = chunk.metadata.completionTokens;
                         }
+                        // A first call that broke off after its tool calls still counts against the key's health, even when the follow-up works
+                        if (chunk.metadata?.error) {
+                            followUpFailedForHealth = true;
+                            if (chunk.metadata.errorStatus) followUpErrorStatus = chunk.metadata.errorStatus;
+                        }
 
                         // Capture $ai_generation for the initial LLM call NOW —
                         // before tool execution distorts its latency and before
@@ -946,6 +1071,10 @@ Everything above is technical guidance. Follow your personality as defined in th
                                     if (retryChunk.done) {
                                         retryTruncated = !!retryChunk.metadata?.truncated;
                                         retryMeta = retryChunk.metadata;
+                                    }
+                                    if (retryChunk.done && retryChunk.metadata?.error) {
+                                        followUpFailedForHealth = true;
+                                        if (retryChunk.metadata.errorStatus) followUpErrorStatus = retryChunk.metadata.errorStatus;
                                     }
                                 }
                             } catch (retryError) {
@@ -1149,6 +1278,8 @@ Everything above is technical guidance. Follow your personality as defined in th
                                 }
                                 if (resultChunk.metadata?.error) {
                                     followUpError = true;
+                                    followUpFailedForHealth = true;
+                                    if (resultChunk.metadata.errorStatus) followUpErrorStatus = resultChunk.metadata.errorStatus;
                                 }
                                 // Accumulate content from follow-up response (same as main stream)
                                 if (resultChunk.content) {
@@ -1398,6 +1529,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     }
                                     // Flag the error before yielding done so telemetry captures it
                                     followUpError = true;
+                                    followUpFailedForHealth = true;
                                     followUpContent = '';
                                     followUpTokens = 0;
                                     followUpPromptTokens = 0;
@@ -1459,6 +1591,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                         if (retryChunk.done) {
                                             retryTruncated = !!retryChunk.metadata?.truncated;
                                             retryMeta = retryChunk.metadata;
+                                        }
+                                        if (retryChunk.done && retryChunk.metadata?.error) {
+                                            followUpFailedForHealth = true;
+                                            if (retryChunk.metadata.errorStatus) followUpErrorStatus = retryChunk.metadata.errorStatus;
                                         }
                                     }
                                 } catch (retryError) {
@@ -1624,6 +1760,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
                     if (chunk.metadata?.error) {
                         error = true;
+                        if (chunk.metadata.errorStatus) errorStatus = chunk.metadata.errorStatus;
                     }
                     if (chunk.done) {
                         streamCompleted = true;
@@ -1796,7 +1933,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 }
                 
                 // Always track usage - fire and forget
-                this.trackUsage(botId, providerId, {
+                this.trackUsage(botId, usageProviderId, {
                     tokensUsed,
                     promptTokens,
                     completionTokens,
@@ -1809,6 +1946,16 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         console.error('[AIService] Error details:', err.message);
                     }
                 });
+
+                // A reply through a person's own key: tell Orbit how it went (a cancelled one says nothing either way).
+                // 401 and 403 mean the provider rejected the key, which marks it Down at once.
+                if (reportHealth && streamCompleted && !abortSignal?.aborted) {
+                    const failed = error || followUpFailedForHealth;
+                    const status = errorStatus ?? followUpErrorStatus;
+                    this.adminApiService
+                        .reportAiHealth(botId, failed ? { ok: false, rejected: status === 401 || status === 403, ...(status ? { status } : {}) } : { ok: true })
+                        .catch(() => {});
+                }
 
                 // Flush PostHog events — pg.flush() sends queued events without destroying the singleton
                 if (!privateBot) {
@@ -1825,7 +1972,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             }
 
             // Track error
-            this.trackUsage(botId, providerId, {
+            this.trackUsage(botId, usageProviderId, {
                 tokensUsed: 0,
                 latency,
                 error: true,
@@ -2043,12 +2190,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      */
     private calculateCost(providerId: string, metadata: AIUsageMetadata): number {
         try {
-            const cached = this.credentialCache.get(providerId);
-            if (!cached) {
+            const config = this.credentialCache.get(providerId)?.credentials ?? this.botRoutePricing.get(providerId);
+            if (!config) {
                 return 0;
             }
 
-            const config = cached.credentials;
             const promptTokens = metadata.promptTokens || 0;
             const completionTokens = metadata.completionTokens || 0;
             const durationSeconds = metadata.durationSeconds;
@@ -2098,6 +2244,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      */
     clearCache(): void {
         this.credentialCache.clear();
+        this.botCredentialCache.clear();
+        this.botRoutePricing.clear();
     }
 
     /**
@@ -3605,21 +3753,33 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      */
     private async runBoundedProviderCall<T>(
         providerId: string,
-        call: (provider: AIProvider, config: AIProviderConfig, signal: AbortSignal) => Promise<T>
+        call: (provider: AIProvider, config: AIProviderConfig, signal: AbortSignal) => Promise<T>,
+        botId?: string
     ): Promise<T | undefined> {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), QUICK_LLM_TIMEOUT_MS);
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        let lookupTimeoutId: ReturnType<typeof setTimeout> | undefined;
 
         try {
-            const config = await this.getProviderCredentials(providerId);
+            // The credential lookup can go to Orbit (up to its own 15s limit), so it gets its
+            // own deadline: the provider call below then still has its full time, instead of
+            // starting already aborted after a slow lookup.
+            const config = await Promise.race([
+                this.getProviderCredentials(providerId, botId),
+                new Promise<never>((_resolve, reject) => {
+                    lookupTimeoutId = setTimeout(() => reject(new Error("credential lookup timed out")), QUICK_LLM_TIMEOUT_MS);
+                }),
+            ]);
             const provider = this.providerRegistry.getOrCreateProvider(config);
             if (!provider) return undefined;
+            const controller = new AbortController();
+            timeoutId = setTimeout(() => controller.abort(), QUICK_LLM_TIMEOUT_MS);
             return await call(provider, config, controller.signal);
         } catch {
             // Timeout abort or provider error — the caller decides the fallback.
             // The abort already cancelled the upstream call.
             return undefined;
         } finally {
+            clearTimeout(lookupTimeoutId);
             clearTimeout(timeoutId);
         }
     }
@@ -3631,7 +3791,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      * interruption feature works for bots on any provider.
      * Returns the action and a message to say as a followup.
      */
-    async quickClassify(providerId: string, currentTask: string, newMessage: string): Promise<{ action: InterruptionAction; message: string }> {
+    async quickClassify(providerId: string, currentTask: string, newMessage: string, botId?: string): Promise<{ action: InterruptionAction; message: string }> {
         const prompt = `Current task: "${currentTask}"
 New message: "${newMessage}"
 
@@ -3657,7 +3817,8 @@ Return JSON: { "action": "...", "message": "what to say as a followup" }`;
                 config,
                 undefined,
                 signal
-            )
+            ),
+            botId
         );
         if (!result) return { action: 'queue', message: '' };
 
@@ -3679,13 +3840,14 @@ Return JSON: { "action": "...", "message": "what to say as a followup" }`;
      * Returns '' on failure so callers stay silent rather than fall back to
      * hardcoded text.
      */
-    async quickGenerate(providerId: string, systemPrompt: string, userPrompt: string): Promise<string> {
+    async quickGenerate(providerId: string, systemPrompt: string, userPrompt: string, botId?: string): Promise<string> {
         // Same bounded-abort pattern as quickClassify: the overflow ack runs in
         // the interruption-routing path — a slow provider must not delay it for
         // the provider's own (30s+) timeout, and the call must actually be
         // cancelled at the deadline, not left dangling.
         const result = await this.runBoundedProviderCall(providerId, (provider, config, signal) =>
-            provider.generate(systemPrompt, userPrompt, config, undefined, signal)
+            provider.generate(systemPrompt, userPrompt, config, undefined, signal),
+            botId
         );
         return (result?.content || '').trim();
     }

@@ -135,6 +135,39 @@ export interface BotUsageQuery {
     endDate?: Date;
 }
 
+/** The fields of one provider, as Orbit serves them. */
+export interface AIProviderCredentials {
+    providerId: string;
+    name: string;
+    type: string;
+    enabled: boolean;
+    endpoint: string;
+    apiKeyEncrypted: string | null;
+    model: string;
+    temperature: number;
+    maxTokens: number;
+    supportsStreaming: boolean;
+    supportsVision: boolean | null;
+    visionModel: string | null;
+    defaultVision: boolean;
+    settings?: Record<string, any>;
+}
+
+/**
+ * Orbit's answer for a bot (#374): a provider and where it came from, or "resting". `own-key` is a person's own key
+ * (`keyAddressTyped` says the person typed its address, so the address guard applies); `universe-ai` may stand in for
+ * a key that is down (`standingInFor`); `resting` means the owner chose Stop replying: say the line, call nothing.
+ */
+export type BotAiCredentialsAnswer =
+    | (AIProviderCredentials & {
+          source: 'provider' | 'universe-ai' | 'own-key';
+          keyOwnerId?: string;
+          keyAddressTyped?: boolean;
+          standingInFor?: string;
+          movedFromKey?: string;
+      })
+    | { source: 'resting'; keyOwnerId: string; restingLine: string };
+
 export class AdminApiService {
     private adminApiUrl: string;
     // Cache for room metadata (room URL -> metadata, cached for 5 minutes)
@@ -496,6 +529,60 @@ export class AdminApiService {
             console.error('[AdminApiService] Error getting AI provider credentials:', error);
             captureException(error as Error);
             throw error;
+        }
+    }
+
+    /**
+     * How one bot talks to its AI, asked by bot id (#374). Needed for bots on Universe AI or on a person's own key:
+     * Orbit decides, per bot, whether that key may run it now, and answers with the key, with Universe AI's provider,
+     * or (when the owner chose "Stop replying" for a key that is down) with a resting line and no provider at all.
+     * Returns null when Orbit does not know the bot or has no such route yet.
+     */
+    async getBotAiCredentials(botId: string): Promise<BotAiCredentialsAnswer | null> {
+        if (!this.isConfigured()) {
+            return null;
+        }
+
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!botServiceToken) {
+            throw new Error('BOT_SERVICE_TOKEN environment variable is not set');
+        }
+
+        try {
+            const response: AxiosResponse = await axios.get(
+                `${this.adminApiUrl}/api/bots/${encodeURIComponent(botId)}/ai-credentials`,
+                { headers: { Authorization: `Bearer ${botServiceToken}` }, timeout: 15000 }
+            );
+            return response.data;
+        } catch (error) {
+            if (axios.isAxiosError(error) && error.response?.status === 404) {
+                return null;
+            }
+            console.error('[AdminApiService] Error getting bot AI credentials:', error);
+            captureException(error as Error);
+            throw error;
+        }
+    }
+
+    /**
+     * Tells Orbit how a reply through a person's own key went (#374), so it can mark the key Down after two failed
+     * replies in a row or a rejected key. `status` is the HTTP status the provider answered with, when it did: Orbit decides
+     * which statuses count against the key (a 400 or a 429 says nothing about the key). Fire-and-forget: a report never
+     * slows or breaks a reply.
+     */
+    async reportAiHealth(botId: string, outcome: { ok: true } | { ok: false; rejected: boolean; status?: number }): Promise<void> {
+        if (!this.isConfigured()) return;
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!botServiceToken) return;
+        try {
+            await axios.post(
+                `${this.adminApiUrl}/api/bots/${encodeURIComponent(botId)}/ai-health`,
+                outcome,
+                { headers: { Authorization: `Bearer ${botServiceToken}` }, timeout: 10000 }
+            );
+        } catch (error) {
+            const msg = (axios.isAxiosError(error) && error.response?.data?.message) || (error as Error)?.message || 'Unknown error';
+            console.error(`[AdminApiService] Error reporting AI health: ${msg}`);
         }
     }
 

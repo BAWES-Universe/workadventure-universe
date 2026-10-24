@@ -17,6 +17,7 @@
     } from "../../Stores/SideWindowInFrontStore";
     import {
         openHereBehindChatMin,
+        openHereListOpenStore,
         openHereSheetHeight,
         openHereSheetRelease,
         openHereSheetRestStore,
@@ -59,7 +60,8 @@
     $: windowBehindCardStore.set(floating && $cardOverWindowStore);
     $: behindOrbit = ($modalVisibilityStore && $sideWindowInFrontStore === "orbit") || $cardOverWindowStore;
     // The sheet is under the chat whenever the chat is open: chat opens in front, and the window rises behind it.
-    $: behindChat = $chatVisibilityStore && ($windowInFrontStore === "chat" || !floating);
+    // On a phone the window is behind the chat, except while its list of open items is up: the list comes to the front.
+    $: behindChat = $chatVisibilityStore && (floating ? $windowInFrontStore === "chat" : !$openHereListOpenStore);
 
     function bringForward() {
         if (!floating) return;
