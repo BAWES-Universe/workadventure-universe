@@ -8,7 +8,8 @@ export const GAME_ORIGIN = originOf(process.env.FRONT_URL ?? "", process.env.PUS
 
 export function originOf(raw: string, base?: string): string | undefined {
     try {
-        return new URL(raw, base || undefined).origin;
+        // A base such as "//play.example.com/" has no scheme to resolve a path against: read it as https
+        return new URL(raw, base?.startsWith("//") ? `https:${base}` : base || undefined).origin;
     } catch {
         return undefined;
     }

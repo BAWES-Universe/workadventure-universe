@@ -76,6 +76,11 @@ describe("originOf", () => {
         expect(originOf("", "https://play.bawes.net/")).toBe(GAME);
     });
 
+    it("reads a path FRONT_URL against a PUSHER_URL without a scheme as https", () => {
+        expect(originOf("/", "//play.bawes.net/")).toBe(GAME);
+        expect(originOf("https://play.bawes.net/", "//other.example/")).toBe(GAME);
+    });
+
     it("knows no origin when neither is a full address", () => {
         expect(originOf("/", "/")).toBeUndefined();
         expect(originOf("/", undefined)).toBeUndefined();

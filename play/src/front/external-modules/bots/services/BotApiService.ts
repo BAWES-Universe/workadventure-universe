@@ -37,6 +37,13 @@ export function isOrbitSessionResponse(value: unknown): value is { version: 2; s
     );
 }
 
+/** The shape the bot page reads without a guard: the key list and whether Universe AI is offered. Anything else is "no answer". */
+export function isBotAiOptions(data: unknown): data is BotAiOptions {
+    if (typeof data !== "object" || data === null) return false;
+    const answer = data as Partial<BotAiOptions>;
+    return Array.isArray(answer.keys) && typeof answer.universeAi?.available === "boolean";
+}
+
 export interface CreateBotDto {
     roomId: string;
     name: string;
@@ -465,8 +472,7 @@ export class BotApiService {
         try {
             const response = await this.fetch(`/api/me/bot-ai?${query}`);
             const data: unknown = await response.json();
-            if (typeof data !== "object" || data === null || !Array.isArray((data as BotAiOptions).keys)) return null;
-            return data as BotAiOptions;
+            return isBotAiOptions(data) ? data : null;
         } catch {
             return null;
         }
