@@ -59,6 +59,9 @@ export interface BotAiOptions {
         name: string;
         kind: string | null;
         kindLabel: string;
+        /** The provider's logo file in /static/ai-providers (without .svg); `plainIcon` says what is drawn without one. Absent from an older Orbit. */
+        logo?: string | null;
+        plainIcon?: "plug" | "chip" | null;
         group: "own-computer" | "hosted" | null;
         universeName: string;
         status: "working" | "down";
@@ -71,6 +74,8 @@ export interface BotAiOptions {
         mine: boolean;
         status: "working" | "down";
         ifDown: "universe-ai" | "stop";
+        logo?: string | null;
+        plainIcon?: "plug" | "chip" | null;
     } | null;
     providers: Array<{ id: string; name: string; type: string; model: string | null; enabled: boolean }> | null;
 }
