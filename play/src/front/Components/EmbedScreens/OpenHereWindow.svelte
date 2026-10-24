@@ -200,6 +200,9 @@
         if (chatOverSheet) {
             const behind = openHereSheetRelease(height, $windowSize.height);
             behindRest = behind === "tuck" ? "peek" : behind;
+            // Let go where it already is: no height changes, so no transition ends and the map is centred now.
+            if (dragged !== undefined && Math.abs(behindHeightOf(behindRest) - dragged) < 1)
+                void tick().then(reposition);
             return;
         }
         const release = openHereSheetRelease(height, $windowSize.height);

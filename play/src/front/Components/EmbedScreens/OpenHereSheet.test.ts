@@ -317,6 +317,18 @@ describe("OpenHereWindow as a phone's sheet", () => {
             expect(sheet()?.style.height).toBe(`${heights.full}px`);
         });
 
+        it("centres the map as soon as a drag is let go where the sheet already is, as no height changes then", async () => {
+            await tick();
+            reposition.mockClear();
+
+            dragHandle(handle()!, 100, 100 + heights.full - strip);
+            await tick();
+            await tick();
+
+            expect(sheet()?.style.height).toBe(`${strip}px`);
+            expect(reposition).toHaveBeenCalledTimes(1);
+        });
+
         it("steps through its heights when its handle is tapped", async () => {
             dragHandle(handle()!, 300, 300);
             await tick();
