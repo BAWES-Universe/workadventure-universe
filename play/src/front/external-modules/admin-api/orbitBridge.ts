@@ -10,7 +10,9 @@
  * scripting API (`WA.*`), so the bridge has no message for them. The one thing Orbit tells the game is that you
  * renamed yourself in your profile (`orbit-profile-changed`), which the game applies as its own rename does, and asks
  * the game to invite someone over (`orbit-invite-person`) or open a chat with them (`orbit-message-person`). Those two
- * are requests: the game checks reach, Busy and blocks itself, exactly as when you invite from the People tab.
+ * are requests: the game checks reach, Busy and blocks itself, exactly as when you invite from the People tab. Orbit
+ * also asks which of someone's profile links the game can show in its window (`orbit-check-links`, answered with
+ * `orbit-links`) and to open one there (`orbit-open-link`); the game checks each page itself, as it does a chat link.
  *
  * Every visit (a room join or a reconnect) gets a new room revision. Requests carry it; Orbit refuses one from another
  * revision, and the game ignores answers from another revision, so an old Orbit frame can't act after a room or
@@ -64,7 +66,21 @@ export interface OrbitViewMessage {
     view: OrbitView;
 }
 
-export type OrbitBridgeOutgoing = OrbitBridgeInitMessage | OrbitNavigateMessage | OrbitEventMessage | OrbitViewMessage;
+/** The answer to `orbit-check-links`: which of those links open in the game's window. */
+export interface OrbitLinksMessage {
+    type: "orbit-links";
+    version: typeof ORBIT_BRIDGE_VERSION;
+    requestId: string;
+    roomRevision: string;
+    openHere: string[];
+}
+
+export type OrbitBridgeOutgoing =
+    | OrbitBridgeInitMessage
+    | OrbitNavigateMessage
+    | OrbitEventMessage
+    | OrbitViewMessage
+    | OrbitLinksMessage;
 
 // Orbit → game
 export interface OrbitBridgeReadyMessage {
@@ -110,6 +126,26 @@ export interface OrbitMessagePersonMessage {
     /** Their Matrix id, the chat's address for them. */
     chatId: string;
 }
+
+/** Orbit asks which of these profile links the game can show in its window (the game's "open-link" capability). */
+export interface OrbitCheckLinksMessage {
+    type: "orbit-check-links";
+    version: typeof ORBIT_BRIDGE_VERSION;
+    requestId: string;
+    roomRevision: string;
+    urls: string[];
+}
+
+/** Orbit asks the game to open a link in its window, in front of Orbit (a link the game said it can show). */
+export interface OrbitOpenLinkMessage {
+    type: "orbit-open-link";
+    version: typeof ORBIT_BRIDGE_VERSION;
+    roomRevision: string;
+    url: string;
+}
+
+/** The most links Orbit asks about at once. */
+export const MAX_CHECKED_LINKS = 10;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return !!value && typeof value === "object";
@@ -183,6 +219,30 @@ export function isOrbitMessagePersonMessage(value: unknown): value is OrbitMessa
     );
 }
 
+export function isOrbitCheckLinksMessage(value: unknown): value is OrbitCheckLinksMessage {
+    return (
+        isRecord(value) &&
+        value.type === "orbit-check-links" &&
+        value.version === ORBIT_BRIDGE_VERSION &&
+        isBoundedString(value.requestId, 1, 64) &&
+        isBoundedString(value.roomRevision, 16, 128) &&
+        Array.isArray(value.urls) &&
+        value.urls.length >= 1 &&
+        value.urls.length <= MAX_CHECKED_LINKS &&
+        value.urls.every((url) => isBoundedString(url, 1, 2048))
+    );
+}
+
+export function isOrbitOpenLinkMessage(value: unknown): value is OrbitOpenLinkMessage {
+    return (
+        isRecord(value) &&
+        value.type === "orbit-open-link" &&
+        value.version === ORBIT_BRIDGE_VERSION &&
+        isBoundedString(value.roomRevision, 16, 128) &&
+        isBoundedString(value.url, 1, 2048)
+    );
+}
+
 /** A fresh room revision for a new visit. */
 export function newRoomRevision(): string {
     return `rev-${crypto.randomUUID()}`;
@@ -223,7 +283,7 @@ export class OrbitBridge {
             type: "orbit-bridge-init",
             version: ORBIT_BRIDGE_VERSION,
             roomRevision: this.roomRevision,
-            capabilities: ["navigate", "event", "view", "profile", "invite", "message"],
+            capabilities: ["navigate", "event", "view", "profile", "invite", "message", "open-link"],
             view: this.view,
             ...(this.maxNameLength ? { maxNameLength: this.maxNameLength } : {}),
         });
@@ -254,6 +314,18 @@ export class OrbitBridge {
     setView(view: OrbitView): void {
         this.view = view;
         if (this.ready) this.env.post({ type: "orbit-view", version: ORBIT_BRIDGE_VERSION, view });
+    }
+
+    /** Tells Orbit which of the links it asked about (`orbit-check-links`) open in the game's window. */
+    answerLinks(requestId: string, openHere: string[]): void {
+        if (!this.ready) return;
+        this.env.post({
+            type: "orbit-links",
+            version: ORBIT_BRIDGE_VERSION,
+            requestId,
+            roomRevision: this.roomRevision,
+            openHere,
+        });
     }
 
     navigate(intent: OrbitNavigateIntent, params?: Record<string, string>): void {
