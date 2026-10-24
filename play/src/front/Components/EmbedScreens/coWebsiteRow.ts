@@ -25,6 +25,9 @@ export function coWebsiteKnownSite(coWebsite: CoWebsite): { name: string; icon: 
 /** Labels that sit under a country ending ("co" in bbc.co.uk): the site's name is the label before them. */
 const COUNTRY_SECOND_LEVELS = new Set(["co", "com", "org", "net", "gov", "edu", "ac", "or", "ne", "go"]);
 
+/** Sites whose first label is a product of its own ("docs.google.com" is Docs, "drive.google.com" is Drive). */
+const PRODUCT_SUBDOMAIN_SITES = new Set(["google.com"]);
+
 /**
  * The site's name: the name of the site itself, not of the part of it that is open. "en.wikipedia.org" is Wikipedia,
  * not "En", and "www.bbc.co.uk" is Bbc. An address with no name in it (an IP address, "localhost") is shown as it is.
@@ -41,6 +44,7 @@ export function coWebsiteSiteName(coWebsite: CoWebsite): string {
         const underCountry =
             labels.length >= 3 && last.length === 2 && COUNTRY_SECOND_LEVELS.has(labels[labels.length - 2]);
         index = labels.length - (underCountry ? 3 : 2);
+        if (index > 0 && PRODUCT_SUBDOMAIN_SITES.has(labels.slice(index).join("."))) index = 0;
     }
     const name = hasName ? labels[index] : host;
     return name.charAt(0).toUpperCase() + name.slice(1);
