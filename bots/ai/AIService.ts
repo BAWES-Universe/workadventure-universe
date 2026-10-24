@@ -299,7 +299,9 @@ export class AIService {
         abortSignal?: AbortSignal,
         images?: string[],
         /** 'dm' when the person writes to the bot by direct message instead of in a bubble on the map. */
-        channel: 'world' | 'dm' = 'world'
+        channel: 'world' | 'dm' = 'world',
+        /** The bot's Patience for tools, for a caller with no bot client (a direct message). */
+        toolTimeoutSeconds?: number | null
     ): AsyncGenerator<AIStreamChunk> {
         const startTime = Date.now();
         // Buffer for content received before tool calls are detected
@@ -638,7 +640,7 @@ Everything above is technical guidance. Follow your personality as defined in th
             const isQwenModel = config.model.toLowerCase().includes('qwen');
 
             // Define tools for function calling
-            const { tools, toolServerMap } = await this.buildTools(botId, botClient, adminApiService || this.adminApiService);
+            const { tools, toolServerMap } = await this.buildTools(botId, botClient, adminApiService || this.adminApiService, channel);
 
             // Generate stream with tools
             let tokensUsed = 0;
@@ -1058,7 +1060,7 @@ Everything above is technical guidance. Follow your personality as defined in th
                                     argsLength: tc.arguments.length
                                 })));
                             }
-                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal);
+                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds);
 
                             // Collect URLs that were already sent by explicit send_* tool calls
                             // so autoSendMedia doesn't re-send them via parent tool results.
@@ -2120,7 +2122,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     /**
      * Build tool definitions for function calling
      */
-    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService): Promise<{ tools: any[]; toolServerMap: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string> }> }> {
+    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService, channel: 'world' | 'dm' = 'world'): Promise<{ tools: any[]; toolServerMap: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string> }> }> {
         const tools: any[] = [];
         const toolServerMap = new Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string> }>();
 
@@ -2278,8 +2280,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             });
         }
 
-        // Tool: read a web page someone mentions ("check out bawes.net")
-        if (botClient) {
+        // Tool: read a web page someone mentions ("check out bawes.net"). It needs no map, so a direct message has it too.
+        if (botClient || channel === 'dm') {
             tools.push({
                 type: 'function',
                 function: {
@@ -2350,7 +2352,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         spaceName?: string,
         botId?: string,
         playerId?: number,
-        abortSignal?: AbortSignal
+        abortSignal?: AbortSignal,
+        toolTimeoutSeconds?: number | null
     ): Promise<Array<{ id: string; name: string; result: any }>> {
         // Filter out invalid tool calls (empty name, undefined, etc.)
         const validToolCalls = toolCalls.filter(tc => tc && tc.name && tc.name.trim() !== '');
@@ -2679,7 +2682,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     mcpServerConfig.headers,
                                     playerUuid,
                                     abortSignal,
-                                    toolTimeoutMs(botClient?.getFullConfig()?.toolTimeoutSeconds)
+                                    toolTimeoutMs(toolTimeoutSeconds)
                                 );
                                 // Process MCP resource blobs (base64 binary data) by uploading to CDN
                                 // and returning CDN URLs so the AI can use send_image/send_audio/etc.

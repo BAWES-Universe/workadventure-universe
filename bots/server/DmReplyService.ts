@@ -217,7 +217,8 @@ export class DmReplyService extends BaseBehavior {
                 this.adminApiService ?? undefined,
                 undefined,
                 images.length ? images : undefined,
-                'dm'
+                'dm',
+                config.toolTimeoutSeconds
             )) {
                 if (chunk.reset) {
                     // The model said something before calling tools: in a bubble that stays as its own bubble.
