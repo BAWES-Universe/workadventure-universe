@@ -78,6 +78,39 @@ describe("listenForPinch", () => {
         expect(onPinch).toHaveBeenCalledWith(1.5, expect.anything());
     });
 
+    it("goes on when a third finger touches and lifts while two stay down", () => {
+        const onPinch = vi.fn();
+        stop = listenForPinch(element, onPinch);
+
+        element.dispatchEvent(
+            touch("touchstart", [
+                [100, 200],
+                [200, 200],
+            ])
+        );
+        element.dispatchEvent(
+            touch("touchstart", [
+                [100, 200],
+                [200, 200],
+                [300, 300],
+            ])
+        );
+        element.dispatchEvent(
+            touch("touchend", [
+                [100, 200],
+                [200, 200],
+            ])
+        );
+        element.dispatchEvent(
+            touch("touchmove", [
+                [50, 200],
+                [250, 200],
+            ])
+        );
+
+        expect(onPinch).toHaveBeenCalledWith(2, { x: 150, y: 200 });
+    });
+
     it("leaves one finger alone: it scrolls", () => {
         const onPinch = vi.fn();
         stop = listenForPinch(element, onPinch);

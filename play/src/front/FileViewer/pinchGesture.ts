@@ -47,7 +47,10 @@ export function listenForPinch(
     };
 
     const onEnd = (event: Event): void => {
-        if ((event as TouchEvent).touches.length < 2) last = 0;
+        const touches = (event as TouchEvent).touches;
+        // A third finger lifting leaves two: the pinch goes on from how far apart they are now.
+        if (touches.length === 2) last = distance(event as TouchEvent);
+        else if (touches.length < 2) last = 0;
     };
 
     target.addEventListener("touchstart", onStart, { passive: true });
