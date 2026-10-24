@@ -33,3 +33,22 @@ const KEYBOARD_MIN_HEIGHT = 100;
 export function keyboardClosed(previousHeight: number, height: number): boolean {
     return height - previousHeight >= KEYBOARD_MIN_HEIGHT;
 }
+
+/**
+ * The first of the list's messages still showing at its top (its bottom below the list's top), from the messages'
+ * bottoms in list order. Undefined when there are none.
+ */
+export function firstShowingIndex(
+    count: number,
+    bottomAt: (index: number) => number,
+    listTop: number
+): number | undefined {
+    let low = 0;
+    let high = count;
+    while (low < high) {
+        const middle = Math.floor((low + high) / 2);
+        if (bottomAt(middle) > listTop) high = middle;
+        else low = middle + 1;
+    }
+    return low < count ? low : undefined;
+}
