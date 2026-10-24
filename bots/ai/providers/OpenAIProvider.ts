@@ -13,6 +13,21 @@ import { linkExternalAbort } from './abortUtils';
 import { resolveVisionSupport } from './visionModels';
 import * as Sentry from '@sentry/node';
 
+/**
+ * Prompt tokens the provider served from its cache, or undefined when the
+ * response carries no cache figure. DeepSeek reports prompt_cache_hit_tokens;
+ * OpenAI and compatible endpoints report prompt_tokens_details.cached_tokens.
+ * Both are a subset of prompt_tokens.
+ */
+export function readCachedPromptTokens(usage: any): number | undefined {
+    if (!usage || typeof usage !== 'object') return undefined;
+    const deepseek = usage.prompt_cache_hit_tokens;
+    if (typeof deepseek === 'number') return deepseek;
+    const openai = usage.prompt_tokens_details?.cached_tokens;
+    if (typeof openai === 'number') return openai;
+    return undefined;
+}
+
 export class OpenAIProvider implements AIProvider {
     private readonly DEFAULT_ENDPOINT = 'https://api.openai.com/v1';
     private readonly DEFAULT_TIMEOUT = 30000; // 30 seconds
@@ -173,6 +188,7 @@ export class OpenAIProvider implements AIProvider {
         const startTime = Date.now();
         let tokensUsed = 0;
         let promptTokens = 0;
+        let cachedPromptTokens: number | undefined;
         let completionTokens = 0;
         let responseModel = '';
         let streamEnded = false;
@@ -332,6 +348,10 @@ export class OpenAIProvider implements AIProvider {
                                     completionTokens = usage.completion_tokens;
                                 }
                                 tokensUsed = (usage.prompt_tokens || 0) + (usage.completion_tokens || 0);
+                                const cached = readCachedPromptTokens(usage);
+                                if (cached !== undefined) {
+                                    cachedPromptTokens = cached;
+                                }
                             }
 
                             // Track response model
@@ -375,6 +395,7 @@ export class OpenAIProvider implements AIProvider {
                 metadata: {
                     tokensUsed,
                     promptTokens,
+                    ...(cachedPromptTokens !== undefined ? { cachedPromptTokens } : {}),
                     completionTokens,
                     latency,
                     error: !streamEnded,
@@ -531,7 +552,7 @@ export class OpenAIProvider implements AIProvider {
                     }
                 }
 
-                const data = await finalResponse.json() as { choices?: Array<{ message?: { content?: string }; finish_reason?: string }>; usage?: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number }; model?: string };
+                const data = await finalResponse.json() as { choices?: Array<{ message?: { content?: string }; finish_reason?: string }>; usage?: any; model?: string };
                 const content = data.choices?.[0]?.message?.content || '';
                 const tokensUsed = data.usage?.total_tokens || 0;
                 const promptTokens = data.usage?.prompt_tokens || 0;
@@ -541,6 +562,10 @@ export class OpenAIProvider implements AIProvider {
                 span.setAttribute("gen_ai.response.model", data.model || config.model);
                 span.setAttribute("gen_ai.usage.input_tokens", promptTokens);
                 span.setAttribute("gen_ai.usage.output_tokens", completionTokens);
+                const cachedPromptTokens = readCachedPromptTokens(data.usage);
+                if (cachedPromptTokens !== undefined) {
+                    span.setAttribute("gen_ai.usage.cache_read.input_tokens", cachedPromptTokens);
+                }
                 span.setAttribute("gen_ai.agent.name", config.name || '');
 
                 return {
