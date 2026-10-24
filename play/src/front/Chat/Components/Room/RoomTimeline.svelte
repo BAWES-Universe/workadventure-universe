@@ -48,7 +48,13 @@
     import { mapEditorToolbarInUseStore } from "../../../Stores/MapEditorStore";
     import { isTouchScreen, SETTLE_CHECKS_MS } from "../../../Utils/ViewportGuard";
     import Message from "./Message.svelte";
-    import { firstShowingIndex, keyboardClosed, listGrewTaller, stillPinnedToBottom } from "./TimelinePin";
+    import {
+        firstShowingIndex,
+        keyboardClosed,
+        listGrewTaller,
+        placeAfterMove,
+        stillPinnedToBottom,
+    } from "./TimelinePin";
     import MessageInputBar from "./MessageInputBar.svelte";
     import MessageSystem from "./MessageSystem.svelte";
     import TypingUsers from "./TypingUsers.svelte";
@@ -127,7 +133,7 @@
     // The message the reader is looking at while scrolled up, and where it sits in the list's content. When something
     // above it changes height (older messages coming in, a picture loading), the list moves by as much, so the reader
     // stays on it. Safari doesn't do this on its own, so the browsers' own way is turned off and this does it for all.
-    let readingPlace: { id: string; contentTop: number } | undefined;
+    let readingPlace: { id: string; contentTop: number; scrollTop: number } | undefined;
 
     let loadingMessagePromise: Promise<void> | undefined = undefined;
 
@@ -350,7 +356,11 @@
         const id = item instanceof HTMLElement ? item.dataset.eventId : undefined;
         readingPlace =
             item && id
-                ? { id, contentTop: item.getBoundingClientRect().top - listTop + messageListRef.scrollTop }
+                ? {
+                      id,
+                      contentTop: item.getBoundingClientRect().top - listTop + messageListRef.scrollTop,
+                      scrollTop: messageListRef.scrollTop,
+                  }
                 : undefined;
     }
 
@@ -368,7 +378,15 @@
             const listTop = messageListRef.getBoundingClientRect().top;
             const contentTop = item.getBoundingClientRect().top - listTop + messageListRef.scrollTop;
             const moved = contentTop - readingPlace.contentTop;
-            if (Math.abs(moved) >= 1) messageListRef.scrollTop += moved;
+            if (Math.abs(moved) >= 1) {
+                const list = messageListRef;
+                list.scrollTop = placeAfterMove(
+                    list.scrollTop,
+                    readingPlace.scrollTop,
+                    list.scrollHeight - list.clientHeight,
+                    moved
+                );
+            }
         }
         rememberReadingPlace();
     }

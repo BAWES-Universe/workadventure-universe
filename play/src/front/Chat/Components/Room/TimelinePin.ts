@@ -52,3 +52,18 @@ export function firstShowingIndex(
     }
     return low < count ? low : undefined;
 }
+
+/**
+ * Where the list scrolls to so the message being read stays put after it `moved` (CSS px) in the list's content. When
+ * the list got shorter under a reader near its end, the browser has already pulled the place up to the new end: the
+ * move then counts from where the reader was, not from there.
+ */
+export function placeAfterMove(
+    scrollTop: number,
+    rememberedScrollTop: number,
+    maxScrollTop: number,
+    moved: number
+): number {
+    const pulledToEnd = scrollTop >= maxScrollTop - 1 && rememberedScrollTop > scrollTop;
+    return (pulledToEnd ? rememberedScrollTop : scrollTop) + moved;
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { firstShowingIndex, keyboardClosed, listGrewTaller, stillPinnedToBottom } from "../TimelinePin";
+import { firstShowingIndex, keyboardClosed, listGrewTaller, placeAfterMove, stillPinnedToBottom } from "../TimelinePin";
 
 const view = { scrollHeight: 2000, clientHeight: 500 }; // the bottom is at scrollTop 1500
 
@@ -74,5 +74,24 @@ describe("firstShowingIndex", () => {
     it("finds none when every message is above the top, or there are none", () => {
         expect(firstShowingIndex(bottoms.length, bottomAt, 400)).toBeUndefined();
         expect(firstShowingIndex(0, bottomAt, 0)).toBeUndefined();
+    });
+});
+
+describe("placeAfterMove", () => {
+    it("moves down by as much as older messages added above", () => {
+        expect(placeAfterMove(300, 300, 2000, 480)).toBe(780);
+    });
+
+    it("counts from where the reader is now when they scrolled since", () => {
+        expect(placeAfterMove(250, 300, 2000, 480)).toBe(730);
+    });
+
+    it("counts from where the reader was when the list got shorter and the browser pulled them to its end", () => {
+        // 30px from the end of a 1000px scroll: 100px above went away, the browser pulled the place to the new end, 900.
+        expect(placeAfterMove(900, 970, 900, -100)).toBe(870);
+    });
+
+    it("counts from now when the reader is at the end without being pulled there", () => {
+        expect(placeAfterMove(900, 880, 900, -100)).toBe(800);
     });
 });
