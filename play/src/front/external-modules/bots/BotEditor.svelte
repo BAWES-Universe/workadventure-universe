@@ -72,10 +72,7 @@
     // Debounced auto-save. Behavior config (position, radius...) and AI config are saved separately, so a change to one
     // doesn't cancel the other's pending save
     type SaveKind = "config" | "ai";
-    const pendingSaves = new Map<
-        SaveKind,
-        { timeout: ReturnType<typeof setTimeout>; save: () => void; botId: string }
-    >();
+    const pendingSaves = new Map<SaveKind, { timeout: ReturnType<typeof setTimeout>; save: () => void }>();
     let lastSavedBotConfig: string | null = null;
     let lastSavedAIConfig: string | null = null;
 
@@ -102,35 +99,35 @@
     /** Whether the banner shows a save Orbit refused, so the next save that goes through clears it */
     let refusedSave = false;
 
-    /**
-     * Debounce a save (wait 1 second after the last change), replacing the pending save of the same kind. Another
-     * bot's pending save is sent now instead of dropped, as on close.
-     */
-    function scheduleSave(kind: SaveKind, botId: string, save: () => void): void {
+    /** Debounce a save (wait 1 second after the last change), replacing the pending save of the same kind */
+    function scheduleSave(kind: SaveKind, save: () => void): void {
         const pending = pendingSaves.get(kind);
         if (pending) {
             clearTimeout(pending.timeout);
-            if (pending.botId !== botId) {
-                pending.save();
-            }
         }
         const timeout = setTimeout(() => {
             pendingSaves.delete(kind);
             save();
         }, 1000);
-        pendingSaves.set(kind, { timeout, save, botId });
+        pendingSaves.set(kind, { timeout, save });
     }
 
-    /**
-     * Drop this bot's pending save of this kind: its page is back to what is saved, so the edit it would send is
-     * undone. Another bot's pending save is kept (picking another bot right after an edit still saves it).
-     */
-    function cancelSave(kind: SaveKind, botId: string): void {
+    /** Drop the pending save of this kind: the page is back to what is saved, so the edit it would send is undone */
+    function cancelSave(kind: SaveKind): void {
         const pending = pendingSaves.get(kind);
-        if (pending && pending.botId === botId) {
+        if (pending) {
             clearTimeout(pending.timeout);
             pendingSaves.delete(kind);
         }
+    }
+
+    /** Send the pending saves now rather than dropping them */
+    function flushSaves(): void {
+        for (const { timeout, save } of pendingSaves.values()) {
+            clearTimeout(timeout);
+            save();
+        }
+        pendingSaves.clear();
     }
 
     const unsubscribeSelectedBot = selectedBotStore.subscribe((bot) => {
@@ -147,6 +144,10 @@
         // Picking a different bot (the list and the map both end up here) ends a note about another one
         const notice = get(botTelemetryNoticeStore);
         if (notice && bot && bot.id !== notice.botId) botTelemetryNoticeStore.set(null);
+
+        // Leaving a bot (another bot, or back to the list) sends its waiting saves now. Left waiting, coming back to it
+        // within the second would take its edit as already saved and drop it, or a save would cross into another bot.
+        if (previousBot && previousBot.id !== bot?.id) flushSaves();
 
         // Initialize lastSaved values when bot first selected or changes
         if (bot && (!previousBot || previousBot.id !== bot.id)) {
@@ -185,7 +186,7 @@
 
             // Only save if config actually changed
             if (currentConfig !== lastSavedBotConfig) {
-                scheduleSave("config", bot.id, () => {
+                scheduleSave("config", () => {
                     void (async () => {
                         try {
                             // Extract behaviorType from behaviorConfig if present, or use top-level
@@ -216,7 +217,7 @@
                     })();
                 });
             } else {
-                cancelSave("config", bot.id);
+                cancelSave("config");
             }
 
             // Auto-save when AI config changes (provider, instructions) - debounced
@@ -231,7 +232,7 @@
                 // is then the other bot's)
                 const savedAIOnSchedule = lastSavedAIConfig;
                 const savedAIConfig = () => (selectedBot?.id === bot.id ? lastSavedAIConfig : savedAIOnSchedule);
-                scheduleSave("ai", bot.id, () => {
+                scheduleSave("ai", () => {
                     void (async () => {
                         try {
                             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
@@ -306,7 +307,7 @@
                 });
             } else {
                 // Changed and changed back within the debounce (a provider picked, then the saved one again)
-                cancelSave("ai", bot.id);
+                cancelSave("ai");
             }
         } else if (!bot) {
             // Reset when no bot selected. A rename keeps them: it saves nothing here, and the provider check
@@ -478,11 +479,7 @@
         // detail view's own debounced edits go first, while this component still listens for them (a parent's
         // onDestroy runs before its children's).
         detailView?.flushPendingSaves();
-        for (const { timeout, save } of pendingSaves.values()) {
-            clearTimeout(timeout);
-            save();
-        }
-        pendingSaves.clear();
+        flushSaves();
 
         // Deactivate the Phaser tool
         botEditorTool.deactivate();
