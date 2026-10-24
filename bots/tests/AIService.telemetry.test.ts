@@ -126,6 +126,7 @@ function buildMocks() {
 
     const mockConversationMemory: any = {
         getMemory: vi.fn(() => ({ userUuid: "test-uuid" })),
+        getPendingMediaNotice: vi.fn(() => ""),
     };
 
     return { mockAdminApiService, mockConversationMemory };

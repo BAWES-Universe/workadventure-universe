@@ -121,6 +121,16 @@ export interface BotPlayerMemory {
     maxPendingMedia: number;
 }
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** "Oct 24, 14:32" in UTC; the prompt's current-time line says the times are UTC. */
+export function formatHistoryTime(timestamp: number): string {
+    const d = new Date(timestamp);
+    const hh = String(d.getUTCHours()).padStart(2, '0');
+    const mm = String(d.getUTCMinutes()).padStart(2, '0');
+    return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${hh}:${mm}`;
+}
+
 export class ConversationMemory {
     private memories: Map<string, BotPlayerMemory> = new Map(); // key: "botId_playerId"
     private maxHistorySize: number = 50; // Keep last 50 messages per player
@@ -713,6 +723,36 @@ export class ConversationMemory {
     }
 
     /**
+     * Auto-delivered media notification — tells the bot that media items it
+     * GENERATED SUCCESSFULLY (but couldn't deliver) are being re-sent alongside
+     * the greeting. Media-agnostic — works for images, files, audio, video.
+     * Reads pendingMedia directly (no fact) so the AI always knows about
+     * pending items at turn start, whether from re-entry or orphaned tool
+     * results from a previous turn. Items in retry cooldown (lastRetryAt
+     * within 10s) are excluded — they won't be delivered this turn.
+     *
+     * Kept out of getConversationContext: it toggles between calls, so it
+     * goes at the very end of the system prompt, after everything the
+     * provider can cache (issue #1333).
+     */
+    getPendingMediaNotice(botId: string, playerId: number): string {
+        const memory = this.getMemory(botId, playerId);
+        if (!memory) {
+            return '';
+        }
+        const now = Date.now();
+        const MIN_RETRY_INTERVAL_MS = 10_000;
+        const deliverableCount = memory.pendingMedia?.filter(p =>
+            p.retryCount < 3 &&
+            (!p.lastRetryAt || (now - p.lastRetryAt) >= MIN_RETRY_INTERVAL_MS)
+        ).length || 0;
+        if (deliverableCount === 0) {
+            return '';
+        }
+        return `[System: ${deliverableCount} media item(s) from the previous session are being delivered alongside this message. Do NOT generate or request them again.]`;
+    }
+
+    /**
      * Get conversation context for AI (formatted for prompt)
      * Returns natural, human-like context that feels like remembering a friend
      */
@@ -767,23 +807,6 @@ export class ConversationMemory {
         }
         if (personalInfo.preferences && personalInfo.preferences.length > 0) {
             personalDetails.push(`They like: ${personalInfo.preferences.join(', ')}`);
-        }
-
-        // Auto-delivered media notification — tells the bot that media items it
-        // GENERATED SUCCESSFULLY (but couldn't deliver) are being re-sent alongside
-        // the greeting. Media-agnostic — works for images, files, audio, video.
-        // Reads pendingMedia directly (no fact) so the AI always knows about
-        // pending items at turn start, whether from re-entry or orphaned tool
-        // results from a previous turn. Items in retry cooldown (lastRetryAt
-        // within 10s) are excluded — they won't be delivered this turn.
-        const now = Date.now();
-        const MIN_RETRY_INTERVAL_MS = 10_000;
-        const deliverableCount = memory.pendingMedia?.filter(p =>
-            p.retryCount < 3 &&
-            (!p.lastRetryAt || (now - p.lastRetryAt) >= MIN_RETRY_INTERVAL_MS)
-        ).length || 0;
-        if (deliverableCount > 0) {
-            context.push(`\n[System: ${deliverableCount} media item(s) from the previous session are being delivered alongside this message. Do NOT generate or request them again.]`);
         }
 
         // Natural facts recall (especially current state)
@@ -871,25 +894,12 @@ export class ConversationMemory {
             context.push(`\nRecent conversation:`);
             recentHistory.forEach((msg, index) => {
                 const sender = msg.sender === 'bot' ? 'You' : 'They';
-                const timeAgo = Math.floor((Date.now() - msg.timestamp) / 1000); // seconds ago
-                let timeDesc = '';
-                if (timeAgo < 60) {
-                    timeDesc = ` (just now)`;
-                } else if (timeAgo < 3600) {
-                    const minutesAgo = Math.floor(timeAgo / 60);
-                    timeDesc = ` (${minutesAgo} minute${minutesAgo > 1 ? 's' : ''} ago)`;
-                } else if (timeAgo < 86400) {
-                    const hoursAgo = Math.floor(timeAgo / 3600);
-                    timeDesc = ` (${hoursAgo} hour${hoursAgo > 1 ? 's' : ''} ago)`;
-                } else {
-                    // Multi-day gaps (issue #268): "72 hours ago" reads as if it
-                    // just happened. Render day-level deltas so the bot can
-                    // acknowledge the time gap ("It's been 3 days — let me pull
-                    // fresh data") instead of treating it as the same day.
-                    const daysAgo = Math.floor(timeAgo / 86400);
-                    timeDesc = ` (${daysAgo} day${daysAgo > 1 ? 's' : ''} ago)`;
-                }
-                context.push(`${sender}: "${msg.message}"${timeDesc}`);
+                // Fixed UTC date and time instead of "N minutes ago": a line
+                // that is written once never changes, so the provider can
+                // keep serving it from its prompt cache (issue #1333). The
+                // current date and time sit at the end of the prompt, so the
+                // bot still sees multi-day gaps (issue #268) by comparing.
+                context.push(`${sender}: "${msg.message}" (${formatHistoryTime(msg.timestamp)})`);
             });
         }
 

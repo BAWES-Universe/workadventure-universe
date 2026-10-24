@@ -6,12 +6,12 @@
  * The date line (issue #268) must survive the reorder.
  */
 import { describe, it, expect } from 'vitest';
-import { buildSystemPrompt, buildTodayLine } from '../ai/systemPrompt';
+import { buildSystemPrompt, buildNowLine } from '../ai/systemPrompt';
 
 const INSTRUCTIONS = 'You are Zed, a grumpy guard.';
 const MAP = `\n\nCurrent Location Context (you are always here):\n- Universe: BAWES\n- World: Hub\n- Room: Lobby`;
-const ALICE = 'Relationship: friends\nWhat you know about them: They mentioned they\'re hungry right now.\nRecent conversation:\nThey: "hi" (just now)';
-const BOB = 'Relationship: new\nRecent conversation:\nThey: "yo" (2 minutes ago)';
+const ALICE = 'Relationship: friends\nWhat you know about them: They mentioned they\'re hungry right now.\nRecent conversation:\nThey: "hi" (Oct 24, 11:29)';
+const BOB = 'Relationship: new\nRecent conversation:\nThey: "yo" (Oct 24, 11:28)';
 const NOW = new Date('2026-10-24T11:30:00Z'); // Saturday
 
 function commonPrefixLength(a: string, b: string): number {
@@ -29,7 +29,7 @@ describe('buildSystemPrompt layout', () => {
         expect(at('**HOW TO CONVERSE NATURALLY')).toBeGreaterThan(at('**HOW TO BE HUMAN-LIKE AND REALISTIC:**'));
         expect(at(MAP)).toBeGreaterThan(at('FINAL REMINDER - YOUR PERSONALITY'));
         expect(at('\n\nConversation Context:')).toBeGreaterThan(at(MAP));
-        expect(at("**TODAY'S DATE:**")).toBeGreaterThan(at('\nRecent conversation:'));
+        expect(at("**NOW:**")).toBeGreaterThan(at('\nRecent conversation:'));
         expect(p.trimEnd().endsWith('instead of acting like they just occurred.')).toBe(true);
     });
 
@@ -49,10 +49,24 @@ describe('buildSystemPrompt layout', () => {
         expect(commonPrefixLength(first, later)).toBeGreaterThanOrEqual(first.indexOf(MAP) + MAP.length);
     });
 
-    it('a new day changes only the tail', () => {
-        const day1 = buildSystemPrompt({ chatInstructions: INSTRUCTIONS, mapContextInfo: MAP, conversationContext: ALICE, now: NOW });
-        const day2 = buildSystemPrompt({ chatInstructions: INSTRUCTIONS, mapContextInfo: MAP, conversationContext: ALICE, now: new Date('2026-10-25T09:00:00Z') });
-        expect(commonPrefixLength(day1, day2)).toBeGreaterThanOrEqual(day1.indexOf("**TODAY'S DATE:**"));
+    it('a new minute or a new day changes only the tail', () => {
+        const base = { chatInstructions: INSTRUCTIONS, mapContextInfo: MAP, conversationContext: ALICE };
+        const t1 = buildSystemPrompt({ ...base, now: NOW });
+        for (const later of [new Date('2026-10-24T11:31:00Z'), new Date('2026-10-25T09:00:00Z')]) {
+            const t2 = buildSystemPrompt({ ...base, now: later });
+            expect(t2).not.toBe(t1);
+            expect(commonPrefixLength(t1, t2)).toBeGreaterThanOrEqual(t1.indexOf("**NOW:**"));
+        }
+    });
+
+    it('puts the pending-media notice last, after the date and time', () => {
+        const notice = '[System: 2 media item(s) from the previous session are being delivered alongside this message. Do NOT generate or request them again.]';
+        const p = buildSystemPrompt({ chatInstructions: INSTRUCTIONS, conversationContext: ALICE, pendingMediaNotice: notice, now: NOW });
+        expect(p.trimEnd().endsWith(notice)).toBe(true);
+        expect(p.indexOf(notice)).toBeGreaterThan(p.indexOf('**NOW:**'));
+        // Toggling the notice must not change anything before the Now line.
+        const without = buildSystemPrompt({ chatInstructions: INSTRUCTIONS, conversationContext: ALICE, now: NOW });
+        expect(commonPrefixLength(p, without)).toBeGreaterThanOrEqual(without.trimEnd().length);
     });
 
     it('falls back to a plain default without instructions, rules still present', () => {
@@ -73,19 +87,24 @@ describe('buildSystemPrompt layout', () => {
     });
 });
 
-describe("today's date line (issue #268)", () => {
-    it('gives the bot the weekday and full date', () => {
+describe('current day, date and time (issues #268 and #1333)', () => {
+    it('gives the bot the weekday, full date and the time', () => {
         const p = buildSystemPrompt({ chatInstructions: INSTRUCTIONS, conversationContext: ALICE, now: NOW });
-        expect(p).toContain("**TODAY'S DATE:** Saturday, October 24, 2026");
+        expect(p).toContain('**NOW:** Saturday, October 24, 2026, 11:30 UTC');
     });
 
     it('uses UTC, so the date does not follow the host timezone near midnight', () => {
-        expect(buildTodayLine(new Date('2026-10-24T23:59:00Z'))).toContain('Saturday, October 24, 2026');
-        expect(buildTodayLine(new Date('2026-10-25T00:01:00Z'))).toContain('Sunday, October 25, 2026');
+        expect(buildNowLine(new Date('2026-10-24T23:59:00Z'))).toContain('Saturday, October 24, 2026, 23:59 UTC');
+        expect(buildNowLine(new Date('2026-10-25T00:01:00Z'))).toContain('Sunday, October 25, 2026, 00:01 UTC');
     });
 
     it('is present even when there is no memory and no location', () => {
         const p = buildSystemPrompt({ chatInstructions: '', now: NOW });
-        expect(p).toContain("**TODAY'S DATE:**");
+        expect(p).toContain('**NOW:**');
+        expect(p).toContain('11:30 UTC');
+    });
+
+    it('tells the bot the history times are UTC so it can compare', () => {
+        expect(buildNowLine(NOW)).toContain('The times in "Recent conversation" are UTC too');
     });
 });
