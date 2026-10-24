@@ -4,10 +4,13 @@
     import { MAX_TABLE_COLUMNS, MAX_TABLE_ROWS } from "../../../FileViewer/textFiles";
     import { columnLetters, readSpreadsheet, type SheetView } from "../../../FileViewer/spreadsheet";
     import { listenForPinch, type PinchCentre } from "../../../FileViewer/pinchGesture";
+    import type { ViewerView } from "../../../FileViewer/viewerController";
     import FileViewerLimitNote from "./FileViewerLimitNote.svelte";
     import FileViewerOpening from "./FileViewerOpening.svelte";
 
     export let bytes: ArrayBuffer;
+    /** Where the reader was left when it was put away: the sheet and how far it was scrolled. */
+    export let view: ViewerView | undefined = undefined;
 
     const dispatch = createEventDispatcher<{ loaded: { sheetCount: number }; failed: void; download: void }>();
 
@@ -24,6 +27,7 @@
                 }
                 sheets = read;
                 dispatch("loaded", { sheetCount: read.length });
+                void restoreView(read.length);
             },
             (error) => {
                 // A damaged or password-locked file.
@@ -32,6 +36,24 @@
             }
         );
     });
+
+    /** What the reader needs to look the same when it is brought back. */
+    export function getView(): ViewerView | undefined {
+        // Still being read: there is no place to report yet, and what was saved stays.
+        if (!sheet) return undefined;
+        return { zoom, sheet: current, scrollX: scroller?.scrollLeft ?? 0, scrollY: scroller?.scrollTop ?? 0 };
+    }
+
+    async function restoreView(sheetCount: number): Promise<void> {
+        if (!view) return;
+        current = Math.min(Math.max(0, view.sheet ?? 0), sheetCount - 1);
+        // The zoom first: the place is measured on the sheet as it is drawn at that zoom.
+        if (typeof view.zoom === "number") zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, view.zoom));
+        await tick();
+        if (!scroller) return;
+        scroller.scrollLeft = view.scrollX ?? 0;
+        scroller.scrollTop = view.scrollY ?? 0;
+    }
 
     // --- Pinch (two fingers) and Ctrl + wheel zoom: the sheet is drawn bigger or smaller, where the fingers are ---
     const MIN_ZOOM = 0.5;

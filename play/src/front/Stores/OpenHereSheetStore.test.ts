@@ -18,7 +18,9 @@ import { SimpleCoWebsite } from "../WebRtc/CoWebsite/SimpleCoWebsite";
 import { coWebsites } from "./CoWebsiteStore";
 import { bringOpenHereInFront, openHereTuckedStore } from "./SideWindowInFrontStore";
 import {
+    OPEN_HERE_BEHIND_CHAT_STRIP,
     OPEN_HERE_TUCKED_HEIGHT,
+    openHereBehindChatMin,
     openHereSheetHeight,
     openHereSheetRelease,
     openHereSheetStore,
@@ -42,6 +44,29 @@ describe("openHereSheetHeight", () => {
         expect(openHereSheetHeight({ ...base, tucked: true, chatOver: false })).toBe(OPEN_HERE_TUCKED_HEIGHT);
         // The chat in front of a tucked sheet still raises it: it is the file behind the chat.
         expect(openHereSheetHeight({ ...base, tucked: true, chatOver: true })).toBe(heights.full);
+    });
+});
+
+describe("the sheet behind the chat", () => {
+    const base = { rest: "half" as const, tucked: false, chatOver: true, viewportHeight: VIEWPORT };
+
+    it("keeps a strip above the chat's top, and never asks for more than full", () => {
+        expect(openHereBehindChatMin(heights.peek, VIEWPORT)).toBe(heights.peek + OPEN_HERE_BEHIND_CHAT_STRIP);
+        expect(openHereBehindChatMin(heights.full, VIEWPORT)).toBe(heights.full);
+    });
+
+    it("rests where it was put, and never lower than the strip", () => {
+        expect(openHereSheetHeight({ ...base, behindRest: 0.8, chatHeight: heights.peek })).toBe(
+            Math.round(0.8 * VIEWPORT)
+        );
+        expect(openHereSheetHeight({ ...base, behindRest: "peek", chatHeight: heights.peek })).toBe(
+            heights.peek + OPEN_HERE_BEHIND_CHAT_STRIP
+        );
+        expect(openHereSheetHeight({ ...base, behindRest: "full", chatHeight: heights.peek })).toBe(heights.full);
+    });
+
+    it("is at the top until it was put somewhere", () => {
+        expect(openHereSheetHeight({ ...base, chatHeight: heights.peek })).toBe(heights.full);
     });
 });
 

@@ -18,6 +18,7 @@
     import { closeAllOpenItems, pickedAfterUndoStore } from "../../Stores/ClosedItemsStore";
     import { openHereTuckedStore } from "../../Stores/SideWindowInFrontStore";
     import { openHereListOpenStore } from "../../Stores/OpenHereSheetStore";
+    import { usedReaders } from "../../FileViewer/readerBudget";
     import SheetHandle from "../Sheet/SheetHandle.svelte";
     import LL from "../../../i18n/i18n-svelte";
     import CoWebsiteTab from "./CoWebsiteTab.svelte";
@@ -75,6 +76,10 @@
             pickedAfterUndoStore.set(undefined);
         });
     });
+
+    // Only the item in front and the one used before it keep their reader: more than that can be more than a phone holds.
+    let recentlyUsed: CoWebsite[] = [];
+    $: recentlyUsed = usedReaders(recentlyUsed, activeCowebsite, $coWebsites);
 
     const setActiveCowebsite = (coWebsite: CoWebsite) => {
         activeCowebsite = coWebsite;
@@ -397,7 +402,11 @@
                         visible={coWebsite === activeCowebsite}
                     />
                 {:else if coWebsite instanceof FileViewerCoWebsite}
-                    <FileViewerCowebsiteComponent actualCowebsite={coWebsite} visible={coWebsite === activeCowebsite} />
+                    <FileViewerCowebsiteComponent
+                        actualCowebsite={coWebsite}
+                        visible={coWebsite === activeCowebsite}
+                        parked={!recentlyUsed.includes(coWebsite)}
+                    />
                 {:else if coWebsite instanceof SimpleCoWebsite}
                     <SimpleCowebsiteComponent
                         actualCowebsite={coWebsite}
