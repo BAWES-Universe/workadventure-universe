@@ -295,3 +295,28 @@ At 2:00 PM: The room is visible in Element as a normal room
 At 3:00 PM: The room disappears from the main room list and is moved to the "History" section. A click on the "History" section
 does not show the content of the room and the room cannot be joined from Element (because it is private)
 At 4:00 PM: The room is visible in Element as a normal room again.
+
+## Bot direct messages on a local checkout
+
+Bots can receive direct messages through Matrix. For that, the bot server registers on Synapse as a Matrix
+[application service](https://spec.matrix.org/latest/application-service-api/): Synapse needs a registration file that
+names the bot server and the two tokens both sides use, and the bot server needs the same tokens.
+
+The local setup does this for you, with no configuration, when you start the bot server:
+
+```bash
+docker compose -f docker-compose.yaml -f docker-compose.bots.yaml up
+```
+
+- `synapse/appservice-universe-bots.template.yaml` is the registration. `synapse/start.sh` turns it into
+  `synapse/appservice-universe-bots.yaml` (not committed) on every start and `homeserver.template.yaml` lists it under
+  `app_service_config_files`. Edit the template, never the generated file.
+- `docker-compose.yaml` (Synapse) and `docker-compose.bots.yaml` (bot server) read `MATRIX_AS_TOKEN` and
+  `MATRIX_HS_TOKEN` from your `.env`, with the same local-only defaults, so they always match. The defaults are not
+  secrets and only work on `*.workadventure.localhost`.
+- The bot server also gets `MATRIX_HOMESERVER_URL` and `MATRIX_DOMAIN`. Bot accounts are `@bot_<id>:matrix.workadventure.localhost`.
+- Without `docker-compose.bots.yaml`, nothing changes: no bot server runs and Synapse never asks for it.
+- To run without Matrix at all, keep using `docker-compose.no-synapse.yaml`.
+
+If you change `SYNAPSE_SERVER_NAME` or the server name in `homeserver.template.yaml`, change the `regex` in the
+registration template and `MATRIX_DOMAIN` too. `bots/tests/matrixLocalDev.test.ts` checks that these files agree.

@@ -4,6 +4,7 @@
     import LL from "../../../../i18n/i18n-svelte";
     import { renderWordDocument, type RenderedWord } from "../../../FileViewer/wordDocument";
     import { pageInView } from "../../../FileViewer/wordPages";
+    import { listenForPinch } from "../../../FileViewer/pinchGesture";
     import type { ViewerController, ViewerPages, ViewerView } from "../../../FileViewer/viewerController";
     import FileViewerOpening from "./FileViewerOpening.svelte";
 
@@ -96,33 +97,9 @@
     }
 
     // --- Pinch (two fingers) and Ctrl + wheel zoom, from the panel and from over the document ---
-    const pointers = new Map<number, { x: number; y: number }>();
-    let pinchDistance = 0;
-
-    function distance(): number {
-        const [first, second] = [...pointers.values()];
-        return Math.hypot(first.x - second.x, first.y - second.y);
-    }
-
-    function onPointerDown(event: PointerEvent): void {
-        pointers.set(event.pointerId, { x: event.screenX, y: event.screenY });
-        if (pointers.size === 2) pinchDistance = distance();
-    }
-
-    function onPointerMove(event: PointerEvent): void {
-        if (!pointers.has(event.pointerId)) return;
-        pointers.set(event.pointerId, { x: event.screenX, y: event.screenY });
-        if (pointers.size === 2 && pinchDistance > 0) {
-            const next = distance();
-            setZoom(userZoom * (next / pinchDistance));
-            pinchDistance = next;
-            pinchHint = false;
-        }
-    }
-
-    function onPointerEnd(event: PointerEvent): void {
-        pointers.delete(event.pointerId);
-        if (pointers.size < 2) pinchDistance = 0;
+    function onPinch(factor: number): void {
+        setZoom(userZoom * factor);
+        pinchHint = false;
     }
 
     function onWheel(event: WheelEvent): void {
@@ -140,22 +117,21 @@
         if (href && /^(https?:|mailto:|tel:)/i.test(href)) window.open(href, "_blank", "noopener,noreferrer");
     }
 
+    const stopListening = new Map<Document | HTMLElement, Array<() => void>>();
+
     function listen(target: Document | HTMLElement): void {
-        target.addEventListener("pointerdown", onPointerDown as EventListener);
-        target.addEventListener("pointermove", onPointerMove as EventListener);
-        target.addEventListener("pointerup", onPointerEnd as EventListener);
-        target.addEventListener("pointercancel", onPointerEnd as EventListener);
         target.addEventListener("wheel", onWheel as EventListener, { passive: false });
         target.addEventListener("click", onLinkClick as EventListener);
+        stopListening.set(target, [
+            listenForPinch(target, onPinch),
+            () => target.removeEventListener("wheel", onWheel as EventListener),
+            () => target.removeEventListener("click", onLinkClick as EventListener),
+        ]);
     }
 
     function unlisten(target: Document | HTMLElement): void {
-        target.removeEventListener("pointerdown", onPointerDown as EventListener);
-        target.removeEventListener("pointermove", onPointerMove as EventListener);
-        target.removeEventListener("pointerup", onPointerEnd as EventListener);
-        target.removeEventListener("pointercancel", onPointerEnd as EventListener);
-        target.removeEventListener("wheel", onWheel as EventListener);
-        target.removeEventListener("click", onLinkClick as EventListener);
+        stopListening.get(target)?.forEach((stop) => stop());
+        stopListening.delete(target);
     }
 
     /** The panel was hidden while the pages loaded, so nothing could be measured yet. */

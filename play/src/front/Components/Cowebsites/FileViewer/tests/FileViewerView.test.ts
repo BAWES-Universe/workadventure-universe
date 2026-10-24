@@ -44,4 +44,13 @@ describe("where a reader reports it is", () => {
         for (let i = 0; i < 6; i++) await tick();
         expect(component.getView()).toMatchObject({ sheet: 0 });
     });
+
+    it("keeps the zoom it had when it is brought back", async () => {
+        component = new FileViewerExcel({
+            target: document.body,
+            props: { bytes: new ArrayBuffer(8), view: { zoom: 2, sheet: 0 } },
+        });
+        for (let i = 0; i < 6; i++) await tick();
+        expect(component.getView()).toMatchObject({ zoom: 2 });
+    });
 });
