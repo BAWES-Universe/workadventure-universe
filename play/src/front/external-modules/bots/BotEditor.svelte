@@ -112,6 +112,15 @@
         pendingSaves.set(kind, { timeout, save });
     }
 
+    /** Drop the pending save of this kind: the page is back to what is saved, so the edit it would send is undone */
+    function cancelSave(kind: SaveKind): void {
+        const pending = pendingSaves.get(kind);
+        if (pending) {
+            clearTimeout(pending.timeout);
+            pendingSaves.delete(kind);
+        }
+    }
+
     const unsubscribeSelectedBot = selectedBotStore.subscribe((bot) => {
         if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
             console.log(
@@ -193,6 +202,8 @@
                         }
                     })();
                 });
+            } else {
+                cancelSave("config");
             }
 
             // Auto-save when AI config changes (provider, instructions) - debounced
@@ -276,6 +287,9 @@
                         }
                     })();
                 });
+            } else {
+                // Changed and changed back within the debounce (a provider picked, then the saved one again)
+                cancelSave("ai");
             }
         } else if (!bot) {
             // Reset when no bot selected. A rename keeps them: it saves nothing here, and the provider check
