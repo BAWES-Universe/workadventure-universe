@@ -328,6 +328,25 @@ describe("OpenHereWindow as a phone's sheet", () => {
             expect(sheet()?.style.height).toBe(`${heights.half}px`);
         });
 
+        it("leaves the videos the room above it when it is lower than the top, and none at the top", async () => {
+            // Behind the chat at the top, the videos sit above the chat, behind the window.
+            expect(get(openHereSheetHeightStore)).toBe(0);
+
+            dragHandle(handle()!, 300, 300);
+            await tick();
+            expect(sheet()?.style.height).toBe(`${strip}px`);
+            expect(get(openHereSheetHeightStore)).toBe(strip);
+
+            dragHandle(handle()!, 300, 300);
+            await tick();
+            expect(get(openHereSheetHeightStore)).toBe(heights.half);
+
+            dragHandle(handle()!, 300, 300);
+            await tick();
+            expect(sheet()?.style.height).toBe(`${heights.full}px`);
+            expect(get(openHereSheetHeightStore)).toBe(0);
+        });
+
         it("keeps stepping when a tall chat holds two of its heights at the same place", async () => {
             chatOwnSheetHeightStore.set(heights.half);
             await tick();

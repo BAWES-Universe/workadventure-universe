@@ -37,7 +37,7 @@
         restoreChatAfterFile,
     } from "../../Chat/ChatSheetStore";
     import { CHAT_SHEET_SIZES, type ChatSheetRest } from "../../Chat/ChatSheetSizes";
-    import { clampHeight, nearestSnap, nextSnap, sheetFrameStyle } from "../Sheet/BottomSheet";
+    import { clampHeight, getSnapHeights, nearestSnap, nextSnap, sheetFrameStyle } from "../Sheet/BottomSheet";
     import SheetHandle from "../Sheet/SheetHandle.svelte";
     import LL from "../../../i18n/i18n-svelte";
     import CoWebsitesContainer from "./CoWebsitesContainer.svelte";
@@ -141,8 +141,12 @@
             viewportHeight: $windowSize.height,
         });
     // The videos above the sheet follow its height, drag included. Tucked, they have all the room again; with the chat
-    // open, they sit above the chat, behind the window.
-    $: openHereSheetHeightStore.set(!floating && !tucked && !chatOverSheet ? sheetHeight : 0);
+    // open and the window all the way up, they sit above the chat, behind the window. Lower than that, the window
+    // leaves them the room above it.
+    $: fullHeight = getSnapHeights($windowSize.height, CHAT_SHEET_SIZES).full;
+    $: openHereSheetHeightStore.set(
+        !floating && !tucked && !(chatOverSheet && sheetHeight >= fullHeight) ? sheetHeight : 0
+    );
 
     // The map is centred in the space the sheet leaves free, which is measured from the sheet as it is at that moment:
     // once more as the sheet stops moving, whether it rose, or was tucked, untucked or snapped to another height. The
