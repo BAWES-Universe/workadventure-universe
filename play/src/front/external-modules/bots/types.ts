@@ -42,3 +42,35 @@ export interface BotData {
     updatedBy?: BotUser | null;
     [key: string]: unknown;
 }
+
+/**
+ * What the bot page offers under "Runs on" for one bot (Orbit GET /api/me/bot-ai, #374). Nobody is shown the server's
+ * provider list: the choices are Universe AI and the viewer's own keys lent to this bot's universe. A key that isn't
+ * the viewer's is shown only as what the bot is on now. A super admin also gets `providers`, to pin a bot to one.
+ */
+export interface BotAiOptions {
+    /** The bot's current ref ("universe-ai", a provider id, a key id, or null). */
+    current: string | null;
+    universeAi: { available: boolean };
+    maker: { id: string; name: string | null } | null;
+    viewerIsMaker: boolean;
+    keys: Array<{
+        id: string;
+        name: string;
+        kind: string | null;
+        kindLabel: string;
+        group: "own-computer" | "hosted" | null;
+        universeName: string;
+        status: "working" | "down";
+        ifDown: "universe-ai" | "stop";
+    }>;
+    currentKey: {
+        id: string;
+        name: string;
+        ownerName: string | null;
+        mine: boolean;
+        status: "working" | "down";
+        ifDown: "universe-ai" | "stop";
+    } | null;
+    providers: Array<{ id: string; name: string; type: string; model: string | null; enabled: boolean }> | null;
+}
