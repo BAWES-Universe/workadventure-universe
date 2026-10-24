@@ -202,6 +202,13 @@ describe("helpers", () => {
         ["LMStudio API error: 403 x", 403],
         [new Error('OpenAI API error: 429 {"error":{"type":"insufficient_quota","message":"You exceeded your current quota"}}'), 402],
         [new Error('OpenAI API error: 429 {"error":{"type":"rate_limit_exceeded","message":"Rate limit reached"}}'), 429],
+        // Gemini's free-tier per-minute limit: busy for a moment, not out of credit
+        [
+            new Error(
+                'OpenAI API error: 429 [{"error":{"code":429,"message":"You exceeded your current quota, please check your plan and billing details. Please retry in 8.9s.","status":"RESOURCE_EXHAUSTED"}}]'
+            ),
+            429,
+        ],
         [undefined, undefined],
     ])("reads the status from %s", (error, expected) => {
         expect(statusFromError(error)).toBe(expected);
