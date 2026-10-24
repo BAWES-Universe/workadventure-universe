@@ -550,6 +550,17 @@ export class BotApiService {
     }
 
     /**
+     * Save the bot's own model on its AI key (Orbit #575). Sent to Orbit itself: the bot server's save of a bot's
+     * settings doesn't carry a model. The bot server asks Orbit for the model each time the bot replies.
+     */
+    async saveBotModel(id: string, aiModel: string): Promise<void> {
+        await this.fetch(`/api/bots/${encodeURIComponent(id)}`, {
+            method: "PUT",
+            body: JSON.stringify({ aiModel }),
+        });
+    }
+
+    /**
      * Delete a bot
      */
     async deleteBot(id: string): Promise<void> {
