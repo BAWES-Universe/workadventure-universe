@@ -5,6 +5,8 @@
     import remend from "remend";
     import type { ChatMessageContent } from "../../../Connection/ChatConnection";
     import { linkifyBareDomains } from "../../../LinkPreview/ChatLinks";
+    import { isPlainClick, opensHere } from "../../../LinkPreview/EmbeddableLinks";
+    import { openChatLinkHere } from "../../../LinkPreview/openChatLinkHere";
     import { sanitizeHTML } from "./WA-HTML-Sanitizer";
     export let content: Readable<ChatMessageContent>;
     export let hasDepth: false;
@@ -52,9 +54,12 @@
     }
 
     let html = "";
+    let bubble: HTMLDivElement | undefined;
 
     let unsubscriber: Unsubscriber | undefined;
     onMount(() => {
+        // Links inside the message's HTML: one listener on the bubble (Enter on a focused link is a click too).
+        bubble?.addEventListener("click", openLinkHere);
         unsubscriber = content.subscribe((value) => {
             const healed = remend(value.body);
             let promiseHtml = getMarked(healed).then((marked) => marked.parse(healed));
@@ -73,10 +78,22 @@
     });
 
     onDestroy(() => {
+        bubble?.removeEventListener("click", openLinkHere);
         if (unsubscriber) {
             unsubscriber();
         }
     });
+
+    /**
+     * A plain click on a link whose page the game may show opens it in the window, as its card's Open here does. Other
+     * links, and other clicks, keep opening a new tab.
+     */
+    function openLinkHere(event: MouseEvent) {
+        const anchor = event.target instanceof Element ? event.target.closest("a") : null;
+        if (!anchor || !isPlainClick(event) || !opensHere(anchor.href)) return;
+        event.preventDefault();
+        openChatLinkHere(anchor.href);
+    }
 
     /* eslint-disable svelte/no-at-html-tags */
 </script>
@@ -85,6 +102,7 @@
     class="message-bubble m-0 {hasDepth ? 'text-xs leading-4' : 'text-sm'} text-white py-1 px-2"
     style="padding-top: 7px;"
     lang=""
+    bind:this={bubble}
 >
     <!-- One box around the text, so its first and last block can drop the browser's outer margins. -->
     <div class="message-body">{@html sanitizeHTML(html)}</div>
