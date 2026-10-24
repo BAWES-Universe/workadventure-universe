@@ -72,7 +72,10 @@
     // Debounced auto-save. Behavior config (position, radius...) and AI config are saved separately, so a change to one
     // doesn't cancel the other's pending save
     type SaveKind = "config" | "ai";
-    const pendingSaves = new Map<SaveKind, { timeout: ReturnType<typeof setTimeout>; save: () => void }>();
+    const pendingSaves = new Map<
+        SaveKind,
+        { timeout: ReturnType<typeof setTimeout>; save: () => void; botId: string }
+    >();
     let lastSavedBotConfig: string | null = null;
     let lastSavedAIConfig: string | null = null;
 
@@ -99,23 +102,32 @@
     /** Whether the banner shows a save Orbit refused, so the next save that goes through clears it */
     let refusedSave = false;
 
-    /** Debounce a save (wait 1 second after the last change), replacing the pending save of the same kind */
-    function scheduleSave(kind: SaveKind, save: () => void): void {
+    /**
+     * Debounce a save (wait 1 second after the last change), replacing the pending save of the same kind. Another
+     * bot's pending save is sent now instead of dropped, as on close.
+     */
+    function scheduleSave(kind: SaveKind, botId: string, save: () => void): void {
         const pending = pendingSaves.get(kind);
         if (pending) {
             clearTimeout(pending.timeout);
+            if (pending.botId !== botId) {
+                pending.save();
+            }
         }
         const timeout = setTimeout(() => {
             pendingSaves.delete(kind);
             save();
         }, 1000);
-        pendingSaves.set(kind, { timeout, save });
+        pendingSaves.set(kind, { timeout, save, botId });
     }
 
-    /** Drop the pending save of this kind: the page is back to what is saved, so the edit it would send is undone */
-    function cancelSave(kind: SaveKind): void {
+    /**
+     * Drop this bot's pending save of this kind: its page is back to what is saved, so the edit it would send is
+     * undone. Another bot's pending save is kept (picking another bot right after an edit still saves it).
+     */
+    function cancelSave(kind: SaveKind, botId: string): void {
         const pending = pendingSaves.get(kind);
-        if (pending) {
+        if (pending && pending.botId === botId) {
             clearTimeout(pending.timeout);
             pendingSaves.delete(kind);
         }
@@ -173,7 +185,7 @@
 
             // Only save if config actually changed
             if (currentConfig !== lastSavedBotConfig) {
-                scheduleSave("config", () => {
+                scheduleSave("config", bot.id, () => {
                     void (async () => {
                         try {
                             // Extract behaviorType from behaviorConfig if present, or use top-level
@@ -185,7 +197,8 @@
                                     behaviorConfig: bot.behaviorConfig,
                                 })
                             );
-                            lastSavedBotConfig = currentConfig;
+                            // Only while the page still shows this bot: the record is the shown bot's
+                            if (selectedBot?.id === bot.id) lastSavedBotConfig = currentConfig;
                         } catch (e) {
                             console.error("[BotEditor] Failed to auto-save bot:", e);
 
@@ -203,7 +216,7 @@
                     })();
                 });
             } else {
-                cancelSave("config");
+                cancelSave("config", bot.id);
             }
 
             // Auto-save when AI config changes (provider, instructions) - debounced
@@ -214,7 +227,11 @@
                         aiProviderRef: bot.aiProviderRef,
                     });
                 }
-                scheduleSave("ai", () => {
+                // What is saved for this bot, if its save runs after another bot is picked (the page's record
+                // is then the other bot's)
+                const savedAIOnSchedule = lastSavedAIConfig;
+                const savedAIConfig = () => (selectedBot?.id === bot.id ? lastSavedAIConfig : savedAIOnSchedule);
+                scheduleSave("ai", bot.id, () => {
                     void (async () => {
                         try {
                             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
@@ -231,7 +248,7 @@
                                 // The provider is sent only when it was changed here, against what the saves before
                                 // this one stored. Sent with every save, a page left open would put back a provider
                                 // Orbit has since moved the bot off (a key that was pulled).
-                                const savedRef = savedProviderRef(lastSavedAIConfig);
+                                const savedRef = savedProviderRef(savedAIConfig());
                                 const providerChanged = savedRef === null || bot.aiProviderRef !== savedRef;
                                 const currentBot = get(botPreviewsStore).get(bot.id) ?? bot;
                                 const behaviorType =
@@ -247,7 +264,7 @@
                             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                                 console.log("[BotEditor] AI config update successful");
                             }
-                            lastSavedAIConfig = currentAIConfig;
+                            if (selectedBot?.id === bot.id) lastSavedAIConfig = currentAIConfig;
                             if (refusedSave) {
                                 refusedSave = false;
                                 error = null;
@@ -261,7 +278,7 @@
                             if ((e as Error & { status?: number })?.status === 400) {
                                 error = (e as Error).message;
                                 refusedSave = true;
-                                const savedRef = savedProviderRef(lastSavedAIConfig);
+                                const savedRef = savedProviderRef(savedAIConfig());
                                 const currentBot = get(botPreviewsStore).get(bot.id);
                                 if (
                                     savedRef !== null &&
@@ -289,7 +306,7 @@
                 });
             } else {
                 // Changed and changed back within the debounce (a provider picked, then the saved one again)
-                cancelSave("ai");
+                cancelSave("ai", bot.id);
             }
         } else if (!bot) {
             // Reset when no bot selected. A rename keeps them: it saves nothing here, and the provider check
