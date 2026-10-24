@@ -32,6 +32,11 @@ services:
       NODE_ENV: development
       POSTHOG_API_KEY: ${POSTHOG_API_KEY:-}
       POSTHOG_HOST: ${POSTHOG_HOST:-https://eu.posthog.com}
+      # Direct messages to bots through the local Synapse (same values as the synapse service in docker-compose.yaml)
+      MATRIX_HOMESERVER_URL: ${MATRIX_HOMESERVER_URL:-http://synapse:8008}
+      MATRIX_DOMAIN: ${MATRIX_DOMAIN:-matrix.workadventure.localhost}
+      MATRIX_AS_TOKEN: ${MATRIX_AS_TOKEN:-local-dev-bots-as-token-0123456789abcdef}
+      MATRIX_HS_TOKEN: ${MATRIX_HS_TOKEN:-local-dev-bots-hs-token-fedcba9876543210}
     depends_on:
       - redis
     restart: unless-stopped
