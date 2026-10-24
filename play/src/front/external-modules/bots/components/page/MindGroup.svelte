@@ -6,9 +6,11 @@
     import { resolveVisionSupport } from "../../visionModels";
     import { canOpenOrbit, openOrbitPage } from "../../../admin-api/index";
     import { canPick, mindBriefName, runsOnCards, type RunsOnCard } from "../../mindModel";
+    import { allowedModelsOf, botModelOf, keyChoice, keyOfRef, modelRow, shortName } from "../../modelPickerModel";
     import PageGroup from "./PageGroup.svelte";
     import PageButton from "./PageButton.svelte";
-    import { IconChevronDown, IconExternalLink, IconKey, IconSparkles } from "@wa-icons";
+    import ModelList from "./ModelList.svelte";
+    import { IconChevronDown, IconExternalLink, IconEye, IconKey, IconSparkles, IconTool } from "@wa-icons";
 
     export let bot: BotData;
     export let open: boolean;
@@ -25,6 +27,9 @@
      * say (an older Orbit, offline): the page then keeps the provider list it always had.
      */
     let options: BotAiOptions | null = null;
+
+    /** The model list is open: for the key the bot is on (Change), or for a key it is about to go on (nothing picked yet). */
+    let choosing: { keyId: string; pending: boolean } | null = null;
 
     let loadedFor: string | undefined | null = null;
     let loadCount = 0;
@@ -61,6 +66,7 @@
         if (loadedFor === botId) return;
         loadedFor = botId;
         options = null;
+        choosing = null;
         void load(botId);
     }
 
@@ -82,11 +88,18 @@
     $: names = new Map(providers.map((p) => [p.providerId.toLowerCase(), p.name]));
     $: cards = options ? runsOnCards(options, ref || null, names) : [];
     $: runsOnBrief = options ? mindBriefName(options, ref || null, names) : null;
+    // The model the bot is on, when it is on one of the person's own keys
+    $: rowKey = options ? keyOfRef(options, ref || options.current) : undefined;
+    $: row = options ? modelRow(options, ref || options.current, botModelOf(options, bot)) : null;
+    $: rowModel = row?.kind === "choose" ? row.model : row?.kind === "single" ? row.model : null;
+    $: rowModelId = rowModel ? rowModel.id : row?.kind === "unlisted" ? row.model : null;
+    $: choosingKey = options && choosing ? keyOfRef(options, choosing.keyId) : undefined;
+    $: chooseModels = choosingKey ? allowedModelsOf(choosingKey) : null;
     $: brief = options
         ? runsOnBrief?.kind === "universe-ai"
             ? page.mind.universeAi()
             : runsOnBrief?.kind === "key"
-            ? runsOnBrief.name
+            ? [runsOnBrief.name, rowModelId ? shortName(rowModelId) : ""].filter(Boolean).join(" · ")
             : runsOnBrief?.kind === "gone"
             ? page.mind.keyGoneTitle()
             : runsOnBrief?.kind === "provider" && current
@@ -116,7 +129,21 @@
 
     function chooseCard(card: RunsOnCard) {
         if (!options || !canPick(options, card)) return;
-        onChange({ ...bot, aiProviderRef: card.id });
+        // Another key or Universe AI starts the bot off on its own model: the only one, the provider's suggested one, or
+        // none yet. A key that needs a pick opens its list first, and the bot moves only when a model is saved.
+        const key = card.kind === "mine" ? keyOfRef(options, card.id) : undefined;
+        const choice = key ? keyChoice(key) : { model: null, needsPick: false };
+        if (choice.needsPick) {
+            choosing = { keyId: card.id, pending: true };
+            return;
+        }
+        onChange({ ...bot, aiProviderRef: card.id, aiModel: choice.model });
+    }
+
+    function saveModel(model: string) {
+        if (!choosing) return;
+        onChange({ ...bot, aiProviderRef: choosing.keyId, aiModel: model });
+        choosing = null;
     }
 
     function noteOf(card: RunsOnCard): string {
@@ -150,18 +177,27 @@
         const value = select.value;
         // Back to the prompt, so the same provider can be pinned again after the bot moves off it
         select.value = "";
-        if (value) onChange({ ...bot, aiProviderRef: value });
+        if (value) onChange({ ...bot, aiProviderRef: value, aiModel: null });
     }
 
     function pick(event: Event) {
         const value = (event.currentTarget as HTMLSelectElement).value;
-        onChange({ ...bot, aiProviderRef: value || undefined });
+        onChange({ ...bot, aiProviderRef: value || undefined, aiModel: null });
     }
 </script>
 
 <PageGroup id="mind" icon={IconSparkles} title={page.mind.title()} {brief} {open} {onToggle}>
     {#if loading}
         <p class="bp-m">{$LL.actionbar.botEditorModule.loadingProviders()}</p>
+    {:else if options && choosing && choosingKey && chooseModels}
+        <ModelList
+            botName={bot.name ?? ""}
+            keyName={choosingKey.name}
+            models={chooseModels}
+            selected={choosing.pending ? null : rowModelId}
+            onSave={saveModel}
+            onBack={() => (choosing = null)}
+        />
     {:else if options}
         <div class="bp-cap" id="bot-runs-on-label">{page.mind.runsOn()}</div>
         <div class="bp-cards" role="radiogroup" aria-labelledby="bot-runs-on-label" data-testid="bot-runs-on">
@@ -200,6 +236,39 @@
                 </button>
             {/each}
         </div>
+        {#if row}
+            <div class="bp-model" data-testid="bot-model-row">
+                <div class="bp-mtx">
+                    <span class="bp-cap">{page.mind.model.title()}</span>
+                    <span class="bp-mid">{rowModelId ?? page.mind.model.notPicked()}</span>
+                    {#if row.kind === "single"}
+                        <span class="bp-cn">
+                            {page.mind.model.only({ key: rowKey?.name ?? "", universe: rowKey?.universeName ?? "" })}
+                        </span>
+                    {:else if row.kind === "unlisted"}
+                        <span class="bp-cn">{page.mind.model.unlisted()}</span>
+                    {:else if rowModel && (rowModel.tools === true || rowModel.vision === true)}
+                        <span class="bp-facts">
+                            {#if rowModel.tools === true}
+                                <span class="bp-fact"><IconTool font-size="14" />{page.mind.model.tools()}</span>
+                            {/if}
+                            {#if rowModel.vision === true}
+                                <span class="bp-fact"><IconEye font-size="14" />{page.mind.seesPictures()}</span>
+                            {/if}
+                        </span>
+                    {/if}
+                </div>
+                {#if row.kind === "choose"}
+                    <PageButton
+                        testId="bot-model-change"
+                        tall
+                        on:click={() => (choosing = { keyId: ref || options?.current || "", pending: false })}
+                    >
+                        {page.mind.model.change()}
+                    </PageButton>
+                {/if}
+            </div>
+        {/if}
         {#if options.viewerIsMaker && canOpenOrbit()}
             <div class="bp-line">
                 <PageButton testId="bot-runs-on-ai-keys" tall on:click={() => openOrbitPage("/admin/you/ai-keys")}>
@@ -332,6 +401,40 @@
     .bp-radio.on {
         background: radial-gradient(circle, #fff 0 4px, #6d4aff 5px);
         box-shadow: none;
+    }
+    .bp-model {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px;
+        border-radius: 14px;
+        background: #0a0814;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+    }
+    .bp-mtx {
+        display: flex;
+        flex: 1;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+    }
+    .bp-mid {
+        font-size: 15px;
+        font-weight: 700;
+        overflow-wrap: anywhere;
+    }
+    .bp-facts {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+    .bp-fact {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 12.5px;
+        font-weight: 600;
+        color: rgba(244, 242, 250, 0.64);
     }
     .bp-m {
         margin: 0;
