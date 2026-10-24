@@ -48,6 +48,11 @@ const sentrySetSpan: ((scope: any, span: any) => void) | undefined =
 // PostHog LLM Analytics — captures $ai_trace + $ai_generation events alongside Sentry
 import { captureAiGeneration, captureAiTrace, flushPostHog } from './PostHogClient';
 
+/** Adds a provider-reported cached-token figure to a running total; stays undefined until a provider reports one. */
+function addCachedTokens(total: number | undefined, add: number | undefined): number | undefined {
+    return add === undefined ? total : (total ?? 0) + add;
+}
+
 interface CachedCredentials {
     credentials: AIProviderConfig;
     expiresAt: number;
@@ -626,6 +631,9 @@ Everything above is technical guidance. Follow your personality as defined in th
             // Generate stream with tools
             let tokensUsed = 0;
             let promptTokens = 0;
+            // Prompt tokens served from the provider's cache. Undefined until a
+            // provider reports a figure (LM Studio never does).
+            let cachedPromptTokens: number | undefined;
             let completionTokens = 0;
             let error = false;
             let streamCompleted = false;
@@ -634,6 +642,7 @@ Everything above is technical guidance. Follow your personality as defined in th
             let followUpContent = '';
             let followUpTokens = 0;
             let followUpPromptTokens = 0;
+            let followUpCachedPromptTokens: number | undefined;
             let followUpCompletionTokens = 0;
             let followUpStartTime = 0;
             let firstCallStartTime = 0;
@@ -845,6 +854,9 @@ Everything above is technical guidance. Follow your personality as defined in th
                         if (chunk.metadata?.promptTokens) {
                             promptTokens = chunk.metadata.promptTokens;
                         }
+                        if (chunk.metadata?.cachedPromptTokens !== undefined) {
+                            cachedPromptTokens = chunk.metadata.cachedPromptTokens;
+                        }
                         if (chunk.metadata?.completionTokens) {
                             completionTokens = chunk.metadata.completionTokens;
                         }
@@ -865,6 +877,7 @@ Everything above is technical guidance. Follow your personality as defined in th
                                 input: userMessageForQwen,
                                 output: firstCallContent,
                                 inputTokens: promptTokens,
+                                cachedInputTokens: cachedPromptTokens,
                                 outputTokens: completionTokens,
                                 latency: (Date.now() - firstCallStartTime) / 1000,
                                 cost: this.calculateCost(providerId, {
@@ -942,6 +955,7 @@ Everything above is technical guidance. Follow your personality as defined in th
                                     }
                                     if (retryChunk.metadata?.tokensUsed) tokensUsed += retryChunk.metadata.tokensUsed;
                                     if (retryChunk.metadata?.promptTokens) promptTokens += retryChunk.metadata.promptTokens;
+                                    cachedPromptTokens = addCachedTokens(cachedPromptTokens, retryChunk.metadata?.cachedPromptTokens);
                                     if (retryChunk.metadata?.completionTokens) completionTokens += retryChunk.metadata.completionTokens;
                                     if (retryChunk.done) {
                                         retryTruncated = !!retryChunk.metadata?.truncated;
@@ -1021,6 +1035,7 @@ Everything above is technical guidance. Follow your personality as defined in th
                         // Track token counts and start time from the previous round for telemetry restoration
                         let previousRoundTokens = 0;
                         let previousRoundPromptTokens = 0;
+                        let previousRoundCachedPromptTokens: number | undefined;
                         let previousRoundCompletionTokens = 0;
                         let previousRoundStartTime = 0;
                         let previousRoundInput = '';
@@ -1143,6 +1158,8 @@ Everything above is technical guidance. Follow your personality as defined in th
                                     promptTokens += resultChunk.metadata.promptTokens;
                                     followUpPromptTokens += resultChunk.metadata.promptTokens;
                                 }
+                                cachedPromptTokens = addCachedTokens(cachedPromptTokens, resultChunk.metadata?.cachedPromptTokens);
+                                followUpCachedPromptTokens = addCachedTokens(followUpCachedPromptTokens, resultChunk.metadata?.cachedPromptTokens);
                                 if (resultChunk.metadata?.completionTokens) {
                                     completionTokens += resultChunk.metadata.completionTokens;
                                     followUpCompletionTokens += resultChunk.metadata.completionTokens;
@@ -1232,6 +1249,7 @@ Everything above is technical guidance. Follow your personality as defined in th
                                             input: followUpMessageWithNoThink,
                                             output: followUpContent,
                                             inputTokens: followUpPromptTokens,
+                                            cachedInputTokens: followUpCachedPromptTokens,
                                             outputTokens: followUpCompletionTokens,
                                             latency: (Date.now() - followUpStartTime) / 1000,
                                             cost: this.calculateCost(providerId, {
@@ -1262,6 +1280,7 @@ Everything above is technical guidance. Follow your personality as defined in th
                                 if (followUpContent) {
                                     previousRoundTokens = followUpTokens;
                                     previousRoundPromptTokens = followUpPromptTokens;
+                                    previousRoundCachedPromptTokens = followUpCachedPromptTokens;
                                     previousRoundCompletionTokens = followUpCompletionTokens;
                                     previousRoundStartTime = followUpStartTime;
                                     previousRoundInput = followUpInput;
@@ -1269,6 +1288,7 @@ Everything above is technical guidance. Follow your personality as defined in th
                                 followUpContent = '';
                                 followUpTokens = 0;
                                 followUpPromptTokens = 0;
+                                followUpCachedPromptTokens = undefined;
                                 followUpCompletionTokens = 0;
                                 followUpError = false;
                                 // Discard this round's content — tool calls were detected,
@@ -1304,6 +1324,7 @@ Everything above is technical guidance. Follow your personality as defined in th
                             followUpContent = previousRoundContent;
                             followUpTokens = previousRoundTokens;
                             followUpPromptTokens = previousRoundPromptTokens;
+                            followUpCachedPromptTokens = previousRoundCachedPromptTokens;
                             followUpCompletionTokens = previousRoundCompletionTokens;
                             followUpStartTime = previousRoundStartTime;
                             followUpInput = previousRoundInput;
@@ -1346,6 +1367,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 let synthContent = '';
                                 let synthTokens = 0;
                                 let synthPrompt = 0;
+                                let synthCached: number | undefined;
                                 let synthCompletion = 0;
                                 const synthStartTime = Date.now();
                                 try {
@@ -1373,6 +1395,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                             promptTokens += synthChunk.metadata.promptTokens;
                                             synthPrompt += synthChunk.metadata.promptTokens;
                                         }
+                                        cachedPromptTokens = addCachedTokens(cachedPromptTokens, synthChunk.metadata?.cachedPromptTokens);
+                                        synthCached = addCachedTokens(synthCached, synthChunk.metadata?.cachedPromptTokens);
                                         if (synthChunk.metadata?.completionTokens) {
                                             completionTokens += synthChunk.metadata.completionTokens;
                                             synthCompletion += synthChunk.metadata.completionTokens;
@@ -1388,6 +1412,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     followUpInput = synthesisMsg;
                                     followUpTokens = synthTokens;
                                     followUpPromptTokens = synthPrompt;
+                                    followUpCachedPromptTokens = synthCached;
                                     followUpCompletionTokens = synthCompletion;
                                     followUpStartTime = synthStartTime;
                                     yield {content: '', done: true, metadata: lastSynthMeta};
@@ -1401,6 +1426,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     followUpContent = '';
                                     followUpTokens = 0;
                                     followUpPromptTokens = 0;
+                                    followUpCachedPromptTokens = undefined;
                                     followUpCompletionTokens = 0;
                                     followUpInput = synthesisMsg;
                                     followUpStartTime = synthStartTime;
@@ -1452,6 +1478,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                             promptTokens += retryChunk.metadata.promptTokens;
                                             followUpPromptTokens += retryChunk.metadata.promptTokens;
                                         }
+                                        cachedPromptTokens = addCachedTokens(cachedPromptTokens, retryChunk.metadata?.cachedPromptTokens);
+                                        followUpCachedPromptTokens = addCachedTokens(followUpCachedPromptTokens, retryChunk.metadata?.cachedPromptTokens);
                                         if (retryChunk.metadata?.completionTokens) {
                                             completionTokens += retryChunk.metadata.completionTokens;
                                             followUpCompletionTokens += retryChunk.metadata.completionTokens;
@@ -1564,6 +1592,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     input: followUpInput,
                                     output: followUpContent,
                                     inputTokens: followUpPromptTokens,
+                                    cachedInputTokens: followUpCachedPromptTokens,
                                     outputTokens: followUpCompletionTokens,
                                     latency: (Date.now() - followUpStartTime) / 1000,
                                     cost: this.calculateCost(providerId, {
@@ -1617,6 +1646,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     }
                     if (chunk.metadata?.promptTokens) {
                         promptTokens = chunk.metadata.promptTokens;
+                    }
+                    if (chunk.metadata?.cachedPromptTokens !== undefined) {
+                        cachedPromptTokens = chunk.metadata.cachedPromptTokens;
                     }
                     if (chunk.metadata?.completionTokens) {
                         completionTokens = chunk.metadata.completionTokens;
@@ -1693,6 +1725,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             input: userMessageForQwen,
                             output: firstCallContent,
                             inputTokens: followUpPromptTokens > 0 ? (promptTokens - followUpPromptTokens) : promptTokens,
+                            cachedInputTokens: followUpCachedPromptTokens !== undefined && cachedPromptTokens !== undefined ? cachedPromptTokens - followUpCachedPromptTokens : cachedPromptTokens,
                             outputTokens: followUpCompletionTokens > 0 ? (completionTokens - followUpCompletionTokens) : completionTokens,
                             latency: (Date.now() - firstCallStartTime) / 1000,
                             cost: this.calculateCost(providerId, {
@@ -1719,6 +1752,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             input: followUpInput,
                             output: followUpContent,
                             inputTokens: followUpPromptTokens,
+                            cachedInputTokens: followUpCachedPromptTokens,
                             outputTokens: followUpCompletionTokens,
                             latency: (Date.now() - followUpStartTime) / 1000,
                             cost: this.calculateCost(providerId, {
@@ -1746,6 +1780,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             input: message,
                             output: accumulatedContent || '',
                             inputTokens: promptTokens,
+                            cachedInputTokens: cachedPromptTokens,
                             outputTokens: completionTokens,
                             latency: generationLatency,
                             cost: this.calculateCost(providerId, {
@@ -1772,6 +1807,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     }
                 } finally {
                     // Always close Sentry span and restore scope, even if PostHog fails
+                    if (cachedPromptTokens !== undefined) {
+                        parentSpan?.setAttribute("gen_ai.usage.cache_read.input_tokens", cachedPromptTokens);
+                    }
                     parentSpan?.end();
                     sentrySetSpan?.(sentryScope, previousSpan);
                 }
