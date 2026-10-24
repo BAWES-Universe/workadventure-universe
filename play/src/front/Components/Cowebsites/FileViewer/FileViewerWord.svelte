@@ -60,7 +60,9 @@
     /** What the reader needs to look the same when it is brought back. */
     export function getView(): ViewerView | undefined {
         // Still being read: there is no place to report yet, and what was saved stays.
-        if (!rendered) return undefined;
+        if (!frameDocument) return undefined;
+        // The place to go back to has not been reached yet (the document is still being measured): it is the place.
+        if (scrollAnchor !== undefined) return { zoom: userZoom, scrollY: scrollAnchor };
         const height = area?.scrollHeight ?? 0;
         return { zoom: userZoom, scrollY: height > 0 ? area.scrollTop / height : lastPlace ?? 0 };
     }

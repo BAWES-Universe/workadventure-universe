@@ -238,7 +238,8 @@
         pdfViewer.currentScaleValue = view?.zoom !== undefined ? String(view.zoom) : "auto";
         pages.set({ page: 1, count: pdfViewer.pagesCount });
         restoreScroll();
-        placed = true;
+        // With a place to go back to, the file has its place once that is put back (see `onFirstPageRendered`).
+        if (view?.scrollY === undefined) placed = true;
     }
 
     // Brought back after being put away: the file goes back to where it was left. PDF.js moves to the first page as it
@@ -256,6 +257,7 @@
     function onFirstPageRendered(): void {
         eventBus?.off("pagerendered", onFirstPageRendered);
         putBackPlace();
+        placed = true;
     }
 
     /** What the reader needs to look the same when it is brought back. */
