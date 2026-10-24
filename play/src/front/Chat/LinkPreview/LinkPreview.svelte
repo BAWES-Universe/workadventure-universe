@@ -2,6 +2,7 @@
     import { onDestroy } from "svelte";
     import { v4 as uuid } from "uuid";
     import LL from "../../../i18n/i18n-svelte";
+    import { lowerChatSheet } from "../ChatSheetStore";
     import { coWebsites } from "../../Stores/CoWebsiteStore";
     import { SimpleCoWebsite } from "../../WebRtc/CoWebsite/SimpleCoWebsite";
     import Lightbox from "../Components/Room/Message/Lightbox.svelte";
@@ -86,6 +87,8 @@
     function openHere(url: string, allowPolicy?: string) {
         if ($playingChatVideoStore === previewId) playingChatVideoStore.set(undefined);
         try {
+            // On a phone the page shows above the chat sheet, as a chat file does, not behind it.
+            lowerChatSheet();
             coWebsites.add(new SimpleCoWebsite(new URL(url), false, allowPolicy));
         } catch (error) {
             console.error("Could not open a chat link beside the map", error);

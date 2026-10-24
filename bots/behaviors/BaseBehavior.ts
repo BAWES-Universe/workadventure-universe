@@ -1626,6 +1626,12 @@ export abstract class BaseBehavior {
             return { processed: initialProcessed, processedMessage: initialProcessedMessage, responseId: initialResponseId };
         }
 
+        // A resting bot (its key is down and its owner chose Stop replying) says one fixed line. Asking again could only
+        // bring the same line back, and the failed retries would end with no reply at all (#374).
+        if (this.aiService.isRestingLine(fullMessage)) {
+            return { processed: initialProcessed, processedMessage: initialProcessedMessage, responseId: initialResponseId };
+        }
+
         // If high repetition detected (score >= 0.85), block and regenerate (up to 3 attempts)
         // Lower threshold catches near-duplicates like "*snorts* response" vs "*grunts* response"
         let regenerationAttempts = 0;
@@ -1819,7 +1825,7 @@ export abstract class BaseBehavior {
                     `Say one short, natural line that genuinely moves the conversation forward — ` +
                     `a new thought, a question, or a fresh angle. Do NOT repeat anything you already said. ` +
                     `No emojis, no apologies for repeating.`;
-                const fallbackMessage = await this.aiService.quickGenerate(aiProviderRef, chatInstructions, fallbackPrompt);
+                const fallbackMessage = await this.aiService.quickGenerate(aiProviderRef, chatInstructions, fallbackPrompt, botId);
                 if (fallbackMessage.trim()) {
                     processedMessage = fallbackMessage.trim();
                 }
@@ -2092,7 +2098,7 @@ export abstract class BaseBehavior {
         const botConfig = this.bot?.getFullConfig();
         const providerId = botConfig?.aiProviderRef;
         if (!providerId) return { action: 'queue', message: '' };
-        return this.aiService.quickClassify(providerId, currentTask, newMessage);
+        return this.aiService.quickClassify(providerId, currentTask, newMessage, botConfig?.botId);
     }
 
     private async enqueueMessage(
@@ -2134,7 +2140,7 @@ export abstract class BaseBehavior {
         const prompt = `Current task: "${currentTask}"
 
 The person you're talking to just sent several more messages while you were still finishing a response. Acknowledge this in one short sentence, in your own voice — you've noticed and will get to them.`;
-        return this.aiService.quickGenerate(providerId, chatInstructions, prompt);
+        return this.aiService.quickGenerate(providerId, chatInstructions, prompt, botConfig?.botId);
     }
 
     /**

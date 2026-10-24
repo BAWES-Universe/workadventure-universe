@@ -1717,7 +1717,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         // Get UUID (REQUIRED by Admin API) - should be available from InitSpaceUsersMessage or addSpaceUserMessage
         const userUuid = this.userIdToUuid.get(senderId);
         if (!userUuid) {
-            console.warn(`[PatrolBehavior] UUID not found for user ${senderId} (${userName}). This should not happen if InitSpaceUsersMessage is working correctly.`);
+            console.warn(`[PatrolBehavior] UUID not found for user ${senderId}. This should not happen if InitSpaceUsersMessage is working correctly.`);
             // Don't proceed without UUID - conversation cannot be stored correctly
             return;
         }
