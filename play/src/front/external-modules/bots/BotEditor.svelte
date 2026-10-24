@@ -75,6 +75,8 @@
     const pendingSaves = new Map<SaveKind, { timeout: ReturnType<typeof setTimeout>; save: () => void }>();
     let lastSavedBotConfig: string | null = null;
     let lastSavedAIConfig: string | null = null;
+    // Counts the bots shown (back to the list counts too), so a save can tell the page's record above was reset since
+    let shownBotCount = 0;
 
     /** What the "ai" save sends besides the behavior: the bot's mind, chat instructions, Patience and description */
     function aiConfigOf(bot: BotData): string {
@@ -147,7 +149,10 @@
 
         // Leaving a bot (another bot, or back to the list) sends its waiting saves now. Left waiting, coming back to it
         // within the second would take its edit as already saved and drop it, or a save would cross into another bot.
-        if (previousBot && previousBot.id !== bot?.id) flushSaves();
+        if (previousBot?.id !== bot?.id) {
+            shownBotCount++;
+            if (previousBot) flushSaves();
+        }
 
         // Initialize lastSaved values when bot first selected or changes
         if (bot && (!previousBot || previousBot.id !== bot.id)) {
@@ -228,12 +233,16 @@
                         aiProviderRef: bot.aiProviderRef,
                     });
                 }
-                // What is saved for this bot, if its save runs after another bot is picked (the page's record
-                // is then the other bot's)
+                // What is saved for this bot, if its save runs after the page left it: the page's record is then
+                // another bot's, or this bot's reset to what it showed on coming back (edits not saved yet)
                 const savedAIOnSchedule = lastSavedAIConfig;
-                const savedAIConfig = () => (selectedBot?.id === bot.id ? lastSavedAIConfig : savedAIOnSchedule);
+                const shownBotCountOnSchedule = shownBotCount;
+                const savedAIConfig = () =>
+                    shownBotCount === shownBotCountOnSchedule ? lastSavedAIConfig : savedAIOnSchedule;
                 scheduleSave("ai", () => {
                     void (async () => {
+                        // The provider saved when the request went out: what a refusal puts back
+                        let savedRefWhenSent: string | undefined | null = null;
                         try {
                             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                                 console.log("[BotEditor] Sending AI config update to API:", {
@@ -250,6 +259,7 @@
                                 // this one stored. Sent with every save, a page left open would put back a provider
                                 // Orbit has since moved the bot off (a key that was pulled).
                                 const savedRef = savedProviderRef(savedAIConfig());
+                                savedRefWhenSent = savedRef;
                                 const providerChanged = savedRef === null || bot.aiProviderRef !== savedRef;
                                 const currentBot = get(botPreviewsStore).get(bot.id) ?? bot;
                                 const behaviorType =
@@ -279,7 +289,7 @@
                             if ((e as Error & { status?: number })?.status === 400) {
                                 error = (e as Error).message;
                                 refusedSave = true;
-                                const savedRef = savedProviderRef(savedAIConfig());
+                                const savedRef = savedRefWhenSent;
                                 const currentBot = get(botPreviewsStore).get(bot.id);
                                 if (
                                     savedRef !== null &&
