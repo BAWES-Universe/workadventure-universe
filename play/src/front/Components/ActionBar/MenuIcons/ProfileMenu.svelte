@@ -67,12 +67,10 @@
     let userName = gameManager.getPlayerName() || "";
     let profileButton: HTMLButtonElement;
 
-    // Escape closes the open menu and puts the focus back on its button, so the keyboard picks up where it was.
     // Only where this browser can show notifications at all (an iPhone tab can, from the Home Screen).
     const canShowNotifications = typeof Notification !== "undefined" || pushAvailability() === "iphone-tab";
-    // The browser's answer can change in its own settings: read it again each time the menu opens.
-    onMount(() => updateThisDeviceState());
 
+    // Escape closes the open menu and puts the focus back on its button, so the keyboard picks up where it was.
     function closeOnEscape(event: KeyboardEvent) {
         if (event.key !== "Escape" || $openedMenuStore !== "profileMenu") return;
         event.stopPropagation();
@@ -144,6 +142,8 @@
     const unsubscribeOpenedMenuStore = openedMenuStore.subscribe((menuState) => {
         if (checkInterval) clearInterval(checkInterval);
         if (menuState === "profileMenu") {
+            // The browser's notification answer can change in its own settings: read it again each time the menu opens
+            updateThisDeviceState();
             // Menu opened - start checking
             checkPersonalDesk();
             // Start checking periodically

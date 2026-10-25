@@ -111,9 +111,9 @@ function sameKey(subscription: PushSubscription, key: Uint8Array): boolean {
  * a guest, or a server that sends none (no Orbit, or no keys there). Notifications then only come while it is open.
  */
 export async function subscribeThisDevice(): Promise<"saved" | "notSetUp" | "failed"> {
-    if (pushAvailability() !== "ready" || !localUserStore.isLogged()) return "notSetUp";
+    if (pushAvailability() !== "ready" || !localUserStore.isLogged()) return notInOrbit();
     const publicKey = await botApiService.getPushPublicKey();
-    if (publicKey === null) return "notSetUp";
+    if (publicKey === null) return notInOrbit();
     if (!publicKey) return "failed";
     const key = keyBytes(publicKey);
     const registration = await navigator.serviceWorker.register(SERVICE_WORKER_URL);
@@ -130,6 +130,12 @@ export async function subscribeThisDevice(): Promise<"saved" | "notSetUp" | "fai
     if (id === null) return "failed";
     setThisDeviceId(id);
     return "saved";
+}
+
+/** Nothing is saved in Orbit for this browser now: an id kept from an earlier sign-in no longer stands for it. */
+function notInOrbit(): "notSetUp" {
+    setThisDeviceId(undefined);
+    return "notSetUp";
 }
 
 /**

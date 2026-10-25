@@ -76,6 +76,7 @@
                     return;
                 }
                 settings = overview.settings;
+                confirmed = overview.settings;
                 devices = overview.devices;
                 pushSetUp = overview.publicKey !== null;
             })
@@ -150,17 +151,18 @@
         if (overview) devices = overview.devices;
     }
 
-    // Shown at once, and put back if Orbit refuses it. Only the latest save may write back.
+    // Shown at once, and put back to what Orbit last confirmed if it refuses. Only the latest save may write back.
     let latestSave = 0;
+    let confirmed: PushSettings | undefined;
     async function save(change: Partial<PushSettings>) {
         if (!settings) return;
         const request = ++latestSave;
-        const before = settings;
-        settings = { ...before, ...change };
+        settings = { ...settings, ...change };
         saveFailed = false;
         const saved = await botApiService.updatePushSettings(change);
-        if (request !== latestSave) return;
-        show(saved ?? before);
+        if (saved) confirmed = saved;
+        if (request !== latestSave || !confirmed) return;
+        show(confirmed);
         saveFailed = !saved;
     }
 
