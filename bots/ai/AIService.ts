@@ -84,6 +84,10 @@ const WORLD_PLACE_RULES = `**LOCATION & SPACE QUESTIONS (Answer naturally, like 
 - Only offer to lead when explicitly asked - don't say "Follow me!" when just describing what's available
 
 `;
+/** Tool follow-up navigation lines: on the map the bot leads, in a direct message it can't. */
+const WORLD_NAVIGATION_FOLLOW_UP = `- For "take me to X" questions: Just say "Follow me!" or "I'll take you there" - do NOT say the location
+- For navigation: Just respond naturally (e.g., "Follow me!") - do NOT prefix with location`;
+const DM_NAVIGATION_FOLLOW_UP = `- For "take me to X" questions: You can't walk anywhere from a direct message. Invite them to come find you in your room by name instead`;
 /** In a direct message the person is not next to the bot, so it cannot show them around. */
 const DM_PLACE_RULES = `**DIRECT MESSAGE (You are chatting by direct message, not on the map):**
 - This person is messaging you directly. They may be anywhere, or not in the game at all.
@@ -1263,7 +1267,7 @@ Everything above is technical guidance. Follow your personality as defined in th
                             const previousResponseSection = previousRoundContent
                                 ? `You previously responded with:\n"${previousRoundContent}"`
                                 : `You are continuing after gathering more data. The user's original question was: "${message}"`;
-                            const followUpMessage = `${previousResponseSection}\n\nContinue from there. Do NOT restate your intent — you already said the above.\nYou just received these new tool results:\n\n${toolResultsMessage}\n\nCRITICAL RESPONSE RULES:\n- Continue naturally — do NOT re-introduce yourself, re-greet, apologize, or repeat anything you already said\n- This is the same conversation turn — just keep answering\n- Use ONLY information from tool results above - never invent or make up details\n- **CRITICAL: Do NOT repeat location (universe/world/room) if you already said it in this conversation - check "Recent conversation" first!**\n- Only mention location if this is the FIRST time they ask "where are we" - otherwise just answer the question directly\n- For "what areas" questions: Just list the areas (e.g., "There's a Social Area and Meeting Room here") - do NOT say the location again\n- For "take me to X" questions: Just say "Follow me!" or "I'll take you there" - do NOT say the location\n- For navigation: Just respond naturally (e.g., "Follow me!") - do NOT prefix with location\n- Use actual names from results - never placeholders or made-up text\n- Be conversational and natural - avoid repetitive responses`;
+                            const followUpMessage = `${previousResponseSection}\n\nContinue from there. Do NOT restate your intent — you already said the above.\nYou just received these new tool results:\n\n${toolResultsMessage}\n\nCRITICAL RESPONSE RULES:\n- Continue naturally — do NOT re-introduce yourself, re-greet, apologize, or repeat anything you already said\n- This is the same conversation turn — just keep answering\n- Use ONLY information from tool results above - never invent or make up details\n- **CRITICAL: Do NOT repeat location (universe/world/room) if you already said it in this conversation - check "Recent conversation" first!**\n- Only mention location if this is the FIRST time they ask "where are we" - otherwise just answer the question directly\n- For "what areas" questions: Just list the areas (e.g., "There's a Social Area and Meeting Room here") - do NOT say the location again\n${channel === 'dm' ? DM_NAVIGATION_FOLLOW_UP : WORLD_NAVIGATION_FOLLOW_UP}\n- Use actual names from results - never placeholders or made-up text\n- Be conversational and natural - avoid repetitive responses`;
 
                             // Add /no_think for Qwen models in follow-up message
                             const followUpMessageWithNoThink = isQwenModel 

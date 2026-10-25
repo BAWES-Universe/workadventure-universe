@@ -68,6 +68,11 @@ async function* plainAnswer() {
     yield { content: "", done: true, metadata: { tokensUsed: 3, promptTokens: 2, completionTokens: 1, latency: 5, error: false, truncated: false } };
 }
 
+async function* toolCallFirst() {
+    yield { content: "", done: false, toolCalls: [{ id: "call_1", name: "get_bot_position", arguments: "{}" }] };
+    yield { content: "", done: true, metadata: { tokensUsed: 10, latency: 20, error: false, truncated: false } };
+}
+
 const ROOM = "https://play.example/@/bawes/hq/lobby";
 
 function buildMocks() {
@@ -103,6 +108,18 @@ async function systemPromptFor(channel: "world" | "dm", homeRoomUrl?: string) {
     return { prompt: String(mockGenerateStream.mock.calls[0][1]), mocks };
 }
 
+async function toolFollowUpFor(channel: "world" | "dm") {
+    const { AIService } = await import("../ai/AIService");
+    const mocks = buildMocks();
+    mockGenerateStream.mockImplementationOnce(toolCallFirst).mockImplementationOnce(plainAnswer);
+    const service = new AIService(mocks.conversationMemory, mocks.adminApiService, "http://admin.local", mocks.mapDataService);
+    for await (const _chunk of service.generateBotResponseStream(
+        "bot-1", -1, "take me to the Library", "You are Friend.", "test-provider", "matrix-dm", "", undefined, mocks.adminApiService,
+        undefined, undefined, channel, undefined, ROOM
+    )) { /* drain */ }
+    return String(mockGenerateStream.mock.calls[1][2]);
+}
+
 describe("AIService: where a bot lives, in a direct message", () => {
     beforeEach(() => {
         vi.clearAllMocks();
@@ -136,5 +153,17 @@ describe("AIService: where a bot lives, in a direct message", () => {
         const { prompt, mocks } = await systemPromptFor("world", ROOM);
         expect(mocks.adminApiService.getRoomMetadata).not.toHaveBeenCalled();
         expect(prompt).not.toContain("- Room: Lobby");
+    });
+
+    it("never tells a direct message to say 'Follow me!' after a tool result", async () => {
+        const followUp = await toolFollowUpFor("dm");
+        expect(followUp).toContain("You just received these new tool results");
+        expect(followUp).not.toContain("Follow me!");
+        expect(followUp).toContain("Invite them to come find you in your room by name");
+    });
+
+    it("keeps 'Follow me!' after a tool result on the map", async () => {
+        const followUp = await toolFollowUpFor("world");
+        expect(followUp).toContain("Follow me!");
     });
 });
