@@ -30,7 +30,16 @@ describe('buildSystemPrompt layout', () => {
         expect(at(MAP)).toBeGreaterThan(at('FINAL REMINDER - YOUR PERSONALITY'));
         expect(at('\n\nConversation Context:')).toBeGreaterThan(at(MAP));
         expect(at("**TODAY'S DATE:**")).toBeGreaterThan(at('\nRecent conversation:'));
-        expect(p.trimEnd().endsWith('instead of acting like they just occurred.')).toBe(true);
+        expect(at('**BEFORE YOU ANSWER:**')).toBeGreaterThan(at("**TODAY'S DATE:**"));
+    });
+
+    it('ends with the personality and emotion-block reminder, after the memory and the date', () => {
+        const withMemory = buildSystemPrompt({ chatInstructions: INSTRUCTIONS, mapContextInfo: MAP, conversationContext: ALICE, now: NOW });
+        const firstMessage = buildSystemPrompt({ chatInstructions: INSTRUCTIONS, mapContextInfo: MAP, conversationContext: '', now: NOW });
+        for (const p of [withMemory, firstMessage]) {
+            expect(p.trimEnd().endsWith('end every reply with the [EMOTION_UPDATE] block exactly as described in the rules above.')).toBe(true);
+            expect(p.indexOf('**BEFORE YOU ANSWER:**')).toBeGreaterThan(p.indexOf("**TODAY'S DATE:**"));
+        }
     });
 
     it('shares everything down to the memory between two people in the same room', () => {

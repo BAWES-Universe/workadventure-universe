@@ -145,6 +145,13 @@ Rules for emotion analysis:
 Everything above is technical guidance. Follow your personality as defined in the instructions above. Your tone and style should reflect your character.
 `;
 
+/**
+ * Short fixed closing lines. The emotion block format and the personality
+ * reminder sit inside the cached rules near the top; models weight the end of
+ * a prompt most, so this keeps both in view after the memory and date (#1335).
+ */
+const CLOSING_REMINDER = `\n\n**BEFORE YOU ANSWER:** Stay in the personality from your instructions at the top, and end every reply with the [EMOTION_UPDATE] block exactly as described in the rules above.`;
+
 export interface SystemPromptParts {
     /** The bot's chat instructions from Orbit; empty falls back to a plain default. */
     chatInstructions?: string;
@@ -208,5 +215,6 @@ export function buildSystemPrompt(parts: SystemPromptParts): string {
         systemPrompt += `\n\nConversation Context:\n${conversationContext}`;
     }
     systemPrompt += buildTodayLine(now);
+    systemPrompt += CLOSING_REMINDER;
     return systemPrompt;
 }
