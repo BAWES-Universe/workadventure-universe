@@ -123,6 +123,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
     private roomMembers = new Map<string, Set<string>>();
     /** Bots Orbit last said don't exist: how many times in a row, and when that was last counted. */
     private botNotFound = new Map<string, { inARow: number; at: number }>();
+    /** When each chat last got a live answer: a message left there while the bot rested, older than that, is passed. */
+    private answeredLive = new Map<string, number>();
     private handledOrder: string[] = [];
     /** Waits between join attempts when the homeserver refuses or times out. */
     private joinRetryDelaysMs = [1000, 4000];
@@ -569,7 +571,12 @@ export class MatrixDmBridge implements MatrixEventHandler {
             if (typing) await this.client.setTyping(botUserId, event.room_id, false).catch(() => undefined);
         }
         // The bot is answering again, so anyone who wrote while it rested gets their answer now.
-        if (answered && !catchUp) void this.drainIfWaiting(botId).catch(() => undefined);
+        if (answered && !catchUp) {
+            this.answeredLive.delete(event.room_id);
+            this.answeredLive.set(event.room_id, event.origin_server_ts ?? Date.now());
+            if (this.answeredLive.size > NOTE_TIMES_MAX) this.answeredLive.delete(this.answeredLive.keys().next().value!);
+            void this.drainIfWaiting(botId).catch(() => undefined);
+        }
     }
 
     /**
@@ -741,6 +748,12 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 if (roomBot !== botId) {
                     // The person left (and the bot with them) or the bot was deleted: nobody is there to answer.
                     console.info(`[MatrixDmBridge] Dropping a waiting message for bot ${botId}: the chat in ${event.room_id} is closed`);
+                    continue;
+                }
+                if ((event.origin_server_ts ?? 0) <= (this.answeredLive.get(event.room_id) ?? -1)) {
+                    // The person wrote again since and got an answer: only the newest message is answered, as when
+                    // nothing waited, and the older one never comes after it.
+                    console.info(`[MatrixDmBridge] Passing a waiting message for bot ${botId}: a newer one in ${event.room_id} was answered`);
                     continue;
                 }
                 await this.handleMessage(event, true).catch((error) =>

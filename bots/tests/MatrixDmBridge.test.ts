@@ -11,6 +11,7 @@ const config = { homeserverUrl: 'http://hs', domain: 'matrix.test', asToken: 'as
 const BOT = '0b7c1d2e-1111-4222-8333-944455556666';
 const BOT_USER = `@bot_${BOT}:matrix.test`;
 const ALICE = '@alice:matrix.test';
+const BOB = '@bob:matrix.test';
 const ROOM = '!dm:matrix.test';
 
 // Loosely typed so tests can reach the vi.fn helpers on each method.
@@ -485,13 +486,32 @@ describe('MatrixDmBridge', () => {
     });
 
     it('answers waiting messages as soon as someone else gets an answer', async () => {
+        const OTHER_ROOM = '!dm2:matrix.test';
+        client.getJoinedMembers.mockImplementation(async (_bot: string, room: string) => (room === OTHER_ROOM ? [BOB, BOT_USER] : [ALICE, BOT_USER]));
+        deps.checkAccess.mockImplementation(async (_bot: string, sender: string) => ({
+            allowed: true,
+            reason: null,
+            user: sender === BOB ? { uuid: 'uuid-bob', name: 'Bob', isGuest: false } : { uuid: 'uuid-alice', name: 'Alice', isGuest: false },
+        }));
+        await bridge.onEvent(invite());
+        await bridge.onEvent(invite({ room_id: OTHER_ROOM, sender: BOB, event_id: '$i2' }));
+        deps.getBotConfig.mockResolvedValue(resting as never);
+        await bridge.onEvent(message('left while resting'));
+        deps.getBotConfig.mockResolvedValue({ ...resting, enabled: true } as never);
+        await bridge.onEvent({ ...message('now?', BOB), room_id: OTHER_ROOM });
+        await vi.waitFor(() => expect(deps.reply).toHaveBeenCalledTimes(2));
+        expect(deps.reply.mock.calls.map((call: any[]) => call[2])).toEqual(['now?', 'left while resting']);
+    });
+
+    it('never answers a waiting message after a newer one from the same chat', async () => {
         await bridge.onEvent(invite());
         deps.getBotConfig.mockResolvedValue(resting as never);
         await bridge.onEvent(message('left while resting'));
         deps.getBotConfig.mockResolvedValue({ ...resting, enabled: true } as never);
         await bridge.onEvent(message('now?'));
-        await vi.waitFor(() => expect(deps.reply).toHaveBeenCalledTimes(2));
-        expect(deps.reply.mock.calls.map((call: any[]) => call[2])).toEqual(['now?', 'left while resting']);
+        await bridge.checkWaiting();
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(deps.reply.mock.calls.map((call: any[]) => call[2])).toEqual(['now?']);
     });
 
     it('keeps waiting messages in the shared store when there is one', async () => {
@@ -1305,6 +1325,41 @@ describe('DmReplyService history', () => {
         expect(await (service as any).replyNow(BOT, person, 'where is the library?', [], {})).toEqual({ text: '', media: [], failed: true });
         const history = memory.getMemory(BOT, service.playerIdFor(ALICE))!.conversationHistory;
         expect(history.map((entry) => entry.sender)).toEqual(['person']);
+    });
+
+    it('drops media a failed turn made, so it never rides along with the next answer', async () => {
+        const { DmReplyService } = await import('../server/DmReplyService');
+        const { PersistentMemory } = await import('../memory/PersistentMemory');
+        const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
+        const memory = new PersistentMemory({});
+        const picture = { url: 'https://cdn.test/map.png', mediaType: 'image' as const, mimeType: 'image/png', createdAt: Date.now(), retryCount: 0 };
+        let turn = 0;
+        const stream = vi.fn(async function* () {
+            turn++;
+            if (turn === 1) {
+                // A tool made a picture, then the provider broke off.
+                memory.getMemory(BOT, service.playerIdFor(ALICE))!.pendingMedia = [picture];
+                yield { content: 'Here is the', done: false };
+                yield { content: '', done: true, metadata: { tokensUsed: 0, latency: 5, error: true } };
+                return;
+            }
+            yield { content: 'Hello Alice!', done: true, metadata: { tokensUsed: 0, latency: 5 } };
+        });
+        Object.assign(service, {
+            playerIds: new Map(),
+            nextPlayerId: -1,
+            loadedBots: new Set([BOT]),
+            botManager: { getBot: () => null },
+            getBotConfig: async () => ({ botId: BOT, name: 'Guide', aiProviderRef: 'p' }),
+            aiService: { generateBotResponseStream: stream },
+            conversationMemory: memory,
+            conversationStorage: { startConversation: vi.fn(), addMessage: vi.fn(async () => undefined) },
+        });
+        const person = { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false };
+        expect(await (service as any).replyNow(BOT, person, 'show me the map', [], {})).toEqual({ text: '', media: [], failed: true });
+        const next = await (service as any).replyNow(BOT, person, 'hi', [], {});
+        expect(next.text).toBe('Hello Alice!');
+        expect(next.media).toEqual([]);
     });
 
     it('adds no room link to a reply that does not name the room', async () => {
