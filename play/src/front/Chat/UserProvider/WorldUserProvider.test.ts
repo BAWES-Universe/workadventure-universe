@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { countPeople, countPeopleAndBots } from "./WorldUserProvider";
+import { countPeople, countPeopleAndBots, countPeopleElsewhere } from "./WorldUserProvider";
 
 describe("countPeople", () => {
     it("counts each tab of one account (clones) as a person", () => {
@@ -40,5 +40,21 @@ describe("countPeopleAndBots", () => {
 
     it("is all bots when only bots are there", () => {
         expect(countPeopleAndBots([{ isBot: true }, { isBot: true }])).toEqual({ people: 0, bots: 2 });
+    });
+});
+
+describe("countPeopleElsewhere", () => {
+    it("counts the people in this world's other rooms, bots and this room left out", () => {
+        const usersByRoom = new Map<string | undefined, { users: { isBot?: boolean }[] }>([
+            ["hq", { users: [{}, {}, { isBot: true }] }],
+            ["cafe", { users: [{}, {}, {}, { isBot: true }, { isBot: true }, { isBot: true }, { isBot: true }] }],
+            ["garden", { users: [{ isBot: true }] }],
+            [undefined, { users: [{}] }],
+        ]);
+        expect(countPeopleElsewhere(usersByRoom, "hq")).toBe(3);
+    });
+
+    it("is 0 when only bots are elsewhere", () => {
+        expect(countPeopleElsewhere(new Map([["lab", { users: [{ isBot: true }] }]]), "hq")).toBe(0);
     });
 });
