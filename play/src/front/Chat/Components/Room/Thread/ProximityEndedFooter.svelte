@@ -1,6 +1,6 @@
 <script lang="ts">
     import { onDestroy } from "svelte";
-    import { get, readable } from "svelte/store";
+    import { derived, get, readable } from "svelte/store";
     import LL from "../../../../../i18n/i18n-svelte";
     import { gameManager } from "../../../../Phaser/Game/GameManager";
     import type { ChatMessage } from "../../../Connection/ChatConnection";
@@ -18,6 +18,9 @@
     import { localUserStore } from "../../../../Connection/LocalUserStore";
     import { blackListManager } from "../../../../WebRtc/BlackListManager";
     import { isBotUser } from "../../../UserProvider/ChatUserMapper";
+    import { botIdFromChatId } from "../../../Bots/BotChatStatus";
+    import { botDmAccessCache } from "../../../Bots/BotStatusStore";
+    import { openDirectChatRoom } from "../../../Utils";
     import {
         IconCheck,
         IconCopy,
@@ -151,7 +154,8 @@
 
     // "You were with": the signed-in people of this chat (only they have a chat id), each with Add friend unless you
     // are friends already or asked. How most friendships start: you met, so you add. Friends can be rung back.
-    // Bots are left out, as in People and on the map card: they can't be friends or come over (Walk to stays).
+    // Bots are left out, as in People and on the map card: they can't be friends or come over (Walk to stays). A bot
+    // you may message gets its own row with Message instead (below).
     $: metPeople = ((): { uuid: string; name: string }[] => {
         if (!$friendsEnabledStore) return [];
         const me = localUserStore.getLocalUser()?.uuid;
@@ -165,6 +169,27 @@
         });
         return people;
     })();
+    // The bots of this chat you may message: Message only once the owner's rule says yes, as on People and the map
+    // card, so nobody refused sees a button that can't work.
+    $: metBots = ((): { botId: string; chatID: string; name: string }[] => {
+        const bots: { botId: string; chatID: string; name: string }[] = [];
+        session.participantIds.forEach((spaceUserId, index) => {
+            const user = $worldUsers?.get(spaceUserId);
+            const botId = user && isBotUser(user) ? botIdFromChatId(user.chatID) : undefined;
+            if (!user?.chatID || !botId || bots.some((bot) => bot.botId === botId)) return;
+            bots.push({ botId, chatID: user.chatID, name: user.name || session.participants[index] || "" });
+        });
+        return bots;
+    })();
+    $: messageableBots = derived(
+        metBots.map((bot) => botDmAccessCache.store(bot.botId)),
+        (allowed) => metBots.filter((_, index) => allowed[index])
+    );
+    function messageBot(chatID: string) {
+        analyticsClient.openedChat();
+        openDirectChatRoom(chatID).catch((e) => console.error(e));
+    }
+
     let adding = new Set<string>();
     async function addFriend(person: { uuid: string; name: string }) {
         adding = new Set(adding).add(person.uuid);
@@ -196,9 +221,26 @@
         </div>
     {/if}
     <p class="m-0 text-xs text-white/60">{$LL.chat.session.endedFooter()}</p>
-    {#if metPeople.length > 0}
+    {#if metPeople.length > 0 || $messageableBots.length > 0}
         <div class="u-glass flex flex-col gap-1 rounded-[14px] px-3 py-2" data-testid="proximityMetPeople">
             <span class="u-eyebrow">{$LL.chat.session.youWereWith()}</span>
+            {#each $messageableBots as bot (bot.botId)}
+                <div class="flex min-h-9 items-center gap-2">
+                    <span class="flex min-w-0 flex-auto items-center text-sm font-bold">
+                        <span class="truncate">{bot.name}</span>
+                    </span>
+                    <button
+                        type="button"
+                        class="u-cta-secondary m-0 flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3 text-xs font-bold text-white"
+                        aria-label={$LL.chat.userList.messageUser({ userName: bot.name })}
+                        data-testid="proximityMessageBot"
+                        on:click={() => messageBot(bot.chatID)}
+                    >
+                        <IconMessage font-size="14" />
+                        {$LL.chat.userList.message()}
+                    </button>
+                </div>
+            {/each}
             {#each metPeople as person (person.uuid)}
                 {@const relationship = $relationshipsStore.get(person.uuid) ?? "none"}
                 <div class="flex min-h-9 items-center gap-2">

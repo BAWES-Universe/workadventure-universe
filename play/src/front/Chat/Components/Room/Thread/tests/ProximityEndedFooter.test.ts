@@ -31,6 +31,16 @@ vi.mock("../../../../Stores/FriendsStore", async () => {
     return { friendsEnabledStore: store(true), relationshipsStore: store(new Map([["uuid-sara", "friends"]])) };
 });
 vi.mock("../../../UserList/FriendActions", () => ({ runFriendAction: friendsHolder.runFriendAction }));
+// Whether you may message a bot: the owner's rule, as Orbit answers it.
+const botsHolder = vi.hoisted(() => ({
+    allowed: new Set<string>(),
+    openDirectChatRoom: vi.fn(() => Promise.resolve()),
+}));
+vi.mock("../../../../Bots/BotStatusStore", async () => {
+    const { readable: store } = await import("svelte/store");
+    return { botDmAccessCache: { store: (botId: string) => store(botsHolder.allowed.has(botId)) } };
+});
+vi.mock("../../../../Utils", () => ({ openDirectChatRoom: botsHolder.openDirectChatRoom }));
 vi.mock("../../../../../../i18n/i18n-svelte", () => {
     const fn: unknown = new Proxy(() => "x", { get: () => fn, apply: () => "x" });
     return { default: readable(fn), LL: readable(fn) };
@@ -66,6 +76,8 @@ describe("ProximityEndedFooter", () => {
         document.body.innerHTML = "";
         sceneHolder.scene = undefined;
         gameSceneIsLoadedStore.set(false);
+        botsHolder.allowed.clear();
+        botsHolder.openDirectChatRoom.mockClear();
     });
 
     it("offers the way back once the new map has loaded, when it first showed during the swap", async () => {
@@ -135,7 +147,7 @@ describe("ProximityEndedFooter", () => {
                         {
                             uuid: "bot-7",
                             name: "Bot",
-                            chatID: "@bot_7:chat",
+                            chatID: "@bot_7:chat.example.test",
                             tags: ["bot"],
                             playUri: "https://play.example.test/room",
                         },
@@ -165,6 +177,58 @@ describe("ProximityEndedFooter", () => {
         expect(met?.textContent).toContain("Noura");
         expect(met?.textContent).not.toContain("Bot");
         expect(target.querySelectorAll('[data-testid="proximityAddFriend"]')).toHaveLength(1);
+        expect(target.querySelector('[data-kind="walk"]')).not.toBeNull();
+    });
+
+    function botScene() {
+        sceneHolder.scene = {
+            allUsersInWorldStore: readable(
+                new Map([
+                    [
+                        "space-bot",
+                        {
+                            uuid: "bot-7",
+                            name: "Bot",
+                            chatID: "@bot_7:chat.example.test",
+                            tags: ["bot"],
+                            playUri: "https://play.example.test/room",
+                        },
+                    ],
+                ])
+            ),
+            roomUrl: "https://play.example.test/room",
+            room: { isChatOnlineListEnabled: true, isChatDisconnectedListEnabled: false },
+            userProviderMerger: Promise.resolve({ usersByRoomStore: readable(new Map()) }),
+        };
+    }
+
+    it("offers Message for a bot you may message, which opens your direct messages with it", async () => {
+        botsHolder.allowed.add("7");
+        botScene();
+        const target = document.createElement("div");
+        document.body.append(target);
+        component = new ProximityEndedFooter({ target, props: { session: endedWithBot } });
+        await tick();
+
+        const met = target.querySelector('[data-testid="proximityMetPeople"]');
+        expect(met?.textContent).toContain("Bot");
+        expect(target.querySelector('[data-testid="proximityAddFriend"]')).toBeNull();
+        expect(target.querySelector('[data-testid="proximityInvite"]')).toBeNull();
+        const message = target.querySelector<HTMLButtonElement>('[data-testid="proximityMessageBot"]');
+        expect(message).not.toBeNull();
+        message?.click();
+        expect(botsHolder.openDirectChatRoom).toHaveBeenCalledWith("@bot_7:chat.example.test");
+    });
+
+    it("lists no bot you may not message", async () => {
+        botScene();
+        const target = document.createElement("div");
+        document.body.append(target);
+        component = new ProximityEndedFooter({ target, props: { session: endedWithBot } });
+        await tick();
+
+        expect(target.querySelector('[data-testid="proximityMetPeople"]')).toBeNull();
+        expect(target.querySelector('[data-testid="proximityMessageBot"]')).toBeNull();
         expect(target.querySelector('[data-kind="walk"]')).not.toBeNull();
     });
 
