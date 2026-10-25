@@ -11,6 +11,7 @@ import { openChat } from "../Chat/openChat";
 import { gameSceneIsLoadedStore } from "../Stores/GameSceneStore";
 import { waitForStoreValue } from "../Stores/Utils/waitForStoreValue";
 import type { NotificationWA } from "./Notification";
+import { findChatRoom } from "./findChatRoom";
 
 type SelectedRoomStore = {
     subscribe: (this: void, run: Subscriber<ChatRoom | undefined>) => Unsubscriber;
@@ -80,8 +81,7 @@ class NotificationManager {
             const liveScene = gameManager.tryGetCurrentGameScene();
             room = liveScene?.hasProximityChatRoom ? liveScene.proximityChatRoom : undefined;
         } else {
-            const chatConnection = await gameManager.getChatConnection();
-            room = chatConnection.getRoomByID(chatRoomId);
+            room = await findChatRoom(await gameManager.getChatConnection(), chatRoomId);
         }
         if (room) {
             this.selectedRoomStore.set(room);
