@@ -5,6 +5,7 @@ import type { StateEvents } from "matrix-js-sdk";
 import type { RoomConnection } from "../../Connection/RoomConnection";
 import type { PictureStore } from "../../Stores/PictureStore";
 import type { HeldRole } from "../Roles/WorldRoles";
+import type { ChatPusher } from "../../Notification/Push/PushChat";
 
 export type memberTypingInformation = { id: string; name: string | null; pictureStore: PictureStore };
 /**
@@ -276,6 +277,8 @@ export interface ChatConnectionInterface {
     /** People you blocked in chat: their messages are hidden on every device. */
     ignoredUsers: Readable<string[]>;
     setUserIgnored(userChatId: string, ignored: boolean): Promise<void>;
+    /** Sends this account's notifications for one device to a push gateway while Universe is closed (#863). */
+    setPusher(pusher: ChatPusher): Promise<void>;
 }
 
 export type Connection = Pick<RoomConnection, "queryChatMembers" | "emitPlayerChatID" | "emitBanPlayerMessage">;

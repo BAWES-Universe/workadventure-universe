@@ -36,6 +36,10 @@ export class VoidChatConnection implements ChatConnectionInterface {
         return Promise.resolve();
     }
 
+    setPusher(): Promise<void> {
+        return Promise.resolve();
+    }
+
     createRoom(roomOptions: CreateRoomOptions): Promise<{ room_id: string }> {
         throw new Error("VoidChatConnection: createRoom is not implemented.");
     }

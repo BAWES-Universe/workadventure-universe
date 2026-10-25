@@ -54,6 +54,7 @@ import { MATRIX_ADMIN_USER, MATRIX_DOMAIN } from "../../../Enum/EnvironmentVaria
 import { currentPlayerWokaLayersStore, currentPlayerWokaStore } from "../../../Stores/CurrentPlayerWokaStore";
 import { MatrixRateLimiter } from "../../Services/MatrixRateLimiter";
 import { ChatsStillLoadingError } from "../ChatsStillLoadingError";
+import type { ChatPusher } from "../../../Notification/Push/PushChat";
 import { MatrixChatRoom } from "./MatrixChatRoom";
 import type { MatrixSecurity } from "./MatrixSecurity";
 import { matrixSecurity as defaultMatrixSecurity } from "./MatrixSecurity";
@@ -1379,6 +1380,13 @@ export class MatrixChatConnection implements ChatConnectionInterface {
             : current.filter((userId) => userId !== userChatId);
         await this.client.setIgnoredUsers(next);
         this._ignoredUsers.set(next);
+    }
+
+    async setPusher(pusher: ChatPusher): Promise<void> {
+        if (!this.client) throw new Error(CLIENT_NOT_INITIALIZED_ERROR_MSG);
+        // Guests have no account to send notifications for
+        if (this.client.isGuest()) return;
+        await this.client.setPusher(pusher);
     }
 
     async searchChatUsers(searchText: string, limit = 20) {

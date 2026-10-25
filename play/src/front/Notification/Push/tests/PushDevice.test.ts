@@ -184,3 +184,21 @@ describe("saving this device", () => {
         vi.unstubAllGlobals();
     });
 });
+
+describe("signing out", () => {
+    it("takes this browser out of Your devices and drops its subscription", async () => {
+        const { forgetThisDeviceOnSignOut, thisDeviceIdStore } = await import("../PushDevice");
+        const unsubscribe = vi.fn(() => Promise.resolve(true));
+        const registration = { pushManager: { getSubscription: () => Promise.resolve({ unsubscribe }) } };
+        vi.stubGlobal("navigator", { serviceWorker: { getRegistration: () => Promise.resolve(registration) } });
+        thisDeviceIdStore.set("d1");
+        removePushDevice.mockClear();
+        await forgetThisDeviceOnSignOut();
+        expect(removePushDevice).toHaveBeenCalledWith("d1");
+        expect(unsubscribe).toHaveBeenCalledOnce();
+        let id: string | undefined = "x";
+        thisDeviceIdStore.subscribe((value) => (id = value))();
+        expect(id).toBeUndefined();
+        vi.unstubAllGlobals();
+    });
+});

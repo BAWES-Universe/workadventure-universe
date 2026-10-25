@@ -1,4 +1,4 @@
-import { writable } from "svelte/store";
+import { get, writable } from "svelte/store";
 import { botApiService } from "../../external-modules/bots/services/BotApiService";
 import { localUserStore } from "../../Connection/LocalUserStore";
 import { SERVICE_WORKER_URL } from "../../Network/ServiceWorker";
@@ -129,6 +129,10 @@ export async function subscribeThisDevice(): Promise<"saved" | "notSetUp" | "fai
     );
     if (id === null) return "failed";
     setThisDeviceId(id);
+    // Direct messages reach it through Synapse: point this account's pusher for this device at Orbit
+    import("./PushChatLink")
+        .then(({ linkChatToDevice }) => linkChatToDevice(id))
+        .catch((error) => console.warn("Notifications: direct messages could not be sent to this device", error));
     return "saved";
 }
 
@@ -204,6 +208,17 @@ export async function turnOffThisDevice(deviceId: string | undefined, remove: bo
     // way (Orbit forgets the device at its next send there).
     if (remove || !told) await forgetThisBrowser();
     if (remove && !told) throw new Error("Orbit did not remove the device");
+}
+
+/**
+ * Signing out: this browser leaves Your devices and drops its subscription, so nothing for the account reaches it
+ * once signed out. Signing in again saves it again, for whoever signs in.
+ */
+export async function forgetThisDeviceOnSignOut(): Promise<void> {
+    const id = get(thisDeviceIdStore);
+    setThisDeviceId(undefined);
+    if (id) await botApiService.removePushDevice(id);
+    await forgetThisBrowser();
 }
 
 /** This browser drops its subscription, so nothing more reaches it while Universe is closed. */

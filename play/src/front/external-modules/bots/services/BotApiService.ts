@@ -10,6 +10,7 @@ import {
 import { resolveCredentialUrl } from "../../admin-api/iframeAuth";
 import { freshOrbitAccessToken, type GameTokenHolder } from "../../admin-api/orbitAccessToken";
 import type { PushOverview, PushSettings } from "../../../Notification/Push/PushSettings";
+import { ChatPusherSchema, type ChatPusher, type PushActivityReport } from "../../../Notification/Push/PushChat";
 import { classifySummonFailure, type SummonResult } from "./summonFailure";
 
 interface AuthError extends Error {
@@ -534,6 +535,41 @@ export class BotApiService {
             return typeof data.device?.id === "string" ? data.device.id : null;
         } catch {
             return null;
+        }
+    }
+
+    /**
+     * What Synapse needs (`pushers/set`) so direct messages reach this device while Universe is closed: Orbit's
+     * gateway and the device's secret (#863). Null when Orbit has none for it.
+     */
+    async getChatPusher(deviceId: string): Promise<ChatPusher | null> {
+        if (!this.adminUrl || !this.accessToken) return null;
+        try {
+            const response = await this.fetch(`/api/me/push/devices/${encodeURIComponent(deviceId)}/pusher`, {
+                method: "POST",
+            });
+            const parsed = ChatPusherSchema.safeParse(((await response.json()) as { pusher?: unknown }).pusher);
+            return parsed.success ? parsed.data : null;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Where this tab is (#863): Universe in front or not, and the chat open there, so Orbit sends no notification for
+     * what is already seen. `keepalive` for the last report of a page that is closing. True when Orbit has it.
+     */
+    async reportPushActivity(report: PushActivityReport, keepalive = false): Promise<boolean> {
+        if (!this.adminUrl || !this.accessToken) return false;
+        try {
+            const response = await this.fetch("/api/me/push/activity", {
+                method: "POST",
+                body: JSON.stringify(report),
+                keepalive,
+            });
+            return response.ok;
+        } catch {
+            return false;
         }
     }
 
