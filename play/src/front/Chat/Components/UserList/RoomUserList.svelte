@@ -127,6 +127,12 @@
     // unchanged. People and bots are counted apart (#1389).
     $: hereEntry = $usersByRoom.get(currentRoomUrl);
     $: hereCount = countPeopleAndBots(hereEntry?.users ?? []);
+    $: hereCountText =
+        hereCount.bots > 0
+            ? `${$LL.chat.peopleTab.countPeople({ count: hereCount.people })} · ${$LL.chat.peopleTab.countBots({
+                  count: hereCount.bots,
+              })}`
+            : $LL.chat.peopleTab.countPeople({ count: hereCount.people });
     $: hereName = hereEntry?.roomName?.trim() || mapRoomName || $LL.chat.peopleTab.thisRoom();
     $: elsewhereCount = Array.from($usersByRoom.entries())
         .filter(([playUri]) => playUri !== undefined && playUri !== currentRoomUrl)
@@ -300,10 +306,7 @@
                     >
                         <span class="u-live-dot shrink-0" aria-hidden="true" />
                         <span class="truncate">{hereName}</span>
-                        <span class="u-count shrink-0 font-normal"
-                            >{$LL.chat.peopleTab.countPeople({ count: hereCount.people })}{#if hereCount.bots > 0}
-                                · {$LL.chat.peopleTab.countBots({ count: hereCount.bots })}{/if}</span
-                        >
+                        <span class="u-count shrink-0 font-normal">{hereCountText}</span>
                     </h3>
                     <PeopleAndBots
                         all={hereAll}

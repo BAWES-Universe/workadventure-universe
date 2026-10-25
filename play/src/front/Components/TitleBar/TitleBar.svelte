@@ -93,6 +93,9 @@
 
     $: roomName = $sceneInfo.roomName;
     $: here = $sceneInfo.here && $sceneInfo.here.count > 0 ? $sceneInfo.here : undefined;
+    // "6 people · 21 bots" (#1389); the bots part is left out when there are none, or when the strip is short of room.
+    $: herePeople = here ? $LL.chat.peopleTab.countPeople({ count: here.people }) : "";
+    $: hereBots = here && here.bots > 0 ? $LL.chat.peopleTab.countBots({ count: here.bots }) : "";
     // Their Wokas, as pictures (each face keeps its own store, so the row listens to all of them).
     $: facePictures = derived(
         (here?.faces ?? []).map((face) => face.pictureStore ?? readable<string | undefined>(undefined)),
@@ -308,14 +311,9 @@
                     <button
                         type="button"
                         class="u-title-bar-item u-title-bar-here"
-                        aria-label={here.bots > 0
-                            ? $LL.titleBar.hereWithBotsLabel({
-                                  people: $LL.chat.peopleTab.countPeople({ count: here.people }),
-                                  bots: $LL.chat.peopleTab.countBots({ count: here.bots }),
-                              })
-                            : $LL.titleBar.hereLabel({
-                                  people: $LL.chat.peopleTab.countPeople({ count: here.people }),
-                              })}
+                        aria-label={hereBots
+                            ? $LL.titleBar.hereWithBotsLabel({ people: herePeople, bots: hereBots })
+                            : $LL.titleBar.hereLabel({ people: herePeople })}
                         data-testid="titleBarHere"
                         on:click={openPeople}
                     >
@@ -336,10 +334,7 @@
                                 {/each}
                             </span>
                         {/if}
-                        <span
-                            >{$LL.chat.peopleTab.countPeople({ count: here.people })}{#if level < 1 && here.bots > 0}
-                                · {$LL.chat.peopleTab.countBots({ count: here.bots })}{/if}</span
-                        >
+                        <span>{level < 1 && hereBots ? `${herePeople} · ${hereBots}` : herePeople}</span>
                     </button>
                 {/if}
 
