@@ -71,7 +71,9 @@ export function startPushActivity(): () => void {
     const signals = (): FrontSignals => ({
         visible: document.visibilityState === "visible",
         focused: document.hasFocus(),
-        lastInputAt,
+        // Keys and taps inside a call or a website opened in Universe stay in that frame: while one has the focus,
+        // they count as being here
+        lastInputAt: document.activeElement instanceof HTMLIFrameElement ? Date.now() : lastInputAt,
         openChatRoomId: get(openChatRoomIdStore),
     });
 

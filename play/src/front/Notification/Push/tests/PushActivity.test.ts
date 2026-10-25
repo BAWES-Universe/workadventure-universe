@@ -89,3 +89,27 @@ describe("a tab closing", () => {
         focusSpy.mockRestore();
     });
 });
+
+describe("a tab used inside a frame", () => {
+    it("stays in front while a call or website frame has the focus, though its input never reaches the page", () => {
+        vi.useFakeTimers();
+        const visibilitySpy = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+        const focusSpy = vi.spyOn(document, "hasFocus").mockReturnValue(true);
+        const frame = document.createElement("iframe");
+        document.body.appendChild(frame);
+        frame.focus();
+        reportPushActivity.mockClear();
+        const stop = startPushActivity();
+
+        // Well past the idle time with no input on the page itself
+        vi.advanceTimersByTime(IDLE_AFTER_MS + REPORT_EVERY_MS);
+        expect(reportPushActivity).not.toHaveBeenCalledWith(expect.objectContaining({ front: false }), true);
+        expect(reportPushActivity).toHaveBeenLastCalledWith(expect.objectContaining({ front: true }), false);
+
+        stop();
+        frame.remove();
+        visibilitySpy.mockRestore();
+        focusSpy.mockRestore();
+        vi.useRealTimers();
+    });
+});
