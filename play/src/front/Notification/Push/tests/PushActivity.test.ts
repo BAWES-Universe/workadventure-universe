@@ -9,7 +9,7 @@ import {
 } from "../PushActivity";
 
 const { reportPushActivity } = vi.hoisted(() => ({
-    reportPushActivity: vi.fn((_report: unknown, _keepalive?: boolean) => Promise.resolve()),
+    reportPushActivity: vi.fn((_report: unknown, _keepalive?: boolean) => Promise.resolve(true)),
 }));
 vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: { reportPushActivity } }));
 vi.mock("../../../Chat/Stores/ChatStore", async () => {
@@ -108,6 +108,36 @@ describe("a tab used inside a frame", () => {
 
         stop();
         frame.remove();
+        visibilitySpy.mockRestore();
+        focusSpy.mockRestore();
+        vi.useRealTimers();
+    });
+});
+
+describe("a report that does not reach Orbit", () => {
+    it("goes again at the next check, even though nothing changed", async () => {
+        vi.useFakeTimers();
+        let visibility: DocumentVisibilityState = "visible";
+        const visibilitySpy = vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
+        const focusSpy = vi.spyOn(document, "hasFocus").mockReturnValue(true);
+        reportPushActivity.mockClear();
+        const stop = startPushActivity();
+        expect(reportPushActivity).toHaveBeenCalledTimes(1);
+
+        // Going to the back is lost on the way
+        reportPushActivity.mockResolvedValueOnce(false);
+        visibility = "hidden";
+        document.dispatchEvent(new Event("visibilitychange"));
+        expect(reportPushActivity).toHaveBeenCalledTimes(2);
+        await vi.advanceTimersByTimeAsync(REPORT_EVERY_MS / 3);
+        expect(reportPushActivity).toHaveBeenCalledTimes(3);
+        expect(reportPushActivity).toHaveBeenLastCalledWith(expect.objectContaining({ front: false }), true);
+
+        // It got there this time: nothing more while at the back
+        await vi.advanceTimersByTimeAsync(REPORT_EVERY_MS);
+        expect(reportPushActivity).toHaveBeenCalledTimes(3);
+
+        stop();
         visibilitySpy.mockRestore();
         focusSpy.mockRestore();
         vi.useRealTimers();

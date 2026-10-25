@@ -67,6 +67,8 @@ export function startPushActivity(): () => void {
     let lastInputAt = Date.now();
     let sent: PushActivityReport | null = null;
     let lastSentAt = 0;
+    // The last report did not reach Orbit: the next check sends again, whatever changed
+    let retry = false;
 
     const signals = (): FrontSignals => ({
         visible: document.visibilityState === "visible",
@@ -80,14 +82,20 @@ export function startPushActivity(): () => void {
     const send = (report: PushActivityReport, keepalive = false) => {
         sent = report;
         lastSentAt = Date.now();
-        botApiService.reportPushActivity(report, keepalive).catch(() => undefined);
+        retry = false;
+        botApiService
+            .reportPushActivity(report, keepalive)
+            .then((delivered) => {
+                if (!delivered && sent === report) retry = true;
+            })
+            .catch(() => undefined);
     };
 
     const check = () => {
         const now = Date.now();
         const report = readReport(tabId, signals(), now);
         // Going to the back may be the page closing (it is hidden before pagehide): that report must get out too
-        if (mustSend(sent, report, lastSentAt, now)) send(report, !report.front);
+        if (retry || mustSend(sent, report, lastSentAt, now)) send(report, !report.front);
     };
 
     const onInput = () => {
