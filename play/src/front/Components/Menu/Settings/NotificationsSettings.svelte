@@ -26,6 +26,7 @@
         quietHoursLabel,
         quietHoursValue,
     } from "../../../Notification/Push/PushSettings";
+    import { raceTimeout } from "../../../Utils/PromiseUtils";
     import SettingSection from "./SettingSection.svelte";
     import SettingSwitch from "./SettingSwitch.svelte";
     import SettingChoice from "./SettingChoice.svelte";
@@ -45,6 +46,7 @@
     const deviceWord =
         device.os === "iphone" ? "iPhone" : device.os === "ipad" ? "iPad" : $LL.notification.push.device[device.kind]();
     const steps = blockedSteps(device);
+    const REFRESH_WAIT_MS = 5000;
 
     let settings: PushSettings | undefined;
     let devices: PushDeviceView[] = [];
@@ -65,8 +67,10 @@
     onMount(() => {
         updateThisDeviceState();
         if (!signedIn) return;
-        // Saves this browser again first where it is on, so it is listed and known as This device.
-        refreshThisDevice()
+        // Saves this browser again first where it is on, so it is listed and known as This device. A browser that
+        // takes too long to subscribe doesn't hold the rest of the section back.
+        raceTimeout(refreshThisDevice(), REFRESH_WAIT_MS)
+            .catch((error) => console.warn("Notifications: this device could not be saved again", error))
             .then(() => botApiService.getPushOverview())
             .then((overview) => {
                 // No Orbit on this server: only the switch, for the open window
@@ -130,6 +134,8 @@
     async function enableThisDevice(result: "saved" | "notSetUp" | "failed"): Promise<boolean> {
         if (result === "failed") return false;
         const id = $thisDeviceIdStore;
+        // Switched off again while this was on its way: Off stands, Orbit is not told On
+        if (!localUserStore.getNotification()) return true;
         // Not in Orbit (this server sends none while Universe is closed, or a guest, who may still hold the id of an
         // earlier session): on in the open window only
         if (result === "notSetUp" || !signedIn || !id) return true;
