@@ -900,6 +900,26 @@ describe('MatrixDmBridge', () => {
     /** Moves the clock past the spacing between two "no such bot" answers that count. */
     const aMinuteLater = () => vi.setSystemTime(Date.now() + 61_000);
 
+    it("shows a bot Orbit can't find as gone only once that is confirmed, and forgets the misses on a real answer", async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        try {
+            const config = { botId: BOT, name: 'Guide', enabled: true, aiProviderRef: 'p' } as never;
+            // Orbit restarting can answer "not found" for a minute or two: the chat must not read as closed.
+            expect(bridge.availability(BOT, null)).toBe('unknown');
+            aMinuteLater();
+            expect(bridge.availability(BOT, null)).toBe('unknown');
+            expect(bridge.availability(BOT, config)).toBe('online');
+            aMinuteLater();
+            expect(bridge.availability(BOT, null)).toBe('unknown');
+            aMinuteLater();
+            expect(bridge.availability(BOT, null)).toBe('unknown');
+            aMinuteLater();
+            expect(bridge.availability(BOT, null)).toBe('gone');
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('a deleted bot says goodbye once Orbit has said so three times a minute apart, then leaves and forgets the chat', async () => {
         vi.useFakeTimers({ toFake: ['Date'] });
         try {

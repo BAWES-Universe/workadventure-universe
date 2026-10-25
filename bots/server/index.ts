@@ -24,7 +24,7 @@ import { MatrixAppServiceClient } from '../matrix/MatrixAppServiceClient';
 import { MatrixDmBridge } from '../matrix/MatrixDmBridge';
 import { createMatrixAppServiceRouter } from '../matrix/MatrixAppServiceRouter';
 import { uploadAttachment } from '../matrix/uploadAttachment';
-import { availabilityOf, type BotAvailability } from '../matrix/BotStatusNotes';
+import type { BotAvailability } from '../matrix/BotStatusNotes';
 import type { Router } from 'express';
 import * as path from 'path';
 
@@ -76,12 +76,13 @@ async function setupMatrix(): Promise<void> {
     });
     preRouters.push(createMatrixAppServiceRouter(matrixConfig, matrixBridge));
     // The game shows a bot's state in its chat header and the People list. Same cached lookup the replies use.
+    const bridge = matrixBridge;
     dmStatus = async (botIds) =>
         Object.fromEntries(
             await Promise.all(
                 botIds.map(async (botId) => {
                     try {
-                        return [botId, availabilityOf(await dmReplyService.getBotConfig(botId))] as const;
+                        return [botId, bridge.availability(botId, await dmReplyService.getBotConfig(botId))] as const;
                     } catch {
                         return [botId, 'unknown'] as const;
                     }

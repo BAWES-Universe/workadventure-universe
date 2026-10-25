@@ -5,7 +5,14 @@ import { BOT_LOCALPART_PREFIX, botIdFromMatrixId, type MatrixAppServiceConfig } 
 import type { BotConfiguration } from '../server/AdminApiService';
 import type { DmAttachment, DmPerson, DmReply, DmReplyHooks } from '../server/DmReplyService';
 import type { PendingMedia } from '../memory/ConversationMemory';
-import { detectLanguage, statusNoteContent, type BotNoteState, type NoteLanguage } from './BotStatusNotes';
+import {
+    availabilityOf,
+    detectLanguage,
+    statusNoteContent,
+    type BotAvailability,
+    type BotNoteState,
+    type NoteLanguage,
+} from './BotStatusNotes';
 import { ACCESS_CACHE_TTL_MS } from '../server/BotAccessGate';
 
 /** The field of a reply that names the bot's room: the game shows a card under it to go there. */
@@ -563,6 +570,18 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
         // The bot is answering again, so anyone who wrote while it rested gets their answer now.
         if (answered && !catchUp) void this.drainIfWaiting(botId).catch(() => undefined);
+    }
+
+    /**
+     * What the game shows about a bot (chat header, People). A bot Orbit can't find reads as gone only once that is
+     * confirmed, as for closing its chats: until then Orbit may just be restarting, so it is unknown.
+     */
+    availability(botId: string, config: BotConfiguration | null): BotAvailability | 'unknown' {
+        if (config) {
+            this.botNotFound.delete(botId);
+            return availabilityOf(config);
+        }
+        return this.confirmedGone(botId) ? 'gone' : 'unknown';
     }
 
     /** Orbit said this bot doesn't exist. True once it has said so BOT_GONE_AFTER times, far enough apart to believe it. */
