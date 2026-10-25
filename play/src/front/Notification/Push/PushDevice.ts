@@ -134,9 +134,9 @@ export async function subscribeThisDevice(): Promise<"saved" | "notSetUp" | "fai
         subscription ??= await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
     } catch (error) {
         // The browser refuses push (Brave with it switched off, a push service that fails): it still shows them while
-        // Universe is open, as the permission is given
+        // Universe is open, as the permission is given. A device already in Orbit stays this device: this may pass.
         console.warn("Notifications: this browser could not subscribe to push", error);
-        return notInOrbit();
+        return "notSetUp";
     }
     // Switched off while this was on its way, and still off: Off stands, so nothing is saved and nothing can arrive
     const switchedOff = () => switchOffs !== offsAtStart && localUserStore.getNotificationChoice() === false;

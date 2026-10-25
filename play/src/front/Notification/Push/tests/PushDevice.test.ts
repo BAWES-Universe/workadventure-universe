@@ -247,6 +247,28 @@ describe("saving this device", () => {
         vi.unstubAllGlobals();
     });
 
+    it("keeps this device's id when the browser refuses push for a moment", async () => {
+        const { subscribeThisDevice, thisDeviceIdStore } = await import("../PushDevice");
+        vi.stubGlobal("navigator", {
+            userAgent: UA.windowsEdge,
+            platform: "",
+            maxTouchPoints: 0,
+            serviceWorker: { register: () => Promise.reject(new Error("worker could not start")) },
+        });
+        vi.stubGlobal("Notification", { permission: "granted" });
+        vi.stubGlobal("PushManager", class {});
+        thisDeviceIdStore.set("d-kept");
+        getPushPublicKey.mockResolvedValueOnce("AAAA");
+        setPushDeviceId.mockClear();
+        expect(await subscribeThisDevice()).toBe("notSetUp");
+        let id: string | undefined;
+        thisDeviceIdStore.subscribe((value) => (id = value))();
+        expect(id).toBe("d-kept");
+        expect(setPushDeviceId).not.toHaveBeenCalled();
+        thisDeviceIdStore.set(undefined);
+        vi.unstubAllGlobals();
+    });
+
     it("saves nothing when switched off while the browser was still subscribing", async () => {
         const { subscribeThisDevice, turnOffThisDevice } = await import("../PushDevice");
         const { localUserStore } = await import("../../../Connection/LocalUserStore");
