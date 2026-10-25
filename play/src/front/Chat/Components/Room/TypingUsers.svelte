@@ -88,12 +88,16 @@
         pointer-events: none;
         opacity: 0;
         transform: translateY(4px);
-        transition: opacity 0.2s ease, transform 0.2s ease;
+        /* Hidden for real once faded out, so it counts as gone (screen readers, tests). */
+        visibility: hidden;
+        transition: opacity 0.2s ease, transform 0.2s ease, visibility 0s linear 0.2s;
     }
 
     .typing-users.visible {
         opacity: 1;
         transform: none;
+        visibility: visible;
+        transition: opacity 0.2s ease, transform 0.2s ease, visibility 0s;
     }
 
     /* Smaller than next to messages: the pill sits on the message box's edge. */
@@ -143,7 +147,8 @@
     }
 
     @media (prefers-reduced-motion: reduce) {
-        .typing-users {
+        .typing-users,
+        .typing-users.visible {
             transition: none;
         }
 
