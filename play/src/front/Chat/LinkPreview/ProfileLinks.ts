@@ -15,6 +15,19 @@ export function isProfileLinkList(value: unknown): value is string[] {
     );
 }
 
+/**
+ * Whether a message comes from the card's own address. The card's frame can leave that address (a link inside it that
+ * opens in the frame), and the frame's window stays the same, so the window alone does not say who is speaking.
+ */
+export function isFromCardOrigin(messageOrigin: string, cardUrl: string | undefined, base: string): boolean {
+    if (!cardUrl) return false;
+    try {
+        return new URL(cardUrl, base).origin === messageOrigin;
+    } catch {
+        return false;
+    }
+}
+
 function isHttps(url: string): boolean {
     try {
         return new URL(url).protocol === "https:";
