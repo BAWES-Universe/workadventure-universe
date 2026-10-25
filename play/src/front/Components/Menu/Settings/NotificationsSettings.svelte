@@ -48,8 +48,11 @@
 
     let settings: PushSettings | undefined;
     let devices: PushDeviceView[] = [];
-    /** False while this server sends nothing when Universe is closed: the switch is then for the open window only. */
-    let pushSetUp = true;
+    /**
+     * True once Orbit says it sends notifications while Universe is closed. Until then, and on a server without them,
+     * the switch is for the open window only.
+     */
+    let pushSetUp = false;
     let loadFailed = false;
     let saveFailed = false;
     let switchFailed = false;
@@ -66,6 +69,8 @@
         refreshThisDevice()
             .then(() => botApiService.getPushOverview())
             .then((overview) => {
+                // No Orbit on this server: only the switch, for the open window
+                if (overview === null) return;
                 if (!overview) {
                     loadFailed = true;
                     return;
@@ -124,8 +129,9 @@
     async function enableThisDevice(result: "saved" | "notSetUp" | "failed"): Promise<boolean> {
         if (result === "failed") return false;
         const id = $thisDeviceIdStore;
-        // Not in Orbit (this server sends none while Universe is closed, or a guest): on in the open window only
-        if (!id) return true;
+        // Not in Orbit (this server sends none while Universe is closed, or a guest, who may still hold the id of an
+        // earlier session): on in the open window only
+        if (result === "notSetUp" || !signedIn || !id) return true;
         if (!(await botApiService.setPushDeviceEnabled(id, true))) return false;
         await reloadDevices();
         return true;
