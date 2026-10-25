@@ -6,7 +6,7 @@ vi.mock("../LinkPreviewFetcher", () => ({ fetchWebPreview: (url: string) => fetc
 vi.mock("../openChatLinkHere", () => ({ openChatLinkHere: (url: string) => openChatLinkHere(url) }));
 
 import { rememberEmbeddable } from "../EmbeddableLinks";
-import { isProfileLinkList, openProfileLinkHere, profileLinksOpeningHere } from "../ProfileLinks";
+import { isFromCardOrigin, isProfileLinkList, openProfileLinkHere, profileLinksOpeningHere } from "../ProfileLinks";
 
 const ABOUT = "https://mishari.example/about";
 const LINKEDIN = "https://www.linkedin.com/in/mishari";
@@ -54,5 +54,28 @@ describe("profile links", () => {
         expect(isProfileLinkList(Array(11).fill(ABOUT))).toBe(false);
         expect(isProfileLinkList([ABOUT, 3])).toBe(false);
         expect(isProfileLinkList(ABOUT)).toBe(false);
+    });
+});
+
+describe("the card's own address", () => {
+    const BASE = "https://universe.example/room";
+    const CARD = "https://orbit.example/api/profile/abc?x=1";
+
+    it("accepts a message from the card's address", () => {
+        expect(isFromCardOrigin("https://orbit.example", CARD, BASE)).toBe(true);
+    });
+
+    it("rejects a message from the same frame after it went to another site", () => {
+        expect(isFromCardOrigin("https://evil.example", CARD, BASE)).toBe(false);
+        expect(isFromCardOrigin("http://orbit.example", CARD, BASE)).toBe(false);
+    });
+
+    it("reads a card on the game's own server by the game's address", () => {
+        expect(isFromCardOrigin("https://universe.example", "/profile/abc", BASE)).toBe(true);
+    });
+
+    it("rejects everything when there is no card address", () => {
+        expect(isFromCardOrigin("https://orbit.example", undefined, BASE)).toBe(false);
+        expect(isFromCardOrigin("null", "http://[", BASE)).toBe(false);
     });
 });

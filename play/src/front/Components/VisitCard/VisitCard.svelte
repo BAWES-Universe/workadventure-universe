@@ -5,6 +5,7 @@
     import { wokaMenuStore } from "../../Stores/WokaMenuStore";
     import { actionsMenuStore } from "../../Stores/ActionsMenuStore";
     import {
+        isFromCardOrigin,
         isProfileLinkList,
         openProfileLinkHere,
         profileLinksOpeningHere,
@@ -59,6 +60,9 @@
         if (message.data?.type === "cvIframeSize") {
             // w = message.data.data.w + "px";
             h = message.data.data.h;
+        } else if (!isFromCardOrigin(message.origin, safeVisitCardUrl, window.location.href)) {
+            // Asking about links and opening one are left to the card itself: the frame may have gone to another site.
+            return;
         } else if (message.data?.type === "cvCheckLinks" && isProfileLinkList(message.data.urls)) {
             answerLinks(message.data.urls);
         } else if (message.data?.type === "cvOpenLink" && typeof message.data.url === "string") {
