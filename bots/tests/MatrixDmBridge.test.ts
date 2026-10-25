@@ -1282,6 +1282,31 @@ describe('DmReplyService history', () => {
         expect(reply.roomLink).toEqual({ url: room, room: 'Lobby', world: 'BAWES HQ' });
     });
 
+    it('counts an answer the provider broke off as failed, so it is never sent cut short', async () => {
+        const { DmReplyService } = await import('../server/DmReplyService');
+        const { PersistentMemory } = await import('../memory/PersistentMemory');
+        const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
+        const memory = new PersistentMemory({});
+        const brokenOff = vi.fn(async function* () {
+            yield { content: 'The Library is just past the', done: false };
+            yield { content: '', done: true, metadata: { tokensUsed: 0, latency: 5, error: true } };
+        });
+        Object.assign(service, {
+            playerIds: new Map(),
+            nextPlayerId: -1,
+            loadedBots: new Set([BOT]),
+            botManager: { getBot: () => null },
+            getBotConfig: async () => ({ botId: BOT, name: 'Guide', aiProviderRef: 'p' }),
+            aiService: { generateBotResponseStream: brokenOff },
+            conversationMemory: memory,
+            conversationStorage: { startConversation: vi.fn(), addMessage: vi.fn(async () => undefined) },
+        });
+        const person = { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false };
+        expect(await (service as any).replyNow(BOT, person, 'where is the library?', [], {})).toEqual({ text: '', media: [], failed: true });
+        const history = memory.getMemory(BOT, service.playerIdFor(ALICE))!.conversationHistory;
+        expect(history.map((entry) => entry.sender)).toEqual(['person']);
+    });
+
     it('adds no room link to a reply that does not name the room', async () => {
         const { DmReplyService } = await import('../server/DmReplyService');
         const { PersistentMemory } = await import('../memory/PersistentMemory');

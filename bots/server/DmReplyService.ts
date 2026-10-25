@@ -243,6 +243,7 @@ export class DmReplyService extends BaseBehavior {
         let latency = 0;
         let promptTokens = 0;
         let completionTokens = 0;
+        let providerFailed = false;
 
         try {
             for await (const chunk of this.aiService.generateBotResponseStream(
@@ -280,10 +281,16 @@ export class DmReplyService extends BaseBehavior {
                 if (chunk.metadata?.latency) latency = chunk.metadata.latency;
                 if (chunk.metadata?.promptTokens) promptTokens = chunk.metadata.promptTokens;
                 if (chunk.metadata?.completionTokens) completionTokens = chunk.metadata.completionTokens;
+                // The provider failed part-way: what came so far is cut short, so the person sends it again instead.
+                if (chunk.metadata?.error) providerFailed = true;
                 if (chunk.done) break;
             }
         } catch (error) {
             console.error(`[DmReplyService] AI error for bot ${botId}:`, error);
+            return { text: '', media: [], failed: true };
+        }
+        if (providerFailed) {
+            console.error(`[DmReplyService] AI provider failed for bot ${botId}; the answer so far is dropped`);
             return { text: '', media: [], failed: true };
         }
 
