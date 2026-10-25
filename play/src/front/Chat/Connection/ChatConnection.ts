@@ -277,8 +277,11 @@ export interface ChatConnectionInterface {
     /** People you blocked in chat: their messages are hidden on every device. */
     ignoredUsers: Readable<string[]>;
     setUserIgnored(userChatId: string, ignored: boolean): Promise<void>;
-    /** Sends this account's notifications for one device to a push gateway while Universe is closed (#863). */
-    setPusher(pusher: ChatPusher): Promise<void>;
+    /**
+     * Sends this account's notifications for one device to a push gateway while Universe is closed (#863). False when
+     * this connection has nowhere to set it: no chat here, or a guest.
+     */
+    setPusher(pusher: ChatPusher): Promise<boolean>;
 }
 
 export type Connection = Pick<RoomConnection, "queryChatMembers" | "emitPlayerChatID" | "emitBanPlayerMessage">;

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { getChatPusher, setPusher } = vi.hoisted(() => ({
     getChatPusher: vi.fn(),
-    setPusher: vi.fn(() => Promise.resolve()),
+    setPusher: vi.fn(() => Promise.resolve(true)),
 }));
 vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: { getChatPusher } }));
 vi.mock("../../../Phaser/Game/GameManager", () => ({
@@ -38,5 +38,14 @@ describe("direct messages to this device", () => {
         expect(setPusher).not.toHaveBeenCalled();
         await linkChatToDevice("d2");
         expect(setPusher).toHaveBeenCalledOnce();
+    });
+
+    it("tries again next time when this room has no chat to set it on", async () => {
+        const { linkChatToDevice } = await import("../PushChatLink");
+        getChatPusher.mockResolvedValue(pusher);
+        setPusher.mockResolvedValueOnce(false);
+        await linkChatToDevice("d3");
+        await linkChatToDevice("d3");
+        expect(setPusher).toHaveBeenCalledTimes(2);
     });
 });

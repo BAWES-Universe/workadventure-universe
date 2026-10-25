@@ -1382,11 +1382,12 @@ export class MatrixChatConnection implements ChatConnectionInterface {
         this._ignoredUsers.set(next);
     }
 
-    async setPusher(pusher: ChatPusher): Promise<void> {
+    async setPusher(pusher: ChatPusher): Promise<boolean> {
         if (!this.client) throw new Error(CLIENT_NOT_INITIALIZED_ERROR_MSG);
         // Guests have no account to send notifications for
-        if (this.client.isGuest()) return;
+        if (this.client.isGuest()) return false;
         await this.client.setPusher(pusher);
+        return true;
     }
 
     async searchChatUsers(searchText: string, limit = 20) {
