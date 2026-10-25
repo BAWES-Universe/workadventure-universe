@@ -449,7 +449,9 @@ export class BotApiService {
                 throw authError;
             }
 
-            throw new Error(errorMessage);
+            const error = new Error(errorMessage) as Error & { status?: number };
+            error.status = response.status;
+            throw error;
         }
 
         return response;
@@ -573,9 +575,13 @@ export class BotApiService {
         }
     }
 
-    /** Everything Settings > Notifications shows, or undefined when Orbit can't be reached. */
-    async getPushOverview(): Promise<PushOverview | undefined> {
-        if (!this.adminUrl || !this.accessToken) return undefined;
+    /**
+     * Everything Settings > Notifications shows. Null when this server has no Orbit, so nothing is sent while Universe
+     * is closed; undefined when Orbit can't be reached.
+     */
+    async getPushOverview(): Promise<PushOverview | null | undefined> {
+        if (!this.adminUrl) return null;
+        if (!this.accessToken) return undefined;
         try {
             const response = await this.fetch("/api/me/push");
             if (!response.ok) return undefined;
@@ -624,9 +630,10 @@ export class BotApiService {
             const response = await this.fetch(`/api/me/push/devices/${encodeURIComponent(deviceId)}`, {
                 method: "DELETE",
             });
-            return response.ok || response.status === 404;
-        } catch {
-            return false;
+            return response.ok;
+        } catch (error) {
+            // Orbit answers 404 for a device it already removed, and the fetch throws on it
+            return (error as { status?: number }).status === 404;
         }
     }
 
