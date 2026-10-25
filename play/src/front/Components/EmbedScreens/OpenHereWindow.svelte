@@ -420,7 +420,11 @@
         min-width: min(360px, 100vw);
         max-width: 100vw;
         pointer-events: auto;
-        transition: width 160ms ease-out;
+        // Expanding and collapsing move every edge together, as Orbit's window does (Tailwind's transition-all: 150ms,
+        // cubic-bezier(0.4, 0, 0.2, 1)): it grows from where it sits, its own corner held to the screen's.
+        transition-property: top, left, right, width, max-width, height;
+        transition-duration: 150ms;
+        transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
 
         &.dragging {
             transition: none;
@@ -532,8 +536,11 @@
     }
 
     // Expanded: the window takes the whole screen, over the chat too, with the pill at the top right as Orbit's.
+    // Only the edge it is held to moves: setting the far edge too would pin it there at once, and it would grow from
+    // the other side of the screen.
     .open-here.expanded {
-        inset: 0;
+        top: 0;
+        inset-inline-end: 0;
         width: 100vw;
         height: 100dvh;
 
