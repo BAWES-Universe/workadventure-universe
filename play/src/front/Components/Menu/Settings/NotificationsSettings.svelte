@@ -12,6 +12,7 @@
         describeDevice,
         pushAvailability,
         refreshThisDevice,
+        enableThisDeviceInOrbit,
         subscribeThisDevice,
         thisDeviceIdStore,
         thisDeviceStateStore,
@@ -118,7 +119,8 @@
         turnOnThisDevice()
             .then(async (result) => {
                 if (result === "on") {
-                    if (!(await enableThisDevice("saved"))) couldNotTurnOn();
+                    // Already on in Orbit too
+                    await reloadDevices();
                     return;
                 }
                 // Switched off again while this was on its way: Off stands, and nothing went wrong
@@ -129,18 +131,14 @@
     }
 
     /**
-     * A device switched off before keeps that in Orbit when saved again: switching it on here says so. False when
-     * Orbit has not got it on.
+     * A device switched off before keeps that in Orbit when saved again: switching it on here says so, also when the
+     * browser refused push for now and it is only on in the open window. False when Orbit has not got it on.
      */
     async function enableThisDevice(result: "saved" | "notSetUp" | "failed"): Promise<boolean> {
         // Switched off again while this was on its way: Off stands, Orbit is not told On, and nothing went wrong
         if (!localUserStore.getNotification()) return true;
         if (result === "failed") return false;
-        const id = $thisDeviceIdStore;
-        // Not in Orbit (this server sends none while Universe is closed, or a guest, who may still hold the id of an
-        // earlier session): on in the open window only
-        if (result === "notSetUp" || !signedIn || !id) return true;
-        if (!(await botApiService.setPushDeviceEnabled(id, true))) return false;
+        if (!(await enableThisDeviceInOrbit())) return false;
         await reloadDevices();
         return true;
     }

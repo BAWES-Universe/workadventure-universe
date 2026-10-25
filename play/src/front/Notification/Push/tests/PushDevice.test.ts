@@ -367,6 +367,51 @@ describe("saving this device", () => {
         vi.unstubAllGlobals();
     });
 
+    it.each([
+        [true, "on", true],
+        [false, "failed", false],
+    ] as const)(
+        "tells Orbit a device switched off before is on again (Orbit takes it: %s)",
+        async (taken, result, choice) => {
+            const { turnOnThisDevice, thisDeviceIdStore } = await import("../PushDevice");
+            const { localUserStore } = await import("../../../Connection/LocalUserStore");
+            const subscription = {
+                unsubscribe: () => Promise.resolve(true),
+                toJSON: () => ({ endpoint: "https://push.example/5" }),
+                options: {},
+            };
+            vi.stubGlobal("navigator", {
+                userAgent: UA.windowsEdge,
+                platform: "",
+                maxTouchPoints: 0,
+                serviceWorker: {
+                    register: () =>
+                        Promise.resolve({
+                            pushManager: {
+                                getSubscription: () => Promise.resolve(null),
+                                subscribe: () => Promise.resolve(subscription),
+                            },
+                        }),
+                },
+            });
+            vi.stubGlobal("Notification", {
+                permission: "default",
+                requestPermission: () => Promise.resolve("granted"),
+            });
+            vi.stubGlobal("PushManager", class {});
+            getPushPublicKey.mockResolvedValueOnce("AAAA");
+            // Orbit gives back the device it already had, still switched off there
+            registerPushDevice.mockResolvedValueOnce("d-off");
+            setPushDeviceEnabled.mockClear();
+            setPushDeviceEnabled.mockResolvedValueOnce(taken);
+            expect(await turnOnThisDevice()).toBe(result);
+            expect(setPushDeviceEnabled).toHaveBeenCalledWith("d-off", true);
+            expect(localUserStore.getNotificationChoice()).toBe(choice);
+            thisDeviceIdStore.set(undefined);
+            vi.unstubAllGlobals();
+        }
+    );
+
     it("keeps Off when switched off while the browser was asking", async () => {
         const { turnOnThisDevice, turnOffThisDevice } = await import("../PushDevice");
         const { localUserStore } = await import("../../../Connection/LocalUserStore");
