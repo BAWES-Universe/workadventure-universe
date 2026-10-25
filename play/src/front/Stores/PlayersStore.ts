@@ -3,6 +3,7 @@ import { AvailabilityStatus } from "@workadventure/messages";
 import { Color } from "@workadventure/shared-utils";
 import type { PlayerInterface } from "../Phaser/Game/PlayerInterface";
 import type { RoomConnection } from "../Connection/RoomConnection";
+import { isBotUser } from "../Chat/UserProvider/ChatUserMapper";
 
 let idCount = 0;
 
@@ -82,3 +83,12 @@ function createPlayersStore() {
 }
 
 export const playersStore = createPlayersStore();
+
+/** The people among these players, bots left out (#1396): a bot's id starts with "bot-", as everywhere else. */
+export function peopleAmongPlayers(players: Iterable<{ userUuid: string }>): number {
+    let people = 0;
+    for (const player of players) {
+        if (!isBotUser({ uuid: player.userUuid })) people++;
+    }
+    return people;
+}

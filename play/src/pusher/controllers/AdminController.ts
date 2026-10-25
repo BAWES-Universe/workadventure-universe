@@ -1,12 +1,13 @@
 import { Metadata } from "@grpc/grpc-js";
 import type { Application, Request, Response } from "express";
-import type { RoomsList } from "@workadventure/messages";
+import type { RoomDescription, RoomsList } from "@workadventure/messages";
 import { z } from "zod";
 import Debug from "debug";
 import { apiClientRepository } from "../services/ApiClientRepository";
 import { socketManager } from "../services/SocketManager";
 import { adminToken } from "../middlewares/AdminToken";
 import { validatePostQuery } from "../services/QueryValidator";
+import { toRoomDetails } from "../services/RoomDetails";
 import { BaseHttpController } from "./BaseHttpController";
 
 const debug = Debug("pusher:requests");
@@ -29,6 +30,7 @@ export class AdminController extends BaseHttpController {
         this.receiveGlobalMessagePrompt();
         this.receiveRoomEditionPrompt();
         this.getRoomsList();
+        this.getRoomsDetails();
         this.getPresence();
         this.dispatchGlobalEvent();
         this.dispatchExternalModuleEvent();
@@ -40,6 +42,15 @@ export class AdminController extends BaseHttpController {
      * answer by then is left out.
      */
     private async getOpenRooms(): Promise<Record<string, number>> {
+        const rooms: Record<string, number> = {};
+        for (const room of await this.describeOpenRooms()) {
+            rooms[room.roomId] = room.nbUsers;
+        }
+        return rooms;
+    }
+
+    /** The open rooms as the backs describe them (users, bots, people's names). Same 1 second limit. */
+    private async describeOpenRooms(): Promise<RoomDescription[]> {
         const roomClients = await apiClientRepository.getAllClients(this.GRPC_MAX_MESSAGE_SIZE);
 
         const promises: Promise<RoomsList>[] = [];
@@ -67,13 +78,11 @@ export class AdminController extends BaseHttpController {
         // Note: this call will take at most 1 second because we won't wait more for all the promises to resolve.
         const roomsListsResult = await Promise.allSettled(promises);
 
-        const rooms: Record<string, number> = {};
+        const rooms: RoomDescription[] = [];
 
         for (const roomsListResult of roomsListsResult) {
             if (roomsListResult.status === "fulfilled") {
-                for (const room of roomsListResult.value.roomDescription) {
-                    rooms[room.roomId] = room.nbUsers;
-                }
+                rooms.push(...roomsListResult.value.roomDescription);
             } else {
                 console.warn(
                     "One back server did not respond within one second to the call to 'getRooms': ",
@@ -370,6 +379,26 @@ export class AdminController extends BaseHttpController {
 
             res.setHeader("Content-Type", "application/json").send(JSON.stringify(rooms));
             return;
+        });
+    }
+
+    /**
+     * @openapi
+     * /rooms/details:
+     *   get:
+     *     description: The open rooms with people and bots counted apart, and the people's names (one per account,
+     *       A to Z), for the Discord report. The request must be authenticated with the "authorization" header.
+     *     tags:
+     *      - Admin endpoint
+     *     responses:
+     *       200:
+     *         description: "{ [roomUrl]: { people, bots, names } }"
+     */
+    getRoomsDetails(): void {
+        this.app.get("/rooms/details", [adminToken], async (req: Request, res: Response) => {
+            debug(`AdminController => [${req.method}] ${req.originalUrl} — IP: ${req.ip} — Time: ${Date.now()}`);
+            res.setHeader("Cache-Control", "no-store");
+            res.json(toRoomDetails(await this.describeOpenRooms()));
         });
     }
 
