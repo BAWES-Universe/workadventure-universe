@@ -121,7 +121,11 @@ describe("the bot page's Mind group (#1375)", () => {
 
     it("does not wait for the viewer's keys to show the rest of the page", async () => {
         mocks.api.getBotAiOptions.mockResolvedValue(options({ keys: [lentKey] }));
-        mocks.api.getMyAiKeys.mockReturnValue(new Promise(() => undefined));
+        mocks.api.getMyAiKeys.mockReturnValue(
+            new Promise<null>(() => {
+                // never answers
+            })
+        );
         await mount();
         expect(text()).toContain("Only keys you lent to this universe show here.");
         expect(byTestId("bot-runs-on-unlent")).toHaveLength(0);
