@@ -28,6 +28,7 @@
     import { titleBarGeometryStore } from "../../TitleBar/WindowControlsOverlay";
     import type { FitLevel } from "../../TitleBar/TitleBarFit";
     import { formatConversationTime, pickFitLevel } from "../../TitleBar/TitleBarFit";
+    import { countPeopleAndBots } from "../../Chat/UserProvider/WorldUserProvider";
     import { IconArrowsMaximize, IconUserPlus } from "@wa-icons";
 
     /**
@@ -48,10 +49,11 @@
 
     interface SceneInfo {
         roomName: string | undefined;
-        here: { count: number; faces: ChatUser[] } | undefined;
+        here: { count: number; people: number; bots: number; faces: ChatUser[] } | undefined;
     }
 
-    // The room's name, and who is in it: the same list as the People tab, so "3 here" and the tab always agree.
+    // The room's name, and who is in it: the same list as the People tab, so "3 people · 2 bots" and the tab's room row
+    // always agree.
     const sceneInfo = readable<SceneInfo>({ roomName: undefined, here: undefined }, (set) => {
         let stopUsers: Unsubscriber | undefined;
         let generation = 0;
@@ -74,6 +76,7 @@
                             roomName,
                             here: {
                                 count: users.length,
+                                ...countPeopleAndBots(users),
                                 faces: users.filter((user) => !user.isBot).slice(0, FACES_SHOWN),
                             },
                         });
@@ -181,8 +184,8 @@
         }
     }
 
-    // Words drop only when they do not fit: the room name shortens first (CSS), then the two buttons become icons,
-    // last the faces go (TitleBarFit.ts).
+    // Words drop only when they do not fit: the bots count goes first, so the room name stays whole as long as it can;
+    // then the room name shortens (CSS), then the two buttons become icons, last the faces go (TitleBarFit.ts).
     /** The room name stops shortening at this width (a short name is never padded out to it). */
     const ROOM_MIN_WIDTH = 80;
     const ROOM_PADDING = 14;
@@ -191,11 +194,17 @@
     let level: FitLevel = 0;
     let row: HTMLDivElement | undefined;
     let left: HTMLDivElement | undefined;
+    let roomText: HTMLSpanElement | undefined;
     let fitRun = 0;
 
     function overflows(): boolean {
         // Svelte sets a bound element to null (not undefined) when the strip goes away mid-measure.
         return !!left && left.scrollWidth > left.clientWidth + 1;
+    }
+
+    // The room name shows "…" (it is cut).
+    function roomCut(): boolean {
+        return !!roomText && roomText.scrollWidth > roomText.clientWidth + 1;
     }
 
     // Always starts from the full layout, so a window that grew gets its words back. A newer call replaces one that
@@ -208,14 +217,22 @@
             if (run !== fitRun) return true;
             level = candidate;
             await tick();
-            return !overflows();
+            // The full layout also needs the room name whole: the bots count gives way before the name does.
+            return !overflows() && (candidate > 0 || !roomCut());
         });
         if (run === fitRun) level = picked;
     }
 
     // Whatever changes what the strip holds or how much room it has asks for a new fit.
     $: if (row) {
-        void [$titleBarGeometryStore?.width, roomName, here?.count, inConversation, $mapExplorationModeStore];
+        void [
+            $titleBarGeometryStore?.width,
+            roomName,
+            here?.people,
+            here?.bots,
+            inConversation,
+            $mapExplorationModeStore,
+        ];
         void [$inviteUserActivated, $adminDashboardActivatedStore, canFullscreen, $LL, roomMinWidth];
         fit().catch((error: unknown) => console.error(error));
     }
@@ -278,11 +295,11 @@
                             data-testid="titleBarRoom"
                             on:click={openOrbit}
                         >
-                            <span class="u-title-bar-ellipsis">{roomName}</span>
+                            <span class="u-title-bar-ellipsis" bind:this={roomText}>{roomName}</span>
                         </button>
                     {:else}
                         <span class="u-title-bar-room u-title-bar-plain" style:min-width="{roomMinWidth}px">
-                            <span class="u-title-bar-ellipsis">{roomName}</span>
+                            <span class="u-title-bar-ellipsis" bind:this={roomText}>{roomName}</span>
                         </span>
                     {/if}
                 {/if}
@@ -291,11 +308,18 @@
                     <button
                         type="button"
                         class="u-title-bar-item u-title-bar-here"
-                        aria-label={$LL.titleBar.hereLabel({ count: here.count })}
+                        aria-label={here.bots > 0
+                            ? $LL.titleBar.hereWithBotsLabel({
+                                  people: $LL.chat.peopleTab.countPeople({ count: here.people }),
+                                  bots: $LL.chat.peopleTab.countBots({ count: here.bots }),
+                              })
+                            : $LL.titleBar.hereLabel({
+                                  people: $LL.chat.peopleTab.countPeople({ count: here.people }),
+                              })}
                         data-testid="titleBarHere"
                         on:click={openPeople}
                     >
-                        {#if level < 2 && here.faces.length > 0}
+                        {#if level < 3 && here.faces.length > 0}
                             <span class="u-title-bar-faces" aria-hidden="true">
                                 {#each here.faces as face, index (face.spaceUserId ?? face.chatId)}
                                     <span
@@ -312,7 +336,10 @@
                                 {/each}
                             </span>
                         {/if}
-                        <span>{$LL.titleBar.here({ count: here.count })}</span>
+                        <span
+                            >{$LL.chat.peopleTab.countPeople({ count: here.people })}{#if level < 1 && here.bots > 0}
+                                · {$LL.chat.peopleTab.countBots({ count: here.bots })}{/if}</span
+                        >
                     </button>
                 {/if}
 
@@ -346,30 +373,30 @@
                         type="button"
                         class="u-title-bar-item u-title-bar-action"
                         class:u-title-bar-on={inviteOpen}
-                        class:u-title-bar-icon-only={level >= 1}
+                        class:u-title-bar-icon-only={level >= 2}
                         aria-expanded={inviteOpen}
                         aria-label={$LL.chat.inviteFooter.button()}
-                        title={level >= 1 ? $LL.chat.inviteFooter.button() : undefined}
+                        title={level >= 2 ? $LL.chat.inviteFooter.button() : undefined}
                         data-testid="titleBarInvite"
                         bind:this={inviteButton}
                         on:click={toggleInvite}
                     >
                         <IconUserPlus font-size="16" class="shrink-0" />
-                        {#if level < 1}<span>{$LL.chat.inviteFooter.button()}</span>{/if}
+                        {#if level < 2}<span>{$LL.chat.inviteFooter.button()}</span>{/if}
                     </button>
                 {/if}
                 {#if canFullscreen}
                     <button
                         type="button"
                         class="u-title-bar-item u-title-bar-action"
-                        class:u-title-bar-icon-only={level >= 1}
+                        class:u-title-bar-icon-only={level >= 2}
                         aria-label={$LL.titleBar.fullScreen()}
-                        title={level >= 1 ? $LL.titleBar.fullScreen() : undefined}
+                        title={level >= 2 ? $LL.titleBar.fullScreen() : undefined}
                         data-testid="titleBarFullscreen"
                         on:click={goFullscreen}
                     >
                         <IconArrowsMaximize font-size="16" class="shrink-0" />
-                        {#if level < 1}<span>{$LL.titleBar.fullScreen()}</span>{/if}
+                        {#if level < 2}<span>{$LL.titleBar.fullScreen()}</span>{/if}
                     </button>
                 {/if}
             </div>

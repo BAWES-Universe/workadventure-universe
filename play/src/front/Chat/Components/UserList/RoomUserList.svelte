@@ -22,6 +22,7 @@
         friendsStore,
         relationshipsStore,
     } from "../../Stores/FriendsStore";
+    import { countPeopleAndBots } from "../../UserProvider/WorldUserProvider";
     import UserList from "./UserList.svelte";
     import PeopleAndBots from "./PeopleAndBots.svelte";
     import type { SelfIdentity } from "./PersonActions";
@@ -122,9 +123,10 @@
         }
     }
 
-    // Counts are of sessions (one per open tab or device), before the search filters them: "26 here" is unchanged.
+    // Counts are of sessions (one per open tab or device), before the search filters them: "6 people · 21 bots" is
+    // unchanged. People and bots are counted apart (#1389).
     $: hereEntry = $usersByRoom.get(currentRoomUrl);
-    $: hereCount = hereEntry?.users.length ?? 0;
+    $: hereCount = countPeopleAndBots(hereEntry?.users ?? []);
     $: hereName = hereEntry?.roomName?.trim() || mapRoomName || $LL.chat.peopleTab.thisRoom();
     $: elsewhereCount = Array.from($usersByRoom.entries())
         .filter(([playUri]) => playUri !== undefined && playUri !== currentRoomUrl)
@@ -299,7 +301,8 @@
                         <span class="u-live-dot shrink-0" aria-hidden="true" />
                         <span class="truncate">{hereName}</span>
                         <span class="u-count shrink-0 font-normal"
-                            >{$LL.chat.peopleTab.countHere({ count: hereCount })}</span
+                            >{$LL.chat.peopleTab.countPeople({ count: hereCount.people })}{#if hereCount.bots > 0}
+                                · {$LL.chat.peopleTab.countBots({ count: hereCount.bots })}{/if}</span
                         >
                     </h3>
                     <PeopleAndBots
