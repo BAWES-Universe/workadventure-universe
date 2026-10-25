@@ -375,7 +375,8 @@
     });
 </script>
 
-<div class="pdf-body">
+<!-- pdfjs-scope: the reader's own stylesheet applies only in here (scopePdfViewerCss). -->
+<div class="pdf-body pdfjs-scope">
     {#if $thumbsShown && !compact && $pages.count > 0}
         <aside class="thumbs" bind:this={thumbsElement} aria-label={$LL.chat.fileViewer.pageList()}>
             {#each pageNumbers as pageNumber (pageNumber)}
