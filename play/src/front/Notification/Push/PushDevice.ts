@@ -1,4 +1,4 @@
-import { writable } from "svelte/store";
+import { get, writable } from "svelte/store";
 import { botApiService } from "../../external-modules/bots/services/BotApiService";
 import { localUserStore } from "../../Connection/LocalUserStore";
 import { SERVICE_WORKER_URL } from "../../Network/ServiceWorker";
@@ -256,6 +256,16 @@ async function forgetThisBrowser(): Promise<void> {
 
 export type TurnOnResult = "on" | "blocked" | "dismissed" | "failed";
 
+/**
+ * A device switched off before keeps that in Orbit when saved again: turning it on here says so. False when Orbit has
+ * not got it on. Nothing to tell for a browser with nothing in Orbit, or a guest, who may still hold an earlier id.
+ */
+export async function enableThisDeviceInOrbit(): Promise<boolean> {
+    const id = get(thisDeviceIdStore);
+    if (!id || !localUserStore.isLogged()) return true;
+    return botApiService.setPushDeviceEnabled(id, true);
+}
+
 /** It said it couldn't turn on: Off is the choice now, so the next page load does not turn it on unasked. */
 function couldNotTurnOn(): "failed" {
     localUserStore.setNotification(false);
@@ -283,6 +293,7 @@ export function turnOnThisDevice(): Promise<TurnOnResult> {
             const result = await subscribeThisDevice();
             if (switchOffs !== offsAtStart) return "dismissed";
             if (result === "failed") return couldNotTurnOn();
+            if (!(await enableThisDeviceInOrbit())) return couldNotTurnOn();
             localUserStore.setNotification(true);
             return "on";
         })
