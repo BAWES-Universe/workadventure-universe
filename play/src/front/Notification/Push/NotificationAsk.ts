@@ -1,6 +1,7 @@
 import { localUserStore } from "../../Connection/LocalUserStore";
 import type { PartnerPlace } from "../../Chat/Components/Room/DirectChat/PartnerPlace";
 import { popupStore } from "../../Stores/PopupStore";
+import { botApiService } from "../../external-modules/bots/services/BotApiService";
 import NotificationCard from "./NotificationCard.svelte";
 import { pushAvailability, refreshThisDevice } from "./PushDevice";
 
@@ -47,8 +48,16 @@ export function askForNotifications(moment: NotificationMoment): void {
     }
     if (!shouldAsk(Date.now(), localUserStore.getLastNotificationPermissionRequest())) return;
     localUserStore.setLastNotificationPermissionRequest();
-    popupStore.removePopup(NOTIFICATION_CARD_ID);
-    popupStore.addPopup(NotificationCard, { moment }, NOTIFICATION_CARD_ID);
+    // A server that sends none while Universe is closed (no Orbit, or no keys there): the card only promises them
+    // while it is open. Orbit not answering is not known to be that.
+    botApiService
+        .getPushPublicKey()
+        .catch(() => undefined)
+        .then((publicKey) => {
+            popupStore.removePopup(NOTIFICATION_CARD_ID);
+            popupStore.addPopup(NotificationCard, { moment, whileClosed: publicKey !== null }, NOTIFICATION_CARD_ID);
+        })
+        .catch((error) => console.error(error));
 }
 
 /** Writing in a direct chat is a moment when the other one is a bot, or isn't in Universe to answer now. */

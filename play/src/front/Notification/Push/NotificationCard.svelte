@@ -16,6 +16,8 @@
      * says what happened: on, blocked (with the steps to undo it), or nothing lost.
      */
     export let moment: NotificationMoment;
+    /** Whether this server sends notifications while Universe is closed; if not, the card only promises them while open */
+    export let whileClosed = true;
 
     const ON_CLOSES_AFTER_MS = 6000;
     const device = describeDevice(currentInstallEnvironment());
@@ -39,14 +41,15 @@
             : moment.kind === "friendRequest"
             ? words.friendRequest.title({ name })
             : words.reply.title({ name });
+    $: when = whileClosed ? words.whileClosed() : words.whileOpen();
     $: body =
         moment.kind === "busy"
-            ? words.busy.body({ device: deviceWord })
+            ? words.busy.body({ device: deviceWord, when })
             : moment.kind === "friendRequest"
-            ? words.friendRequest.body({ device: deviceWord })
+            ? words.friendRequest.body({ device: deviceWord, when })
             : isBot
-            ? words.reply.botBody({ device: deviceWord, name })
-            : words.reply.body({ device: deviceWord, name });
+            ? words.reply.botBody({ device: deviceWord, name, when })
+            : words.reply.body({ device: deviceWord, name, when });
     $: preview =
         moment.kind === "busy"
             ? [words.busy.previewName(), words.busy.previewLine()]

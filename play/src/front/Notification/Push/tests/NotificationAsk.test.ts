@@ -1,12 +1,29 @@
-import { describe, expect, it, vi } from "vitest";
-import { ASK_AGAIN_AFTER_MS, ASK_AGAIN_WHEN_BLOCKED_AFTER_MS, replyMoment, shouldAsk } from "../NotificationAsk";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+    ASK_AGAIN_AFTER_MS,
+    ASK_AGAIN_WHEN_BLOCKED_AFTER_MS,
+    askForNotifications,
+    replyMoment,
+    shouldAsk,
+} from "../NotificationAsk";
 import { blockedSteps, cardStartState } from "../NotificationCardState";
 import type { PushDeviceInfo } from "../PushDevice";
 
+const { localUserStore, popupStore, botApiService } = vi.hoisted(() => ({
+    localUserStore: {
+        getPushDeviceId: () => null,
+        isLogged: vi.fn(() => true),
+        getLastNotificationPermissionRequest: vi.fn((): string | null => null),
+        setLastNotificationPermissionRequest: vi.fn(),
+    },
+    popupStore: { addPopup: vi.fn(), removePopup: vi.fn() },
+    botApiService: { getPushPublicKey: vi.fn((): Promise<string | null | undefined> => Promise.resolve("key")) },
+}));
+
 vi.mock("../NotificationCard.svelte", () => ({ default: {} }));
-vi.mock("../../../Connection/LocalUserStore", () => ({ localUserStore: { getPushDeviceId: () => null } }));
-vi.mock("../../../Stores/PopupStore", () => ({ popupStore: {} }));
-vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: {} }));
+vi.mock("../../../Connection/LocalUserStore", () => ({ localUserStore }));
+vi.mock("../../../Stores/PopupStore", () => ({ popupStore }));
+vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService }));
 vi.mock("../../../Network/ServiceWorker", () => ({ SERVICE_WORKER_URL: "/service-worker.js" }));
 
 const NOW = Date.parse("2026-10-25T12:00:00Z");
@@ -35,6 +52,43 @@ describe("when the card asks", () => {
 
     it("treats an unreadable last time as never asked", () => {
         expect(shouldAsk(NOW, "not a date", "ready", "default")).toBe(true);
+    });
+});
+
+describe("showing the card", () => {
+    const flush = () =>
+        new Promise((resolve) => {
+            setTimeout(resolve, 0);
+        });
+    const shownWith = () => popupStore.addPopup.mock.calls[0]?.[1];
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.stubGlobal("Notification", { permission: "default" });
+        vi.stubGlobal("PushManager", function PushManager() {});
+        Object.defineProperty(navigator, "serviceWorker", { value: {}, configurable: true });
+    });
+
+    it("promises notifications while Universe is closed where this server sends them", async () => {
+        askForNotifications({ kind: "busy" });
+        await flush();
+        expect(popupStore.addPopup).toHaveBeenCalledTimes(1);
+        expect(shownWith()).toEqual({ moment: { kind: "busy" }, whileClosed: true });
+        expect(localUserStore.setLastNotificationPermissionRequest).toHaveBeenCalledTimes(1);
+    });
+
+    it("only promises them while it is open where this server sends none", async () => {
+        botApiService.getPushPublicKey.mockResolvedValueOnce(null);
+        askForNotifications({ kind: "busy" });
+        await flush();
+        expect(shownWith()).toEqual({ moment: { kind: "busy" }, whileClosed: false });
+    });
+
+    it("keeps the full promise when Orbit does not answer", async () => {
+        botApiService.getPushPublicKey.mockRejectedValueOnce(new Error("offline"));
+        askForNotifications({ kind: "busy" });
+        await flush();
+        expect(shownWith()).toEqual({ moment: { kind: "busy" }, whileClosed: true });
     });
 });
 
