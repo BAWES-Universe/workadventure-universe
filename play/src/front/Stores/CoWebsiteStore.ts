@@ -179,6 +179,17 @@ export const coWebsitesSize = derived(
     }
 );
 
+const openedByPerson = new WeakSet<CoWebsite>();
+
+/**
+ * Marks an item the person opened themselves (a file or a link from the chat), as opposed to a page the map opened:
+ * it stays open when the game reconnects to the same room, as the chat does. The item is returned, to add it.
+ */
+export function openedByPersonCoWebsite<T extends CoWebsite>(coWebsite: T): T {
+    openedByPerson.add(coWebsite);
+    return coWebsite;
+}
+
 export class CoWebsiteManager {
     get verticalMode(): boolean {
         return window.innerWidth <= window.innerHeight;
@@ -215,8 +226,13 @@ export class CoWebsiteManager {
         return id;
     }
 
-    public cleanup(): void {
-        coWebsites.removeAll();
+    /**
+     * Closes what the map opened, and everything else too unless the same room is being entered again (a reconnect):
+     * the map's pages come back with the map, what the person opened stays where they were reading it.
+     */
+    public cleanup(reconnecting = false): void {
+        if (reconnecting) coWebsites.keepOnly((coWebsite) => openedByPerson.has(coWebsite));
+        else coWebsites.removeAll();
     }
 }
 

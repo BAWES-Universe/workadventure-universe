@@ -84,8 +84,9 @@
 <svelte:window on:keydown={onKeyDown} />
 
 {#if wokaMenuData}
+    <!-- screen-blocker: the camera keeps the person this card is about in the space beside it, not under it. -->
     <div
-        class="m-auto my-0 min-h-0 max-w-lg min-w-48 max-sm:max-w-[89%] z-50 bg-contrast/80 transition-all backdrop-blur rounded-lg pointer-events-auto overflow-hidden md:mr-0 flex flex-col"
+        class="m-auto my-0 min-h-0 max-w-lg min-w-48 max-sm:max-w-[89%] z-50 bg-contrast/80 transition-all backdrop-blur rounded-lg pointer-events-auto overflow-hidden md:mr-0 flex flex-col screen-blocker"
         data-testid="actions-menu"
     >
         <!-- Never taller than the space it has: what's above the buttons scrolls, the buttons (and the ⋯ list) stay in view. -->

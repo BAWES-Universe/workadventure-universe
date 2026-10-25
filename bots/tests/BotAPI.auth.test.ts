@@ -500,3 +500,52 @@ describe('Summon for every player, guests included', () => {
         });
     });
 });
+
+describe('saving a bot onto one of the person\'s own AI keys (#374)', () => {
+    const stored = { botId: 'b1', name: 'Ada', behaviorType: 'social', behaviorConfig: {}, aiProviderRef: 'universe-ai' };
+
+    function put(body: unknown) {
+        return fetch(`${base}/api/bots/b1`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SESSION}` },
+            body: JSON.stringify(body),
+        });
+    }
+
+    beforeEach(() => {
+        adminApiService.getBotConfiguration.mockResolvedValue(stored);
+        adminApiService.saveBotConfiguration.mockReset();
+        adminApiService.saveBotConfiguration.mockResolvedValue(undefined);
+        botManager.getBot.mockReturnValue(null);
+    });
+
+    it('sends a key the bot is not on yet with the person\'s session, so Orbit can see whose key it is', async () => {
+        const response = await put({ aiProviderRef: 'key-123' });
+        expect(response.status).toBe(200);
+        expect(adminApiService.saveBotConfiguration).toHaveBeenCalledWith(expect.objectContaining({ aiProviderRef: 'key-123' }), SESSION);
+    });
+
+    it('keeps every other save on the admin token, as before', async () => {
+        await put({ aiProviderRef: 'universe-ai', chatInstructions: 'Be kind' });
+        await put({ aiProviderRef: 'deepseek-flash' });
+        await put({ name: 'Grace' });
+        expect(adminApiService.saveBotConfiguration).toHaveBeenCalledTimes(3);
+        for (const call of adminApiService.saveBotConfiguration.mock.calls) expect(call[1]).toBeUndefined();
+    });
+
+    it('does not send the session for the key the bot already runs on', async () => {
+        adminApiService.getBotConfiguration.mockResolvedValue({ ...stored, aiProviderRef: 'key-123' });
+        await put({ aiProviderRef: 'key-123', chatInstructions: 'Be kind' });
+        expect(adminApiService.saveBotConfiguration.mock.calls[0][1]).toBeUndefined();
+    });
+
+    it('passes on why Orbit refused, as a 400, and leaves the running bot alone', async () => {
+        const { BotConfigRefused } = await vi.importActual<typeof import('../server/AdminApiService')>('../server/AdminApiService');
+        adminApiService.saveBotConfiguration.mockRejectedValue(new BotConfigRefused('That key isn’t lent to this universe.'));
+        botManager.getBot.mockReturnValue({});
+        const response = await put({ aiProviderRef: 'key-999' });
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({ error: 'That key isn’t lent to this universe.' });
+        expect(botManager.updateBot).not.toHaveBeenCalled();
+    });
+});

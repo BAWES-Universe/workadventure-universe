@@ -6,6 +6,7 @@ import Debug from "debug";
 import axios, { isAxiosError } from "axios";
 import type { AxiosResponse } from "axios";
 import { parsePreviewableUrl, safeLookup } from "./LinkPreviewService";
+import { isFrameable } from "./FrameHeaders";
 
 const debug = Debug("embeddable");
 
@@ -60,7 +61,7 @@ export async function probeEmbeddableWebsite(rawUrl: string, options: ProbeOptio
 
     try {
         const response = await requestHeaders("head", url, parseUrl, agents, timeoutMs);
-        return { state: true, embeddable: isAllowed(response) };
+        return { state: true, embeddable: isAllowed(response, url) };
     } catch (error) {
         // If response from server is "Method not allowed", we try to do a GET request
         if (!(isAxiosError(error) && error.response?.status === 405)) {
@@ -69,7 +70,7 @@ export async function probeEmbeddableWebsite(rawUrl: string, options: ProbeOptio
     }
     try {
         const response = await requestHeaders("get", url, parseUrl, agents, timeoutMs);
-        return { state: true, embeddable: isAllowed(response) };
+        return { state: true, embeddable: isAllowed(response, url) };
     } catch (error) {
         return answerForError(rawUrl, error);
     }
@@ -144,16 +145,15 @@ async function requestHeaders(
     throw new Error("Too many redirects");
 }
 
-function isAllowed(response: AxiosResponse): boolean {
-    const headers = response.headers;
-    if (!headers) {
-        return true;
-    }
-    let xFrameOption = headers["x-frame-options"];
-    if (!xFrameOption) {
-        return true;
-    }
-    xFrameOption = String(xFrameOption).toLowerCase();
-
-    return xFrameOption !== "deny" && xFrameOption !== "sameorigin";
+/** Read from the page that answered, after redirects: both "don't frame me" headers, as the browser reads them. */
+function isAllowed(response: AxiosResponse, url: URL): boolean {
+    const answered = response.config?.url ? new URL(response.config.url, url) : url;
+    const headers = response.headers ?? {};
+    return isFrameable(
+        {
+            "x-frame-options": headers["x-frame-options"] as string | undefined,
+            "content-security-policy": headers["content-security-policy"] as string | undefined,
+        },
+        answered
+    );
 }

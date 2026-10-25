@@ -19,6 +19,7 @@ import type {
     ChatMessageType,
     ChatRoom,
 } from "../ChatConnection";
+import { TYPING_STOP_GRACE_MS } from "../ChatConnection";
 import LL, { locale } from "../../../../i18n/i18n-svelte";
 import { iframeListener } from "../../../Api/IframeListener";
 import type { SpaceInterface, SpaceUserExtended } from "../../../Space/SpaceInterface";
@@ -82,7 +83,7 @@ import {
 const debug = Debug("ProximityChatRoom");
 
 // A typing entry expires on its own if no new "typing" event refreshes it, so a lost "stopped typing" event
-// can never leave the indicator stuck. The sender re-emits "typing" on every keystroke.
+// can never leave the indicator stuck. The sender says "typing" again every few seconds while keys keep coming.
 export const TYPING_EXPIRY_MS = 12000;
 
 /**
@@ -1116,6 +1117,17 @@ export class ProximityChatRoom implements ChatRoom {
         });
     }
 
+    /** A "stopped" keeps the dots a moment (TYPING_STOP_GRACE_MS), in case typing starts again right away. */
+    private typingStoppedBy(id: string) {
+        const timer = this.typingExpiryTimers.get(id);
+        if (!timer) return;
+        clearTimeout(timer);
+        this.typingExpiryTimers.set(
+            id,
+            setTimeout(() => this.removeTypingUserbyID(id), TYPING_STOP_GRACE_MS)
+        );
+    }
+
     private removeTypingUserbyID(id: string) {
         const timer = this.typingExpiryTimers.get(id);
         if (timer) {
@@ -1282,7 +1294,7 @@ export class ProximityChatRoom implements ChatRoom {
             if (event.spaceIsTyping.isTyping) {
                 this.addTypingUser(event.sender, event.spaceIsTyping.characterTextures, event.spaceIsTyping.name);
             } else {
-                this.removeTypingUserbyID(event.sender);
+                this.typingStoppedBy(event.sender);
             }
         });
 
