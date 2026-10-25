@@ -109,6 +109,7 @@ export function groupUniverses(
             };
             universes.set(universeKey, universe);
         }
+        if (names?.universeName) universe.name = names.universeName;
         if (names?.universeColour) universe.colour = names.universeColour;
         universe.people += details.people;
         universe.bots += details.bots;
