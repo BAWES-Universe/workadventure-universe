@@ -2,8 +2,8 @@
 //
 // It keeps nothing offline: the game's files are never stored, so a new release always loads. (The Cache API
 // holds one entry of the page's own, the last room, and this worker leaves it alone.) What it does is
-// take a tapped chat notification to the chat, and give the browsers that ask for one the worker they expect
-// before they offer to install the app.
+// show the notifications Orbit sends while Universe is closed, take a tapped notification to its chat, and give
+// the browsers that ask for one the worker they expect before they offer to install the app.
 
 self.addEventListener("install", () => {
     self.skipWaiting();
@@ -15,6 +15,52 @@ self.addEventListener("activate", (event) => {
 
 // Nothing is answered from here: every request goes to the network as it always did.
 self.addEventListener("fetch", () => {});
+
+// A notification Orbit sends: a title, one line, and what a tap opens. The browser expects one shown for every
+// push (Safari stops sending after a few that show nothing), so one that cannot be read still shows.
+self.addEventListener("push", (event) => {
+    event.waitUntil(showPushed(readPush(event.data)));
+});
+
+function readPush(data) {
+    try {
+        const push = data?.json();
+        if (push && typeof push.title === "string") {
+            return push;
+        }
+    } catch {
+        // Not the shape Orbit sends: show the plain one below.
+    }
+    return { title: "Universe", body: "Open Universe to see what's new." };
+}
+
+async function showPushed(push) {
+    const chatRoomId = typeof push.chatRoomId === "string" ? push.chatRoomId : undefined;
+    // One notification per chat: a newer message takes the place of the one still showing.
+    const tag = chatRoomId ? chatTag(chatRoomId) : typeof push.tag === "string" ? push.tag : undefined;
+    if (tag && replacesByClosing()) {
+        const showing = await self.registration.getNotifications({ tag });
+        showing.forEach((notification) => notification.close());
+    }
+    await self.registration.showNotification(push.title, {
+        body: typeof push.body === "string" ? push.body : undefined,
+        icon: "/static/images/logo-WA-min.png",
+        badge: "/static/images/logo-WA-min.png",
+        tag,
+        data: { chatRoomId, tabUrl: push.url },
+    });
+}
+
+// The same tag the page gives a chat's notification (MessageNotification), so the two never show side by side.
+function chatTag(chatRoomId) {
+    return `chat:${chatRoomId}`;
+}
+
+// Safari (every browser on an iPhone too) keeps both notifications of one tag, so there the older one is closed first.
+function replacesByClosing() {
+    const agent = self.navigator?.userAgent ?? "";
+    return /AppleWebKit\//.test(agent) && !/Chrome\/|Chromium\/|Android/.test(agent);
+}
 
 self.addEventListener("notificationclick", (event) => {
     event.notification.close();
