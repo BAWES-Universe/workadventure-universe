@@ -1,4 +1,5 @@
 import { botApiService } from "../../external-modules/bots/services/BotApiService";
+import { localUserStore } from "../../Connection/LocalUserStore";
 import { SERVICE_WORKER_URL } from "../../Network/ServiceWorker";
 import type { InstallEnvironment } from "../../Install/InstallPlatform";
 import { currentInstallEnvironment, isInstalledApp } from "../../Install/InstallPlatform";
@@ -131,6 +132,8 @@ export async function subscribeThisDevice(): Promise<boolean> {
  */
 export async function refreshThisDevice(): Promise<void> {
     if (pushAvailability() !== "ready" || Notification.permission !== "granted") return;
+    // Switched off here: stays off until switched on again.
+    if (!localUserStore.getNotification()) return;
     try {
         await subscribeThisDevice();
     } catch (error) {
@@ -145,6 +148,19 @@ export function refreshThisDeviceOnce(): void {
     if (refreshed) return;
     refreshed = true;
     refreshThisDevice().catch(() => undefined);
+}
+
+/**
+ * Switched off in the settings: this browser drops its subscription, so nothing more reaches it while Universe is
+ * closed. Orbit forgets the device the next time it tries to send there (the push service answers that it is gone).
+ */
+export async function forgetThisBrowser(): Promise<void> {
+    try {
+        const registration = await navigator.serviceWorker?.getRegistration(SERVICE_WORKER_URL);
+        await (await registration?.pushManager.getSubscription())?.unsubscribe();
+    } catch (error) {
+        console.warn("Notifications: this browser could not be unsubscribed", error);
+    }
 }
 
 export type TurnOnResult = "on" | "blocked" | "dismissed" | "failed";
@@ -165,7 +181,9 @@ export function turnOnThisDevice(): Promise<TurnOnResult> {
         .then(async (permission) => {
             if (permission === "denied") return "blocked";
             if (permission !== "granted") return "dismissed";
-            return (await subscribeThisDevice()) ? "on" : "failed";
+            if (!(await subscribeThisDevice())) return "failed";
+            localUserStore.setNotification(true);
+            return "on";
         })
         .catch((error) => {
             console.error("Notifications: turning on failed", error);

@@ -2,8 +2,18 @@ import { describe, expect, it, vi } from "vitest";
 import type { InstallEnvironment } from "../../../Install/InstallPlatform";
 import { describeDevice, deviceLabel, keyBytes, pushAvailability } from "../PushDevice";
 
-vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: {} }));
+const { getPushPublicKey } = vi.hoisted(() => ({ getPushPublicKey: vi.fn(() => Promise.resolve(null)) }));
+vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: { getPushPublicKey } }));
 vi.mock("../../../Network/ServiceWorker", () => ({ SERVICE_WORKER_URL: "/service-worker.js" }));
+vi.mock("../../../Connection/LocalUserStore", () => {
+    let notification = false;
+    return {
+        localUserStore: {
+            getNotification: () => notification,
+            setNotification: (value: boolean) => (notification = value),
+        },
+    };
+});
 
 const UA = {
     androidChrome:
@@ -69,5 +79,22 @@ describe("the subscribe key", () => {
     it("turns the base64url key into its bytes, with or without padding", () => {
         expect(Array.from(keyBytes("AQID"))).toEqual([1, 2, 3]);
         expect(Array.from(keyBytes("-_8"))).toEqual([251, 255]);
+    });
+});
+
+describe("saving this device again on start", () => {
+    it("leaves a device that was switched off here alone", async () => {
+        const { refreshThisDevice } = await import("../PushDevice");
+        const { localUserStore } = await import("../../../Connection/LocalUserStore");
+        vi.stubGlobal("Notification", { permission: "granted" });
+        vi.stubGlobal("PushManager", class {});
+        vi.stubGlobal("navigator", { userAgent: UA.windowsEdge, platform: "", maxTouchPoints: 0, serviceWorker: {} });
+        localUserStore.setNotification(false);
+        await refreshThisDevice();
+        expect(getPushPublicKey).not.toHaveBeenCalled();
+        localUserStore.setNotification(true);
+        await refreshThisDevice();
+        expect(getPushPublicKey).toHaveBeenCalledOnce();
+        vi.unstubAllGlobals();
     });
 });
