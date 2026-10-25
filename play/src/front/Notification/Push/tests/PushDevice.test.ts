@@ -4,6 +4,16 @@ import { describeDevice, deviceLabel, keyBytes, pushAvailability } from "../Push
 
 vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: {} }));
 vi.mock("../../../Network/ServiceWorker", () => ({ SERVICE_WORKER_URL: "/service-worker.js" }));
+vi.mock("../../../Connection/LocalUserStore", () => {
+    let notification = false;
+    return {
+        localUserStore: {
+            getNotification: () => notification,
+            setNotification: (value: boolean) => (notification = value),
+            isLogged: () => true,
+        },
+    };
+});
 
 const UA = {
     androidChrome:
@@ -69,5 +79,27 @@ describe("the subscribe key", () => {
     it("turns the base64url key into its bytes, with or without padding", () => {
         expect(Array.from(keyBytes("AQID"))).toEqual([1, 2, 3]);
         expect(Array.from(keyBytes("-_8"))).toEqual([251, 255]);
+    });
+});
+
+describe("this device's state", () => {
+    it("is blocked when the browser blocked us, on only when allowed and switched on", async () => {
+        const { readThisDeviceState } = await import("../PushDevice");
+        const { localUserStore } = await import("../../../Connection/LocalUserStore");
+        const permission = { value: "default" as NotificationPermission };
+        vi.stubGlobal("Notification", {
+            get permission() {
+                return permission.value;
+            },
+        });
+        localUserStore.setNotification(true);
+        expect(readThisDeviceState()).toBe("off");
+        permission.value = "granted";
+        expect(readThisDeviceState()).toBe("on");
+        localUserStore.setNotification(false);
+        expect(readThisDeviceState()).toBe("off");
+        permission.value = "denied";
+        expect(readThisDeviceState()).toBe("blocked");
+        vi.unstubAllGlobals();
     });
 });

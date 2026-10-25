@@ -9,6 +9,7 @@ import {
 } from "../accessModel";
 import { resolveCredentialUrl } from "../../admin-api/iframeAuth";
 import { freshOrbitAccessToken, type GameTokenHolder } from "../../admin-api/orbitAccessToken";
+import type { PushOverview, PushSettings } from "../../../Notification/Push/PushSettings";
 import { classifySummonFailure, type SummonResult } from "./summonFailure";
 
 interface AuthError extends Error {
@@ -532,6 +533,63 @@ export class BotApiService {
             return typeof data.device?.id === "string" ? data.device.id : null;
         } catch {
             return null;
+        }
+    }
+
+    /** Everything Settings > Notifications shows, or undefined when Orbit can't be reached. */
+    async getPushOverview(): Promise<PushOverview | undefined> {
+        if (!this.adminUrl || !this.accessToken) return undefined;
+        try {
+            const response = await this.fetch("/api/me/push");
+            if (!response.ok) return undefined;
+            const data = (await response.json()) as Partial<PushOverview>;
+            if (!data.settings || !Array.isArray(data.devices)) return undefined;
+            return { publicKey: data.publicKey ?? null, settings: data.settings, devices: data.devices };
+        } catch {
+            return undefined;
+        }
+    }
+
+    /** Changes some notification settings. All of them as saved, or undefined when Orbit refused or can't be reached. */
+    async updatePushSettings(change: Partial<PushSettings>): Promise<PushSettings | undefined> {
+        if (!this.adminUrl || !this.accessToken) return undefined;
+        try {
+            const response = await this.fetch("/api/me/push/settings", {
+                method: "PATCH",
+                body: JSON.stringify(change),
+            });
+            if (!response.ok) return undefined;
+            const data = (await response.json()) as { settings?: PushSettings };
+            return data.settings;
+        } catch {
+            return undefined;
+        }
+    }
+
+    /** A device's own switch in Orbit. True when saved. */
+    async setPushDeviceEnabled(deviceId: string, enabled: boolean): Promise<boolean> {
+        if (!this.adminUrl || !this.accessToken) return false;
+        try {
+            const response = await this.fetch(`/api/me/push/devices/${encodeURIComponent(deviceId)}`, {
+                method: "PATCH",
+                body: JSON.stringify({ enabled }),
+            });
+            return response.ok;
+        } catch {
+            return false;
+        }
+    }
+
+    /** Remove in Your devices. True when it is gone, including when it already was. */
+    async removePushDevice(deviceId: string): Promise<boolean> {
+        if (!this.adminUrl || !this.accessToken) return false;
+        try {
+            const response = await this.fetch(`/api/me/push/devices/${encodeURIComponent(deviceId)}`, {
+                method: "DELETE",
+            });
+            return response.ok || response.status === 404;
+        } catch {
+            return false;
         }
     }
 

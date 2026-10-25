@@ -2,7 +2,6 @@
     import { onDestroy } from "svelte";
     import LL from "../../../i18n/i18n-svelte";
     import { popupStore } from "../../Stores/PopupStore";
-    import { localUserStore } from "../../Connection/LocalUserStore";
     import { helpNotificationSettingsVisibleStore } from "../../Stores/HelpSettingsStore";
     import { installApp } from "../../Install/InstallWiring";
     import { currentInstallEnvironment } from "../../Install/InstallPlatform";
@@ -73,7 +72,6 @@
         turnOnThisDevice()
             .then((result) => {
                 if (result === "on") {
-                    localUserStore.setNotification(true);
                     helpNotificationSettingsVisibleStore.set(false);
                     state = "on";
                     closeTimer = setTimeout(close, ON_CLOSES_AFTER_MS);

@@ -1,4 +1,6 @@
+import { writable } from "svelte/store";
 import { botApiService } from "../../external-modules/bots/services/BotApiService";
+import { localUserStore } from "../../Connection/LocalUserStore";
 import { SERVICE_WORKER_URL } from "../../Network/ServiceWorker";
 import type { InstallEnvironment } from "../../Install/InstallPlatform";
 import { currentInstallEnvironment, isInstalledApp } from "../../Install/InstallPlatform";
@@ -105,11 +107,14 @@ function sameKey(subscription: PushSubscription, key: Uint8Array): boolean {
 
 /**
  * Subscribes this browser (the permission is already given) and saves it in Orbit. A subscription made with an
- * older key is replaced. True when Orbit has it.
+ * older key is replaced. "notSetUp" when this server sends no notifications while Universe is closed (no keys), or
+ * the player is a guest: notifications then only come while Universe is open.
  */
-export async function subscribeThisDevice(): Promise<boolean> {
+export async function subscribeThisDevice(): Promise<"saved" | "notSetUp" | "failed"> {
+    if (!localUserStore.isLogged()) return "notSetUp";
     const publicKey = await botApiService.getPushPublicKey();
-    if (!publicKey) return false;
+    if (publicKey === null) return "notSetUp";
+    if (!publicKey) return "failed";
     const key = keyBytes(publicKey);
     const registration = await navigator.serviceWorker.register(SERVICE_WORKER_URL);
     let subscription = await registration.pushManager.getSubscription();
@@ -122,7 +127,9 @@ export async function subscribeThisDevice(): Promise<boolean> {
         subscription.toJSON(),
         deviceLabel(describeDevice(currentInstallEnvironment()))
     );
-    return id !== null;
+    if (id === null) return "failed";
+    thisDeviceIdStore.set(id);
+    return "saved";
 }
 
 /**
@@ -131,6 +138,8 @@ export async function subscribeThisDevice(): Promise<boolean> {
  */
 export async function refreshThisDevice(): Promise<void> {
     if (pushAvailability() !== "ready" || Notification.permission !== "granted") return;
+    // Switched off (or removed) here: stays off until switched on again.
+    if (!localUserStore.getNotification()) return;
     try {
         await subscribeThisDevice();
     } catch (error) {
@@ -145,6 +154,47 @@ export function refreshThisDeviceOnce(): void {
     if (refreshed) return;
     refreshed = true;
     refreshThisDevice().catch(() => undefined);
+}
+
+/** This device's id in Orbit, once it has been saved there in this page. */
+export const thisDeviceIdStore = writable<string | undefined>(undefined);
+
+/** What the Notifications row of the menu and This device say: on, off, or blocked by the browser. */
+export type ThisDeviceState = "on" | "off" | "blocked";
+
+export function readThisDeviceState(): ThisDeviceState {
+    if (typeof Notification === "undefined") return "off";
+    if (Notification.permission === "denied") return "blocked";
+    return Notification.permission === "granted" && localUserStore.getNotification() ? "on" : "off";
+}
+
+export const thisDeviceStateStore = writable<ThisDeviceState>(readThisDeviceState());
+
+/** After anything that may have changed it: the card, the switch, Remove. */
+export function updateThisDeviceState(): void {
+    thisDeviceStateStore.set(readThisDeviceState());
+}
+
+/**
+ * This device's switch turned off, or Remove on this device: nothing arrives here any more, from Orbit or from the
+ * open window, until it is switched on again. `remove` also takes it out of Your devices.
+ */
+export async function turnOffThisDevice(deviceId: string | undefined, remove: boolean): Promise<void> {
+    localUserStore.setNotification(false);
+    updateThisDeviceState();
+    if (deviceId) {
+        if (remove) await botApiService.removePushDevice(deviceId);
+        else await botApiService.setPushDeviceEnabled(deviceId, false);
+    }
+    if (remove) {
+        thisDeviceIdStore.set(undefined);
+        try {
+            const registration = await navigator.serviceWorker?.getRegistration(SERVICE_WORKER_URL);
+            await (await registration?.pushManager.getSubscription())?.unsubscribe();
+        } catch (error) {
+            console.warn("Notifications: this browser could not be unsubscribed", error);
+        }
+    }
 }
 
 export type TurnOnResult = "on" | "blocked" | "dismissed" | "failed";
@@ -165,10 +215,13 @@ export function turnOnThisDevice(): Promise<TurnOnResult> {
         .then(async (permission) => {
             if (permission === "denied") return "blocked";
             if (permission !== "granted") return "dismissed";
-            return (await subscribeThisDevice()) ? "on" : "failed";
+            if ((await subscribeThisDevice()) === "failed") return "failed";
+            localUserStore.setNotification(true);
+            return "on";
         })
         .catch((error) => {
             console.error("Notifications: turning on failed", error);
             return "failed" as const;
-        });
+        })
+        .finally(updateThisDeviceState);
 }
