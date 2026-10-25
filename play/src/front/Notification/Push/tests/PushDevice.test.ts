@@ -179,6 +179,25 @@ describe("switching this device off", () => {
         vi.unstubAllGlobals();
     });
 
+    it("leaves the browser alone when switched on again before Orbit answered the switch-off", async () => {
+        const { subscribeThisDevice, turnOffThisDevice } = await import("../PushDevice");
+        const unsubscribe = browserWithSubscription();
+        let answer: (told: boolean) => void = () => undefined;
+        setPushDeviceEnabled.mockImplementationOnce(
+            () =>
+                new Promise<boolean>((resolve) => {
+                    answer = resolve;
+                })
+        );
+        const switchingOff = turnOffThisDevice("d1", false);
+        // On again: this test browser has no Web Push, so the save ends at once, and it has still started
+        await subscribeThisDevice();
+        answer(false);
+        await switchingOff;
+        expect(unsubscribe).not.toHaveBeenCalled();
+        vi.unstubAllGlobals();
+    });
+
     it("on Remove, forgets this device's id once Orbit has removed it", async () => {
         const { turnOffThisDevice } = await import("../PushDevice");
         browserWithSubscription();
