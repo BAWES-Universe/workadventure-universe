@@ -127,4 +127,31 @@ describe("MatrixProvider admin sign-in with MATRIX_ADMIN_TOKEN", () => {
         expect(inspect(error)).toContain("Request failed with status code 500");
         expect(JSON.stringify(error)).not.toContain("device-less-token");
     });
+
+    it("keeps the admin password out of a failed password sign-in", async () => {
+        const failed = {
+            isAxiosError: true,
+            name: "AxiosError",
+            message: "Request failed with status code 429",
+            response: { status: 429 },
+            config: { data: JSON.stringify({ type: "m.login.password", user: "admin", password: "secret" }) },
+        };
+        post.mockReset().mockRejectedValue(failed);
+        await import("../../src/pusher/services/MatrixProvider");
+        await vi.waitFor(() => expect(interceptorUse).toHaveBeenCalled());
+        const onRejected = interceptorUse.mock.calls[0][1] as (error: unknown) => Promise<unknown>;
+
+        // Synapse refuses the token, so the password sign-in runs and fails.
+        await expect(
+            onRejected({
+                isAxiosError: true,
+                response: { status: 401 },
+                config: { headers: { Authorization: "Bearer device-less-token" } },
+            })
+        ).rejects.toBe(failed);
+
+        expect(inspect(failed)).not.toContain("secret");
+        expect(inspect(failed)).toContain("status 429");
+        expect(JSON.stringify(failed)).not.toContain("secret");
+    });
 });
