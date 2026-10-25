@@ -24,6 +24,8 @@ export type RunsOnCard =
           universe: string;
           status: "working" | "down";
           ifDown: "universe-ai" | "stop";
+          logo: string | null;
+          plainIcon: "plug" | "chip" | null;
       }
     /** Someone else's key the bot is on now: shown as it is, never offered, only Universe AI can replace it. */
     | {
@@ -35,6 +37,8 @@ export type RunsOnCard =
           selectable: false;
           status: "working" | "down";
           ifDown: "universe-ai" | "stop";
+          logo: string | null;
+          plainIcon: "plug" | "chip" | null;
       }
     /** A server provider the bot is pinned to (a super admin did that): shown as it is. */
     | { kind: "pinned"; id: string; title: string; picked: true; selectable: false }
@@ -65,6 +69,8 @@ export function runsOnCards(
                           selectable: false,
                           status: options.currentKey.status,
                           ifDown: options.currentKey.ifDown,
+                          logo: options.currentKey.logo ?? null,
+                          plainIcon: options.currentKey.plainIcon ?? null,
                       }
                     : {
                           kind: "theirs",
@@ -75,6 +81,8 @@ export function runsOnCards(
                           selectable: false,
                           status: options.currentKey.status,
                           ifDown: options.currentKey.ifDown,
+                          logo: options.currentKey.logo ?? null,
+                          plainIcon: options.currentKey.plainIcon ?? null,
                       }
             );
         } else if (isOwnKeyRef(current)) {
@@ -107,9 +115,36 @@ export function runsOnCards(
             universe: key.universeName,
             status: key.status,
             ifDown: key.ifDown,
+            logo: key.logo ?? null,
+            plainIcon: key.plainIcon ?? null,
         });
     }
     return cards;
+}
+
+/** What a key's card draws before its name. */
+export type KeyIcon = { kind: "logo"; url: string } | { kind: "plug" } | { kind: "chip" } | { kind: "key" };
+
+/**
+ * The logo file's address. The name comes from Orbit and ends up in a style, so only a plain file name is accepted;
+ * anything else draws no logo.
+ */
+export function aiLogoUrl(logo: string | null | undefined): string | null {
+    return logo && /^[a-z0-9-]+$/.test(logo) ? `/static/ai-providers/${logo}.svg` : null;
+}
+
+/**
+ * The icon of a "Runs on" card: the provider's logo, a plug for "any server", a chip for a key whose kind is unknown,
+ * and the plain key where Orbit doesn't say (an older Orbit). Universe AI keeps its own sparkles, so it has none here.
+ */
+export function cardIcon(card: RunsOnCard): KeyIcon | null {
+    if (card.kind === "universe-ai") return null;
+    if (card.kind !== "mine" && card.kind !== "theirs") return { kind: "key" };
+    const url = aiLogoUrl(card.logo);
+    if (url) return { kind: "logo", url };
+    if (card.plainIcon === "plug") return { kind: "plug" };
+    if (card.plainIcon === "chip") return { kind: "chip" };
+    return { kind: "key" };
 }
 
 /** The one line under "Mind" while it is closed: Universe AI, the key's name, or the provider it is pinned to. */

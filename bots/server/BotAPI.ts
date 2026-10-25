@@ -6,7 +6,7 @@ import express, { type Request, type Response, type NextFunction } from 'express
 import { timingSafeEqual } from 'crypto';
 import jwt from 'jsonwebtoken';
 import { BotManager } from './BotManager';
-import { AdminApiService } from './AdminApiService';
+import { AdminApiService, BotConfigRefused } from './AdminApiService';
 import { BotRegistry } from './BotRegistry';
 import type { BotConfiguration } from './AdminApiService';
 import { movementLogger } from '../utils/MovementLogger';
@@ -251,6 +251,16 @@ function sameRoomAddress(a: string, b: string): boolean {
         }
     };
     return pathOf(a) === pathOf(b);
+}
+
+/**
+ * Whether a bot save puts the bot on a person's own AI key it isn't on yet (a ref starting "key-", #374). Orbit judges that by
+ * who is saving (only the key's owner, who made the bot, in a universe the key is lent to), and the admin token is nobody,
+ * so such a save goes with the person's own session. Every other save keeps the admin token, as before.
+ */
+export function putsBotOnPersonalKey(existing: BotConfiguration, updates: Partial<BotConfiguration>): boolean {
+    const ref = updates.aiProviderRef;
+    return typeof ref === 'string' && ref.startsWith('key-') && ref !== existing.aiProviderRef;
 }
 
 export class BotAPI {
@@ -1035,7 +1045,17 @@ export class BotAPI {
                     }
                 }
                 
-                await this.adminApiService.saveBotConfiguration(finalConfigToSave);
+                const actingSession = putsBotOnPersonalKey(existingConfig, updatesToApply) ? req.sessionToken : undefined;
+                try {
+                    await this.adminApiService.saveBotConfiguration(finalConfigToSave, actingSession);
+                } catch (error) {
+                    // Orbit said why it refused (a key that isn't theirs or isn't lent here): pass it on instead of a bare 500
+                    if (error instanceof BotConfigRefused) {
+                        res.status(400).json({ error: error.message });
+                        return;
+                    }
+                    throw error;
+                }
 
                 // Check if name or texture changed (require respawn)
                 const nameChanged = 'name' in updates && updates.name !== existingConfig.name;
