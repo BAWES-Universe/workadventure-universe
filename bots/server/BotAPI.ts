@@ -236,6 +236,8 @@ async function identifyForAccessMiddleware(
 export interface BotAPIOptions {
     /** Each bot's state for direct messages (online, resting, unready, gone); only when Matrix DMs are on. */
     dmStatus?: (botIds: string[]) => Promise<Record<string, string>>;
+    /** The room a bot lives in, for its profile in a direct message; only when Matrix DMs are on. */
+    dmRoom?: (botId: string) => Promise<{ url: string; room: string; world: string; universe: string } | undefined>;
 }
 
 /** Most bots one state lookup may ask about: a chat list's worth. */
@@ -270,6 +272,7 @@ export class BotAPI {
     private botRegistry: BotRegistry;
     private server: any = null;
     private dmStatus: BotAPIOptions['dmStatus'];
+    private dmRoom: BotAPIOptions['dmRoom'];
 
     constructor(
         botManager: BotManager,
@@ -284,6 +287,7 @@ export class BotAPI {
         this.adminApiService = adminApiService;
         this.botRegistry = botRegistry;
         this.dmStatus = options.dmStatus;
+        this.dmRoom = options.dmRoom;
 
         // Routers with their own auth and body limits (the Matrix application service) go before the shared parser.
         for (const router of preRouters) {
@@ -827,6 +831,31 @@ export class BotAPI {
             } catch (error) {
                 console.error('[BotAPI] Error reading bot states:', error);
                 res.status(500).json({ error: 'Could not read bot states' });
+            }
+        });
+
+        // The room a bot lives in, for the Visit button on its profile in a direct message. Only for someone who may
+        // message it, the same people its replies' room cards reach, so nobody else learns where a bot is.
+        this.app.get('/api/bots/:botId/dm-room', requireSession, async (req: BotAPIRequest, res: Response) => {
+            if (!this.dmRoom) {
+                res.status(404).json({ error: 'Direct messages are off' });
+                return;
+            }
+            const { botId } = req.params;
+            if (!/^[A-Za-z0-9_-]{1,64}$/.test(botId)) {
+                res.status(400).json({ error: 'Not a bot id' });
+                return;
+            }
+            try {
+                const person = { signedIn: true, identifier: req.sessionUuid };
+                if (!(await this.botManager.getAccessGate().check(botId, 'dm', person)).allowed) {
+                    res.json({ room: null });
+                    return;
+                }
+                res.json({ room: (await this.dmRoom(botId)) ?? null });
+            } catch (error) {
+                console.error(`[BotAPI] Error reading the room of bot ${botId}:`, error);
+                res.status(500).json({ error: 'Could not read the room' });
             }
         });
 

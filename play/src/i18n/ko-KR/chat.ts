@@ -508,6 +508,7 @@ const chat: DeepPartial<Translation["chat"]> = {
         left: "{name}님이 떠났어요",
         visit: "방문",
         visitAria: "{room}의 {name}님 방문하기",
+        livesIn: "있는 곳",
         inThisRoom: "이 방에 있어요",
     },
 };

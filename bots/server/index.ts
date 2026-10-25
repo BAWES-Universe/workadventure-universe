@@ -17,7 +17,7 @@ import { BotAPI } from './BotAPI';
 import { AdminApiService } from './AdminApiService';
 import { BotRegistry } from './BotRegistry';
 import { movementLogger } from '../utils/MovementLogger';
-import { DmReplyService } from './DmReplyService';
+import { DmReplyService, type DmRoomLink } from './DmReplyService';
 import { readMatrixConfig } from '../matrix/MatrixConfig';
 import { verifyMatrixRegistration } from '../matrix/verifyMatrixRegistration';
 import { MatrixAppServiceClient } from '../matrix/MatrixAppServiceClient';
@@ -57,6 +57,7 @@ const botManager = new BotManager(adminApiService, botRegistry);
 const preRouters: Router[] = [];
 let matrixBridge: MatrixDmBridge | null = null;
 let dmStatus: ((botIds: string[]) => Promise<Record<string, BotAvailability | 'unknown'>>) | undefined;
+let dmRoom: ((botId: string) => Promise<DmRoomLink | undefined>) | undefined;
 
 /** Turns direct messages on once Synapse accepts this bot server's registration; leaves them off otherwise. */
 async function setupMatrix(): Promise<void> {
@@ -89,6 +90,7 @@ async function setupMatrix(): Promise<void> {
                 })
             )
         );
+    dmRoom = (botId) => dmReplyService.roomOf(botId);
     console.log(`[BotServer] Matrix direct messages on for ${matrixConfig.domain}`);
 }
 // Made in start(), once direct messages are settled: their routes are part of the API.
@@ -155,7 +157,7 @@ async function start() {
 
         // Before any bot connects: a bot shows Message only when Synapse accepted the registration
         await setupMatrix();
-        botAPI = new BotAPI(botManager, adminApiService, botRegistry, preRouters, { dmStatus });
+        botAPI = new BotAPI(botManager, adminApiService, botRegistry, preRouters, { dmStatus, dmRoom });
 
         // Initialize bot manager
         await botManager.initialize();

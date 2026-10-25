@@ -1307,6 +1307,20 @@ describe('DmReplyService history', () => {
         expect(reply.roomLink).toEqual({ url: room, room: 'Lobby', world: 'BAWES HQ', universe: 'BAWES' });
     });
 
+    it("gives a bot's room for its profile, and nothing for a bot without one", async () => {
+        const { DmReplyService } = await import('../server/DmReplyService');
+        const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
+        const room = 'https://play.example/@/bawes/hq/lobby';
+        const configs: Record<string, unknown> = { [BOT]: { botId: BOT, roomUrl: room }, roomless: { botId: 'roomless' } };
+        Object.assign(service, {
+            adminApiService: { getRoomMetadata: vi.fn(async () => ({ universeName: 'BAWES', worldName: 'BAWES HQ', roomName: 'Lobby' })) },
+            getBotConfig: async (botId: string) => configs[botId] ?? null,
+        });
+        expect(await service.roomOf(BOT)).toEqual({ url: room, room: 'Lobby', world: 'BAWES HQ', universe: 'BAWES' });
+        expect(await service.roomOf('roomless')).toBeUndefined();
+        expect(await service.roomOf('missing')).toBeUndefined();
+    });
+
     it('counts an answer the provider broke off as failed, so it is never sent cut short', async () => {
         const { DmReplyService } = await import('../server/DmReplyService');
         const { PersistentMemory } = await import('../memory/PersistentMemory');

@@ -749,6 +749,7 @@ const chat: BaseTranslation = {
         left: "{name} left",
         visit: "Visit",
         visitAria: "Visit {name} in {room}",
+        livesIn: "Lives in",
         inThisRoom: "You're in this room",
     },
     friends: {

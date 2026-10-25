@@ -378,13 +378,26 @@ export class DmReplyService extends BaseBehavior {
         if (!roomUrl || !text || !this.adminApiService) return undefined;
         const lastCard = this.roomCards.get(chat);
         if (!asked && lastCard !== undefined && Date.now() - lastCard < PASSING_ROOM_CARD_EVERY_MS) return undefined;
+        const link = await this.readRoomLink(roomUrl);
+        if (!link || (!asked && !text.toLocaleLowerCase().includes(link.room.toLocaleLowerCase()))) return undefined;
+        this.roomCards.delete(chat);
+        this.roomCards.set(chat, Date.now());
+        if (this.roomCards.size > MAX_TRACKED_PEOPLE) this.roomCards.delete(this.roomCards.keys().next().value!);
+        return link;
+    }
+
+    /** The room a bot lives in, for the Visit button on its profile. Undefined for a bot without a room. */
+    async roomOf(botId: string): Promise<DmRoomLink | undefined> {
+        const config = await this.getBotConfig(botId);
+        return config?.roomUrl ? this.readRoomLink(config.roomUrl) : undefined;
+    }
+
+    private async readRoomLink(roomUrl: string): Promise<DmRoomLink | undefined> {
+        if (!this.adminApiService) return undefined;
         try {
             const metadata = await this.adminApiService.getRoomMetadata(roomUrl);
             const room = metadata?.roomName?.trim();
-            if (!room || (!asked && !text.toLocaleLowerCase().includes(room.toLocaleLowerCase()))) return undefined;
-            this.roomCards.delete(chat);
-            this.roomCards.set(chat, Date.now());
-            if (this.roomCards.size > MAX_TRACKED_PEOPLE) this.roomCards.delete(this.roomCards.keys().next().value!);
+            if (!room) return undefined;
             return { url: roomUrl, room, world: metadata?.worldName?.trim() ?? '', universe: metadata?.universeName?.trim() ?? '' };
         } catch (error) {
             // No card is fine: the reply still names the room in words.

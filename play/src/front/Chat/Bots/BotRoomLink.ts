@@ -21,9 +21,13 @@ export function readBotRoomLink(
     gameOrigin: string
 ): BotRoomLink | undefined {
     if (!botIdFromChatId(sender) || content.msgtype !== "m.text") return undefined;
-    const link = content["universe.room_link"] as Partial<BotRoomLink> | undefined;
-    if (!link || typeof link !== "object") return undefined;
-    const { url, room, world, universe } = link;
+    return parseBotRoomLink(content["universe.room_link"], gameOrigin);
+}
+
+/** A bot's room link as the bot server sends it (in a reply, or for its profile), or undefined when it isn't one. */
+export function parseBotRoomLink(value: unknown, gameOrigin: string): BotRoomLink | undefined {
+    if (!value || typeof value !== "object") return undefined;
+    const { url, room, world, universe } = value as Partial<BotRoomLink>;
     if (typeof url !== "string" || typeof room !== "string" || !room.trim()) return undefined;
     try {
         const parsed = new URL(url);

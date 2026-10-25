@@ -575,6 +575,7 @@ const chat: DeepPartial<Translation["chat"]> = {
         left: "غادر {name}",
         visit: "زيارة",
         visitAria: "زيارة {name} في {room}",
+        livesIn: "يقيم في",
         inThisRoom: "أنت في هذه الغرفة",
     },
     session: {

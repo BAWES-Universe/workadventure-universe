@@ -25,6 +25,7 @@ const chat: DeepPartial<Translation["chat"]> = {
         left: "{name}已离开",
         visit: "前往",
         visitAria: "前往{room}找{name}",
+        livesIn: "所在房间",
         inThisRoom: "你就在这个房间",
     },
 };

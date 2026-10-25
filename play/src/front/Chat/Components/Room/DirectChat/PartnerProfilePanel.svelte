@@ -26,6 +26,10 @@
     import { invitesEnabledStore } from "../../../Stores/RingStore";
     import TopRowAvatar from "../../TopRow/TopRowAvatar.svelte";
     import VisitCard from "../../../../Components/VisitCard/VisitCard.svelte";
+    import { gameSceneStore } from "../../../../Stores/GameSceneStore";
+    import { botApiService } from "../../../../external-modules/bots/services/BotApiService";
+    import BotLivesIn from "../../../Bots/BotLivesIn.svelte";
+    import { botHomeRoom } from "../../../Bots/BotHomeRoom";
     import type { DirectPartner } from "./DirectPartnerStore";
     import { isInUniverse } from "./PartnerPlace";
     import { partnerStatus } from "./PartnerStatus";
@@ -78,6 +82,9 @@
         ? getContext(PERSON_COLOUR_CONTEXT)
         : readable(() => undefined);
 
+    // A bot shows where it lives, with Visit, so nobody has to ask it or scroll back for its room card.
+    const botRoom = botHomeRoom(partner.chatId, (botId) => botApiService.getDmRoom(botId), window.location.origin);
+
     let confirmingDelete = false;
     let blockInProgress = false;
 
@@ -90,7 +97,10 @@
     $: live = isInUniverse(partner.place);
     $: canViewProfile = canOpenPartnerProfile(partner);
     $: canInvite = canInvitePartner(partner, $invitesEnabledStore);
-    $: tiles = [canInvite, partner.actions.walkTo, partner.actions.locate, canViewProfile].filter(Boolean).length;
+    $: currentRoomUrl = $gameSceneStore?.roomUrl;
+    // Away from a bot's room its Visit button already takes you to it, so Walk to would say the same thing twice.
+    $: walkTo = partner.actions.walkTo && !($botRoom && $botRoom.url !== currentRoomUrl);
+    $: tiles = [canInvite, walkTo, partner.actions.locate, canViewProfile].filter(Boolean).length;
     // Add friend, or what comes next with them. Remove friend is red, so it sits with the other red rows.
     $: friendAction = partnerFriendAction(partner, name, $friendsEnabledStore, $relationshipsStore, $LL);
     $: friendRequestPossible = partner.uuid !== undefined && !$relationshipsStore.has(partner.uuid);
@@ -176,6 +186,10 @@
             </div>
         </div>
 
+        {#if $botRoom}
+            <BotLivesIn link={$botRoom} {partner} {name} {currentRoomUrl} />
+        {/if}
+
         {#if partner.user?.visitCardUrl && !partner.isBot}
             <VisitCard visitCardUrl={partner.user.visitCardUrl} isEmbedded={true} showSendMessageButton={false} />
         {/if}
@@ -193,7 +207,7 @@
                         {$LL.chat.friends.ring.ring()}
                     </button>
                 {/if}
-                {#if partner.actions.walkTo}
+                {#if walkTo}
                     <button type="button" class="partner-tile" on:click={() => walkToPartner(partner)}>
                         <span class="partner-tile-icon"><IconWalk font-size="20" /></span>
                         {$LL.chat.userList.walkTo()}

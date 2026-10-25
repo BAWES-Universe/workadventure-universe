@@ -53,3 +53,34 @@ describe('Bot states for the game', () => {
         server.close();
     });
 });
+
+describe("A bot's room for its profile", () => {
+    it('tells the room only to someone who may message the bot, and only when direct messages are on', async () => {
+        const admin: any = { validateSessionToken: vi.fn(async () => ({ uuid: 'u1', email: 'a@b.c' })) };
+        const link = { url: 'https://play.test/@/u/w/r', room: 'Courtyard', world: 'Town', universe: 'Uni' };
+        const dmRoom = vi.fn(async (botId: string) => (botId === 'roomless' ? undefined : link));
+        const gate = {
+            check: vi.fn(async (botId: string) =>
+                botId === 'closed'
+                    ? { allowed: false, kind: 'refused', code: 'no_access', line: 'no' }
+                    : { allowed: true, kind: 'allowed' }
+            ),
+        };
+        const api: any = new BotAPI({ getAccessGate: () => gate } as any, admin, {} as any, [], { dmRoom });
+        const server = api.app.listen(0);
+        const base = `http://127.0.0.1:${server.address().port}`;
+        const headers = { Authorization: `Bearer orb_sess_v2_${'a'.repeat(64)}` };
+        expect((await fetch(`${base}/api/bots/open/dm-room`)).status).toBe(401);
+        expect(await (await fetch(`${base}/api/bots/open/dm-room`, { headers })).json()).toEqual({ room: link });
+        expect(gate.check).toHaveBeenCalledWith('open', 'dm', { signedIn: true, identifier: 'u1' });
+        expect(await (await fetch(`${base}/api/bots/closed/dm-room`, { headers })).json()).toEqual({ room: null });
+        expect(dmRoom).not.toHaveBeenCalledWith('closed');
+        expect(await (await fetch(`${base}/api/bots/roomless/dm-room`, { headers })).json()).toEqual({ room: null });
+        expect((await fetch(`${base}/api/bots/a.b/dm-room`, { headers })).status).toBe(400);
+        const off: any = new BotAPI({} as any, admin, {} as any, []);
+        const s2 = off.app.listen(0);
+        expect((await fetch(`http://127.0.0.1:${s2.address().port}/api/bots/open/dm-room`, { headers })).status).toBe(404);
+        server.close();
+        s2.close();
+    });
+});

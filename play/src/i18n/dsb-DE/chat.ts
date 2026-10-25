@@ -178,6 +178,7 @@ const chat: DeepPartial<Translation["chat"]> = {
         left: "{name} jo wótšeł",
         visit: "Woglědaś",
         visitAria: "{name} w {room} woglědaś",
+        livesIn: "Bydli w",
         inThisRoom: "Sy w toś tej rumnosći",
     },
 };

@@ -591,6 +591,37 @@ export class BotApiService {
     }
 
     /**
+     * The room a bot lives in, as the bot server tells someone who may message it (null for anyone else, a bot with no
+     * room, or no answer in time). Read as a room card's link, so it only ever opens on this game.
+     */
+    async getDmRoom(botId: string): Promise<unknown> {
+        if (!this.botServerUrl) return null;
+        const stop = new AbortController();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const late = new Promise<null>((resolve) => {
+            timer = setTimeout(() => {
+                stop.abort();
+                resolve(null);
+            }, DM_STATUS_TIMEOUT_MS);
+        });
+        const asking = (async () => {
+            try {
+                const response = await this.fetchBotServer(`/api/bots/${encodeURIComponent(botId)}/dm-room`, {
+                    signal: stop.signal,
+                });
+                if (!response.ok) return null;
+                const data = (await response.json()) as { room?: unknown };
+                return data.room ?? null;
+            } catch {
+                return null;
+            }
+        })();
+        return Promise.race([asking, late]).finally(() => {
+            clearTimeout(timer);
+        });
+    }
+
+    /**
      * Save the bot's own model on its AI key (Orbit #575). Sent to Orbit itself: the bot server's save of a bot's
      * settings doesn't carry a model. The bot server asks Orbit for the model each time the bot replies.
      */
