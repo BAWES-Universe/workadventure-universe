@@ -79,8 +79,9 @@
     let fileInputElement: HTMLInputElement | undefined;
     let files: { id: string; file: File }[] = [];
     let filesPreview: { id: string; size: number; name: string; type: string; url: FileReader["result"] }[] = [];
-    // Who else is typing here: shown on the top edge of the field (#1379).
-    const typingMembers = room.typingMembers;
+    // Who else is typing here: shown on the top edge of the field (#1379). Reactive: the nearby chat can be swapped
+    // for a new one with the same id, which keeps this box mounted.
+    $: typingMembers = room.typingMembers;
     // What the others see while this box is being typed in (#1379).
     const typingSignal = new TypingSignal((typing) => {
         (typing ? room.startTyping() : room.stopTyping()).catch((error) => console.error(error));
