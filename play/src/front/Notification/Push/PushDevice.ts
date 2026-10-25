@@ -266,9 +266,13 @@ export async function enableThisDeviceInOrbit(): Promise<boolean> {
     return botApiService.setPushDeviceEnabled(id, true);
 }
 
-/** It said it couldn't turn on: Off is the choice now, so the next page load does not turn it on unasked. */
-function couldNotTurnOn(): "failed" {
+/**
+ * It said it couldn't turn on: Off is the choice now, so the next page load does not turn it on unasked, and nothing
+ * reaches this browser while it says Off (Orbit drops a device whose subscription is gone the next time it sends).
+ */
+async function couldNotTurnOn(): Promise<"failed"> {
     localUserStore.setNotification(false);
+    await forgetThisBrowser();
     return "failed";
 }
 

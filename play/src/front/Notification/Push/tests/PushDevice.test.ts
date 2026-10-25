@@ -375,23 +375,22 @@ describe("saving this device", () => {
         async (taken, result, choice) => {
             const { turnOnThisDevice, thisDeviceIdStore } = await import("../PushDevice");
             const { localUserStore } = await import("../../../Connection/LocalUserStore");
-            const subscription = {
-                unsubscribe: () => Promise.resolve(true),
-                toJSON: () => ({ endpoint: "https://push.example/5" }),
-                options: {},
+            const unsubscribe = vi.fn(() => Promise.resolve(true));
+            const subscription = { unsubscribe, toJSON: () => ({ endpoint: "https://push.example/5" }), options: {} };
+            let subscribed: typeof subscription | null = null;
+            const registration = {
+                pushManager: {
+                    getSubscription: () => Promise.resolve(subscribed),
+                    subscribe: () => Promise.resolve((subscribed = subscription)),
+                },
             };
             vi.stubGlobal("navigator", {
                 userAgent: UA.windowsEdge,
                 platform: "",
                 maxTouchPoints: 0,
                 serviceWorker: {
-                    register: () =>
-                        Promise.resolve({
-                            pushManager: {
-                                getSubscription: () => Promise.resolve(null),
-                                subscribe: () => Promise.resolve(subscription),
-                            },
-                        }),
+                    register: () => Promise.resolve(registration),
+                    getRegistration: () => Promise.resolve(registration),
                 },
             });
             vi.stubGlobal("Notification", {
@@ -407,6 +406,8 @@ describe("saving this device", () => {
             expect(await turnOnThisDevice()).toBe(result);
             expect(setPushDeviceEnabled).toHaveBeenCalledWith("d-off", true);
             expect(localUserStore.getNotificationChoice()).toBe(choice);
+            // Shown as Off: this browser no longer gets anything
+            expect(unsubscribe).toHaveBeenCalledTimes(taken ? 0 : 1);
             thisDeviceIdStore.set(undefined);
             vi.unstubAllGlobals();
         }
