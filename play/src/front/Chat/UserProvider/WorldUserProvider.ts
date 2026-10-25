@@ -8,6 +8,8 @@ import { mapExtendedSpaceUserToChatUser } from "./ChatUserMapper";
 export class WorldUserProvider implements UserProviderInterface {
     public readonly users: Readable<PartialAdminUser[]>;
     public readonly userCount: Readable<number>;
+    /** userCount without the bots: what the People tab's badge shows (#1389). */
+    public readonly peopleCount: Readable<number>;
     private filter: Writable<string> = writable("");
 
     constructor(allUsersInWorldSpace: SpaceInterface) {
@@ -21,6 +23,7 @@ export class WorldUserProvider implements UserProviderInterface {
             []
         );
         this.userCount = derived(this.users, countPeople);
+        this.peopleCount = derived(this.users, (users) => countPeople(users.filter((user) => !user.isBot)));
     }
 
     setFilter(searchText: string): Promise<void> {
@@ -35,4 +38,13 @@ export class WorldUserProvider implements UserProviderInterface {
  */
 export function countPeople(users: { spaceUserId?: string; uuid?: string }[]): number {
     return new Set(users.map((user) => user.spaceUserId || user.uuid)).size;
+}
+
+/**
+ * People and bots among who is somewhere (#1389): a bot is anyone the mapper marks as one (isBotUser), everyone else
+ * (guests and you included) is a person. Counts each entry, as the list gives them.
+ */
+export function countPeopleAndBots(users: { isBot?: boolean }[]): { people: number; bots: number } {
+    const bots = users.filter((user) => user.isBot).length;
+    return { people: users.length - bots, bots };
 }

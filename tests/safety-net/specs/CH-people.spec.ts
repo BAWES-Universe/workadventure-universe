@@ -47,7 +47,7 @@ test("CH-045 People: the room first with its count, You first, then Bob online w
     await bobApart(browser, testInfo, player, url);
     await openPeople(player);
     const title = player.getByTestId("peopleHereTitle");
-    await expect(title).toContainText("2 here", { timeout: 20_000 });
+    await expect(title).toContainText("2 people", { timeout: 20_000 });
     await expect(title.locator(".u-live-dot")).toBeVisible();
     const sections = player.getByTestId("peopleList").locator("section");
     await expect(sections.first()).toHaveAttribute("data-testid", "peopleHere");

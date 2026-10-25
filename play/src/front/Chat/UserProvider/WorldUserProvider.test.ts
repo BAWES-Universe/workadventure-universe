@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { countPeople } from "./WorldUserProvider";
+import { countPeople, countPeopleAndBots } from "./WorldUserProvider";
 
 describe("countPeople", () => {
     it("counts each tab of one account (clones) as a person", () => {
@@ -23,5 +23,22 @@ describe("countPeople", () => {
 
     it("falls back to the uuid without a space user id", () => {
         expect(countPeople([{ uuid: "bob" }, { uuid: "bob" }, { uuid: "eve" }])).toBe(2);
+    });
+});
+
+describe("countPeopleAndBots", () => {
+    it("counts bots apart from people, and everyone else (guests, you) as a person", () => {
+        expect(countPeopleAndBots([{ isBot: false }, { isBot: true }, {}, { isBot: true }, { isBot: true }])).toEqual({
+            people: 2,
+            bots: 3,
+        });
+    });
+
+    it("is zero and zero for an empty room", () => {
+        expect(countPeopleAndBots([])).toEqual({ people: 0, bots: 0 });
+    });
+
+    it("is all bots when only bots are there", () => {
+        expect(countPeopleAndBots([{ isBot: true }, { isBot: true }])).toEqual({ people: 0, bots: 2 });
     });
 });
