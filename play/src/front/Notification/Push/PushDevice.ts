@@ -105,6 +105,9 @@ function sameKey(subscription: PushSubscription, key: Uint8Array): boolean {
     return bytes.length === key.length && bytes.every((byte, index) => byte === key[index]);
 }
 
+/** Set once signing out starts, for the rest of this page: signing in again loads a new one. */
+let signingOut = false;
+
 /**
  * Subscribes this browser (the permission is already given) and saves it in Orbit. A subscription made with an
  * older key is replaced. "notSetUp" when nothing can arrive while Universe is closed: a browser without Web Push,
@@ -123,8 +126,8 @@ export async function subscribeThisDevice(): Promise<"saved" | "notSetUp" | "fai
         subscription = null;
     }
     subscription ??= await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
-    // Switched off while this was on its way: Off stands, so nothing is saved and nothing can arrive
-    if (localUserStore.getNotificationChoice() === false) {
+    // Switched off, or signing out, while this was on its way: that stands, so nothing is saved and nothing can arrive
+    if (localUserStore.getNotificationChoice() === false || signingOut) {
         await subscription.unsubscribe();
         return "failed";
     }
@@ -133,6 +136,12 @@ export async function subscribeThisDevice(): Promise<"saved" | "notSetUp" | "fai
         deviceLabel(describeDevice(currentInstallEnvironment()))
     );
     if (id === null) return "failed";
+    // Signed out while Orbit was saving it: it leaves again rather than stay for an account no longer here
+    if (signingOut) {
+        await subscription.unsubscribe();
+        botApiService.removePushDevice(id).catch(() => undefined);
+        return "failed";
+    }
     setThisDeviceId(id);
     // Direct messages reach it through Synapse: point this account's pusher for this device at Orbit
     import("./PushChatLink")
@@ -223,14 +232,16 @@ export async function turnOffThisDevice(deviceId: string | undefined, remove: bo
 }
 
 /**
- * Signing out: this browser leaves Your devices and drops its subscription, so nothing for the account reaches it
- * once signed out. Signing in again saves it again, for whoever signs in.
+ * Signing out: this browser drops its subscription first, so nothing for the account reaches it however long Orbit
+ * takes, then leaves Your devices. A save still on its way saves nothing. Signing in again saves it again, for
+ * whoever signs in.
  */
 export async function forgetThisDeviceOnSignOut(): Promise<void> {
+    signingOut = true;
     const id = get(thisDeviceIdStore);
     setThisDeviceId(undefined);
-    if (id) await botApiService.removePushDevice(id);
     await forgetThisBrowser();
+    if (id) await botApiService.removePushDevice(id);
 }
 
 /** This browser drops its subscription, so nothing more reaches it while Universe is closed. */
