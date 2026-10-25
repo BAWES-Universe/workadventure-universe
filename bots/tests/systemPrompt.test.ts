@@ -30,7 +30,16 @@ describe('buildSystemPrompt layout', () => {
         expect(at(MAP)).toBeGreaterThan(at('FINAL REMINDER - YOUR PERSONALITY'));
         expect(at('\n\nConversation Context:')).toBeGreaterThan(at(MAP));
         expect(at("**NOW:**")).toBeGreaterThan(at('\nRecent conversation:'));
-        expect(p.trimEnd().endsWith('instead of acting like they just occurred.')).toBe(true);
+        expect(at('**BEFORE YOU ANSWER:**')).toBeGreaterThan(at("**NOW:**"));
+    });
+
+    it('ends with the personality and emotion-block reminder, after the memory and the Now line', () => {
+        const withMemory = buildSystemPrompt({ chatInstructions: INSTRUCTIONS, mapContextInfo: MAP, conversationContext: ALICE, now: NOW });
+        const firstMessage = buildSystemPrompt({ chatInstructions: INSTRUCTIONS, mapContextInfo: MAP, conversationContext: '', now: NOW });
+        for (const p of [withMemory, firstMessage]) {
+            expect(p.trimEnd().endsWith('end every reply with the [EMOTION_UPDATE] block exactly as described in the rules above.')).toBe(true);
+            expect(p.indexOf('**BEFORE YOU ANSWER:**')).toBeGreaterThan(p.indexOf("**NOW:**"));
+        }
     });
 
     it('shares everything down to the memory between two people in the same room', () => {
@@ -59,14 +68,14 @@ describe('buildSystemPrompt layout', () => {
         }
     });
 
-    it('puts the pending-media notice last, after the date and time', () => {
+    it('puts the pending-media notice after the date and time, just before the closing reminder', () => {
         const notice = '[System: 2 media item(s) from the previous session are being delivered alongside this message. Do NOT generate or request them again.]';
         const p = buildSystemPrompt({ chatInstructions: INSTRUCTIONS, conversationContext: ALICE, pendingMediaNotice: notice, now: NOW });
-        expect(p.trimEnd().endsWith(notice)).toBe(true);
         expect(p.indexOf(notice)).toBeGreaterThan(p.indexOf('**NOW:**'));
-        // Toggling the notice must not change anything before the Now line.
+        expect(p.indexOf('**BEFORE YOU ANSWER:**')).toBeGreaterThan(p.indexOf(notice));
+        // Toggling the notice must not change anything up to the end of the Now line.
         const without = buildSystemPrompt({ chatInstructions: INSTRUCTIONS, conversationContext: ALICE, now: NOW });
-        expect(commonPrefixLength(p, without)).toBeGreaterThanOrEqual(without.trimEnd().length);
+        expect(commonPrefixLength(p, without)).toBeGreaterThanOrEqual(without.indexOf('\n\n**BEFORE YOU ANSWER:**'));
     });
 
     it('falls back to a plain default without instructions, rules still present', () => {

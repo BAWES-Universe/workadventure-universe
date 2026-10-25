@@ -125,7 +125,7 @@ describe("AIService – system prompt handed to the provider", () => {
     it("puts the pending-media notice after the current time", async () => {
         const notice = "[System: 1 media item(s) from the previous session are being delivered alongside this message. Do NOT generate or request them again.]";
         const prompt = await promptFor(AIService, "openai", "ctx", notice);
-        expect(prompt.trimEnd().endsWith(notice)).toBe(true);
         expect(prompt.indexOf(notice)).toBeGreaterThan(prompt.indexOf("**NOW:**"));
+        expect(prompt.indexOf("**BEFORE YOU ANSWER:**")).toBeGreaterThan(prompt.indexOf(notice));
     });
 });
