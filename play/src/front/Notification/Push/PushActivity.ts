@@ -84,7 +84,8 @@ export function startPushActivity(): () => void {
     const check = () => {
         const now = Date.now();
         const report = readReport(tabId, signals(), now);
-        if (mustSend(sent, report, lastSentAt, now)) send(report);
+        // Going to the back may be the page closing (it is hidden before pagehide): that report must get out too
+        if (mustSend(sent, report, lastSentAt, now)) send(report, !report.front);
     };
 
     const onInput = () => {

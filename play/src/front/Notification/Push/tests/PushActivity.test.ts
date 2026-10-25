@@ -1,7 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
-import { IDLE_AFTER_MS, REPORT_EVERY_MS, mustSend, readReport, type FrontSignals } from "../PushActivity";
+import {
+    IDLE_AFTER_MS,
+    REPORT_EVERY_MS,
+    mustSend,
+    readReport,
+    startPushActivity,
+    type FrontSignals,
+} from "../PushActivity";
 
-vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: {} }));
+const { reportPushActivity } = vi.hoisted(() => ({
+    reportPushActivity: vi.fn((_report: unknown, _keepalive?: boolean) => Promise.resolve()),
+}));
+vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: { reportPushActivity } }));
 vi.mock("../../../Chat/Stores/ChatStore", async () => {
     const { writable } = await import("svelte/store");
     return { navChat: writable({ key: "chat" }) };
@@ -55,5 +65,27 @@ describe("when a tab reports", () => {
         expect(mustSend(front, front, NOW - REPORT_EVERY_MS + 1, NOW)).toBe(false);
         expect(mustSend(front, front, NOW - REPORT_EVERY_MS, NOW)).toBe(true);
         expect(mustSend(back, back, 0, NOW)).toBe(false);
+    });
+});
+
+describe("a tab closing", () => {
+    it("sends going to the back so it survives the page closing, even when hidden comes before pagehide", () => {
+        let visibility: DocumentVisibilityState = "visible";
+        const visibilitySpy = vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
+        const focusSpy = vi.spyOn(document, "hasFocus").mockReturnValue(true);
+        reportPushActivity.mockClear();
+        const stop = startPushActivity();
+        expect(reportPushActivity).toHaveBeenLastCalledWith(expect.objectContaining({ front: true }), false);
+
+        // Closing: hidden first, then pagehide
+        visibility = "hidden";
+        document.dispatchEvent(new Event("visibilitychange"));
+        window.dispatchEvent(new Event("pagehide"));
+        expect(reportPushActivity).toHaveBeenCalledTimes(2);
+        expect(reportPushActivity).toHaveBeenLastCalledWith(expect.objectContaining({ front: false }), true);
+
+        stop();
+        visibilitySpy.mockRestore();
+        focusSpy.mockRestore();
     });
 });
