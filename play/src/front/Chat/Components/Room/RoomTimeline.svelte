@@ -60,7 +60,6 @@
     } from "./TimelinePin";
     import MessageInputBar from "./MessageInputBar.svelte";
     import MessageSystem from "./MessageSystem.svelte";
-    import TypingUsers from "./TypingUsers.svelte";
     import CopiedPill from "./MessageActions/CopiedPill.svelte";
     import SessionDivider from "./Thread/SessionDivider.svelte";
     import ProximityThreadTitle from "./Thread/ProximityThreadTitle.svelte";
@@ -158,7 +157,6 @@
 
     $: messages = room?.messages;
     $: roomName = room?.name;
-    $: typingMembers = room.typingMembers;
     $: isEncrypted = room.isEncrypted;
     $: proximityRoom = room instanceof ProximityChatRoom ? room : undefined;
     $: matrixRoom = room instanceof MatrixChatRoom ? room : undefined;
@@ -974,10 +972,6 @@
                 {/if}
             </ul>
         </div>
-
-        {#if $typingMembers.length > 0 && !isEnded}
-            <TypingUsers typingMembers={$typingMembers} />
-        {/if}
 
         <CopiedPill />
 

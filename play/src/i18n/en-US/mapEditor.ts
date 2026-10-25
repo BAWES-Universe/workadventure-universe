@@ -755,6 +755,11 @@ const mapEditor: BaseTranslation = {
                     keyGone: "This key isn’t there anymore. Pick Universe AI to get replies.",
                     aiKeys: "AI keys",
                     makerHint: "Only keys you lent to this universe show here.",
+                    unlentOne: "Your key {key:string} isn’t lent to this universe yet.",
+                    unlentMany: "Your keys {keys:string} aren’t lent to this universe yet.",
+                    unlentStepOne: "In AI keys, tap Lend to a universe on it. It shows here as soon as it’s lent.",
+                    unlentStepMany:
+                        "In AI keys, tap Lend to a universe on the one you want. It shows here as soon as it’s lent.",
                     managerHint:
                         "You manage bots here, so you can switch {bot:string} to Universe AI. Your own keys never show on someone else’s bot.",
                     pinTo: "Pin to a provider",

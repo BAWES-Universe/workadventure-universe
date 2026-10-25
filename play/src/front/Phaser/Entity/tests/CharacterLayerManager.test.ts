@@ -217,4 +217,49 @@ describe("CharacterLayerManager.wokaBase64 when the scene is reset while the fra
             process.off("unhandledRejection", unhandled);
         }
     });
+
+    it("refuses a scene that is shutting down even though its display list is still there", async () => {
+        // Phaser.Scenes.SHUTDOWN: the map is being left, `sys.displayList` has not been dropped yet.
+        const shuttingDown = {
+            superLoad: {},
+            sys: { displayList: {}, settings: { status: 8 } },
+            textures: { exists: () => true },
+        };
+        stubPhaser();
+        lazyLoad.mockReset();
+        getSnapshot.mockReset();
+        reportFailure.mockReset();
+        lazyLoad.mockImplementation(() => Promise.resolve(["color_1"]));
+        sceneHolder.scene = shuttingDown;
+        gameSceneIsLoadedStore.set(true);
+
+        const error = await CharacterLayerManager.wokaBase64([{ id: "color_1", url: "color_1.png" }]).catch((e) => e);
+
+        expect(error).toBeInstanceOf(CharacterTextureError);
+        expect((error as Error).message).toBe("scene not ready");
+        expect(spriteScenes).toEqual([]);
+        expect(getSnapshot).not.toHaveBeenCalled();
+        // Nothing could be drawn: still reported to Sentry.
+        expect(reportFailure).toHaveBeenCalledTimes(1);
+    });
+
+    it("draws on a running scene", async () => {
+        const running = {
+            superLoad: {},
+            sys: { displayList: {}, settings: { status: 5 } },
+            textures: { exists: () => true },
+        };
+        stubPhaser();
+        lazyLoad.mockReset();
+        getSnapshot.mockReset();
+        getSnapshot.mockResolvedValue("data:image/png;base64,ok");
+        lazyLoad.mockImplementation(() => Promise.resolve(["color_1"]));
+        sceneHolder.scene = running;
+        gameSceneIsLoadedStore.set(true);
+
+        await expect(CharacterLayerManager.wokaBase64([{ id: "color_1", url: "color_1.png" }])).resolves.toBe(
+            "data:image/png;base64,ok"
+        );
+        expect(spriteScenes).toEqual([running]);
+    });
 });
