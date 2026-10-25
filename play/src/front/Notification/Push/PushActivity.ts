@@ -15,6 +15,13 @@ import type { PushActivityReport } from "./PushChat";
 export const REPORT_EVERY_MS = 30_000;
 /** No key, tap or pointer for this long: they have walked away, so it no longer counts as in front. */
 export const IDLE_AFTER_MS = 5 * 60_000;
+/** A report Orbit did not take goes again after 10 seconds, then twice as long each time, up to this. */
+export const RETRY_AT_MOST_EVERY_MS = 5 * 60_000;
+
+/** How long after this many reports in a row did not reach Orbit the next one goes anyway. */
+export function retryAfter(failures: number): number {
+    return Math.min((REPORT_EVERY_MS / 3) * 2 ** Math.max(0, failures - 1), RETRY_AT_MOST_EVERY_MS);
+}
 
 export interface FrontSignals {
     visible: boolean;
@@ -67,8 +74,9 @@ export function startPushActivity(): () => void {
     let lastInputAt = Date.now();
     let sent: PushActivityReport | null = null;
     let lastSentAt = 0;
-    // The last report did not reach Orbit: the next check sends again, whatever changed
-    let retry = false;
+    // Reports in a row that did not reach Orbit: one goes again once its wait is over, whatever changed
+    let failures = 0;
+    let retryAt = Number.POSITIVE_INFINITY;
 
     let frameInFocus: HTMLIFrameElement | null = null;
 
@@ -89,11 +97,16 @@ export function startPushActivity(): () => void {
     const send = (report: PushActivityReport, keepalive = false) => {
         sent = report;
         lastSentAt = Date.now();
-        retry = false;
+        retryAt = Number.POSITIVE_INFINITY;
         botApiService
             .reportPushActivity(report, keepalive)
             .then((delivered) => {
-                if (!delivered && sent === report) retry = true;
+                if (delivered) {
+                    failures = 0;
+                } else if (sent === report) {
+                    failures++;
+                    retryAt = Date.now() + retryAfter(failures);
+                }
             })
             .catch(() => undefined);
     };
@@ -102,7 +115,7 @@ export function startPushActivity(): () => void {
         const now = Date.now();
         const report = readReport(tabId, signals(), now);
         // Going to the back may be the page closing (it is hidden before pagehide): that report must get out too
-        if (retry || mustSend(sent, report, lastSentAt, now)) send(report, !report.front);
+        if (now >= retryAt || mustSend(sent, report, lastSentAt, now)) send(report, !report.front);
     };
 
     const onInput = () => {

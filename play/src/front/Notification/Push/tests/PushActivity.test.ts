@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
     IDLE_AFTER_MS,
     REPORT_EVERY_MS,
+    RETRY_AT_MOST_EVERY_MS,
     mustSend,
     readReport,
+    retryAfter,
     startPushActivity,
     type FrontSignals,
 } from "../PushActivity";
@@ -145,6 +147,36 @@ describe("a report that does not reach Orbit", () => {
         expect(reportPushActivity).toHaveBeenCalledTimes(3);
 
         stop();
+        visibilitySpy.mockRestore();
+        focusSpy.mockRestore();
+        vi.useRealTimers();
+    });
+});
+
+describe("how long a report Orbit keeps refusing waits", () => {
+    it("is 10 seconds, then twice as long each time, up to 5 minutes", () => {
+        expect([1, 2, 3, 4].map(retryAfter)).toEqual([10_000, 20_000, 40_000, 80_000]);
+        expect(retryAfter(20)).toBe(RETRY_AT_MOST_EVERY_MS);
+    });
+
+    it("backs off while Orbit keeps refusing a tab at the back", async () => {
+        vi.useFakeTimers();
+        let visibility: DocumentVisibilityState = "visible";
+        const visibilitySpy = vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
+        const focusSpy = vi.spyOn(document, "hasFocus").mockReturnValue(true);
+        reportPushActivity.mockClear();
+        const stop = startPushActivity();
+        reportPushActivity.mockResolvedValue(false);
+        visibility = "hidden";
+        document.dispatchEvent(new Event("visibilitychange"));
+        expect(reportPushActivity).toHaveBeenCalledTimes(2);
+
+        // 10s, then 20s, then 40s: three more in 70 seconds, not seven
+        await vi.advanceTimersByTimeAsync(70_000);
+        expect(reportPushActivity).toHaveBeenCalledTimes(5);
+
+        stop();
+        reportPushActivity.mockResolvedValue(true);
         visibilitySpy.mockRestore();
         focusSpy.mockRestore();
         vi.useRealTimers();
