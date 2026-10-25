@@ -15,6 +15,7 @@
     import { lookAroundBottomCoverStore } from "../../Stores/LookAroundStore";
     import { currentPlayerWokaStore } from "../../Stores/CurrentPlayerWokaStore";
     import { mobileLayoutStore } from "../../Stores/MobileLayoutStore";
+    import { isBotUser } from "../../Chat/UserProvider/ChatUserMapper";
     import { LL } from "../../../i18n/i18n-svelte";
     import type { ExplorerTool } from "../../Phaser/Game/MapEditor/Tools/ExplorerTool";
     import { labelLayerLift, youTabPlacement, type YouTabPlacement } from "./labelLayer";
@@ -65,8 +66,9 @@
         const inside = (p: { x: number; y: number }) =>
             p.x >= rect.x && p.x <= rect.x + rect.width && p.y >= rect.y && p.y <= rect.y + rect.height;
         let count = inside(scene.CurrentPlayer) ? 1 : 0;
+        // People only, bots left out (#1396).
         for (const player of scene.MapPlayersByKey.values()) {
-            if (inside(player)) count++;
+            if (inside(player) && !isBotUser({ uuid: player.userUuid })) count++;
         }
         return count;
     }

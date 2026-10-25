@@ -7,7 +7,7 @@
     import { fade } from "svelte/transition";
     import { LL } from "../../../i18n/i18n-svelte";
     import { gameManager } from "../../Phaser/Game/GameManager";
-    import { playersStore } from "../../Stores/PlayersStore";
+    import { peopleAmongPlayers, playersStore } from "../../Stores/PlayersStore";
     import { mobileLayoutStore } from "../../Stores/MobileLayoutStore";
     import { mapExplorationObjectSelectedStore } from "../../Stores/MapEditorStore";
     import { cameraTilesClearStore } from "../../Stores/CameraTilesClearStore";
@@ -47,7 +47,8 @@
     });
 
     const roomName = gameManager.currentStartedRoom?.roomName ?? "";
-    $: peopleHere = $playersStore.size + 1;
+    // People only, bots left out (#1396).
+    $: peopleHere = peopleAmongPlayers($playersStore.values()) + 1;
     $: roomLine =
         (roomName ? roomName + " · " : "") +
         (peopleHere === 1

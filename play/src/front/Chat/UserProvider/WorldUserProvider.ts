@@ -48,3 +48,16 @@ export function countPeopleAndBots(users: { isBot?: boolean }[]): { people: numb
     const bots = users.filter((user) => user.isBot).length;
     return { people: users.length - bots, bots };
 }
+
+/** The people in this world's other rooms, for "Elsewhere in this world" (#1396): bots left out, sessions counted as
+ * the list gives them. */
+export function countPeopleElsewhere(
+    usersByRoom: Map<string | undefined, { users: { isBot?: boolean }[] }>,
+    currentRoomUrl: string | undefined
+): number {
+    let people = 0;
+    for (const [playUri, entry] of usersByRoom) {
+        if (playUri !== undefined && playUri !== currentRoomUrl) people += countPeopleAndBots(entry.users).people;
+    }
+    return people;
+}
