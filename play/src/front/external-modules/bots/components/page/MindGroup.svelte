@@ -67,18 +67,23 @@
             return;
         }
         try {
-            // The provider names (to show what a pinned bot is on), what Orbit offers, and the viewer's own keys, together
-            const [loadedProviders, loadedOptions, loadedKeys] = await Promise.all([
+            // The viewer's own keys only add a hint, so the page never waits for them: they show when they arrive
+            void botApiService
+                .getMyAiKeys()
+                .then((loadedKeys) => {
+                    if (mine === loadCount && (loadedKeys || !quiet)) myKeys = loadedKeys;
+                })
+                .catch((e) => console.error("[MindGroup] Failed to load the viewer's AI keys:", e));
+            // The provider names (to show what a pinned bot is on) and what Orbit offers, together
+            const [loadedProviders, loadedOptions] = await Promise.all([
                 botApiService.getAvailableAIProviders(true),
                 botApiService.getBotAiOptions(botId ? { botId } : {}),
-                botApiService.getMyAiKeys(),
             ]);
             if (mine !== loadCount) return;
             // A background load that couldn't be answered (the provider list comes back empty then) keeps what the page
             // already shows
             if (loadedProviders.length > 0 || !quiet) providers = loadedProviders;
             if (loadedOptions || !quiet) options = loadedOptions;
-            if (loadedKeys || !quiet) myKeys = loadedKeys;
         } catch (e) {
             if (mine !== loadCount) return;
             console.error("[MindGroup] Failed to load AI providers:", e);
