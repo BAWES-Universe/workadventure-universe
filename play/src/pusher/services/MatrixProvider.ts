@@ -5,7 +5,13 @@ import pLimit from "p-limit";
 import type { ICreateRoomOpts } from "matrix-js-sdk";
 import { EventType, Visibility } from "matrix-js-sdk";
 import { slugify } from "@workadventure/shared-utils/src/Jitsi/slugify";
-import { MATRIX_ADMIN_PASSWORD, MATRIX_ADMIN_USER, MATRIX_API_URI, MATRIX_DOMAIN } from "../enums/EnvironmentVariable";
+import {
+    MATRIX_ADMIN_PASSWORD,
+    MATRIX_ADMIN_TOKEN,
+    MATRIX_ADMIN_USER,
+    MATRIX_API_URI,
+    MATRIX_DOMAIN,
+} from "../enums/EnvironmentVariable";
 
 const ADMIN_CHAT_ID = `@${MATRIX_ADMIN_USER}:${MATRIX_DOMAIN}`;
 
@@ -15,6 +21,8 @@ const ADMIN_DEVICE_ID = `universe-pusher-${hostname()}`;
 const limit = pLimit(10);
 class MatrixProvider {
     private loginPromise: Promise<string> | undefined;
+    // Set once Synapse refuses MATRIX_ADMIN_TOKEN: from then on the password sign-in is used.
+    private adminTokenRefused = false;
     private roomAreaFolderName = slugify("current visited room");
     private roomAreaFolderID: string | undefined;
 
@@ -51,6 +59,14 @@ class MatrixProvider {
                 throw error;
             }
             config.signedInAgain = true;
+            if (
+                MATRIX_ADMIN_TOKEN &&
+                !this.adminTokenRefused &&
+                config.headers.Authorization === `Bearer ${MATRIX_ADMIN_TOKEN}`
+            ) {
+                this.adminTokenRefused = true;
+                console.error("Synapse refused MATRIX_ADMIN_TOKEN: signing in with the admin password instead");
+            }
             // Calls that failed together with the same token share one new sign-in.
             if (this.loginPromise === login) {
                 this.loginPromise = undefined;
@@ -84,6 +100,10 @@ class MatrixProvider {
     }
 
     private async signIn(): Promise<string> {
+        // A token made without a device adds nothing to the admin's device list, however often the game server is redeployed.
+        if (MATRIX_ADMIN_TOKEN && !this.adminTokenRefused) {
+            return MATRIX_ADMIN_TOKEN;
+        }
         const response = await axios.post(`${MATRIX_API_URI}_matrix/client/r0/login`, {
             type: "m.login.password",
             user: MATRIX_ADMIN_USER,
