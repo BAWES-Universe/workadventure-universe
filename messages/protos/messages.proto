@@ -1699,7 +1699,12 @@ message BanMessage {
 
 message RoomDescription {
   string roomId = 1;
+  // Everyone in the room, bots included (one per open tab or device).
   int32 nbUsers = 2;
+  // How many of nbUsers are bots (#1389).
+  int32 nbBots = 3;
+  // The people (not bots) in the room, by the name they show in game, one per account, A to Z.
+  repeated string peopleNames = 4;
 }
 
 message RoomsList {

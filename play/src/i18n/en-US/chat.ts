@@ -724,7 +724,9 @@ const chat: BaseTranslation = {
     },
     peopleTab: {
         thisRoom: "This room",
-        countHere: "{count} here",
+        // "6 people · 21 bots" (#1389): people and bots are counted apart, people first.
+        countPeople: "{count:number} {{person|people}}",
+        countBots: "{count:number} {{bot|bots}}",
         elsewhere: "Elsewhere in this world",
         offline: "Offline members",
         offlineHint: "Members of this world who aren't online.",

@@ -557,7 +557,8 @@ const chat: DeepPartial<Translation["chat"]> = {
     },
     peopleTab: {
         thisRoom: "هذه الغرفة",
-        countHere: "{count} هنا",
+        countPeople: "{count} {{أشخاص|شخص|شخصان|أشخاص|شخصًا|شخص}}",
+        countBots: "{count} {{روبوتات|روبوت|روبوتان|روبوتات|روبوتًا|روبوت}}",
         elsewhere: "في مكان آخر من هذا العالم",
         offline: "الأعضاء غير المتصلين",
         offlineHint: "أعضاء هذا العالم غير المتصلين الآن.",

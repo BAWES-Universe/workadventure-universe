@@ -424,6 +424,7 @@ export class GameScene extends DirtyScene {
     private _userProviderMergerDeferred: Deferred<UserProviderMerger> = new Deferred();
     private unsubscribeChatBlockSync: (() => void) | undefined;
     private _worldUserCounter: ForwardableStore<number> = new ForwardableStore(0);
+    private _worldPeopleCounter: ForwardableStore<number> = new ForwardableStore(0);
     // Everyone in the world space (the unfiltered source behind the People tab), undefined until the space is joined
     private _allUsersInWorldStore: ForwardableStore<Map<string, SpaceUserExtended> | undefined> = new ForwardableStore<
         Map<string, SpaceUserExtended> | undefined
@@ -2179,6 +2180,7 @@ export class GameScene extends DirtyScene {
                         this.allUserSpace = space;
                         worldUserProvider = new WorldUserProvider(space);
                         this._worldUserCounter.forward(worldUserProvider.userCount);
+                        this._worldPeopleCounter.forward(worldUserProvider.peopleCount);
                         this._allUsersInWorldStore.forward(space.usersStore);
                         return gameManager.getChatConnection();
                     })
@@ -4514,6 +4516,11 @@ export class GameScene extends DirtyScene {
 
     get worldUserCounter(): Readable<number> {
         return this._worldUserCounter;
+    }
+
+    /** People in this world, bots left out (the People tab's badge). */
+    get worldPeopleCounter(): Readable<number> {
+        return this._worldPeopleCounter;
     }
 
     /**
