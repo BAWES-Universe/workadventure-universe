@@ -108,12 +108,16 @@ function sameKey(subscription: PushSubscription, key: Uint8Array): boolean {
 /** Set once signing out starts, for the rest of this page: signing in again loads a new one. */
 let signingOut = false;
 
+/** Each time this device is switched off or removed: a save on its way when it happens saves nothing. */
+let switchOffs = 0;
+
 /**
  * Subscribes this browser (the permission is already given) and saves it in Orbit. A subscription made with an
  * older key is replaced. "notSetUp" when nothing can arrive while Universe is closed: a browser without Web Push,
  * a guest, or a server that sends none (no Orbit, or no keys there). Notifications then only come while it is open.
  */
 export async function subscribeThisDevice(): Promise<"saved" | "notSetUp" | "failed"> {
+    const offsAtStart = switchOffs;
     if (pushAvailability() !== "ready" || !localUserStore.isLogged()) return notInOrbit();
     const publicKey = await botApiService.getPushPublicKey();
     if (publicKey === null) return notInOrbit();
@@ -126,8 +130,9 @@ export async function subscribeThisDevice(): Promise<"saved" | "notSetUp" | "fai
         subscription = null;
     }
     subscription ??= await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
-    // Switched off, or signing out, while this was on its way: that stands, so nothing is saved and nothing can arrive
-    if (localUserStore.getNotificationChoice() === false || signingOut) {
+    // Switched off while this was on its way and still off, or signing out: that stands, so nothing is saved and
+    // nothing can arrive
+    if ((switchOffs !== offsAtStart && localUserStore.getNotificationChoice() === false) || signingOut) {
         await subscription.unsubscribe();
         return "failed";
     }
@@ -215,6 +220,7 @@ export function updateThisDeviceState(): void {
  * open window, until it is switched on again. `remove` also takes it out of Your devices.
  */
 export async function turnOffThisDevice(deviceId: string | undefined, remove: boolean): Promise<void> {
+    switchOffs++;
     localUserStore.setNotification(false);
     updateThisDeviceState();
     let told = false;

@@ -61,6 +61,14 @@ describe("loading Settings > Notifications", () => {
         expect(fetchMock).not.toHaveBeenCalled();
     });
 
+    it("is not known before a room has set the service up, so nothing saved for this device is forgotten", async () => {
+        const fetchMock = vi.spyOn(globalThis, "fetch");
+        const api = new BotApiService();
+        await expect(api.getPushOverview()).resolves.toBeUndefined();
+        await expect(api.getPushPublicKey()).resolves.toBeUndefined();
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
     it("is undefined when Orbit can't be reached, so it says so", async () => {
         vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"));
         await expect(service().getPushOverview()).resolves.toBeUndefined();

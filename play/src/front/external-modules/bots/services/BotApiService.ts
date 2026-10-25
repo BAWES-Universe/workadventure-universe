@@ -106,6 +106,8 @@ export class BotApiService {
     /** The game's token this service signs in with; renewed in place when its OIDC access token runs out. */
     private gameToken: GameTokenHolder | null = null;
     private adminUrl: string | null = null;
+    /** Set up by a room yet: until then a missing Orbit address says nothing about the server */
+    private initialized = false;
     private roomId: string | null = null;
     private botServerUrl: string | null = null;
     private sessionTokenPromise: Promise<string | null> | null = null; // Cache login attempt to avoid multiple simultaneous calls
@@ -121,6 +123,7 @@ export class BotApiService {
         botServerUrl?: string
     ): boolean {
         const roomIdChanged = this.roomId !== null && this.roomId !== roomId;
+        this.initialized = true;
         const previousAdminUrl = this.adminUrl;
         const nextAccessToken = this.getAccessTokenFromJwt(userAccessToken);
         if (this.accessToken !== nextAccessToken) {
@@ -513,7 +516,7 @@ export class BotApiService {
      * guest, or Orbit didn't answer.
      */
     async getPushPublicKey(): Promise<string | null | undefined> {
-        if (!this.adminUrl) return null;
+        if (!this.adminUrl) return this.orbitAnswer();
         if (!this.accessToken) return undefined;
         try {
             const response = await this.fetch("/api/me/push");
@@ -523,6 +526,14 @@ export class BotApiService {
         } catch {
             return undefined;
         }
+    }
+
+    /**
+     * No Orbit address: null (a server without Orbit) once a room has set this service up, undefined (not known yet)
+     * before that, so nothing saved for this device is forgotten in a room that has not set it up.
+     */
+    private orbitAnswer(): null | undefined {
+        return this.initialized ? null : undefined;
     }
 
     /** Saves this browser's push subscription for the player, under a name for Your devices. The device id, or null. */
@@ -580,7 +591,7 @@ export class BotApiService {
      * is closed; undefined when Orbit can't be reached.
      */
     async getPushOverview(): Promise<PushOverview | null | undefined> {
-        if (!this.adminUrl) return null;
+        if (!this.adminUrl) return this.orbitAnswer();
         if (!this.accessToken) return undefined;
         try {
             const response = await this.fetch("/api/me/push");
