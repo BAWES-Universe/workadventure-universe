@@ -67,6 +67,10 @@ describe('MatrixConfig', () => {
         expect(botIdFromMatrixId('matrix.test', BOT_USER)).toBe(BOT);
         expect(botIdFromMatrixId('matrix.test', ALICE)).toBeNull();
         expect(botIdFromMatrixId('matrix.test', `@bot_${BOT}:elsewhere.org`)).toBeNull();
+        // Nothing that could step out of a URL path segment: Orbit bot ids are uuids.
+        expect(botIdFromMatrixId('matrix.test', '@bot_../../admin:matrix.test')).toBeNull();
+        expect(botIdFromMatrixId('matrix.test', '@bot_a/b:matrix.test')).toBeNull();
+        expect(botMatrixId('matrix.test', '../x')).toBeUndefined();
     });
 });
 

@@ -18,8 +18,9 @@ export interface MatrixAppServiceConfig {
 
 export const BOT_LOCALPART_PREFIX = 'bot_';
 
-// Matrix localparts allow only lowercase letters, digits and ._=-/ (Orbit bot ids are lowercase uuids).
-const LOCALPART_SAFE = /^[a-z0-9._=\-/]+$/;
+// Orbit bot ids are lowercase uuids. Matrix localparts also allow ._=/ but a bot id only ever has letters, digits and
+// dashes, so an id taken from a Matrix ID is always one safe URL path segment (never "..", never a "/").
+const BOT_ID_SAFE = /^[a-z0-9-]+$/;
 
 export function readMatrixConfig(env: NodeJS.ProcessEnv = process.env): MatrixAppServiceConfig | null {
     const homeserverUrl = env.MATRIX_HOMESERVER_URL?.trim().replace(/\/+$/, '');
@@ -45,7 +46,7 @@ export function activeMatrixConfig(env: NodeJS.ProcessEnv = process.env): Matrix
 
 /** The Matrix ID of a bot, or undefined when its id cannot be a Matrix localpart. */
 export function botMatrixId(domain: string, botId: string): string | undefined {
-    if (!LOCALPART_SAFE.test(botId)) return undefined;
+    if (!BOT_ID_SAFE.test(botId)) return undefined;
     return `@${BOT_LOCALPART_PREFIX}${botId}:${domain}`;
 }
 
@@ -55,5 +56,5 @@ export function botIdFromMatrixId(domain: string, userId: string): string | null
     const suffix = `:${domain}`;
     if (!userId.startsWith(prefix) || !userId.endsWith(suffix)) return null;
     const botId = userId.slice(prefix.length, userId.length - suffix.length);
-    return botId && LOCALPART_SAFE.test(botId) ? botId : null;
+    return botId && BOT_ID_SAFE.test(botId) ? botId : null;
 }

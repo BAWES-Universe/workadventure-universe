@@ -280,7 +280,7 @@ export class AdminApiService {
 
         try {
             const response: AxiosResponse<BotConfiguration> = await axios.get(
-                `${this.adminApiUrl}/api/bots/configuration/${botId}`,
+                `${this.adminApiUrl}/api/bots/configuration/${encodeURIComponent(botId)}`,
                 {
                     timeout: timeoutMs,
                     headers: {
@@ -361,7 +361,7 @@ export class AdminApiService {
         }
 
         try {
-            await axios.delete(`${this.adminApiUrl}/api/bots/configuration/${botId}`, {
+            await axios.delete(`${this.adminApiUrl}/api/bots/configuration/${encodeURIComponent(botId)}`, {
                 headers: {
                     Authorization: `Bearer ${this.adminApiToken}`,
                 },
