@@ -261,6 +261,19 @@
     let dragRatio: number | undefined;
     let dragStartX: number | undefined;
     let anchorX = 0;
+    // Turning the phone sideways swaps chat's sheet for the floating window in the same element. The window takes its
+    // place at once, without the expand and collapse motion: its edges would otherwise slide over from where the sheet
+    // was. Turned back upright, the sheet keeps its own height motion, which centres the map when it ends.
+    let switching = false;
+    let wasFloating = floating;
+    $: if (floating !== wasFloating) {
+        wasFloating = floating;
+        if (floating) {
+            switching = true;
+            // Two frames: the first draws the new place without motion, the second turns the motion back on.
+            requestAnimationFrame(() => requestAnimationFrame(() => (switching = false)));
+        }
+    }
     // A split dragged on an upright phone has no limits: the window opened by turning the phone keeps within these.
     $: ratio = dragRatio ?? clampOpenHereRatio($coWebsiteRatio);
 
@@ -324,7 +337,7 @@
     class:screen-blocker={!floating && !tucked}
     class:behind-orbit={behindOrbit}
     class:behind-chat={!behindOrbit && behindChat}
-    class:dragging={dragRatio !== undefined || sheetDragHeight !== undefined}
+    class:dragging={dragRatio !== undefined || sheetDragHeight !== undefined || switching}
     style={floating ? `--open-here-ratio: ${ratio}` : sheetFrameStyle(sheetHeight, $windowSize.height)}
     data-testid={floating ? "openHereWindow" : "openHereSheet"}
     on:pointerdown|capture={bringForward}
