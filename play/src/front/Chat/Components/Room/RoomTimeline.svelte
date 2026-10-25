@@ -924,7 +924,12 @@
             <!-- One composer per conversation: its draft, files and pending sends belong to this room only.
                  Keyed by id: re-selecting the same room must not remount it (files, focus and uploads are kept). -->
             {#key room.id}
-                <MessageInputBar disabled={$shouldRetrySendingEvents} {room} bind:this={messageInputBarRef} />
+                <MessageInputBar
+                    disabled={$shouldRetrySendingEvents}
+                    {room}
+                    partner={$directPartner}
+                    bind:this={messageInputBarRef}
+                />
             {/key}
         {/if}
     {/if}

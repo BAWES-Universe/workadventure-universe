@@ -34,6 +34,7 @@
     import ComposerLinkPreview from "../../LinkPreview/ComposerLinkPreview.svelte";
     import GifPicker from "../../Gif/GifPicker.svelte";
     import { withoutPreview } from "../../LinkPreview/ChatLinks";
+    import { askForNotifications, replyMoment } from "../../../Notification/Push/NotificationAsk";
     import { appendEmoji } from "./AppendEmoji";
     import { withoutBlankEdges } from "./BlankEdges";
     import { canHover } from "./FocusAfterSend";
@@ -43,6 +44,7 @@
     import { mainUploadFailure, UploadFailure, uploadFailureReason } from "./UploadFailure";
     import { TypingSignal } from "./TypingSignal";
     import TypingUsers from "./TypingUsers.svelte";
+    import type { DirectPartner } from "./DirectChat/DirectPartnerStore";
     import { IconGif, IconMoodSmile, IconPaperclip, IconSend, IconX } from "@wa-icons";
 
     // Frontend pre-check constants (server enforces the real limits)
@@ -70,6 +72,8 @@
 
     export let room: ChatRoom;
     export let disabled = false;
+    /** The other one of a direct chat: writing to a bot, or to someone not in Universe, may offer notifications. */
+    export let partner: DirectPartner | undefined = undefined;
 
     let message = "";
     // Links whose preview was closed above the message box: they are sent without one.
@@ -461,6 +465,8 @@
                 }
             } else {
                 destination.room.sendMessage(messageToSend);
+                const moment = partner ? replyMoment(partner, get(destination.room.name)) : undefined;
+                if (moment) askForNotifications(moment);
             }
             clearComposerIfUnchanged(submittedDraft);
         }

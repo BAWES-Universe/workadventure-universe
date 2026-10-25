@@ -504,6 +504,38 @@ export class BotApiService {
     }
 
     /**
+     * Whether Orbit can send this player notifications (#863): the key a browser subscribes with, or null when Orbit
+     * has none (notifications are not set up there). Undefined when it can't be known: a guest, no Orbit, or Orbit
+     * didn't answer.
+     */
+    async getPushPublicKey(): Promise<string | null | undefined> {
+        if (!this.adminUrl || !this.accessToken) return undefined;
+        try {
+            const response = await this.fetch("/api/me/push");
+            const data = (await response.json()) as { publicKey?: unknown };
+            if (data.publicKey === null) return null;
+            return typeof data.publicKey === "string" && data.publicKey ? data.publicKey : undefined;
+        } catch {
+            return undefined;
+        }
+    }
+
+    /** Saves this browser's push subscription for the player, under a name for Your devices. The device id, or null. */
+    async registerPushDevice(subscription: PushSubscriptionJSON, label: string): Promise<string | null> {
+        if (!this.adminUrl || !this.accessToken) return null;
+        try {
+            const response = await this.fetch("/api/me/push/devices", {
+                method: "POST",
+                body: JSON.stringify({ endpoint: subscription.endpoint, keys: subscription.keys, label }),
+            });
+            const data = (await response.json()) as { device?: { id?: unknown } };
+            return typeof data.device?.id === "string" ? data.device.id : null;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
      * What the membership button on another player's card says for this player, in the universe of the current room:
      * Give membership, Pending invite, Roles or Membership. Null when Orbit says there is none, and when it can't be
      * known: no Orbit, or Orbit didn't answer.
