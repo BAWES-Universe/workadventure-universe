@@ -2,10 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import type { InstallEnvironment } from "../../../Install/InstallPlatform";
 import { describeDevice, deviceLabel, keyBytes, pushAvailability } from "../PushDevice";
 
-const { getPushPublicKey, setPushDeviceEnabled, removePushDevice } = vi.hoisted(() => ({
+const { getPushPublicKey, setPushDeviceEnabled, removePushDevice, setPushDeviceId } = vi.hoisted(() => ({
     getPushPublicKey: vi.fn(() => Promise.resolve(null)),
     setPushDeviceEnabled: vi.fn(() => Promise.resolve(true)),
     removePushDevice: vi.fn(() => Promise.resolve(true)),
+    setPushDeviceId: vi.fn(),
 }));
 vi.mock("../../../external-modules/bots/services/BotApiService", () => ({
     botApiService: { getPushPublicKey, setPushDeviceEnabled, removePushDevice },
@@ -20,7 +21,7 @@ vi.mock("../../../Connection/LocalUserStore", () => {
             setNotification: (value: boolean | null) => (notification = value),
             isLogged: () => true,
             getPushDeviceId: () => null,
-            setPushDeviceId: () => undefined,
+            setPushDeviceId,
         },
     };
 });
@@ -181,6 +182,27 @@ describe("saving this device", () => {
         getPushPublicKey.mockClear();
         expect(await subscribeThisDevice()).toBe("notSetUp");
         expect(getPushPublicKey).not.toHaveBeenCalled();
+        vi.unstubAllGlobals();
+    });
+
+    it("forgets an id kept from before when nothing is saved in Orbit now", async () => {
+        const { subscribeThisDevice, thisDeviceIdStore } = await import("../PushDevice");
+        const { get } = await import("svelte/store");
+        thisDeviceIdStore.set("old-device");
+        setPushDeviceId.mockClear();
+        // This server sends nothing while Universe is closed (no keys in Orbit)
+        vi.stubGlobal("navigator", {
+            userAgent: UA.windowsEdge,
+            platform: "",
+            maxTouchPoints: 0,
+            serviceWorker: { register: vi.fn() },
+        });
+        vi.stubGlobal("Notification", { permission: "granted" });
+        vi.stubGlobal("PushManager", class {});
+        getPushPublicKey.mockResolvedValueOnce(null);
+        expect(await subscribeThisDevice()).toBe("notSetUp");
+        expect(get(thisDeviceIdStore)).toBeUndefined();
+        expect(setPushDeviceId).toHaveBeenCalledWith(null);
         vi.unstubAllGlobals();
     });
 });
