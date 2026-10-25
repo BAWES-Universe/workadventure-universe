@@ -6,10 +6,11 @@ const { getPushPublicKey } = vi.hoisted(() => ({ getPushPublicKey: vi.fn(() => P
 vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: { getPushPublicKey } }));
 vi.mock("../../../Network/ServiceWorker", () => ({ SERVICE_WORKER_URL: "/service-worker.js" }));
 vi.mock("../../../Connection/LocalUserStore", () => {
-    let notification = false;
+    let notification: boolean | null = null;
     return {
         localUserStore: {
-            getNotification: () => notification,
+            getNotification: () => notification === true,
+            getNotificationChoice: () => notification,
             setNotification: (value: boolean) => (notification = value),
         },
     };
@@ -83,18 +84,22 @@ describe("the subscribe key", () => {
 });
 
 describe("saving this device again on start", () => {
-    it("leaves a device that was switched off here alone", async () => {
+    it("leaves a device that was switched off here alone, and saves one allowed in the browser's settings", async () => {
         const { refreshThisDevice } = await import("../PushDevice");
         const { localUserStore } = await import("../../../Connection/LocalUserStore");
         vi.stubGlobal("Notification", { permission: "granted" });
         vi.stubGlobal("PushManager", class {});
         vi.stubGlobal("navigator", { userAgent: UA.windowsEdge, platform: "", maxTouchPoints: 0, serviceWorker: {} });
-        localUserStore.setNotification(false);
-        await refreshThisDevice();
-        expect(getPushPublicKey).not.toHaveBeenCalled();
-        localUserStore.setNotification(true);
+        // Allowed in the browser's own site settings, never switched here: saved, and on here too
         await refreshThisDevice();
         expect(getPushPublicKey).toHaveBeenCalledOnce();
+        expect(localUserStore.getNotification()).toBe(true);
+        localUserStore.setNotification(false);
+        await refreshThisDevice();
+        expect(getPushPublicKey).toHaveBeenCalledOnce();
+        localUserStore.setNotification(true);
+        await refreshThisDevice();
+        expect(getPushPublicKey).toHaveBeenCalledTimes(2);
         vi.unstubAllGlobals();
     });
 });

@@ -132,8 +132,11 @@ export async function subscribeThisDevice(): Promise<boolean> {
  */
 export async function refreshThisDevice(): Promise<void> {
     if (pushAvailability() !== "ready" || Notification.permission !== "granted") return;
-    // Switched off here: stays off until switched on again.
-    if (!localUserStore.getNotification()) return;
+    // Switched off here: stays off until switched on again. Allowed in the browser's own site settings, with no choice
+    // made here: on, as the browser says.
+    const choice = localUserStore.getNotificationChoice();
+    if (choice === false) return;
+    if (choice === null) localUserStore.setNotification(true);
     try {
         await subscribeThisDevice();
     } catch (error) {

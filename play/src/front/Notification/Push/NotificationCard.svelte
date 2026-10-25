@@ -4,7 +4,6 @@
     import { popupStore } from "../../Stores/PopupStore";
     import { localUserStore } from "../../Connection/LocalUserStore";
     import { helpNotificationSettingsVisibleStore } from "../../Stores/HelpSettingsStore";
-    import { installApp } from "../../Install/InstallWiring";
     import { currentInstallEnvironment } from "../../Install/InstallPlatform";
     import type { NotificationMoment } from "./NotificationAsk";
     import { NOTIFICATION_CARD_ID } from "./NotificationAsk";
@@ -91,7 +90,10 @@
 
     function addToHomeScreen() {
         close();
-        installApp.install("menu").catch((error) => console.error(error));
+        // Loaded on the tap: the install wiring pulls in the game's stores, which must not load with this card
+        import("../../Install/InstallWiring")
+            .then(({ installApp }) => installApp.install("menu"))
+            .catch((error) => console.error(error));
     }
 
     function onKeyDown(event: KeyboardEvent) {
