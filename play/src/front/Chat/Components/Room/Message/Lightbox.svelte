@@ -264,14 +264,18 @@
             rawY = ty;
             recentMoves = [{ y: start.y, t: e.timeStamp }];
             pressedBackground = e.button === 0 && onBackground(e);
-        } else if (!isVideo) {
-            // The second finger turns the gesture into a pinch. It never fades or closes the viewer.
-            if (mode === "dismiss") {
-                ty = 0;
-                backdropOpacity = 1;
+        } else {
+            // A second finger never counts as a click on the background; on a video it leaves the gesture "pending".
+            pressedBackground = false;
+            if (!isVideo) {
+                // The second finger turns the gesture into a pinch. It never fades or closes the viewer.
+                if (mode === "dismiss") {
+                    ty = 0;
+                    backdropOpacity = 1;
+                }
+                mode = "pinch";
+                beginPinch();
             }
-            mode = "pinch";
-            beginPinch();
         }
     }
 
