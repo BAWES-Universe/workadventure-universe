@@ -21,9 +21,30 @@ describe("coWebsiteSiteName", () => {
         expect(siteNameOf("https://youtu.be/dQw4w9WgXcQ")).toBe("YouTube");
     });
 
-    it("keeps the title other sites always had", () => {
+    it("names a site, not the part of it that is open", () => {
+        expect(siteNameOf("https://en.wikipedia.org/wiki/Universe")).toBe("Wikipedia");
         expect(siteNameOf("https://www.example.com/page")).toBe("Example");
         expect(siteNameOf("https://docs.google.com/document/d/1")).toBe("Docs");
+        expect(siteNameOf("https://a.b.shop.example.com/x")).toBe("Example");
+    });
+
+    it("keeps the name of a Google product", () => {
+        expect(siteNameOf("https://docs.google.com/document/d/1")).toBe("Docs");
+        expect(siteNameOf("https://sheets.google.com/")).toBe("Sheets");
+        expect(siteNameOf("https://drive.google.com/drive/folders/1")).toBe("Drive");
+        expect(siteNameOf("https://www.google.com/search?q=a")).toBe("Google");
+    });
+
+    it("looks past a country ending", () => {
+        expect(siteNameOf("https://www.bbc.co.uk/news")).toBe("Bbc");
+        expect(siteNameOf("https://news.bbc.co.uk/")).toBe("Bbc");
+        expect(siteNameOf("https://www.example.com.au/")).toBe("Example");
+        expect(siteNameOf("https://example.co/")).toBe("Example");
+    });
+
+    it("shows an address with no name in it as it is", () => {
+        expect(siteNameOf("http://localhost:8080/page")).toBe("Localhost");
+        expect(siteNameOf("http://192.168.1.20/page")).toBe("192.168.1.20");
     });
 });
 

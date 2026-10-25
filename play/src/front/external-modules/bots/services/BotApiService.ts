@@ -1,4 +1,4 @@
-import type { BotData } from "../types";
+import type { BotAiOptions, BotData } from "../types";
 import {
     readPermissions,
     readRule,
@@ -35,6 +35,13 @@ export function isOrbitSessionResponse(value: unknown): value is { version: 2; s
         typeof response.expiresAt === "number" &&
         Number.isFinite(response.expiresAt)
     );
+}
+
+/** The shape the bot page reads without a guard: the key list and whether Universe AI is offered. Anything else is "no answer". */
+export function isBotAiOptions(data: unknown): data is BotAiOptions {
+    if (typeof data !== "object" || data === null) return false;
+    const answer = data as Partial<BotAiOptions>;
+    return Array.isArray(answer.keys) && typeof answer.universeAi?.available === "boolean";
 }
 
 export interface CreateBotDto {
@@ -450,6 +457,28 @@ export class BotApiService {
     }
 
     /**
+     * What the bot page offers under "Runs on" (#374): Universe AI and the viewer's own keys lent to this universe.
+     * Pass the bot's id, or nothing (this room) for a bot not made yet. Null when Orbit can't say (an older Orbit, no
+     * permission, offline): the page then keeps the provider list it always had.
+     */
+    async getBotAiOptions(target: { botId?: string; roomId?: string } = {}): Promise<BotAiOptions | null> {
+        const roomId = target.roomId ?? this.roomId;
+        const query = target.botId
+            ? `botId=${encodeURIComponent(target.botId)}`
+            : roomId
+            ? `roomId=${encodeURIComponent(roomId)}`
+            : null;
+        if (!query) return null;
+        try {
+            const response = await this.fetch(`/api/me/bot-ai?${query}`);
+            const data: unknown = await response.json();
+            return isBotAiOptions(data) ? data : null;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
      * What the membership button on another player's card says for this player, in the universe of the current room:
      * Give membership, Pending invite, Roles or Membership. Null when Orbit says there is none, and when it can't be
      * known: no Orbit, or Orbit didn't answer.
@@ -524,6 +553,17 @@ export class BotApiService {
         });
 
         return response.json();
+    }
+
+    /**
+     * Save the bot's own model on its AI key (Orbit #575). Sent to Orbit itself: the bot server's save of a bot's
+     * settings doesn't carry a model. The bot server asks Orbit for the model each time the bot replies.
+     */
+    async saveBotModel(id: string, aiModel: string): Promise<void> {
+        await this.fetch(`/api/bots/${encodeURIComponent(id)}`, {
+            method: "PUT",
+            body: JSON.stringify({ aiModel }),
+        });
     }
 
     /**
