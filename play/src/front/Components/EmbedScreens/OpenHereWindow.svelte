@@ -261,6 +261,19 @@
     let dragRatio: number | undefined;
     let dragStartX: number | undefined;
     let anchorX = 0;
+    // Turning the phone sideways swaps chat's sheet for the floating window in the same element. The window takes its
+    // place at once, without the expand and collapse motion: its edges would otherwise slide over from where the sheet
+    // was. Turned back upright, the sheet keeps its own height motion, which centres the map when it ends.
+    let switching = false;
+    let wasFloating = floating;
+    $: if (floating !== wasFloating) {
+        wasFloating = floating;
+        if (floating) {
+            switching = true;
+            // Two frames: the first draws the new place without motion, the second turns the motion back on.
+            requestAnimationFrame(() => requestAnimationFrame(() => (switching = false)));
+        }
+    }
     // A split dragged on an upright phone has no limits: the window opened by turning the phone keeps within these.
     $: ratio = dragRatio ?? clampOpenHereRatio($coWebsiteRatio);
 
@@ -324,7 +337,7 @@
     class:screen-blocker={!floating && !tucked}
     class:behind-orbit={behindOrbit}
     class:behind-chat={!behindOrbit && behindChat}
-    class:dragging={dragRatio !== undefined || sheetDragHeight !== undefined}
+    class:dragging={dragRatio !== undefined || sheetDragHeight !== undefined || switching}
     style={floating ? `--open-here-ratio: ${ratio}` : sheetFrameStyle(sheetHeight, $windowSize.height)}
     data-testid={floating ? "openHereWindow" : "openHereSheet"}
     on:pointerdown|capture={bringForward}
@@ -420,7 +433,11 @@
         min-width: min(360px, 100vw);
         max-width: 100vw;
         pointer-events: auto;
-        transition: width 160ms ease-out;
+        // Expanding and collapsing move every edge together, as Orbit's window does (Tailwind's transition-all: 150ms,
+        // cubic-bezier(0.4, 0, 0.2, 1)): it grows from where it sits, its own corner held to the screen's.
+        transition-property: top, left, right, width, max-width, height;
+        transition-duration: 150ms;
+        transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
 
         &.dragging {
             transition: none;
@@ -532,8 +549,11 @@
     }
 
     // Expanded: the window takes the whole screen, over the chat too, with the pill at the top right as Orbit's.
+    // Only the edge it is held to moves: setting the far edge too would pin it there at once, and it would grow from
+    // the other side of the screen.
     .open-here.expanded {
-        inset: 0;
+        top: 0;
+        inset-inline-end: 0;
         width: 100vw;
         height: 100dvh;
 
