@@ -18,6 +18,7 @@ import { analyticsClient } from "../../Administration/AnalyticsClient";
 import { blackListManager } from "../../WebRtc/BlackListManager";
 import { ringStore } from "../../Chat/Stores/RingStore";
 import { openDirectChatRoom } from "../../Chat/Utils";
+import { openProfileLinkHere, profileLinksOpeningHere } from "../../Chat/LinkPreview/ProfileLinks";
 import {
     ORBIT_AUTH_VERSION,
     buildAdminLoginUrl,
@@ -31,6 +32,8 @@ import {
     isOrbitBridgeReadyMessage,
     isOrbitInvitePersonMessage,
     isOrbitMessagePersonMessage,
+    isOrbitCheckLinksMessage,
+    isOrbitOpenLinkMessage,
     isOrbitProfileChangedMessage,
     newRoomRevision,
     type OrbitEventTopic,
@@ -207,6 +210,23 @@ function handleAdminAuthMessage(event: MessageEvent<unknown>) {
     }
     if (isOrbitMessagePersonMessage(event.data)) {
         if (bridge && event.data.roomRevision === bridge.roomRevision) messagePersonFromOrbit(event.data.chatId);
+        return;
+    }
+    if (isOrbitCheckLinksMessage(event.data)) {
+        // Which of someone's profile links the game can show, checked as chat links are, for this visit's Orbit only.
+        const { requestId, roomRevision, urls } = event.data;
+        const asking = bridge;
+        if (asking && roomRevision === asking.roomRevision)
+            profileLinksOpeningHere(urls)
+                .then((openHere) => {
+                    if (bridge === asking) asking.answerLinks(requestId, openHere);
+                })
+                .catch((error) => console.error("Could not check profile links for Orbit", error));
+        return;
+    }
+    if (isOrbitOpenLinkMessage(event.data)) {
+        // The window comes in front, and Orbit stays as it is behind it: its button brings it back.
+        if (bridge && event.data.roomRevision === bridge.roomRevision) openProfileLinkHere(event.data.url);
         return;
     }
     if (!isOrbitAuthReadyMessage(event.data)) return;
