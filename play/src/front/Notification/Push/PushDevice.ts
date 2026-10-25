@@ -110,6 +110,8 @@ let signingOut = false;
 
 /** Each time this device is switched off or removed: a save on its way when it happens saves nothing. */
 let switchOffs = 0;
+/** Each time this browser starts being saved: a switch-off still on its way then leaves the browser as it is. */
+let saves = 0;
 
 /**
  * Subscribes this browser (the permission is already given) and saves it in Orbit. A subscription made with an
@@ -118,6 +120,7 @@ let switchOffs = 0;
  */
 export async function subscribeThisDevice(): Promise<"saved" | "notSetUp" | "failed"> {
     const offsAtStart = switchOffs;
+    saves++;
     if (pushAvailability() !== "ready" || !localUserStore.isLogged()) return notInOrbit();
     const publicKey = await botApiService.getPushPublicKey();
     if (publicKey === null) return notInOrbit();
@@ -221,6 +224,7 @@ export function updateThisDeviceState(): void {
  */
 export async function turnOffThisDevice(deviceId: string | undefined, remove: boolean): Promise<void> {
     switchOffs++;
+    const savesAtStart = saves;
     localUserStore.setNotification(false);
     updateThisDeviceState();
     let told = false;
@@ -229,11 +233,13 @@ export async function turnOffThisDevice(deviceId: string | undefined, remove: bo
             ? await botApiService.removePushDevice(deviceId)
             : await botApiService.setPushDeviceEnabled(deviceId, false);
     }
+    // Switched on again while Orbit was answering: that save owns the browser and its id now
+    const onAgain = saves !== savesAtStart;
     // Still listed when Orbit refused: it stays This device there until Orbit forgets it
-    if (remove && told) setThisDeviceId(undefined);
+    if (remove && told && !onAgain) setThisDeviceId(undefined);
     // Removed, or Orbit could not be told: this browser drops its subscription as well, so nothing reaches it either
     // way (Orbit forgets the device at its next send there).
-    if (remove || !told) await forgetThisBrowser();
+    if ((remove || !told) && !onAgain) await forgetThisBrowser();
     if (remove && !told) throw new Error("Orbit did not remove the device");
 }
 
