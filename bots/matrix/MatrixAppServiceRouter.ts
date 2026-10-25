@@ -94,7 +94,8 @@ export function createMatrixAppServiceRouter(config: MatrixAppServiceConfig, han
         res.status(404).json({ errcode: 'M_NOT_FOUND', error: 'Not found' });
     };
 
-    router.use(['/_matrix/app', '/transactions', '/users', '/rooms'], express.json({ limit: '10mb' }), requireHomeserver);
+    // The token comes first, so nobody else gets a body read.
+    router.use(['/_matrix/app', '/transactions', '/users', '/rooms'], requireHomeserver, express.json({ limit: '10mb' }));
     router.put('/_matrix/app/v1/transactions/:txnId', transactions);
     router.get('/_matrix/app/v1/users/:userId', userQuery);
     router.get('/_matrix/app/v1/rooms/:alias', notFound);
