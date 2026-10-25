@@ -5,6 +5,8 @@ export interface BotRoomLink {
     url: string;
     room: string;
     world: string;
+    /** Empty when the bot server didn't send it (an older one) */
+    universe: string;
 }
 
 const NAME_MAX = 120;
@@ -21,7 +23,7 @@ export function readBotRoomLink(
     if (!botIdFromChatId(sender) || content.msgtype !== "m.text") return undefined;
     const link = content["universe.room_link"] as Partial<BotRoomLink> | undefined;
     if (!link || typeof link !== "object") return undefined;
-    const { url, room, world } = link;
+    const { url, room, world, universe } = link;
     if (typeof url !== "string" || typeof room !== "string" || !room.trim()) return undefined;
     try {
         const parsed = new URL(url);
@@ -33,5 +35,6 @@ export function readBotRoomLink(
         url,
         room: room.trim().slice(0, NAME_MAX),
         world: typeof world === "string" ? world.trim().slice(0, NAME_MAX) : "",
+        universe: typeof universe === "string" ? universe.trim().slice(0, NAME_MAX) : "",
     };
 }

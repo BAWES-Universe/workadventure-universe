@@ -64,6 +64,7 @@ export interface DmRoomLink {
     url: string;
     room: string;
     world: string;
+    universe: string;
 }
 
 /** How a resting bot words "not now", so it still sounds like itself. */
@@ -363,7 +364,7 @@ export class DmReplyService extends BaseBehavior {
             const metadata = await this.adminApiService.getRoomMetadata(roomUrl);
             const room = metadata?.roomName?.trim();
             if (!room || !text.toLocaleLowerCase().includes(room.toLocaleLowerCase())) return undefined;
-            return { url: roomUrl, room, world: metadata?.worldName?.trim() ?? '' };
+            return { url: roomUrl, room, world: metadata?.worldName?.trim() ?? '', universe: metadata?.universeName?.trim() ?? '' };
         } catch (error) {
             // No card is fine: the reply still names the room in words.
             console.warn(`[DmReplyService] Could not read the room of ${roomUrl}:`, (error as Error)?.message ?? error);

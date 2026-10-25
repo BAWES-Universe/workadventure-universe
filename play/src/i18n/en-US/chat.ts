@@ -747,7 +747,8 @@ const chat: BaseTranslation = {
         unreadyPlaceholder: "Can't reply yet",
         closed: "This chat is closed",
         left: "{name} left",
-        visitRoom: "Tap to visit {name}",
+        visit: "Visit",
+        visitAria: "Visit {name} in {room}",
         inThisRoom: "You're in this room",
     },
     friends: {

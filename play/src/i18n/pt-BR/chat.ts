@@ -492,7 +492,8 @@ const chat: DeepPartial<Translation["chat"]> = {
         unreadyPlaceholder: "Ainda não pode responder",
         closed: "Esta conversa está fechada",
         left: "{name} saiu",
-        visitRoom: "Toque para visitar {name}",
+        visit: "Visitar",
+        visitAria: "Visitar {name} em {room}",
         inThisRoom: "Você está nesta sala",
     },
 };

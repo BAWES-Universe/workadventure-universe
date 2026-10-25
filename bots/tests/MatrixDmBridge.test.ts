@@ -112,7 +112,7 @@ describe('MatrixDmBridge', () => {
 
     it("sends a reply that names the bot's room with its link, for the game's card", async () => {
         await bridge.onEvent(invite());
-        const roomLink = { url: 'https://play.example/@/bawes/hq/lobby', room: 'Lobby', world: 'BAWES HQ' };
+        const roomLink = { url: 'https://play.example/@/bawes/hq/lobby', room: 'Lobby', world: 'BAWES HQ', universe: 'BAWES' };
         deps.reply.mockResolvedValueOnce({ text: 'I live in the Lobby.', media: [], roomLink });
         await bridge.onEvent(message('where u at'));
         expect(client.sendMessage).toHaveBeenCalledWith(BOT_USER, ROOM, {
@@ -1303,7 +1303,7 @@ describe('DmReplyService history', () => {
         const reply = await (service as any).replyNow(BOT, person, "who's around?", [], {});
         (BotClient as any).botUserIds.delete(otherBot);
         expect((answering.mock.calls[0] as unknown[])[14]).toEqual(['Khalid', 'User 2']);
-        expect(reply.roomLink).toEqual({ url: room, room: 'Lobby', world: 'BAWES HQ' });
+        expect(reply.roomLink).toEqual({ url: room, room: 'Lobby', world: 'BAWES HQ', universe: 'BAWES' });
     });
 
     it('counts an answer the provider broke off as failed, so it is never sent cut short', async () => {

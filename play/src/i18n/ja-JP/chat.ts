@@ -327,7 +327,8 @@ const chat: DeepPartial<Translation["chat"]> = {
         unreadyPlaceholder: "まだ返信できません",
         closed: "このチャットは終了しました",
         left: "{name}はいなくなりました",
-        visitRoom: "タップして{name}に会いに行く",
+        visit: "会いに行く",
+        visitAria: "{room}の{name}に会いに行く",
         inThisRoom: "このルームにいます",
     },
 };

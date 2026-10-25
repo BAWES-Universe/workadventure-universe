@@ -244,7 +244,8 @@ const chat: DeepPartial<Translation["chat"]> = {
         unreadyPlaceholder: "Kann noch nicht antworten",
         closed: "Dieser Chat ist geschlossen",
         left: "{name} ist gegangen",
-        visitRoom: "Tippen, um {name} zu besuchen",
+        visit: "Besuchen",
+        visitAria: "{name} in {room} besuchen",
         inThisRoom: "Sie sind in diesem Raum",
     },
 };

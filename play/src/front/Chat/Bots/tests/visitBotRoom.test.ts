@@ -5,7 +5,7 @@ const goToPage = vi.fn();
 vi.mock("../../Components/Room/DirectChat/PartnerActions", () => ({ walkToPartner }));
 vi.mock("../../../Api/ScriptUtils", () => ({ scriptUtils: { goToPage } }));
 
-const LINK = { url: "https://play.example/@/bawes/hq/lobby", room: "Lobby", world: "BAWES HQ" };
+const LINK = { url: "https://play.example/@/bawes/hq/lobby", room: "Lobby", world: "BAWES HQ", universe: "BAWES" };
 const onMap = { actions: { walkTo: true, locate: true } } as never;
 const away = { actions: { walkTo: false, locate: false } } as never;
 
