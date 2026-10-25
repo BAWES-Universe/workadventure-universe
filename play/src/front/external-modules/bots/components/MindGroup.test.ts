@@ -66,6 +66,7 @@ describe("the bot page's Mind group (#1375)", () => {
         mocks.api.isInitialized.mockReturnValue(true);
         mocks.canOpenOrbit.mockReturnValue(true);
         mocks.api.getAvailableAIProviders.mockResolvedValue([]);
+        mocks.api.getMyAiKeys.mockResolvedValue(null);
         modalVisibilityStore.set(false);
         target = document.createElement("div");
         document.body.append(target);
@@ -116,6 +117,14 @@ describe("the bot page's Mind group (#1375)", () => {
         await mount();
         expect(byTestId("bot-runs-on-unlent")).toHaveLength(0);
         expect(text()).toContain("Only keys you lent to this universe show here.");
+    });
+
+    it("does not wait for the viewer's keys to show the rest of the page", async () => {
+        mocks.api.getBotAiOptions.mockResolvedValue(options({ keys: [lentKey] }));
+        mocks.api.getMyAiKeys.mockReturnValue(new Promise(() => undefined));
+        await mount();
+        expect(text()).toContain("Only keys you lent to this universe show here.");
+        expect(byTestId("bot-runs-on-unlent")).toHaveLength(0);
     });
 
     it("never shows it on someone else's bot", async () => {
