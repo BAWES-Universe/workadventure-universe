@@ -529,11 +529,14 @@ export class BotApiService {
     }
 
     /**
-     * No Orbit address: null (a server without Orbit) once a room has set this service up, undefined (not known yet)
-     * before that, so nothing saved for this device is forgotten in a room that has not set it up.
+     * No Orbit address: null (a server without Orbit) once a room has set this service up, or when the server has
+     * none. Undefined (not known yet) while a room that has not set it up runs on a server with Orbit, so nothing
+     * saved for this device is forgotten there.
      */
     private orbitAnswer(): null | undefined {
-        return this.initialized ? null : undefined;
+        // Read from the page's config directly: this service is also used where that config is not loaded
+        const serverHasOrbit = typeof window !== "undefined" && !!window.env?.ADMIN_URL;
+        return this.initialized || !serverHasOrbit ? null : undefined;
     }
 
     /** Saves this browser's push subscription for the player, under a name for Your devices. The device id, or null. */

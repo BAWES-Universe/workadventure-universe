@@ -62,11 +62,21 @@ describe("loading Settings > Notifications", () => {
     });
 
     it("is not known before a room has set the service up, so nothing saved for this device is forgotten", async () => {
+        vi.stubGlobal("env", { ADMIN_URL: ORBIT });
         const fetchMock = vi.spyOn(globalThis, "fetch");
         const api = new BotApiService();
         await expect(api.getPushOverview()).resolves.toBeUndefined();
         await expect(api.getPushPublicKey()).resolves.toBeUndefined();
         expect(fetchMock).not.toHaveBeenCalled();
+        vi.unstubAllGlobals();
+    });
+
+    it("is null before a room has set the service up on a server without Orbit, so only the switch shows", async () => {
+        vi.stubGlobal("env", { ADMIN_URL: "" });
+        const api = new BotApiService();
+        await expect(api.getPushOverview()).resolves.toBeNull();
+        await expect(api.getPushPublicKey()).resolves.toBeNull();
+        vi.unstubAllGlobals();
     });
 
     it("is undefined when Orbit can't be reached, so it says so", async () => {
