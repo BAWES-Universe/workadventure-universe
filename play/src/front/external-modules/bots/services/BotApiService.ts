@@ -44,6 +44,18 @@ export function isBotAiOptions(data: unknown): data is BotAiOptions {
     return Array.isArray(answer.keys) && typeof answer.universeAi?.available === "boolean";
 }
 
+/** Only the id and name of each of the player's own AI keys, which is all the bot page needs (#1375). */
+export function myAiKeyNames(data: unknown): Array<{ id: string; name: string }> | null {
+    if (typeof data !== "object" || data === null) return null;
+    const keys = (data as { keys?: unknown }).keys;
+    if (!Array.isArray(keys)) return null;
+    return keys.flatMap((key: unknown) => {
+        if (typeof key !== "object" || key === null) return [];
+        const { id, name } = key as { id?: unknown; name?: unknown };
+        return typeof id === "string" && typeof name === "string" ? [{ id, name }] : [];
+    });
+}
+
 export interface CreateBotDto {
     roomId: string;
     name: string;
@@ -473,6 +485,19 @@ export class BotApiService {
             const response = await this.fetch(`/api/me/bot-ai?${query}`);
             const data: unknown = await response.json();
             return isBotAiOptions(data) ? data : null;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * The player's own AI keys, lent anywhere or nowhere (#1375): the bot page uses them to say which keys aren't lent to
+     * this universe yet. Null when Orbit can't say (offline, an older Orbit).
+     */
+    async getMyAiKeys(): Promise<Array<{ id: string; name: string }> | null> {
+        try {
+            const response = await this.fetch("/api/me/ai-keys");
+            return myAiKeyNames(await response.json());
         } catch {
             return null;
         }

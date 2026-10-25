@@ -122,6 +122,19 @@ export function runsOnCards(
     return cards;
 }
 
+/**
+ * The maker's own keys that are not lent to this bot's universe (#1375). Only lent keys show under "Runs on", so the page
+ * names these and says how to lend them. Empty for anyone but the maker, and when their keys can't be loaded.
+ */
+export function unlentKeyNames(
+    options: BotAiOptions,
+    myKeys: ReadonlyArray<{ id: string; name: string }> | null
+): string[] {
+    if (!options.viewerIsMaker || !myKeys) return [];
+    const lent = new Set(options.keys.map((key) => key.id));
+    return myKeys.filter((key) => !lent.has(key.id)).map((key) => key.name);
+}
+
 /** What a key's card draws before its name. */
 export type KeyIcon = { kind: "logo"; url: string } | { kind: "plug" } | { kind: "chip" } | { kind: "key" };
 

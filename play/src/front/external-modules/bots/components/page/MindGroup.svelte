@@ -1,11 +1,13 @@
 <script lang="ts">
     // Mind: which AI the bot thinks with. A provider whose model has vision (can look at pictures) says so.
-    import LL from "../../../../../i18n/i18n-svelte";
+    import { onDestroy } from "svelte";
+    import LL, { locale } from "../../../../../i18n/i18n-svelte";
+    import { modalVisibilityStore } from "../../../../Stores/ModalStore";
     import type { BotAiOptions, BotData } from "../../types";
     import { botApiService } from "../../services/BotApiService";
     import { resolveVisionSupport } from "../../visionModels";
     import { canOpenOrbit, openOrbitPage } from "../../../admin-api/index";
-    import { canPick, cardIcon, mindBriefName, runsOnCards, type RunsOnCard } from "../../mindModel";
+    import { canPick, cardIcon, mindBriefName, runsOnCards, unlentKeyNames, type RunsOnCard } from "../../mindModel";
     import { allowedModelsOf, botModelOf, keyChoice, keyOfRef, modelRow, shortName } from "../../modelPickerModel";
     import PageGroup from "./PageGroup.svelte";
     import PageButton from "./PageButton.svelte";
@@ -36,6 +38,13 @@
      * say (an older Orbit, offline): the page then keeps the provider list it always had.
      */
     let options: BotAiOptions | null = null;
+    /** The viewer's own keys, lent or not (#1375): the ones not lent here are named, with how to lend them. */
+    let myKeys: Array<{ id: string; name: string }> | null = null;
+    /**
+     * AI keys was opened from this page: a key lent there should show here at once, so what Orbit offers is loaded again
+     * when Orbit closes or the page gets focus back, until the panel moves to another bot.
+     */
+    let lendPending = false;
 
     /** The model list is open: for the key the bot is on (Change), or for a key it is about to go on (nothing picked yet). */
     let choosing: { keyId: string; pending: boolean } | null = null;
@@ -43,39 +52,66 @@
     let loadedFor: string | undefined | null = null;
     let loadCount = 0;
 
-    async function load(botId: string | undefined) {
+    /** `quiet`: loaded again in the background (after a lend), so the page keeps what it shows until the answer is in. */
+    async function load(botId: string | undefined, quiet = false) {
         // Only the newest load may answer: a slow reply for the bot the panel was on before must not show on this one
         const mine = ++loadCount;
-        loading = true;
-        failed = false;
+        if (!quiet) {
+            loading = true;
+            failed = false;
+        }
         if (!botApiService.isInitialized()) {
+            if (quiet) return;
             loading = false;
             failed = true;
             return;
         }
         try {
-            // The provider names (to show what a pinned bot is on) and what Orbit offers, together
-            const [loadedProviders, loadedOptions] = await Promise.all([
+            // The provider names (to show what a pinned bot is on), what Orbit offers, and the viewer's own keys, together
+            const [loadedProviders, loadedOptions, loadedKeys] = await Promise.all([
                 botApiService.getAvailableAIProviders(true),
                 botApiService.getBotAiOptions(botId ? { botId } : {}),
+                botApiService.getMyAiKeys(),
             ]);
             if (mine !== loadCount) return;
-            providers = loadedProviders;
-            options = loadedOptions;
+            // A background load that couldn't be answered (the provider list comes back empty then) keeps what the page
+            // already shows
+            if (loadedProviders.length > 0 || !quiet) providers = loadedProviders;
+            if (loadedOptions || !quiet) options = loadedOptions;
+            if (loadedKeys || !quiet) myKeys = loadedKeys;
         } catch (e) {
             if (mine !== loadCount) return;
             console.error("[MindGroup] Failed to load AI providers:", e);
-            failed = true;
+            if (!quiet) failed = true;
         } finally {
             if (mine === loadCount) loading = false;
         }
     }
 
+    function openAiKeys() {
+        lendPending = true;
+        openOrbitPage("/admin/you/ai-keys");
+    }
+
+    function reloadAfterLend() {
+        if (lendPending && !loading) void load(bot.id, true);
+    }
+
+    // Orbit closing is one way back from a lend (the other is the page getting focus back, below)
+    let orbitOpen = false;
+    const unsubscribeOrbit = modalVisibilityStore.subscribe((visible) => {
+        if (orbitOpen && !visible) reloadAfterLend();
+        orbitOpen = visible;
+    });
+    onDestroy(unsubscribeOrbit);
+
     function showFor(botId: string | undefined) {
         if (loadedFor === botId) return;
         loadedFor = botId;
         options = null;
+        myKeys = null;
         choosing = null;
+        lendPending = false;
         void load(botId);
     }
 
@@ -97,6 +133,8 @@
     $: names = new Map(providers.map((p) => [p.providerId.toLowerCase(), p.name]));
     $: cards = options ? runsOnCards(options, ref || null, names) : [];
     $: runsOnBrief = options ? mindBriefName(options, ref || null, names) : null;
+    $: unlent = options ? unlentKeyNames(options, myKeys) : [];
+    $: unlentList = listNames(unlent, $locale);
     // The model the bot is on, when it is on one of the person's own keys
     $: rowKey = options ? keyOfRef(options, ref || options.current) : undefined;
     $: row = options ? modelRow(options, ref || options.current, botModelOf(options, bot)) : null;
@@ -135,6 +173,11 @@
               .filter(Boolean)
               .join(" · ")
         : ref;
+
+    function listNames(list: string[], lang: string): string {
+        if (list.length < 2 || !Intl.ListFormat) return list.join(", ");
+        return new Intl.ListFormat(lang, { style: "long", type: "conjunction" }).format(list);
+    }
 
     function chooseCard(card: RunsOnCard) {
         if (!options || !canPick(options, card)) return;
@@ -194,6 +237,8 @@
         onChange({ ...bot, aiProviderRef: value || undefined, aiModel: null });
     }
 </script>
+
+<svelte:window on:focus={reloadAfterLend} />
 
 <PageGroup id="mind" icon={IconSparkles} title={page.mind.title()} {brief} {open} {onToggle}>
     {#if loading}
@@ -286,9 +331,26 @@
                 {/if}
             </div>
         {/if}
+        {#if options.viewerIsMaker && unlent.length > 0}
+            <div class="bp-unlent" data-testid="bot-runs-on-unlent">
+                <IconKey font-size="18" />
+                <div class="bp-mtx">
+                    <span class="bp-ut">
+                        {unlent.length === 1
+                            ? page.mind.unlentOne({ key: unlentList })
+                            : page.mind.unlentMany({ keys: unlentList })}
+                    </span>
+                    {#if canOpenOrbit()}
+                        <span class="bp-cn">
+                            {unlent.length === 1 ? page.mind.unlentStepOne() : page.mind.unlentStepMany()}
+                        </span>
+                    {/if}
+                </div>
+            </div>
+        {/if}
         {#if options.viewerIsMaker && canOpenOrbit()}
             <div class="bp-line">
-                <PageButton testId="bot-runs-on-ai-keys" tall on:click={() => openOrbitPage("/admin/you/ai-keys")}>
+                <PageButton testId="bot-runs-on-ai-keys" tall on:click={openAiKeys}>
                     {page.mind.aiKeys()}
                     <IconExternalLink font-size="14" />
                 </PageButton>
@@ -310,9 +372,11 @@
                 <IconChevronDown font-size="16" />
             </label>
         {/if}
-        <p class="bp-m">
-            {options.viewerIsMaker ? page.mind.makerHint() : page.mind.managerHint({ bot: bot.name ?? "" })}
-        </p>
+        {#if !options.viewerIsMaker || unlent.length === 0}
+            <p class="bp-m">
+                {options.viewerIsMaker ? page.mind.makerHint() : page.mind.managerHint({ bot: bot.name ?? "" })}
+            </p>
+        {/if}
     {:else if failed}
         <div class="bp-line">
             <p class="bp-m">{$LL.actionbar.botEditorModule.errorLoadFailed()}</p>
@@ -443,6 +507,27 @@
         border-radius: 14px;
         background: #0a0814;
         box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+    }
+    /* A key of the maker's that isn't lent here: said above the AI keys button, which is the way to lend it */
+    .bp-unlent {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 12px;
+        border-radius: 14px;
+        background: #0a0814;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+        color: #fff;
+    }
+    .bp-unlent > :global(svg) {
+        flex: none;
+        margin-top: 1px;
+    }
+    .bp-ut {
+        font-size: 14px;
+        font-weight: 600;
+        line-height: 1.35;
+        overflow-wrap: anywhere;
     }
     .bp-mtx {
         display: flex;
