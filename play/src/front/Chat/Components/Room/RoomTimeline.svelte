@@ -270,7 +270,7 @@
     // A note saying the bot is resting, not ready or gone updates the header at once, unless a lookup that started after
     // the note was written knows better.
     $: lastNoteAvailability = lastBotNote ? availabilityFromNote(lastBotNote.state) : undefined;
-    $: noteWrittenAt = lastBotMessage?.date?.getTime();
+    $: noteWrittenAt = lastBotMessage?.botStatusAt ?? lastBotMessage?.date?.getTime();
     $: if (partnerBotId && lastNoteAvailability && noteWrittenAt !== undefined) {
         botStatusCache.learn(partnerBotId, lastNoteAvailability, noteWrittenAt);
     }

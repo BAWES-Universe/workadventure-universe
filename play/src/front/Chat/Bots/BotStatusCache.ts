@@ -64,7 +64,7 @@ export class BotStatusCache {
 
     /**
      * A bot said it is gone, resting or not ready in a note: show that now, without waiting for the next lookup.
-     * `at` is when the note was written. A note written before the latest lookup started changes nothing (the lookup
+     * `at` is when the note was written, on this device's clock (as the lookups are), not the homeserver's. A note written before the latest lookup started changes nothing (the lookup
      * knows better), and a lookup that started before the note, even if it answers later, cannot replace it. A note
      * written at the very moment a lookup started counts as the newer.
      */

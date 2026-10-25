@@ -172,6 +172,8 @@ export interface ChatMessage {
     canDelete: Readable<boolean>;
     /** Set when a bot left a status note (resting, gone...) instead of an answer: drawn as a card, not a bubble. */
     botStatus?: BotStatusNote;
+    /** When a bot's status note was sent, on this device's clock, so it compares with this device's lookups. */
+    botStatusAt?: number;
     /** Set when a bot's reply names the room it lives in: a card under the message takes you there. */
     roomLink?: BotRoomLink;
     /** Whether reactions on this message reach the other people in the chat. */

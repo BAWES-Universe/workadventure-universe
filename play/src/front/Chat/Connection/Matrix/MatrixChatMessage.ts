@@ -54,6 +54,7 @@ export class MatrixChatMessage implements ChatMessage {
     relations: MatrixChatRelation | undefined;
     readonly canDelete: Writable<boolean>;
     readonly botStatus: BotStatusNote | undefined;
+    readonly botStatusAt: number | undefined;
     readonly roomLink: BotRoomLink | undefined;
     readonly canReact = writable(true);
     readonly canReply = writable(true);
@@ -66,6 +67,8 @@ export class MatrixChatMessage implements ChatMessage {
         this.id = event.getId() ?? uuidv4();
         this.type = this.mapMatrixMessageTypeToChatMessage();
         this.botStatus = readBotStatusNote(event.getSender(), event.getOriginalContent());
+        // The homeserver's clock can differ from ours: the SDK's local timestamp is the send time on our clock.
+        this.botStatusAt = this.botStatus ? event.localTimestamp : undefined;
         this.roomLink = readBotRoomLink(event.getSender(), event.getOriginalContent(), window.location.origin);
         this.date = event.getDate();
         this.sender = this.getSender();
