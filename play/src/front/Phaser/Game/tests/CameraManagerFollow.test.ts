@@ -34,6 +34,9 @@ vi.mock("../../../Stores/MapEditorStore", async () => {
 });
 const querySelectorOrFail = vi.hoisted(() => vi.fn());
 vi.mock("../../../WebRtc/HtmlUtils", () => ({ HtmlUtils: { querySelectorOrFail } }));
+// The space the panels and cards leave free; the whole 800x600 screen unless a test says otherwise.
+const measureBiggestAvailableArea = vi.hoisted(() => vi.fn(() => ({ xStart: 0, yStart: 0, xEnd: 800, yEnd: 600 })));
+vi.mock("../../../Stores/BiggestAvailableAreaStore", () => ({ measureBiggestAvailableArea }));
 vi.mock("../../Player/Player", () => ({ hasMovedEventName: "hasMoved" }));
 vi.mock("../../UserInput/UserInputManager", () => ({ UserInputEvent: {} }));
 vi.mock("../../../Utils/Debuggers", () => ({ debugZoom: () => undefined }));
@@ -251,6 +254,84 @@ describe("CameraManager after gliding back to the player", () => {
 
         finishLastGlide(scene);
         expect(camera.startFollow).toHaveBeenCalledWith(currentPlayer, true);
+    });
+});
+
+describe("CameraManager landing someone beside their card (#1380)", () => {
+    // Their card takes the right 300px of the 800x600 screen: the free space is the left 500px, centred 150px left.
+    const besideCard = { xStart: 0, yStart: 0, xEnd: 500, yEnd: 600 };
+
+    function lastGlide(scene: { tweens: { addCounter: ReturnType<typeof vi.fn> } }) {
+        const calls = scene.tweens.addCounter.mock.calls;
+        return calls[calls.length - 1][0] as {
+            onUpdate: (tween: { getValue: () => number }) => void;
+            onComplete: () => void;
+        };
+    }
+
+    function focusPoint(manager: unknown) {
+        return (manager as { explorerFocusOn: { x: number; y: number } }).explorerFocusOn;
+    }
+
+    it("glides straight to the free space and stays there once following", async () => {
+        querySelectorOrFail.mockReturnValue({ offsetWidth: 800, offsetHeight: 600 });
+        measureBiggestAvailableArea.mockReturnValue(besideCard);
+        const { manager, camera, remote, scene } = await makeCameraManager();
+
+        manager.followRemotePlayer("stitch");
+        const glide = lastGlide(scene);
+        glide.onUpdate({ getValue: () => 1 });
+
+        // The screen's middle is 150px right of them, so they sit in the middle of the free space, not under the card.
+        expect(focusPoint(manager)).toEqual({ x: remote.x + 150, y: remote.y });
+
+        camera.setFollowOffset.mockClear();
+        glide.onComplete();
+        expect(camera.startFollow).toHaveBeenLastCalledWith(remote, true);
+        // Following keeps that same spot: no second slide once they're found.
+        expect(camera.setFollowOffset).toHaveBeenLastCalledWith(-150, 0);
+        measureBiggestAvailableArea.mockReturnValue({ xStart: 0, yStart: 0, xEnd: 800, yEnd: 600 });
+    });
+
+    it("re-measures while gliding, so a card still sliding in is caught by the end", async () => {
+        querySelectorOrFail.mockReturnValue({ offsetWidth: 800, offsetHeight: 600 });
+        const { manager, remote, scene } = await makeCameraManager();
+
+        manager.followRemotePlayer("stitch");
+        const glide = lastGlide(scene);
+        glide.onUpdate({ getValue: () => 0.5 });
+        measureBiggestAvailableArea.mockReturnValue(besideCard);
+        glide.onUpdate({ getValue: () => 1 });
+
+        expect(focusPoint(manager)).toEqual({ x: remote.x + 150, y: remote.y });
+        measureBiggestAvailableArea.mockReturnValue({ xStart: 0, yStart: 0, xEnd: 800, yEnd: 600 });
+    });
+
+    it("centres a search's position in the free space when asked", async () => {
+        querySelectorOrFail.mockReturnValue({ offsetWidth: 800, offsetHeight: 600 });
+        measureBiggestAvailableArea.mockReturnValue(besideCard);
+        const { manager } = await makeCameraManager();
+        manager.setExplorationMode();
+
+        manager.centerCameraOn({ x: 400, y: 300 }, 1, true);
+        // One long frame reaches the target.
+        (manager as unknown as { animate: (time: number, delta: number) => void }).animate(0, 500);
+
+        expect(focusPoint(manager)).toEqual({ x: 550, y: 300 });
+        measureBiggestAvailableArea.mockReturnValue({ xStart: 0, yStart: 0, xEnd: 800, yEnd: 600 });
+    });
+
+    it("still centres on the screen's middle when not asked (zooming out to the whole map)", async () => {
+        querySelectorOrFail.mockReturnValue({ offsetWidth: 800, offsetHeight: 600 });
+        measureBiggestAvailableArea.mockReturnValue(besideCard);
+        const { manager } = await makeCameraManager();
+        manager.setExplorationMode();
+
+        manager.centerCameraOn({ x: 400, y: 300 }, 1);
+        (manager as unknown as { animate: (time: number, delta: number) => void }).animate(0, 500);
+
+        expect(focusPoint(manager)).toEqual({ x: 400, y: 300 });
+        measureBiggestAvailableArea.mockReturnValue({ xStart: 0, yStart: 0, xEnd: 800, yEnd: 600 });
     });
 });
 

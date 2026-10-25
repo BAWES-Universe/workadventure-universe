@@ -1,6 +1,7 @@
 import { mapEditorModeStore } from "../../Stores/MapEditorStore";
 import { Easing } from "../../types";
 import { HtmlUtils } from "../../WebRtc/HtmlUtils";
+import { measureBiggestAvailableArea } from "../../Stores/BiggestAvailableAreaStore";
 import type { Box } from "../../WebRtc/LayoutManager";
 import type { Player } from "../Player/Player";
 import { hasMovedEventName } from "../Player/Player";
@@ -102,7 +103,8 @@ export class CameraManager extends Phaser.Events.EventEmitter {
     // The point of the scene the explorer mode is focusing on.
     private explorerFocusOn: { x: number; y: number } = { x: 0, y: 0 };
     // If set, the camera will move toward this target.
-    private explorerFocusOnTarget: { x: number; y: number; zoom: number } | undefined;
+    // With inFreeSpace, the target lands in the space the panels and cards leave free instead of the screen's middle.
+    private explorerFocusOnTarget: { x: number; y: number; zoom: number; inFreeSpace?: boolean } | undefined;
     // True while a drag on the map, while editing, holds the camera off the player.
     private freedByDrag = false;
     // The player-moved listener that drag set, so that following resumes once and the listener can be dropped.
@@ -353,6 +355,8 @@ export class CameraManager extends Phaser.Events.EventEmitter {
         }
 
         const oldPos = { ...this.explorerFocusOn };
+        // Where the player will sit once followed, from the screen's middle: the space the panels and cards leave free.
+        let offset = { x: 0, y: 0 };
         const startZoomModifier = this.waScaleManager.zoomModifier;
         this.animationInProgress = true;
         this.scene.events.off(Phaser.Scenes.Events.UPDATE, this.animateCallback);
@@ -370,8 +374,11 @@ export class CameraManager extends Phaser.Events.EventEmitter {
                     return;
                 }
                 const progress = tween.getValue() ?? 0;
-                const shiftX = (this.playerToFollow.x - oldPos.x) * progress;
-                const shiftY = (this.playerToFollow.y - oldPos.y) * progress;
+                // The glide lands the player straight in that free space (measured each frame, while a card slides in
+                // or out), instead of in the middle and then sliding them over once it ends.
+                offset = this.freeSpaceOffset();
+                const shiftX = (this.playerToFollow.x - offset.x - oldPos.x) * progress;
+                const shiftY = (this.playerToFollow.y - offset.y - oldPos.y) * progress;
                 this.explorerFocusOn.x = oldPos.x + shiftX;
                 this.explorerFocusOn.y = oldPos.y + shiftY;
                 if (targetZoomLevel !== undefined) {
@@ -392,6 +399,8 @@ export class CameraManager extends Phaser.Events.EventEmitter {
                     return;
                 }
                 this.camera.startFollow(player, true);
+                // startFollow resets the offset: keep the one the glide landed on, so the player stays put.
+                this.camera.setFollowOffset(offset.x, offset.y);
                 this.setMapBounds();
                 // Back to following: the player is placed in the space the chat panel and videos leave free again.
                 this.setCameraMode(CameraMode.Follow);
@@ -461,17 +470,15 @@ export class CameraManager extends Phaser.Events.EventEmitter {
      * (tries to put the character in the center of the remaining space if there is a discussion going on.
      */
     public updateCameraOffset(box: Box, instant = false): void {
-        if (this.cameraMode !== CameraMode.Follow || box.xEnd === undefined || box.yEnd === undefined) {
+        if (this.cameraMode !== CameraMode.Follow) {
             return;
         }
-        const xCenter = (box.xEnd - box.xStart) / 2 + box.xStart;
-        const yCenter = (box.yEnd - box.yStart) / 2 + box.yStart;
-
-        const game = HtmlUtils.querySelectorOrFail<HTMLCanvasElement>("#game canvas");
-
-        // Let's put this in Game coordinates by applying the zoom level:
-        const followOffsetX = (xCenter - game.offsetWidth / 2) / this.scene.scale.zoom;
-        const followOffsetY = (yCenter - game.offsetHeight / 2) / this.scene.scale.zoom;
+        const followOffset = this.followOffsetFor(box);
+        if (!followOffset) {
+            return;
+        }
+        const followOffsetX = followOffset.x;
+        const followOffsetY = followOffset.y;
 
         if (instant) {
             this.camera.setFollowOffset(followOffsetX, followOffsetY);
@@ -507,6 +514,28 @@ export class CameraManager extends Phaser.Events.EventEmitter {
                 this.animationInProgress = false;
             },
         });
+    }
+
+    /** The follow offset that puts the followed player in the middle of this box of the screen. */
+    private followOffsetFor(box: Box): { x: number; y: number } | undefined {
+        if (box.xEnd === undefined || box.yEnd === undefined) {
+            return undefined;
+        }
+        const xCenter = (box.xEnd - box.xStart) / 2 + box.xStart;
+        const yCenter = (box.yEnd - box.yStart) / 2 + box.yStart;
+
+        const game = HtmlUtils.querySelectorOrFail<HTMLCanvasElement>("#game canvas");
+
+        // Let's put this in Game coordinates by applying the zoom level:
+        return {
+            x: (xCenter - game.offsetWidth / 2) / this.scene.scale.zoom,
+            y: (yCenter - game.offsetHeight / 2) / this.scene.scale.zoom,
+        };
+    }
+
+    /** The follow offset for the space the panels and cards leave free right now. */
+    private freeSpaceOffset(): { x: number; y: number } {
+        return this.followOffsetFor(measureBiggestAvailableArea()) ?? { x: 0, y: 0 };
     }
 
     public isCameraLocked(): boolean {
@@ -700,10 +729,11 @@ export class CameraManager extends Phaser.Events.EventEmitter {
         this.camera.panEffect.reset();
     }
 
-    public centerCameraOn(position: { x: number; y: number }, zoom?: number): void {
+    public centerCameraOn(position: { x: number; y: number }, zoom?: number, inFreeSpace = false): void {
         this.explorerFocusOnTarget = {
             ...position,
             zoom: zoom ?? this.waScaleManager.zoomModifier,
+            inFreeSpace,
         };
 
         if (zoom === undefined && this.waScaleManager.zoomModifier < this._resistanceEndZoomLevel) {
@@ -876,16 +906,19 @@ export class CameraManager extends Phaser.Events.EventEmitter {
                 (((this.explorerFocusOnTarget.zoom - this.waScaleManager.zoomModifier) * delta) / 100) *
                     this.focusTargetSpeed;
 
-            let x =
-                this.explorerFocusOn.x +
-                (((this.explorerFocusOnTarget.x - this.explorerFocusOn.x) * delta) / 100) * this.focusTargetSpeed;
-            let y =
-                this.explorerFocusOn.y +
-                (((this.explorerFocusOnTarget.y - this.explorerFocusOn.y) * delta) / 100) * this.focusTargetSpeed;
+            // Measured each frame: a card opening meanwhile is taken into account as it slides in.
+            const offset = this.explorerFocusOnTarget.inFreeSpace ? this.freeSpaceOffset() : { x: 0, y: 0 };
+            const targetX = this.explorerFocusOnTarget.x - offset.x;
+            const targetY = this.explorerFocusOnTarget.y - offset.y;
 
-            if (Math.abs(this.explorerFocusOnTarget.x - x) < 1 && Math.abs(this.explorerFocusOnTarget.y - y) < 1) {
-                x = this.explorerFocusOnTarget.x;
-                y = this.explorerFocusOnTarget.y;
+            let x =
+                this.explorerFocusOn.x + (((targetX - this.explorerFocusOn.x) * delta) / 100) * this.focusTargetSpeed;
+            let y =
+                this.explorerFocusOn.y + (((targetY - this.explorerFocusOn.y) * delta) / 100) * this.focusTargetSpeed;
+
+            if (Math.abs(targetX - x) < 1 && Math.abs(targetY - y) < 1) {
+                x = targetX;
+                y = targetY;
                 newZoom = this.explorerFocusOnTarget.zoom;
                 this.explorerFocusOnTarget = undefined;
             }

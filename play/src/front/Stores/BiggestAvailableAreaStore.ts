@@ -131,6 +131,33 @@ export function getBoxArea(box: Box, xVertices: number[], yVertices: number[]): 
 }
 
 /**
+ * The biggest box of the game left free by the panels and cards on screen (the elements marked `screen-blocker`),
+ * as it is right now.
+ */
+export function measureBiggestAvailableArea(): Box {
+    const game = HtmlUtils.querySelectorOrFail<HTMLCanvasElement>("#game canvas");
+
+    const gameSize = {
+        width: game.offsetWidth,
+        height: game.offsetHeight,
+    };
+
+    const blockingElements = Array.from(document.getElementsByClassName("screen-blocker"));
+
+    const blockingBoxes = blockingElements.map((element) => {
+        const bounds = element.getBoundingClientRect();
+        return {
+            xStart: bounds.x,
+            yStart: bounds.y,
+            xEnd: bounds.right,
+            yEnd: bounds.bottom,
+        };
+    });
+
+    return findBiggestAvailableArea(gameSize, blockingBoxes);
+}
+
+/**
  * A store that contains the list of (video) peers we are connected to.
  */
 function createBiggestAvailableAreaStore() {
@@ -139,26 +166,7 @@ function createBiggestAvailableAreaStore() {
     return {
         subscribe,
         recompute: () => {
-            const game = HtmlUtils.querySelectorOrFail<HTMLCanvasElement>("#game canvas");
-
-            const gameSize = {
-                width: game.offsetWidth,
-                height: game.offsetHeight,
-            };
-
-            const blockingElements = Array.from(document.getElementsByClassName("screen-blocker"));
-
-            const blockingBoxes = blockingElements.map((element) => {
-                const bounds = element.getBoundingClientRect();
-                return {
-                    xStart: bounds.x,
-                    yStart: bounds.y,
-                    xEnd: bounds.right,
-                    yEnd: bounds.bottom,
-                };
-            });
-
-            set(findBiggestAvailableArea(gameSize, blockingBoxes));
+            set(measureBiggestAvailableArea());
         },
     };
 }

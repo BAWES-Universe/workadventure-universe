@@ -88,12 +88,17 @@ export class LocateManager {
         // Clear any existing locate position intervals/timeouts
         this.clearAllTimeouts();
 
-        // Set camera to exploration mode and center on the position
+        // Set camera to exploration mode and center on the position, in the space the panels and the card opening
+        // below leave free: the card doesn't cover the person, and following them once found doesn't move the camera.
         this.cameraManager.setExplorationMode();
-        this.cameraManager.centerCameraOn({
-            x: message.position.x,
-            y: message.position.y,
-        });
+        this.cameraManager.centerCameraOn(
+            {
+                x: message.position.x,
+                y: message.position.y,
+            },
+            undefined,
+            true
+        );
 
         // Get user data to initialize woka menu
         const userData = this.scene.getRemotePlayersRepository().getPlayers().get(message.userId);
