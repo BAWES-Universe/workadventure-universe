@@ -163,3 +163,22 @@ describe("LocateManager: the camera and the open card", () => {
         expect(cameraManager.followRemotePlayer).not.toHaveBeenCalled();
     });
 });
+
+describe("LocateManager: where the search points the camera (#1380)", () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+    });
+    afterEach(async () => {
+        vi.useRealTimers();
+        const { wokaMenuStore, wokaMenuProgressStore } = await import("../../../Stores/WokaMenuStore");
+        wokaMenuStore.clear();
+        wokaMenuProgressStore.set(undefined);
+    });
+
+    it("centres the person in the space the panels and their card leave free, not under the card", async () => {
+        const { stream, cameraManager } = await makeLocateManager();
+        stream.next({ userId: 5, position: { x: 1, y: 2 } });
+
+        expect(cameraManager.centerCameraOn).toHaveBeenCalledWith({ x: 1, y: 2 }, undefined, true);
+    });
+});
