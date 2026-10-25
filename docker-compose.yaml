@@ -530,6 +530,9 @@ services:
       MATRIX_ADMIN_USER: admin
       MATRIX_ADMIN_PASSWORD: MySecretPassword
       JWT_SECRET: "$SECRET_KEY"
+      # Registration of the bot server as a Matrix application service (see docker-compose.bots.yaml)
+      MATRIX_AS_TOKEN: "${MATRIX_AS_TOKEN:-local-dev-bots-as-token-0123456789abcdef}"
+      MATRIX_HS_TOKEN: "${MATRIX_HS_TOKEN:-local-dev-bots-hs-token-fedcba9876543210}"
 
 #  coturn:
 #    image: coturn/coturn:4.5.2

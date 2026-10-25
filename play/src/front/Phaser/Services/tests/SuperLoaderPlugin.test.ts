@@ -120,6 +120,25 @@ describe("SuperLoaderPlugin", () => {
         expect(load.listenerCount("loaderror")).toBe(0);
     });
 
+    it("rejects, leaving no listener behind, when the scene is destroyed while the resource is being queued", async () => {
+        const { SuperLoaderPlugin } = await import("../SuperLoaderPlugin");
+        const { load, scene } = fakeScene();
+        // A listener of the loader's "addfile" event destroys the scene as the resource is queued.
+        load.spritesheet.mockImplementation(() => {
+            scene.scene.settings = undefined as never;
+        });
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const plugin = new SuperLoaderPlugin(scene as any);
+
+        const promise = plugin.spritesheet("body", "https://example.test/body.png");
+
+        await expect(promise).rejects.toThrow("Trying to load a spritesheet in a Scene that is already destroyed.");
+        expect(load.start).not.toHaveBeenCalled();
+        expect(load.listenerCount("complete")).toBe(0);
+        expect(load.listenerCount("loaderror")).toBe(0);
+        expect(load.listenerCount("filecomplete-spritesheet-body")).toBe(0);
+    });
+
     describe("isSceneDestroyed", () => {
         it("is false while the room runs", async () => {
             const { plugin } = await createPlugin();

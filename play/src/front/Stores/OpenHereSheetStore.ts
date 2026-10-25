@@ -36,17 +36,45 @@ export const openHereListOpenStore = writable(false);
 /** The tucked sheet is a grabber (28px) and one row (64px) above the bar. */
 export const OPEN_HERE_TUCKED_HEIGHT = 92;
 
+/** What shows of the window above the chat at the least: its grabber and its row of buttons, with room to grab. */
+export const OPEN_HERE_BEHIND_CHAT_STRIP = 120;
+
+/**
+ * The lowest the window goes while the chat is open over it: a strip of it stays above the chat's top, so it cannot
+ * be dragged out of sight behind the chat. Never past "full" (the chat may be taller than that allows).
+ */
+export function openHereBehindChatMin(chatHeight: number, viewportHeight: number): number {
+    return Math.min(getSnapHeights(viewportHeight, CHAT_SHEET_SIZES).full, chatHeight + OPEN_HERE_BEHIND_CHAT_STRIP);
+}
+
 export interface OpenHereSheetHeightInput {
     rest: ChatSheetRest;
     tucked: boolean;
     /** The chat is open over the window: the window rises to the top behind it. */
     chatOver: boolean;
+    /** Where the window was put while the chat is open over it; undefined until it was, and it stays at the top. */
+    behindRest?: ChatSheetRest;
+    /** The chat's own height on screen: the window keeps a strip above it. */
+    chatHeight?: number;
     viewportHeight: number;
 }
 
 /** The sheet's height for where it rests, before a drag moves it. */
-export function openHereSheetHeight({ rest, tucked, chatOver, viewportHeight }: OpenHereSheetHeightInput): number {
-    if (chatOver) return getSnapHeights(viewportHeight, CHAT_SHEET_SIZES).full;
+export function openHereSheetHeight({
+    rest,
+    tucked,
+    chatOver,
+    behindRest,
+    chatHeight = 0,
+    viewportHeight,
+}: OpenHereSheetHeightInput): number {
+    if (chatOver) {
+        if (behindRest === undefined) return getSnapHeights(viewportHeight, CHAT_SHEET_SIZES).full;
+        return Math.max(
+            chatSheetRestingHeight(behindRest, viewportHeight),
+            openHereBehindChatMin(chatHeight, viewportHeight)
+        );
+    }
     if (tucked) return OPEN_HERE_TUCKED_HEIGHT;
     return chatSheetRestingHeight(rest, viewportHeight);
 }

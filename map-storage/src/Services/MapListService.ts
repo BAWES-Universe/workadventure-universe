@@ -12,6 +12,30 @@ import { mapPathUsingDomain } from "./PathMapper";
 import type { WebHookService } from "./WebHookService";
 
 /**
+ * What a caught value says, for an error message. An Error says its message and a primitive its text; any other
+ * object (a file system error that is not an Error) says its fields. A reference back to one of its own parents shows
+ * as "[Circular]" instead of making the formatting itself throw; the same object met twice in different places is
+ * not a cycle and is written out both times.
+ */
+function describeCaught(caught: unknown): string {
+    if (caught instanceof Error) return caught.message;
+    if (typeof caught !== "object" || caught === null) return String(caught);
+    const ancestors: unknown[] = [];
+    try {
+        return JSON.stringify(caught, function (this: unknown, _key, value: unknown) {
+            if (typeof value !== "object" || value === null) return value;
+            // `this` is the object holding this value: whatever was entered after it has been left.
+            while (ancestors.length > 0 && ancestors[ancestors.length - 1] !== this) ancestors.pop();
+            if (ancestors.includes(value)) return "[Circular]";
+            ancestors.push(value);
+            return value;
+        });
+    } catch {
+        return Object.prototype.toString.call(caught);
+    }
+}
+
+/**
  * Manages the cache file containing the list of maps.
  * Also, will call the webhook automatically when an update is made to the cache file.
  */
@@ -89,9 +113,9 @@ export class MapListService {
             };
         } catch (e) {
             throw new Error(
-                `Error while trying to read WAM file "${wamFilePath}" to generate cache: ${
-                    e instanceof Error ? e.message : String(e)
-                }. Skipping this file for cache generation.`,
+                `Error while trying to read WAM file "${wamFilePath}" to generate cache: ${describeCaught(
+                    e
+                )}. Skipping this file for cache generation.`,
                 { cause: e }
             );
         }

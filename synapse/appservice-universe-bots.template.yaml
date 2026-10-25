@@ -1,0 +1,15 @@
+# Application service registration for the bot server (bots/matrix). Local development only.
+# start.sh turns this template into appservice-universe-bots.yaml (ignored by git) on every start.
+# The tokens come from MATRIX_AS_TOKEN / MATRIX_HS_TOKEN, the same variables docker-compose.bots.yaml gives the bot server.
+id: universe-bots
+url: http://bot-server:3001
+as_token: "${MATRIX_AS_TOKEN}"
+hs_token: "${MATRIX_HS_TOKEN}"
+sender_localpart: universe-bots
+rate_limited: false
+namespaces:
+  users:
+    - exclusive: true
+      regex: '@bot_.*:matrix\.workadventure\.localhost'
+  aliases: []
+  rooms: []

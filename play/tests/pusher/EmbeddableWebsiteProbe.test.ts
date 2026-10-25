@@ -22,6 +22,9 @@ beforeAll(async () => {
             case "/no-head":
                 response.writeHead(request.method === "HEAD" ? 405 : 200, { "X-Frame-Options": "SAMEORIGIN" });
                 break;
+            case "/csp":
+                response.writeHead(200, { "Content-Security-Policy": "frame-ancestors 'self'" });
+                break;
             case "/to-deny":
                 response.writeHead(302, { Location: "/deny" });
                 break;
@@ -153,6 +156,10 @@ describe("probeEmbeddableWebsite, against a stand-in public site", () => {
 
     it("says a site with X-Frame-Options DENY can't be framed", async () => {
         expect(await probeEmbeddableWebsite(site("/deny"), options)).toEqual({ state: true, embeddable: false });
+    });
+
+    it("says a site whose CSP frame-ancestors leaves the game out can't be framed", async () => {
+        expect(await probeEmbeddableWebsite(site("/csp"), options)).toEqual({ state: true, embeddable: false });
     });
 
     it("asks with GET when HEAD is not allowed", async () => {
