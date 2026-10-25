@@ -27,7 +27,7 @@ export class LinkPreviewController extends BaseHttpController {
          *        example: "https://bawes.net"
          *     responses:
          *       200:
-         *         description: The preview (siteName always, title, description and image when the page has them)
+         *         description: The preview (siteName always, title, description and image when the page has them, and embeddable when Open here can show it)
          *       422:
          *         description: The link can't be previewed (not public, not reachable, or not a page)
          *       429:

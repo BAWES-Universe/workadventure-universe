@@ -54,6 +54,8 @@ const mocks = vi.hoisted(() => ({
     ring: vi.fn((): Promise<boolean> => Promise.resolve(true)),
     whenConnected: vi.fn((): Promise<boolean> => Promise.resolve(true)),
     openDirectChatRoom: vi.fn((): Promise<void> => Promise.resolve()),
+    profileLinksOpeningHere: vi.fn((urls: readonly string[]): Promise<string[]> => Promise.resolve(urls.slice(0, 1))),
+    openProfileLinkHere: vi.fn((_url: string): boolean => true),
     // Whether the room is loaded and shown (false while the game gets back in after a reconnect), as a small store.
     gameLoaded: (() => {
         let value = true;
@@ -118,6 +120,10 @@ vi.mock("../../Chat/Stores/RingStore", () => ({
     ringStore: { ring: mocks.ring, whenConnected: mocks.whenConnected },
 }));
 vi.mock("../../Chat/Utils", () => ({ openDirectChatRoom: mocks.openDirectChatRoom }));
+vi.mock("../../Chat/LinkPreview/ProfileLinks", () => ({
+    profileLinksOpeningHere: mocks.profileLinksOpeningHere,
+    openProfileLinkHere: mocks.openProfileLinkHere,
+}));
 
 vi.mock("../../Connection/Capabilities", () => ({
     hasCapability: (name: string) => name === "api/save-name",
@@ -520,7 +526,7 @@ describe("The Orbit bridge", () => {
                 type: "orbit-bridge-init",
                 version: 1,
                 roomRevision: revision,
-                capabilities: ["navigate", "event", "view", "profile", "invite", "message"],
+                capabilities: ["navigate", "event", "view", "profile", "invite", "message", "open-link"],
                 view: "compact",
                 maxNameLength: 25,
             },
@@ -636,6 +642,66 @@ describe("The Orbit bridge", () => {
         (await openAndRename("Someone", "rev-from-an-earlier-visit-0000"))();
         expect(mocks.setPlayerName).not.toHaveBeenCalled();
         expect(mocks.rejoinCurrentRoom).not.toHaveBeenCalled();
+    });
+
+    describe("profile links Orbit asks the game to show", () => {
+        const ABOUT = "https://mishari.example/about";
+        const LINKEDIN = "https://www.linkedin.com/in/mishari";
+
+        async function openOrbit() {
+            const index = await freshIndex();
+            index.default.init({}, makeOptions());
+            vi.advanceTimersByTime(3000);
+            index.openAdminModalFromMenu();
+            fromOrbit({ type: "orbit-bridge-ready", version: 1, capabilities: [] });
+            mocks.modalVisibilitySet.mockClear();
+            mocks.profileLinksOpeningHere.mockClear();
+            mocks.openProfileLinkHere.mockClear();
+            return lastInitRevision();
+        }
+
+        const check = (roomRevision: string) => ({
+            type: "orbit-check-links",
+            version: 1,
+            requestId: "links-1",
+            roomRevision,
+            urls: [ABOUT, LINKEDIN],
+        });
+
+        it("says it can, and answers which links open in its window", async () => {
+            const revision = await openOrbit();
+            const init = frame.postMessage.mock.calls.find((call) => call[0].type === "orbit-bridge-init");
+            expect(init?.[0].capabilities).toContain("open-link");
+
+            fromOrbit(check(revision));
+            await vi.advanceTimersByTimeAsync(0);
+            expect(mocks.profileLinksOpeningHere).toHaveBeenCalledWith([ABOUT, LINKEDIN]);
+            expect(frame.postMessage).toHaveBeenLastCalledWith(
+                { type: "orbit-links", version: 1, requestId: "links-1", roomRevision: revision, openHere: [ABOUT] },
+                ADMIN
+            );
+        });
+
+        it("opens a link in its window and leaves Orbit open behind it", async () => {
+            const revision = await openOrbit();
+            fromOrbit({ type: "orbit-open-link", version: 1, roomRevision: revision, url: ABOUT });
+            expect(mocks.openProfileLinkHere).toHaveBeenCalledWith(ABOUT);
+            expect(mocks.modalVisibilitySet).not.toHaveBeenCalledWith(false);
+        });
+
+        it("ignores both from another visit's frame", async () => {
+            await openOrbit();
+            fromOrbit(check("rev-from-an-earlier-visit-0000"));
+            fromOrbit({
+                type: "orbit-open-link",
+                version: 1,
+                roomRevision: "rev-from-an-earlier-visit-0000",
+                url: ABOUT,
+            });
+            await vi.advanceTimersByTimeAsync(0);
+            expect(mocks.profileLinksOpeningHere).not.toHaveBeenCalled();
+            expect(mocks.openProfileLinkHere).not.toHaveBeenCalled();
+        });
     });
 
     describe("asking the game to invite or message someone", () => {

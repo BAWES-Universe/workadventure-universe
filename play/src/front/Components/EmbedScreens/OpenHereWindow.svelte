@@ -15,7 +15,13 @@
         sideWindowInFrontStore,
         windowBehindCardStore,
     } from "../../Stores/SideWindowInFrontStore";
-    import { openHereSheetHeight, openHereSheetRelease, openHereSheetRestStore } from "../../Stores/OpenHereSheetStore";
+    import {
+        openHereBehindChatMin,
+        openHereListOpenStore,
+        openHereSheetHeight,
+        openHereSheetRelease,
+        openHereSheetRestStore,
+    } from "../../Stores/OpenHereSheetStore";
     import {
         clampOpenHereRatio,
         nearestWidthStop,
@@ -25,9 +31,14 @@
     import { analyticsClient } from "../../Administration/AnalyticsClient";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { prefersReducedMotion } from "../../Phaser/Components/prefersReducedMotion";
-    import { chatSheetLayoutStore, openHereSheetHeightStore, restoreChatAfterFile } from "../../Chat/ChatSheetStore";
-    import { CHAT_SHEET_SIZES } from "../../Chat/ChatSheetSizes";
-    import { clampHeight, nearestSnap, nextSnap, sheetFrameStyle } from "../Sheet/BottomSheet";
+    import {
+        chatOwnSheetHeightStore,
+        chatSheetLayoutStore,
+        openHereSheetHeightStore,
+        restoreChatAfterFile,
+    } from "../../Chat/ChatSheetStore";
+    import { CHAT_SHEET_SIZES, type ChatSheetRest } from "../../Chat/ChatSheetSizes";
+    import { clampHeight, getSnapHeights, nearestSnap, nextSnap, sheetFrameStyle } from "../Sheet/BottomSheet";
     import SheetHandle from "../Sheet/SheetHandle.svelte";
     import LL from "../../../i18n/i18n-svelte";
     import CoWebsitesContainer from "./CoWebsitesContainer.svelte";
@@ -49,7 +60,8 @@
     $: windowBehindCardStore.set(floating && $cardOverWindowStore);
     $: behindOrbit = ($modalVisibilityStore && $sideWindowInFrontStore === "orbit") || $cardOverWindowStore;
     // The sheet is under the chat whenever the chat is open: chat opens in front, and the window rises behind it.
-    $: behindChat = $chatVisibilityStore && ($windowInFrontStore === "chat" || !floating);
+    // On a phone the window is behind the chat, except while its list of open items is up: the list comes to the front.
+    $: behindChat = $chatVisibilityStore && (floating ? $windowInFrontStore === "chat" : !$openHereListOpenStore);
 
     function bringForward() {
         if (!floating) return;
@@ -116,17 +128,27 @@
     $: tucked = !floating && $openHereTuckedStore;
     // The chat is open over a sheet that is up; a tucked one stays as it is, under the chat.
     $: chatOverSheet = !floating && !tucked && $chatVisibilityStore && $chatSheetLayoutStore;
+    // Where the handle put the sheet while the chat is open over it (it rises to the top until then). The chat closing
+    // gives the height it rested at back, so this is forgotten.
+    let behindRest: ChatSheetRest | undefined;
+    $: if (!chatOverSheet) behindRest = undefined;
     $: sheetHeight =
         sheetDragHeight ??
         openHereSheetHeight({
             rest: $openHereSheetRestStore,
             tucked,
             chatOver: chatOverSheet,
+            behindRest,
+            chatHeight: $chatOwnSheetHeightStore,
             viewportHeight: $windowSize.height,
         });
     // The videos above the sheet follow its height, drag included. Tucked, they have all the room again; with the chat
-    // open, they sit above the chat, behind the window.
-    $: openHereSheetHeightStore.set(!floating && !tucked && !chatOverSheet ? sheetHeight : 0);
+    // open and the window all the way up, they sit above the chat, behind the window. Lower than that, the window
+    // leaves them the room above it.
+    $: fullHeight = getSnapHeights($windowSize.height, CHAT_SHEET_SIZES).full;
+    $: openHereSheetHeightStore.set(
+        !floating && !tucked && !(chatOverSheet && sheetHeight >= fullHeight) ? sheetHeight : 0
+    );
 
     // The map is centred in the space the sheet leaves free, which is measured from the sheet as it is at that moment:
     // once more as the sheet stops moving, whether it rose, or was tucked, untucked or snapped to another height. The
@@ -155,7 +177,16 @@
     $: if (settled !== undefined) void repositionWhenDrawn();
 
     function onSheetDrag(height: number) {
-        if (chatOverSheet) return;
+        if (chatOverSheet) {
+            // The chat stays where it is: the window goes no lower than a strip above it, and is not tucked.
+            sheetDragHeight = clampHeight(
+                height,
+                $windowSize.height,
+                CHAT_SHEET_SIZES,
+                openHereBehindChatMin($chatOwnSheetHeightStore, $windowSize.height)
+            );
+            return;
+        }
         // A tucked sheet dragged up is up again from where the finger is.
         if (tucked) openHereTuckedStore.set(false);
         // It follows the finger below its lowest height too, so letting go there tucks it.
@@ -168,7 +199,14 @@
     function onSheetRelease(height: number) {
         const dragged = sheetDragHeight;
         sheetDragHeight = undefined;
-        if (chatOverSheet) return;
+        if (chatOverSheet) {
+            const behind = openHereSheetRelease(height, $windowSize.height);
+            behindRest = behind === "tuck" ? "peek" : behind;
+            // Let go where it already is: no height changes, so no transition ends and the map is centred now.
+            if (dragged !== undefined && Math.abs(behindHeightOf(behindRest) - dragged) < 1)
+                void tick().then(reposition);
+            return;
+        }
         const release = openHereSheetRelease(height, $windowSize.height);
         if (release === "tuck") openHereTuckedStore.set(true);
         else openHereSheetRestStore.set(release);
@@ -182,8 +220,29 @@
         if (dragged !== undefined && Math.abs(settledHeight - dragged) < 1) void tick().then(reposition);
     }
 
+    /** How high the window stands behind the chat when it rests at `rest`. */
+    function behindHeightOf(rest: ChatSheetRest): number {
+        return openHereSheetHeight({
+            rest: $openHereSheetRestStore,
+            tucked: false,
+            chatOver: true,
+            behindRest: rest,
+            chatHeight: $chatOwnSheetHeightStore,
+            viewportHeight: $windowSize.height,
+        });
+    }
+
     function onSheetTap() {
-        if (chatOverSheet) return;
+        if (chatOverSheet) {
+            // At the lowest it can be over the chat, it is at "peek" as far as the next step goes.
+            const atLowest = sheetHeight <= openHereBehindChatMin($chatOwnSheetHeightStore, $windowSize.height);
+            let step = nextSnap(atLowest ? "peek" : nearestSnap(sheetHeight, $windowSize.height, CHAT_SHEET_SIZES));
+            // A tall chat holds a step that would not move the window (peek and half both at its lowest) where it is:
+            // the tap goes on to the first step that does.
+            for (let tries = 0; tries < 2 && behindHeightOf(step) === sheetHeight; tries++) step = nextSnap(step);
+            behindRest = step;
+            return;
+        }
         if (tucked) {
             openHereTuckedStore.set(false);
             return;
@@ -202,6 +261,19 @@
     let dragRatio: number | undefined;
     let dragStartX: number | undefined;
     let anchorX = 0;
+    // Turning the phone sideways swaps chat's sheet for the floating window in the same element. The window takes its
+    // place at once, without the expand and collapse motion: its edges would otherwise slide over from where the sheet
+    // was. Turned back upright, the sheet keeps its own height motion, which centres the map when it ends.
+    let switching = false;
+    let wasFloating = floating;
+    $: if (floating !== wasFloating) {
+        wasFloating = floating;
+        if (floating) {
+            switching = true;
+            // Two frames: the first draws the new place without motion, the second turns the motion back on.
+            requestAnimationFrame(() => requestAnimationFrame(() => (switching = false)));
+        }
+    }
     // A split dragged on an upright phone has no limits: the window opened by turning the phone keeps within these.
     $: ratio = dragRatio ?? clampOpenHereRatio($coWebsiteRatio);
 
@@ -265,7 +337,7 @@
     class:screen-blocker={!floating && !tucked}
     class:behind-orbit={behindOrbit}
     class:behind-chat={!behindOrbit && behindChat}
-    class:dragging={dragRatio !== undefined || sheetDragHeight !== undefined}
+    class:dragging={dragRatio !== undefined || sheetDragHeight !== undefined || switching}
     style={floating ? `--open-here-ratio: ${ratio}` : sheetFrameStyle(sheetHeight, $windowSize.height)}
     data-testid={floating ? "openHereWindow" : "openHereSheet"}
     on:pointerdown|capture={bringForward}
@@ -361,7 +433,11 @@
         min-width: min(360px, 100vw);
         max-width: 100vw;
         pointer-events: auto;
-        transition: width 160ms ease-out;
+        // Expanding and collapsing move every edge together, as Orbit's window does (Tailwind's transition-all: 150ms,
+        // cubic-bezier(0.4, 0, 0.2, 1)): it grows from where it sits, its own corner held to the screen's.
+        transition-property: top, left, right, width, max-width, height;
+        transition-duration: 150ms;
+        transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
 
         &.dragging {
             transition: none;
@@ -473,8 +549,11 @@
     }
 
     // Expanded: the window takes the whole screen, over the chat too, with the pill at the top right as Orbit's.
+    // Only the edge it is held to moves: setting the far edge too would pin it there at once, and it would grow from
+    // the other side of the screen.
     .open-here.expanded {
-        inset: 0;
+        top: 0;
+        inset-inline-end: 0;
         width: 100vw;
         height: 100dvh;
 

@@ -41,6 +41,8 @@
     import ReplyPreview from "./MessageActions/ReplyPreview.svelte";
     import { captureSendDestination, isSendDestinationOpen, spaceGenerationOf } from "./SendDestination";
     import { mainUploadFailure, UploadFailure, uploadFailureReason } from "./UploadFailure";
+    import { TypingSignal } from "./TypingSignal";
+    import TypingUsers from "./TypingUsers.svelte";
     import { IconGif, IconMoodSmile, IconPaperclip, IconSend, IconX } from "@wa-icons";
 
     // Frontend pre-check constants (server enforces the real limits)
@@ -75,10 +77,26 @@
     let messageInput: HTMLDivElement;
     let messageBarRef: HTMLDivElement;
     let fileInputElement: HTMLInputElement | undefined;
-    let stopTypingTimeOutID: undefined | ReturnType<typeof setTimeout>;
     let files: { id: string; file: File }[] = [];
     let filesPreview: { id: string; size: number; name: string; type: string; url: FileReader["result"] }[] = [];
-    const TYPINT_TIMEOUT = 10000;
+    // Who else is typing here: shown on the top edge of the field (#1379). Reactive: the nearby chat can be swapped
+    // for a new one with the same id, which keeps this box mounted.
+    $: typingMembers = room.typingMembers;
+    // What the others see while this box is being typed in (#1379).
+    function typingSignalFor(forRoom: ChatRoom): TypingSignal {
+        return new TypingSignal((typing) => {
+            (typing ? forRoom.startTyping() : forRoom.stopTyping()).catch((error) => console.error(error));
+        });
+    }
+    let signalRoom = room;
+    let typingSignal = typingSignalFor(room);
+    // A swapped room gets its own signal: the old one says "stopped" to the room it started in, and the first key in the
+    // new room says "typing" at once.
+    $: if (room !== signalRoom) {
+        typingSignal.stop();
+        signalRoom = room;
+        typingSignal = typingSignalFor(room);
+    }
 
     let fileAttachementEnabled = false;
     let isUploading = false;
@@ -182,27 +200,10 @@
     }
 
     function stopTypingNow() {
-        if (stopTypingTimeOutID) clearTimeout(stopTypingTimeOutID);
-        stopTypingTimeOutID = undefined;
-        room.stopTyping().catch((error) => console.error(error));
+        typingSignal.stop();
     }
 
     function sendMessageOrEscapeLine(keyDownEvent: KeyboardEvent) {
-        if (stopTypingTimeOutID) clearTimeout(stopTypingTimeOutID);
-        room.startTyping()
-            .then(() => {
-                stopTypingTimeOutID = setTimeout(() => {
-                    room.stopTyping().catch((error) => console.error(error));
-                    stopTypingTimeOutID = undefined;
-                }, TYPINT_TIMEOUT);
-            })
-            .catch((error) => console.error(error));
-
-        if (keyDownEvent.key === "Enter" || isEmptyMessage(message)) {
-            if (stopTypingTimeOutID) clearTimeout(stopTypingTimeOutID);
-            room.stopTyping().catch((error) => console.error(error));
-        }
-
         if (keyDownEvent.key === "Enter" && keyDownEvent.shiftKey) {
             return;
         }
@@ -486,10 +487,9 @@
     $: if (isEmptyMessage(message) && closedLinkPreviews.length > 0) closedLinkPreviews = [];
 
     function onInputHandler() {
-        if (isEmptyMessage(message)) {
-            if (stopTypingTimeOutID) clearTimeout(stopTypingTimeOutID);
-            room.stopTyping().catch((error) => console.error(error));
-        }
+        // The field itself: the bound message can still hold what was there before this key.
+        if (isEmptyMessage(messageInput?.innerHTML ?? message)) typingSignal.stop();
+        else typingSignal.keyTyped();
     }
 
     // Something (the Picture in Picture chat button) asked for the cursor to go in the message box.
@@ -555,6 +555,8 @@
 
     onDestroy(() => {
         unsubscribeComposerFocusRequest();
+        // Leaving the conversation ends the typing status there.
+        typingSignal.stop();
         if (
             room instanceof ProximityChatRoom &&
             mountSessionId !== undefined &&
@@ -903,8 +905,9 @@
     class="message-bar flex w-full flex-none items-center border border-solid border-b-0 border-x-0 border-t-1 border-white/10 bg-contrast/50 relative"
     bind:this={messageBarRef}
 >
-    <!-- Above the field: what the message replies to, then the preview of the link being typed. -->
+    <!-- Above the field: who is typing, what the message replies to, then the preview of the link being typed. -->
     <div class="above-field flex flex-col gap-2 p-2 absolute top-0 -translate-y-full w-full pointer-events-none">
+        <TypingUsers typingMembers={$typingMembers} />
         {#if $selectedChatMessageToReply !== null}
             <ReplyPreview message={$selectedChatMessageToReply} onClose={unselectChatMessageToReply} />
         {/if}
@@ -1035,6 +1038,9 @@
     }
     .above-field > :global(*) {
         pointer-events: auto;
+    }
+    .above-field > :global(.typing-users) {
+        pointer-events: none;
     }
     .message-bar :global(.message-input) {
         padding: 14px 4px 14px 16px;

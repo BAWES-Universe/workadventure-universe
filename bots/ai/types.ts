@@ -20,6 +20,11 @@ export interface AIProviderConfig {
     visionModel?: string | null; // model used when this provider describes images (vision fallback)
     defaultVision?: boolean; // preferred vision provider for bots whose main model is text-only
     settings?: Record<string, any>;
+    /**
+     * Set only for a provider that is a person's own key (#374). `addressTyped` means the person typed the address
+     * (their own computer, or their own NIM), so every call to it goes through the address guard.
+     */
+    ownKey?: { addressTyped: boolean };
 }
 
 /**
@@ -49,6 +54,7 @@ export interface AIStreamChunk {
         latency?: number;
         durationSeconds?: number; // For voice AI
         error?: boolean;
+        errorStatus?: number; // HTTP status the provider answered with when the call failed (401/403 = the key was rejected)
         truncated?: boolean; // true when the provider hit finish_reason='length' (max_tokens cap)
         // MultiPromptAIService analysis metadata
         analysis?: {
