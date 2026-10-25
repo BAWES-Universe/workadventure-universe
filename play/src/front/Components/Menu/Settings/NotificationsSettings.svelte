@@ -94,26 +94,49 @@
             updateThisDeviceState();
             subscribeThisDevice()
                 .then(enableThisDevice)
-                .catch((error) => console.error(error));
+                .catch((error) => {
+                    console.error(error);
+                    return false;
+                })
+                .then((on) => {
+                    if (!on) couldNotTurnOn();
+                })
+                .catch(() => undefined);
             return;
         }
         // Straight from the tap: Safari and Firefox open their box only then.
         turnOnThisDevice()
-            .then((result) => {
-                if (result === "on") return enableThisDevice("saved");
+            .then(async (result) => {
+                if (result === "on") {
+                    if (!(await enableThisDevice("saved"))) couldNotTurnOn();
+                    return;
+                }
                 if (result === "failed") switchFailed = true;
                 deviceOn = false;
-                return undefined;
             })
             .catch((error) => console.error(error));
     }
 
-    /** A device switched off before keeps that in Orbit when saved again: switching it on here says so. */
-    async function enableThisDevice(result: "saved" | "notSetUp" | "failed") {
+    /**
+     * A device switched off before keeps that in Orbit when saved again: switching it on here says so. False when
+     * Orbit has not got it on.
+     */
+    async function enableThisDevice(result: "saved" | "notSetUp" | "failed"): Promise<boolean> {
+        if (result === "failed") return false;
         const id = $thisDeviceIdStore;
-        if (result !== "saved" || !id) return;
-        await botApiService.setPushDeviceEnabled(id, true);
+        // Not in Orbit (this server sends none while Universe is closed, or a guest): on in the open window only
+        if (!id) return true;
+        if (!(await botApiService.setPushDeviceEnabled(id, true))) return false;
         await reloadDevices();
+        return true;
+    }
+
+    /** Orbit could not be reached: the switch goes back to off, and says so. */
+    function couldNotTurnOn() {
+        localUserStore.setNotification(false);
+        updateThisDeviceState();
+        deviceOn = false;
+        switchFailed = true;
     }
 
     async function reloadDevices() {

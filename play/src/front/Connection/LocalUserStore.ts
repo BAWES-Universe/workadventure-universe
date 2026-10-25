@@ -518,6 +518,12 @@ class LocalUserStore {
         return localStorage.getItem(notification) === "true";
     }
 
+    /** Whether notifications were switched on or off here; null when that was never set. */
+    getNotificationChoice(): boolean | null {
+        const value = localStorage.getItem(notification);
+        return value === null ? null : value === "true";
+    }
+
     setAllowPictureInPicture(value: boolean): void {
         localStorage.setItem(allowPictureInPicture, value.toString());
     }

@@ -2,15 +2,22 @@ import { describe, expect, it, vi } from "vitest";
 import type { InstallEnvironment } from "../../../Install/InstallPlatform";
 import { describeDevice, deviceLabel, keyBytes, pushAvailability } from "../PushDevice";
 
-const { getPushPublicKey } = vi.hoisted(() => ({ getPushPublicKey: vi.fn(() => Promise.resolve(null)) }));
-vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: { getPushPublicKey } }));
+const { getPushPublicKey, setPushDeviceEnabled, removePushDevice } = vi.hoisted(() => ({
+    getPushPublicKey: vi.fn(() => Promise.resolve(null)),
+    setPushDeviceEnabled: vi.fn(() => Promise.resolve(true)),
+    removePushDevice: vi.fn(() => Promise.resolve(true)),
+}));
+vi.mock("../../../external-modules/bots/services/BotApiService", () => ({
+    botApiService: { getPushPublicKey, setPushDeviceEnabled, removePushDevice },
+}));
 vi.mock("../../../Network/ServiceWorker", () => ({ SERVICE_WORKER_URL: "/service-worker.js" }));
 vi.mock("../../../Connection/LocalUserStore", () => {
-    let notification = false;
+    let notification: boolean | null = null;
     return {
         localUserStore: {
-            getNotification: () => notification,
-            setNotification: (value: boolean) => (notification = value),
+            getNotification: () => notification === true,
+            getNotificationChoice: () => notification,
+            setNotification: (value: boolean | null) => (notification = value),
             isLogged: () => true,
         },
     };
@@ -106,18 +113,60 @@ describe("this device's state", () => {
 });
 
 describe("saving this device again on start", () => {
-    it("leaves a device that was switched off here alone", async () => {
+    it("leaves a device that was switched off here alone, and saves one allowed in the browser's settings", async () => {
         const { refreshThisDevice } = await import("../PushDevice");
         const { localUserStore } = await import("../../../Connection/LocalUserStore");
         vi.stubGlobal("Notification", { permission: "granted" });
         vi.stubGlobal("PushManager", class {});
         vi.stubGlobal("navigator", { userAgent: UA.windowsEdge, platform: "", maxTouchPoints: 0, serviceWorker: {} });
-        localUserStore.setNotification(false);
-        await refreshThisDevice();
-        expect(getPushPublicKey).not.toHaveBeenCalled();
-        localUserStore.setNotification(true);
+        // Allowed in the browser's own site settings, never switched here: saved, and on here too
+        (localUserStore.setNotification as (value: boolean | null) => void)(null);
         await refreshThisDevice();
         expect(getPushPublicKey).toHaveBeenCalledOnce();
+        expect(localUserStore.getNotification()).toBe(true);
+        localUserStore.setNotification(false);
+        await refreshThisDevice();
+        expect(getPushPublicKey).toHaveBeenCalledOnce();
+        localUserStore.setNotification(true);
+        await refreshThisDevice();
+        expect(getPushPublicKey).toHaveBeenCalledTimes(2);
+        vi.unstubAllGlobals();
+    });
+});
+
+describe("switching this device off", () => {
+    function browserWithSubscription() {
+        const unsubscribe = vi.fn(() => Promise.resolve(true));
+        const registration = { pushManager: { getSubscription: () => Promise.resolve({ unsubscribe }) } };
+        vi.stubGlobal("navigator", { serviceWorker: { getRegistration: () => Promise.resolve(registration) } });
+        vi.stubGlobal("Notification", { permission: "granted" });
+        return unsubscribe;
+    }
+
+    it("tells Orbit and keeps the browser's subscription, so switching on again is quick", async () => {
+        const { turnOffThisDevice } = await import("../PushDevice");
+        const unsubscribe = browserWithSubscription();
+        await turnOffThisDevice("d1", false);
+        expect(setPushDeviceEnabled).toHaveBeenCalledWith("d1", false);
+        expect(unsubscribe).not.toHaveBeenCalled();
+        vi.unstubAllGlobals();
+    });
+
+    it("drops the browser's subscription when Orbit can't be told, so nothing arrives anyway", async () => {
+        const { turnOffThisDevice } = await import("../PushDevice");
+        const unsubscribe = browserWithSubscription();
+        setPushDeviceEnabled.mockResolvedValueOnce(false);
+        await turnOffThisDevice("d1", false);
+        expect(unsubscribe).toHaveBeenCalledOnce();
+        vi.unstubAllGlobals();
+    });
+
+    it("on Remove, drops the subscription and says so when Orbit kept the device", async () => {
+        const { turnOffThisDevice } = await import("../PushDevice");
+        const unsubscribe = browserWithSubscription();
+        removePushDevice.mockResolvedValueOnce(false);
+        await expect(turnOffThisDevice("d1", true)).rejects.toThrow();
+        expect(unsubscribe).toHaveBeenCalledOnce();
         vi.unstubAllGlobals();
     });
 });

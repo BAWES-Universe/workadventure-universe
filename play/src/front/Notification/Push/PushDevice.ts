@@ -138,8 +138,14 @@ export async function subscribeThisDevice(): Promise<"saved" | "notSetUp" | "fai
  */
 export async function refreshThisDevice(): Promise<void> {
     if (pushAvailability() !== "ready" || Notification.permission !== "granted") return;
-    // Switched off (or removed) here: stays off until switched on again.
-    if (!localUserStore.getNotification()) return;
+    // Switched off (or removed) here: stays off until switched on again. Allowed in the browser's own site settings,
+    // with no choice made here: on, as the browser says.
+    const choice = localUserStore.getNotificationChoice();
+    if (choice === false) return;
+    if (choice === null) {
+        localUserStore.setNotification(true);
+        updateThisDeviceState();
+    }
     try {
         await subscribeThisDevice();
     } catch (error) {
@@ -182,14 +188,17 @@ export function updateThisDeviceState(): void {
 export async function turnOffThisDevice(deviceId: string | undefined, remove: boolean): Promise<void> {
     localUserStore.setNotification(false);
     updateThisDeviceState();
+    let told = false;
     if (deviceId) {
-        if (remove) await botApiService.removePushDevice(deviceId);
-        else await botApiService.setPushDeviceEnabled(deviceId, false);
+        told = remove
+            ? await botApiService.removePushDevice(deviceId)
+            : await botApiService.setPushDeviceEnabled(deviceId, false);
     }
-    if (remove) {
-        thisDeviceIdStore.set(undefined);
-        await forgetThisBrowser();
-    }
+    if (remove) thisDeviceIdStore.set(undefined);
+    // Removed, or Orbit could not be told: this browser drops its subscription as well, so nothing reaches it either
+    // way (Orbit forgets the device at its next send there).
+    if (remove || !told) await forgetThisBrowser();
+    if (remove && !told) throw new Error("Orbit did not remove the device");
 }
 
 /** This browser drops its subscription, so nothing more reaches it while Universe is closed. */

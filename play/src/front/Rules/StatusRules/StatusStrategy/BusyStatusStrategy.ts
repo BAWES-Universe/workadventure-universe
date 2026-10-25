@@ -1,7 +1,6 @@
 import { AvailabilityStatus } from "@workadventure/messages";
 import type { TimedRules } from "../statusRules";
 import { askIfUserWantToJoinBubbleOf, askToChangeStatus } from "../statusChangerFunctions";
-import { askForNotifications } from "../../../Notification/Push/NotificationAsk";
 import { BasicStatusStrategy } from "./BasicStatusStrategy";
 
 export class BusyStatusStrategy extends BasicStatusStrategy {
@@ -30,6 +29,10 @@ export class BusyStatusStrategy extends BasicStatusStrategy {
 
     /** Going Busy is a moment notifications matter: the card asks, held for a while after Not now (NotificationAsk). */
     private showNotificationPermissionModal = () => {
-        askForNotifications({ kind: "busy" });
+        // Loaded when needed: statuses load with the local store, which nearly everything imports, and the card brings
+        // the menu, the install wiring and Orbit's client with it
+        import("../../../Notification/Push/NotificationAsk")
+            .then(({ askForNotifications }) => askForNotifications({ kind: "busy" }))
+            .catch((error) => console.error(error));
     };
 }
