@@ -159,10 +159,12 @@
     }
 
     // Shown at once, and put back to what Orbit last confirmed if it refuses. Saves go to Orbit one after another, so
-    // what it confirms comes back in order; only the latest save may write back.
+    // what it confirms comes back in order; only the latest save may write back, and it says so if any save since the
+    // last write-back failed.
     let latestSave = 0;
     let confirmed: PushSettings | undefined;
     let saving: Promise<unknown> = Promise.resolve();
+    let failedSinceShown = false;
     async function save(change: Partial<PushSettings>) {
         if (!settings) return;
         const request = ++latestSave;
@@ -172,9 +174,11 @@
         saving = sending.catch(() => undefined);
         const saved = await sending;
         if (saved) confirmed = saved;
+        else failedSinceShown = true;
         if (request !== latestSave || !confirmed) return;
         show(confirmed);
-        saveFailed = !saved;
+        saveFailed = failedSinceShown;
+        failedSinceShown = false;
     }
 
     function show(value: PushSettings) {
