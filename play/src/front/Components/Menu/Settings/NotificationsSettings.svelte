@@ -145,10 +145,12 @@
         return true;
     }
 
-    /** Orbit could not be reached: the switch goes back to off, and says so. */
+    /**
+     * Orbit could not be reached: the switch goes back to off, and says so. Whatever was already saved is switched
+     * off too (the browser drops its subscription when Orbit can't be told), so nothing arrives while it shows Off.
+     */
     function couldNotTurnOn() {
-        localUserStore.setNotification(false);
-        updateThisDeviceState();
+        turnOffThisDevice($thisDeviceIdStore, false).catch((error) => console.error(error));
         deviceOn = false;
         switchFailed = true;
     }
@@ -237,8 +239,9 @@
         });
     }
 
-    function deviceLine(listed: PushDeviceView): string {
-        if (listed.id === $thisDeviceIdStore) return words.thisDeviceRow();
+    // This device's id comes in as an argument, so the line follows it when the id arrives after the list
+    function deviceLine(listed: PushDeviceView, thisDeviceId: string | undefined): string {
+        if (listed.id === thisDeviceId) return words.thisDeviceRow();
         if (!listed.enabled) return words.deviceOff();
         if (!listed.lastNotifiedAt) return words.noNotificationYet();
         return words.lastNotified({ when: lastNotifiedLabel(listed.lastNotifiedAt, Date.now(), $locale) });
@@ -387,7 +390,7 @@
                 <div class="u-set-row u-set-device" data-testid="notification-device">
                     <span class="u-set-text">
                         <span class="u-set-label">{listed.label}</span>
-                        <span class="u-set-hint">{deviceLine(listed)}</span>
+                        <span class="u-set-hint">{deviceLine(listed, $thisDeviceIdStore)}</span>
                     </span>
                     <button
                         type="button"
