@@ -85,6 +85,15 @@ describe('MatrixDmBridge', () => {
         bridge = new MatrixDmBridge(config, client as never, deps);
     });
 
+    it('tries the bot name again next time when setting it failed', async () => {
+        client.setDisplayName.mockRejectedValueOnce(new Error('homeserver busy'));
+        expect(await bridge.userExists(BOT_USER)).toBe(true);
+        expect(await bridge.userExists(BOT_USER)).toBe(true);
+        expect(client.setDisplayName).toHaveBeenCalledTimes(2);
+        expect(await bridge.userExists(BOT_USER)).toBe(true);
+        expect(client.setDisplayName).toHaveBeenCalledTimes(2);
+    });
+
     it('creates the bot account on first lookup and names it after the bot', async () => {
         expect(await bridge.userExists(BOT_USER)).toBe(true);
         expect(client.ensureRegistered).toHaveBeenCalledWith(`bot_${BOT}`);
@@ -554,6 +563,64 @@ describe('MatrixDmBridge', () => {
         expect(deps.reply.mock.calls[1][2]).toBe('left while resting');
     });
 
+    it('a waiting message still holds while the live answer clears its typing dots', async () => {
+        await bridge.onEvent(invite());
+        deps.getBotConfig.mockResolvedValue(resting as never);
+        await bridge.onEvent({ ...message('left while resting'), origin_server_ts: Date.now() - 1000 });
+        deps.getBotConfig.mockResolvedValue({ ...resting, enabled: true } as never);
+        // The answer takes long enough to show typing, and clearing it then hangs.
+        deps.reply.mockImplementationOnce(() => new Promise((resolve) => setTimeout(() => resolve({ text: 'Here now!', media: [] }), 900)));
+        let cleared!: () => void;
+        client.setTyping.mockImplementation((_bot: string, _room: string, on: boolean) =>
+            on ? Promise.resolve() : new Promise<void>((resolve) => (cleared = resolve))
+        );
+        const live = bridge.onEvent(message('now?'));
+        await vi.waitFor(() => expect(cleared).toBeDefined(), { timeout: 2000 });
+        await bridge.checkWaiting();
+        cleared();
+        await live;
+        await bridge.checkWaiting();
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(deps.reply.mock.calls.map((call: any[]) => call[2])).toEqual(['now?']);
+    });
+
+    it('on shutdown, puts back in line the waiting messages a drain took but had not started on', async () => {
+        const OTHER_ROOM = '!dm2:matrix.test';
+        const store = new Map<string, string>();
+        deps.waiting = {
+            hasSharedStore: () => true,
+            rememberWaitingDm: vi.fn(async (_b: string, r: string, m: string) => void store.set(r, m)),
+            waitingDmBots: vi.fn(async () => (store.size ? [BOT] : [])),
+            hasWaitingDms: vi.fn(async () => store.size > 0),
+            takeWaitingDms: vi.fn(async () => {
+                const all = [...store.values()];
+                store.clear();
+                return all;
+            }),
+        };
+        client.getJoinedMembers.mockImplementation(async (_bot: string, room: string) => (room === OTHER_ROOM ? [BOB, BOT_USER] : [ALICE, BOT_USER]));
+        deps.checkAccess.mockImplementation(async (_bot: string, sender: string) => ({
+            allowed: true,
+            reason: null,
+            user: sender === BOB ? { uuid: 'uuid-bob', name: 'Bob', isGuest: false } : { uuid: 'uuid-alice', name: 'Alice', isGuest: false },
+        }));
+        await bridge.onEvent(invite());
+        await bridge.onEvent(invite({ room_id: OTHER_ROOM, sender: BOB, event_id: '$i2' }));
+        deps.getBotConfig.mockResolvedValue(resting as never);
+        await bridge.onEvent({ ...message('first'), origin_server_ts: Date.now() - 2000 });
+        await bridge.onEvent({ ...message('second', BOB), room_id: OTHER_ROOM, origin_server_ts: Date.now() - 1000 });
+        deps.getBotConfig.mockResolvedValue({ ...resting, enabled: true } as never);
+        let land!: (value: any) => void;
+        deps.reply.mockImplementationOnce(() => new Promise((resolve) => (land = resolve)));
+        const draining = bridge.checkWaiting();
+        await vi.waitFor(() => expect(deps.reply).toHaveBeenCalledTimes(1));
+        await bridge.stop();
+        expect(store.get(OTHER_ROOM)).toContain('second');
+        land({ text: 'Hi!', media: [] });
+        await draining;
+        expect(deps.reply.mock.calls.map((call: any[]) => call[2])).toEqual(['first']);
+    });
+
     it('keeps waiting messages in the shared store when there is one', async () => {
         const store = new Map<string, string>();
         deps.waiting = {
@@ -753,7 +820,7 @@ describe('MatrixDmBridge', () => {
             deps.getBotConfig.mockClear();
             await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
             expect(deps.getBotConfig).not.toHaveBeenCalled();
-            bridge.stop();
+            await bridge.stop();
             expect(vi.getTimerCount()).toBe(0);
         } finally {
             vi.useRealTimers();

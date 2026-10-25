@@ -117,6 +117,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
     /** Messages waiting for a resting bot when there is no shared store: bot, then room, then the message. */
     private localWaiting = new Map<string, Map<string, { message: string; at: number }>>();
     private draining = new Set<string>();
+    /** Messages a drain has taken but not started on yet, per bot: on shutdown they go back in line. */
+    private drainQueues = new Map<string, MatrixEvent[]>();
+    private stopping = false;
     private waitingTimer: NodeJS.Timeout | undefined;
     private handledEvents = new Set<string>();
     /** Joined members per room, kept current from membership events so a reply needs no extra homeserver call. */
@@ -154,9 +157,15 @@ export class MatrixDmBridge implements MatrixEventHandler {
         this.waitingTimer.unref?.();
     }
 
-    stop(): void {
+    /** Stop checking, and put back in line any waiting message a drain took but hasn't started on, so none is lost. */
+    async stop(): Promise<void> {
+        this.stopping = true;
         clearInterval(this.waitingTimer);
         this.waitingTimer = undefined;
+        for (const [botId, queue] of this.drainQueues) {
+            for (const event of queue.splice(0)) await this.rememberWaiting(botId, event, attemptsOf(event));
+        }
+        this.drainQueues.clear();
     }
 
     async onEvent(event: MatrixEvent): Promise<void> {
@@ -176,10 +185,11 @@ export class MatrixDmBridge implements MatrixEventHandler {
     private async ensureBotAccount(botId: string, name?: string): Promise<void> {
         await this.client.ensureRegistered(`${BOT_LOCALPART_PREFIX}${botId}`);
         if (name && this.botNames.get(botId) !== name) {
-            await this.client.setDisplayName(this.botUserId(botId), name).catch((error) =>
-                console.warn(`[MatrixDmBridge] Could not set the display name of bot ${botId}:`, error?.message ?? error)
+            // Only a name that got through is remembered, so a failed one is tried again next time.
+            await this.client.setDisplayName(this.botUserId(botId), name).then(
+                () => this.botNames.set(botId, name),
+                (error) => console.warn(`[MatrixDmBridge] Could not set the display name of bot ${botId}:`, error?.message ?? error)
             );
-            this.botNames.set(botId, name);
         }
     }
 
@@ -569,19 +579,22 @@ export class MatrixDmBridge implements MatrixEventHandler {
             console.error(`[MatrixDmBridge] Bot ${botId} could not answer in ${event.room_id}:`, error?.message ?? error);
             await couldNotAnswer(config);
         } finally {
-            if (!catchUp && this.answeringLive.get(event.room_id) === sentAt) this.answeringLive.delete(event.room_id);
             clearTimeout(typingTimer);
             clearInterval(typingRefresh);
             typingTimer = undefined;
             if (typing) await this.client.setTyping(botUserId, event.room_id, false).catch(() => undefined);
+            if (!catchUp) {
+                // Noted as answered before it stops counting as being answered, so no check in between sees neither.
+                if (answered) {
+                    this.answeredLive.delete(event.room_id);
+                    this.answeredLive.set(event.room_id, sentAt);
+                    if (this.answeredLive.size > NOTE_TIMES_MAX) this.answeredLive.delete(this.answeredLive.keys().next().value!);
+                }
+                if (this.answeringLive.get(event.room_id) === sentAt) this.answeringLive.delete(event.room_id);
+            }
         }
         // The bot is answering again, so anyone who wrote while it rested gets their answer now.
-        if (answered && !catchUp) {
-            this.answeredLive.delete(event.room_id);
-            this.answeredLive.set(event.room_id, sentAt);
-            if (this.answeredLive.size > NOTE_TIMES_MAX) this.answeredLive.delete(this.answeredLive.keys().next().value!);
-            void this.drainIfWaiting(botId).catch(() => undefined);
-        }
+        if (answered && !catchUp) void this.drainIfWaiting(botId).catch(() => undefined);
     }
 
     /**
@@ -737,11 +750,13 @@ export class MatrixDmBridge implements MatrixEventHandler {
 
     /** Answer the messages left while the bot rested, oldest first, if they are less than a day old. */
     private async drain(botId: string): Promise<void> {
-        if (this.draining.has(botId)) return;
+        if (this.stopping || this.draining.has(botId)) return;
         this.draining.add(botId);
         try {
             const messages = this.readWaiting(await this.takeWaiting(botId));
-            for (const event of messages) {
+            this.drainQueues.set(botId, messages);
+            // Taken one at a time, so on shutdown stop() can put back whatever is left.
+            for (let event = messages.shift(); event; event = messages.shift()) {
                 let roomBot: string | null;
                 try {
                     roomBot = await this.botForRoom(event.room_id, true);
@@ -771,6 +786,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 );
             }
         } finally {
+            this.drainQueues.delete(botId);
             this.draining.delete(botId);
         }
     }

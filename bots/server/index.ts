@@ -134,7 +134,8 @@ async function shutdown(signal: string) {
         stopMovementAnalysis();
         
         // Stop API server
-        matrixBridge?.stop();
+        // Before the shared store closes, so waiting messages a drain took go back in line
+        await matrixBridge?.stop();
         await botAPI?.stop();
         
         // Shutdown bot manager (disconnects all bots)
