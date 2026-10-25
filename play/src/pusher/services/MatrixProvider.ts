@@ -1,4 +1,5 @@
 import { hostname } from "node:os";
+import { inspect } from "node:util";
 import type { AxiosInstance, InternalAxiosRequestConfig } from "axios";
 import axios from "axios";
 import pLimit from "p-limit";
@@ -17,6 +18,22 @@ const ADMIN_CHAT_ID = `@${MATRIX_ADMIN_USER}:${MATRIX_DOMAIN}`;
 
 // One device per pusher instance: signing in again reuses it instead of adding a new device every time.
 const ADMIN_DEVICE_ID = `universe-pusher-${hostname()}`;
+
+/**
+ * An axios error carries the request it came from, including its Authorization header. Printing it (or turning it into
+ * JSON) would put the admin token in the logs, so the error shows only what went wrong.
+ */
+function keepTokenOutOfLogs(error: unknown): unknown {
+    if (axios.isAxiosError(error)) {
+        const summary = { name: error.name, message: error.message, status: error.response?.status };
+        Object.defineProperty(error, inspect.custom, {
+            value: () => `${summary.name}: ${summary.message}${summary.status ? ` (status ${summary.status})` : ""}`,
+            configurable: true,
+        });
+        Object.defineProperty(error, "toJSON", { value: () => summary, configurable: true });
+    }
+    return error;
+}
 
 const limit = pLimit(10);
 class MatrixProvider {
@@ -52,11 +69,11 @@ class MatrixProvider {
         // The token is kept for the life of the process: if Synapse refuses it, sign in again once and repeat the call.
         instance.interceptors.response.use(undefined, async (error: unknown) => {
             if (!axios.isAxiosError(error) || error.response?.status !== 401 || !error.config) {
-                throw error;
+                throw keepTokenOutOfLogs(error);
             }
             const config: InternalAxiosRequestConfig & { signedInAgain?: boolean } = error.config;
             if (config.signedInAgain) {
-                throw error;
+                throw keepTokenOutOfLogs(error);
             }
             config.signedInAgain = true;
             if (

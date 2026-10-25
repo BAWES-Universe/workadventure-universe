@@ -1,3 +1,4 @@
+import { inspect } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { post, instancePost, request, interceptorUse, create } = vi.hoisted(() => {
@@ -106,5 +107,24 @@ describe("MatrixProvider admin sign-in with MATRIX_ADMIN_TOKEN", () => {
 
         const logged = [...vi.mocked(console.error).mock.calls, ...vi.mocked(console.info).mock.calls].flat().join(" ");
         expect(logged).not.toContain("device-less-token");
+    });
+
+    it("keeps the token out of an error that is printed or turned into JSON", async () => {
+        await import("../../src/pusher/services/MatrixProvider");
+        await vi.waitFor(() => expect(interceptorUse).toHaveBeenCalled());
+        const onRejected = interceptorUse.mock.calls[0][1] as (error: unknown) => Promise<unknown>;
+        const error = {
+            isAxiosError: true,
+            name: "AxiosError",
+            message: "Request failed with status code 500",
+            response: { status: 500 },
+            config: { headers: { Authorization: "Bearer device-less-token" } },
+        };
+
+        await expect(onRejected(error)).rejects.toBe(error);
+
+        expect(inspect(error)).not.toContain("device-less-token");
+        expect(inspect(error)).toContain("Request failed with status code 500");
+        expect(JSON.stringify(error)).not.toContain("device-less-token");
     });
 });
