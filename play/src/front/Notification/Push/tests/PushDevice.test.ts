@@ -201,7 +201,7 @@ describe("saving this device", () => {
     });
 
     it("saves nothing when switched off while the browser was still subscribing", async () => {
-        const { subscribeThisDevice } = await import("../PushDevice");
+        const { subscribeThisDevice, turnOffThisDevice } = await import("../PushDevice");
         const { localUserStore } = await import("../../../Connection/LocalUserStore");
         const unsubscribe = vi.fn(() => Promise.resolve(true));
         const subscription = { unsubscribe, toJSON: () => ({ endpoint: "https://push.example/1" }), options: {} };
@@ -224,13 +224,44 @@ describe("saving this device", () => {
         localUserStore.setNotification(true);
         getPushPublicKey.mockImplementationOnce(() => {
             // The switch goes off while Orbit's key is on its way
-            localUserStore.setNotification(false);
+            void turnOffThisDevice(undefined, false);
             return Promise.resolve("AAAA");
         });
         registerPushDevice.mockClear();
         expect(await subscribeThisDevice()).toBe("failed");
         expect(unsubscribe).toHaveBeenCalledOnce();
         expect(registerPushDevice).not.toHaveBeenCalled();
+        vi.unstubAllGlobals();
+    });
+
+    it("turns on a device that was switched off before", async () => {
+        const { turnOnThisDevice } = await import("../PushDevice");
+        const { localUserStore } = await import("../../../Connection/LocalUserStore");
+        const unsubscribe = vi.fn(() => Promise.resolve(true));
+        const subscription = { unsubscribe, toJSON: () => ({ endpoint: "https://push.example/3" }), options: {} };
+        vi.stubGlobal("navigator", {
+            userAgent: UA.windowsEdge,
+            platform: "",
+            maxTouchPoints: 0,
+            serviceWorker: {
+                register: () =>
+                    Promise.resolve({
+                        pushManager: {
+                            getSubscription: () => Promise.resolve(null),
+                            subscribe: () => Promise.resolve(subscription),
+                        },
+                    }),
+            },
+        });
+        vi.stubGlobal("Notification", { permission: "default", requestPermission: () => Promise.resolve("granted") });
+        vi.stubGlobal("PushManager", class {});
+        localUserStore.setNotification(false);
+        getPushPublicKey.mockResolvedValueOnce("AAAA");
+        registerPushDevice.mockClear();
+        expect(await turnOnThisDevice()).toBe("on");
+        expect(unsubscribe).not.toHaveBeenCalled();
+        expect(registerPushDevice).toHaveBeenCalledOnce();
+        expect(localUserStore.getNotificationChoice()).toBe(true);
         vi.unstubAllGlobals();
     });
 
