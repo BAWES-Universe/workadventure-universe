@@ -61,8 +61,9 @@
         letter-spacing: 0.04em;
     }
 
+    /* A site icon that is not square shows whole, not cut off. */
     img.icon {
-        object-fit: cover;
+        object-fit: contain;
     }
 
     .globe {
