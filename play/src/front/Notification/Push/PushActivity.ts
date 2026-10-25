@@ -70,14 +70,21 @@ export function startPushActivity(): () => void {
     // The last report did not reach Orbit: the next check sends again, whatever changed
     let retry = false;
 
-    const signals = (): FrontSignals => ({
-        visible: document.visibilityState === "visible",
-        focused: document.hasFocus(),
-        // Keys and taps inside a call or a website opened in Universe stay in that frame: while one has the focus,
-        // they count as being here
-        lastInputAt: document.activeElement instanceof HTMLIFrameElement ? Date.now() : lastInputAt,
-        openChatRoomId: get(openChatRoomIdStore),
-    });
+    let frameInFocus: HTMLIFrameElement | null = null;
+
+    const signals = (): FrontSignals => {
+        // Keys and taps inside a call or a website opened in Universe stay in that frame, but moving the focus into
+        // one is input: the idle time runs from then
+        const frame = document.activeElement instanceof HTMLIFrameElement ? document.activeElement : null;
+        if (frame && frame !== frameInFocus) lastInputAt = Date.now();
+        frameInFocus = frame;
+        return {
+            visible: document.visibilityState === "visible",
+            focused: document.hasFocus(),
+            lastInputAt,
+            openChatRoomId: get(openChatRoomIdStore),
+        };
+    };
 
     const send = (report: PushActivityReport, keepalive = false) => {
         sent = report;

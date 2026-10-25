@@ -91,20 +91,27 @@ describe("a tab closing", () => {
 });
 
 describe("a tab used inside a frame", () => {
-    it("stays in front while a call or website frame has the focus, though its input never reaches the page", () => {
+    it("counts moving into a call or website frame as input, then lets the idle time run", async () => {
         vi.useFakeTimers();
         const visibilitySpy = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
         const focusSpy = vi.spyOn(document, "hasFocus").mockReturnValue(true);
         const frame = document.createElement("iframe");
         document.body.appendChild(frame);
-        frame.focus();
         reportPushActivity.mockClear();
         const stop = startPushActivity();
 
-        // Well past the idle time with no input on the page itself
-        vi.advanceTimersByTime(IDLE_AFTER_MS + REPORT_EVERY_MS);
-        expect(reportPushActivity).not.toHaveBeenCalledWith(expect.objectContaining({ front: false }), true);
+        // Walked away from the page: it goes to the back
+        await vi.advanceTimersByTimeAsync(IDLE_AFTER_MS + REPORT_EVERY_MS);
+        expect(reportPushActivity).toHaveBeenLastCalledWith(expect.objectContaining({ front: false }), true);
+
+        // Back, straight into the frame: in front again, though no input reaches the page
+        frame.focus();
+        await vi.advanceTimersByTimeAsync(REPORT_EVERY_MS / 3);
         expect(reportPushActivity).toHaveBeenLastCalledWith(expect.objectContaining({ front: true }), false);
+
+        // The frame keeps the focus but nobody is there: the idle time still runs out
+        await vi.advanceTimersByTimeAsync(IDLE_AFTER_MS + REPORT_EVERY_MS);
+        expect(reportPushActivity).toHaveBeenLastCalledWith(expect.objectContaining({ front: false }), true);
 
         stop();
         frame.remove();
