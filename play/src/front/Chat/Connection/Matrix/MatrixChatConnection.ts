@@ -1384,8 +1384,9 @@ export class MatrixChatConnection implements ChatConnectionInterface {
 
     async setPusher(pusher: ChatPusher): Promise<boolean> {
         if (!this.client) throw new Error(CLIENT_NOT_INITIALIZED_ERROR_MSG);
-        // Guests have no account to send notifications for
-        if (this.client.isGuest()) return false;
+        // Guests have no account to send notifications for, and a chat signed out (left for a room without chat) has
+        // no session to set it on
+        if (this.client.isGuest() || !this.client.getAccessToken()) return false;
         await this.client.setPusher(pusher);
         return true;
     }
