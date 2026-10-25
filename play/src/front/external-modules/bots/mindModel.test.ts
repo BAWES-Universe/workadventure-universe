@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { BotAiOptions } from "./types";
-import { aiLogoUrl, canPick, cardIcon, isOwnKeyRef, mindBriefName, newBotRef, runsOnCards } from "./mindModel";
+import {
+    aiLogoUrl,
+    canPick,
+    cardIcon,
+    isOwnKeyRef,
+    mindBriefName,
+    newBotRef,
+    runsOnCards,
+    unlentKeyNames,
+} from "./mindModel";
 
 const key = (id: string, over: Partial<BotAiOptions["keys"][number]> = {}): BotAiOptions["keys"][number] => ({
     id,
@@ -305,5 +314,27 @@ describe("cardIcon", () => {
         for (const bad of ["", null, undefined, "../x", "a/b", "a.svg", "x);y", "A", "a b"]) {
             expect(aiLogoUrl(bad)).toBeNull();
         }
+    });
+});
+
+describe("unlentKeyNames", () => {
+    const mine = [
+        { id: "key-1", name: "Opus 5.5" },
+        { id: "key-2", name: "My DeepSeek" },
+    ];
+
+    it("names the maker's keys that aren't lent to this universe, in their order", () => {
+        expect(unlentKeyNames(options({ keys: [key("key-2")] }), mine)).toEqual(["Opus 5.5"]);
+        expect(unlentKeyNames(options({ keys: [] }), mine)).toEqual(["Opus 5.5", "My DeepSeek"]);
+    });
+
+    it("says nothing once every key is lent here, or when there are no keys", () => {
+        expect(unlentKeyNames(options({ keys: [key("key-1"), key("key-2")] }), mine)).toEqual([]);
+        expect(unlentKeyNames(options(), [])).toEqual([]);
+    });
+
+    it("says nothing to someone who didn't make the bot, or when the keys couldn't be loaded", () => {
+        expect(unlentKeyNames(options({ viewerIsMaker: false }), mine)).toEqual([]);
+        expect(unlentKeyNames(options(), null)).toEqual([]);
     });
 });
