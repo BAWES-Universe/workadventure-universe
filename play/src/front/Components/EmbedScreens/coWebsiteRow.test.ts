@@ -58,4 +58,10 @@ describe("coWebsiteIconUrl", () => {
         expect(coWebsiteIconUrl(other)).toContain("/icon?url=");
         expect(coWebsiteIconBackground(other)).toBeUndefined();
     });
+
+    it("asks the icon service for small and large icons, not only mid-sized ones", () => {
+        const url = new URL(coWebsiteIconUrl(coWebsiteOf("https://bawes.net/")), "https://play.example.com");
+        expect(url.searchParams.get("url")).toBe("https://bawes.net/");
+        expect(url.searchParams.get("size")).toBe("16..64..500");
+    });
 });

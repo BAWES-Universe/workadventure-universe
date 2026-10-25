@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { BotApiService, isBotAiOptions, isOrbitSessionResponse } from "./BotApiService";
+import { BotApiService, isBotAiOptions, isOrbitSessionResponse, myAiKeyNames } from "./BotApiService";
 
 const mocks = vi.hoisted(() => ({
     getAuthToken: vi.fn((): string | null => null),
@@ -285,5 +285,29 @@ describe("isBotAiOptions", () => {
         expect(isBotAiOptions({ keys: "none", universeAi: { available: true } })).toBe(false);
         expect(isBotAiOptions(null)).toBe(false);
         expect(isBotAiOptions("keys")).toBe(false);
+    });
+});
+
+describe("myAiKeyNames", () => {
+    it("keeps only each key's id and name", () => {
+        expect(
+            myAiKeyNames({
+                keys: [
+                    { id: "key-1", name: "Opus 5.5", kind: "openrouter", lentTo: [] },
+                    { id: "key-2", name: "My DeepSeek", lentTo: [{ universeId: "u1" }] },
+                ],
+            })
+        ).toEqual([
+            { id: "key-1", name: "Opus 5.5" },
+            { id: "key-2", name: "My DeepSeek" },
+        ]);
+    });
+
+    it("skips a key without an id or name, and answers null for anything that isn't a key list", () => {
+        expect(myAiKeyNames({ keys: [{ id: "key-1" }, null, { id: "key-2", name: "Ok" }] })).toEqual([
+            { id: "key-2", name: "Ok" },
+        ]);
+        expect(myAiKeyNames({ error: "Unauthorized" })).toBeNull();
+        expect(myAiKeyNames(null)).toBeNull();
     });
 });

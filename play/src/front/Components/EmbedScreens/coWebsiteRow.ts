@@ -55,13 +55,17 @@ export function coWebsiteIconBackground(coWebsite: CoWebsite): string | undefine
     return coWebsiteKnownSite(coWebsite) ? "transparent" : undefined;
 }
 
-/** The site's own icon: the one we ship for a known site, else the one from the icon service. */
+/**
+ * The site's own icon: the one we ship for a known site, else the one from the icon service. The service is asked
+ * for anything from a 16px favicon up to its 500px limit, so a site whose only icon is small or large still shows it;
+ * it draws a letter only when the site has no icon at all.
+ */
 export function coWebsiteIconUrl(coWebsite: CoWebsite): string {
     const known = coWebsiteKnownSite(coWebsite);
     if (known) return known.icon;
     return `${ICON_URL}/icon?url=${encodeURIComponent(
         coWebsite.getUrl().toString()
-    )}&size=64..96..256&fallback_icon_color=14304c`;
+    )}&size=16..64..500&fallback_icon_color=14304c`;
 }
 
 export function copyCoWebsiteLink(coWebsite: CoWebsite): void {
