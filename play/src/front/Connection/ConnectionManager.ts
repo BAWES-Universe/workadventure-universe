@@ -226,8 +226,9 @@ class ConnectionManager {
         const tokenTmp = localUserStore.getAuthToken();
         // Read before the token goes: a guest whose token was refused is not an account that signs out.
         const wasSignedIn = localUserStore.isLogged();
-        //remove token in localstorage
-        localUserStore.setAuthToken(null);
+        // A guest's token goes now; an account's once this device has left it (below), since Orbit's sign-in for that
+        // may need renewing from it
+        if (!wasSignedIn) localUserStore.setAuthToken(null);
         // The device kept the account's name: the next guest here gets their own back, or none, not this one (#1192).
         localUserStore.restoreGuestName(wasSignedIn);
         //user logout, set connected store for menu at false (actually don't do it because we are going to redirect and
@@ -242,7 +243,10 @@ class ConnectionManager {
                       forgetThisDeviceOnSignOut()
                   ),
                   2_000
-              ).catch((error) => console.warn("Notifications: this device could not leave the account", error))
+              )
+                  .catch((error) => console.warn("Notifications: this device could not leave the account", error))
+                  //remove token in localstorage
+                  .finally(() => localUserStore.setAuthToken(null))
             : Promise.resolve();
 
         // check if we are in a room

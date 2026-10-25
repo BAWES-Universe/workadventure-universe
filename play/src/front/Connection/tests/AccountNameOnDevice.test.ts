@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => {
         PUBLIC_MAP_STORAGE_URL: "http://map-storage.example.com",
         MAX_USERNAME_LENGTH: 25,
     };
-    return { me: vi.fn(), setPlayerName: vi.fn() };
+    return { me: vi.fn(), setPlayerName: vi.fn(), forgetThisDeviceOnSignOut: vi.fn(() => Promise.resolve()) };
 });
 
 vi.mock("../AxiosUtils", () => ({ axiosToPusher: { get: mocks.me }, axiosWithRetry: {} }));
@@ -28,6 +28,7 @@ vi.mock("../../Chat/Utils", () => ({ openChatRoom: vi.fn() }));
 vi.mock("../../external-modules/admin-api/orbitAccessToken", () => ({ gameTokenToJoinWith: vi.fn() }));
 vi.mock("../RoomConnection", () => ({ RoomConnection: class {} }));
 vi.mock("../ConnectAttemptWatch", () => ({ watchConnectAttempt: vi.fn() }));
+vi.mock("../../Notification/Push/PushDevice", () => ({ forgetThisDeviceOnSignOut: mocks.forgetThisDeviceOnSignOut }));
 
 import { connectionManager } from "../ConnectionManager";
 import { localUserStore } from "../LocalUserStore";
@@ -193,5 +194,34 @@ describe("signing out", () => {
         connectionManager.goToSignIn();
         connectionManager.logout();
         expect(localUserStore.getName()).toBeNull();
+    });
+});
+
+// The device leaves the account's notifications on the way out (#863), while Orbit's sign-in can still be renewed.
+describe("signing out, this device's notifications", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        localStorage.clear();
+    });
+
+    it("leaves the account while the token is still there, then the token goes", async () => {
+        mocks.me.mockResolvedValue(meAnswer("Khalid"));
+        await openTheGame();
+        let tokenWhileLeaving: string | null = null;
+        mocks.forgetThisDeviceOnSignOut.mockImplementationOnce(() => {
+            tokenWhileLeaving = localUserStore.getAuthToken();
+            return Promise.resolve();
+        });
+        connectionManager.logout();
+        await vi.waitFor(() => expect(localUserStore.getAuthToken()).toBeNull());
+        expect(mocks.forgetThisDeviceOnSignOut).toHaveBeenCalledOnce();
+        expect(tokenWhileLeaving).toBe(gameToken);
+    });
+
+    it("signs a guest out at once, with no device to leave", () => {
+        localUserStore.setAuthToken(`header.${window.btoa(JSON.stringify({ identifier: "guest" }))}.signature`);
+        connectionManager.logout();
+        expect(localUserStore.getAuthToken()).toBeNull();
+        expect(mocks.forgetThisDeviceOnSignOut).not.toHaveBeenCalled();
     });
 });
