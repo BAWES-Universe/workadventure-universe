@@ -575,13 +575,17 @@ export class BotApiService {
     async updatePushSettings(change: Partial<PushSettings>): Promise<PushSettings | undefined> {
         if (!this.adminUrl || !this.accessToken) return undefined;
         try {
-            const response = await this.fetch("/api/me/push/settings", {
-                method: "PATCH",
-                body: JSON.stringify(change),
+            // Settings queues its saves one after another: one that hangs gives up rather than hold back the rest
+            return await this.withPermissionsTimeout(async (signal) => {
+                const response = await this.fetch("/api/me/push/settings", {
+                    method: "PATCH",
+                    body: JSON.stringify(change),
+                    signal,
+                });
+                if (!response.ok) return undefined;
+                const data = (await response.json()) as { settings?: PushSettings };
+                return data.settings;
             });
-            if (!response.ok) return undefined;
-            const data = (await response.json()) as { settings?: PushSettings };
-            return data.settings;
         } catch {
             return undefined;
         }

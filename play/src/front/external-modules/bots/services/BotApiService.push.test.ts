@@ -84,3 +84,16 @@ describe("loading Settings > Notifications", () => {
         await expect(service().getPushOverview()).resolves.toBeUndefined();
     });
 });
+
+describe("saving Settings > Notifications", () => {
+    it("gives up on a save Orbit does not answer, so the saves after it are not held back", async () => {
+        vi.useFakeTimers();
+        // Never answers
+        vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise<Response>(() => {}));
+        const saving = service().updatePushSettings({ previews: false });
+        await vi.advanceTimersByTimeAsync(20_000);
+        await expect(saving).resolves.toBeUndefined();
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+    });
+});
