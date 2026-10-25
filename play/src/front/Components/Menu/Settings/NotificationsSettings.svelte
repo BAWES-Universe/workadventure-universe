@@ -158,15 +158,19 @@
         if (overview) devices = overview.devices;
     }
 
-    // Shown at once, and put back to what Orbit last confirmed if it refuses. Only the latest save may write back.
+    // Shown at once, and put back to what Orbit last confirmed if it refuses. Saves go to Orbit one after another, so
+    // what it confirms comes back in order; only the latest save may write back.
     let latestSave = 0;
     let confirmed: PushSettings | undefined;
+    let saving: Promise<unknown> = Promise.resolve();
     async function save(change: Partial<PushSettings>) {
         if (!settings) return;
         const request = ++latestSave;
         settings = { ...settings, ...change };
         saveFailed = false;
-        const saved = await botApiService.updatePushSettings(change);
+        const sending = saving.then(() => botApiService.updatePushSettings(change));
+        saving = sending.catch(() => undefined);
+        const saved = await sending;
         if (saved) confirmed = saved;
         if (request !== latestSave || !confirmed) return;
         show(confirmed);
