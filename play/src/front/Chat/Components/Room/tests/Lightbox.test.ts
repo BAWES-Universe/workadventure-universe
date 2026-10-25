@@ -225,6 +225,15 @@ describe("the picture viewer", () => {
             click(stage, ON_BACKGROUND);
             expect(closed).toBe(1);
         });
+
+        it("does not close when two fingers touch it, even if one starts and the other ends over the background", async () => {
+            const { stage, media } = await open({ src: "https://example.com/cat.mp4", isVideo: true });
+            pointer("pointerdown", stage, ON_BACKGROUND, { id: 1 });
+            pointer("pointerdown", media, ON_PICTURE, { id: 2 });
+            pointer("pointerup", media, ON_PICTURE, { id: 1 });
+            pointer("pointerup", stage, ON_BACKGROUND, { id: 2 });
+            expect(closed).toBe(0);
+        });
     });
 
     describe("the other ways to close", () => {
