@@ -264,7 +264,7 @@ describe("CameraManager landing someone beside their card (#1380)", () => {
     function lastGlide(scene: { tweens: { addCounter: ReturnType<typeof vi.fn> } }) {
         const calls = scene.tweens.addCounter.mock.calls;
         return calls[calls.length - 1][0] as {
-            onUpdate: (tween: { getValue: () => number }) => void;
+            onUpdate: (tween: { getValue: () => number; progress?: number }) => void;
             onComplete: () => void;
         };
     }
@@ -301,9 +301,30 @@ describe("CameraManager landing someone beside their card (#1380)", () => {
         const glide = lastGlide(scene);
         glide.onUpdate({ getValue: () => 0.5 });
         measureBiggestAvailableArea.mockReturnValue(besideCard);
-        glide.onUpdate({ getValue: () => 1 });
+        // The glide's last frame lands on the measurement.
+        glide.onUpdate({ getValue: () => 1, progress: 1 });
 
-        expect(focusPoint(manager)).toEqual({ x: remote.x + 150, y: remote.y });
+        expect(focusPoint(manager).x).toBe(remote.x + 150);
+        expect(focusPoint(manager).y).toBe(remote.y);
+        measureBiggestAvailableArea.mockReturnValue({ xStart: 0, yStart: 0, xEnd: 800, yEnd: 600 });
+    });
+
+    it("eases toward a free space that switches sides mid-glide instead of jumping", async () => {
+        querySelectorOrFail.mockReturnValue({ offsetWidth: 800, offsetHeight: 600 });
+        const { manager, remote, scene } = await makeCameraManager();
+
+        manager.followRemotePlayer("stitch");
+        const glide = lastGlide(scene);
+        glide.onUpdate({ getValue: () => 0.9 });
+        const before = focusPoint(manager).x;
+        // The card sliding in flips the biggest free box from the whole screen to its left: 150px in one frame.
+        measureBiggestAvailableArea.mockReturnValue(besideCard);
+        glide.onUpdate({ getValue: () => 0.9 });
+
+        const moved = focusPoint(manager).x - before;
+        expect(moved).toBeGreaterThan(0);
+        expect(moved).toBeLessThan(0.9 * 150 * 0.5);
+        expect(remote.x).toBe(500);
         measureBiggestAvailableArea.mockReturnValue({ xStart: 0, yStart: 0, xEnd: 800, yEnd: 600 });
     });
 

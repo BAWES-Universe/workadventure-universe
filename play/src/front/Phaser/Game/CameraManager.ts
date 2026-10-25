@@ -115,6 +115,8 @@ export class CameraManager extends Phaser.Events.EventEmitter {
         | undefined;
     private focusMargin = 0;
     private focusTargetSpeed = 0.2;
+    // The share of the way a glide's free-space offset moves toward a new measurement on each frame.
+    private static readonly FREE_SPACE_EASING = 0.25;
 
     // The tween for the camera offset
     private cameraOffsetCurrentTween?: Phaser.Tweens.Tween;
@@ -356,7 +358,7 @@ export class CameraManager extends Phaser.Events.EventEmitter {
 
         const oldPos = { ...this.explorerFocusOn };
         // Where the player will sit once followed, from the screen's middle: the space the panels and cards leave free.
-        let offset = { x: 0, y: 0 };
+        let offset: { x: number; y: number } | undefined;
         const startZoomModifier = this.waScaleManager.zoomModifier;
         this.animationInProgress = true;
         this.scene.events.off(Phaser.Scenes.Events.UPDATE, this.animateCallback);
@@ -376,7 +378,17 @@ export class CameraManager extends Phaser.Events.EventEmitter {
                 const progress = tween.getValue() ?? 0;
                 // The glide lands the player straight in that free space (measured each frame, while a card slides in
                 // or out), instead of in the middle and then sliding them over once it ends.
-                offset = this.freeSpaceOffset();
+                const measured = this.freeSpaceOffset();
+                // Eased toward the measurement: while a card slides in, the biggest free box can switch from one side
+                // of it to another between two frames, and the camera would jump with it. The easing tightens towards
+                // the glide's end, so it lands on the measurement and following doesn't have to move them again.
+                const easing = Math.max(CameraManager.FREE_SPACE_EASING, Math.pow(tween.progress ?? 0, 3));
+                offset = offset
+                    ? {
+                          x: offset.x + (measured.x - offset.x) * easing,
+                          y: offset.y + (measured.y - offset.y) * easing,
+                      }
+                    : measured;
                 const shiftX = (this.playerToFollow.x - offset.x - oldPos.x) * progress;
                 const shiftY = (this.playerToFollow.y - offset.y - oldPos.y) * progress;
                 this.explorerFocusOn.x = oldPos.x + shiftX;
@@ -400,7 +412,7 @@ export class CameraManager extends Phaser.Events.EventEmitter {
                 }
                 this.camera.startFollow(player, true);
                 // startFollow resets the offset: keep the one the glide landed on, so the player stays put.
-                this.camera.setFollowOffset(offset.x, offset.y);
+                this.camera.setFollowOffset(offset?.x ?? 0, offset?.y ?? 0);
                 this.setMapBounds();
                 // Back to following: the player is placed in the space the chat panel and videos leave free again.
                 this.setCameraMode(CameraMode.Follow);
