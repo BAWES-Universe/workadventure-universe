@@ -505,12 +505,13 @@ export class BotApiService {
     }
 
     /**
-     * Whether Orbit can send this player notifications (#863): the key a browser subscribes with, or null when Orbit
-     * has none (notifications are not set up there). Undefined when it can't be known: a guest, no Orbit, or Orbit
-     * didn't answer.
+     * Whether Orbit can send this player notifications (#863): the key a browser subscribes with, or null when there
+     * is none (no Orbit on this server, or notifications are not set up there). Undefined when it can't be known: a
+     * guest, or Orbit didn't answer.
      */
     async getPushPublicKey(): Promise<string | null | undefined> {
-        if (!this.adminUrl || !this.accessToken) return undefined;
+        if (!this.adminUrl) return null;
+        if (!this.accessToken) return undefined;
         try {
             const response = await this.fetch("/api/me/push");
             const data = (await response.json()) as { publicKey?: unknown };

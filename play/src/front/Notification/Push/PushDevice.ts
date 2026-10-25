@@ -107,11 +107,11 @@ function sameKey(subscription: PushSubscription, key: Uint8Array): boolean {
 
 /**
  * Subscribes this browser (the permission is already given) and saves it in Orbit. A subscription made with an
- * older key is replaced. "notSetUp" when this server sends no notifications while Universe is closed (no keys), or
- * the player is a guest: notifications then only come while Universe is open.
+ * older key is replaced. "notSetUp" when nothing can arrive while Universe is closed: a browser without Web Push,
+ * a guest, or a server that sends none (no Orbit, or no keys there). Notifications then only come while it is open.
  */
 export async function subscribeThisDevice(): Promise<"saved" | "notSetUp" | "failed"> {
-    if (!localUserStore.isLogged()) return "notSetUp";
+    if (pushAvailability() !== "ready" || !localUserStore.isLogged()) return "notSetUp";
     const publicKey = await botApiService.getPushPublicKey();
     if (publicKey === null) return "notSetUp";
     if (!publicKey) return "failed";
@@ -128,7 +128,7 @@ export async function subscribeThisDevice(): Promise<"saved" | "notSetUp" | "fai
         deviceLabel(describeDevice(currentInstallEnvironment()))
     );
     if (id === null) return "failed";
-    thisDeviceIdStore.set(id);
+    setThisDeviceId(id);
     return "saved";
 }
 
@@ -162,8 +162,13 @@ export function refreshThisDeviceOnce(): void {
     refreshThisDevice().catch(() => undefined);
 }
 
-/** This device's id in Orbit, once it has been saved there in this page. */
-export const thisDeviceIdStore = writable<string | undefined>(undefined);
+/** This device's id in Orbit, once it has been saved there: kept, so Your devices knows it while switched off too. */
+export const thisDeviceIdStore = writable<string | undefined>(localUserStore.getPushDeviceId() ?? undefined);
+
+function setThisDeviceId(id: string | undefined): void {
+    localUserStore.setPushDeviceId(id ?? null);
+    thisDeviceIdStore.set(id);
+}
 
 /** What the Notifications row of the menu and This device say: on, off, or blocked by the browser. */
 export type ThisDeviceState = "on" | "off" | "blocked";
@@ -194,7 +199,7 @@ export async function turnOffThisDevice(deviceId: string | undefined, remove: bo
             ? await botApiService.removePushDevice(deviceId)
             : await botApiService.setPushDeviceEnabled(deviceId, false);
     }
-    if (remove) thisDeviceIdStore.set(undefined);
+    if (remove) setThisDeviceId(undefined);
     // Removed, or Orbit could not be told: this browser drops its subscription as well, so nothing reaches it either
     // way (Orbit forgets the device at its next send there).
     if (remove || !told) await forgetThisBrowser();

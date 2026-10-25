@@ -19,6 +19,8 @@ vi.mock("../../../Connection/LocalUserStore", () => {
             getNotificationChoice: () => notification,
             setNotification: (value: boolean | null) => (notification = value),
             isLogged: () => true,
+            getPushDeviceId: () => null,
+            setPushDeviceId: () => undefined,
         },
     };
 });
@@ -167,6 +169,18 @@ describe("switching this device off", () => {
         removePushDevice.mockResolvedValueOnce(false);
         await expect(turnOffThisDevice("d1", true)).rejects.toThrow();
         expect(unsubscribe).toHaveBeenCalledOnce();
+        vi.unstubAllGlobals();
+    });
+});
+
+describe("saving this device", () => {
+    it("is only in the open window where the browser has no Web Push, without asking Orbit", async () => {
+        const { subscribeThisDevice } = await import("../PushDevice");
+        vi.stubGlobal("navigator", { userAgent: UA.windowsEdge, platform: "", maxTouchPoints: 0, serviceWorker: {} });
+        vi.stubGlobal("Notification", { permission: "granted" });
+        getPushPublicKey.mockClear();
+        expect(await subscribeThisDevice()).toBe("notSetUp");
+        expect(getPushPublicKey).not.toHaveBeenCalled();
         vi.unstubAllGlobals();
     });
 });

@@ -57,7 +57,7 @@
     let deviceOn = $thisDeviceStateStore === "on";
 
     $: words = $LL.notification.push.settings;
-    $: deviceHint = signedIn && pushSetUp ? words.deviceHint() : words.deviceHintOpenOnly();
+    $: deviceHint = signedIn && pushSetUp && availability === "ready" ? words.deviceHint() : words.deviceHintOpenOnly();
 
     onMount(() => {
         updateThisDeviceState();
@@ -244,7 +244,7 @@
                     {$LL.notification.push.iphone.addToHomeScreen()}
                 </button>
             </div>
-        {:else if availability === "unsupported"}
+        {:else if availability === "unsupported" && typeof Notification === "undefined"}
             <p class="u-set-hint m-0 px-4 py-2">{words.unsupported()}</p>
         {:else if $thisDeviceStateStore === "blocked"}
             <div class="u-set-row u-set-notice" data-testid="notifications-blocked">

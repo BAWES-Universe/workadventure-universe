@@ -4,7 +4,7 @@ import { blockedSteps, cardStartState } from "../NotificationCardState";
 import type { PushDeviceInfo } from "../PushDevice";
 
 vi.mock("../NotificationCard.svelte", () => ({ default: {} }));
-vi.mock("../../../Connection/LocalUserStore", () => ({ localUserStore: {} }));
+vi.mock("../../../Connection/LocalUserStore", () => ({ localUserStore: { getPushDeviceId: () => null } }));
 vi.mock("../../../Stores/PopupStore", () => ({ popupStore: {} }));
 vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: {} }));
 vi.mock("../../../Network/ServiceWorker", () => ({ SERVICE_WORKER_URL: "/service-worker.js" }));
