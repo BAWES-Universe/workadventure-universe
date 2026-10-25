@@ -68,7 +68,7 @@
     import RoomMenu from "./RoomMenu/RoomMenu.svelte";
     import DirectChatTitle from "./DirectChat/DirectChatTitle.svelte";
     import PartnerProfilePanel from "./DirectChat/PartnerProfilePanel.svelte";
-    import { directPartnerStore } from "./DirectChat/DirectPartnerStore";
+    import { DIRECT_PARTNER_CONTEXT, directPartnerStore, type DirectPartner } from "./DirectChat/DirectPartnerStore";
     import { dayLabel, messageRuns, runSenderKey } from "./MessageRuns";
     import { IconChevronLeft, IconChevronRight, IconLoader, IconLock, IconMailBox } from "@wa-icons";
 
@@ -88,6 +88,10 @@
             createNameByChatIdStore(gameManager.getCurrentGameScene().userProviderMerger, currentChatPeople()?.store)
         );
     }
+
+    // Cards inside messages (a bot's room) act on the other person of a direct chat.
+    const partnerForCards = writable<DirectPartner | undefined>(undefined);
+    setContext<Readable<DirectPartner | undefined>>(DIRECT_PARTNER_CONTEXT, partnerForCards);
 
     // In a direct chat, each person's woka sits on their colour from People (header, profile, messages).
     const isDirectChat = writable(false);
@@ -162,6 +166,7 @@
     $: directPartner = matrixRoom?.type === "direct" ? directPartnerStore(matrixRoom) : undefined;
     $: profileOpen = directPartner !== undefined && $openProfileRoomIdStore === room.id;
     $: isDirectChat.set(directPartner !== undefined);
+    $: partnerForCards.set(directPartner ? $directPartner : undefined);
     $: roomMembers = matrixRoom ? matrixRoom.members : readable([]);
     $: memberCount = $roomMembers.length;
     // The proximity chat is one timeline across every stay. The thread shows one stay at a time: the live one,

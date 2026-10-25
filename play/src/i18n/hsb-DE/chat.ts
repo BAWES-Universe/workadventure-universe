@@ -176,6 +176,8 @@ const chat: DeepPartial<Translation["chat"]> = {
         unreadyPlaceholder: "Hišće njemóže wotmołwić",
         closed: "Tutón chat je začinjeny",
         left: "{name} je wotešoł",
+        visitRoom: "Podótkń so, zo by {name} wopytał",
+        inThisRoom: "Sy w tutej rumnosći",
     },
 };
 

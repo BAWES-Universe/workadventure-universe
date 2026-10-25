@@ -8,6 +8,9 @@ import type { PendingMedia } from '../memory/ConversationMemory';
 import { detectLanguage, statusNoteContent, type BotNoteState, type NoteLanguage } from './BotStatusNotes';
 import { ACCESS_CACHE_TTL_MS } from '../server/BotAccessGate';
 
+/** The field of a reply that names the bot's room: the game shows a card under it to go there. */
+export const ROOM_LINK_KEY = 'universe.room_link';
+
 export interface DmAccessResult {
     allowed: boolean;
     reason: string | null;
@@ -532,7 +535,16 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 await couldNotAnswer(config);
                 return;
             }
-            if (reply.text) await this.client.sendText(botUserId, event.room_id, reply.text);
+            if (reply.roomLink && reply.text) {
+                // A reply that names the bot's room carries it, so the game shows a card to go there.
+                await this.client.sendMessage(botUserId, event.room_id, {
+                    msgtype: 'm.text',
+                    body: reply.text,
+                    [ROOM_LINK_KEY]: reply.roomLink,
+                });
+            } else if (reply.text) {
+                await this.client.sendText(botUserId, event.room_id, reply.text);
+            }
             reply.keep?.();
             for (const item of reply.media ?? []) {
                 await this.sendMedia(botUserId, event.room_id, item).catch((error) =>

@@ -506,6 +506,8 @@ const chat: DeepPartial<Translation["chat"]> = {
         unreadyPlaceholder: "아직 답장할 수 없어요",
         closed: "이 채팅은 닫혔어요",
         left: "{name}님이 떠났어요",
+        visitRoom: "탭해서 {name}님을 만나러 가기",
+        inThisRoom: "이 방에 있어요",
     },
 };
 

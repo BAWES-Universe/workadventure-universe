@@ -39,6 +39,9 @@ export interface DirectPartner {
     isGameBlocked: boolean;
 }
 
+/** The other person of the open direct chat, for cards inside its messages (a bot's room). */
+export const DIRECT_PARTNER_CONTEXT = Symbol("directPartner");
+
 const NO_USERS: UsersByRoom = new Map();
 
 /**

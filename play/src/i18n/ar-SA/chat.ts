@@ -573,6 +573,8 @@ const chat: DeepPartial<Translation["chat"]> = {
         unreadyPlaceholder: "لا يمكنه الرد بعد",
         closed: "هذه الدردشة مغلقة",
         left: "غادر {name}",
+        visitRoom: "اضغط لزيارة {name}",
+        inThisRoom: "أنت في هذه الغرفة",
     },
     session: {
         live: "مباشر",

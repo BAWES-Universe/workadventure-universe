@@ -10,6 +10,7 @@
  * no BotClient attached, so the bubble path itself is untouched. One instance serves every bot in the process.
  */
 import { BaseBehavior } from '../behaviors/BaseBehavior';
+import { BotClient } from '../client/BotClient';
 import { parseEmotionsFromResponse, appendStreamedChunk } from '../ai/EmotionParser';
 import type { PendingMedia } from '../memory/ConversationMemory';
 import type { BotConfiguration } from './AdminApiService';
@@ -54,6 +55,15 @@ export interface DmReply {
     failed?: boolean;
     /** Remembers the text as said. Call it once the text reached the person, so an answer that never arrived isn't. */
     keep?: () => void;
+    /** The bot's room, when the text names it: the game shows a card under the message to go there. */
+    roomLink?: DmRoomLink;
+}
+
+/** A reply's link to the bot's room (sent as its `universe.room_link` field). */
+export interface DmRoomLink {
+    url: string;
+    room: string;
+    world: string;
 }
 
 /** How a resting bot words "not now", so it still sounds like itself. */
@@ -112,6 +122,16 @@ export class DmReplyService extends BaseBehavior {
         this.playerIds.set(matrixUserId, id);
         if (this.playerIds.size > MAX_TRACKED_PEOPLE) this.playerIds.delete(this.playerIds.keys().next().value!);
         return id;
+    }
+
+    /** Who is in the bot's room right now, as its bubble on the map sees them; null while it isn't on the map. */
+    private peopleInRoom(botId: string): string[] | null {
+        const bot = this.botManager.getBot(botId);
+        if (!bot?.isConnected()) return null;
+        return bot
+            .getAllPeople()
+            .filter((person) => !BotClient.isBot(person.userId))
+            .map((person) => person.name || `User ${person.userId}`);
     }
 
     /**
@@ -216,6 +236,7 @@ export class DmReplyService extends BaseBehavior {
         }
 
         const context = memory.getConversationContext(botId, playerId);
+        const peopleInRoom = this.peopleInRoom(botId);
         const startTime = Date.now();
         let fullMessage = '';
         let tokensUsed = 0;
@@ -238,7 +259,8 @@ export class DmReplyService extends BaseBehavior {
                 images.length ? images : undefined,
                 'dm',
                 config.toolTimeoutSeconds,
-                config.roomUrl
+                config.roomUrl,
+                peopleInRoom
             )) {
                 if (chunk.reset) {
                     // The model said something before calling tools: in a bubble that stays as its own bubble.
@@ -302,6 +324,7 @@ export class DmReplyService extends BaseBehavior {
                 channel: 'dm',
                 toolTimeoutSeconds: config.toolTimeoutSeconds,
                 homeRoomUrl: config.roomUrl,
+                peopleInRoom,
             });
             replyText = regenerated.processedMessage;
         }
@@ -319,6 +342,22 @@ export class DmReplyService extends BaseBehavior {
         // Media the tools produced waits in memory; a DM delivers it as attachments right after the text.
         const playerMemory = memory.getMemory(botId, playerId);
         const media = playerMemory?.pendingMedia?.splice(0) ?? [];
-        return { text: replyText, media, keep };
+        const roomLink = await this.roomLinkFor(config.roomUrl, replyText);
+        return { text: replyText, media, keep, ...(roomLink ? { roomLink } : {}) };
+    }
+
+    /** The bot's room as a link, when the reply names it (the room's name, in any case). */
+    private async roomLinkFor(roomUrl: string | undefined, text: string): Promise<DmRoomLink | undefined> {
+        if (!roomUrl || !text || !this.adminApiService) return undefined;
+        try {
+            const metadata = await this.adminApiService.getRoomMetadata(roomUrl);
+            const room = metadata?.roomName?.trim();
+            if (!room || !text.toLocaleLowerCase().includes(room.toLocaleLowerCase())) return undefined;
+            return { url: roomUrl, room, world: metadata?.worldName?.trim() ?? '' };
+        } catch (error) {
+            // No card is fine: the reply still names the room in words.
+            console.warn(`[DmReplyService] Could not read the room of ${roomUrl}:`, (error as Error)?.message ?? error);
+            return undefined;
+        }
     }
 }

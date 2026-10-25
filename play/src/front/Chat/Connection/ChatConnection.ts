@@ -3,6 +3,7 @@ import type { AvailabilityStatus } from "@workadventure/messages";
 import type { MapStore } from "@workadventure/store-utils";
 import type { StateEvents } from "matrix-js-sdk";
 import type { BotStatusNote } from "../Bots/BotChatStatus";
+import type { BotRoomLink } from "../Bots/BotRoomLink";
 import type { RoomConnection } from "../../Connection/RoomConnection";
 import type { PictureStore } from "../../Stores/PictureStore";
 import type { HeldRole } from "../Roles/WorldRoles";
@@ -171,6 +172,8 @@ export interface ChatMessage {
     canDelete: Readable<boolean>;
     /** Set when a bot left a status note (resting, gone...) instead of an answer: drawn as a card, not a bubble. */
     botStatus?: BotStatusNote;
+    /** Set when a bot's reply names the room it lives in: a card under the message takes you there. */
+    roomLink?: BotRoomLink;
     /** Whether reactions on this message reach the other people in the chat. */
     canReact: Readable<boolean>;
     /** Whether a reply to this message is sent as a reply (with its quote) to the other people in the chat. */

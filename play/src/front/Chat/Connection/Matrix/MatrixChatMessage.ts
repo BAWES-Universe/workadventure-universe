@@ -5,6 +5,7 @@ import { writable } from "svelte/store";
 import { v4 as uuidv4 } from "uuid";
 import { MapStore } from "@workadventure/store-utils";
 import { readBotStatusNote, type BotStatusNote } from "../../Bots/BotChatStatus";
+import { readBotRoomLink, type BotRoomLink } from "../../Bots/BotRoomLink";
 import type { ChatMessage, ChatMessageContent, ChatMessageType, ChatUser } from "../ChatConnection";
 import { canRenderAttachmentInline } from "../../../Utils/InlineMimeType";
 import { chatUserFactory } from "./MatrixChatUser";
@@ -53,6 +54,7 @@ export class MatrixChatMessage implements ChatMessage {
     relations: MatrixChatRelation | undefined;
     readonly canDelete: Writable<boolean>;
     readonly botStatus: BotStatusNote | undefined;
+    readonly roomLink: BotRoomLink | undefined;
     readonly canReact = writable(true);
     readonly canReply = writable(true);
     private isShown = false;
@@ -64,6 +66,7 @@ export class MatrixChatMessage implements ChatMessage {
         this.id = event.getId() ?? uuidv4();
         this.type = this.mapMatrixMessageTypeToChatMessage();
         this.botStatus = readBotStatusNote(event.getSender(), event.getOriginalContent());
+        this.roomLink = readBotRoomLink(event.getSender(), event.getOriginalContent(), window.location.origin);
         this.date = event.getDate();
         this.sender = this.getSender();
         this.isMyMessage = this.room.client.getUserId() === event.getSender();

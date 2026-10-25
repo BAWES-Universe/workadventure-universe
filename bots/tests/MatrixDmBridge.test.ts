@@ -105,6 +105,19 @@ describe('MatrixDmBridge', () => {
         expect(client.setTyping).not.toHaveBeenCalled();
     });
 
+    it("sends a reply that names the bot's room with its link, for the game's card", async () => {
+        await bridge.onEvent(invite());
+        const roomLink = { url: 'https://play.example/@/bawes/hq/lobby', room: 'Lobby', world: 'BAWES HQ' };
+        deps.reply.mockResolvedValueOnce({ text: 'I live in the Lobby.', media: [], roomLink });
+        await bridge.onEvent(message('where u at'));
+        expect(client.sendMessage).toHaveBeenCalledWith(BOT_USER, ROOM, {
+            msgtype: 'm.text',
+            body: 'I live in the Lobby.',
+            'universe.room_link': roomLink,
+        });
+        expect(client.sendText).not.toHaveBeenCalled();
+    });
+
     it('shows typing while a slow reply is on its way, then clears it', async () => {
         vi.useFakeTimers();
         try {
@@ -1066,6 +1079,16 @@ describe('Matrix application service routes', () => {
         expect(handler.onEvent).not.toHaveBeenCalled();
     });
 
+    it('reads no body before the token is checked', async () => {
+        const response = await fetch(`${base}/_matrix/app/v1/transactions/2`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{not json',
+        });
+        // Parsed first, this would be a 400 for the broken body.
+        expect(response.status).toBe(403);
+    });
+
     it('keeps one room in order while other rooms run alongside it', async () => {
         const order: string[] = [];
         let releaseSlow: () => void = () => undefined;
@@ -1131,6 +1154,7 @@ describe('DmReplyService history', () => {
             playerIds: new Map(),
             nextPlayerId: -1,
             loadedBots: new Set([BOT]),
+            botManager: { getBot: () => null },
             getBotConfig: async () => ({ botId: BOT, name: 'Guide', aiProviderRef: 'p' }),
             aiService: { generateBotResponseStream: failing },
             conversationMemory: memory,
@@ -1163,6 +1187,7 @@ describe('DmReplyService history', () => {
             playerIds: new Map(),
             nextPlayerId: -1,
             loadedBots: new Set([BOT]),
+            botManager: { getBot: () => null },
             getBotConfig: async () => ({ botId: BOT, name: 'Guide', aiProviderRef: 'p' }),
             aiService: { generateBotResponseStream: answering },
             conversationMemory: memory,
@@ -1185,6 +1210,7 @@ describe('DmReplyService history', () => {
             playerIds: new Map(),
             nextPlayerId: -1,
             loadedBots: new Set([BOT]),
+            botManager: { getBot: () => null },
             getBotConfig: async () => ({ botId: BOT, name: 'Guide', aiProviderRef: 'p', roomUrl: room }),
             aiService: { generateBotResponseStream: answering },
             conversationMemory: new PersistentMemory({}),
@@ -1195,6 +1221,68 @@ describe('DmReplyService history', () => {
         const args = answering.mock.calls[0] as unknown[];
         expect(args[11]).toBe('dm');
         expect(args[13]).toBe(room);
+        // Not on the map right now, so it can't tell who is in its room.
+        expect(args[14]).toBeNull();
+    });
+
+    it("tells the model who is in the bot's room, as its bubble on the map sees them, and links the room it names", async () => {
+        const { DmReplyService } = await import('../server/DmReplyService');
+        const { PersistentMemory } = await import('../memory/PersistentMemory');
+        const { BotClient } = await import('../client/BotClient');
+        const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
+        const room = 'https://play.example/@/bawes/hq/lobby';
+        const answering = vi.fn(async function* () {
+            yield { content: 'I live in the Lobby at BAWES HQ. Khalid is here too.', done: true };
+        });
+        const otherBot = 98765;
+        (BotClient as any).botUserIds.add(otherBot);
+        const live = {
+            isConnected: () => true,
+            getAllPeople: () => [
+                { userId: 1, name: 'Khalid' },
+                { userId: otherBot, name: 'Other bot' },
+                { userId: 2, name: '' },
+            ],
+        };
+        Object.assign(service, {
+            playerIds: new Map(),
+            nextPlayerId: -1,
+            loadedBots: new Set([BOT]),
+            botManager: { getBot: () => live },
+            adminApiService: { getRoomMetadata: vi.fn(async () => ({ universeName: 'BAWES', worldName: 'BAWES HQ', roomName: 'Lobby' })) },
+            getBotConfig: async () => ({ botId: BOT, name: 'Guide', aiProviderRef: 'p', roomUrl: room }),
+            aiService: { generateBotResponseStream: answering },
+            conversationMemory: new PersistentMemory({}),
+            conversationStorage: { startConversation: vi.fn(), addMessage: vi.fn(async () => undefined) },
+        });
+        const person = { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false };
+        const reply = await (service as any).replyNow(BOT, person, "who's around?", [], {});
+        (BotClient as any).botUserIds.delete(otherBot);
+        expect((answering.mock.calls[0] as unknown[])[14]).toEqual(['Khalid', 'User 2']);
+        expect(reply.roomLink).toEqual({ url: room, room: 'Lobby', world: 'BAWES HQ' });
+    });
+
+    it('adds no room link to a reply that does not name the room', async () => {
+        const { DmReplyService } = await import('../server/DmReplyService');
+        const { PersistentMemory } = await import('../memory/PersistentMemory');
+        const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
+        const answering = vi.fn(async function* () {
+            yield { content: 'Hello there!', done: true };
+        });
+        Object.assign(service, {
+            playerIds: new Map(),
+            nextPlayerId: -1,
+            loadedBots: new Set([BOT]),
+            botManager: { getBot: () => null },
+            adminApiService: { getRoomMetadata: vi.fn(async () => ({ universeName: 'BAWES', worldName: 'BAWES HQ', roomName: 'Lobby' })) },
+            getBotConfig: async () => ({ botId: BOT, name: 'Guide', aiProviderRef: 'p', roomUrl: 'https://play.example/@/bawes/hq/lobby' }),
+            aiService: { generateBotResponseStream: answering },
+            conversationMemory: new PersistentMemory({}),
+            conversationStorage: { startConversation: vi.fn(), addMessage: vi.fn(async () => undefined) },
+        });
+        const person = { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false };
+        const reply = await (service as any).replyNow(BOT, person, 'hi', [], {});
+        expect(reply.roomLink).toBeUndefined();
     });
 
     it('remembers an answer only once it was sent, so a retry after a failed send is answered afresh', async () => {
@@ -1210,6 +1298,7 @@ describe('DmReplyService history', () => {
             playerIds: new Map(),
             nextPlayerId: -1,
             loadedBots: new Set([BOT]),
+            botManager: { getBot: () => null },
             getBotConfig: async () => ({ botId: BOT, name: 'Guide', aiProviderRef: 'p' }),
             aiService: { generateBotResponseStream: answering },
             conversationMemory: memory,
