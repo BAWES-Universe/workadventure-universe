@@ -143,14 +143,16 @@ export function measureBiggestAvailableArea(): Box {
     };
 
     const blockingElements = Array.from(document.getElementsByClassName("screen-blocker"));
+    // The boxes are measured on the game, not on the window: a title bar above the game moves one against the other
+    const gameBounds = game.getBoundingClientRect();
 
     const blockingBoxes = blockingElements.map((element) => {
         const bounds = element.getBoundingClientRect();
         return {
-            xStart: bounds.x,
-            yStart: bounds.y,
-            xEnd: bounds.right,
-            yEnd: bounds.bottom,
+            xStart: bounds.x - gameBounds.x,
+            yStart: bounds.y - gameBounds.y,
+            xEnd: bounds.right - gameBounds.x,
+            yEnd: bounds.bottom - gameBounds.y,
         };
     });
 

@@ -83,9 +83,20 @@
     // for a new one with the same id, which keeps this box mounted.
     $: typingMembers = room.typingMembers;
     // What the others see while this box is being typed in (#1379).
-    const typingSignal = new TypingSignal((typing) => {
-        (typing ? room.startTyping() : room.stopTyping()).catch((error) => console.error(error));
-    });
+    function typingSignalFor(forRoom: ChatRoom): TypingSignal {
+        return new TypingSignal((typing) => {
+            (typing ? forRoom.startTyping() : forRoom.stopTyping()).catch((error) => console.error(error));
+        });
+    }
+    let signalRoom = room;
+    let typingSignal = typingSignalFor(room);
+    // A swapped room gets its own signal: the old one says "stopped" to the room it started in, and the first key in the
+    // new room says "typing" at once.
+    $: if (room !== signalRoom) {
+        typingSignal.stop();
+        signalRoom = room;
+        typingSignal = typingSignalFor(room);
+    }
 
     let fileAttachementEnabled = false;
     let isUploading = false;
