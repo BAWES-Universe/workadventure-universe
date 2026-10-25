@@ -121,7 +121,8 @@
                     if (!(await enableThisDevice("saved"))) couldNotTurnOn();
                     return;
                 }
-                if (result === "failed") switchFailed = true;
+                // Switched off again while this was on its way: Off stands, and nothing went wrong
+                if (result === "failed" && deviceOn) switchFailed = true;
                 deviceOn = false;
             })
             .catch((error) => console.error(error));
@@ -132,10 +133,10 @@
      * Orbit has not got it on.
      */
     async function enableThisDevice(result: "saved" | "notSetUp" | "failed"): Promise<boolean> {
+        // Switched off again while this was on its way: Off stands, Orbit is not told On, and nothing went wrong
+        if (!localUserStore.getNotification()) return true;
         if (result === "failed") return false;
         const id = $thisDeviceIdStore;
-        // Switched off again while this was on its way: Off stands, Orbit is not told On
-        if (!localUserStore.getNotification()) return true;
         // Not in Orbit (this server sends none while Universe is closed, or a guest, who may still hold the id of an
         // earlier session): on in the open window only
         if (result === "notSetUp" || !signedIn || !id) return true;
