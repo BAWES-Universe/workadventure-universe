@@ -518,6 +518,42 @@ describe('MatrixDmBridge', () => {
         expect(deps.reply.mock.calls.map((call: any[]) => call[2])).toEqual(['now?']);
     });
 
+    it('holds a waiting message while a newer one from the same chat is being answered, then passes it', async () => {
+        await bridge.onEvent(invite());
+        deps.getBotConfig.mockResolvedValue(resting as never);
+        await bridge.onEvent({ ...message('left while resting'), origin_server_ts: Date.now() - 1000 });
+        deps.getBotConfig.mockResolvedValue({ ...resting, enabled: true } as never);
+        let land!: (value: any) => void;
+        deps.reply.mockImplementationOnce(() => new Promise((resolve) => (land = resolve)));
+        const live = bridge.onEvent(message('now?'));
+        await vi.waitFor(() => expect(deps.reply).toHaveBeenCalledTimes(1));
+        // The regular check runs while the live answer is still on its way.
+        await bridge.checkWaiting();
+        expect(deps.reply).toHaveBeenCalledTimes(1);
+        land({ text: 'Here now!', media: [] });
+        await live;
+        await bridge.checkWaiting();
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(deps.reply.mock.calls.map((call: any[]) => call[2])).toEqual(['now?']);
+    });
+
+    it('answers the held message on the next check when the newer answer failed', async () => {
+        await bridge.onEvent(invite());
+        deps.getBotConfig.mockResolvedValue(resting as never);
+        await bridge.onEvent({ ...message('left while resting'), origin_server_ts: Date.now() - 1000 });
+        deps.getBotConfig.mockResolvedValue({ ...resting, enabled: true } as never);
+        let fail!: (error: Error) => void;
+        deps.reply.mockImplementationOnce(() => new Promise((_resolve, reject) => (fail = reject)));
+        const live = bridge.onEvent(message('now?'));
+        await vi.waitFor(() => expect(deps.reply).toHaveBeenCalledTimes(1));
+        await bridge.checkWaiting();
+        fail(new Error('model down'));
+        await live;
+        await bridge.checkWaiting();
+        await vi.waitFor(() => expect(deps.reply).toHaveBeenCalledTimes(2));
+        expect(deps.reply.mock.calls[1][2]).toBe('left while resting');
+    });
+
     it('keeps waiting messages in the shared store when there is one', async () => {
         const store = new Map<string, string>();
         deps.waiting = {

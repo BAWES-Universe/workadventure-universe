@@ -125,6 +125,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
     private botNotFound = new Map<string, { inARow: number; at: number }>();
     /** When each chat last got a live answer: a message left there while the bot rested, older than that, is passed. */
     private answeredLive = new Map<string, number>();
+    /** Chats with a live answer on its way, and when that message was sent: an older waiting one holds until it lands. */
+    private answeringLive = new Map<string, number>();
     private handledOrder: string[] = [];
     /** Waits between join attempts when the homeserver refuses or times out. */
     private joinRetryDelaysMs = [1000, 4000];
@@ -526,6 +528,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
         };
         let typingTimer: NodeJS.Timeout | undefined = setTimeout(startTyping, TYPING_DELAY_MS);
         let answered = false;
+        const sentAt = event.origin_server_ts ?? Date.now();
+        if (!catchUp) this.answeringLive.set(event.room_id, sentAt);
         try {
             const reply = await this.deps.reply(botId, person, text, attachments, {
                 onInterimMessage: async (interim) => {
@@ -565,6 +569,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
             console.error(`[MatrixDmBridge] Bot ${botId} could not answer in ${event.room_id}:`, error?.message ?? error);
             await couldNotAnswer(config);
         } finally {
+            if (!catchUp && this.answeringLive.get(event.room_id) === sentAt) this.answeringLive.delete(event.room_id);
             clearTimeout(typingTimer);
             clearInterval(typingRefresh);
             typingTimer = undefined;
@@ -573,7 +578,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         // The bot is answering again, so anyone who wrote while it rested gets their answer now.
         if (answered && !catchUp) {
             this.answeredLive.delete(event.room_id);
-            this.answeredLive.set(event.room_id, event.origin_server_ts ?? Date.now());
+            this.answeredLive.set(event.room_id, sentAt);
             if (this.answeredLive.size > NOTE_TIMES_MAX) this.answeredLive.delete(this.answeredLive.keys().next().value!);
             void this.drainIfWaiting(botId).catch(() => undefined);
         }
@@ -754,6 +759,11 @@ export class MatrixDmBridge implements MatrixEventHandler {
                     // The person wrote again since and got an answer: only the newest message is answered, as when
                     // nothing waited, and the older one never comes after it.
                     console.info(`[MatrixDmBridge] Passing a waiting message for bot ${botId}: a newer one in ${event.room_id} was answered`);
+                    continue;
+                }
+                if ((event.origin_server_ts ?? 0) <= (this.answeringLive.get(event.room_id) ?? -1)) {
+                    // A newer message there is being answered right now: wait to see whether that answer lands.
+                    await this.rememberWaiting(botId, event, attemptsOf(event));
                     continue;
                 }
                 await this.handleMessage(event, true).catch((error) =>
