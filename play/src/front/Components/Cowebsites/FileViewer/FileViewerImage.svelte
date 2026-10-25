@@ -4,6 +4,7 @@
     import { createAttachmentUrl, revokeAttachmentUrl } from "../../../Utils/AttachmentUrls";
     import { imageMimeTypeOf } from "../../../FileViewer/fileKinds";
     import { drawnSizeOf } from "../../../FileViewer/pictureSize";
+    import { listenForPinch } from "../../../FileViewer/pinchGesture";
     import type { ViewerController } from "../../../FileViewer/viewerController";
 
     export let bytes: ArrayBuffer;
@@ -65,33 +66,7 @@
     }
 
     // --- Pinch (two fingers) and Ctrl + wheel zoom ---
-    const pointers = new Map<number, { x: number; y: number }>();
-    let pinchDistance = 0;
-
-    function distance(): number {
-        const [first, second] = [...pointers.values()];
-        return Math.hypot(first.x - second.x, first.y - second.y);
-    }
-
-    function onPointerDown(event: PointerEvent): void {
-        pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
-        if (pointers.size === 2) pinchDistance = distance();
-    }
-
-    function onPointerMove(event: PointerEvent): void {
-        if (!pointers.has(event.pointerId)) return;
-        pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
-        if (pointers.size === 2 && pinchDistance > 0) {
-            const next = distance();
-            setScale(scale * (next / pinchDistance));
-            pinchDistance = next;
-        }
-    }
-
-    function onPointerEnd(event: PointerEvent): void {
-        pointers.delete(event.pointerId);
-        if (pointers.size < 2) pinchDistance = 0;
-    }
+    let stopPinch: (() => void) | undefined;
 
     function onWheel(event: WheelEvent): void {
         if (!event.ctrlKey) return;
@@ -101,6 +76,7 @@
 
     onMount(() => {
         url = createAttachmentUrl(bytes, imageMimeTypeOf(name));
+        stopPinch = listenForPinch(container, (factor) => setScale(scale * factor));
         controller = {
             zoomPercent: { subscribe: zoomPercent.subscribe },
             zoomIn: () => setScale(scale * 1.25),
@@ -114,20 +90,13 @@
     });
 
     onDestroy(() => {
+        stopPinch?.();
         resizeObserver?.disconnect();
         if (url) revokeAttachmentUrl(url);
     });
 </script>
 
-<div
-    bind:this={container}
-    class="image-area"
-    on:pointerdown={onPointerDown}
-    on:pointermove={onPointerMove}
-    on:pointerup={onPointerEnd}
-    on:pointercancel={onPointerEnd}
-    on:wheel={onWheel}
->
+<div bind:this={container} class="image-area" on:wheel={onWheel}>
     {#if url}
         <img
             bind:this={picture}

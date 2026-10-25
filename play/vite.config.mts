@@ -10,6 +10,7 @@ import { nodePolyfills } from "vite-plugin-node-polyfills";
 import { viteStaticCopy } from "vite-plugin-static-copy";
 import { createRequire } from "node:module";
 import { dirname } from "node:path";
+import { scopePdfViewerCss } from "./src/front/FileViewer/scopePdfViewerCss";
 
 // The folder of the PDF reader package, wherever npm put it (here or hoisted to the repository root).
 const pdfjsDir = dirname(createRequire(import.meta.url).resolve("pdfjs-dist/package.json"));
@@ -89,9 +90,14 @@ export default defineConfig(({ mode }) => {
                             `${pdfjsDir}/legacy/build/pdf.mjs`,
                             `${pdfjsDir}/legacy/build/pdf.worker.min.mjs`,
                             `${pdfjsDir}/legacy/web/pdf_viewer.mjs`,
-                            `${pdfjsDir}/web/pdf_viewer.css`,
                         ],
                         dest: "static/pdfjs",
+                    },
+                    // The reader's stylesheet styles plain class names for the whole page: it is kept inside the reader.
+                    {
+                        src: `${pdfjsDir}/web/pdf_viewer.css`,
+                        dest: "static/pdfjs",
+                        transform: (content) => scopePdfViewerCss(content),
                     },
                     { src: `${pdfjsDir}/cmaps/*`, dest: "static/pdfjs/cmaps" },
                     { src: `${pdfjsDir}/standard_fonts/*`, dest: "static/pdfjs/standard_fonts" },

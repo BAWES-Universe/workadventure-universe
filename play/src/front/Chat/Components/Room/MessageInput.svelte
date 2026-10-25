@@ -58,6 +58,8 @@
         insertTextAtCursor(text);
         message = messageInput.innerHTML;
         event.preventDefault();
+        // The paste is put in by hand, so no input event follows: it still counts as typing.
+        onInput();
     }
     function insertTextAtCursor(text: string) {
         const selection = window.getSelection();

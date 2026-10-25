@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { BotApiService, isOrbitSessionResponse } from "./BotApiService";
+import { BotApiService, isBotAiOptions, isOrbitSessionResponse, myAiKeyNames } from "./BotApiService";
 
 const mocks = vi.hoisted(() => ({
     getAuthToken: vi.fn((): string | null => null),
@@ -270,5 +270,44 @@ describe("BotApiService bot chat telemetry", () => {
     it("refuses an answer it does not understand", async () => {
         vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ hello: "world" })));
         await expect(serviceWithSession().getBotTelemetry("bot-1")).rejects.toThrow(/does not understand/);
+    });
+});
+
+describe("isBotAiOptions", () => {
+    it("takes an answer with a key list and a Universe AI answer", () => {
+        expect(isBotAiOptions({ keys: [], universeAi: { available: true } })).toBe(true);
+        expect(isBotAiOptions({ keys: [{ id: "k" }], universeAi: { available: false } })).toBe(true);
+    });
+
+    it("treats an answer without the Universe AI part as no answer, so the page keeps its provider list", () => {
+        expect(isBotAiOptions({ keys: [] })).toBe(false);
+        expect(isBotAiOptions({ keys: [], universeAi: {} })).toBe(false);
+        expect(isBotAiOptions({ keys: "none", universeAi: { available: true } })).toBe(false);
+        expect(isBotAiOptions(null)).toBe(false);
+        expect(isBotAiOptions("keys")).toBe(false);
+    });
+});
+
+describe("myAiKeyNames", () => {
+    it("keeps only each key's id and name", () => {
+        expect(
+            myAiKeyNames({
+                keys: [
+                    { id: "key-1", name: "Opus 5.5", kind: "openrouter", lentTo: [] },
+                    { id: "key-2", name: "My DeepSeek", lentTo: [{ universeId: "u1" }] },
+                ],
+            })
+        ).toEqual([
+            { id: "key-1", name: "Opus 5.5" },
+            { id: "key-2", name: "My DeepSeek" },
+        ]);
+    });
+
+    it("skips a key without an id or name, and answers null for anything that isn't a key list", () => {
+        expect(myAiKeyNames({ keys: [{ id: "key-1" }, null, { id: "key-2", name: "Ok" }] })).toEqual([
+            { id: "key-2", name: "Ok" },
+        ]);
+        expect(myAiKeyNames({ error: "Unauthorized" })).toBeNull();
+        expect(myAiKeyNames(null)).toBeNull();
     });
 });

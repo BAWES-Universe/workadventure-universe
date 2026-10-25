@@ -1,4 +1,5 @@
-import type { AxiosInstance } from "axios";
+import { hostname } from "node:os";
+import type { AxiosInstance, InternalAxiosRequestConfig } from "axios";
 import axios from "axios";
 import pLimit from "p-limit";
 import type { ICreateRoomOpts } from "matrix-js-sdk";
@@ -8,9 +9,12 @@ import { MATRIX_ADMIN_PASSWORD, MATRIX_ADMIN_USER, MATRIX_API_URI, MATRIX_DOMAIN
 
 const ADMIN_CHAT_ID = `@${MATRIX_ADMIN_USER}:${MATRIX_DOMAIN}`;
 
+// One device per pusher instance: signing in again reuses it instead of adding a new device every time.
+const ADMIN_DEVICE_ID = `universe-pusher-${hostname()}`;
+
 const limit = pLimit(10);
 class MatrixProvider {
-    private accessToken: string | undefined;
+    private loginPromise: Promise<string> | undefined;
     private roomAreaFolderName = slugify("current visited room");
     private roomAreaFolderID: string | undefined;
 
@@ -29,13 +33,32 @@ class MatrixProvider {
     }
 
     private async getAxios(): Promise<AxiosInstance> {
-        const accessToken = await this.getAccessToken();
-        return axios.create({
+        const login = this.getAccessToken();
+        const accessToken = await login;
+        const instance = axios.create({
             baseURL: MATRIX_API_URI,
             headers: {
                 Authorization: `Bearer ${accessToken}`,
             },
         });
+        // The token is kept for the life of the process: if Synapse refuses it, sign in again once and repeat the call.
+        instance.interceptors.response.use(undefined, async (error: unknown) => {
+            if (!axios.isAxiosError(error) || error.response?.status !== 401 || !error.config) {
+                throw error;
+            }
+            const config: InternalAxiosRequestConfig & { signedInAgain?: boolean } = error.config;
+            if (config.signedInAgain) {
+                throw error;
+            }
+            config.signedInAgain = true;
+            // Calls that failed together with the same token share one new sign-in.
+            if (this.loginPromise === login) {
+                this.loginPromise = undefined;
+            }
+            config.headers.Authorization = `Bearer ${await this.getAccessToken()}`;
+            return instance.request(config);
+        });
+        return instance;
     }
 
     getMatrixIdFromEmail(email: string): string {
@@ -46,26 +69,32 @@ class MatrixProvider {
         return email.replace("@", "_");
     }
 
-    private async getAccessToken(): Promise<string> {
-        if (!this.accessToken) {
-            const response = await axios.post(`${MATRIX_API_URI}_matrix/client/r0/login`, {
-                type: "m.login.password",
-                user: MATRIX_ADMIN_USER,
-                password: MATRIX_ADMIN_PASSWORD,
+    private getAccessToken(): Promise<string> {
+        if (!this.loginPromise) {
+            const login = this.signIn();
+            this.loginPromise = login;
+            // A failed sign-in is not kept: the next call tries again.
+            login.catch(() => {
+                if (this.loginPromise === login) {
+                    this.loginPromise = undefined;
+                }
             });
-            if (response.status === 200 && response.data.errcode === undefined) {
-                this.accessToken = response.data.access_token;
-                return response.data.access_token;
-            } else {
-                throw new Error("Failed with errcode " + response.data.errcode);
-            }
         }
+        return this.loginPromise;
+    }
 
-        if (!this.accessToken) {
-            throw new Error("No access token found");
+    private async signIn(): Promise<string> {
+        const response = await axios.post(`${MATRIX_API_URI}_matrix/client/r0/login`, {
+            type: "m.login.password",
+            user: MATRIX_ADMIN_USER,
+            password: MATRIX_ADMIN_PASSWORD,
+            device_id: ADMIN_DEVICE_ID,
+            initial_device_display_name: "Universe game server",
+        });
+        if (response.status === 200 && response.data.errcode === undefined) {
+            return response.data.access_token;
         }
-
-        return this.accessToken;
+        throw new Error("Failed with errcode " + response.data.errcode);
     }
 
     async setNewMatrixPassword(matrixUserId: string, password: string): Promise<void> {
@@ -182,6 +211,11 @@ class MatrixProvider {
     }
 
     private async overrideRateLimitForAdminAccount() {
+        if (!MATRIX_DOMAIN) {
+            // Without the domain the admin id would end in ":undefined" and Synapse would answer 400.
+            console.warn("MATRIX_DOMAIN is not set: the chat admin account keeps the default Synapse rate limits");
+            return;
+        }
         const axiosInstance = await this.getAxios();
         const response = await axiosInstance.post(`_synapse/admin/v1/users/${ADMIN_CHAT_ID}/override_ratelimit`, {
             message_per_second: 0,

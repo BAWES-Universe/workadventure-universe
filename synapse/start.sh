@@ -5,20 +5,26 @@ apt-get install -y gettext-base sudo wget
 set -e
 #set -x
 
-# Check if all variables used in the template is defined or not
-grep -o '\${[0-9A-Za-z_]*}' /data/homeserver.template.yaml | while read line
+# Check if all variables used in the templates are defined or not
+for template in /data/homeserver.template.yaml /data/appservice-universe-bots.template.yaml
 do
-    line=$(echo "$line" | sed 's/^..//' | sed 's/.$//')
-    if [[ -z `printenv $line` ]]; then
-      echo "---------------------------------------------"
-      echo "------------------- ERROR -------------------"
-      echo "Environment variable $line key is not defined"
-      echo "---------------------------------------------"
-      exit 1
-    fi
+    grep -o '\${[0-9A-Za-z_]*}' "$template" | while read line
+    do
+        line=$(echo "$line" | sed 's/^..//' | sed 's/.$//')
+        if [[ -z `printenv $line` ]]; then
+          echo "---------------------------------------------"
+          echo "------------------- ERROR -------------------"
+          echo "Environment variable $line key is not defined"
+          echo "---------------------------------------------"
+          exit 1
+        fi
+    done
 done
 
 envsubst < /data/homeserver.template.yaml > /data/homeserver.yaml
+# The bot server (docker-compose.bots.yaml) is an application service: Synapse reads this file to know which
+# accounts (@bot_*) the bot server owns and how to reach it. See docs/others/contributing/matrix-dev.md
+envsubst < /data/appservice-universe-bots.template.yaml > /data/appservice-universe-bots.yaml
 
 # Wait for the OIDC mock server to be up, exit with an error after 2 minutes
 timeout=120
