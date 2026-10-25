@@ -8,6 +8,8 @@ import { gameManager } from "../Phaser/Game/GameManager";
 import { selectedRoomStore } from "../Chat/Stores/SelectRoomStore";
 import { proximityMeetingStore } from "../Stores/MyMediaStore";
 import { openChat } from "../Chat/openChat";
+import { gameSceneIsLoadedStore } from "../Stores/GameSceneStore";
+import { waitForStoreValue } from "../Stores/Utils/waitForStoreValue";
 import type { NotificationWA } from "./Notification";
 
 type SelectedRoomStore = {
@@ -16,10 +18,8 @@ type SelectedRoomStore = {
 };
 
 class NotificationManager {
-    private channels: Map<string, BroadcastChannel> = new Map();
-
     constructor(private proximityMeetingStore: Writable<boolean>, private selectedRoomStore: SelectedRoomStore) {
-        this.createNotificationMessageChannel();
+        this.listenToServiceWorker();
     }
 
     public hasNotification(): boolean {
@@ -46,26 +46,32 @@ class NotificationManager {
         }
     }
 
-    private createNotificationMessageChannel() {
-        const messageChannel = new BroadcastChannel(NotificationChannel.message);
-        messageChannel.onmessage = async (event) => {
-            try {
-                const result = NotificationSchema.parse(event.data);
-                const validatedData = result.data;
-                const chatRoomId: string = validatedData.chatRoomId;
-
-                await this.handleMessageNotification(chatRoomId);
-            } catch (error) {
-                Sentry.captureException(error);
-                console.error("Invalid notification data:", error);
-                return;
-            }
-        };
-
-        this.channels.set(NotificationChannel.message, messageChannel);
+    // The service worker sends a tapped chat notification to the one window it brought forward or opened.
+    private listenToServiceWorker() {
+        if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) {
+            return;
+        }
+        // Lives as long as the page, like the manager itself.
+        // eslint-disable-next-line listeners/no-missing-remove-event-listener
+        navigator.serviceWorker.addEventListener("message", this.onServiceWorkerMessage);
+        // Delivers what the worker sent while this page was still loading (a window the tap just opened).
+        navigator.serviceWorker.startMessages();
     }
 
+    private readonly onServiceWorkerMessage = (event: MessageEvent): void => {
+        const result = NotificationSchema.safeParse(event.data);
+        if (!result.success) {
+            return;
+        }
+        this.handleMessageNotification(result.data.data.chatRoomId).catch((error) => {
+            Sentry.captureException(error);
+            console.error("Could not open the chat of a notification:", error);
+        });
+    };
+
     private async handleMessageNotification(chatRoomId: string) {
+        // A window the tap just opened is still getting in: its chat is ready once the room is.
+        await waitForStoreValue(gameSceneIsLoadedStore);
         openChat("notification");
         let room: ChatRoom | undefined;
         if (chatRoomId === "proximity") {
@@ -81,10 +87,6 @@ class NotificationManager {
             this.selectedRoomStore.set(room);
         }
     }
-}
-
-enum NotificationChannel {
-    message = "message",
 }
 
 const NotificationSchema = z.object({

@@ -19,33 +19,49 @@ self.addEventListener("fetch", () => {});
 self.addEventListener("notificationclick", (event) => {
     event.notification.close();
 
-    // Get the chat room data from notification
-    const { chatRoomId, tabUrl } = event.notification.data;
-
-    // Focus or open window and navigate to chat
-    event.waitUntil(
-        clients.matchAll({ type: "window" }).then((clientList) => {
-            if (clientList.length > 0) {
-                // Focus existing window
-                const waClient = clientList.find((client) => client.url === tabUrl);
-
-                if (waClient) {
-                    waClient.focus();
-                } else {
-                    clientList[0].focus();
-                }
-            }
-
-            // Send message to open chat if room data exists
-            if (chatRoomId) {
-                const messageChannel = new BroadcastChannel("message");
-                messageChannel.postMessage({
-                    type: "openChat",
-                    data: {
-                        chatRoomId,
-                    },
-                });
-            }
-        })
-    );
+    const { chatRoomId, tabUrl } = event.notification.data ?? {};
+    event.waitUntil(openFromNotification(chatRoomId, tabUrl));
 });
+
+// The tap brings one Universe window forward, or opens one when none is left, and only that window opens the chat.
+async function openFromNotification(chatRoomId, tabUrl) {
+    const url = sameSiteUrl(tabUrl);
+    const windows = await clients.matchAll({ type: "window", includeUncontrolled: true });
+    const existing = windows.find((client) => client.url === url) ?? windows[0];
+
+    if (existing) {
+        // A browser that refuses to bring it forward still gets the chat open in it.
+        const focused = (await existing.focus().catch(() => undefined)) ?? existing;
+        if (chatRoomId) {
+            focused.postMessage(openChatMessage(chatRoomId));
+        }
+        return;
+    }
+
+    const opened = await clients.openWindow(url);
+    // A nearby chat ended with the window that showed it, so a new window only opens a chat that still exists.
+    if (opened && chatRoomId && chatRoomId !== "proximity") {
+        // Kept by the browser until the new page has loaded and listens (NotificationManager).
+        opened.postMessage(openChatMessage(chatRoomId));
+    }
+}
+
+function openChatMessage(chatRoomId) {
+    return { type: "openChat", data: { chatRoomId } };
+}
+
+// Only an address on this site is opened; anything else opens the site itself.
+function sameSiteUrl(tabUrl) {
+    if (typeof tabUrl !== "string") {
+        return self.registration.scope;
+    }
+    try {
+        const url = new URL(tabUrl, self.location.origin);
+        if (url.origin === self.location.origin) {
+            return url.href;
+        }
+    } catch {
+        // Not an address: open the site.
+    }
+    return self.registration.scope;
+}
