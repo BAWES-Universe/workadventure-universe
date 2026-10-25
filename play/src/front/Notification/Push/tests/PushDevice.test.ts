@@ -312,6 +312,39 @@ describe("saving this device", () => {
         vi.unstubAllGlobals();
     });
 
+    it("records Off when it could not turn on, so the next page load does not turn it on unasked", async () => {
+        const { turnOnThisDevice } = await import("../PushDevice");
+        const { localUserStore } = await import("../../../Connection/LocalUserStore");
+        const subscription = {
+            unsubscribe: () => Promise.resolve(true),
+            toJSON: () => ({ endpoint: "https://push.example/4" }),
+            options: {},
+        };
+        vi.stubGlobal("navigator", {
+            userAgent: UA.windowsEdge,
+            platform: "",
+            maxTouchPoints: 0,
+            serviceWorker: {
+                register: () =>
+                    Promise.resolve({
+                        pushManager: {
+                            getSubscription: () => Promise.resolve(null),
+                            subscribe: () => Promise.resolve(subscription),
+                        },
+                    }),
+            },
+        });
+        vi.stubGlobal("Notification", { permission: "default", requestPermission: () => Promise.resolve("granted") });
+        vi.stubGlobal("PushManager", class {});
+        (localUserStore.setNotification as (value: boolean | null) => void)(null);
+        getPushPublicKey.mockResolvedValueOnce("AAAA");
+        // Orbit does not take the device
+        registerPushDevice.mockResolvedValueOnce(null as unknown as string);
+        expect(await turnOnThisDevice()).toBe("failed");
+        expect(localUserStore.getNotificationChoice()).toBe(false);
+        vi.unstubAllGlobals();
+    });
+
     it("keeps Off when switched off while the browser was asking", async () => {
         const { turnOnThisDevice, turnOffThisDevice } = await import("../PushDevice");
         const { localUserStore } = await import("../../../Connection/LocalUserStore");

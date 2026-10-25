@@ -256,6 +256,12 @@ async function forgetThisBrowser(): Promise<void> {
 
 export type TurnOnResult = "on" | "blocked" | "dismissed" | "failed";
 
+/** It said it couldn't turn on: Off is the choice now, so the next page load does not turn it on unasked. */
+function couldNotTurnOn(): "failed" {
+    localUserStore.setNotification(false);
+    return "failed";
+}
+
 /**
  * Turn on, from the tap itself: the browser's own box opens straight away (Safari and Firefox only open it from a
  * tap), then this browser is subscribed and saved.
@@ -276,13 +282,13 @@ export function turnOnThisDevice(): Promise<TurnOnResult> {
             if (permission !== "granted" || switchOffs !== offsAtStart) return "dismissed";
             const result = await subscribeThisDevice();
             if (switchOffs !== offsAtStart) return "dismissed";
-            if (result === "failed") return "failed";
+            if (result === "failed") return couldNotTurnOn();
             localUserStore.setNotification(true);
             return "on";
         })
         .catch((error) => {
             console.error("Notifications: turning on failed", error);
-            return "failed" as const;
+            return couldNotTurnOn();
         })
         .finally(updateThisDeviceState);
 }
