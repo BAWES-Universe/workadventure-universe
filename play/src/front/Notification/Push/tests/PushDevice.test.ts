@@ -2,14 +2,17 @@ import { describe, expect, it, vi } from "vitest";
 import type { InstallEnvironment } from "../../../Install/InstallPlatform";
 import { describeDevice, deviceLabel, keyBytes, pushAvailability } from "../PushDevice";
 
-const { getPushPublicKey, setPushDeviceEnabled, removePushDevice, setPushDeviceId } = vi.hoisted(() => ({
-    getPushPublicKey: vi.fn(() => Promise.resolve(null)),
-    setPushDeviceEnabled: vi.fn(() => Promise.resolve(true)),
-    removePushDevice: vi.fn(() => Promise.resolve(true)),
-    setPushDeviceId: vi.fn(),
-}));
+const { getPushPublicKey, setPushDeviceEnabled, removePushDevice, setPushDeviceId, registerPushDevice } = vi.hoisted(
+    () => ({
+        getPushPublicKey: vi.fn((): Promise<string | null> => Promise.resolve(null)),
+        registerPushDevice: vi.fn(() => Promise.resolve("d-new")),
+        setPushDeviceEnabled: vi.fn(() => Promise.resolve(true)),
+        removePushDevice: vi.fn(() => Promise.resolve(true)),
+        setPushDeviceId: vi.fn(),
+    })
+);
 vi.mock("../../../external-modules/bots/services/BotApiService", () => ({
-    botApiService: { getPushPublicKey, setPushDeviceEnabled, removePushDevice },
+    botApiService: { getPushPublicKey, setPushDeviceEnabled, removePushDevice, registerPushDevice },
 }));
 vi.mock("../../../Network/ServiceWorker", () => ({ SERVICE_WORKER_URL: "/service-worker.js" }));
 vi.mock("../../../Connection/LocalUserStore", () => {
@@ -194,6 +197,40 @@ describe("saving this device", () => {
         getPushPublicKey.mockClear();
         expect(await subscribeThisDevice()).toBe("notSetUp");
         expect(getPushPublicKey).not.toHaveBeenCalled();
+        vi.unstubAllGlobals();
+    });
+
+    it("saves nothing when switched off while the browser was still subscribing", async () => {
+        const { subscribeThisDevice } = await import("../PushDevice");
+        const { localUserStore } = await import("../../../Connection/LocalUserStore");
+        const unsubscribe = vi.fn(() => Promise.resolve(true));
+        const subscription = { unsubscribe, toJSON: () => ({ endpoint: "https://push.example/1" }), options: {} };
+        vi.stubGlobal("navigator", {
+            userAgent: UA.windowsEdge,
+            platform: "",
+            maxTouchPoints: 0,
+            serviceWorker: {
+                register: () =>
+                    Promise.resolve({
+                        pushManager: {
+                            getSubscription: () => Promise.resolve(null),
+                            subscribe: () => Promise.resolve(subscription),
+                        },
+                    }),
+            },
+        });
+        vi.stubGlobal("Notification", { permission: "granted" });
+        vi.stubGlobal("PushManager", class {});
+        localUserStore.setNotification(true);
+        getPushPublicKey.mockImplementationOnce(() => {
+            // The switch goes off while Orbit's key is on its way
+            localUserStore.setNotification(false);
+            return Promise.resolve("AAAA");
+        });
+        registerPushDevice.mockClear();
+        expect(await subscribeThisDevice()).toBe("failed");
+        expect(unsubscribe).toHaveBeenCalledOnce();
+        expect(registerPushDevice).not.toHaveBeenCalled();
         vi.unstubAllGlobals();
     });
 

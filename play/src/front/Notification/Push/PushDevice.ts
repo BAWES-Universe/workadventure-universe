@@ -123,6 +123,11 @@ export async function subscribeThisDevice(): Promise<"saved" | "notSetUp" | "fai
         subscription = null;
     }
     subscription ??= await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+    // Switched off while this was on its way: Off stands, so nothing is saved and nothing can arrive
+    if (localUserStore.getNotificationChoice() === false) {
+        await subscription.unsubscribe();
+        return "failed";
+    }
     const id = await botApiService.registerPushDevice(
         subscription.toJSON(),
         deviceLabel(describeDevice(currentInstallEnvironment()))
