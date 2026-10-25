@@ -226,9 +226,8 @@ class ConnectionManager {
         const tokenTmp = localUserStore.getAuthToken();
         // Read before the token goes: a guest whose token was refused is not an account that signs out.
         const wasSignedIn = localUserStore.isLogged();
-        // A guest's token goes now; an account's once this device has left it (below), since Orbit's sign-in for that
-        // may need renewing from it
-        if (!wasSignedIn) localUserStore.setAuthToken(null);
+        //remove token in localstorage
+        localUserStore.setAuthToken(null);
         // The device kept the account's name: the next guest here gets their own back, or none, not this one (#1192).
         localUserStore.restoreGuestName(wasSignedIn);
         //user logout, set connected store for menu at false (actually don't do it because we are going to redirect and
@@ -236,17 +235,15 @@ class ConnectionManager {
         //userIsConnected.set(false);
 
         // This browser leaves the account's devices, so no notification for it arrives once signed out (#863). It has
-        // a moment to tell Orbit, and the sign-out goes on either way.
+        // a moment to tell Orbit, and the sign-out goes on either way: the browser's own subscription goes first, and
+        // Orbit drops a device whose subscription is gone the next time it sends to it.
         const deviceForgotten = wasSignedIn
             ? raceTimeout(
                   import("../Notification/Push/PushDevice").then(({ forgetThisDeviceOnSignOut }) =>
                       forgetThisDeviceOnSignOut()
                   ),
                   2_000
-              )
-                  .catch((error) => console.warn("Notifications: this device could not leave the account", error))
-                  //remove token in localstorage
-                  .finally(() => localUserStore.setAuthToken(null))
+              ).catch((error) => console.warn("Notifications: this device could not leave the account", error))
             : Promise.resolve();
 
         // check if we are in a room

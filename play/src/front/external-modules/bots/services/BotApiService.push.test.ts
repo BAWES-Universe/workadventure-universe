@@ -40,6 +40,26 @@ describe("removing a device in Your devices", () => {
         await expect(service().removePushDevice("d1")).resolves.toBe(true);
     });
 
+    it("leaves on the saved session on the way out of the account, without renewing, and outlives the page", async () => {
+        const api = service();
+        const renew = vi.spyOn(
+            api as unknown as { getAdminApiSessionToken: () => Promise<string> },
+            "getAdminApiSessionToken"
+        );
+        const saved = `orb_sess_v2_${"f".repeat(64)}`;
+        sessionStorage.setItem("orbit_admin_session_v2", saved);
+        sessionStorage.setItem("orbit_admin_session_v2_expires", String(Date.now() + 60_000));
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ ok: true }));
+
+        await expect(api.removePushDevice("d1", true)).resolves.toBe(true);
+
+        expect(renew).not.toHaveBeenCalled();
+        const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+        expect(init.method).toBe("DELETE");
+        expect(init.keepalive).toBe(true);
+        expect((init.headers as Record<string, string>).Authorization).toBe(`Bearer ${saved}`);
+    });
+
     it.each([
         ["an error", () => Promise.resolve(json({ error: "nope" }, 500))],
         ["no answer", () => Promise.reject(new Error("offline"))],

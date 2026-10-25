@@ -197,25 +197,28 @@ describe("signing out", () => {
     });
 });
 
-// The device leaves the account's notifications on the way out (#863), while Orbit's sign-in can still be renewed.
+// The device leaves the account's notifications on the way out (#863), after the account's token is gone.
 describe("signing out, this device's notifications", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         localStorage.clear();
     });
 
-    it("leaves the account while the token is still there, then the token goes", async () => {
+    it("drops the token at once, then leaves the account", async () => {
         mocks.me.mockResolvedValue(meAnswer("Khalid"));
         await openTheGame();
-        let tokenWhileLeaving: string | null = null;
-        mocks.forgetThisDeviceOnSignOut.mockImplementationOnce(() => {
-            tokenWhileLeaving = localUserStore.getAuthToken();
-            return Promise.resolve();
-        });
+        let leaving: () => void = () => undefined;
+        mocks.forgetThisDeviceOnSignOut.mockImplementationOnce(
+            () =>
+                new Promise<void>((resolve) => {
+                    leaving = resolve;
+                })
+        );
         connectionManager.logout();
-        await vi.waitFor(() => expect(localUserStore.getAuthToken()).toBeNull());
-        expect(mocks.forgetThisDeviceOnSignOut).toHaveBeenCalledOnce();
-        expect(tokenWhileLeaving).toBe(gameToken);
+        // Closing the tab now still leaves it signed out
+        expect(localUserStore.getAuthToken()).toBeNull();
+        await vi.waitFor(() => expect(mocks.forgetThisDeviceOnSignOut).toHaveBeenCalledOnce());
+        leaving();
     });
 
     it("signs a guest out at once, with no device to leave", () => {

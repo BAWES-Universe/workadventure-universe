@@ -649,12 +649,16 @@ export class BotApiService {
         }
     }
 
-    /** Remove in Your devices. True when it is gone, including when it already was. */
-    async removePushDevice(deviceId: string): Promise<boolean> {
+    /**
+     * Remove in Your devices. True when it is gone, including when it already was. `keepalive` on the way out of the
+     * account: it goes on the saved Orbit session and outlives the page.
+     */
+    async removePushDevice(deviceId: string, keepalive = false): Promise<boolean> {
         if (!this.adminUrl || !this.accessToken) return false;
         try {
             const response = await this.fetch(`/api/me/push/devices/${encodeURIComponent(deviceId)}`, {
                 method: "DELETE",
+                keepalive,
             });
             return response.ok;
         } catch (error) {

@@ -260,7 +260,8 @@ export async function forgetThisDeviceOnSignOut(): Promise<void> {
     const id = get(thisDeviceIdStore);
     setThisDeviceId(undefined);
     await forgetThisBrowser();
-    if (id) await botApiService.removePushDevice(id);
+    // The account's token is already gone: this goes on the saved Orbit session, and still goes as the page leaves
+    if (id) await botApiService.removePushDevice(id, true);
 }
 
 /** This browser drops its subscription, so nothing more reaches it while Universe is closed. */

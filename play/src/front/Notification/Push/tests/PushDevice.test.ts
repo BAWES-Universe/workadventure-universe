@@ -370,7 +370,7 @@ describe("signing out", () => {
         thisDeviceIdStore.set("d1");
         removePushDevice.mockClear();
         await forgetThisDeviceOnSignOut();
-        expect(removePushDevice).toHaveBeenCalledWith("d1");
+        expect(removePushDevice).toHaveBeenCalledWith("d1", true);
         expect(unsubscribe).toHaveBeenCalledOnce();
         let id: string | undefined = "x";
         thisDeviceIdStore.subscribe((value) => (id = value))();
@@ -387,7 +387,7 @@ describe("signing out", () => {
         // Orbit never answers: sign-out gives up waiting on it
         removePushDevice.mockImplementationOnce(() => new Promise<boolean>(() => {}));
         const leaving = forgetThisDeviceOnSignOut();
-        await vi.waitFor(() => expect(removePushDevice).toHaveBeenCalledWith("d2"));
+        await vi.waitFor(() => expect(removePushDevice).toHaveBeenCalledWith("d2", true));
         expect(unsubscribe).toHaveBeenCalledOnce();
         void leaving;
         vi.unstubAllGlobals();
