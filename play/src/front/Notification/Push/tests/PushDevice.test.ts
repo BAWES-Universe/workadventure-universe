@@ -219,6 +219,34 @@ describe("saving this device", () => {
         vi.unstubAllGlobals();
     });
 
+    it("stays on in the open window when the browser refuses push, as the permission is given", async () => {
+        const { turnOnThisDevice } = await import("../PushDevice");
+        const { localUserStore } = await import("../../../Connection/LocalUserStore");
+        vi.stubGlobal("navigator", {
+            userAgent: UA.windowsEdge,
+            platform: "",
+            maxTouchPoints: 0,
+            serviceWorker: {
+                register: () =>
+                    Promise.resolve({
+                        pushManager: {
+                            getSubscription: () => Promise.resolve(null),
+                            subscribe: () => Promise.reject(new DOMException("push service error", "AbortError")),
+                        },
+                    }),
+            },
+        });
+        vi.stubGlobal("Notification", { permission: "default", requestPermission: () => Promise.resolve("granted") });
+        vi.stubGlobal("PushManager", class {});
+        localUserStore.setNotification(false);
+        getPushPublicKey.mockResolvedValueOnce("AAAA");
+        registerPushDevice.mockClear();
+        expect(await turnOnThisDevice()).toBe("on");
+        expect(registerPushDevice).not.toHaveBeenCalled();
+        expect(localUserStore.getNotificationChoice()).toBe(true);
+        vi.unstubAllGlobals();
+    });
+
     it("saves nothing when switched off while the browser was still subscribing", async () => {
         const { subscribeThisDevice, turnOffThisDevice } = await import("../PushDevice");
         const { localUserStore } = await import("../../../Connection/LocalUserStore");

@@ -126,13 +126,21 @@ export async function subscribeThisDevice(): Promise<"saved" | "notSetUp" | "fai
     if (publicKey === null) return notInOrbit();
     if (!publicKey) return "failed";
     const key = keyBytes(publicKey);
-    const registration = await navigator.serviceWorker.register(SERVICE_WORKER_URL);
-    let subscription = await registration.pushManager.getSubscription();
-    if (subscription && !sameKey(subscription, key)) {
-        await subscription.unsubscribe();
-        subscription = null;
+    let subscription: PushSubscription | null;
+    try {
+        const registration = await navigator.serviceWorker.register(SERVICE_WORKER_URL);
+        subscription = await registration.pushManager.getSubscription();
+        if (subscription && !sameKey(subscription, key)) {
+            await subscription.unsubscribe();
+            subscription = null;
+        }
+        subscription ??= await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+    } catch (error) {
+        // The browser refuses push (Brave with it switched off, a push service that fails): it still shows them while
+        // Universe is open, as the permission is given
+        console.warn("Notifications: this browser could not subscribe to push", error);
+        return notInOrbit();
     }
-    subscription ??= await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
     // Switched off while this was on its way and still off, or signing out: that stands, so nothing is saved and
     // nothing can arrive
     const switchedOff = () => switchOffs !== offsAtStart && localUserStore.getNotificationChoice() === false;
