@@ -28,6 +28,8 @@ export { default as IconPhoto } from "~icons/tabler/photo";
 export { default as IconPhotoOff } from "~icons/tabler/photo-off";
 export { default as IconEdit } from "~icons/tabler/edit";
 export { default as IconKey } from "~icons/tabler/key";
+export { default as IconPlug } from "~icons/tabler/plug";
+export { default as IconCpu } from "~icons/tabler/cpu";
 export { default as IconChevronLeft } from "~icons/tabler/chevron-left";
 export { default as IconDeselect } from "~icons/tabler/deselect";
 export { default as IconCloudUpload } from "~icons/tabler/cloud-upload";

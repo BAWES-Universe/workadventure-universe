@@ -3,7 +3,7 @@ import { RoomMemberEvent } from "matrix-js-sdk";
 import type { Writable } from "svelte/store";
 import { get, writable } from "svelte/store";
 import type { ChatRoomMember, ChatRoomMembership, memberTypingInformation } from "../ChatConnection";
-import { ChatPermissionLevel } from "../ChatConnection";
+import { ChatPermissionLevel, TYPING_STOP_GRACE_MS } from "../ChatConnection";
 import type { PictureStore } from "../../../Stores/PictureStore";
 import { changingMatrixAvatarStore } from "./MatrixMedia";
 
@@ -19,6 +19,7 @@ export class MatrixChatRoomMember implements ChatRoomMember {
     readonly isTypingInformation: Writable<{ id: string; name: string | null; pictureStore: PictureStore } | null> =
         writable(null);
     private pictureStore: PictureStore;
+    private typingGraceTimer: ReturnType<typeof setTimeout> | undefined;
     private readonly pictureMxc: Writable<string | undefined>;
 
     constructor(private roomMember: RoomMember, client: MatrixClient) {
@@ -48,15 +49,34 @@ export class MatrixChatRoomMember implements ChatRoomMember {
         this.permissionLevel.set(MatrixChatRoomMember.getPermissionLevel(member.powerLevelNorm));
     }
     private onRoomMemberTyping(ev: MatrixEvent, member: RoomMember) {
-        const memberInformation: memberTypingInformation | null = member.typing
-            ? {
-                  id: this.id,
-                  name: get(this.name),
-                  pictureStore: this.pictureStore,
-              }
-            : null;
+        this.clearTypingGrace();
+        if (member.typing) {
+            const memberInformation: memberTypingInformation = {
+                id: this.id,
+                name: get(this.name),
+                pictureStore: this.pictureStore,
+            };
+            this.isTypingInformation.set(memberInformation);
+            return;
+        }
+        if (get(this.isTypingInformation) === null) return;
+        // The dots stay a moment after a "stopped", in case typing starts again right away.
+        this.typingGraceTimer = setTimeout(() => {
+            this.typingGraceTimer = undefined;
+            this.isTypingInformation.set(null);
+        }, TYPING_STOP_GRACE_MS);
+    }
 
-        this.isTypingInformation.set(memberInformation);
+    /** Their message arrived: they are no longer typing it, and the dots go at once. */
+    stoppedTyping(): void {
+        this.clearTypingGrace();
+        this.isTypingInformation.set(null);
+    }
+
+    private clearTypingGrace(): void {
+        if (this.typingGraceTimer === undefined) return;
+        clearTimeout(this.typingGraceTimer);
+        this.typingGraceTimer = undefined;
     }
 
     static getPermissionLevel(powerLevel: number): ChatPermissionLevel {
@@ -90,5 +110,6 @@ export class MatrixChatRoomMember implements ChatRoomMember {
         this.roomMember.off(RoomMemberEvent.PowerLevel, this.handleRoomMemberPowerLevel);
         this.roomMember.off(RoomMemberEvent.Name, this.handleRoomMemberName);
         this.roomMember.off(RoomMemberEvent.Typing, this.handleRoomMemberTyping);
+        this.clearTypingGrace();
     }
 }

@@ -6,7 +6,10 @@ import { Marked } from "marked";
 vi.mock("../../../Connection/ConnectionManager", () => ({
     connectionManager: { applications: [], youtubeToolActivated: true },
 }));
-vi.mock("../../../Stores/CoWebsiteStore", () => ({ coWebsites: { add: vi.fn() } }));
+vi.mock("../../../Stores/CoWebsiteStore", () => ({
+    coWebsites: { add: vi.fn() },
+    openedByPersonCoWebsite: <T>(coWebsite: T) => coWebsite,
+}));
 vi.mock("../../ChatSheetStore", () => ({ lowerChatSheet: vi.fn() }));
 vi.mock("../../../WebRtc/CoWebsite/SimpleCoWebsite", () => ({ SimpleCoWebsite: class {} }));
 vi.mock("../LinkPreviewFetcher", async () => {

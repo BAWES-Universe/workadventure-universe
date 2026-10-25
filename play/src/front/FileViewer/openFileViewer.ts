@@ -1,5 +1,5 @@
 import { derived, get, type Readable } from "svelte/store";
-import { coWebsites } from "../Stores/CoWebsiteStore";
+import { coWebsites, openedByPersonCoWebsite } from "../Stores/CoWebsiteStore";
 import { lowerChatSheet } from "../Chat/ChatSheetStore";
 import { bringOpenHereInFront } from "../Stores/SideWindowInFrontStore";
 import { FileViewerCoWebsite, type FileViewerSource } from "../WebRtc/CoWebsite/FileViewerCoWebsite";
@@ -123,7 +123,7 @@ export function openChatFileInViewer(file: ChatFileToOpen): void {
             if (bytes) openBytesInNewTab(file.name, bytes);
         },
     };
-    coWebsites.add(new FileViewerCoWebsite(source));
+    coWebsites.add(openedByPersonCoWebsite(new FileViewerCoWebsite(source)));
 }
 
 export interface MapFileToOpen {
