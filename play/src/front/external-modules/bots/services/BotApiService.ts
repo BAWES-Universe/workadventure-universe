@@ -186,6 +186,15 @@ export class BotApiService {
     /**
      * Get the opaque Admin API session from this tab's sessionStorage.
      */
+    /** The saved Orbit session while it has not run out yet, however soon it will. */
+    private unexpiredSessionToken(): string | null {
+        if (typeof sessionStorage === "undefined") return null;
+        const sessionToken = sessionStorage.getItem(SESSION_KEY);
+        const expiresAt = parseInt(sessionStorage.getItem(SESSION_EXPIRES_KEY) ?? "", 10);
+        if (!sessionToken || !OPAQUE_SESSION_PATTERN.test(sessionToken) || !(expiresAt > Date.now())) return null;
+        return sessionToken;
+    }
+
     private async getAdminApiSessionToken(): Promise<string | null> {
         if (typeof window === "undefined" || typeof sessionStorage === "undefined") {
             return null;
@@ -373,8 +382,11 @@ export class BotApiService {
             throw new Error("BotApiService not initialized. Missing adminUrl.");
         }
 
-        // Try to get Admin API session token first (async - may fetch new one if missing/expired)
-        const sessionToken = await this.getAdminApiSessionToken();
+        // Try to get Admin API session token first (async - may fetch new one if missing/expired). A keepalive
+        // request goes out while the page closes, when renewing first would be cut off: it takes the session as it
+        // is while that still works.
+        const sessionToken =
+            (options.keepalive ? this.unexpiredSessionToken() : null) ?? (await this.getAdminApiSessionToken());
 
         const url = `${this.adminUrl}${endpoint}`;
 

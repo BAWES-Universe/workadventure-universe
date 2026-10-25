@@ -84,3 +84,26 @@ describe("loading Settings > Notifications", () => {
         await expect(service().getPushOverview()).resolves.toBeUndefined();
     });
 });
+
+describe("the report a closing tab sends", () => {
+    it("goes out on the saved session even when it runs out soon, since renewing first would be cut off", async () => {
+        const api = service();
+        const renew = vi.spyOn(
+            api as unknown as { getAdminApiSessionToken: () => Promise<string> },
+            "getAdminApiSessionToken"
+        );
+        const saved = `orb_sess_v2_${"e".repeat(64)}`;
+        sessionStorage.setItem("orbit_admin_session_v2", saved);
+        sessionStorage.setItem("orbit_admin_session_v2_expires", String(Date.now() + 60_000));
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(json({}));
+
+        await api.reportPushActivity({ tabId: "t1", front: false, chatRoomId: null }, true);
+
+        expect(renew).not.toHaveBeenCalled();
+        const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+        expect(init.keepalive).toBe(true);
+        expect((init.headers as Record<string, string>).Authorization).toBe(`Bearer ${saved}`);
+        sessionStorage.clear();
+        vi.restoreAllMocks();
+    });
+});
