@@ -23,7 +23,14 @@ export class WorldUserProvider implements UserProviderInterface {
             []
         );
         this.userCount = derived(this.users, countPeople);
-        this.peopleCount = derived(this.users, (users) => countPeople(users.filter((user) => !user.isBot)));
+        // From everyone in the world, not the search results: the badge doesn't change as you type in the People filter.
+        this.peopleCount = derived(allUsersInWorldSpace.usersStore, (users) =>
+            countPeople(
+                Array.from(users.values())
+                    .map(mapExtendedSpaceUserToChatUser)
+                    .filter((user) => !user.isBot)
+            )
+        );
     }
 
     setFilter(searchText: string): Promise<void> {

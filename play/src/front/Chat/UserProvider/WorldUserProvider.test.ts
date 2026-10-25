@@ -1,5 +1,34 @@
 import { describe, expect, it } from "vitest";
-import { countPeople, countPeopleAndBots, countPeopleElsewhere } from "./WorldUserProvider";
+import { get, writable } from "svelte/store";
+import type { SpaceInterface } from "../../Space/SpaceInterface";
+import { countPeople, countPeopleAndBots, countPeopleElsewhere, WorldUserProvider } from "./WorldUserProvider";
+
+function spaceUser(id: string, name: string, tags: string[] = []) {
+    return {
+        uuid: id,
+        spaceUserId: `room_${id}`,
+        name,
+        tags,
+        pictureStore: writable(undefined),
+        reactiveUser: { availabilityStatus: writable(0) },
+    };
+}
+
+describe("WorldUserProvider.peopleCount", () => {
+    it("counts the people in the world without bots, and stays put while the People filter is typed in", async () => {
+        const users = new Map([
+            ["1", spaceUser("1", "Sara")],
+            ["2", spaceUser("2", "Omar")],
+            ["3", spaceUser("bot-3", "Helper", ["bot"])],
+        ]);
+        const space = { usersStore: writable(users) } as unknown as SpaceInterface;
+        const provider = new WorldUserProvider(space);
+        expect(get(provider.peopleCount)).toBe(2);
+        await provider.setFilter("sara");
+        expect(get(provider.users)).toHaveLength(1);
+        expect(get(provider.peopleCount)).toBe(2);
+    });
+});
 
 describe("countPeople", () => {
     it("counts each tab of one account (clones) as a person", () => {
