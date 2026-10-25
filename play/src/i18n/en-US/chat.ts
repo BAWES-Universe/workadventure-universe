@@ -750,6 +750,7 @@ const chat: BaseTranslation = {
         visit: "Visit",
         visitAria: "Visit {name} in {room}",
         livesIn: "Lives in",
+        nowIn: "Now in",
         inThisRoom: "You're in this room",
     },
     friends: {

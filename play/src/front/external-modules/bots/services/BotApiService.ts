@@ -591,6 +591,28 @@ export class BotApiService {
     }
 
     /**
+     * Orbit's live view (who is where, as you may see it), for the "Now in" on a person's profile in a direct message.
+     * Null when signed out, on no answer in time, or on any error: the profile then just doesn't say.
+     */
+    async getLiveView(): Promise<unknown> {
+        if (!this.adminUrl) return null;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const late = new Promise<null>((resolve) => {
+            timer = setTimeout(() => resolve(null), DM_STATUS_TIMEOUT_MS);
+        });
+        const asking = (async () => {
+            try {
+                return (await (await this.fetch("/api/live")).json()) as unknown;
+            } catch {
+                return null;
+            }
+        })();
+        return Promise.race([asking, late]).finally(() => {
+            clearTimeout(timer);
+        });
+    }
+
+    /**
      * The room a bot lives in, as the bot server tells someone who may message it (null for anyone else, a bot with no
      * room, or no answer in time). Read as a room card's link, so it only ever opens on this game.
      */

@@ -349,6 +349,7 @@ const chat: DeepPartial<Translation["chat"]> = {
         visit: "Visita",
         visitAria: "Visita {name} in {room}",
         livesIn: "Vive in",
+        nowIn: "Ora in",
         inThisRoom: "Sei in questa stanza",
     },
 };

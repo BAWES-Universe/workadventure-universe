@@ -28,8 +28,10 @@
     import VisitCard from "../../../../Components/VisitCard/VisitCard.svelte";
     import { gameSceneStore } from "../../../../Stores/GameSceneStore";
     import { botApiService } from "../../../../external-modules/bots/services/BotApiService";
-    import BotLivesIn from "../../../Bots/BotLivesIn.svelte";
     import { botHomeRoom } from "../../../Bots/BotHomeRoom";
+    import { visitBotRoom } from "../../../Bots/visitBotRoom";
+    import PartnerRoomBlock from "./PartnerRoomBlock.svelte";
+    import { partnerNowIn, sameRoom, visitPerson } from "./PartnerNowIn";
     import type { DirectPartner } from "./DirectPartnerStore";
     import { isInUniverse } from "./PartnerPlace";
     import { partnerStatus } from "./PartnerStatus";
@@ -97,9 +99,17 @@
     $: live = isInUniverse(partner.place);
     $: canViewProfile = canOpenPartnerProfile(partner);
     $: canInvite = canInvitePartner(partner, $invitesEnabledStore);
+    // A person shows where they are now, when they share their room with you and you can enter it (Orbit decides).
+    $: partnerUuid = partner.isBot ? undefined : partner.uuid;
+    $: personRoom = partnerNowIn(partnerUuid, () => botApiService.getLiveView(), window.location.origin);
+    $: placeNow = $botRoom ?? $personRoom;
     $: currentRoomUrl = $gameSceneStore?.roomUrl;
-    // Away from a bot's room its Visit button already takes you to it, so Walk to would say the same thing twice.
-    $: walkTo = partner.actions.walkTo && !($botRoom && $botRoom.url !== currentRoomUrl);
+    // Away from their room Visit already takes you to them, so Walk to would say the same thing twice.
+    $: walkTo = partner.actions.walkTo && !(placeNow && !sameRoom(currentRoomUrl, placeNow.url));
+    function visitRoom() {
+        if ($botRoom) visitBotRoom($botRoom, partner, currentRoomUrl);
+        else if ($personRoom) visitPerson(partner, $personRoom);
+    }
     $: tiles = [canInvite, walkTo, partner.actions.locate, canViewProfile].filter(Boolean).length;
     // Add friend, or what comes next with them. Remove friend is red, so it sits with the other red rows.
     $: friendAction = partnerFriendAction(partner, name, $friendsEnabledStore, $relationshipsStore, $LL);
@@ -186,8 +196,14 @@
             </div>
         </div>
 
-        {#if $botRoom}
-            <BotLivesIn link={$botRoom} {partner} {name} {currentRoomUrl} />
+        {#if placeNow}
+            <PartnerRoomBlock
+                label={$botRoom ? $LL.chat.botStatus.livesIn() : $LL.chat.botStatus.nowIn()}
+                link={placeNow}
+                {name}
+                {currentRoomUrl}
+                visit={visitRoom}
+            />
         {/if}
 
         {#if partner.user?.visitCardUrl && !partner.isBot}
