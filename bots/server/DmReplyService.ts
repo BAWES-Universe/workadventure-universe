@@ -351,8 +351,9 @@ export class DmReplyService extends BaseBehavior {
             replyText = regenerated.processedMessage;
         }
 
-        // The bot marks a reply that answers where it is: the person asked, so it always gets the card.
-        const askedForRoom = fullMessage.toUpperCase().includes(ROOM_CARD_MARK) || replyText.toUpperCase().includes(ROOM_CARD_MARK);
+        // The bot marks a reply that answers where it is: the person asked, so it always gets the card. Read from the
+        // reply that is sent, so an answer asked for again after a repeat goes by its own mark.
+        const askedForRoom = replyText.toUpperCase().includes(ROOM_CARD_MARK);
         replyText = withoutRoomCardMark(replyText);
         // Kept only once it was sent: if sending fails the person's message stays the last thing said, so a retry
         // answers it afresh instead of seeing a reply they never got.

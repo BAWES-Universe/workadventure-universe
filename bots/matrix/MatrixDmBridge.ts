@@ -778,17 +778,19 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const mediaType = ({ 'm.image': 'image', 'm.file': 'file', 'm.audio': 'audio', 'm.video': 'video' } as const)[
             msgtype as 'm.image' | 'm.file' | 'm.audio' | 'm.video'
         ];
-        if (!mediaType || typeof content.url !== 'string' || !this.deps.uploadAttachment) {
+        if (!mediaType || typeof content.url !== 'string') {
             return { text: '', attachments: [] };
         }
         // A caption is carried in body when filename is set separately (Matrix v1.10).
         const filename = String(content.filename ?? content.body ?? 'file');
         const caption = content.filename && content.body && content.body !== content.filename ? String(content.body) : '';
+        // With nowhere to put the file the bot can't read it: the person is told, rather than hearing nothing.
+        if (!this.deps.uploadAttachment) return { text: caption, attachments: [], failed: true };
         try {
             const file = await this.client.downloadMedia(botUserId, content.url);
             const mimeType = String(content.info?.mimetype ?? file.contentType);
             const url = await this.deps.uploadAttachment(file.data, mimeType, filename);
-            if (!url) return { text: caption, attachments: [] };
+            if (!url) return { text: caption, attachments: [], failed: true };
             return { text: caption, attachments: [{ url, mimeType, mediaType }] };
         } catch (error) {
             console.warn('[MatrixDmBridge] Could not read an attachment:', (error as Error)?.message ?? error);

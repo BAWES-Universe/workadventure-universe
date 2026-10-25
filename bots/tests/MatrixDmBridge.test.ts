@@ -860,6 +860,20 @@ describe('MatrixDmBridge', () => {
         expect(noteStates()).toEqual(['trouble']);
     });
 
+    it('says it could not answer a picture it has nowhere to put, instead of going silent', async () => {
+        const picture: MatrixEvent = {
+            ...message('pic.png'),
+            content: { msgtype: 'm.image', body: 'pic.png', url: 'mxc://matrix.test/pic', info: { mimetype: 'image/png' } },
+        };
+        await bridge.onEvent(invite());
+        deps.uploadAttachment = vi.fn(async () => null);
+        await bridge.onEvent(picture);
+        deps.uploadAttachment = undefined as never;
+        await bridge.onEvent({ ...picture, event_id: '$pic2' });
+        expect(deps.reply).not.toHaveBeenCalled();
+        expect(noteStates()).toEqual(['trouble', 'trouble']);
+    });
+
     it('messages typed before the bot joined get one "couldn\'t answer" note between them when answering fails', async () => {
         const early = (body: string, ts: number): MatrixEvent => ({ ...message(body), origin_server_ts: ts });
         client.getRecentMessages.mockResolvedValueOnce([early('hi', 2000), early('anyone there?', 2100), early('hello??', 2200)]);
@@ -1418,6 +1432,33 @@ describe('DmReplyService history', () => {
         const meet = await ask('can we meet?');
         expect(meet.roomLink?.room).toBe('Lobby');
         expect(meet.text).toBe('Come over');
+    });
+
+    it('goes by the mark of the reply that is sent, when a repeated answer was asked for again', async () => {
+        const { DmReplyService } = await import('../server/DmReplyService');
+        const { PersistentMemory } = await import('../memory/PersistentMemory');
+        const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
+        const answering = vi.fn(async function* () {
+            yield { content: "I'm in the Lobby, come find me! [ROOM_CARD]", done: true };
+        });
+        Object.assign(service, {
+            playerIds: new Map(),
+            nextPlayerId: -1,
+            loadedBots: new Set([BOT]),
+            roomCards: new Map(),
+            botManager: { getBot: () => null },
+            adminApiService: { getRoomMetadata: vi.fn(async () => ({ universeName: 'BAWES', worldName: 'BAWES HQ', roomName: 'Lobby' })) },
+            getBotConfig: async () => ({ botId: BOT, name: 'Guide', aiProviderRef: 'p', roomUrl: 'https://play.example/@/bawes/hq/lobby' }),
+            aiService: { generateBotResponseStream: answering },
+            responseProcessor: { processResponse: (_b: string, _p: number, text: string) => ({ cleaned: text }) },
+            regenerateOnRepetition: vi.fn(async () => ({ processedMessage: 'Happy to help with that.' })),
+            conversationMemory: new PersistentMemory({}),
+            conversationStorage: { startConversation: vi.fn(), addMessage: vi.fn(async () => undefined) },
+        });
+        const person = { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false };
+        const reply = await (service as any).replyNow(BOT, person, 'where are you?', [], {});
+        expect(reply.text).toBe('Happy to help with that.');
+        expect(reply.roomLink).toBeUndefined();
     });
 
     it('adds no room link to a reply that does not name the room', async () => {
