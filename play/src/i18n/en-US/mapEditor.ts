@@ -877,6 +877,8 @@ const mapEditor: BaseTranslation = {
                     actions: {
                         chat: "Chat nearby",
                         chatHint: "In its bubble on the map",
+                        dm: "Direct messages",
+                        dmHint: "From anywhere, one to one. Needs sign-in",
                         summon: "Summon",
                         summonHint: "Summon it to you in its room",
                         manage: "Manage this bot",
