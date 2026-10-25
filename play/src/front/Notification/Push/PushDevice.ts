@@ -188,12 +188,17 @@ export async function turnOffThisDevice(deviceId: string | undefined, remove: bo
     }
     if (remove) {
         thisDeviceIdStore.set(undefined);
-        try {
-            const registration = await navigator.serviceWorker?.getRegistration(SERVICE_WORKER_URL);
-            await (await registration?.pushManager.getSubscription())?.unsubscribe();
-        } catch (error) {
-            console.warn("Notifications: this browser could not be unsubscribed", error);
-        }
+        await forgetThisBrowser();
+    }
+}
+
+/** This browser drops its subscription, so nothing more reaches it while Universe is closed. */
+async function forgetThisBrowser(): Promise<void> {
+    try {
+        const registration = await navigator.serviceWorker?.getRegistration(SERVICE_WORKER_URL);
+        await (await registration?.pushManager.getSubscription())?.unsubscribe();
+    } catch (error) {
+        console.warn("Notifications: this browser could not be unsubscribed", error);
     }
 }
 

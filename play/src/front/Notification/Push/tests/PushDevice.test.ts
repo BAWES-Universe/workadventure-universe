@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { InstallEnvironment } from "../../../Install/InstallPlatform";
 import { describeDevice, deviceLabel, keyBytes, pushAvailability } from "../PushDevice";
 
-vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: {} }));
+const { getPushPublicKey } = vi.hoisted(() => ({ getPushPublicKey: vi.fn(() => Promise.resolve(null)) }));
+vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: { getPushPublicKey } }));
 vi.mock("../../../Network/ServiceWorker", () => ({ SERVICE_WORKER_URL: "/service-worker.js" }));
 vi.mock("../../../Connection/LocalUserStore", () => {
     let notification = false;
@@ -100,6 +101,23 @@ describe("this device's state", () => {
         expect(readThisDeviceState()).toBe("off");
         permission.value = "denied";
         expect(readThisDeviceState()).toBe("blocked");
+        vi.unstubAllGlobals();
+    });
+});
+
+describe("saving this device again on start", () => {
+    it("leaves a device that was switched off here alone", async () => {
+        const { refreshThisDevice } = await import("../PushDevice");
+        const { localUserStore } = await import("../../../Connection/LocalUserStore");
+        vi.stubGlobal("Notification", { permission: "granted" });
+        vi.stubGlobal("PushManager", class {});
+        vi.stubGlobal("navigator", { userAgent: UA.windowsEdge, platform: "", maxTouchPoints: 0, serviceWorker: {} });
+        localUserStore.setNotification(false);
+        await refreshThisDevice();
+        expect(getPushPublicKey).not.toHaveBeenCalled();
+        localUserStore.setNotification(true);
+        await refreshThisDevice();
+        expect(getPushPublicKey).toHaveBeenCalledOnce();
         vi.unstubAllGlobals();
     });
 });
