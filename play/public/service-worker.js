@@ -34,6 +34,8 @@ async function openFromNotification(chatRoomId, tabUrl) {
         const focused = (await existing.focus().catch(() => undefined)) ?? existing;
         if (chatRoomId) {
             focused.postMessage(openChatMessage(chatRoomId));
+            // A window still on the release before this worker listens here instead, until it reloads.
+            new BroadcastChannel("message").postMessage(openChatMessage(chatRoomId));
         }
         return;
     }

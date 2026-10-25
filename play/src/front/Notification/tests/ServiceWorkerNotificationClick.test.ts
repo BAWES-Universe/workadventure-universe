@@ -28,6 +28,13 @@ async function tap(windows: FakeWindow[], data: unknown, opened: FakeWindow | nu
         addEventListener: (type: string, listener: (event: unknown) => void) => listeners.set(type, listener),
         skipWaiting: vi.fn(),
     };
+    const broadcasts: unknown[] = [];
+    class FakeBroadcastChannel {
+        constructor(readonly name: string) {}
+        postMessage(message: unknown) {
+            broadcasts.push({ channel: this.name, message });
+        }
+    }
     const fakeClients = {
         matchAll: vi.fn().mockResolvedValue(windows),
         openWindow: vi.fn().mockResolvedValue(opened),
@@ -35,7 +42,7 @@ async function tap(windows: FakeWindow[], data: unknown, opened: FakeWindow | nu
     };
     // The real worker file, run with the fake browser parts in place of its globals.
     // eslint-disable-next-line @typescript-eslint/no-implied-eval
-    new Function("self", "clients", workerSource)(fakeSelf, fakeClients);
+    new Function("self", "clients", "BroadcastChannel", workerSource)(fakeSelf, fakeClients, FakeBroadcastChannel);
 
     let done: Promise<unknown> = Promise.resolve();
     const close = vi.fn();
@@ -46,7 +53,7 @@ async function tap(windows: FakeWindow[], data: unknown, opened: FakeWindow | nu
         },
     });
     await done;
-    return { close, openWindow: fakeClients.openWindow };
+    return { close, openWindow: fakeClients.openWindow, broadcasts };
 }
 
 const openChat = (chatRoomId: string) => ({ type: "openChat", data: { chatRoomId } });
@@ -71,6 +78,18 @@ describe("service worker: tapping a chat notification", () => {
         expect(same.postMessage).toHaveBeenCalledWith(openChat("!dm:chat"));
         expect(other.focus).not.toHaveBeenCalled();
         expect(other.postMessage).not.toHaveBeenCalled();
+    });
+
+    it("also tells windows still on the previous release, which listen on the old channel until they reload", async () => {
+        const { broadcasts } = await tap([fakeWindow(ROOM)], { chatRoomId: "!dm:chat", tabUrl: ROOM });
+
+        expect(broadcasts).toEqual([{ channel: "message", message: openChat("!dm:chat") }]);
+    });
+
+    it("tells no one on the old channel about a window it opens, which is always on this release", async () => {
+        const { broadcasts } = await tap([], { chatRoomId: "!dm:chat", tabUrl: ROOM });
+
+        expect(broadcasts).toEqual([]);
     });
 
     it("brings the first window forward when none shows the notification's room", async () => {
