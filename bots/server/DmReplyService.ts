@@ -1,6 +1,7 @@
 /**
  * Answers a direct message to a bot the same way the bot answers in a bubble on the map: same personality, memory,
- * emotions, tools (minus the map ones) and repetition checks. The bot does not need to be spawned.
+ * emotions, tools (minus the map ones), knowledge of the room it lives in, and repetition checks. The bot does not need
+ * to be spawned.
  *
  * Direct messages stay between the person and the bot: they are never written to the bot's conversation log, so the
  * people who manage the bot don't read them there.
@@ -236,7 +237,8 @@ export class DmReplyService extends BaseBehavior {
                 undefined,
                 images.length ? images : undefined,
                 'dm',
-                config.toolTimeoutSeconds
+                config.toolTimeoutSeconds,
+                config.roomUrl
             )) {
                 if (chunk.reset) {
                     // The model said something before calling tools: in a bubble that stays as its own bubble.
@@ -299,6 +301,7 @@ export class DmReplyService extends BaseBehavior {
                 images: images.length ? images : undefined,
                 channel: 'dm',
                 toolTimeoutSeconds: config.toolTimeoutSeconds,
+                homeRoomUrl: config.roomUrl,
             });
             replyText = regenerated.processedMessage;
         }

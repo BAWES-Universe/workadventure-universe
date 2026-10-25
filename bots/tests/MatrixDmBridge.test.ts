@@ -1173,6 +1173,30 @@ describe('DmReplyService history', () => {
         expect(uuidSeen).toBe('uuid-alice');
     });
 
+    it("tells the model which room the bot lives in, so it can name it", async () => {
+        const { DmReplyService } = await import('../server/DmReplyService');
+        const { PersistentMemory } = await import('../memory/PersistentMemory');
+        const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
+        const room = 'https://play.example/@/bawes/hq/lobby';
+        const answering = vi.fn(async function* () {
+            yield { content: 'I live in the Lobby.', done: true };
+        });
+        Object.assign(service, {
+            playerIds: new Map(),
+            nextPlayerId: -1,
+            loadedBots: new Set([BOT]),
+            getBotConfig: async () => ({ botId: BOT, name: 'Guide', aiProviderRef: 'p', roomUrl: room }),
+            aiService: { generateBotResponseStream: answering },
+            conversationMemory: new PersistentMemory({}),
+            conversationStorage: { startConversation: vi.fn(), addMessage: vi.fn(async () => undefined) },
+        });
+        const person = { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false };
+        await (service as any).replyNow(BOT, person, 'where u at', [], {});
+        const args = answering.mock.calls[0] as unknown[];
+        expect(args[11]).toBe('dm');
+        expect(args[13]).toBe(room);
+    });
+
     it('remembers an answer only once it was sent, so a retry after a failed send is answered afresh', async () => {
         const { DmReplyService } = await import('../server/DmReplyService');
         const { ConversationMemory } = await import('../memory/ConversationMemory');

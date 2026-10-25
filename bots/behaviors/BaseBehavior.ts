@@ -1604,6 +1604,8 @@ export abstract class BaseBehavior {
         channel?: 'world' | 'dm';
         /** The bot's Patience for tools, for a caller with no bot client (a direct message). */
         toolTimeoutSeconds?: number | null;
+        /** The bot's room, for a caller with no bot client (a direct message), so the retry still knows it. */
+        homeRoomUrl?: string;
     }): Promise<{ processed: ProcessedResponse; processedMessage: string; responseId: string }> {
         const {
             botId,
@@ -1679,7 +1681,8 @@ export abstract class BaseBehavior {
                     abortSignal,
                     images,
                     params.channel ?? 'world',
-                    params.toolTimeoutSeconds
+                    params.toolTimeoutSeconds,
+                    params.homeRoomUrl
                 )) {
                     if (chunk.reset) {
                         const showToolCalls = chunk.toolNames?.length ? await this.shouldShowToolCalls(botId) : false;
