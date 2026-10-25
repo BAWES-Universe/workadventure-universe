@@ -173,4 +173,28 @@ describe("the bot page's Mind group (#1375)", () => {
         await settle();
         expect(byTestId("bot-runs-on-mine")).toHaveLength(1);
     });
+
+    it("keeps a pinned provider's name when the background load gets no provider list", async () => {
+        mocks.api.getAvailableAIProviders.mockResolvedValue([
+            { providerId: "openai-main", name: "OpenAI", model: "gpt-5", enabled: true },
+        ]);
+        mocks.api.getBotAiOptions.mockResolvedValue(options({ current: "openai-main" }));
+        mocks.api.getMyAiKeys.mockResolvedValue([]);
+        const component = new MindGroup({
+            target,
+            props: { bot: { ...bot, aiProviderRef: "openai-main" }, open: false, onToggle: vi.fn(), onChange: vi.fn() },
+        });
+        destroy = () => component.$destroy();
+        await settle();
+        component.$set({ open: true });
+        await settle();
+        expect(text()).toContain("OpenAI");
+
+        byTestId("bot-runs-on-ai-keys")[0].click();
+        mocks.api.getAvailableAIProviders.mockResolvedValue([]);
+        window.dispatchEvent(new Event("focus"));
+        await settle();
+        expect(mocks.api.getBotAiOptions).toHaveBeenCalledTimes(2);
+        expect(text()).toContain("OpenAI · gpt-5");
+    });
 });

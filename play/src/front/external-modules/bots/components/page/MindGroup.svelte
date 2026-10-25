@@ -74,8 +74,9 @@
                 botApiService.getMyAiKeys(),
             ]);
             if (mine !== loadCount) return;
-            providers = loadedProviders;
-            // A background load that Orbit couldn't answer keeps what the page already shows
+            // A background load that couldn't be answered (the provider list comes back empty then) keeps what the page
+            // already shows
+            if (loadedProviders.length > 0 || !quiet) providers = loadedProviders;
             if (loadedOptions || !quiet) options = loadedOptions;
             if (loadedKeys || !quiet) myKeys = loadedKeys;
         } catch (e) {
