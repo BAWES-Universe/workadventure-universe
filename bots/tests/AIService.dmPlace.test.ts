@@ -137,6 +137,7 @@ describe("AIService: where a bot lives, in a direct message", () => {
         expect(prompt).toContain("- Areas in this room: Library, Social Area");
         expect(prompt).toContain("name that room and its world");
         expect(prompt).toContain("Bring up your room only when they ask where you are, want to meet, or want to be shown around");
+        expect(prompt).toContain("end that reply with [ROOM_CARD]");
     });
 
     it("leaves out area coordinates, since a direct message can't walk there", async () => {

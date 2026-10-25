@@ -12,6 +12,7 @@
 import { BaseBehavior } from '../behaviors/BaseBehavior';
 import { BotClient } from '../client/BotClient';
 import { parseEmotionsFromResponse, appendStreamedChunk } from '../ai/EmotionParser';
+import { ROOM_CARD_MARK } from '../ai/AIService';
 import type { PendingMedia } from '../memory/ConversationMemory';
 import type { BotConfiguration } from './AdminApiService';
 import type { BotManager } from './BotManager';
@@ -25,6 +26,14 @@ const CONFIG_CACHE_MS = 60 * 1000;
 /** Orbit gets this long to send a bot's settings before the lookup counts as failed (the person hears "couldn't answer"). */
 const CONFIG_TIMEOUT_MS = 10 * 1000;
 const MAX_TRACKED_PEOPLE = 10000;
+/** A room card for a reply that only names the room in passing comes at most this often in one chat. */
+const PASSING_ROOM_CARD_EVERY_MS = 24 * 60 * 60 * 1000;
+const ROOM_CARD_MARKS = /\s*\[ROOM_CARD\]\s*/gi;
+
+/** The reply without the bot's room card mark. */
+function withoutRoomCardMark(text: string): string {
+    return text.replace(ROOM_CARD_MARKS, ' ').trim();
+}
 const MAX_CACHED_CONFIGS = 1000;
 
 export interface DmPerson {
@@ -81,6 +90,8 @@ export class DmReplyService extends BaseBehavior {
     private configCache = new Map<string, { config: BotConfiguration; at: number }>();
     // Kept apart, so lookups of ids that are not bots cannot push real bots out of the cache above
     private missingCache = new Map<string, number>();
+    /** When each chat (bot and person) last got a room card. */
+    private roomCards = new Map<string, number>();
 
     constructor(private botManager: BotManager) {
         super({ type: 'dm' });
@@ -269,7 +280,7 @@ export class DmReplyService extends BaseBehavior {
             )) {
                 if (chunk.reset) {
                     // The model said something before calling tools: in a bubble that stays as its own bubble.
-                    const interim = parseEmotionsFromResponse(fullMessage).cleanedResponse.trim();
+                    const interim = withoutRoomCardMark(parseEmotionsFromResponse(fullMessage).cleanedResponse);
                     if (interim) await hooks.onInterimMessage?.(interim);
                     // The bot's own "Show tool calls" switch, as in a bubble (#742).
                     if (chunk.toolNames?.length && (await this.shouldShowToolCalls(botId))) {
@@ -340,7 +351,9 @@ export class DmReplyService extends BaseBehavior {
             replyText = regenerated.processedMessage;
         }
 
-        replyText = replyText.trim();
+        // The bot marks a reply that answers where it is: the person asked, so it always gets the card.
+        const askedForRoom = fullMessage.toUpperCase().includes(ROOM_CARD_MARK) || replyText.toUpperCase().includes(ROOM_CARD_MARK);
+        replyText = withoutRoomCardMark(replyText);
         // Kept only once it was sent: if sending fails the person's message stays the last thing said, so a retry
         // answers it afresh instead of seeing a reply they never got.
         let kept = false;
@@ -353,17 +366,25 @@ export class DmReplyService extends BaseBehavior {
         // Media the tools produced waits in memory; a DM delivers it as attachments right after the text.
         const playerMemory = memory.getMemory(botId, playerId);
         const media = playerMemory?.pendingMedia?.splice(0) ?? [];
-        const roomLink = await this.roomLinkFor(config.roomUrl, replyText);
+        const roomLink = await this.roomLinkFor(config.roomUrl, replyText, askedForRoom, `${botId}:${person.matrixUserId}`);
         return { text: replyText, media, keep, ...(roomLink ? { roomLink } : {}) };
     }
 
-    /** The bot's room as a link, when the reply names it (the room's name, in any case). */
-    private async roomLinkFor(roomUrl: string | undefined, text: string): Promise<DmRoomLink | undefined> {
+    /**
+     * The bot's room as a link. A reply that answers where the bot is (the person asked) always gets it. A reply that
+     * only names the room (in any case) gets it when the chat had no card in the last day, so it never repeats.
+     */
+    private async roomLinkFor(roomUrl: string | undefined, text: string, asked: boolean, chat: string): Promise<DmRoomLink | undefined> {
         if (!roomUrl || !text || !this.adminApiService) return undefined;
+        const lastCard = this.roomCards.get(chat);
+        if (!asked && lastCard !== undefined && Date.now() - lastCard < PASSING_ROOM_CARD_EVERY_MS) return undefined;
         try {
             const metadata = await this.adminApiService.getRoomMetadata(roomUrl);
             const room = metadata?.roomName?.trim();
-            if (!room || !text.toLocaleLowerCase().includes(room.toLocaleLowerCase())) return undefined;
+            if (!room || (!asked && !text.toLocaleLowerCase().includes(room.toLocaleLowerCase()))) return undefined;
+            this.roomCards.delete(chat);
+            this.roomCards.set(chat, Date.now());
+            if (this.roomCards.size > MAX_TRACKED_PEOPLE) this.roomCards.delete(this.roomCards.keys().next().value!);
             return { url: roomUrl, room, world: metadata?.worldName?.trim() ?? '', universe: metadata?.universeName?.trim() ?? '' };
         } catch (error) {
             // No card is fine: the reply still names the room in words.

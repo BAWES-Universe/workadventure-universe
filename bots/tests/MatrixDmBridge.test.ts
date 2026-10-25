@@ -1293,6 +1293,7 @@ describe('DmReplyService history', () => {
             nextPlayerId: -1,
             loadedBots: new Set([BOT]),
             botManager: { getBot: () => live },
+            roomCards: new Map(),
             adminApiService: { getRoomMetadata: vi.fn(async () => ({ universeName: 'BAWES', worldName: 'BAWES HQ', roomName: 'Lobby' })) },
             getBotConfig: async () => ({ botId: BOT, name: 'Guide', aiProviderRef: 'p', roomUrl: room }),
             aiService: { generateBotResponseStream: answering },
@@ -1366,6 +1367,45 @@ describe('DmReplyService history', () => {
         expect(next.media).toEqual([]);
     });
 
+    it('cards a passing mention of the room once a day, and every answer to where the bot is', async () => {
+        const { DmReplyService } = await import('../server/DmReplyService');
+        const { PersistentMemory } = await import('../memory/PersistentMemory');
+        const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
+        const replies = [
+            'Back in the Lobby I keep a list of those.',
+            'The Lobby has a good view of it too.',
+            "I'm in the Lobby at BAWES HQ, come find me! [ROOM_CARD]",
+            'Come over [room_card]',
+        ];
+        const answering = vi.fn(async function* () {
+            yield { content: replies.shift()!, done: true };
+        });
+        Object.assign(service, {
+            playerIds: new Map(),
+            nextPlayerId: -1,
+            loadedBots: new Set([BOT]),
+            roomCards: new Map(),
+            botManager: { getBot: () => null },
+            adminApiService: { getRoomMetadata: vi.fn(async () => ({ universeName: 'BAWES', worldName: 'BAWES HQ', roomName: 'Lobby' })) },
+            getBotConfig: async () => ({ botId: BOT, name: 'Guide', aiProviderRef: 'p', roomUrl: 'https://play.example/@/bawes/hq/lobby' }),
+            aiService: { generateBotResponseStream: answering },
+            conversationMemory: new PersistentMemory({}),
+            conversationStorage: { startConversation: vi.fn(), addMessage: vi.fn(async () => undefined) },
+        });
+        const person = { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false };
+        const ask = (text: string) => (service as any).replyNow(BOT, person, text, [], {});
+        // In passing: the first mention gets a card, the next one that day does not.
+        expect((await ask('any tips?')).roomLink?.room).toBe('Lobby');
+        expect((await ask('and the view?')).roomLink).toBeUndefined();
+        // Asked where it is: the card comes every time, and the mark never shows.
+        const where = await ask('where are you?');
+        expect(where.roomLink?.room).toBe('Lobby');
+        expect(where.text).toBe("I'm in the Lobby at BAWES HQ, come find me!");
+        const meet = await ask('can we meet?');
+        expect(meet.roomLink?.room).toBe('Lobby');
+        expect(meet.text).toBe('Come over');
+    });
+
     it('adds no room link to a reply that does not name the room', async () => {
         const { DmReplyService } = await import('../server/DmReplyService');
         const { PersistentMemory } = await import('../memory/PersistentMemory');
@@ -1378,6 +1418,7 @@ describe('DmReplyService history', () => {
             nextPlayerId: -1,
             loadedBots: new Set([BOT]),
             botManager: { getBot: () => null },
+            roomCards: new Map(),
             adminApiService: { getRoomMetadata: vi.fn(async () => ({ universeName: 'BAWES', worldName: 'BAWES HQ', roomName: 'Lobby' })) },
             getBotConfig: async () => ({ botId: BOT, name: 'Guide', aiProviderRef: 'p', roomUrl: 'https://play.example/@/bawes/hq/lobby' }),
             aiService: { generateBotResponseStream: answering },

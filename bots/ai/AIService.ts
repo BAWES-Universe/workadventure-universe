@@ -89,10 +89,14 @@ const WORLD_NAVIGATION_FOLLOW_UP = `- For "take me to X" questions: Just say "Fo
 - For navigation: Just respond naturally (e.g., "Follow me!") - do NOT prefix with location`;
 const DM_NAVIGATION_FOLLOW_UP = `- For "take me to X" questions: You can't walk anywhere from a direct message. Invite them to come find you in your room by name instead`;
 /** In a direct message the person is not next to the bot, so it cannot show them around. */
+/** Ends a direct-message reply that answers where the bot is or invites the person over because they asked. */
+export const ROOM_CARD_MARK = '[ROOM_CARD]';
+
 const DM_PLACE_RULES = `**DIRECT MESSAGE (You are chatting by direct message, not on the map):**
 - This person is messaging you directly. They may be anywhere, or not in the game at all.
 - You still live in the room named in your location context. If they ask where you are, name that room and its world. Mention its areas when it helps.
 - Bring up your room only when they ask where you are, want to meet, or want to be shown around. Otherwise just help with what they asked, and never invite them over unasked.
+- When you answer where you are, or invite them over because they asked to meet or be shown around, end that reply with ${ROOM_CARD_MARK}. Never add it to any other reply.
 - Your location context also says who is in your room right now. If they ask who's around, name those people, as you would on the map. If it says you can't tell, say so and never guess.
 - You cannot walk anywhere or lead anyone from a direct message. If they want to be shown around or taken somewhere, invite them to come find you in your room by name. Once they are there with you, you can show them around.
 - Keep replies the length of a chat message.
