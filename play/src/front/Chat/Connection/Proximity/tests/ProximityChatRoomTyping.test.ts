@@ -2,6 +2,7 @@ import { Subject } from "rxjs";
 import { get, writable } from "svelte/store";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProximityChatRoom, TYPING_EXPIRY_MS } from "../ProximityChatRoom";
+import { TYPING_STOP_GRACE_MS } from "../../ChatConnection";
 import type { SpaceInterface, SpaceUserExtended } from "../../../../Space/SpaceInterface";
 import type { SpaceRegistryInterface } from "../../../../Space/SpaceRegistry/SpaceRegistryInterface";
 import type { RemotePlayersRepository } from "../../../../Phaser/Game/RemotePlayersRepository";
@@ -125,6 +126,24 @@ describe("ProximityChatRoom typing indicator", () => {
 
         // The members list is empty (it lags the events): the stop must still be applied.
         fake.emit("spaceIsTyping", typing("room_2", false));
+        vi.advanceTimersByTime(TYPING_STOP_GRACE_MS);
+        expect(typingIds()).toEqual([]);
+    });
+
+    it("keeps the dots a moment after a stop, and a new start in that moment keeps them on (#1379)", () => {
+        fake.emit("spaceIsTyping", typing("room_2", true));
+        fake.emit("spaceIsTyping", typing("room_2", false));
+        vi.advanceTimersByTime(TYPING_STOP_GRACE_MS - 1);
+        expect(typingIds()).toEqual(["room_2"]);
+
+        fake.emit("spaceIsTyping", typing("room_2", true));
+        vi.advanceTimersByTime(TYPING_STOP_GRACE_MS);
+        expect(typingIds()).toEqual(["room_2"]);
+    });
+
+    it("ignores a stop from someone who was not typing", () => {
+        fake.emit("spaceIsTyping", typing("room_2", false));
+        vi.advanceTimersByTime(TYPING_STOP_GRACE_MS);
         expect(typingIds()).toEqual([]);
     });
 
@@ -132,6 +151,7 @@ describe("ProximityChatRoom typing indicator", () => {
         fake.emit("spaceIsTyping", typing("room_2", true));
         fake.emit("spaceIsTyping", typing("room_3", true));
         fake.emit("spaceIsTyping", typing("room_2", false));
+        vi.advanceTimersByTime(TYPING_STOP_GRACE_MS);
         expect(typingIds()).toEqual(["room_3"]);
     });
 
@@ -157,6 +177,18 @@ describe("ProximityChatRoom typing indicator", () => {
 
         expect(typingIds()).toEqual(["room_3"]);
         expect(get(room.messages).some((message) => get(message.content).body === "hello")).toBe(true);
+    });
+
+    it("takes the dots away at once when the message arrives right after the stop", () => {
+        // Sending says "stopped" first, then the message comes: the message does not wait for the grace.
+        fake.emit("spaceIsTyping", typing("room_2", true));
+        fake.emit("spaceIsTyping", typing("room_2", false));
+        fake.emit("spaceMessage", {
+            sender: "room_2",
+            spaceMessage: { message: "sent", characterTextures: [], name: "room_2" },
+        });
+
+        expect(typingIds()).toEqual([]);
     });
 
     it("clears the entries and their timers when the room is destroyed", () => {
