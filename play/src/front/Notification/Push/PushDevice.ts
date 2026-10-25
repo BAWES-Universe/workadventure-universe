@@ -131,7 +131,8 @@ export async function subscribeThisDevice(): Promise<"saved" | "notSetUp" | "fai
     }
     subscription ??= await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
     // Switched off while this was on its way, and still off: Off stands, so nothing is saved and nothing can arrive
-    if (switchOffs !== offsAtStart && localUserStore.getNotificationChoice() === false) {
+    const switchedOff = () => switchOffs !== offsAtStart && localUserStore.getNotificationChoice() === false;
+    if (switchedOff()) {
         await subscription.unsubscribe();
         return "failed";
     }
@@ -141,6 +142,12 @@ export async function subscribeThisDevice(): Promise<"saved" | "notSetUp" | "fai
     );
     if (id === null) return "failed";
     setThisDeviceId(id);
+    // Switched off while Orbit was saving it: it is this device, kept as off there, and nothing reaches the browser
+    if (switchedOff()) {
+        await subscription.unsubscribe();
+        await botApiService.setPushDeviceEnabled(id, false);
+        return "failed";
+    }
     return "saved";
 }
 
@@ -246,6 +253,8 @@ export type TurnOnResult = "on" | "blocked" | "dismissed" | "failed";
  * tap), then this browser is subscribed and saved.
  */
 export function turnOnThisDevice(): Promise<TurnOnResult> {
+    // Switched off again while the browser asked or this was saved: Off stands, and nothing went wrong
+    const offsAtStart = switchOffs;
     let asking: Promise<NotificationPermission>;
     try {
         asking = Notification.requestPermission();
@@ -256,8 +265,10 @@ export function turnOnThisDevice(): Promise<TurnOnResult> {
     return asking
         .then(async (permission) => {
             if (permission === "denied") return "blocked";
-            if (permission !== "granted") return "dismissed";
-            if ((await subscribeThisDevice()) === "failed") return "failed";
+            if (permission !== "granted" || switchOffs !== offsAtStart) return "dismissed";
+            const result = await subscribeThisDevice();
+            if (switchOffs !== offsAtStart) return "dismissed";
+            if (result === "failed") return "failed";
             localUserStore.setNotification(true);
             return "on";
         })

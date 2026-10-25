@@ -284,6 +284,61 @@ describe("saving this device", () => {
         vi.unstubAllGlobals();
     });
 
+    it("keeps Off when switched off while the browser was asking", async () => {
+        const { turnOnThisDevice, turnOffThisDevice } = await import("../PushDevice");
+        const { localUserStore } = await import("../../../Connection/LocalUserStore");
+        vi.stubGlobal("navigator", { userAgent: UA.windowsEdge, platform: "", maxTouchPoints: 0, serviceWorker: {} });
+        vi.stubGlobal("Notification", {
+            permission: "default",
+            requestPermission: () => {
+                // Off again while the browser's own box is open
+                void turnOffThisDevice(undefined, false);
+                return Promise.resolve("granted");
+            },
+        });
+        vi.stubGlobal("PushManager", class {});
+        registerPushDevice.mockClear();
+        expect(await turnOnThisDevice()).toBe("dismissed");
+        expect(localUserStore.getNotificationChoice()).toBe(false);
+        expect(registerPushDevice).not.toHaveBeenCalled();
+        vi.unstubAllGlobals();
+    });
+
+    it("keeps Off in Orbit and on the browser when switched off while Orbit was saving it", async () => {
+        const { subscribeThisDevice, turnOffThisDevice } = await import("../PushDevice");
+        const { localUserStore } = await import("../../../Connection/LocalUserStore");
+        const unsubscribe = vi.fn(() => Promise.resolve(true));
+        const subscription = { unsubscribe, toJSON: () => ({ endpoint: "https://push.example/4" }), options: {} };
+        vi.stubGlobal("navigator", {
+            userAgent: UA.windowsEdge,
+            platform: "",
+            maxTouchPoints: 0,
+            serviceWorker: {
+                register: () =>
+                    Promise.resolve({
+                        pushManager: {
+                            getSubscription: () => Promise.resolve(null),
+                            subscribe: () => Promise.resolve(subscription),
+                        },
+                    }),
+                getRegistration: () => Promise.resolve(undefined),
+            },
+        });
+        vi.stubGlobal("Notification", { permission: "granted" });
+        vi.stubGlobal("PushManager", class {});
+        localUserStore.setNotification(true);
+        getPushPublicKey.mockResolvedValueOnce("AAAA");
+        registerPushDevice.mockImplementationOnce(() => {
+            void turnOffThisDevice(undefined, false);
+            return Promise.resolve("d-saving");
+        });
+        setPushDeviceEnabled.mockClear();
+        expect(await subscribeThisDevice()).toBe("failed");
+        expect(unsubscribe).toHaveBeenCalledOnce();
+        expect(setPushDeviceEnabled).toHaveBeenCalledWith("d-saving", false);
+        vi.unstubAllGlobals();
+    });
+
     it("forgets an id kept from before when nothing is saved in Orbit now", async () => {
         const { subscribeThisDevice, thisDeviceIdStore } = await import("../PushDevice");
         const { get } = await import("svelte/store");
