@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
     ASK_AGAIN_AFTER_MS,
     ASK_AGAIN_WHEN_BLOCKED_AFTER_MS,
+    ORBIT_ANSWER_WITHIN_MS,
     askForNotifications,
     replyMoment,
     shouldAsk,
@@ -89,6 +90,15 @@ describe("showing the card", () => {
         askForNotifications({ kind: "busy" });
         await flush();
         expect(shownWith()).toEqual({ moment: { kind: "busy" }, whileClosed: true });
+    });
+
+    it("still opens, with the full promise, when Orbit takes too long to answer", async () => {
+        vi.useFakeTimers();
+        botApiService.getPushPublicKey.mockReturnValueOnce(new Promise(() => {}));
+        askForNotifications({ kind: "busy" });
+        await vi.advanceTimersByTimeAsync(ORBIT_ANSWER_WITHIN_MS);
+        expect(shownWith()).toEqual({ moment: { kind: "busy" }, whileClosed: true });
+        vi.useRealTimers();
     });
 });
 
