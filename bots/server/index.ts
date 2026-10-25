@@ -22,7 +22,7 @@ import { readMatrixConfig } from '../matrix/MatrixConfig';
 import { verifyMatrixRegistration } from '../matrix/verifyMatrixRegistration';
 import { MatrixAppServiceClient } from '../matrix/MatrixAppServiceClient';
 import { MatrixDmBridge } from '../matrix/MatrixDmBridge';
-import { createMatrixAppServiceRouter } from '../matrix/MatrixAppServiceRouter';
+import { createMatrixAppServiceRouter, type MatrixAppServiceRouter } from '../matrix/MatrixAppServiceRouter';
 import { uploadAttachment } from '../matrix/uploadAttachment';
 import type { BotAvailability } from '../matrix/BotStatusNotes';
 import type { Router } from 'express';
@@ -56,6 +56,7 @@ const botManager = new BotManager(adminApiService, botRegistry);
 // Direct messages to bots over Matrix (off unless MATRIX_* is set). Synapse pushes events here; no socket per bot.
 const preRouters: Router[] = [];
 let matrixBridge: MatrixDmBridge | null = null;
+let matrixRouter: MatrixAppServiceRouter | null = null;
 let dmStatus: ((botIds: string[]) => Promise<Record<string, BotAvailability | 'unknown'>>) | undefined;
 let dmRoom: ((botId: string) => Promise<DmRoomLink | undefined>) | undefined;
 
@@ -75,7 +76,8 @@ async function setupMatrix(): Promise<void> {
         restingLine: (config, text) => dmReplyService.restingLine(config, text),
         waiting: botRegistry,
     });
-    preRouters.push(createMatrixAppServiceRouter(matrixConfig, matrixBridge));
+    matrixRouter = createMatrixAppServiceRouter(matrixConfig, matrixBridge);
+    preRouters.push(matrixRouter);
     // The game shows a bot's state in its chat header and the People list. Same cached lookup the replies use.
     const bridge = matrixBridge;
     dmStatus = async (botIds) =>
@@ -122,6 +124,9 @@ if (isDevelopment) {
     console.log('[BotServer] AutoPilot disabled (production mode)');
 }
 
+/** How long shutdown waits for direct messages being answered. */
+const DM_SHUTDOWN_GRACE_MS = 8000;
+
 // Graceful shutdown handler
 async function shutdown(signal: string) {
     console.log(`[BotServer] Received ${signal}, shutting down gracefully...`);
@@ -134,6 +139,11 @@ async function shutdown(signal: string) {
         stopMovementAnalysis();
         
         // Stop API server
+        // Direct messages already taken in get their answer first; new ones go back to Synapse for the next bot server.
+        // Kept under the container's stop grace, so a slow answer can't get the process killed mid-way.
+        if (matrixRouter && !(await matrixRouter.settle(DM_SHUTDOWN_GRACE_MS))) {
+            console.warn('[BotServer] Some direct messages were still being answered at shutdown');
+        }
         // Before the shared store closes, so waiting messages a drain took go back in line
         await matrixBridge?.stop();
         await botAPI?.stop();

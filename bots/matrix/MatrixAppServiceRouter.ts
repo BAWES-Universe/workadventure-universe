@@ -23,6 +23,14 @@ export interface MatrixEventHandler {
 
 const RECENT_TXN_LIMIT = 1000;
 
+export interface MatrixAppServiceRouter extends Router {
+    /**
+     * For shutdown: from now on, transactions are refused so Synapse sends them again to the next bot server, and this
+     * waits for the events already taken in to be handled, at most `timeoutMs`. Resolves true when all of them were.
+     */
+    settle(timeoutMs: number): Promise<boolean>;
+}
+
 function tokenMatches(presented: string | undefined, expected: string): boolean {
     if (!presented) return false;
     const a = Buffer.from(presented);
@@ -34,11 +42,12 @@ function tokenMatches(presented: string | undefined, expected: string): boolean 
  * The application service API Synapse calls (spec: /_matrix/app/v1). Mount it before the bot API's own body parser:
  * a transaction can be larger than the default 100 kB limit.
  */
-export function createMatrixAppServiceRouter(config: MatrixAppServiceConfig, handler: MatrixEventHandler): Router {
+export function createMatrixAppServiceRouter(config: MatrixAppServiceConfig, handler: MatrixEventHandler): MatrixAppServiceRouter {
     const router = express.Router();
     const recentTxnIds: string[] = [];
     const recentTxnSet = new Set<string>();
     const roomChains = new Map<string, Promise<void>>();
+    let closing = false;
 
     const requireHomeserver = (req: Request, res: Response, next: NextFunction) => {
         const header = req.headers.authorization;
@@ -52,6 +61,11 @@ export function createMatrixAppServiceRouter(config: MatrixAppServiceConfig, han
     };
 
     const transactions = (req: Request, res: Response) => {
+        if (closing) {
+            // Synapse keeps a refused transaction and sends it again later, by then to the bot server that took over.
+            res.status(503).json({ errcode: 'M_UNKNOWN', error: 'Shutting down' });
+            return;
+        }
         const txnId = req.params.txnId;
         if (recentTxnSet.has(txnId)) {
             res.json({});
@@ -106,5 +120,18 @@ export function createMatrixAppServiceRouter(config: MatrixAppServiceConfig, han
     router.put('/transactions/:txnId', transactions);
     router.get('/users/:userId', userQuery);
     router.get('/rooms/:alias', notFound);
-    return router;
+
+    const settle = async (timeoutMs: number): Promise<boolean> => {
+        closing = true;
+        let timer: NodeJS.Timeout | undefined;
+        const timedOut = new Promise<false>((resolve) => (timer = setTimeout(() => resolve(false), timeoutMs)));
+        // Chains only grow while transactions are taken in, and those are refused now, so this set is final.
+        const done = Promise.all([...roomChains.values()]).then(() => true as const);
+        try {
+            return await Promise.race([done, timedOut]);
+        } finally {
+            clearTimeout(timer);
+        }
+    };
+    return Object.assign(router, { settle });
 }

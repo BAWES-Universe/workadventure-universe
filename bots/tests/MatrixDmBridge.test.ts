@@ -1731,3 +1731,39 @@ describe('MatrixDmBridge waiting messages', () => {
         expect((bridge as any).localWaiting.size).toBe(0);
     });
 });
+
+describe('Matrix app service shutdown', () => {
+    it('refuses new transactions and waits for the events already taken in, but not forever', async () => {
+        let finish!: () => void;
+        const handler = {
+            onEvent: vi.fn(() => new Promise<void>((resolve) => (finish = resolve))),
+            userExists: vi.fn(async () => true),
+        };
+        const router = createMatrixAppServiceRouter(config, handler);
+        const app = express();
+        app.use(router);
+        const server = await new Promise<Server>((resolve) => {
+            const s = app.listen(0, () => resolve(s));
+        });
+        const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+        const put = (txn: string) =>
+            fetch(`${base}/_matrix/app/v1/transactions/${txn}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer hs-secret' },
+                body: JSON.stringify({ events: [{ ...message('hi'), event_id: `$${txn}` }] }),
+            });
+        try {
+            expect((await put('a')).status).toBe(200);
+            await vi.waitFor(() => expect(handler.onEvent).toHaveBeenCalledTimes(1));
+            // Too slow to wait for: shutdown goes on without it.
+            expect(await router.settle(20)).toBe(false);
+            expect((await put('b')).status).toBe(503);
+            expect(handler.onEvent).toHaveBeenCalledTimes(1);
+            const settled = router.settle(1000);
+            finish();
+            expect(await settled).toBe(true);
+        } finally {
+            await new Promise<void>((resolve) => server.close(() => resolve()));
+        }
+    });
+});
