@@ -209,7 +209,8 @@ export async function turnOffThisDevice(deviceId: string | undefined, remove: bo
             ? await botApiService.removePushDevice(deviceId)
             : await botApiService.setPushDeviceEnabled(deviceId, false);
     }
-    if (remove) setThisDeviceId(undefined);
+    // Still listed when Orbit refused: it stays This device there until Orbit forgets it
+    if (remove && told) setThisDeviceId(undefined);
     // Removed, or Orbit could not be told: this browser drops its subscription as well, so nothing reaches it either
     // way (Orbit forgets the device at its next send there).
     if (remove || !told) await forgetThisBrowser();

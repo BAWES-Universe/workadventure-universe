@@ -168,8 +168,20 @@ describe("switching this device off", () => {
         const { turnOffThisDevice } = await import("../PushDevice");
         const unsubscribe = browserWithSubscription();
         removePushDevice.mockResolvedValueOnce(false);
+        setPushDeviceId.mockClear();
         await expect(turnOffThisDevice("d1", true)).rejects.toThrow();
         expect(unsubscribe).toHaveBeenCalledOnce();
+        // Still in Your devices, so still This device there
+        expect(setPushDeviceId).not.toHaveBeenCalled();
+        vi.unstubAllGlobals();
+    });
+
+    it("on Remove, forgets this device's id once Orbit has removed it", async () => {
+        const { turnOffThisDevice } = await import("../PushDevice");
+        browserWithSubscription();
+        setPushDeviceId.mockClear();
+        await turnOffThisDevice("d1", true);
+        expect(setPushDeviceId).toHaveBeenCalledWith(null);
         vi.unstubAllGlobals();
     });
 });
