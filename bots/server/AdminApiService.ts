@@ -50,6 +50,64 @@ export function canSendSessionTo(adminApiUrl: URL, nodeEnv: string | undefined =
     return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
 }
 
+// ---- Live artifacts (game #1422, Orbit #622) -----------------------------------------------------------------------
+
+export type ArtifactKind = 'app' | 'page' | 'markdown' | 'svg';
+
+/** A chat by the id the game uses for it: the bubble's space name, or the direct chat's Matrix room. */
+export interface ArtifactChat {
+    kind: 'nearby' | 'dm';
+    ref: string;
+}
+
+/** Who asks. A guest has no account (nothing is kept for them beyond a day). */
+export interface ArtifactPerson {
+    signedIn: boolean;
+    identifier?: string | null;
+    name?: string | null;
+}
+
+/** Every artifact call names the bot, the person and the chat. */
+export interface ArtifactCall {
+    botId: string;
+    person: ArtifactPerson;
+    chat: ArtifactChat;
+}
+
+export interface ArtifactEdit {
+    old: string;
+    new: string;
+    all?: boolean;
+}
+
+export interface ArtifactSummary {
+    id: string;
+    title: string;
+    kind: ArtifactKind;
+    makerName: string;
+    version: number;
+}
+
+export interface ArtifactVersionSummary {
+    number: number;
+    summary: string | null;
+}
+
+/** Orbit said no, or could not be asked. `code` is Orbit's (edit_not_found, change_not_allowed, ...) or orbit_unavailable. */
+export class ArtifactCallError extends Error {
+    constructor(
+        public readonly code: string,
+        public readonly status: number,
+        message: string
+    ) {
+        super(message);
+        this.name = 'ArtifactCallError';
+    }
+}
+
+/** A make or a change takes a little longer than the access check: Orbit saves the file first. */
+const ARTIFACT_TIMEOUT_MS = 20_000;
+
 /** What people do with a bot, as Orbit's check names it. */
 export type BotAccessAction = 'chat' | 'dm' | 'summon';
 
@@ -777,7 +835,7 @@ export class AdminApiService {
     }
 
     private async fetchBotPrivacy(botId: string, lastKnown: boolean | undefined): Promise<boolean> {
-        // BOT_SERVICE_TOKEN is preferred, the admin token is the fallback (same as the memory endpoints)
+        // BOT_SERVICE_TOKEN is preferred, the admin token is the fallback. Memory itself takes only BOT_SERVICE_TOKEN (#444).
         const token = process.env.BOT_SERVICE_TOKEN || this.adminApiToken;
         try {
             const response: AxiosResponse = await axios.get(
@@ -947,6 +1005,68 @@ export class AdminApiService {
             throw new Error('Orbit answered the bot access check with something unexpected');
         }
         return answer;
+    }
+
+    /**
+     * One call to Orbit's artifact routes with the bot service token. A refusal comes back as an ArtifactCallError with
+     * Orbit's own code and line (no content is ever logged); anything that stops Orbit answering is `orbit_unavailable`.
+     */
+    private async artifactCall<T>(path: string, body: object): Promise<T> {
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!this.isConfigured() || !botServiceToken) {
+            throw new ArtifactCallError('orbit_unavailable', 503, 'Orbit is not set up for artifacts.');
+        }
+        try {
+            const response: AxiosResponse<T> = await axios.post(resolveAdminApiEndpoint(this.adminApiUrl, path), body, {
+                headers: { Authorization: `Bearer ${botServiceToken}`, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+                timeout: ARTIFACT_TIMEOUT_MS,
+                maxBodyLength: Infinity,
+            });
+            return response.data;
+        } catch (error) {
+            const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+            const data = axios.isAxiosError(error) ? error.response?.data : undefined;
+            if (status && status < 500 && data && typeof data.error === 'string') {
+                throw new ArtifactCallError(data.error, status, typeof data.message === 'string' ? data.message : data.error);
+            }
+            if (status === 503 && data?.error === 'storage_not_configured') {
+                throw new ArtifactCallError('storage_not_configured', 503, 'Artifact storage is not set up.');
+            }
+            // Only where it broke: the request holds the person's file
+            Sentry.captureException(new Error(`Artifact call ${path} failed (${status ?? 'no answer'})`), { tags: { area: 'bot-artifacts' } });
+            throw new ArtifactCallError('orbit_unavailable', status ?? 503, 'Orbit could not be reached.');
+        }
+    }
+
+    /** Make an artifact for the person who asked, in the chat they asked in. */
+    makeArtifact(
+        call: ArtifactCall,
+        artifact: { title: string; kind: ArtifactKind; content: string; summary?: string | null }
+    ): Promise<{ artifact: ArtifactSummary; version: ArtifactVersionSummary; hidden: boolean }> {
+        return this.artifactCall('api/artifacts', { ...call, ...artifact });
+    }
+
+    /** Change one with small edits (or the whole new file). Every change is a new version. */
+    changeArtifact(
+        id: string,
+        call: ArtifactCall,
+        change: { edits?: ArtifactEdit[]; content?: string; summary?: string | null; title?: string | null; baseVersion?: number | null }
+    ): Promise<{ artifact: ArtifactSummary; version: ArtifactVersionSummary; hidden: boolean }> {
+        return this.artifactCall(`api/artifacts/${encodeURIComponent(id)}/change`, { ...call, ...change });
+    }
+
+    /** Read one version of an artifact, with its text. */
+    readArtifact(
+        id: string,
+        call: ArtifactCall,
+        version?: number | null
+    ): Promise<{ artifact: ArtifactSummary; version: ArtifactVersionSummary; content: string; hidden: boolean }> {
+        return this.artifactCall(`api/artifacts/${encodeURIComponent(id)}/read`, { ...call, ...(version ? { version } : {}) });
+    }
+
+    /** The artifacts made in this chat that the person may open, the most recently changed first. */
+    listArtifactsInChat(call: ArtifactCall): Promise<{ artifacts: ArtifactSummary[]; hidden: boolean }> {
+        return this.artifactCall('api/artifacts/in-chat', call);
     }
 
     /**

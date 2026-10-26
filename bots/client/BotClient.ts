@@ -2177,6 +2177,16 @@ export class BotClient {
     }
 
     /**
+     * Who is asking, for the artifact tools: the same person Orbit's access check sees (signed in, and by which
+     * identifier), and the name they go by here.
+     */
+    getPersonForArtifacts(playerId: number): { signedIn: boolean; identifier: string | null; name: string | null } {
+        const access = this.behavior?.getPersonForAccess(playerId) ?? { signedIn: false, identifier: null };
+        const name = this.players.get(playerId)?.name ?? null;
+        return { signedIn: access.signedIn, identifier: access.identifier, name };
+    }
+
+    /**
      * Get the room URL this bot is connected to
      */
     getRoomUrl(): string {
