@@ -106,6 +106,29 @@ describe('MatrixDmBridge', () => {
         expect(await bridge.userExists(BOT_USER)).toBe(false);
     });
 
+    it('tells the reply which room it answers in, and sends a card for each artifact the bot made', async () => {
+        await bridge.onEvent(invite());
+        const card = { id: 'art-1', version: 2, title: 'Quests board', kind: 'app', maker: 'Guide' };
+        deps.reply.mockResolvedValueOnce({ text: 'Here you go.', media: [], artifacts: [card] });
+        await bridge.onEvent(message('make me a quests board'));
+        expect(deps.reply.mock.calls.at(-1)[4]).toMatchObject({ roomId: ROOM });
+        expect(client.sendText).toHaveBeenCalledWith(BOT_USER, ROOM, 'Here you go.');
+        expect(client.sendMessage).toHaveBeenCalledWith(BOT_USER, ROOM, {
+            msgtype: 'm.text',
+            body: 'Quests board · Mini app · Version 2',
+            'universe.artifact': card,
+        });
+    });
+
+    it('answers with just the card when the bot made an artifact and said nothing', async () => {
+        await bridge.onEvent(invite());
+        const card = { id: 'art-1', version: 1, title: 'Clock', kind: 'page', maker: 'Guide' };
+        deps.reply.mockResolvedValueOnce({ text: '', media: [], artifacts: [card] });
+        await bridge.onEvent(message('a clock please'));
+        expect(client.sendMessage).toHaveBeenCalledWith(BOT_USER, ROOM, expect.objectContaining({ 'universe.artifact': card }));
+        expect(client.sendText).not.toHaveBeenCalled();
+    });
+
     it('joins a direct chat from someone allowed, and replies to their messages', async () => {
         await bridge.onEvent(invite());
         expect(deps.checkAccess).toHaveBeenCalledWith(BOT, ALICE);
@@ -1551,6 +1574,65 @@ describe('DmReplyService history', () => {
         const next = await (service as any).replyNow(BOT, person, 'hi', [], {});
         expect(next.text).toBe('Hello Alice!');
         expect(next.media).toEqual([]);
+    });
+
+    it('gives the tools the room a message came in, and sends back the cards the bot made this turn, none from a turn that failed', async () => {
+        const { DmReplyService } = await import('../server/DmReplyService');
+        const { PersistentMemory } = await import('../memory/PersistentMemory');
+        const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
+        const memory = new PersistentMemory({});
+        const card = { id: 'art-1', version: 1, title: 'Quests board', kind: 'app' as const, maker: 'Guide' };
+        let roomSeen: string | undefined;
+        let turn = 0;
+        const stream = vi.fn(async function* () {
+            turn++;
+            const mine = memory.getMemory(BOT, service.playerIdFor(ALICE))!;
+            roomSeen = mine.dmRoomId;
+            if (turn === 1) {
+                // A tool made a card, then the provider broke off
+                (mine.pendingArtifacts ??= []).push({ ...card, id: 'lost' });
+                yield { content: 'Here is the', done: false };
+                yield { content: '', done: true, metadata: { tokensUsed: 0, latency: 5, error: true } };
+                return;
+            }
+            (mine.pendingArtifacts ??= []).push(card);
+            yield { content: 'Made it!', done: true, metadata: { tokensUsed: 0, latency: 5 } };
+        });
+        Object.assign(service, {
+            playerIds: new Map(),
+            nextPlayerId: -1,
+            loadedBots: new Set([BOT]),
+            botManager: { getBot: () => null },
+            getBotConfig: async () => ({ botId: BOT, name: 'Guide', aiProviderRef: 'p' }),
+            aiService: { generateBotResponseStream: stream },
+            conversationMemory: memory,
+            conversationStorage: { startConversation: vi.fn(), addMessage: vi.fn(async () => undefined) },
+        });
+        const person = { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false };
+        expect(await (service as any).replyNow(BOT, person, 'a quests board', [], { roomId: ROOM })).toEqual({ text: '', media: [], failed: true });
+        const next = await (service as any).replyNow(BOT, person, 'again please', [], { roomId: ROOM });
+        expect(roomSeen).toBe(ROOM);
+        expect(next.text).toBe('Made it!');
+        expect(next.artifacts).toEqual([card]);
+        expect(memory.getMemory(BOT, service.playerIdFor(ALICE))!.pendingArtifacts).toEqual([]);
+    });
+
+    it('sends no artifacts field for a reply that made none', async () => {
+        const { DmReplyService } = await import('../server/DmReplyService');
+        const { PersistentMemory } = await import('../memory/PersistentMemory');
+        const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
+        Object.assign(service, {
+            playerIds: new Map(),
+            nextPlayerId: -1,
+            loadedBots: new Set([BOT]),
+            botManager: { getBot: () => null },
+            getBotConfig: async () => ({ botId: BOT, name: 'Guide', aiProviderRef: 'p' }),
+            aiService: { generateBotResponseStream: async function* () { yield { content: 'Hi!', done: true }; } },
+            conversationMemory: new PersistentMemory({}),
+            conversationStorage: { startConversation: vi.fn(), addMessage: vi.fn(async () => undefined) },
+        });
+        const person = { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false };
+        expect(await (service as any).replyNow(BOT, person, 'hello', [], { roomId: ROOM })).not.toHaveProperty('artifacts');
     });
 
     it('cards a passing mention of the room once a day, and every answer to where the bot is', async () => {

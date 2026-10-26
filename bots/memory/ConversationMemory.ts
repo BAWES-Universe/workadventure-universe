@@ -119,6 +119,11 @@ export interface BotPlayerMemory {
     // Pending media delivery (items that were uploaded but couldn't be sent)
     pendingMedia: PendingMedia[];
     maxPendingMedia: number;
+
+    // Live artifacts a direct-message turn made, waiting to go out as cards with the reply, and the Matrix room the
+    // turn is in. Runtime only: nothing here is saved.
+    pendingArtifacts?: Array<{ id: string; version: number; title: string; kind: 'app' | 'page' | 'markdown' | 'svg'; maker: string }>;
+    dmRoomId?: string;
 }
 
 export class ConversationMemory {

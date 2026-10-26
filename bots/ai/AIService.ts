@@ -47,6 +47,15 @@ const sentrySetSpan: ((scope: any, span: any) => void) | undefined =
 
 // PostHog LLM Analytics — captures $ai_trace + $ai_generation events alongside Sentry
 import { captureAiGeneration, captureAiTrace, flushPostHog } from './PostHogClient';
+import {
+    artifactMarker,
+    artifactToolDefinitions,
+    artifactsEnabled,
+    formatArtifactResult,
+    isArtifactTool,
+    runArtifactTool,
+    type ArtifactCard,
+} from './ArtifactTools';
 
 /** A bot's provider, resolved by bot id (#374): the settings to call, where they came from, or "resting". */
 type ResolvedProvider =
@@ -2485,6 +2494,12 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             });
         }
 
+        // Tools: make, change, read and find live artifacts (game #1422). They need Orbit, which keeps them, and a chat to
+        // put the card in: a bubble on the map or a direct message. Off unless BOT_ARTIFACTS_ENABLED=true.
+        if (artifactsEnabled() && (botClient || channel === 'dm') && adminApiService?.isConfigured?.()) {
+            tools.push(...artifactToolDefinitions());
+        }
+
         // Add MCP tools
         if (botId && adminApiService) {
             try {
@@ -2521,6 +2536,51 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         }
 
         return { tools, toolServerMap };
+    }
+
+    /**
+     * Run one artifact tool for the person who is talking to the bot, and put its card in their chat: in a bubble that is
+     * a line of nearby chat; in a direct message it waits in memory and goes out with the reply. Never throws.
+     */
+    private async runArtifactToolCall(
+        name: string,
+        args: Record<string, unknown>,
+        where: { botClient?: BotClient; adminApiService?: AdminApiService; spaceName?: string; botId?: string; playerId?: number }
+    ): Promise<Record<string, unknown>> {
+        const { botClient, spaceName, botId, playerId } = where;
+        const admin = where.adminApiService ?? this.adminApiService;
+        if (!admin || !botId || playerId === undefined) return { error: 'Artifacts are not available right now.' };
+
+        const memory = this.conversationMemory?.getMemory(botId, playerId);
+        let person: { signedIn: boolean; identifier: string | null; name: string | null };
+        let chat: { kind: 'nearby' | 'dm'; ref: string };
+        if (botClient) {
+            if (!spaceName) return { error: 'Cannot make an artifact: not currently in a conversation space' };
+            person = botClient.getPersonForArtifacts(playerId);
+            chat = { kind: 'nearby', ref: spaceName };
+        } else {
+            // A direct message is always a signed-in person, in the Matrix room the message came from
+            if (!memory?.dmRoomId) return { error: 'Artifacts are not available in this chat.' };
+            person = { signedIn: true, identifier: memory.userUuid, name: memory.playerName ?? null };
+            chat = { kind: 'dm', ref: memory.dmRoomId };
+        }
+
+        const run = await runArtifactTool(name, args, { admin, botId, person, chat });
+        if (run.card) this.deliverArtifactCard(run.card, botClient, spaceName, memory);
+        return run.result;
+    }
+
+    private deliverArtifactCard(
+        card: ArtifactCard,
+        botClient: BotClient | undefined,
+        spaceName: string | undefined,
+        memory: { pendingArtifacts?: ArtifactCard[] } | undefined
+    ): void {
+        if (botClient && spaceName) {
+            botClient.sendChatMessage(spaceName, artifactMarker(card));
+        } else if (memory) {
+            (memory.pendingArtifacts ??= []).push(card);
+        }
     }
 
     /**
@@ -2840,6 +2900,17 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         }
                         break;
 
+                    case 'make_artifact':
+                    case 'change_artifact':
+                    case 'read_artifact':
+                    case 'list_artifacts':
+                        result = await this.runArtifactToolCall(
+                            toolCall.name,
+                            typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
+                            { botClient, adminApiService, spaceName, botId, playerId }
+                        );
+                        break;
+
                     case READ_WEB_PAGE_TOOL: {
                         const parsedArgs = typeof toolCall.arguments === 'string'
                             ? this.safeParseToolArgs(toolCall.arguments)
@@ -2955,7 +3026,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         for (const tr of toolResults) {
             // Skip results from media tools and built-in tools — they don't produce URLs to extract
             if (['send_image', 'send_file', 'send_audio', 'send_video', 'get_people_on_map',
-                 'get_bot_position', 'get_areas_on_map', 'navigate_to', READ_WEB_PAGE_TOOL].includes(tr.name)) {
+                 'get_bot_position', 'get_areas_on_map', 'navigate_to', READ_WEB_PAGE_TOOL].includes(tr.name) || isArtifactTool(tr.name)) {
                 continue;
             }
 
@@ -3029,7 +3100,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         for (const tr of toolResults) {
             // Skip results from our own media tools (they already handled sending)
             if (['send_image', 'send_file', 'send_audio', 'send_video', 'get_people_on_map',
-                 'get_bot_position', 'get_areas_on_map', 'navigate_to', READ_WEB_PAGE_TOOL].includes(tr.name)) {
+                 'get_bot_position', 'get_areas_on_map', 'navigate_to', READ_WEB_PAGE_TOOL].includes(tr.name) || isArtifactTool(tr.name)) {
                 continue;
             }
 
@@ -3464,6 +3535,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 if (r.result.success) {
                     return `navigate_to: Successfully started navigating. You are now leading people to the destination. The bot has started moving. If the user asks "why aren't you taking me" or "why aren't you moving", reassure them that you are leading them and they should follow. Do NOT say you can't take them - you already started leading. Respond naturally like "I'm leading you there now, just follow me!" or "Come on, follow me!" - don't mention tools or technical details.`;
                 }
+            }
+            if (isArtifactTool(r.name) && r.result) {
+                return formatArtifactResult(r.name, r.result);
             }
             if (r.name === READ_WEB_PAGE_TOOL && r.result) {
                 if (r.result.error || !r.result.content) {
