@@ -88,9 +88,7 @@
             <div class="text-xs text-white/60">{$LL.chat.directChat.members({ count: joined.length })}</div>
         </div>
 
-        {#key room}
-            <PinnedSummary {room} />
-        {/key}
+        <PinnedSummary {room} />
         <SharedSummary {room} />
 
         <div class="details-group" data-testid="roomDetailsPeople">

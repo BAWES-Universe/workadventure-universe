@@ -918,8 +918,8 @@
                 {/if}
             </div>
             {#if matrixRoom}
-                <!-- Made again when the chat is (its type can be found out later), so it never shows the old one's pins. -->
-                {#key matrixRoom}
+                <!-- Made again when the chat is, so it never shows the old one's pins. -->
+                {#key roomInstance}
                     <PinnedBar
                         room={matrixRoom}
                         onShowAll={() =>
