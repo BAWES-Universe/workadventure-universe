@@ -80,11 +80,11 @@ describe("buildWebManifest", () => {
         expect(buildWebManifest(meta, "https://play.test/").start_url).toBe("/");
     });
 
-    it("is a standalone window in any orientation that may draw its own title bar, with the broken values gone", () => {
-        expect(manifest.display).toBe("standalone");
-        expect(manifest).not.toHaveProperty("orientation");
-        // The computer app may draw its own title bar (the Universe strip); every other browser stays standalone.
-        expect(manifest.display_override).toEqual(["window-controls-overlay"]);
+    it("is a fullscreen landscape window that may draw its own title bar, with the broken values gone", () => {
+        expect(manifest.display).toBe("fullscreen");
+        expect(manifest.orientation).toBe("landscape");
+        // The computer app may draw its own title bar (the Universe strip); every other browser stays fullscreen.
+        expect(manifest.display_override).toEqual(["window-controls-overlay", "fullscreen"]);
         expect(manifest.scope).toBe("/");
     });
 
