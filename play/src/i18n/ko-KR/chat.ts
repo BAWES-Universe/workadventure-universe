@@ -374,12 +374,6 @@ const chat: DeepPartial<Translation["chat"]> = {
         },
     },
     connectionError: "채팅을 사용할 수 없습니다",
-    requiresLoginForChatModal: {
-        title: "채팅을 사용하려면 로그인하세요!",
-        content_1: "이 채팅 기능을 온전히 즐기려면 계정에 로그인해야 합니다.",
-        content_2: "로그인하면 모든 옵션을 사용할 수 있고, 끊김 없이 계속 이용할 수 있습니다.",
-        content_3: "계속 이용하려면 로그인해 주세요.",
-    },
     verificationEmojiDialog: {
         confirmation: "같습니다",
         mismatch: "다릅니다",
