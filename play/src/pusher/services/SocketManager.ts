@@ -421,7 +421,8 @@ export class SocketManager implements ZoneEventListener {
             const pusherRoom = await this.getOrCreateRoom(socketData.roomId);
             pusherRoom.join(client);
             this.friendsPresence.track(client);
-            this.socketsByIdentifier.add(socketData.userIdentifier, client);
+            // The socket may have left while the room was being made
+            if (!client.getUserData().disconnecting) this.socketsByIdentifier.add(socketData.userIdentifier, client);
             this.friendsRings.joined(client);
         } catch (e) {
             Sentry.captureException(e);

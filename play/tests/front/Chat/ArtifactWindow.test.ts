@@ -156,6 +156,33 @@ describe("the artifact window", () => {
         expect(byTestId("artifactSwitchFailed")).toBeNull();
     });
 
+    it("drops an opening that is still on its way when the version on show is chosen again", async () => {
+        api.fetchArtifact.mockResolvedValueOnce(opened(3));
+        const website = mountWindow(3);
+        await vi.waitFor(() => expect(byTestId("artifactFrame")).not.toBeNull());
+
+        let arrive: (value: unknown) => void = () => undefined;
+        api.fetchArtifact.mockReturnValueOnce(
+            new Promise((resolve) => {
+                arrive = resolve;
+            })
+        );
+        website.version.set(1);
+        await tick();
+        website.version.set(3);
+        await tick();
+        arrive(opened(1));
+        await new Promise((resolve) => {
+            setTimeout(resolve, 20);
+        });
+
+        let shown: number | undefined;
+        website.version.subscribe((value) => (shown = value))();
+        expect(shown).toBe(3);
+        expect(byTestId("artifactFrame")?.getAttribute("src")).toBe("https://artifacts.test/v3.html");
+        expect(byTestId("artifactVersions")).not.toBeNull();
+    });
+
     it("reads a document again when its text could not be read and Try again is tapped", async () => {
         api.fetchArtifact.mockResolvedValue(opened(1, 1, "markdown"));
         api.fetchArtifactCode.mockRejectedValueOnce(new Error("offline"));

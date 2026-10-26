@@ -77,7 +77,14 @@
     $: if (phase === "ready" && opened && needsText) ensureText(opened.version.number, textAttempt);
 
     function syncVersion(wanted: number | undefined, _attempt: number) {
-        if (shownNumber !== undefined && (wanted === undefined || wanted === shownNumber)) return;
+        if (shownNumber !== undefined && (wanted === undefined || wanted === shownNumber)) {
+            // Back to the version on show: an opening of another one that is still on its way is no longer wanted
+            if (opened) {
+                request++;
+                phase = "ready";
+            }
+            return;
+        }
         void load(wanted);
     }
 
