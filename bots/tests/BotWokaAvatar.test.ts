@@ -67,10 +67,10 @@ describe('wokaLayerUrls', () => {
         hat: { collections: [] },
     };
 
-    it('finds each texture in any part, in order, and resolves the game\'s own paths against the room', () => {
+    it('finds each texture in any part, in order, and resolves the game\'s own paths against its root', () => {
         expect(wokaLayerUrls(list, ['body1', 'male1'], ROOM_URL)).toEqual([
             'https://cdn.test/body1.png',
-            'https://play.test/_/u/w/resources/characters/pipoya/Male%2001-1.png',
+            'https://play.test/resources/characters/pipoya/Male%2001-1.png',
         ]);
     });
 

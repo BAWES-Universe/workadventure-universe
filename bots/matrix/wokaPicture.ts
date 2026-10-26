@@ -13,7 +13,8 @@ export type WokaList = Record<string, { collections?: Array<{ textures?: Array<{
 
 /**
  * The picture of each texture, bottom first, as absolute URLs (relative ones are the game's, so they resolve against
- * the bot's room). Null when one can't be found: a Woka with a missing layer would be a different Woka.
+ * the root of the bot's room address). Null when one can't be found: a Woka with a missing layer would be a different
+ * Woka.
  */
 export function wokaLayerUrls(list: WokaList, textureIds: readonly string[], roomUrl: string): string[] | null {
     const urls: string[] = [];
@@ -28,7 +29,8 @@ export function wokaLayerUrls(list: WokaList, textureIds: readonly string[], roo
         }
         if (!found) return null;
         try {
-            urls.push(new URL(found, roomUrl).toString());
+            // The game serves its own sheets from the root of its address, not from beside the map.
+            urls.push(new URL(found, new URL('/', roomUrl)).toString());
         } catch {
             return null;
         }
