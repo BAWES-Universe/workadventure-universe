@@ -108,7 +108,8 @@ export class LocateManager {
 
         // Initialize woka menu with progress
         this.searchingFor = userUuid;
-        wokaMenuStore.initialize(userName, -1, userUuid, visitCardUrl || undefined);
+        // Far away on a large map, their avatar isn't on this map yet: the card shows their Woka from People meanwhile.
+        wokaMenuStore.initialize(userName, -1, userUuid, visitCardUrl || undefined, false, request?.picture);
 
         // Set up progress messages with fun explanations
         const progressMessages = [

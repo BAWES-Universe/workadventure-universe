@@ -85,6 +85,25 @@ describe('buildSystemPrompt layout', () => {
         expect(p).not.toContain('**YOUR PERSONALITY:**');
     });
 
+    it('keeps the direct-message rules inside the fixed part, so direct messages share a prefix too', () => {
+        const a = buildSystemPrompt({ chatInstructions: INSTRUCTIONS, mapContextInfo: MAP, conversationContext: ALICE, channel: 'dm', now: NOW });
+        const b = buildSystemPrompt({ chatInstructions: INSTRUCTIONS, mapContextInfo: MAP, conversationContext: BOB, channel: 'dm', now: NOW });
+        expect(a).toContain('**DIRECT MESSAGE (You are chatting by direct message, not on the map):**');
+        expect(a).toContain('end that reply with [ROOM_CARD]');
+        expect(a).toContain('attached to your reply automatically');
+        expect(a).not.toContain('**LOCATION & SPACE QUESTIONS');
+        expect(a).not.toContain('You have send_image, send_file');
+        expect(a.indexOf('**DIRECT MESSAGE')).toBeLessThan(a.indexOf('FINAL REMINDER - YOUR PERSONALITY'));
+        expect(commonPrefixLength(a, b)).toBeGreaterThanOrEqual(a.indexOf('\n\nConversation Context:'));
+    });
+
+    it('uses the map rules when no channel is given', () => {
+        const p = buildSystemPrompt({ chatInstructions: INSTRUCTIONS, mapContextInfo: MAP, conversationContext: ALICE, now: NOW });
+        expect(p).toBe(buildSystemPrompt({ chatInstructions: INSTRUCTIONS, mapContextInfo: MAP, conversationContext: ALICE, channel: 'world', now: NOW }));
+        expect(p).toContain('**LOCATION & SPACE QUESTIONS');
+        expect(p).not.toContain('**DIRECT MESSAGE');
+    });
+
     it('words the memory rules so they hold with and without a memory section', () => {
         for (const conversationContext of [ALICE, '']) {
             const p = buildSystemPrompt({ chatInstructions: INSTRUCTIONS, conversationContext, now: NOW });

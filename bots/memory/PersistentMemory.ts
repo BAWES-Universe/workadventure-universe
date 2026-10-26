@@ -18,7 +18,6 @@ export interface PersistentMemoryConfig {
     maxHistorySize?: number;
     maxMemories?: number;
     adminApiUrl?: string;
-    adminApiToken?: string;
     debounceInterval?: number; // Debounce interval for conversation history saves (default: 30 seconds)
     immediateSaveEnabled?: boolean; // Whether to immediately save emotion changes (default: true)
 }
@@ -33,10 +32,18 @@ export class PersistentMemory extends ConversationMemory {
     private uuidTracking: Map<string, { userUuid: string; isLogged: boolean }> = new Map();
     // Temporary storage for loaded memories (keyed by userUuid) - restored when user joins
     private loadedMemoriesByUuid: Map<string, BotPlayerMemory> = new Map(); // key: "botId_userUuid"
-    /** Forgets already applied, by "botId|row:<id>" (or "botId|*" and "botId|uuid:<uuid>" from an older Orbit), with when (see forget) */
+    /** Forgets already applied, by "botId|row:<id>" (or "botId|*" and "botId|uuid:<uuid>" from an older Orbit), with when each may be left out (see forget) */
     private appliedForgets: Map<string, number> = new Map();
-    /** Longer than Orbit's one-minute repeat plus one 30-second privacy check */
+    /** Forgets being reported to Orbit right now, by "botId|<id>" */
+    private reporting: Set<string> = new Set();
+    /** An older Orbit repeats a Forget for a minute: longer than that plus one 30-second privacy check */
     private static readonly FORGET_REPEAT_WINDOW_MS = 2 * 60 * 1000;
+    /**
+     * A Forget with an id is repeated by Orbit until we report it (#493), so it is remembered as applied for as long as
+     * that takes. This is only the limit for one that is never reported; a reported one is kept for a short tail, for
+     * answers that were already on their way.
+     */
+    private static readonly FORGET_UNREPORTED_KEEP_MS = 24 * 60 * 60 * 1000;
 
     constructor(config: PersistentMemoryConfig = {}) {
         super(config.maxHistorySize || 50, config.maxMemories || 1000);
@@ -47,8 +54,7 @@ export class PersistentMemory extends ConversationMemory {
         // Initialize memory storage
         this.memoryStorage = new MemoryStorage({
             adminApiUrl: config.adminApiUrl,
-            adminApiToken: config.adminApiToken,
-            botServiceToken: process.env.BOT_SERVICE_TOKEN, // Use BOT_SERVICE_TOKEN for bot endpoints
+            botServiceToken: process.env.BOT_SERVICE_TOKEN, // the only token memory uses (#444)
             saveInterval: 5 * 60 * 1000, // 5 minutes (not used for debounced saves)
             maxRetries: 3,
         });
@@ -63,13 +69,20 @@ export class PersistentMemory extends ConversationMemory {
      * bot starts fresh from their next message.
      */
     forget(botId: string, notice: MemoryForgetNotice): void {
-        // Orbit repeats a Forget in every answer for a minute after it first sends it. Applied each time, it would wipe what
-        // the bot learned since from someone who kept talking, so each one is applied once: by its id when Orbit sends
-        // one (a second Forget of the same person is a new id), otherwise by who it names.
+        this.dropForgotten(botId, notice);
+        // Every Forget with an id in this notice gets reported, the new ones and the ones a lost report left behind
+        if (notice.rows && notice.rows.length > 0) this.reportForgotten(botId, notice.rows.map((row) => row.id));
+    }
+
+    private dropForgotten(botId: string, notice: MemoryForgetNotice): void {
+        // Orbit repeats a Forget in every answer until we report it dropped (#493; an older Orbit for a minute). Applied
+        // each time, it would wipe what the bot learned since from someone who kept talking, so each one is applied
+        // once: by its id when Orbit sends one (a second Forget of the same person is a new id), otherwise by who it names.
         const now = Date.now();
-        for (const [key, appliedAt] of this.appliedForgets) {
-            if (now - appliedAt > PersistentMemory.FORGET_REPEAT_WINDOW_MS) this.appliedForgets.delete(key);
+        for (const [key, keepUntil] of this.appliedForgets) {
+            if (now > keepUntil) this.appliedForgets.delete(key);
         }
+
         const isNew = (key: string) => !this.appliedForgets.has(`${botId}|${key}`);
         let everyone: boolean;
         let userUuids: string[];
@@ -77,12 +90,12 @@ export class PersistentMemory extends ConversationMemory {
             const rows = notice.rows.filter((row) => isNew(`row:${row.id}`));
             everyone = rows.some((row) => row.userUuid === null);
             userUuids = rows.flatMap((row) => (row.userUuid === null ? [] : [row.userUuid]));
-            for (const row of rows) this.appliedForgets.set(`${botId}|row:${row.id}`, now);
+            for (const row of rows) this.appliedForgets.set(`${botId}|row:${row.id}`, now + PersistentMemory.FORGET_UNREPORTED_KEEP_MS);
         } else {
             everyone = notice.everyone && isNew('*');
             userUuids = notice.userUuids.filter((uuid) => isNew(`uuid:${uuid}`));
-            if (everyone) this.appliedForgets.set(`${botId}|*`, now);
-            for (const uuid of userUuids) this.appliedForgets.set(`${botId}|uuid:${uuid}`, now);
+            if (everyone) this.appliedForgets.set(`${botId}|*`, now + PersistentMemory.FORGET_REPEAT_WINDOW_MS);
+            for (const uuid of userUuids) this.appliedForgets.set(`${botId}|uuid:${uuid}`, now + PersistentMemory.FORGET_REPEAT_WINDOW_MS);
         }
         if (!everyone && userUuids.length === 0) return;
 
@@ -106,6 +119,31 @@ export class PersistentMemory extends ConversationMemory {
                 this.loadedMemoriesByUuid.delete(key);
             }
         }
+    }
+
+    /**
+     * Tell Orbit these Forgets are dropped, so it stops skipping those people and removes the rows. Fire and forget: when
+     * the report does not get through, Orbit keeps sending the Forget and the next answer that carries it reports again.
+     * The dropped people are never wiped twice meanwhile, because the id stays in appliedForgets.
+     */
+    private reportForgotten(botId: string, ids: string[]): void {
+        const pending = ids.filter((id) => !this.reporting.has(`${botId}|${id}`));
+        if (pending.length === 0) return;
+        for (const id of pending) this.reporting.add(`${botId}|${id}`);
+        this.memoryStorage
+            .acknowledgeForgets(botId, pending)
+            .then((reported) => {
+                if (!reported) return;
+                // Answers Orbit already sent may still carry the Forget: keep the id for a little, so it is not applied again
+                const keepUntil = Date.now() + PersistentMemory.FORGET_REPEAT_WINDOW_MS;
+                for (const id of pending) {
+                    if (this.appliedForgets.has(`${botId}|row:${id}`)) this.appliedForgets.set(`${botId}|row:${id}`, keepUntil);
+                }
+            })
+            .catch(() => undefined)
+            .finally(() => {
+                for (const id of pending) this.reporting.delete(`${botId}|${id}`);
+            });
     }
 
     /**

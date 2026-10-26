@@ -118,6 +118,20 @@ describe("LocateManager: a search never opens its card over another one", () => 
         expect(get(wokaMenuStore)).toMatchObject({ userId: -1, wokaName: "Stitch" });
     });
 
+    it("shows the Woka People had for them while searching for someone far away", async () => {
+        const { wokaMenuStore } = await import("../../../Stores/WokaMenuStore");
+        const { rememberLocateRequest } = await import("../LocateRequest");
+        const { readable } = await import("svelte/store");
+        const { stream } = await makeLocateManager();
+        const picture = readable<string | undefined>("data:image/png;base64,stitch");
+        rememberLocateRequest("Stitch", picture);
+
+        stream.next({ userId: 5, position: { x: 1, y: 2 } });
+
+        expect(get(wokaMenuStore)).toMatchObject({ userId: -1, wokaName: "Stitch" });
+        expect(get(wokaMenuStore)?.searchPicture).toBe(picture);
+    });
+
     it("opens the found person's card over their own search card, the second time too", async () => {
         const { wokaMenuStore } = await import("../../../Stores/WokaMenuStore");
         const { stream, remotePlayers, stitch } = await makeLocateManager();

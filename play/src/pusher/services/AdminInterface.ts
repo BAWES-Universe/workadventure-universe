@@ -22,6 +22,7 @@ export interface AdminInterface {
      * @var ipAddress
      * @var characterTextures
      * @var guestName the name a guest (a visitor who is not logged in) typed, so the admin can show them by name
+     * @var previousGuestUuid right after sign-in, the guest id this device used before, so the guest's visits can join the account
      * @return MapDetailsData|RoomRedirect
      */
     fetchMemberDataByUuid(
@@ -34,7 +35,8 @@ export interface AdminInterface {
         locale?: string,
         tags?: string[],
         chatID?: string,
-        guestName?: string
+        guestName?: string,
+        previousGuestUuid?: string
     ): Promise<FetchMemberDataByUuidResponse>;
 
     /**

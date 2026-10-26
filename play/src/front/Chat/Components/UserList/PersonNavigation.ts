@@ -82,8 +82,8 @@ export function locatePerson(person: PersonLocation, name?: string): void {
         }
     }
 
-    // Their name shows on the card while the search runs.
-    rememberLocateRequest(name);
+    // Their name and Woka show on the card while the search runs.
+    rememberLocateRequest(name, person.pictureStore);
     scene.connection?.emitAskPosition(target.uuid, target.playUri, AskPositionMessage_AskType.LOCATE, target.userId);
 }
 

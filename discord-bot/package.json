@@ -7,7 +7,8 @@
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
     "build": "tsc",
-    "push-sentry-sourcemaps": "tsc && sentry-cli releases new ${RELEASE_VERSION:-$SENTRY_RELEASE} && sentry-cli releases files ${RELEASE_VERSION:-$SENTRY_RELEASE} upload-sourcemaps dist && sentry-cli releases finalize ${RELEASE_VERSION:-$SENTRY_RELEASE}"
+    "push-sentry-sourcemaps": "tsc && sentry-cli releases new ${RELEASE_VERSION:-$SENTRY_RELEASE} && sentry-cli releases files ${RELEASE_VERSION:-$SENTRY_RELEASE} upload-sourcemaps dist && sentry-cli releases finalize ${RELEASE_VERSION:-$SENTRY_RELEASE}",
+    "test": "node --require ts-node/register --test src/discord/*.test.ts"
   },
   "dependencies": {
     "@sentry/node": "^10.56.0",
