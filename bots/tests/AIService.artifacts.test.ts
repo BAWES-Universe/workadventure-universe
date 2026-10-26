@@ -161,6 +161,17 @@ describe('artifact tools in AIService', () => {
         expect(second.result).toMatchObject({ success: true });
     });
 
+    it('leaves a same-named tool to its MCP server when artifacts are off', async () => {
+        vi.stubEnv('BOT_ARTIFACTS_ENABLED', '');
+        const orbit = admin();
+        const execute = vi.spyOn(MCPConnector, 'executeToolCall').mockResolvedValue({ ok: true } as never);
+        const toolServerMap = new Map([['list_artifacts', { serverId: 's1', serverUrl: 'https://mcp.test', authType: 'none', authConfig: {}, headers: {} }]]);
+        const [result] = await service()['executeToolCalls']([{ id: 't5', name: 'list_artifacts', arguments: '{}' }], botClient() as never, orbit as never, toolServerMap as never, 'uuid-1', 'bubble-1', 'bot1', 7);
+        expect(execute).toHaveBeenCalledTimes(1);
+        expect(result.result).toEqual({ ok: true });
+        expect(orbit.listArtifactsInChat).not.toHaveBeenCalled();
+    });
+
     it('turns a result into the line the model reads, and keeps the media interceptors away from it', async () => {
         const ai = service();
         const results = [{ id: 't1', name: 'list_artifacts', result: { artifacts: [{ id: 'art-1', title: 'T', kind: 'app', version: 1, madeBy: 'Scout' }] } }];

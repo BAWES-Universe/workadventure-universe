@@ -2634,7 +2634,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 }
                 let result: any;
 
-                switch (toolCall.name) {
+                // With artifacts off, a tool of the same name belongs to an MCP server: send it down the default branch
+                switch (isArtifactTool(toolCall.name) && !artifactsEnabled() ? '' : toolCall.name) {
                     case 'get_people_on_map':
                         if (botClient) {
                             const people = botClient.getAllPeople();
