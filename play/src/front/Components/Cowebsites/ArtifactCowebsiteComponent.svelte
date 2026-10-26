@@ -58,7 +58,11 @@
     $: makerName = opened?.artifact.makerName ?? $summaryStore.makerName ?? "";
     $: title = opened?.artifact.title ?? $summaryStore.title;
     $: shown = opened?.version;
-    $: latest = opened?.artifact.version ?? 0;
+    // A newer version may have been made while the window stayed open, and the list of versions is where that shows
+    $: latest = (versions ?? []).reduce(
+        (newest, version) => Math.max(newest, version.number),
+        opened?.artifact.version ?? 0
+    );
     $: isLatest = shown !== undefined && shown.number === latest;
     $: line = shown
         ? isLatest

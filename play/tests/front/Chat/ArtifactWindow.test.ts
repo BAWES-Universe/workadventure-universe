@@ -229,6 +229,25 @@ describe("the artifact window", () => {
         expect(byTestId("artifactVersionMenu")).toBeNull();
     });
 
+    it("counts a version made while the window stayed open as the latest once the list shows it", async () => {
+        api.fetchArtifact.mockImplementation((_id: string, _chat: unknown, version?: number) =>
+            Promise.resolve(opened(version ?? 2, 2))
+        );
+        api.fetchArtifactVersions.mockResolvedValue([opened(3, 3).version, opened(2, 3).version, opened(1, 3).version]);
+        mountWindow(2);
+        await vi.waitFor(() => expect(byTestId("artifactVersions")).not.toBeNull());
+        expect(byTestId("artifactOldNote")).toBeNull();
+
+        byTestId("artifactVersions")?.click();
+        await vi.waitFor(() => expect(byTestId("artifactVersionMenu")?.querySelectorAll(".menu-row")).toHaveLength(3));
+        await vi.waitFor(() => expect(byTestId("artifactOldNote")).not.toBeNull());
+
+        byTestId("artifactOldNote")?.querySelector<HTMLButtonElement>("button")?.click();
+        await vi.waitFor(() =>
+            expect(byTestId("artifactFrame")?.getAttribute("src")).toBe("https://artifacts.test/v3.html")
+        );
+    });
+
     it("says it is gone for a missing artifact, and offers another try only when the server cannot be reached", async () => {
         api.fetchArtifact.mockRejectedValue(new api.ArtifactRequestError(404, "not_found"));
         mountWindow(1);
