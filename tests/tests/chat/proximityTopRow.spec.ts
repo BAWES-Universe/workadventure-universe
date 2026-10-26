@@ -85,7 +85,7 @@ test.describe("Proximity chat in the chat list @chat @nomobile @nowebkit", () =>
 
     // People (from the list, where Alice already is): the room comes first, with its count, and Bob is in it.
     await alice.getByTestId("chatTabPeople").click();
-    await expect(alice.getByTestId("peopleHereTitle")).toContainText("2 here");
+    await expect(alice.getByTestId("peopleHereTitle")).toContainText("2 people");
     await expect(alice.getByTestId("walk-to-Bob")).toBeVisible();
 
     // Alice had a proximity chat, so the "Say hi in person" card is gone for good on this device: after a reload the

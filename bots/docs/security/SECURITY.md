@@ -338,9 +338,9 @@ auditLog.log({
 5. Public saved to WAM, sensitive saved to Admin API
 ```
 
-## Compliance Considerations
+## Data handling
 
-### GDPR/Privacy
+### Personal details in bot settings
 
 - Chat instructions may contain personal data references
 - Movement instructions may reveal user behavior patterns

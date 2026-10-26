@@ -14,6 +14,21 @@ const chat: DeepPartial<Translation["chat"]> = {
         viewProfile: "查看个人资料",
         follow: "定位",
     },
+    botStatus: {
+        online: "在线",
+        resting: "休息中",
+        unready: "尚未准备好",
+        gone: "已离开",
+        restingPlaceholder: "回复已暂停",
+        unreadyPlaceholder: "暂时还不能回复",
+        closed: "此聊天已关闭",
+        left: "{name}已离开",
+        visit: "前往",
+        visitAria: "前往{room}找{name}",
+        livesIn: "所在房间",
+        nowIn: "当前所在",
+        inThisRoom: "你就在这个房间",
+    },
 };
 
 export default chat;

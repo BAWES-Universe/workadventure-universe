@@ -70,7 +70,8 @@ class LocalAdmin implements AdminInterface {
         locale?: string,
         tags?: string[],
         chatID?: string,
-        guestName?: string
+        guestName?: string,
+        previousGuestUuid?: string
     ): Promise<FetchMemberDataByUuidResponse> {
         let canEdit = false;
         const roomUrl = new URL(playUri);

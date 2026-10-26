@@ -1,20 +1,46 @@
 import { hostname } from "node:os";
+import { inspect } from "node:util";
 import type { AxiosInstance, InternalAxiosRequestConfig } from "axios";
 import axios from "axios";
 import pLimit from "p-limit";
 import type { ICreateRoomOpts } from "matrix-js-sdk";
 import { EventType, Visibility } from "matrix-js-sdk";
 import { slugify } from "@workadventure/shared-utils/src/Jitsi/slugify";
-import { MATRIX_ADMIN_PASSWORD, MATRIX_ADMIN_USER, MATRIX_API_URI, MATRIX_DOMAIN } from "../enums/EnvironmentVariable";
+import {
+    MATRIX_ADMIN_PASSWORD,
+    MATRIX_ADMIN_TOKEN,
+    MATRIX_ADMIN_USER,
+    MATRIX_API_URI,
+    MATRIX_DOMAIN,
+} from "../enums/EnvironmentVariable";
 
 const ADMIN_CHAT_ID = `@${MATRIX_ADMIN_USER}:${MATRIX_DOMAIN}`;
 
 // One device per pusher instance: signing in again reuses it instead of adding a new device every time.
 const ADMIN_DEVICE_ID = `universe-pusher-${hostname()}`;
 
+/**
+ * An axios error carries the request it came from: its Authorization header and, for the password sign-in, the password
+ * in its body. Printing it (or turning it into JSON) would put the admin token or password in the logs, so the error
+ * shows only what went wrong.
+ */
+function keepSecretsOutOfLogs(error: unknown): unknown {
+    if (axios.isAxiosError(error)) {
+        const summary = { name: error.name, message: error.message, status: error.response?.status };
+        Object.defineProperty(error, inspect.custom, {
+            value: () => `${summary.name}: ${summary.message}${summary.status ? ` (status ${summary.status})` : ""}`,
+            configurable: true,
+        });
+        Object.defineProperty(error, "toJSON", { value: () => summary, configurable: true });
+    }
+    return error;
+}
+
 const limit = pLimit(10);
 class MatrixProvider {
     private loginPromise: Promise<string> | undefined;
+    // Set once Synapse refuses MATRIX_ADMIN_TOKEN: from then on the password sign-in is used.
+    private adminTokenRefused = false;
     private roomAreaFolderName = slugify("current visited room");
     private roomAreaFolderID: string | undefined;
 
@@ -44,13 +70,21 @@ class MatrixProvider {
         // The token is kept for the life of the process: if Synapse refuses it, sign in again once and repeat the call.
         instance.interceptors.response.use(undefined, async (error: unknown) => {
             if (!axios.isAxiosError(error) || error.response?.status !== 401 || !error.config) {
-                throw error;
+                throw keepSecretsOutOfLogs(error);
             }
             const config: InternalAxiosRequestConfig & { signedInAgain?: boolean } = error.config;
             if (config.signedInAgain) {
-                throw error;
+                throw keepSecretsOutOfLogs(error);
             }
             config.signedInAgain = true;
+            if (
+                MATRIX_ADMIN_TOKEN &&
+                !this.adminTokenRefused &&
+                config.headers.Authorization === `Bearer ${MATRIX_ADMIN_TOKEN}`
+            ) {
+                this.adminTokenRefused = true;
+                console.error("Synapse refused MATRIX_ADMIN_TOKEN: signing in with the admin password instead");
+            }
             // Calls that failed together with the same token share one new sign-in.
             if (this.loginPromise === login) {
                 this.loginPromise = undefined;
@@ -84,13 +118,21 @@ class MatrixProvider {
     }
 
     private async signIn(): Promise<string> {
-        const response = await axios.post(`${MATRIX_API_URI}_matrix/client/r0/login`, {
-            type: "m.login.password",
-            user: MATRIX_ADMIN_USER,
-            password: MATRIX_ADMIN_PASSWORD,
-            device_id: ADMIN_DEVICE_ID,
-            initial_device_display_name: "Universe game server",
-        });
+        // A token made without a device adds nothing to the admin's device list, however often the game server is redeployed.
+        if (MATRIX_ADMIN_TOKEN && !this.adminTokenRefused) {
+            return MATRIX_ADMIN_TOKEN;
+        }
+        const response = await axios
+            .post(`${MATRIX_API_URI}_matrix/client/r0/login`, {
+                type: "m.login.password",
+                user: MATRIX_ADMIN_USER,
+                password: MATRIX_ADMIN_PASSWORD,
+                device_id: ADMIN_DEVICE_ID,
+                initial_device_display_name: "Universe game server",
+            })
+            .catch((error: unknown) => {
+                throw keepSecretsOutOfLogs(error);
+            });
         if (response.status === 200 && response.data.errcode === undefined) {
             return response.data.access_token;
         }
