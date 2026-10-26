@@ -106,6 +106,7 @@
                   previewLine(lastMessage.type, $lastContent, {
                       photo: $LL.chat.messageActions.photo(),
                       photos: (count) => $LL.chat.messageActions.photos({ count }),
+                      files: (count) => $LL.chat.messageActions.files({ count }),
                       video: $LL.chat.messageActions.video(),
                       voice: $LL.chat.messageActions.voice(),
                       audio: $LL.chat.messageActions.audio(),

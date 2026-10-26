@@ -114,15 +114,23 @@ export function summarizeForReply(type: ChatMessageType, content: ChatMessageCon
 /**
  * The one line a chat list row or a desktop notification shows for a message. Text stays as it is; a picture, video
  * or voice message says what it is (or shows its caption) instead of its file name. A document keeps its name.
+ * The text comes back as it was sent: the row turns it into one plain line, the notification shows it as it is.
  * It works from the message alone: a file's URL is loaded later, so it is not there yet when a message arrives.
  */
 export function previewLine(
     type: ChatMessageType,
     content: ChatMessageContent,
-    labels: { photo: string; photos: (count: number) => string; video: string; voice: string; audio: string }
+    labels: {
+        photo: string;
+        photos: (count: number) => string;
+        files: (count: number) => string;
+        video: string;
+        voice: string;
+        audio: string;
+    }
 ): string {
-    if (!MEDIA_TYPES.has(type)) return bodyToPlainText(content.body ?? "");
-    const body = bodyToPlainText(getMediaCaption(content) ?? "");
+    if (!MEDIA_TYPES.has(type)) return content.body ?? "";
+    const body = (getMediaCaption(content) ?? "").trim();
     // A gallery's body can be the name of any of its files.
     const caption = content.fileNames?.some((name) => name.trim() === body) ? "" : body;
     if (caption !== "") return caption;
@@ -130,7 +138,10 @@ export function previewLine(
         case "image":
             return labels.photo;
         case "gallery": {
-            const count = Math.max(content.fileNames?.length ?? 0, 1 + (content.urls?.length ?? 0));
+            const names = content.fileNames ?? [content.url, ...(content.urls ?? [])].filter((url) => !!url);
+            const count = Math.max(names.length, 1 + (content.urls?.length ?? 0));
+            // Several files are not all pictures: say so when we know it from their names.
+            if (!names.every((name) => name && isImageUrl(name))) return labels.files(count);
             return count > 1 ? labels.photos(count) : labels.photo;
         }
         case "video":
@@ -138,7 +149,7 @@ export function previewLine(
         case "audio":
             return content.isVoice === true ? labels.voice : labels.audio;
         default:
-            return content.filename?.trim() || content.fileNames?.[0] || bodyToPlainText(content.body ?? "");
+            return content.filename?.trim() || content.fileNames?.[0] || (content.body ?? "");
     }
 }
 
