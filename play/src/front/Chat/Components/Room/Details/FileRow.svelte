@@ -20,6 +20,10 @@
     let url: string | undefined;
     let unsubscribe: Unsubscriber | undefined;
     let waiting = false;
+    let waitTimeout: ReturnType<typeof setTimeout> | undefined;
+
+    // A fetch that never brings the file gives up, so the next tap asks again.
+    const FILE_WAIT_MS = 15000;
 
     $: kind = fileKindOf(name);
     $: badge = kind ? badgeOfKind(kind, name) : { color: "#757575", label: "FILE", kindName: "File" };
@@ -50,16 +54,28 @@
         }
         if (waiting) return;
         waiting = true;
+        waitTimeout = setTimeout(stopWaiting, FILE_WAIT_MS);
         unsubscribe ??= message.content.subscribe((content) => {
             url = content.url;
             if (url && waiting) {
                 waiting = false;
+                clearTimeout(waitTimeout);
                 openWith(url);
             }
         });
     }
 
-    onDestroy(() => unsubscribe?.());
+    function stopWaiting() {
+        waiting = false;
+        if (url) return;
+        unsubscribe?.();
+        unsubscribe = undefined;
+    }
+
+    onDestroy(() => {
+        clearTimeout(waitTimeout);
+        unsubscribe?.();
+    });
 </script>
 
 <button
