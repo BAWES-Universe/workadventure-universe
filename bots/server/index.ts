@@ -140,12 +140,15 @@ async function shutdown(signal: string) {
         
         // Stop API server
         // Direct messages already taken in get their answer first; new ones go back to Synapse for the next bot server.
-        // Kept under the container's stop grace, so a slow answer can't get the process killed mid-way.
-        if (matrixRouter && !(await matrixRouter.settle(DM_SHUTDOWN_GRACE_MS))) {
+        // Waiting messages a drain took but hasn't started on go back in line (before the shared store closes), and the
+        // ones being answered get the same time. Kept under the container's stop grace, so nothing is killed mid-way.
+        const [settled, drained] = await Promise.all([
+            matrixRouter ? matrixRouter.settle(DM_SHUTDOWN_GRACE_MS) : true,
+            matrixBridge ? matrixBridge.stop(DM_SHUTDOWN_GRACE_MS) : true,
+        ]);
+        if (!settled || !drained) {
             console.warn('[BotServer] Some direct messages were still being answered at shutdown');
         }
-        // Before the shared store closes, so waiting messages a drain took go back in line
-        await matrixBridge?.stop();
         await botAPI?.stop();
         
         // Shutdown bot manager (disconnects all bots)

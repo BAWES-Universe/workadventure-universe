@@ -119,6 +119,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
     private draining = new Set<string>();
     /** Messages a drain has taken but not started on yet, per bot: on shutdown they go back in line. */
     private drainQueues = new Map<string, MatrixEvent[]>();
+    /** Drains running now, per bot: on shutdown the message each is answering gets time to land. */
+    private drains = new Map<string, Promise<void>>();
     private stopping = false;
     private waitingTimer: NodeJS.Timeout | undefined;
     private handledEvents = new Set<string>();
@@ -157,8 +159,11 @@ export class MatrixDmBridge implements MatrixEventHandler {
         this.waitingTimer.unref?.();
     }
 
-    /** Stop checking, and put back in line any waiting message a drain took but hasn't started on, so none is lost. */
-    async stop(): Promise<void> {
+    /**
+     * Stop checking, put back in line any waiting message a drain took but hasn't started on, and give the ones being
+     * answered up to `timeoutMs` to land. False when some were still being answered at the end of that time.
+     */
+    async stop(timeoutMs = 0): Promise<boolean> {
         this.stopping = true;
         clearInterval(this.waitingTimer);
         this.waitingTimer = undefined;
@@ -166,6 +171,14 @@ export class MatrixDmBridge implements MatrixEventHandler {
             for (const event of queue.splice(0)) await this.rememberWaiting(botId, event, attemptsOf(event));
         }
         this.drainQueues.clear();
+        if (this.drains.size === 0) return true;
+        let timer: NodeJS.Timeout | undefined;
+        const landed = await Promise.race([
+            Promise.all([...this.drains.values()]).then(() => true),
+            new Promise<boolean>((resolve) => (timer = setTimeout(() => resolve(false), timeoutMs))),
+        ]);
+        clearTimeout(timer);
+        return landed;
     }
 
     async onEvent(event: MatrixEvent): Promise<void> {
@@ -752,8 +765,23 @@ export class MatrixDmBridge implements MatrixEventHandler {
     private async drain(botId: string): Promise<void> {
         if (this.stopping || this.draining.has(botId)) return;
         this.draining.add(botId);
+        const run = this.runDrain(botId);
+        this.drains.set(botId, run);
+        try {
+            await run;
+        } finally {
+            this.drains.delete(botId);
+        }
+    }
+
+    private async runDrain(botId: string): Promise<void> {
         try {
             const messages = this.readWaiting(await this.takeWaiting(botId));
+            if (this.stopping) {
+                // Shutdown began while they were being taken: they go back in line for the next process.
+                for (const event of messages) await this.rememberWaiting(botId, event, attemptsOf(event));
+                return;
+            }
             this.drainQueues.set(botId, messages);
             // Taken one at a time, so on shutdown stop() can put back whatever is left.
             for (let event = messages.shift(); event; event = messages.shift()) {

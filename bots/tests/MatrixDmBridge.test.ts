@@ -621,6 +621,61 @@ describe('MatrixDmBridge', () => {
         expect(deps.reply.mock.calls.map((call: any[]) => call[2])).toEqual(['first']);
     });
 
+    function sharedStore() {
+        const store = new Map<string, string>();
+        let taking: (() => void) | undefined;
+        let holdTake = false;
+        deps.waiting = {
+            hasSharedStore: () => true,
+            rememberWaitingDm: vi.fn(async (_b: string, r: string, m: string) => void store.set(r, m)),
+            waitingDmBots: vi.fn(async () => (store.size ? [BOT] : [])),
+            hasWaitingDms: vi.fn(async () => store.size > 0),
+            takeWaitingDms: vi.fn(async () => {
+                const all = [...store.values()];
+                store.clear();
+                if (holdTake) await new Promise<void>((resolve) => (taking = resolve));
+                return all;
+            }),
+        };
+        return { store, holdTake: () => (holdTake = true), finishTake: () => taking?.() };
+    }
+
+    it('on shutdown, gives the waiting message being answered time to land', async () => {
+        const { store } = sharedStore();
+        await bridge.onEvent(invite());
+        deps.getBotConfig.mockResolvedValue(resting as never);
+        await bridge.onEvent(message('left while resting'));
+        deps.getBotConfig.mockResolvedValue({ ...resting, enabled: true } as never);
+        let land!: (value: any) => void;
+        deps.reply.mockImplementationOnce(() => new Promise((resolve) => (land = resolve)));
+        const draining = bridge.checkWaiting();
+        await vi.waitFor(() => expect(deps.reply).toHaveBeenCalledTimes(1));
+        const stopped = bridge.stop(5000);
+        setTimeout(() => land({ text: 'Back now!', media: [] }), 20);
+        expect(await stopped).toBe(true);
+        expect(client.sendText).toHaveBeenCalledWith(BOT_USER, ROOM, 'Back now!');
+        expect(store.size).toBe(0);
+        await draining;
+    });
+
+    it('on shutdown while a drain is still taking its messages, puts them all back in line', async () => {
+        const { store, holdTake, finishTake } = sharedStore();
+        await bridge.onEvent(invite());
+        deps.getBotConfig.mockResolvedValue(resting as never);
+        await bridge.onEvent(message('left while resting'));
+        deps.getBotConfig.mockResolvedValue({ ...resting, enabled: true } as never);
+        holdTake();
+        const draining = bridge.checkWaiting();
+        await vi.waitFor(() => expect(deps.waiting!.takeWaitingDms).toHaveBeenCalled());
+        expect(store.size).toBe(0);
+        const stopped = bridge.stop(5000);
+        finishTake();
+        expect(await stopped).toBe(true);
+        await draining;
+        expect(deps.reply).not.toHaveBeenCalled();
+        expect(store.get(ROOM)).toContain('left while resting');
+    });
+
     it('keeps waiting messages in the shared store when there is one', async () => {
         const store = new Map<string, string>();
         deps.waiting = {
