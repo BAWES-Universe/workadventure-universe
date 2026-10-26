@@ -11,6 +11,7 @@ import { gameManager } from "../../Phaser/Game/GameManager";
 import { wokaMenuStore, type WokaMenuData, type WokaMenuAction } from "../../Stores/WokaMenuStore";
 import { warningMessageStore } from "../../Stores/ErrorStore";
 import { BOT_SERVER_URL } from "../../Enum/EnvironmentVariable";
+import { refreshThisDeviceOnce } from "../../Notification/Push/PushDevice";
 import { botApiService } from "./services/BotApiService";
 import { summonFailureLine, type SummonFailure } from "./services/summonFailure";
 import { destroyBotEditorTool } from "./phaser/BotEditorTool";
@@ -632,6 +633,8 @@ function setupBotEditor(options: ExtensionModuleOptions) {
             options.roomId,
             botServerUrl
         );
+        // Orbit can be reached now: a browser that already allows notifications is saved there again (#863).
+        refreshThisDeviceOnce();
 
         // If room changed and bot editor is open, trigger a reload
         if (roomIdChanged && botEditorOpen) {

@@ -1041,6 +1041,7 @@
                     <MessageInputBar
                         disabled={$shouldRetrySendingEvents}
                         {room}
+                        partner={$directPartner}
                         inputHint={botPlaceholder}
                         bind:this={messageInputBarRef}
                     />
