@@ -2,11 +2,13 @@
     import { onDestroy, tick } from "svelte";
     import { lightboxOpenStore } from "../../../Stores/UserInputStore";
     import { LL } from "../../../../i18n/i18n-svelte";
-    import type { HeldRole } from "../../Roles/WorldRoles";
+    import { MEMBER_COLOR, type HeldRole } from "../../Roles/WorldRoles";
 
     /** The roles to show, highest first: the first one next to the name, "+N" for the rest. */
     export let roles: HeldRole[] = [];
     export let personName = "";
+    /** They joined: the list ends with Member, which everyone who joined has (never on the badge). */
+    export let isMember = false;
 
     let open = false;
     let closeButton: HTMLButtonElement | undefined;
@@ -100,12 +102,20 @@
                         <span class="min-w-0 [overflow-wrap:anywhere]">{role.name}</span>
                     </li>
                 {/each}
+                {#if isMember}
+                    <li
+                        class="flex min-h-[48px] items-center gap-3 border-b border-white/10 text-base font-semibold last:border-b-0"
+                        data-testid="role-list-member"
+                    >
+                        <i class="block h-2.5 w-2.5 shrink-0 rounded-full" style="background:{MEMBER_COLOR}" />
+                        <span class="min-w-0 [overflow-wrap:anywhere]">{$LL.chat.role.member()}</span>
+                    </li>
+                {/if}
             </ul>
-            <p class="my-3 text-sm text-white/60">{$LL.chat.role.memberNote()}</p>
             <button
                 bind:this={closeButton}
                 type="button"
-                class="u-cta-secondary h-11 w-full rounded-full text-base font-bold"
+                class="u-cta-secondary mt-3 h-11 w-full rounded-full text-base font-bold"
                 on:click|stopPropagation={() => (open = false)}>{$LL.chat.role.close()}</button
             >
         </div>

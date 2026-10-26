@@ -30,6 +30,8 @@
     function titleOf(action: RuleAction): string {
         return action === "chat"
             ? access.actions.chat()
+            : action === "dm"
+            ? access.actions.dm()
             : action === "summon"
             ? access.actions.summon()
             : access.actions.manage();
@@ -38,6 +40,8 @@
     function hintOf(action: RuleAction): string {
         return action === "chat"
             ? access.actions.chatHint()
+            : action === "dm"
+            ? access.actions.dmHint()
             : action === "summon"
             ? access.actions.summonHint()
             : access.actions.manageHint();

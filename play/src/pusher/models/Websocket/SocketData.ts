@@ -32,6 +32,8 @@ export type SocketData = {
     roomId: string;
     userId?: number; // User Id served by the back
     userUuid: string; // Admin UUID
+    /** The identifier in the sign-in token (what the game's HTTP routes know the person by); it can differ from userUuid. */
+    userIdentifier?: string;
     isLogged: boolean;
     ipAddress: string;
     name: string;

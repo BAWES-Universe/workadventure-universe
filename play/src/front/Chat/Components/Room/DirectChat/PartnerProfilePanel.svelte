@@ -26,6 +26,12 @@
     import { invitesEnabledStore } from "../../../Stores/RingStore";
     import TopRowAvatar from "../../TopRow/TopRowAvatar.svelte";
     import VisitCard from "../../../../Components/VisitCard/VisitCard.svelte";
+    import { gameSceneStore } from "../../../../Stores/GameSceneStore";
+    import { botApiService } from "../../../../external-modules/bots/services/BotApiService";
+    import { botHomeRoom } from "../../../Bots/BotHomeRoom";
+    import { visitBotRoom } from "../../../Bots/visitBotRoom";
+    import PartnerRoomBlock from "./PartnerRoomBlock.svelte";
+    import { partnerNowIn, sameRoom, visitPerson } from "./PartnerNowIn";
     import type { DirectPartner } from "./DirectPartnerStore";
     import { isInUniverse } from "./PartnerPlace";
     import { partnerStatus } from "./PartnerStatus";
@@ -78,6 +84,9 @@
         ? getContext(PERSON_COLOUR_CONTEXT)
         : readable(() => undefined);
 
+    // A bot shows where it lives, with Visit, so nobody has to ask it or scroll back for its room card.
+    const botRoom = botHomeRoom(partner.chatId, (botId) => botApiService.getDmRoom(botId), window.location.origin);
+
     let confirmingDelete = false;
     let blockInProgress = false;
 
@@ -90,7 +99,18 @@
     $: live = isInUniverse(partner.place);
     $: canViewProfile = canOpenPartnerProfile(partner);
     $: canInvite = canInvitePartner(partner, $invitesEnabledStore);
-    $: tiles = [canInvite, partner.actions.walkTo, partner.actions.locate, canViewProfile].filter(Boolean).length;
+    // A person shows where they are now, when they share their room with you and you can enter it (Orbit decides).
+    $: partnerUuid = partner.isBot ? undefined : partner.uuid;
+    $: personRoom = partnerNowIn(partnerUuid, () => botApiService.getLiveView(), window.location.origin);
+    $: placeNow = $botRoom ?? $personRoom;
+    $: currentRoomUrl = $gameSceneStore?.roomUrl;
+    // Away from their room Visit already takes you to them, so Walk to would say the same thing twice.
+    $: walkTo = partner.actions.walkTo && !(placeNow && !sameRoom(currentRoomUrl, placeNow.url));
+    function visitRoom() {
+        if ($botRoom) visitBotRoom($botRoom, partner, currentRoomUrl);
+        else if ($personRoom) visitPerson(partner, $personRoom);
+    }
+    $: tiles = [canInvite, walkTo, partner.actions.locate, canViewProfile].filter(Boolean).length;
     // Add friend, or what comes next with them. Remove friend is red, so it sits with the other red rows.
     $: friendAction = partnerFriendAction(partner, name, $friendsEnabledStore, $relationshipsStore, $LL);
     $: friendRequestPossible = partner.uuid !== undefined && !$relationshipsStore.has(partner.uuid);
@@ -176,6 +196,16 @@
             </div>
         </div>
 
+        {#if placeNow}
+            <PartnerRoomBlock
+                label={$botRoom ? $LL.chat.botStatus.livesIn() : $LL.chat.botStatus.nowIn()}
+                link={placeNow}
+                {name}
+                {currentRoomUrl}
+                visit={visitRoom}
+            />
+        {/if}
+
         {#if partner.user?.visitCardUrl && !partner.isBot}
             <VisitCard visitCardUrl={partner.user.visitCardUrl} isEmbedded={true} showSendMessageButton={false} />
         {/if}
@@ -193,7 +223,7 @@
                         {$LL.chat.friends.ring.ring()}
                     </button>
                 {/if}
-                {#if partner.actions.walkTo}
+                {#if walkTo}
                     <button type="button" class="partner-tile" on:click={() => walkToPartner(partner)}>
                         <span class="partner-tile-icon"><IconWalk font-size="20" /></span>
                         {$LL.chat.userList.walkTo()}

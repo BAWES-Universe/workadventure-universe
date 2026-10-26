@@ -24,6 +24,7 @@ vi.mock("axios", () => ({
 vi.mock("../../src/pusher/enums/EnvironmentVariable", () => ({
     MATRIX_ADMIN_USER: "admin",
     MATRIX_ADMIN_PASSWORD: "secret",
+    MATRIX_ADMIN_TOKEN: undefined,
     MATRIX_API_URI: "http://matrix.test/",
     MATRIX_DOMAIN: "chat.test",
 }));

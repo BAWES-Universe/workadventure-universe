@@ -4,6 +4,9 @@ import type { Writable } from "svelte/store";
 import { writable } from "svelte/store";
 import { v4 as uuidv4 } from "uuid";
 import { MapStore } from "@workadventure/store-utils";
+import { readBotStatusNote, type BotStatusNote } from "../../Bots/BotChatStatus";
+import { readBotRoomLink, type BotRoomLink } from "../../Bots/BotRoomLink";
+import { readArtifactField, type ArtifactCard } from "../../../Artifacts/artifactCard";
 import type { ChatMessage, ChatMessageContent, ChatMessageType, ChatUser } from "../ChatConnection";
 import { canRenderAttachmentInline } from "../../../Utils/InlineMimeType";
 import { chatUserFactory } from "./MatrixChatUser";
@@ -51,6 +54,10 @@ export class MatrixChatMessage implements ChatMessage {
     reactions: MapStore<string, MatrixChatMessageReaction>;
     relations: MatrixChatRelation | undefined;
     readonly canDelete: Writable<boolean>;
+    readonly botStatus: BotStatusNote | undefined;
+    readonly botStatusAt: number | undefined;
+    readonly roomLink: BotRoomLink | undefined;
+    readonly artifact: ArtifactCard | undefined;
     readonly canReact = writable(true);
     readonly canReply = writable(true);
     private isShown = false;
@@ -61,6 +68,11 @@ export class MatrixChatMessage implements ChatMessage {
     constructor(private event: MatrixEvent, private room: Room, isQuotedMessage?: boolean, private isDirect = false) {
         this.id = event.getId() ?? uuidv4();
         this.type = this.mapMatrixMessageTypeToChatMessage();
+        this.botStatus = readBotStatusNote(event.getSender(), event.getOriginalContent());
+        // The homeserver's clock can differ from ours: the SDK's local timestamp is the send time on our clock.
+        this.botStatusAt = this.botStatus ? event.localTimestamp : undefined;
+        this.roomLink = readBotRoomLink(event.getSender(), event.getOriginalContent(), window.location.origin);
+        this.artifact = readArtifactField(event.getSender(), event.getOriginalContent());
         this.date = event.getDate();
         this.sender = this.getSender();
         this.isMyMessage = this.room.client.getUserId() === event.getSender();

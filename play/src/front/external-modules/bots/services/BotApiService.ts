@@ -24,6 +24,8 @@ const OPAQUE_SESSION_PATTERN = /^orb_sess_v2_[0-9a-f]{64}$/;
 const ACCESS_CHECK_TIMEOUT_MS = 3000;
 /** How long a read or change of who may use a bot waits for Orbit before it counts as failed */
 const PERMISSIONS_TIMEOUT_MS = 20000;
+/** How long a lookup of bot states waits before it counts as failed (and is asked again on the next look) */
+const DM_STATUS_TIMEOUT_MS = 10000;
 
 export function isOrbitSessionResponse(value: unknown): value is { version: 2; sessionId: string; expiresAt: number } {
     if (!value || typeof value !== "object") return false;
@@ -504,6 +506,38 @@ export class BotApiService {
     }
 
     /**
+     * Whether Orbit can send this player notifications (#863): the key a browser subscribes with, or null when Orbit
+     * has none (notifications are not set up there). Undefined when it can't be known: a guest, no Orbit, or Orbit
+     * didn't answer.
+     */
+    async getPushPublicKey(): Promise<string | null | undefined> {
+        if (!this.adminUrl || !this.accessToken) return undefined;
+        try {
+            const response = await this.fetch("/api/me/push");
+            const data = (await response.json()) as { publicKey?: unknown };
+            if (data.publicKey === null) return null;
+            return typeof data.publicKey === "string" && data.publicKey ? data.publicKey : undefined;
+        } catch {
+            return undefined;
+        }
+    }
+
+    /** Saves this browser's push subscription for the player, under a name for Your devices. The device id, or null. */
+    async registerPushDevice(subscription: PushSubscriptionJSON, label: string): Promise<string | null> {
+        if (!this.adminUrl || !this.accessToken) return null;
+        try {
+            const response = await this.fetch("/api/me/push/devices", {
+                method: "POST",
+                body: JSON.stringify({ endpoint: subscription.endpoint, keys: subscription.keys, label }),
+            });
+            const data = (await response.json()) as { device?: { id?: unknown } };
+            return typeof data.device?.id === "string" ? data.device.id : null;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
      * What the membership button on another player's card says for this player, in the universe of the current room:
      * Give membership, Pending invite, Roles or Membership. Null when Orbit says there is none, and when it can't be
      * known: no Orbit, or Orbit didn't answer.
@@ -578,6 +612,92 @@ export class BotApiService {
         });
 
         return response.json();
+    }
+
+    /**
+     * Each bot's state for direct messages (online, resting, unready, gone), for the chat header and People list.
+     * Null when the bot server can't say (not signed in, direct messages off, unreachable, or stalled): one lookup
+     * runs at a time, so one that hung would hold back every later state.
+     */
+    async getDmStatus(botIds: string[]): Promise<Record<string, string> | null> {
+        if (!this.botServerUrl || botIds.length === 0) return null;
+        const stop = new AbortController();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        // Raced as well as aborted: the Orbit sign-in that comes first in a request does not listen for the abort
+        const late = new Promise<null>((resolve) => {
+            timer = setTimeout(() => {
+                stop.abort();
+                resolve(null);
+            }, DM_STATUS_TIMEOUT_MS);
+        });
+        const asking = (async () => {
+            try {
+                const response = await this.fetchBotServer(
+                    `/api/bots/dm-status?ids=${botIds.map(encodeURIComponent).join(",")}`,
+                    { signal: stop.signal }
+                );
+                const data = (await response.json()) as { bots?: Record<string, string> };
+                return data.bots ?? null;
+            } catch {
+                return null;
+            }
+        })();
+        return Promise.race([asking, late]).finally(() => {
+            clearTimeout(timer);
+        });
+    }
+
+    /**
+     * Orbit's live view (who is where, as you may see it), for the "Now in" on a person's profile in a direct message.
+     * Null when signed out, on no answer in time, or on any error: the profile then just doesn't say.
+     */
+    async getLiveView(): Promise<unknown> {
+        if (!this.adminUrl) return null;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const late = new Promise<null>((resolve) => {
+            timer = setTimeout(() => resolve(null), DM_STATUS_TIMEOUT_MS);
+        });
+        const asking = (async () => {
+            try {
+                return (await (await this.fetch("/api/live")).json()) as unknown;
+            } catch {
+                return null;
+            }
+        })();
+        return Promise.race([asking, late]).finally(() => {
+            clearTimeout(timer);
+        });
+    }
+
+    /**
+     * The room a bot lives in, as the bot server tells someone who may message it (null for anyone else, a bot with no
+     * room, or no answer in time). Read as a room card's link, so it only ever opens on this game.
+     */
+    async getDmRoom(botId: string): Promise<unknown> {
+        if (!this.botServerUrl) return null;
+        const stop = new AbortController();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const late = new Promise<null>((resolve) => {
+            timer = setTimeout(() => {
+                stop.abort();
+                resolve(null);
+            }, DM_STATUS_TIMEOUT_MS);
+        });
+        const asking = (async () => {
+            try {
+                const response = await this.fetchBotServer(`/api/bots/${encodeURIComponent(botId)}/dm-room`, {
+                    signal: stop.signal,
+                });
+                if (!response.ok) return null;
+                const data = (await response.json()) as { room?: unknown };
+                return data.room ?? null;
+            } catch {
+                return null;
+            }
+        })();
+        return Promise.race([asking, late]).finally(() => {
+            clearTimeout(timer);
+        });
     }
 
     /**
@@ -924,12 +1044,13 @@ export class BotApiService {
 
     /**
      * Whether the local player may do this with a bot, asked of the bot server (which asks Orbit): the game uses it to
-     * hide Summon from people the owner has refused. `allowed: null` means it could not be found out (a guest with no
-     * Orbit session, Orbit not answering): the caller shows the button, and the real answer comes when it is used.
+     * hide Summon and Message from people the owner has refused. `allowed: null` means it could not be found out (a
+     * guest with no Orbit session, Orbit not answering): Summon then shows, and the real answer comes when it is used;
+     * Message only shows on a yes, since the bot could not answer a chat it cannot check either.
      * `playerUuid` is who is asking. A signed-in player whose Orbit session did not come along is then told so
      * (`signIn`) instead of being asked about as a guest.
      */
-    async getBotAccess(botId: string, action: "summon" | "chat", playerUuid?: string): Promise<BotAccessAnswer> {
+    async getBotAccess(botId: string, action: "summon" | "chat" | "dm", playerUuid?: string): Promise<BotAccessAnswer> {
         // A bot server or sign-in that stalls must not hold the Summon button back: after a few seconds it is "unknown"
         const stop = new AbortController();
         let timer: ReturnType<typeof setTimeout> | undefined;
@@ -946,7 +1067,7 @@ export class BotApiService {
 
     private async askBotAccess(
         botId: string,
-        action: "summon" | "chat",
+        action: "summon" | "chat" | "dm",
         playerUuid: string | undefined,
         signal: AbortSignal
     ): Promise<BotAccessAnswer> {

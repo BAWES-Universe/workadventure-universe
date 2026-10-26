@@ -1,12 +1,16 @@
 import "./instrument";
 import { DiscordBot } from "./discord/bot";
-import { createJoinMessage, createLeaveMessage, createSummaryStatsEmbed, createRoomEmbeds, parseRoomUrl } from "./discord/channels";
+import { createJoinMessage, createLeaveMessage, parseRoomUrl } from "./discord/channels";
+import { AppEmoji } from "./discord/emoji";
+import { buildReport } from "./discord/report";
+import type { RoomMetadata } from "./types";
 import { RoomDiscovery } from "./workadventure/roomDiscovery";
 import { WorkAdventureWebSocket } from "./workadventure/websocket";
 import * as Sentry from "@sentry/node";
 
 class DiscordBotService {
     private discordBot: DiscordBot;
+    private appEmoji: AppEmoji;
     private roomDiscovery: RoomDiscovery;
     private websocket: WorkAdventureWebSocket;
     private statsUpdateInterval: number;
@@ -64,6 +68,7 @@ class DiscordBotService {
         // Initialize components
         const adminApiUrl = process.env.ADMIN_API_URL;
         this.discordBot = new DiscordBot(discordBotToken, eventChannelId, botEventChannelId, statsChannelId);
+        this.appEmoji = new AppEmoji(discordBotToken);
         this.roomDiscovery = new RoomDiscovery(pusherUrl, adminApiToken, roomDiscoveryInterval, adminApiUrl);
 
         // Initialize WebSocket with event handlers
@@ -146,43 +151,43 @@ class DiscordBotService {
     }
 
     /**
-     * Update the stats channel with current room activity
+     * Update the stats channel: a summary post, then one post per universe with people in it (report.ts, #1389).
      */
     private async updateStatsChannel(): Promise<void> {
         try {
             console.log("Updating stats channel...");
-            const roomStats = await this.roomDiscovery.getRoomStats();
-            
-            // Fetch metadata for all active rooms
-            const roomMetadataMap = new Map<string, { universeName: string; worldName: string; roomName: string }>();
-            const activeRooms = Object.entries(roomStats).filter(([, count]) => count > 0);
-            
-            // Fetch metadata for all rooms in parallel
-            const metadataPromises = activeRooms.map(async ([roomUrl]) => {
-                const roomPath = parseRoomUrl(roomUrl);
-                const metadata = await this.roomDiscovery.getRoomMetadata(roomPath);
-                if (metadata) {
-                    roomMetadataMap.set(roomPath, metadata);
-                }
-                return metadata;
-            });
-            
-            // Wait for all metadata fetches
-            await Promise.all(metadataPromises);
-            
-            // Create summary embed
-            const summaryEmbed = createSummaryStatsEmbed(roomStats);
-            
-            // Create individual room embeds with metadata
-            const roomEmbeds = createRoomEmbeds(roomStats, this.pusherUrl, roomMetadataMap);
-            
-            // Send all messages (clears channel first, then sends summary + room messages)
-            await this.discordBot.sendStatsReport(
-                { embeds: [summaryEmbed] },
-                roomEmbeds.map(embed => ({ embeds: [embed] }))
+            const rooms = await this.roomDiscovery.fetchRoomDetails();
+            if (!rooms) {
+                console.warn("Room details unavailable, keeping the last report");
+                return;
+            }
+
+            // Orbit's names (and universe colour) for every room with someone in it, fetched in parallel.
+            const roomMetadataMap = new Map<string, RoomMetadata>();
+            await Promise.all(
+                Object.entries(rooms)
+                    .filter(([, details]) => details.people > 0)
+                    .map(async ([roomUrl]) => {
+                        const roomPath = parseRoomUrl(roomUrl);
+                        const metadata = await this.roomDiscovery.getRoomMetadata(roomPath);
+                        if (metadata) {
+                            roomMetadataMap.set(roomPath, metadata);
+                        }
+                    })
             );
-            
-            console.log(`Stats channel updated successfully with ${roomEmbeds.length} room${roomEmbeds.length === 1 ? '' : 's'}`);
+
+            const icons = await this.appEmoji.get();
+            const report = buildReport(rooms, roomMetadataMap, icons, new Date(), this.pusherUrl);
+
+            // Clears the channel first, then sends the summary and the universes' posts.
+            const sent = await this.discordBot.sendStatsReport(report.summary, report.universes);
+            if (!sent) {
+                // An emoji changed by hand in the Developer Portal would make every post fail: read them again next time.
+                this.appEmoji.forget();
+                return;
+            }
+
+            console.log(`Stats channel updated with ${report.universes.length} universe post${report.universes.length === 1 ? "" : "s"}`);
         } catch (error) {
             console.error("Failed to update stats channel:", error);
         }

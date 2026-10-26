@@ -71,7 +71,7 @@ function buildMocks() {
         getRoomMetadata: vi.fn().mockResolvedValue(null),
         getAvailableAIProviders: vi.fn().mockResolvedValue([]),
     };
-    const memory: any = { getMemory: vi.fn(() => ({ userUuid: "test-uuid" })), appendVisionDescription: vi.fn() };
+    const memory: any = { getMemory: vi.fn(() => ({ userUuid: "test-uuid" })), appendVisionDescription: vi.fn(), getPendingMediaNotice: vi.fn(() => "") };
     return { admin, memory };
 }
 

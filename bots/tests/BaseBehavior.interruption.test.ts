@@ -63,6 +63,8 @@ class TestableBehavior extends BaseBehavior {
         tokenUsage?: { prompt: number; completion: number; total: number };
         responseId: string;
         debugLabel: string;
+        channel?: 'world' | 'dm';
+        toolTimeoutSeconds?: number | null;
     }): Promise<{ processed: any; processedMessage: string; responseId: string }> {
         return this.regenerateOnRepetition(params);
     }
@@ -314,6 +316,37 @@ describe('BaseBehavior interruption routing', () => {
         expect(blankResetAfterAck).toBe(false);
         // 3) The responseId rotated after the reset — follow-up content landed in a fresh bubble
         expect(result.responseId).not.toBe('resp-orig');
+    });
+
+    it("regenerateOnRepetition: passes the bot's Patience on, for a direct message with no bot client", async () => {
+        async function* regenStream() {
+            yield { content: 'Something new.', done: true, metadata: { tokensUsed: 1, latency: 1, error: false } };
+        }
+        ai.generateBotResponseStream.mockImplementation(() => regenStream());
+        const mockResponseProcessor = {
+            processResponse: vi.fn().mockReturnValue({ cleaned: 'Something new.', metrics: { repetitionScore: 0.1 } }),
+            clearRecentResponses: vi.fn(),
+        };
+        behavior.setServices(ai as any, {} as any, undefined, mockResponseProcessor as any);
+        await behavior.testRegenerateOnRepetition({
+            botId: 'bot-1',
+            playerId: SENDER,
+            playerMessage: 'again?',
+            chatInstructions: 'You are a test bot.',
+            aiProviderRef: 'provider-1',
+            spaceName: SPACE,
+            context: '',
+            processed: { cleaned: 'same', metrics: { repetitionScore: 0.95 } },
+            processedMessage: 'same',
+            fullMessage: 'same',
+            responseId: 'resp-dm',
+            debugLabel: 'TestBehavior',
+            channel: 'dm',
+            toolTimeoutSeconds: 300,
+        });
+        const call = ai.generateBotResponseStream.mock.calls[0];
+        expect(call[11]).toBe('dm');
+        expect(call[12]).toBe(300);
     });
 
     it('regenerateOnRepetition: leaves a resting bot’s fixed line alone, so the second message still gets its reply', async () => {

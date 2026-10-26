@@ -19,7 +19,7 @@ import {
 const text: RuleSummaryText = {
     blocked: "Blocked",
     follows: "Follows the roles",
-    action: { chat: "Chat nearby", summon: "Summon", manage: "Manage" },
+    action: { chat: "Chat nearby", dm: "Direct messages", summon: "Summon", manage: "Manage" },
     allowsAndBlocks: (allows, blocks) => `${allows} · ${blocks} blocked`,
     blocksOnly: (blocks) => `${blocks} blocked`,
 };
@@ -118,14 +118,18 @@ describe("rows", () => {
         expect(saysNothing(rule({ dm: "no" }))).toBe(false);
     });
 
-    it("never shows Private DM before DMs exist", () => {
-        expect(SHOWN_ACTIONS).toEqual(["chat", "summon", "manage"]);
+    it("shows direct messages next to nearby chat", () => {
+        expect(SHOWN_ACTIONS).toEqual(["chat", "dm", "summon", "manage"]);
     });
 });
 
 describe("what a row says", () => {
-    it("says Blocked when chatting and summoning are both No", () => {
-        expect(ruleSummary(rule({ chat: "no", summon: "no" }), text)).toBe("Blocked");
+    it("says Blocked when chatting, direct messages and summoning are all No", () => {
+        expect(ruleSummary(rule({ chat: "no", dm: "no", summon: "no" }), text)).toBe("Blocked");
+        expect(ruleSummary(rule({ chat: "no", summon: "no" }), text)).toBe("Chat nearby, Summon blocked");
+        expect(ruleSummary(rule({ chat: "no", dm: "yes", summon: "no" }), text)).toBe(
+            "Direct messages · Chat nearby, Summon blocked"
+        );
     });
     it("lists what is allowed, then what is blocked", () => {
         expect(ruleSummary(rule({ chat: "yes", summon: "no" }), text)).toBe("Chat nearby · Summon blocked");
