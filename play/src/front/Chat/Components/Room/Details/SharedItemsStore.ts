@@ -1,5 +1,5 @@
 import { derived, get } from "svelte/store";
-import type { Readable } from "svelte/store";
+import type { Readable, Unsubscriber } from "svelte/store";
 import type { ChatMessage, ChatRoom } from "../../../Connection/ChatConnection";
 import { getSaveableFiles } from "../MessageActions/messageActions";
 import { sharedItemsOf, type SharedItems } from "./SharedItems";
@@ -27,9 +27,9 @@ export function sharedItemsStore(room: ChatRoom): Readable<SharedItems> {
             message.isDeleted.subscribe(() => {
                 if (ready) build();
             }),
-            ...(message.type === "text" || message.type === "proximity"
+            ...(isText(message)
                 ? [
-                      message.content.subscribe(() => {
+                      listenToText(message, () => {
                           if (ready) build();
                       }),
                   ]
@@ -39,4 +39,28 @@ export function sharedItemsStore(room: ChatRoom): Readable<SharedItems> {
         build();
         return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
     });
+}
+
+/**
+ * Listens to a text message's content. One that turns out to be a picture or file once decrypted is let go at once,
+ * before it would start its download: listening on would count as it being shown.
+ */
+function listenToText(message: ChatMessage, changed: () => void): Unsubscriber {
+    let stop: Unsubscriber | undefined;
+    let stopped = false;
+    const unsubscribe = () => {
+        stopped = true;
+        stop?.();
+        stop = undefined;
+    };
+    stop = message.content.subscribe(() => {
+        if (!isText(message)) unsubscribe();
+        changed();
+    });
+    if (stopped) unsubscribe();
+    return unsubscribe;
+}
+
+function isText(message: ChatMessage): boolean {
+    return message.type === "text" || message.type === "proximity";
 }
