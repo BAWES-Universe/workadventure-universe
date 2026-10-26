@@ -33,16 +33,50 @@ export function readAudioShape(url: string): Promise<AudioShape | undefined> {
     return shape;
 }
 
-async function decode(url: string): Promise<AudioShape | undefined> {
-    const response = await fetch(url);
-    if (!response.ok) return undefined;
-    const size = Number(response.headers.get("content-length"));
-    if (Number.isFinite(size) && size > MAX_SHAPE_BYTES) {
+/**
+ * The body of a response, or undefined once it passes the limit. The size header is only a hint (a chunked or
+ * compressed answer has none), so the bytes are counted as they arrive and the download stops at the limit.
+ */
+async function readCapped(response: Response): Promise<ArrayBuffer | undefined> {
+    const header = response.headers.get("content-length");
+    if (header !== null && Number(header) > MAX_SHAPE_BYTES) {
         await response.body?.cancel();
         return undefined;
     }
-    const bytes = await response.arrayBuffer();
-    if (bytes.byteLength > MAX_SHAPE_BYTES) return undefined;
+    if (!response.body) {
+        const bytes = await response.arrayBuffer();
+        return bytes.byteLength > MAX_SHAPE_BYTES ? undefined : bytes;
+    }
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+        // A stream is read one chunk after another.
+        // eslint-disable-next-line no-await-in-loop
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > MAX_SHAPE_BYTES) {
+            // eslint-disable-next-line no-await-in-loop
+            await reader.cancel();
+            return undefined;
+        }
+        chunks.push(value);
+    }
+    const all = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+        all.set(chunk, offset);
+        offset += chunk.byteLength;
+    }
+    return all.buffer;
+}
+
+async function decode(url: string): Promise<AudioShape | undefined> {
+    const response = await fetch(url);
+    if (!response.ok) return undefined;
+    const bytes = await readCapped(response);
+    if (!bytes) return undefined;
     decoder ??= new OfflineAudioContext(1, 1, 44100);
     const decoded = await decoder.decodeAudioData(bytes);
     // Peaks per bar over the first channel: enough for a shape, and far lighter than mixing every channel.
