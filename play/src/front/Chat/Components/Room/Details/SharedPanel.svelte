@@ -101,13 +101,15 @@
     let lightboxUrl: string | undefined;
     let lightboxUnsubscribe: Unsubscriber | undefined;
     $: lightboxItem = lightboxIndex !== undefined ? $shared.media[lightboxIndex] : undefined;
-    $: watchLightbox(lightboxItem?.message);
+    $: watchLightbox(lightboxItem?.message, lightboxItem?.src);
 
-    function watchLightbox(message: ChatMessage | undefined) {
+    function watchLightbox(message: ChatMessage | undefined, src: string | undefined) {
         lightboxUnsubscribe?.();
         lightboxUnsubscribe = undefined;
-        lightboxUrl = undefined;
-        if (message) lightboxUnsubscribe = message.content.subscribe((content) => (lightboxUrl = content.url));
+        lightboxUrl = src;
+        if (message && src === undefined) {
+            lightboxUnsubscribe = message.content.subscribe((content) => (lightboxUrl = content.url));
+        }
     }
 
     function step(delta: number) {
@@ -155,7 +157,9 @@
                                 <MediaThumb
                                     message={item.message}
                                     {sender}
-                                    label={item.message.type === "video"
+                                    src={item.src}
+                                    video={item.isVideo}
+                                    label={item.isVideo
                                         ? $LL.chat.details.video({ name: sender })
                                         : $LL.chat.details.image({ name: sender })}
                                     on:click={() => (lightboxIndex = $shared.media.indexOf(item))}
@@ -217,7 +221,7 @@
     src={lightboxUrl}
     alt={lightboxItem?.name}
     show={lightboxItem !== undefined}
-    isVideo={lightboxItem?.message.type === "video"}
+    isVideo={lightboxItem?.isVideo ?? false}
     filename={lightboxItem?.name}
     hasPrev={$shared.media.length > 1}
     hasNext={$shared.media.length > 1}

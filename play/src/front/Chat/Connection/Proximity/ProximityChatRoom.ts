@@ -18,6 +18,7 @@ import type {
     ChatMessageReaction,
     ChatMessageType,
     ChatRoom,
+    SharedFileInfo,
 } from "../ChatConnection";
 import { TYPING_STOP_GRACE_MS } from "../ChatConnection";
 import LL, { locale } from "../../../../i18n/i18n-svelte";
@@ -119,6 +120,15 @@ export interface ProximityChatMessageOptions {
     react?: (message: ProximityChatMessage, key: string) => void;
 }
 
+function fileNameOfUrl(url: string): string {
+    const lastSegment = url.split("?")[0].split("#")[0].split("/").pop() ?? "";
+    try {
+        return decodeURIComponent(lastSegment) || "file";
+    } catch {
+        return lastSegment || "file";
+    }
+}
+
 export class ProximityChatMessage implements ChatMessage {
     isQuotedMessage: boolean | undefined;
     quotedMessage: ChatMessage | undefined;
@@ -160,6 +170,17 @@ export class ProximityChatMessage implements ChatMessage {
         const hasContent = type !== "incoming" && type !== "outcoming";
         this.canReact.set(isConversation && hasContent && options.react !== undefined);
         this.canReply.set(isConversation && hasContent);
+    }
+
+    /**
+     * The file a picture, video or file message carries, for the chat's "Media, links and files". Its link is in the
+     * message itself, so reading it fetches nothing. A gallery lists its files in its content instead.
+     */
+    get sharedFile(): SharedFileInfo | undefined {
+        if (!["image", "video", "file", "audio"].includes(this.type)) return undefined;
+        const content = get(this.content);
+        if (!content.url) return undefined;
+        return { name: content.filename || fileNameOfUrl(content.url), size: undefined, voice: false };
     }
 
     remove(): void {

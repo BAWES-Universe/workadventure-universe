@@ -46,7 +46,9 @@
                 <div class="relative">
                     <MediaThumb
                         message={item.message}
-                        label={item.message.type === "video"
+                        src={item.src}
+                        video={item.isVideo}
+                        label={item.isVideo
                             ? $LL.chat.details.video({ name: sender })
                             : $LL.chat.details.image({ name: sender })}
                         on:click={open}

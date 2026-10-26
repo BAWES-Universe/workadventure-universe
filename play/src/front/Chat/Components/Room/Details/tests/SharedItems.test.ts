@@ -32,6 +32,27 @@ const isDeleted = (m: ChatMessage) => (m as unknown as { __deleted: boolean })._
 const file = (name: string, size?: number, voice = false): SharedFileInfo => ({ name, size, voice });
 
 describe("what a chat shared", () => {
+    it("lists each image of a nearby gallery on its own, with its own link", () => {
+        const shared = sharedItemsOf(
+            [message("g1", "gallery"), message("v1", "video", { file: file("clip.mp4") })],
+            bodyOf,
+            isDeleted,
+            (m) =>
+                m.id === "g1"
+                    ? [
+                          { url: "https://cdn.test/a.png", name: "a.png" },
+                          { url: "https://cdn.test/b.webm", name: "b.webm" },
+                      ]
+                    : []
+        );
+
+        expect(shared.media).toEqual([
+            expect.objectContaining({ key: "v1", isVideo: true }),
+            expect.objectContaining({ key: "g1 0", src: "https://cdn.test/a.png", name: "a.png", isVideo: false }),
+            expect.objectContaining({ key: "g1 1", src: "https://cdn.test/b.webm", isVideo: true }),
+        ]);
+    });
+
     it("sorts images and videos, links and files, newest first", () => {
         const shared = sharedItemsOf(
             [

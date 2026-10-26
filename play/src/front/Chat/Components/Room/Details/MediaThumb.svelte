@@ -12,6 +12,9 @@
     export let label: string;
     /** Who sent it, on a small chip, or nothing. */
     export let sender: string | undefined = undefined;
+    /** One image of a gallery: its own link, read from the message without downloading anything. */
+    export let src: string | undefined = undefined;
+    export let video: boolean | undefined = undefined;
 
     let box: HTMLElement;
     let url: string | undefined;
@@ -19,6 +22,10 @@
     let observer: IntersectionObserver | undefined;
 
     function load() {
+        if (src !== undefined) {
+            url = src;
+            return;
+        }
         if (unsubscribe) return;
         unsubscribe = message.content.subscribe((content) => (url = content.url));
     }
@@ -44,7 +51,7 @@
         unsubscribe?.();
     });
 
-    $: isVideo = message.type === "video";
+    $: isVideo = video ?? message.type === "video";
 </script>
 
 <button

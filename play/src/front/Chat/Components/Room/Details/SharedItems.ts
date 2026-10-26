@@ -13,18 +13,31 @@ export interface SharedItem {
     url?: string;
     /** For a file, in bytes, when the message says. */
     size?: number;
+    /** For an image or video: whether it is a video. */
+    isVideo?: boolean;
+    /** For one image of a gallery, which holds several in one message: its own link. */
+    src?: string;
+}
+
+const VIDEO_EXTENSIONS = new Set(["mp4", "webm", "ogg", "mov", "avi", "mkv"]);
+
+function isVideoUrl(url: string): boolean {
+    const name = url.split("?")[0].split("#")[0].split("/").pop() ?? "";
+    return name.includes(".") && VIDEO_EXTENSIONS.has(name.split(".").pop()?.toLowerCase() ?? "");
 }
 
 export type SharedItems = Record<SharedTab, SharedItem[]>;
 
 /**
  * What a chat shared, newest first: images and videos, links, and files. Voice messages stay in the conversation, and
- * deleted messages are left out. `bodyOf` gives a text message's current text (its edits included).
+ * deleted messages are left out. `bodyOf` gives a text message's current text (its edits included), and `filesOf` a
+ * gallery's images (nearby chat sends several in one message).
  */
 export function sharedItemsOf(
     messages: readonly ChatMessage[],
     bodyOf: (message: ChatMessage) => string | undefined,
-    isDeleted: (message: ChatMessage) => boolean
+    isDeleted: (message: ChatMessage) => boolean,
+    filesOf: (message: ChatMessage) => { url: string; name: string }[] = () => []
 ): SharedItems {
     const shared: SharedItems = { media: [], links: [], files: [] };
     for (let index = messages.length - 1; index >= 0; index--) {
@@ -32,7 +45,23 @@ export function sharedItemsOf(
         if (isDeleted(message)) continue;
         const file = message.sharedFile;
         if ((message.type === "image" || message.type === "video") && file) {
-            shared.media.push({ key: message.id, message, name: file.name, size: file.size });
+            shared.media.push({
+                key: message.id,
+                message,
+                name: file.name,
+                size: file.size,
+                isVideo: message.type === "video",
+            });
+        } else if (message.type === "gallery") {
+            filesOf(message).forEach(({ url, name }, position) => {
+                shared.media.push({
+                    key: `${message.id} ${position}`,
+                    message,
+                    name,
+                    src: url,
+                    isVideo: isVideoUrl(url),
+                });
+            });
         } else if ((message.type === "file" || message.type === "audio") && file && !file.voice) {
             shared.files.push({ key: message.id, message, name: file.name, size: file.size });
         } else if (message.type === "text" || message.type === "proximity") {

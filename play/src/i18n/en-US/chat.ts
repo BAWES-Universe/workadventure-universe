@@ -477,6 +477,7 @@ const chat: BaseTranslation = {
         lookFurther: "Look further back",
         lookingFurther: "Looking further back…",
         people: "People",
+        hereNow: "Here now",
         pinned: "Pinned",
         pinnedOf: "Pinned · {index:number} of {count:number}",
         allPins: "All",
