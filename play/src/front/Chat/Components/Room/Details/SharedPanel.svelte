@@ -105,7 +105,11 @@
     $: lightboxItem = lightboxIndex >= 0 ? $shared.media[lightboxIndex] : undefined;
     $: watchLightbox(lightboxItem?.message);
 
+    // The list is rebuilt as messages come and go: the same message keeps its listener, so a playing video doesn't restart.
+    let watchedMessage: ChatMessage | undefined;
     function watchLightbox(message: ChatMessage | undefined) {
+        if (message === watchedMessage) return;
+        watchedMessage = message;
         lightboxUnsubscribe?.();
         lightboxUnsubscribe = undefined;
         lightboxUrl = undefined;
