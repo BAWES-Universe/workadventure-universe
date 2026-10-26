@@ -173,6 +173,15 @@
     $: isEncrypted = room.isEncrypted;
     $: proximityRoom = room instanceof ProximityChatRoom ? room : undefined;
     $: matrixRoom = room instanceof MatrixChatRoom ? room : undefined;
+
+    // Counts the chat objects shown here: a chat can be made again under the same id (its type found out later, or a new
+    // map), and what is keyed on this is made again with it. A number, so the same chat set again changes nothing.
+    let roomInstance = 0;
+    let lastRoom: ChatRoom | undefined = room;
+    $: if (room !== lastRoom) {
+        lastRoom = room;
+        roomInstance++;
+    }
     // A direct chat knows who the other person is and where they are right now (header, menu, profile).
     $: directPartner = matrixRoom?.type === "direct" ? directPartnerStore(matrixRoom) : undefined;
     $: profileOpen = directPartner !== undefined && $openProfileRoomIdStore === room.id;
@@ -818,21 +827,24 @@
                 : $LL.chat.fileAttachment.dropToAddHere()}
         </div>
     {/if}
-    {#if sharedOpen}
-        <SharedPanel {room} tab={sharedOpen.tab} partnerChatId={$directPartner?.chatId} />
-    {:else if profileOpen && matrixRoom && $directPartner}
-        <!-- Over the conversation, which stays as it was (draft, files, scroll) for when you come back. Above the
-             message options (z-50) and menus that live in it; "isolate" keeps all of that inside this panel. -->
-        <PartnerProfilePanel
-            room={matrixRoom}
-            partner={$directPartner}
-            on:close={() => openProfileRoomIdStore.set(undefined)}
-        />
-    {:else if roomDetailsOpen && matrixRoom}
-        <RoomDetailsPanel room={matrixRoom} />
-    {:else if nearbyDetailsOpen && proximityRoom}
-        <NearbyDetailsPanel room={proximityRoom} />
-    {/if}
+    <!-- Made again when the chat is, so a panel never shows the old one. -->
+    {#key roomInstance}
+        {#if sharedOpen}
+            <SharedPanel {room} tab={sharedOpen.tab} partnerChatId={$directPartner?.chatId} />
+        {:else if profileOpen && matrixRoom && $directPartner}
+            <!-- Over the conversation, which stays as it was (draft, files, scroll) for when you come back. Above the
+                 message options (z-50) and menus that live in it; "isolate" keeps all of that inside this panel. -->
+            <PartnerProfilePanel
+                room={matrixRoom}
+                partner={$directPartner}
+                on:close={() => openProfileRoomIdStore.set(undefined)}
+            />
+        {:else if roomDetailsOpen && matrixRoom}
+            <RoomDetailsPanel room={matrixRoom} />
+        {:else if nearbyDetailsOpen && proximityRoom}
+            <NearbyDetailsPanel room={proximityRoom} />
+        {/if}
+    {/key}
     {#if room !== undefined}
         <div class="flex flex-col gap-2">
             <div
@@ -938,8 +950,8 @@
                 {/if}
             </div>
             {#if matrixRoom}
-                <!-- Made again when the chat is (its type can be found out later), so it never shows the old one's pins. -->
-                {#key matrixRoom}
+                <!-- Made again when the chat is, so it never shows the old one's pins. -->
+                {#key roomInstance}
                     <PinnedBar
                         room={matrixRoom}
                         onShowAll={() =>
