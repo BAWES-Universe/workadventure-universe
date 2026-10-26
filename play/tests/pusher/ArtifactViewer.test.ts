@@ -11,6 +11,7 @@ describe("who is looking at an artifact", () => {
         expect(viewerOf("uuid-alice", true, { kind: "nearby", ref: "#bubble-1" }, inSpace)).toEqual({
             person: { signedIn: true, identifier: "uuid-alice" },
             inChat: true,
+            chat: { kind: "nearby", ref: "#bubble-1" },
         });
         expect(viewerOf("uuid-alice", true, { kind: "nearby", ref: "#bubble-2" }, inSpace).inChat).toBe(false);
         expect(viewerOf("uuid-bob", true, { kind: "nearby", ref: "#bubble-1" }, inSpace).inChat).toBe(false);
@@ -21,6 +22,14 @@ describe("who is looking at an artifact", () => {
         expect(viewerOf("uuid-alice", true, { kind: "dm", ref: "!room:chat.test" }, inSpace).inChat).toBe(false);
         expect(viewerOf("uuid-alice", true, undefined, inSpace).inChat).toBe(false);
         expect(inSpace).not.toHaveBeenCalled();
+        expect(viewerOf("uuid-alice", true, undefined, inSpace)).not.toHaveProperty("chat");
+    });
+
+    it("names the chat it is asked about, so Orbit can compare it with the one the artifact was made in", () => {
+        expect(viewerOf("uuid-alice", true, { kind: "dm", ref: "!room:chat.test" }, () => true).chat).toEqual({
+            kind: "dm",
+            ref: "!room:chat.test",
+        });
     });
 
     it("names a guest as signed out", () => {

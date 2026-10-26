@@ -40,6 +40,8 @@ export function viewerOf(
     return {
         person: { signedIn: isLogged, identifier: userIdentifier },
         inChat: chat?.kind === "nearby" && isUserInSpace(userIdentifier, chat.ref),
+        // Orbit counts inChat only when this is the chat the artifact was made in
+        ...(chat ? { chat } : {}),
     };
 }
 

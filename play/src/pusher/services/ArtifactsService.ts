@@ -22,8 +22,10 @@ export interface ArtifactPerson {
 
 export interface ArtifactViewer {
     person: ArtifactPerson;
-    /** The pusher vouches for it: the person is in the chat the artifact was made in, right now. */
+    /** The pusher vouches for it: the person is in the chat named in `chat`, right now. */
     inChat: boolean;
+    /** The chat the person is vouched for; Orbit counts `inChat` only when it is the chat the artifact was made in. */
+    chat?: { kind: "nearby" | "dm"; ref: string };
 }
 
 const VersionView = z.object({
