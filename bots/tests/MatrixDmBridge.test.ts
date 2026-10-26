@@ -1635,6 +1635,38 @@ describe('DmReplyService history', () => {
         expect(await (service as any).replyNow(BOT, person, 'hello', [], { roomId: ROOM })).not.toHaveProperty('artifacts');
     });
 
+    it('drops media a bubble left queued in the person\'s saved memory, so a first direct message never carries it', async () => {
+        const { DmReplyService } = await import('../server/DmReplyService');
+        const { PersistentMemory } = await import('../memory/PersistentMemory');
+        const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
+        const picture = { url: 'https://cdn.test/map.png', mediaType: 'image' as const, mimeType: 'image/png', createdAt: Date.now(), retryCount: 0 };
+        // The person's saved memory (as loaded after a restart) still holds a picture queued in a bubble.
+        const before = new PersistentMemory({});
+        before.addMessage(BOT, 7, 'hello', 'person');
+        const saved = before.getMemory(BOT, 7)!;
+        saved.userUuid = 'uuid-alice';
+        saved.pendingMedia = [picture];
+        const memory = new PersistentMemory({});
+        (memory as any).loadedMemoriesByUuid.set(`${BOT}_uuid-alice`, (before as any).cloneMemory(saved));
+        const stream = vi.fn(async function* () {
+            yield { content: 'Hello Alice!', done: true, metadata: { tokensUsed: 0, latency: 5 } };
+        });
+        Object.assign(service, {
+            playerIds: new Map(),
+            nextPlayerId: -1,
+            loadedBots: new Set([BOT]),
+            botManager: { getBot: () => null },
+            getBotConfig: async () => ({ botId: BOT, name: 'Guide', aiProviderRef: 'p' }),
+            aiService: { generateBotResponseStream: stream },
+            conversationMemory: memory,
+            conversationStorage: { startConversation: vi.fn(), addMessage: vi.fn(async () => undefined) },
+        });
+        const person = { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false };
+        const reply = await (service as any).replyNow(BOT, person, 'hi', [], {});
+        expect(reply.text).toBe('Hello Alice!');
+        expect(reply.media).toEqual([]);
+    });
+
     it('cards a passing mention of the room once a day, and every answer to where the bot is', async () => {
         const { DmReplyService } = await import('../server/DmReplyService');
         const { PersistentMemory } = await import('../memory/PersistentMemory');
