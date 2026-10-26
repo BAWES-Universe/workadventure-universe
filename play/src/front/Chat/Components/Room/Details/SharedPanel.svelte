@@ -107,10 +107,12 @@
     });
 
     // An image or video opens big, with the others before and after it, as a gallery in the chat does.
-    let lightboxIndex: number | undefined;
+    // Kept by key, so an image arriving or going while it is open doesn't swap the one on screen.
+    let lightboxKey: string | undefined;
     let lightboxUrl: string | undefined;
     let lightboxUnsubscribe: Unsubscriber | undefined;
-    $: lightboxItem = lightboxIndex !== undefined ? $shared.media[lightboxIndex] : undefined;
+    $: lightboxIndex = lightboxKey === undefined ? -1 : $shared.media.findIndex((item) => item.key === lightboxKey);
+    $: lightboxItem = lightboxIndex >= 0 ? $shared.media[lightboxIndex] : undefined;
     $: watchLightbox(lightboxItem?.message, lightboxItem?.src);
 
     function watchLightbox(message: ChatMessage | undefined, src: string | undefined) {
@@ -124,8 +126,8 @@
 
     function step(delta: number) {
         const total = $shared.media.length;
-        if (lightboxIndex === undefined || total === 0) return;
-        lightboxIndex = (lightboxIndex + delta + total) % total;
+        if (lightboxIndex < 0 || total === 0) return;
+        lightboxKey = $shared.media[(lightboxIndex + delta + total) % total].key;
     }
 
     onDestroy(() => {
@@ -172,7 +174,7 @@
                                     label={item.isVideo
                                         ? $LL.chat.details.video({ name: sender })
                                         : $LL.chat.details.image({ name: sender })}
-                                    on:click={() => (lightboxIndex = $shared.media.indexOf(item))}
+                                    on:click={() => (lightboxKey = item.key)}
                                 />
                             {/each}
                         </div>
@@ -235,7 +237,7 @@
     filename={lightboxItem?.name}
     hasPrev={$shared.media.length > 1}
     hasNext={$shared.media.length > 1}
-    on:close={() => (lightboxIndex = undefined)}
+    on:close={() => (lightboxKey = undefined)}
     on:prev={() => step(-1)}
     on:next={() => step(1)}
 />
