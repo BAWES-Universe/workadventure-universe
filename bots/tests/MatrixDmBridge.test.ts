@@ -94,6 +94,28 @@ describe('MatrixDmBridge', () => {
         expect(client.setDisplayName).toHaveBeenCalledTimes(2);
     });
 
+    it("gives the bot its Woka as chat picture, also in a chat that started before bots had pictures", async () => {
+        Object.assign(client, {
+            getAvatarUrl: vi.fn(async () => null),
+            setAvatarUrl: vi.fn(async () => undefined),
+            getAccountData: vi.fn(async () => undefined),
+            setAccountData: vi.fn(async () => undefined),
+        });
+        deps.getBotConfig.mockResolvedValue({ botId: BOT, name: 'Guide', enabled: true, aiProviderRef: 'p', characterTextureIds: ['male1'] } as never);
+        deps.wokaPicture = vi.fn(async () => Buffer.from('png'));
+        deps.rooms.rememberDmRoom(ROOM, BOT);
+        bridge = new MatrixDmBridge(config, client as never, deps);
+
+        await bridge.onEvent(message('hi there'));
+        await vi.waitFor(() => expect(client.setAvatarUrl).toHaveBeenCalledWith(BOT_USER, 'mxc://matrix.test/abc'));
+        expect(client.sendText).toHaveBeenCalledWith(BOT_USER, ROOM, 'Hello Alice!');
+        // Once set, later messages and lookups don't ask the homeserver again.
+        await bridge.userExists(BOT_USER);
+        await bridge.onEvent(message('again'));
+        expect(deps.wokaPicture).toHaveBeenCalledTimes(1);
+        expect(client.getAvatarUrl).toHaveBeenCalledTimes(1);
+    });
+
     it('creates the bot account on first lookup and names it after the bot', async () => {
         expect(await bridge.userExists(BOT_USER)).toBe(true);
         expect(client.ensureRegistered).toHaveBeenCalledWith(`bot_${BOT}`);

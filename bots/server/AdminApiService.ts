@@ -7,6 +7,7 @@
 import axios, { type AxiosResponse } from 'axios';
 import * as Sentry from '@sentry/node';
 import { parseForgetNotice, type MemoryForgetHandler } from '../memory/ForgetNotice';
+import type { WokaList } from '../matrix/wokaPicture';
 
 // Optional Sentry integration (uncomment if @sentry/node is installed)
 // import * as Sentry from '@sentry/node';
@@ -372,6 +373,20 @@ export class AdminApiService {
             captureException(error);
             throw error;
         }
+    }
+
+    /**
+     * The woka list the game uses for a bot in its room (the bot picker's list), to draw the bot's Woka. Null when
+     * Orbit isn't set up; errors throw, so the caller tries again later.
+     */
+    async getBotWokaList(roomUrl: string, botId: string): Promise<WokaList | null> {
+        if (!this.isConfigured()) return null;
+        const response: AxiosResponse<WokaList> = await axios.get(`${this.adminApiUrl}/api/woka/list`, {
+            params: { roomUrl, context: 'bot', botId },
+            timeout: 10000,
+            headers: { Authorization: `Bearer ${this.adminApiToken}` },
+        });
+        return response.data && typeof response.data === 'object' ? response.data : null;
     }
 
     /**

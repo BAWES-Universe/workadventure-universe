@@ -50,6 +50,44 @@ export class MatrixAppServiceClient {
         return response.status === 200 && typeof response.data?.displayname === 'string' ? response.data.displayname : null;
     }
 
+    /** The user's chat picture (mxc://), or null when they have none. Throws when the homeserver can't say. */
+    async getAvatarUrl(userId: string): Promise<string | null> {
+        const response = await this.http.get(`/_matrix/client/v3/profile/${encodeURIComponent(userId)}/avatar_url`, {
+            params: { user_id: userId },
+            validateStatus: () => true,
+        });
+        if (response.status === 404) return null;
+        if (response.status !== 200) throw new Error(`Matrix avatar_url of ${userId}: ${response.status} ${response.data?.errcode ?? ''}`);
+        return typeof response.data?.avatar_url === 'string' && response.data.avatar_url ? response.data.avatar_url : null;
+    }
+
+    async setAvatarUrl(userId: string, mxcUri: string): Promise<void> {
+        await this.http.put(
+            `/_matrix/client/v3/profile/${encodeURIComponent(userId)}/avatar_url`,
+            { avatar_url: mxcUri },
+            { params: { user_id: userId } }
+        );
+    }
+
+    /** The user's own account data of this type, or undefined when there is none. Throws when the homeserver can't say. */
+    async getAccountData(userId: string, type: string): Promise<unknown> {
+        const response = await this.http.get(
+            `/_matrix/client/v3/user/${encodeURIComponent(userId)}/account_data/${encodeURIComponent(type)}`,
+            { params: { user_id: userId }, validateStatus: () => true }
+        );
+        if (response.status === 404) return undefined;
+        if (response.status !== 200) throw new Error(`Matrix account data of ${userId}: ${response.status} ${response.data?.errcode ?? ''}`);
+        return response.data;
+    }
+
+    async setAccountData(userId: string, type: string, content: object): Promise<void> {
+        await this.http.put(
+            `/_matrix/client/v3/user/${encodeURIComponent(userId)}/account_data/${encodeURIComponent(type)}`,
+            content,
+            { params: { user_id: userId } }
+        );
+    }
+
     async joinRoom(userId: string, roomId: string): Promise<void> {
         await this.http.post(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/join`, {}, { params: { user_id: userId } });
     }
