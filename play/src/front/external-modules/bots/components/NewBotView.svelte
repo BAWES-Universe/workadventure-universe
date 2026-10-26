@@ -5,11 +5,17 @@
     import { ABSOLUTE_PUSHER_URL } from "../../../Enum/ComputedConst";
     import WokaImage from "../../../Components/Woka/WokaImage.svelte";
     import { botWokaCatalogStore, ensureBotWokaCatalog } from "../stores/BotWokaCatalogStore";
-    import { IconCheck } from "@wa-icons";
+    import TelemetryCard from "./page/TelemetryCard.svelte";
+    import { IconCheck, IconChevronDown } from "@wa-icons";
 
     export let busy = false;
-    export let onCreate: (name: string, textureId: string) => void;
+    export let onCreate: (name: string, textureId: string, telemetryOn: boolean) => void;
     export let onCancel: () => void;
+
+    // Advanced settings, folded away under the WOKA grid. Kept by the panel, so a form that is rebuilt after a failed
+    // create (the first bot of a room swaps it for the spinner meanwhile) still has what the person chose.
+    export let advancedOpen = false;
+    export let telemetryOn = true;
 
     let name = "";
     let textureId = "";
@@ -29,7 +35,7 @@
     }
 
     function submit() {
-        if (ready) onCreate(name.trim(), textureId);
+        if (ready) onCreate(name.trim(), textureId, telemetryOn);
     }
 
     onMount(() => {
@@ -84,6 +90,25 @@
                 {/each}
             </div>
         {/each}
+    </div>
+    <div class="nb-adv">
+        <button
+            type="button"
+            class="nb-disclosure"
+            class:open={advancedOpen}
+            aria-expanded={advancedOpen}
+            aria-controls="new-bot-advanced"
+            data-testid="new-bot-advanced"
+            on:click={() => (advancedOpen = !advancedOpen)}
+        >
+            <span>{page.telemetry.newBotAdvanced()}</span>
+            <span class="nb-chev"><IconChevronDown font-size="18" /></span>
+        </button>
+        {#if advancedOpen}
+            <div id="new-bot-advanced">
+                <TelemetryCard on={telemetryOn} onChange={(next) => (telemetryOn = next)} />
+            </div>
+        {/if}
     </div>
     <div class="nb-foot">
         <button type="button" class="nb-btn" on:click={onCancel}>{page.create.cancel()}</button>
@@ -191,6 +216,54 @@
         height: 18px;
         border-radius: 50%;
         background: linear-gradient(135deg, #8629fc, #4156f6);
+        color: #fff;
+    }
+    .nb-adv {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        flex: none;
+    }
+    .nb-disclosure {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        width: 100%;
+        height: 44px;
+        margin: 0;
+        padding: 0 8px 0 4px;
+        border: 0;
+        border-radius: 12px;
+        background: transparent;
+        font: inherit;
+        font-size: 13px;
+        font-weight: 600;
+        color: #fff;
+        text-align: start;
+        cursor: pointer;
+    }
+    @media (hover: hover) {
+        .nb-disclosure:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+    }
+    .nb-disclosure:focus-visible {
+        outline: 2px solid #a78bfa;
+        outline-offset: -2px;
+    }
+    .nb-chev {
+        display: grid;
+        place-items: center;
+        flex: none;
+        color: rgba(244, 242, 250, 0.64);
+        transform: rotate(-90deg);
+    }
+    :global([dir="rtl"]) .nb-chev {
+        transform: rotate(90deg);
+    }
+    .nb-disclosure.open .nb-chev {
+        transform: none;
         color: #fff;
     }
     .nb-foot {

@@ -443,6 +443,12 @@ export const EnvironmentVariables = z.object({
     MATRIX_PUBLIC_URI: z.string().optional().describe("Matrix homeserver public URI"),
     MATRIX_ADMIN_USER: z.string().optional().describe("Matrix administrator username"),
     MATRIX_ADMIN_PASSWORD: z.string().optional().describe("Matrix administrator password"),
+    MATRIX_ADMIN_TOKEN: z
+        .string()
+        .optional()
+        .describe(
+            "Matrix administrator access token made without a device (Synapse admin API, login as a user). When set it is used instead of signing in with the password; the password is kept as the fallback"
+        ),
     MATRIX_DOMAIN: z.string().optional().describe("Matrix server domain"),
     EMBEDLY_KEY: z.string().optional().describe("Embedly API key for rich link previews"),
     GRPC_MAX_MESSAGE_SIZE: PositiveIntAsString.optional()

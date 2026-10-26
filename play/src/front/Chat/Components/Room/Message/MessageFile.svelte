@@ -2,6 +2,8 @@
     import type { Readable } from "svelte/store";
     import type { ChatMessageContent } from "../../../Connection/ChatConnection";
     import LL from "../../../../../i18n/i18n-svelte";
+    import { chatFileOpensInViewer } from "../../../../FileViewer/fileKinds";
+    import ViewableFileCard from "./ViewableFileCard.svelte";
 
     export let content: Readable<ChatMessageContent>;
 
@@ -53,54 +55,61 @@
     // Matrix files load from a blob: URL, so the type and name come from the file name when there is one.
     $: info = getFileTypeInfo($content.filename ?? $content.url);
     $: displayName = $content.filename ?? getFilenameFromUrl($content.url);
+    // A file the viewer can show opens beside the map when tapped, with a separate Download button. Any other file
+    // keeps the card it always had: a download link.
+    $: viewable = $content.url !== undefined && chatFileOpensInViewer(displayName);
     $: hasCaption = $content.body && $content.body.trim() && $content.body !== $content.filename;
 </script>
 
-<!-- A link only once the file is ready: until its blob: URL is fetched there is nothing to open. -->
-<svelte:element
-    this={$content.url ? "a" : "div"}
-    href={$content.url}
-    target={$content.url ? "_blank" : undefined}
-    rel={$content.url ? "noopener noreferrer" : undefined}
-    download={$content.url ? displayName : undefined}
-    aria-busy={$content.url ? undefined : "true"}
-    class="flex items-center gap-3 p-2 rounded-lg bg-white/5 transition-colors group {$content.url
-        ? 'hover:bg-white/10'
-        : 'opacity-60'}"
->
-    <!-- File type icon badge -->
-    <div
-        class="flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center text-white text-[10px] font-bold tracking-wide"
-        style="background: {info.color};"
+{#if viewable && $content.url}
+    <ViewableFileCard url={$content.url} name={displayName} />
+{:else}
+    <!-- A link only once the file is ready: until its blob: URL is fetched there is nothing to open. -->
+    <svelte:element
+        this={$content.url ? "a" : "div"}
+        href={$content.url}
+        target={$content.url ? "_blank" : undefined}
+        rel={$content.url ? "noopener noreferrer" : undefined}
+        download={$content.url ? displayName : undefined}
+        aria-busy={$content.url ? undefined : "true"}
+        class="flex items-center gap-3 p-2 rounded-lg bg-white/5 transition-colors group {$content.url
+            ? 'hover:bg-white/10'
+            : 'opacity-60'}"
     >
-        {info.label}
-    </div>
-    <!-- Filename + open link -->
-    <div class="flex-1 min-w-0">
-        <div class="text-sm text-white/90 truncate">{displayName}</div>
-        <div class="text-[10px] text-white/40">
-            {$content.url ? $LL.chat.file.clickToOpen() : $LL.chat.loader()}
-        </div>
-    </div>
-    <!-- Download/open icon -->
-    <div class="flex-shrink-0 opacity-40 group-hover:opacity-80 transition-opacity">
-        <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            stroke="#ffffff"
-            fill="none"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
+        <!-- File type icon badge -->
+        <div
+            class="flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center text-white text-[10px] font-bold tracking-wide"
+            style="background: {info.color};"
         >
-            <path d="M21 15v4a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-4" />
-            <path d="M7 10l5 5l5 -5" />
-            <path d="M12 15l0 -12" />
-        </svg>
-    </div>
-</svelte:element>
+            {info.label}
+        </div>
+        <!-- Filename + open link -->
+        <div class="flex-1 min-w-0">
+            <div class="text-sm text-white/90 truncate">{displayName}</div>
+            <div class="text-[10px] text-white/40">
+                {$content.url ? $LL.chat.file.clickToOpen() : $LL.chat.loader()}
+            </div>
+        </div>
+        <!-- Download/open icon -->
+        <div class="flex-shrink-0 opacity-40 group-hover:opacity-80 transition-opacity">
+            <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                stroke="#ffffff"
+                fill="none"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+            >
+                <path d="M21 15v4a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-4" />
+                <path d="M7 10l5 5l5 -5" />
+                <path d="M12 15l0 -12" />
+            </svg>
+        </div>
+    </svelte:element>
+{/if}
 
 <!-- Caption/text below file card -->
 {#if hasCaption}

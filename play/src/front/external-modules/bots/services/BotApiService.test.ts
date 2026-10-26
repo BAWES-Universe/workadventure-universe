@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { BotApiService, isOrbitSessionResponse } from "./BotApiService";
+import { BotApiService, isBotAiOptions, isOrbitSessionResponse, myAiKeyNames } from "./BotApiService";
 
 const mocks = vi.hoisted(() => ({
     getAuthToken: vi.fn((): string | null => null),
@@ -212,5 +212,102 @@ describe("BotApiService once the OIDC access token has run out", () => {
 
         await expect(service.listBots()).rejects.toThrow("Missing Orbit session");
         expect(mocks.setAuthToken).not.toHaveBeenCalled();
+    });
+});
+
+describe("BotApiService bot chat telemetry", () => {
+    function serviceWithSession() {
+        const service = new BotApiService();
+        service.initialize(authToken("oidc-token"), "https://orbit.example.com", "room-1");
+        sessionStorage.setItem("orbit_admin_session_v2", `orb_sess_v2_${"a".repeat(64)}`);
+        sessionStorage.setItem("orbit_admin_session_v2_expires", String(Date.now() + 60 * 60 * 1000));
+        return service;
+    }
+
+    beforeEach(() => {
+        sessionStorage.clear();
+        vi.restoreAllMocks();
+    });
+
+    it("reads telemetry as on when Orbit does not hide the bot's chats", async () => {
+        const fetchMock = vi
+            .spyOn(globalThis, "fetch")
+            .mockResolvedValue(new Response(JSON.stringify({ universeHides: false, choice: "follow", hidden: false })));
+        await expect(serviceWithSession().getBotTelemetry("bot-1")).resolves.toEqual({
+            universeHides: false,
+            on: true,
+        });
+        expect(fetchMock.mock.calls[0][0]).toBe("https://orbit.example.com/api/bots/bot-1/privacy");
+    });
+
+    it("reads telemetry as locked off when the universe hides every bot", async () => {
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(
+            new Response(JSON.stringify({ universeHides: true, choice: "follow", hidden: true }))
+        );
+        await expect(serviceWithSession().getBotTelemetry("bot-1")).resolves.toEqual({
+            universeHides: true,
+            on: false,
+        });
+    });
+
+    it("turns it off with the bot's own choice, and back on by following the universe", async () => {
+        const fetchMock = vi
+            .spyOn(globalThis, "fetch")
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ universeHides: false, choice: "private", hidden: true }))
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ universeHides: false, choice: "follow", hidden: false }))
+            );
+        const service = serviceWithSession();
+        await expect(service.saveBotTelemetry("bot-1", false)).resolves.toEqual({ universeHides: false, on: false });
+        await expect(service.saveBotTelemetry("bot-1", true)).resolves.toEqual({ universeHides: false, on: true });
+        expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string)).toEqual({ choice: "private" });
+        expect(JSON.parse(fetchMock.mock.calls[1][1]?.body as string)).toEqual({ choice: "follow" });
+        expect(fetchMock.mock.calls[0][1]?.method).toBe("PUT");
+    });
+
+    it("refuses an answer it does not understand", async () => {
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ hello: "world" })));
+        await expect(serviceWithSession().getBotTelemetry("bot-1")).rejects.toThrow(/does not understand/);
+    });
+});
+
+describe("isBotAiOptions", () => {
+    it("takes an answer with a key list and a Universe AI answer", () => {
+        expect(isBotAiOptions({ keys: [], universeAi: { available: true } })).toBe(true);
+        expect(isBotAiOptions({ keys: [{ id: "k" }], universeAi: { available: false } })).toBe(true);
+    });
+
+    it("treats an answer without the Universe AI part as no answer, so the page keeps its provider list", () => {
+        expect(isBotAiOptions({ keys: [] })).toBe(false);
+        expect(isBotAiOptions({ keys: [], universeAi: {} })).toBe(false);
+        expect(isBotAiOptions({ keys: "none", universeAi: { available: true } })).toBe(false);
+        expect(isBotAiOptions(null)).toBe(false);
+        expect(isBotAiOptions("keys")).toBe(false);
+    });
+});
+
+describe("myAiKeyNames", () => {
+    it("keeps only each key's id and name", () => {
+        expect(
+            myAiKeyNames({
+                keys: [
+                    { id: "key-1", name: "Opus 5.5", kind: "openrouter", lentTo: [] },
+                    { id: "key-2", name: "My DeepSeek", lentTo: [{ universeId: "u1" }] },
+                ],
+            })
+        ).toEqual([
+            { id: "key-1", name: "Opus 5.5" },
+            { id: "key-2", name: "My DeepSeek" },
+        ]);
+    });
+
+    it("skips a key without an id or name, and answers null for anything that isn't a key list", () => {
+        expect(myAiKeyNames({ keys: [{ id: "key-1" }, null, { id: "key-2", name: "Ok" }] })).toEqual([
+            { id: "key-2", name: "Ok" },
+        ]);
+        expect(myAiKeyNames({ error: "Unauthorized" })).toBeNull();
+        expect(myAiKeyNames(null)).toBeNull();
     });
 });

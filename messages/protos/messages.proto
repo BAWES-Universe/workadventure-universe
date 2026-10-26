@@ -1104,6 +1104,22 @@ message RoomJoinedMessage {
   CompanionTextureMessage companionTexture = 18;
   // What this player may do in the world, as a decimal number (see permissionsFrom); empty when Orbit sent none.
   string permissions = 19;
+  // What each role key is called, for the badge next to people. Unset when Orbit sent no list.
+  RoleCatalogue roleCatalogue = 20;
+}
+
+// The roles Orbit named to this player, highest first.
+message RoleCatalogue {
+  repeated RoleLabel roles = 1;
+}
+
+message RoleLabel {
+  // The role's tag, as carried by people in their tags.
+  string key = 1;
+  string name = 2;
+  string color = 3;
+  // False: the badge shows only on the player who holds the role (and to people who manage roles).
+  bool visibleOnOthers = 4;
 }
 
 message MegaphoneSettings{
@@ -1683,7 +1699,12 @@ message BanMessage {
 
 message RoomDescription {
   string roomId = 1;
+  // Everyone in the room, bots included (one per open tab or device).
   int32 nbUsers = 2;
+  // How many of nbUsers are bots (#1389).
+  int32 nbBots = 3;
+  // The people (not bots) in the room, by the name they show in game, one per account, A to Z.
+  repeated string peopleNames = 4;
 }
 
 message RoomsList {

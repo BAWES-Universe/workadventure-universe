@@ -48,10 +48,15 @@
     import { mapEditorToolbarInUseStore } from "../../../Stores/MapEditorStore";
     import { isTouchScreen, SETTLE_CHECKS_MS } from "../../../Utils/ViewportGuard";
     import Message from "./Message.svelte";
-    import { keyboardClosed, listGrewTaller, stillPinnedToBottom } from "./TimelinePin";
+    import {
+        firstShowingIndex,
+        keyboardClosed,
+        listGrewTaller,
+        placeAfterMove,
+        stillPinnedToBottom,
+    } from "./TimelinePin";
     import MessageInputBar from "./MessageInputBar.svelte";
     import MessageSystem from "./MessageSystem.svelte";
-    import TypingUsers from "./TypingUsers.svelte";
     import CopiedPill from "./MessageActions/CopiedPill.svelte";
     import SessionDivider from "./Thread/SessionDivider.svelte";
     import ProximityThreadTitle from "./Thread/ProximityThreadTitle.svelte";
@@ -111,7 +116,6 @@
     let smoothScrollUntil = 0;
     let newestMessageId: string | undefined;
     let childListObserver: MutationObserver | undefined;
-    let onScrollTop = false;
     // The list's own height at its last size change and the window's at its last resize, to see them grow (see
     // redrawList).
     let lastListHeight = 0;
@@ -125,7 +129,18 @@
     // After the keyboard closes, once the page is back in place (ViewportGuard's last check), with a little margin.
     const REDRAW_AFTER_SETTLE_MS = SETTLE_CHECKS_MS[SETTLE_CHECKS_MS.length - 1] + 100;
 
-    let oldScrollHeight = 0;
+    // Whether the browser keeps the reader's place by itself when something above changes height (scroll anchoring:
+    // Chrome, Firefox, Edge, Safari 27). It does that inside its own scrolling, so a flick on a phone keeps gliding.
+    // Older Safari doesn't: there the timeline keeps the place itself (readingPlace).
+    const browserKeepsPlace = typeof CSS !== "undefined" && CSS.supports?.("overflow-anchor", "auto") === true;
+
+    // Older Safari: the message the reader is looking at while scrolled up, and where it sits in the list's content.
+    // When something above it changes height (a picture loading), the list moves by as much, so the reader stays on it.
+    let readingPlace: { id: string; contentTop: number; scrollTop: number } | undefined;
+
+    // The message showing at the top of the list just before the list is drawn again, and how far its bottom is from
+    // the list's top (see holdPlaceAfterUpdate).
+    let placeBeforeUpdate: { id: string; bottom: number } | undefined;
 
     let loadingMessagePromise: Promise<void> | undefined = undefined;
 
@@ -143,7 +158,6 @@
 
     $: messages = room?.messages;
     $: roomName = room?.name;
-    $: typingMembers = room.typingMembers;
     $: isEncrypted = room.isEncrypted;
     $: proximityRoom = room instanceof ProximityChatRoom ? room : undefined;
     $: matrixRoom = room instanceof MatrixChatRoom ? room : undefined;
@@ -243,10 +257,10 @@
         initMessages()
             .catch((error) => console.error(error))
             .finally(() => {
-                // The first time, jump to the bottom while the list is still hidden, then show it.
-                scrollToMessageListBottom(proximityRoom !== undefined);
-                // The proximity chat has no first fill, and a state change here would run afterUpdate right after
-                // the smooth scroll above starts: its "keep the reader's place" write to scrollTop cancels that scroll.
+                // The first time, jump to the bottom while the list is still hidden, then show it. Every chat opens
+                // on its newest message at once, with no slide, as chat apps do.
+                scrollToMessageListBottom();
+                // The proximity chat has no first fill.
                 if (!proximityRoom) initialLoadDone = true;
             });
     });
@@ -292,8 +306,7 @@
 
         try {
             await loadMessages();
-            scrollToMessageListBottom(proximityRoom !== undefined);
-            setFirstListItem();
+            scrollToMessageListBottom();
         } catch (error) {
             console.error(`Failed to load messages: ${error}`);
         }
@@ -301,10 +314,9 @@
 
     beforeUpdate(() => {
         if (messageListRef) {
-            oldScrollHeight = messageListRef.scrollHeight;
             const scrollableDistance = messageListRef.scrollHeight - messageListRef.offsetHeight;
             autoScroll = pinnedToBottom || messageListRef.scrollTop > scrollableDistance - 20;
-            onScrollTop = messageListRef.scrollTop === 0;
+            placeBeforeUpdate = autoScroll || firstFillPending ? undefined : topMessagePlace();
         }
     });
 
@@ -317,34 +329,117 @@
         const isNewMessage = newest !== undefined && newestMessageId !== undefined && newest.id !== newestMessageId;
         newestMessageId = newest?.id;
         if (autoScroll || (isNewMessage && newest?.isMyMessage === true)) {
-            scrollToMessageListBottom();
-        } else if (onScrollTop) {
-            const oldFirstListItem = messageListRef.querySelector<HTMLLIElement>('li[data-first-li="true"]');
-
-            if (oldFirstListItem !== null) {
-                const newScrollHeight = messageListRef.scrollHeight;
-                messageListRef.scrollTop = newScrollHeight - oldScrollHeight;
-            }
-            setFirstListItem();
+            // Only a new message slides in. Anything else (older messages coming in above, the list drawn again)
+            // keeps the newest message in place before the screen is drawn, so nothing is seen moving.
+            scrollToMessageListBottom(isNewMessage);
+        } else {
+            holdPlaceAfterUpdate();
         }
     });
 
-    function scrollToMessageListBottom(smooth = true) {
+    function isSliding(): boolean {
+        return performance.now() < smoothScrollUntil;
+    }
+
+    function scrollToMessageListBottom(smooth = false) {
         // Safety check for undefined reference
         // After disposing the component, the reference can be undefined
         if (messageListRef == undefined) return;
         // Going to the newest message (your own message sent, the chat opened): stay there while it grows, too.
         pinnedToBottom = true;
-        if (smooth) smoothScrollUntil = performance.now() + SMOOTH_SCROLL_MS;
-        messageListRef.scroll({ top: messageListRef.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+        // A new message is still sliding in: aim that slide at the new bottom instead of cutting it short.
+        const slide = smooth || isSliding();
+        if (slide) smoothScrollUntil = performance.now() + SMOOTH_SCROLL_MS;
+        messageListRef.scroll({ top: messageListRef.scrollHeight, behavior: slide ? "smooth" : "auto" });
+    }
+
+    // The message showing at the top of the list.
+    function topMessage(listTop: number): Element | undefined {
+        const items = messageListContentRef.children;
+        const index = firstShowingIndex(items.length, (i) => items[i].getBoundingClientRect().bottom, listTop);
+        return index === undefined ? undefined : items[index];
+    }
+
+    function topMessagePlace(): { id: string; bottom: number } | undefined {
+        if (!messageListRef || !messageListContentRef) return undefined;
+        const listTop = messageListRef.getBoundingClientRect().top;
+        const item = topMessage(listTop);
+        const id = item instanceof HTMLElement ? item.dataset.eventId : undefined;
+        return item && id ? { id, bottom: item.getBoundingClientRect().bottom - listTop } : undefined;
+    }
+
+    // The list was drawn again while the reader is scrolled up (older messages added above, a message gone): the
+    // message they were looking at goes back to where it was on screen. Measured just before and just after, so only
+    // what the browser has not already put right is moved, and a scroll of the reader's is never undone. By its bottom:
+    // with older messages from the same day and person above it now, it loses its day label and name line at its top.
+    // This also covers the very top of the list, where browsers don't keep the place.
+    function holdPlaceAfterUpdate() {
+        const before = placeBeforeUpdate;
+        placeBeforeUpdate = undefined;
+        if (before && messageListRef && messageListContentRef) {
+            const item = messageListContentRef.querySelector<HTMLElement>(
+                `:scope > li[data-event-id="${CSS.escape(before.id)}"]`
+            );
+            if (item) {
+                const moved =
+                    item.getBoundingClientRect().bottom - messageListRef.getBoundingClientRect().top - before.bottom;
+                if (Math.abs(moved) >= 1) messageListRef.scrollTop += moved;
+            }
+        }
+        if (!browserKeepsPlace) rememberReadingPlace();
+    }
+
+    // Remembers the message showing at the top of the list, and where it is in the list's content.
+    function rememberReadingPlace() {
+        if (!messageListRef || !messageListContentRef) return;
+        const listTop = messageListRef.getBoundingClientRect().top;
+        const item = topMessage(listTop);
+        const id = item instanceof HTMLElement ? item.dataset.eventId : undefined;
+        readingPlace =
+            item && id
+                ? {
+                      id,
+                      contentTop: item.getBoundingClientRect().top - listTop + messageListRef.scrollTop,
+                      scrollTop: messageListRef.scrollTop,
+                  }
+                : undefined;
+    }
+
+    // Older Safari: while the reader is scrolled up, keeps the message they were looking at where it was when something
+    // above it changed height.
+    function keepReadingPlace() {
+        if (!messageListRef || !messageListContentRef) return;
+        const item =
+            !pinnedToBottom && readingPlace
+                ? messageListContentRef.querySelector<HTMLElement>(
+                      `:scope > li[data-event-id="${CSS.escape(readingPlace.id)}"]`
+                  )
+                : null;
+        if (item && readingPlace) {
+            const listTop = messageListRef.getBoundingClientRect().top;
+            const contentTop = item.getBoundingClientRect().top - listTop + messageListRef.scrollTop;
+            const moved = contentTop - readingPlace.contentTop;
+            if (Math.abs(moved) >= 1) {
+                const list = messageListRef;
+                list.scrollTop = placeAfterMove(
+                    list.scrollTop,
+                    readingPlace.scrollTop,
+                    list.scrollHeight - list.clientHeight,
+                    moved
+                );
+            }
+        }
+        rememberReadingPlace();
     }
 
     function watchSizes() {
         if (typeof ResizeObserver === "undefined" || !messageListRef || !messageListContentRef) return;
         resizeObserver = new ResizeObserver(() => {
-            const sliding = performance.now() < smoothScrollUntil;
-            // A new message slides in: aim that slide at the new bottom instead of cutting it short.
-            if (pinnedToBottom) scrollToMessageListBottom(sliding);
+            const sliding = isSliding();
+            // At the newest message: stay on it, before the screen is drawn. Scrolled up: stay on what is read (the
+            // browser does that itself where it can).
+            if (pinnedToBottom) scrollToMessageListBottom();
+            else if (!browserKeepsPlace) keepReadingPlace();
             const height = messageListRef?.clientHeight ?? 0;
             if (touchScreen && !sliding && listGrewTaller(lastListHeight, height)) redrawAfterGrowing();
             lastListHeight = height;
@@ -447,6 +542,8 @@
 
     function handleScroll() {
         updatePinnedToBottom();
+        // Something above may have changed height in this same frame: put that right before taking the new place.
+        if (!browserKeepsPlace) keepReadingPlace();
         clearTimeout(scrollTimer);
         scrollTimer = setTimeout(() => {
             loadMorePreviousMessages();
@@ -501,14 +598,6 @@
         );
     }
 
-    function setFirstListItem() {
-        const oldFirstListItem = messageListRef.querySelector<HTMLLIElement>('li[data-first-li="true"]');
-        oldFirstListItem?.removeAttribute("data-first-li");
-
-        const firstListItem = messageListRef.getElementsByTagName("li").item(0);
-        firstListItem?.setAttribute("data-first-li", "true");
-    }
-
     function isViewportNotFilled() {
         return messageListRef.scrollHeight <= messageListRef.clientHeight;
     }
@@ -522,7 +611,8 @@
                 event.detail.id === $messages[$messages.length - 1].id &&
                 $messages[$messages.length - 1].sender?.chatId === myChatID)
         ) {
-            scrollToMessageListBottom();
+            // At the newest message, its text showing stays put; from higher up, your own message slides in.
+            scrollToMessageListBottom(!pinnedToBottom);
         }
     }
 
@@ -729,12 +819,15 @@
                         <div class="h-12 w-12 shrink-0" aria-hidden="true" />
                     {/if}
                 {/if}
+                {#if shouldDisplayLoader}
+                    <!-- Over the empty space at the top of the list, so the messages don't move when it shows. -->
+                    <div
+                        class="absolute left-0 right-0 top-full z-10 flex justify-center items-center pt-1 pointer-events-none"
+                    >
+                        <IconLoader class="animate-[spin_2s_linear_infinite]" font-size={25} />
+                    </div>
+                {/if}
             </div>
-            {#if shouldDisplayLoader}
-                <div class="flex justify-center items-center w-full pb-1 bg-transparent">
-                    <IconLoader class="animate-[spin_2s_linear_infinite]" font-size={25} />
-                </div>
-            {/if}
             {#if liveElsewhere && proximityRoom}
                 <div
                     class="mx-2 flex items-center gap-2 rounded-xl bg-success/15 px-3 py-2 text-xs text-white"
@@ -868,10 +961,6 @@
                 {/each}
             </ul>
         </div>
-
-        {#if $typingMembers.length > 0 && !isEnded}
-            <TypingUsers typingMembers={$typingMembers} />
-        {/if}
 
         <CopiedPill />
 

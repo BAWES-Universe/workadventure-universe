@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
     clamp,
     doubleTapScaleFor,
+    isOnBackground,
     maxScaleFor,
     panBounds,
     realSizeScale,
@@ -157,5 +158,31 @@ describe("lightboxGestures", () => {
         expect(clamp(30, 10)).toBe(10);
         expect(clamp(-30, 10)).toBe(-10);
         expect(clamp(5, 10)).toBe(5);
+    });
+    describe("isOnBackground", () => {
+        const picture = { left: 100, top: 200, right: 300, bottom: 600 };
+
+        it("is false on the picture and on its very edge", () => {
+            expect(isOnBackground({ x: 200, y: 400 }, picture)).toBe(false);
+            expect(isOnBackground({ x: 100, y: 200 }, picture)).toBe(false);
+            expect(isOnBackground({ x: 300, y: 600 }, picture)).toBe(false);
+        });
+
+        it("is true beside, above and below the picture", () => {
+            expect(isOnBackground({ x: 99, y: 400 }, picture)).toBe(true);
+            expect(isOnBackground({ x: 301, y: 400 }, picture)).toBe(true);
+            expect(isOnBackground({ x: 200, y: 199 }, picture)).toBe(true);
+            expect(isOnBackground({ x: 200, y: 601 }, picture)).toBe(true);
+        });
+
+        it("follows a zoomed picture that is bigger than the screen", () => {
+            const zoomed = { left: -500, top: -300, right: 900, bottom: 1100 };
+            expect(isOnBackground({ x: 10, y: 10 }, zoomed)).toBe(false);
+        });
+
+        it("is true everywhere while there is no picture on screen yet", () => {
+            expect(isOnBackground({ x: 200, y: 400 }, undefined)).toBe(true);
+            expect(isOnBackground({ x: 0, y: 0 }, { left: 0, top: 0, right: 0, bottom: 0 })).toBe(true);
+        });
     });
 });

@@ -5,6 +5,7 @@
  */
 
 import axios, { type AxiosResponse } from 'axios';
+import { parseForgetNotice, type MemoryForgetHandler } from '../memory/ForgetNotice';
 
 // Optional Sentry integration (uncomment if @sentry/node is installed)
 // import * as Sentry from '@sentry/node';
@@ -47,6 +48,28 @@ export function canSendSessionTo(adminApiUrl: URL, nodeEnv: string | undefined =
     const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];
     return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
 }
+
+/** What people do with a bot, as Orbit's check names it. */
+export type BotAccessAction = 'chat' | 'dm' | 'summon';
+
+/** Who is asking: a signed-in person is named by their uuid or email, a guest only by being a guest. */
+export interface BotAccessPerson {
+    signedIn: boolean;
+    identifier?: string | null;
+}
+
+/** Orbit's answer to "can this person do this with this bot?" (POST /api/bots/:id/access). */
+export interface BotAccessAnswer {
+    allowed: boolean;
+    code: 'allowed' | 'sign_in_required' | 'not_allowed' | 'no_room_access';
+    /** A line to show as it is. Null when allowed. */
+    reason: string | null;
+    /** The owner's own line for people who may not chat with the bot, only when the owner wrote one. */
+    reply?: string;
+}
+
+/** How long a bot waits for Orbit's access answer before it counts as "could not check". */
+const BOT_ACCESS_TIMEOUT_MS = 4_000;
 
 export interface BotConfiguration {
     botId: string;
@@ -112,6 +135,14 @@ export interface BotUsageQuery {
     endDate?: Date;
 }
 
+/** Orbit turned a bot save down and said why, in words meant for the person saving. */
+export class BotConfigRefused extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'BotConfigRefused';
+    }
+}
+
 /** The fields of one provider, as Orbit serves them. */
 export interface AIProviderCredentials {
     providerId: string;
@@ -151,6 +182,14 @@ export class AdminApiService {
     private roomMetadataCache: Map<string, { data: { universeName: string; worldName: string; roomName: string }; cachedAt: number }> = new Map();
     private readonly ROOM_METADATA_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
     private adminApiToken: string;
+    // Hide bot conversations (#1166): the answer per bot, asked of Orbit at most every 30 seconds
+    private botPrivacyCache: Map<string, { hidden: boolean; cachedAt: number; notFoundInARow?: number }> = new Map();
+    private botPrivacyRequests: Map<string, Promise<boolean>> = new Map();
+    private readonly BOT_PRIVACY_CACHE_TTL = 30 * 1000;
+    // "Not found" answers in a row (30 seconds apart) before a bot is taken as deleted
+    private readonly BOT_GONE_AFTER = 3;
+    private forgetHandler: MemoryForgetHandler | null = null;
+    private privacySyncTimer: NodeJS.Timeout | null = null;
 
     constructor(adminApiUrl?: string, adminApiToken?: string) {
         this.adminApiUrl = adminApiUrl || process.env.ADMIN_API_URL || '';
@@ -167,7 +206,7 @@ export class AdminApiService {
     /**
      * Save bot configuration to admin API
      */
-    async saveBotConfiguration(config: BotConfiguration): Promise<void> {
+    async saveBotConfiguration(config: BotConfiguration, actingSession?: string): Promise<void> {
         if (!this.isConfigured()) {
             console.warn('[AdminApiService] Admin API not configured, skipping bot configuration save');
             return;
@@ -197,7 +236,8 @@ export class AdminApiService {
                 payload,
                 {
                     headers: {
-                        Authorization: `Bearer ${this.adminApiToken}`,
+                        // A change only a person may make (a bot on their own AI key) goes with their session, so Orbit can see whose it is
+                        Authorization: `Bearer ${actingSession ?? this.adminApiToken}`,
                         'Content-Type': 'application/json',
                     },
                 }
@@ -207,6 +247,10 @@ export class AdminApiService {
                 console.log(`[AdminApiService] Successfully saved bot config for ${config.botId}`);
             }
         } catch (error) {
+            // Orbit turned the save down and said why: that is an answer for the person, not a crash
+            if (axios.isAxiosError(error) && error.response?.status === 400 && typeof error.response.data?.error === 'string') {
+                throw new BotConfigRefused(error.response.data.error);
+            }
             console.error('[AdminApiService] Error saving bot configuration:', error);
             if ((process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') && axios.isAxiosError(error) && error.response) {
                 console.error('[AdminApiService] Response status:', error.response.status);
@@ -604,6 +648,115 @@ export class AdminApiService {
     }
 
     /**
+     * Does this bot hide its conversations (Orbit "Hide bot conversations", #435)? The universe default and the
+     * bot's own choice are resolved by Orbit; this only asks. A private bot sends nothing to PostHog or Sentry
+     * spans; chats, memory, usage counts and everything else work as always.
+     *
+     * Orbit is asked at most every 30 seconds per bot. A bot Orbit does not know, or an Orbit without the setting
+     * yet, is "not private", as every bot was before this setting existed. If Orbit cannot answer (down, timeout,
+     * refused), the last answer is kept, and with none yet the bot counts as private until Orbit answers. Never throws. `fresh` skips the 30 second wait (the bot server's own check).
+     *
+     * Orbit's answer also carries the people a manager asked the bot to forget; those go to the forget handler.
+     */
+    async isBotPrivate(botId: string, options: { fresh?: boolean } = {}): Promise<boolean> {
+        const cached = this.botPrivacyCache.get(botId);
+        if (!options.fresh && cached && Date.now() - cached.cachedAt < this.BOT_PRIVACY_CACHE_TTL) {
+            return cached.hidden;
+        }
+        if (!this.isConfigured()) {
+            return cached?.hidden ?? false;
+        }
+        const inFlight = this.botPrivacyRequests.get(botId);
+        if (inFlight) return inFlight;
+
+        const request = this.fetchBotPrivacy(botId, cached?.hidden).finally(() => {
+            this.botPrivacyRequests.delete(botId);
+        });
+        this.botPrivacyRequests.set(botId, request);
+        return request;
+    }
+
+    /**
+     * Ask Orbit about each running bot every 30 seconds. The answer keeps the privacy setting fresh and carries the
+     * people a manager asked the bot to forget, so a Forget lands even while nobody is talking to the bot.
+     */
+    startPrivacySync(getBotIds: () => Iterable<string>, onGone?: (botId: string) => void): void {
+        if (this.privacySyncTimer || !this.isConfigured()) {
+            return;
+        }
+        this.privacySyncTimer = setInterval(() => {
+            for (const botId of getBotIds()) {
+                void this.isBotPrivate(botId, { fresh: true }).then(() => {
+                    // Orbit has said "not found" several times running (the bot was deleted, not a hiccup): stop asking,
+                    // and let the caller stop tracking it
+                    if ((this.botPrivacyCache.get(botId)?.notFoundInARow ?? 0) >= this.BOT_GONE_AFTER) {
+                        this.botPrivacyCache.delete(botId);
+                        onGone?.(botId);
+                    }
+                });
+            }
+        }, this.BOT_PRIVACY_CACHE_TTL);
+        // Never keep the process alive for this
+        this.privacySyncTimer.unref?.();
+    }
+
+    stopPrivacySync(): void {
+        if (this.privacySyncTimer) {
+            clearInterval(this.privacySyncTimer);
+            this.privacySyncTimer = null;
+        }
+    }
+
+    /** Called with the people Orbit asks the bot server to forget. */
+    setForgetHandler(handler: MemoryForgetHandler | null): void {
+        this.forgetHandler = handler;
+    }
+
+    private applyForgetNotice(botId: string, forget: unknown): void {
+        const notice = parseForgetNotice(forget);
+        if (!this.forgetHandler || !notice) return;
+        try {
+            this.forgetHandler(botId, notice);
+        } catch (error) {
+            console.error('[AdminApiService] Could not drop forgotten memories:', error);
+        }
+    }
+
+    private async fetchBotPrivacy(botId: string, lastKnown: boolean | undefined): Promise<boolean> {
+        // BOT_SERVICE_TOKEN is preferred, the admin token is the fallback (same as the memory endpoints)
+        const token = process.env.BOT_SERVICE_TOKEN || this.adminApiToken;
+        try {
+            const response: AxiosResponse = await axios.get(
+                `${this.adminApiUrl}/api/bots/${encodeURIComponent(botId)}/privacy`,
+                {
+                    headers: { Authorization: `Bearer ${token}` },
+                    timeout: 5000,
+                }
+            );
+            const hidden = response.data?.hidden === true;
+            this.botPrivacyCache.set(botId, { hidden, cachedAt: Date.now() });
+            this.applyForgetNotice(botId, response.data?.forget);
+            return hidden;
+        } catch (error) {
+            // Not found (or an Orbit without the setting yet) is a plain "not private", except for a bot last known as
+            // private: its proxy can answer "not found" while Orbit restarts, so it stays private until Orbit has said
+            // it BOT_GONE_AFTER times running, the same rule that decides the bot is gone. Anything else keeps what we knew.
+            // With nothing known yet (a bot server that just started, while Orbit restarts too), the bot counts as
+            // private until Orbit answers: a hidden bot must never send its text out because Orbit was slow to say so.
+            // Only telemetry waits; replies, memory and saved chats are the same either way.
+            const notFound = axios.isAxiosError(error) && (error.response?.status === 404 || error.response?.status === 405);
+            const notFoundInARow = notFound ? (this.botPrivacyCache.get(botId)?.notFoundInARow ?? 0) + 1 : 0;
+            const hidden = notFound ? lastKnown === true && notFoundInARow < this.BOT_GONE_AFTER : lastKnown ?? true;
+            // Retry soon, not after the full 30 seconds, when Orbit could not answer
+            this.botPrivacyCache.set(botId, { hidden, cachedAt: notFound ? Date.now() : Date.now() - this.BOT_PRIVACY_CACHE_TTL + 5000, ...(notFoundInARow ? { notFoundInARow } : {}) });
+            if (!notFound) {
+                console.warn('[AdminApiService] Could not read the bot privacy setting, keeping the last answer:', axios.isAxiosError(error) ? error.message : 'unknown error');
+            }
+            return hidden;
+        }
+    }
+
+    /**
      * Validate an opaque Orbit session with the Admin API, which owns the
      * server-side session record. The bot server never decodes credentials.
      */
@@ -699,6 +852,40 @@ export class AdminApiService {
             }
             return false;
         }
+    }
+
+    /**
+     * Ask Orbit whether a person may do something with a bot (Orbit #426/#427): chat in its bubble, message it, or
+     * summon it. A no is an answer ({ allowed: false }); anything that stops Orbit answering throws, so the caller
+     * can tell "no" from "could not check". Uses BOT_SERVICE_TOKEN.
+     */
+    async checkBotAccess(
+        botId: string,
+        action: BotAccessAction,
+        person: BotAccessPerson
+    ): Promise<BotAccessAnswer> {
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!botServiceToken) {
+            throw new Error('BOT_SERVICE_TOKEN environment variable is not set');
+        }
+
+        const response: AxiosResponse<BotAccessAnswer> = await axios.post(
+            resolveAdminApiEndpoint(this.adminApiUrl, `api/bots/${encodeURIComponent(botId)}/access`),
+            { action, person: { signedIn: person.signedIn, ...(person.identifier ? { identifier: person.identifier } : {}) } },
+            {
+                headers: {
+                    Authorization: `Bearer ${botServiceToken}`,
+                    'Content-Type': 'application/json',
+                    'Cache-Control': 'no-store',
+                },
+                timeout: BOT_ACCESS_TIMEOUT_MS,
+            }
+        );
+        const answer = response.data;
+        if (!answer || typeof answer.allowed !== 'boolean') {
+            throw new Error('Orbit answered the bot access check with something unexpected');
+        }
+        return answer;
     }
 
     /**

@@ -19,6 +19,7 @@ import type {
     ChatMessageType,
     ChatRoom,
 } from "../ChatConnection";
+import { TYPING_STOP_GRACE_MS } from "../ChatConnection";
 import LL, { locale } from "../../../../i18n/i18n-svelte";
 import { iframeListener } from "../../../Api/IframeListener";
 import type { SpaceInterface, SpaceUserExtended } from "../../../Space/SpaceInterface";
@@ -82,7 +83,7 @@ import {
 const debug = Debug("ProximityChatRoom");
 
 // A typing entry expires on its own if no new "typing" event refreshes it, so a lost "stopped typing" event
-// can never leave the indicator stuck. The sender re-emits "typing" on every keystroke.
+// can never leave the indicator stuck. The sender says "typing" again every few seconds while keys keep coming.
 export const TYPING_EXPIRY_MS = 12000;
 
 /**
@@ -1116,6 +1117,17 @@ export class ProximityChatRoom implements ChatRoom {
         });
     }
 
+    /** A "stopped" keeps the dots a moment (TYPING_STOP_GRACE_MS), in case typing starts again right away. */
+    private typingStoppedBy(id: string) {
+        const timer = this.typingExpiryTimers.get(id);
+        if (!timer) return;
+        clearTimeout(timer);
+        this.typingExpiryTimers.set(
+            id,
+            setTimeout(() => this.removeTypingUserbyID(id), TYPING_STOP_GRACE_MS)
+        );
+    }
+
     private removeTypingUserbyID(id: string) {
         const timer = this.typingExpiryTimers.get(id);
         if (timer) {
@@ -1185,6 +1197,9 @@ export class ProximityChatRoom implements ChatRoom {
 
         // TODO: we need to move that elsewhere.
         // Set up manager of audio streams received by the scripting API (useful for bots)
+        // The previous space may have been torn down without going through leaveSpace() (e.g. left directly
+        // through the space registry), so release any managers still registered before creating new ones.
+        this.closeScriptingAudioStreamManagers();
         this.scriptingOutputAudioStreamManager = new ScriptingOutputAudioStreamManager(this._space);
         this.scriptingInputAudioStreamManager = new ScriptingInputAudioStreamManager(this._space);
 
@@ -1279,7 +1294,7 @@ export class ProximityChatRoom implements ChatRoom {
             if (event.spaceIsTyping.isTyping) {
                 this.addTypingUser(event.sender, event.spaceIsTyping.characterTextures, event.spaceIsTyping.name);
             } else {
-                this.removeTypingUserbyID(event.sender);
+                this.typingStoppedBy(event.sender);
             }
         });
 
@@ -1472,6 +1487,7 @@ export class ProximityChatRoom implements ChatRoom {
                 this.spaceMessageReactionSubscription?.unsubscribe();
                 this.spaceStreamMessageSubscription?.unsubscribe();
                 this.streamMessages.clear();
+                this.closeScriptingAudioStreamManagers();
                 if (this._space) {
                     this.spaceRegistry.leaveSpace(this._space).catch((error) => {
                         console.error("Error leaving space: ", error);
@@ -1694,10 +1710,7 @@ export class ProximityChatRoom implements ChatRoom {
         this.spaceStreamMessageSubscription?.unsubscribe();
         this.streamMessages.clear();
 
-        this.scriptingOutputAudioStreamManager?.close();
-        this.scriptingInputAudioStreamManager?.close();
-        this.scriptingOutputAudioStreamManager = undefined;
-        this.scriptingInputAudioStreamManager = undefined;
+        this.closeScriptingAudioStreamManagers();
 
         try {
             await this.spaceRegistry.leaveSpace(space);
@@ -1706,6 +1719,17 @@ export class ProximityChatRoom implements ChatRoom {
             Sentry.captureException(error);
         }
         return undefined;
+    }
+
+    /**
+     * Releases the scripting audio stream managers. Closing the output manager unregisters its iframe answerers,
+     * which must happen before a new manager registers them again.
+     */
+    private closeScriptingAudioStreamManagers(): void {
+        this.scriptingOutputAudioStreamManager?.close();
+        this.scriptingInputAudioStreamManager?.close();
+        this.scriptingOutputAudioStreamManager = undefined;
+        this.scriptingInputAudioStreamManager = undefined;
     }
 
     private restoreChatState() {
@@ -1765,8 +1789,7 @@ export class ProximityChatRoom implements ChatRoom {
         this.streamMessages.clear();
         this.clearTypingMembers();
 
-        this.scriptingOutputAudioStreamManager?.close();
-        this.scriptingInputAudioStreamManager?.close();
+        this.closeScriptingAudioStreamManagers();
         this.spaceWatcherUserJoinedObserver?.unsubscribe();
         this.spaceWatcherUserLeftObserver?.unsubscribe();
         this.observeUserJoinedSubscription?.unsubscribe();

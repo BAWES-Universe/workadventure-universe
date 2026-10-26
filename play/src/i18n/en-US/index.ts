@@ -59,8 +59,9 @@ const en_US: BaseTranslation = {
     install,
     // The installed computer app's own title bar (TitleBar.svelte).
     titleBar: {
-        here: "{count:number} here",
-        hereLabel: "{count:number} here. Open the people list.",
+        // The counts themselves are chat.peopleTab.countPeople and countBots, as on the People tab's room row.
+        hereLabel: "{people:string} here. Open the people list.",
+        hereWithBotsLabel: "{people:string} and {bots:string} here. Open the people list.",
         roomLabel: "{room:string}. Open Orbit.",
         inConversation: "In conversation",
         lookingAround: "Looking around",

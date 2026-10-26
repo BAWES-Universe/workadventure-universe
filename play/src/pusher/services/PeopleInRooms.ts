@@ -5,7 +5,8 @@ import { apiClientRepository } from "./ApiClientRepository";
 
 /**
  * How many people are in each open room right now, by room URL, asked of every back server. A back that does not
- * answer within a second is left out: its rooms count as empty.
+ * answer within a second is left out: its rooms count as empty. Bots are left out (#1396); a back too old to count
+ * them (nbBots 0) counts everyone, as before.
  */
 export async function getPeopleInRooms(): Promise<Map<string, number>> {
     const roomClients = await apiClientRepository.getAllClients(GRPC_MAX_MESSAGE_SIZE);
@@ -24,7 +25,7 @@ export async function getPeopleInRooms(): Promise<Map<string, number>> {
     for (const list of lists) {
         if (list.status !== "fulfilled") continue;
         for (const room of list.value.roomDescription) {
-            people.set(room.roomId, (people.get(room.roomId) ?? 0) + room.nbUsers);
+            people.set(room.roomId, (people.get(room.roomId) ?? 0) + room.nbUsers - room.nbBots);
         }
     }
     return people;

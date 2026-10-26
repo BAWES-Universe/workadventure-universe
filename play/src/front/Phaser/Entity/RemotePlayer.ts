@@ -16,12 +16,14 @@ import { openDirectChatRoom } from "../../Chat/Utils";
 import { userIsConnected } from "../../Stores/MenuStore";
 import { localUserStore } from "../../Connection/LocalUserStore";
 import { analyticsClient } from "../../Administration/AnalyticsClient";
-import { canOpenOrbit, openOrbitProfile } from "../../external-modules/admin-api/index";
+import { canOpenOrbit, openOrbitMembership, openOrbitProfile } from "../../external-modules/admin-api/index";
+import { botApiService } from "../../external-modules/bots/services/BotApiService";
 import { friendsEnabledStore, relationshipsStore } from "../../Chat/Stores/FriendsStore";
 import { invitesEnabledStore, ringStore } from "../../Chat/Stores/RingStore";
 import { isBotUser } from "../../Chat/UserProvider/ChatUserMapper";
 import { friendMenuAction } from "../../Chat/Components/UserList/FriendMenuAction";
-import { IconMessage, IconUserCircle, IconUsersPlus, IconWalk } from "@wa-icons";
+import { addMembershipCardButton } from "./MembershipCardButton";
+import { IconClock, IconMessage, IconPlanet, IconUserCircle, IconUserCog, IconUsersPlus, IconWalk } from "@wa-icons";
 
 export enum RemotePlayerEvent {
     Clicked = "Clicked",
@@ -141,7 +143,11 @@ export class RemotePlayer extends Character implements ActivatableInterface {
         this.openActionsMenu();
     }
 
+    /** Counts the times this card was opened, so an answer from Orbit only joins the opening it was asked for. */
+    private cardOpening = 0;
+
     private openActionsMenu(): void {
+        this.cardOpening += 1;
         // Track the open woka menu action
         analyticsClient.openWokaMenu();
 
@@ -152,6 +158,7 @@ export class RemotePlayer extends Character implements ActivatableInterface {
         for (const action of this.getDefaultWokaMenuActions()) {
             wokaMenuStore.addAction(action);
         }
+        void this.addMembershipAction(this.cardOpening);
 
         // Send the remote player clicked event to the iframe listener
         const userFound = this.scene.getRemotePlayersRepository().getPlayers().get(this.userId);
@@ -162,6 +169,26 @@ export class RemotePlayer extends Character implements ActivatableInterface {
 
         // Send the remote player clicked event to the iframe listener
         iframeListener.sendRemotePlayerClickedEvent(userFound);
+    }
+
+    /**
+     * Membership, as Orbit says it applies to this person in the universe you are in: Give membership, Pending invite,
+     * Roles or Membership. Orbit is asked when the card opens, and the button joins the card when it answers; no
+     * answer, or an answer of none, leaves the card as it is.
+     */
+    private async addMembershipAction(opening: number): Promise<void> {
+        if (!canOpenOrbit()) return;
+        await addMembershipCardButton({
+            userUuid: this.userUuid,
+            ask: (userUuid) => botApiService.getMembershipButton(userUuid),
+            // The card may have closed, turned to someone else or been opened again while Orbit answered
+            stillShown: () => opening === this.cardOpening && this.isCardShown(),
+            add: (action) => wokaMenuStore.addAction(action),
+            open: (userUuid) => {
+                openOrbitMembership(userUuid);
+            },
+            icons: { membership: IconPlanet, pending: IconClock, roles: IconUserCog },
+        });
     }
 
     private getDefaultWokaMenuActions(): WokaMenuAction[] {
@@ -286,7 +313,6 @@ export class RemotePlayer extends Character implements ActivatableInterface {
                 actionIcon: IconUserCircle,
             });
         }
-
         return actions;
     }
 

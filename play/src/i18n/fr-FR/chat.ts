@@ -382,13 +382,6 @@ const chat: DeepPartial<Translation["chat"]> = {
         },
     },
     connectionError: "Chat indisponible",
-    requiresLoginForChatModal: {
-        title: "Identifiez-vous pour utiliser le chat !",
-        content_1: "Pour profiter pleinement de cette fonctionnalité du chat, vous devez être connecté.",
-        content_2:
-            "La connexion vous donne accès à toutes les fonctionnalités du chat et vous permet de continuer sans interruption.",
-        content_3: "Veuillez vous connecter pour poursuivre l’expérience.",
-    },
     verificationEmojiDialog: {
         titleVerifyThisDevice: "Vérifier votre appareil",
         titleVerifyOtherDevice: "Vérifier un autre appareil",
@@ -583,7 +576,8 @@ const chat: DeepPartial<Translation["chat"]> = {
     },
     peopleTab: {
         thisRoom: "Cette salle",
-        countHere: "{count} ici",
+        countPeople: "{count} {{personne|personnes}}",
+        countBots: "{count} {{bot|bots}}",
         elsewhere: "Ailleurs dans ce monde",
         offline: "Membres hors ligne",
         offlineHint: "Membres de ce monde qui ne sont pas en ligne.",

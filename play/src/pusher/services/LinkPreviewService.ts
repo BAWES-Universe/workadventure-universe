@@ -4,6 +4,7 @@ import dns from "node:dns";
 import net from "node:net";
 import type { LookupFunction } from "node:net";
 import * as cheerio from "cheerio";
+import { isFrameable } from "./FrameHeaders";
 
 /** What a chat message shows under a link: the page's own preview tags. */
 export interface LinkPreview {
@@ -12,6 +13,8 @@ export interface LinkPreview {
     title?: string;
     description?: string;
     image?: string;
+    /** The page lets the game show it in Open here: https all the way, and neither frame header refuses. */
+    embeddable?: boolean;
 }
 
 const FETCH_TIMEOUT_MS = 5000;
@@ -99,7 +102,7 @@ function hexToIpv4(high: string, low: string): string {
  * Resolves like the default lookup, but fails when any address is blocked. The connection uses the address checked
  * here, so a hostname can't pass the check and then resolve to an internal address (DNS rebinding).
  */
-const safeLookup: LookupFunction = (hostname, options, callback) => {
+export const safeLookup: LookupFunction = (hostname, options, callback) => {
     dns.lookup(hostname, { ...options, all: true }, (error, addresses) => {
         if (error) {
             callback(error, "", 4);
@@ -122,8 +125,11 @@ const safeLookup: LookupFunction = (hostname, options, callback) => {
     });
 };
 
-/** A URL the server may fetch: http(s) on the default port, no credentials, a host that isn't an internal name. */
-export function parsePreviewableUrl(raw: string): URL | undefined {
+/**
+ * A URL the server may fetch: http(s) on the default port (any port with `allowPort`), no credentials, a host that isn't
+ * an internal name. A port never reaches an internal address: the address itself is checked here and again after DNS.
+ */
+export function parsePreviewableUrl(raw: string, allowPort = false): URL | undefined {
     if (raw.length > MAX_URL_LENGTH) return undefined;
     let url: URL;
     try {
@@ -133,7 +139,7 @@ export function parsePreviewableUrl(raw: string): URL | undefined {
     }
     if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
     if (url.username || url.password) return undefined;
-    if (url.port !== "") return undefined;
+    if (url.port !== "" && !allowPort) return undefined;
     const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
     if (net.isIP(host)) {
         if (isBlockedAddress(host)) return undefined;
@@ -148,7 +154,7 @@ export function parsePreviewableUrl(raw: string): URL | undefined {
     return url;
 }
 
-export type FetchResult = { kind: "redirect"; location: string } | { kind: "page"; html?: string };
+export type FetchResult = { kind: "redirect"; location: string } | { kind: "page"; html?: string; frameable: boolean };
 
 /**
  * One request, no redirect following. `timeoutMs` bounds the whole request, not just idle time: a server dripping
@@ -196,10 +202,17 @@ export function fetchOnce(
                     reject(new Error(`HTTP ${status}`));
                     return;
                 }
+                const frameable = isFrameable(
+                    {
+                        "x-frame-options": response.headers["x-frame-options"],
+                        "content-security-policy": response.headers["content-security-policy"],
+                    },
+                    url
+                );
                 const contentType = String(response.headers["content-type"] ?? "");
                 if (!/text\/html|application\/xhtml\+xml/i.test(contentType)) {
                     // A file (image, PDF…): nothing to read, the link speaks for itself.
-                    resolve({ kind: "page" });
+                    resolve({ kind: "page", frameable });
                     return;
                 }
                 const chunks: Buffer[] = [];
@@ -208,7 +221,7 @@ export function fetchOnce(
                 const finish = () => {
                     if (done) return;
                     done = true;
-                    resolve({ kind: "page", html: Buffer.concat(chunks).toString("utf8") });
+                    resolve({ kind: "page", html: Buffer.concat(chunks).toString("utf8"), frameable });
                 };
                 response.on("data", (chunk: Buffer) => {
                     chunks.push(chunk);
@@ -270,6 +283,8 @@ export function parsePreviewTags(html: string, pageUrl: URL): Omit<LinkPreview, 
 
 async function loadPreview(url: URL): Promise<LinkPreview> {
     let current = url;
+    // An http page (or hop) can't load inside the game, which is https: the browser blocks it.
+    let httpsAllTheWay = url.protocol === "https:";
     const giveUpAt = Date.now() + PREVIEW_TIMEOUT_MS;
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
         const timeoutMs = Math.min(FETCH_TIMEOUT_MS, giveUpAt - Date.now());
@@ -281,12 +296,18 @@ async function loadPreview(url: URL): Promise<LinkPreview> {
             const next = parsePreviewableUrl(new URL(result.location, current).toString());
             if (!next) throw new Error("Redirected to a URL that can't be previewed");
             current = next;
+            httpsAllTheWay &&= next.protocol === "https:";
             continue;
         }
         if (!result.html) {
+            // No page to show (a file, an empty answer): no embeddable, so its card opens a new tab as before.
             return { url: url.toString(), siteName: siteNameOf(url) };
         }
-        return { url: url.toString(), ...parsePreviewTags(result.html, current) };
+        return {
+            url: url.toString(),
+            ...parsePreviewTags(result.html, current),
+            embeddable: result.frameable && httpsAllTheWay,
+        };
     }
     throw new Error("Too many redirects");
 }

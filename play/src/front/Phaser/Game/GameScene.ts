@@ -49,6 +49,7 @@ import { lazyLoadPlayerCharacterTextures } from "../Entity/PlayerTexturesLoading
 import { lazyLoadPlayerCompanionTexture } from "../Companion/CompanionTexturesLoadingManager";
 import { iframeListener } from "../../Api/IframeListener";
 import { coWebsiteManager, coWebsites } from "../../Stores/CoWebsiteStore";
+import { dismissClosedItems } from "../../Stores/ClosedItemsStore";
 import {
     ADMIN_URL,
     DEBUG_MODE,
@@ -124,12 +125,7 @@ import { LL, locale } from "../../../i18n/i18n-svelte";
 import { GameSceneUserInputHandler } from "../UserInput/GameSceneUserInputHandler";
 import { followUsersColorStore, followUsersStore } from "../../Stores/FollowStore";
 import { axiosWithRetry, hideConnectionIssueMessage } from "../../Connection/AxiosUtils";
-import {
-    RESUME_NETWORK_WAIT_MS,
-    keepLogoInMemory,
-    showReconnectingScreen,
-    waitForNetwork,
-} from "../../Connection/ReconnectScreen";
+import { RESUME_NETWORK_WAIT_MS, showReconnectingScreen, waitForNetwork } from "../../Connection/ReconnectScreen";
 import { reconnectWatchdog } from "../../Connection/AppReconnectWatchdog";
 import type { RoomPicture } from "../../Connection/SoftReconnect";
 import { softReconnect, softReconnectGeneration, stillCopy } from "../../Connection/SoftReconnect";
@@ -428,6 +424,7 @@ export class GameScene extends DirtyScene {
     private _userProviderMergerDeferred: Deferred<UserProviderMerger> = new Deferred();
     private unsubscribeChatBlockSync: (() => void) | undefined;
     private _worldUserCounter: ForwardableStore<number> = new ForwardableStore(0);
+    private _worldPeopleCounter: ForwardableStore<number> = new ForwardableStore(0);
     // Everyone in the world space (the unfiltered source behind the People tab), undefined until the space is joined
     private _allUsersInWorldStore: ForwardableStore<Map<string, SpaceUserExtended> | undefined> = new ForwardableStore<
         Map<string, SpaceUserExtended> | undefined
@@ -869,8 +866,6 @@ export class GameScene extends DirtyScene {
 
         this.outlineManager = new OutlineManager(this);
         gameManager.gameSceneIsCreated(this);
-        // While the network is up: the reconnecting screen will need the logo when it is not.
-        keepLogoInMemory(this._room.errorSceneLogo);
         urlManager.pushRoomIdToUrl(this._room);
         analyticsClient.enteredRoom(this._room.id, this._room.group);
 
@@ -1075,7 +1070,7 @@ export class GameScene extends DirtyScene {
                             }
                             return;
                         }
-                        showReconnectingScreen(this._room.errorSceneLogo);
+                        showReconnectingScreen();
                         reconnectWatchdog.arm();
                     }
                 }, 0);
@@ -1374,7 +1369,8 @@ export class GameScene extends DirtyScene {
         this.playSound(`audio-webrtc-out-${bubbleSound}`);
     }
 
-    public cleanupClosingScene(): void {
+    /** `reconnecting`: the same room is entered again, so what the person opened in the window stays open. */
+    public cleanupClosingScene(reconnecting = false): void {
         this.unsubscribeChatBlockSync?.();
         this.unsubscribeChatBlockSync = undefined;
         // No broadcast join may land on a destroyed registry.
@@ -1392,7 +1388,9 @@ export class GameScene extends DirtyScene {
         mediaManager.disableMyCamera();
         mediaManager.disableMyMicrophone();
         // stop playing audio, close any open website, stop any open Jitsi, unsubscribe
-        coWebsiteManager.cleanup();
+        coWebsiteManager.cleanup(reconnecting);
+        // What was closed belongs to this map: Undo is not offered in the next one.
+        dismissClosedItems();
 
         iframeListener.cleanup();
         uiWebsiteManager.closeAll();
@@ -2182,6 +2180,7 @@ export class GameScene extends DirtyScene {
                         this.allUserSpace = space;
                         worldUserProvider = new WorldUserProvider(space);
                         this._worldUserCounter.forward(worldUserProvider.userCount);
+                        this._worldPeopleCounter.forward(worldUserProvider.peopleCount);
                         this._allUsersInWorldStore.forward(space.usersStore);
                         return gameManager.getChatConnection();
                     })
@@ -2334,7 +2333,6 @@ export class GameScene extends DirtyScene {
                     // If getting back in stalls anywhere, the page refreshes itself (as a manual refresh would).
                     reconnectWatchdog.arm();
                     console.info("Player disconnected from server. Reloading scene.");
-                    const logo = this._room.errorSceneLogo;
                     // Nothing failed: the game is getting back in. The room stays on screen as it was, with the bar,
                     // the chat and a small pill (#958); without a picture of it, the "Reconnecting" screen right away.
                     // Dropped again while still getting back in: the room kept from the first drop stays, its waits
@@ -2347,20 +2345,20 @@ export class GameScene extends DirtyScene {
                             // Left the room meanwhile (a map exit, leaving the game): that took over.
                             if (keptAlready || this.cleanupDone) return;
                             if (picture && !get(errorScreenStore)) {
-                                softReconnect.start(picture, () => showReconnectingScreen(logo));
+                                softReconnect.start(picture, () => showReconnectingScreen());
                                 // The chat stays open: it reaches this scene until the next one is created.
                                 gameManager.keepReplacedGameScene(this);
                             } else {
-                                showReconnectingScreen(logo);
+                                showReconnectingScreen();
                             }
                         })
                         .catch((e) => {
                             console.error("Could not keep the room on screen", e);
-                            if (!this.cleanupDone) showReconnectingScreen(logo);
+                            if (!this.cleanupDone) showReconnectingScreen();
                         })
                         .finally(() => {
                             if (this.cleanupDone) return;
-                            this.cleanupClosingScene();
+                            this.cleanupClosingScene(true);
                             this.createSuccessorGameScene(true, true);
                         });
                 });
@@ -2669,6 +2667,7 @@ export class GameScene extends DirtyScene {
                             gameManager.closeGameScene();
                         },
                         onPlayerMovementEnded: this.onPlayerMovementEnded.bind(this),
+                        reconnecting: this.isReconnecting === true,
                     });
 
                     if (defaultExtensionModule.calendarSynchronised) isCalendarActiveStore.set(true);
@@ -4517,6 +4516,11 @@ export class GameScene extends DirtyScene {
 
     get worldUserCounter(): Readable<number> {
         return this._worldUserCounter;
+    }
+
+    /** People in this world, bots left out (the People tab's badge). */
+    get worldPeopleCounter(): Readable<number> {
+        return this._worldPeopleCounter;
     }
 
     /**

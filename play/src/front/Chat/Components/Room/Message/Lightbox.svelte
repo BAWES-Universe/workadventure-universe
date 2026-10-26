@@ -8,6 +8,7 @@
         MIN_SCALE,
         clamp,
         doubleTapScaleFor,
+        isOnBackground,
         maxScaleFor,
         panBounds,
         realSizeScale,
@@ -65,10 +66,13 @@
     const RECENT_MS = 100;
     let recentMoves: { y: number; t: number }[] = [];
     let lastTap: { x: number; y: number; t: number } | undefined;
+    // A press with the main button that started on the dark background, not on the picture.
+    let pressedBackground = false;
 
     // Portal: move lightbox DOM to body so position:fixed escapes chat sidebar transforms
     let stageEl: HTMLElement | undefined;
     let imgEl: HTMLImageElement | undefined;
+    let videoEl: HTMLVideoElement | undefined;
 
     let thumbnailEls: HTMLElement[] = [];
 
@@ -100,6 +104,7 @@
         mode = "idle";
         fingers.clear();
         lastTap = undefined;
+        pressedBackground = false;
     }
 
     // Clean up store on destroy so input doesn't stay blocked after unmount
@@ -171,6 +176,12 @@
     function localPoint(e: { clientX: number; clientY: number }): { x: number; y: number } {
         const rect = stageEl?.getBoundingClientRect();
         return { x: e.clientX - (rect?.left ?? 0), y: e.clientY - (rect?.top ?? 0) };
+    }
+
+    /** True when a point of the screen is on the dark background around the picture or video. */
+    function onBackground(e: { clientX: number; clientY: number }): boolean {
+        const shown = isVideo ? videoEl : imgEl;
+        return isOnBackground({ x: e.clientX, y: e.clientY }, shown?.getBoundingClientRect());
     }
 
     function ease(): void {
@@ -252,14 +263,19 @@
             rawX = tx;
             rawY = ty;
             recentMoves = [{ y: start.y, t: e.timeStamp }];
-        } else if (!isVideo) {
-            // The second finger turns the gesture into a pinch. It never fades or closes the viewer.
-            if (mode === "dismiss") {
-                ty = 0;
-                backdropOpacity = 1;
+            pressedBackground = e.button === 0 && onBackground(e);
+        } else {
+            // A second finger never counts as a click on the background; on a video it leaves the gesture "pending".
+            pressedBackground = false;
+            if (!isVideo) {
+                // The second finger turns the gesture into a pinch. It never fades or closes the viewer.
+                if (mode === "dismiss") {
+                    ty = 0;
+                    backdropOpacity = 1;
+                }
+                mode = "pinch";
+                beginPinch();
             }
-            mode = "pinch";
-            beginPinch();
         }
     }
 
@@ -365,6 +381,12 @@
         dragging = false;
 
         if (finished === "pending" && !cancelled) {
+            // A click or tap on the dark background closes the viewer. A drag never does: it is no longer "pending".
+            if (pressedBackground && onBackground(e)) {
+                lastTap = undefined;
+                close();
+                return;
+            }
             if (isVideo) return;
             const now = e.timeStamp;
             if (lastTap && now - lastTap.t < 300 && Math.hypot(point.x - lastTap.x, point.y - lastTap.y) < 30) {
@@ -414,14 +436,6 @@
     function preventTouchDefault(e: TouchEvent): void {
         e.preventDefault();
     }
-
-    function onBackdropClick(e: MouseEvent): void {
-        // Close when clicking on the backdrop but NOT on the image/video, controls, or thumbnail strip
-        const target = e.target as HTMLElement;
-        if (!target.closest("[data-lightbox-content]") && !target.closest("[data-thumbnail-strip]")) {
-            close();
-        }
-    }
 </script>
 
 <svelte:window on:keydown={onKeyDown} on:resize={onResize} />
@@ -437,7 +451,6 @@
         class="fixed inset-0 z-[9999] flex items-center justify-center w-full h-full m-0"
         style="background: rgba(0,0,0,{0.8 * backdropOpacity});"
         transition:fade={{ duration: 200 }}
-        on:click={onBackdropClick}
         on:keydown={onKeyDown}
     >
         <div data-lightbox-content class="relative w-full h-full flex items-center justify-center" role="none">
@@ -538,7 +551,7 @@
             <div
                 bind:this={stageEl}
                 class="flex items-center justify-center w-full h-full select-none touch-none"
-                style="cursor: {isVideo ? 'default' : scale > 1 ? 'grab' : dragging ? 'grabbing' : 'zoom-in'};"
+                style="cursor: {isVideo ? 'default' : scale > 1 ? 'grab' : dragging ? 'grabbing' : 'default'};"
                 on:wheel|preventDefault={onWheel}
                 on:pointerdown={onPointerDown}
                 on:pointermove={onPointerMove}
@@ -553,6 +566,7 @@
                     {#if isVideo}
                         <!-- svelte-ignore a11y-media-has-caption -->
                         <video
+                            bind:this={videoEl}
                             {src}
                             controls
                             autoplay
@@ -568,7 +582,9 @@
                             draggable="false"
                             class="object-contain rounded-sm"
                             class:shadow-2xl={scale === 1}
-                            style="max-width: calc(100% - 32px); max-height: 90vh; transform: translate({tx}px, {ty}px) scale({scale}); transition: {animating
+                            style="max-width: calc(100% - 32px); max-height: 90vh; cursor: {scale > 1 || dragging
+                                ? 'inherit'
+                                : 'zoom-in'}; transform: translate({tx}px, {ty}px) scale({scale}); transition: {animating
                                 ? 'transform 0.24s cubic-bezier(0.2, 0.8, 0.2, 1)'
                                 : 'none'};"
                             transition:fade={{ duration: 150 }}
@@ -580,7 +596,7 @@
             <!-- Image counter (top center) -->
             {#if showThumbnails}
                 <div
-                    class="absolute top-[calc(16px+env(safe-area-inset-top))] left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-black/50 text-white text-xs font-medium"
+                    class="absolute top-[calc(16px+env(safe-area-inset-top))] left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-black/50 text-white text-xs font-medium pointer-events-none"
                 >
                     {currentIndex + 1} / {thumbnails.length}
                 </div>
@@ -589,7 +605,7 @@
             <!-- Zoom indicator -->
             {#if scale > 1 && !isVideo}
                 <div
-                    class="absolute bottom-4 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-black/60 text-white text-xs"
+                    class="absolute bottom-4 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-black/60 text-white text-xs pointer-events-none"
                 >
                     {scale.toFixed(1)}×
                 </div>

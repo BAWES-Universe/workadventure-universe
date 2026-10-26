@@ -4,7 +4,9 @@
     import type { ChatMessageContent } from "../../../Connection/ChatConnection";
     import LL from "../../../../../i18n/i18n-svelte";
     import { saveMessageFiles } from "../MessageActions/availableActions";
+    import { chatFileOpensInViewer } from "../../../../FileViewer/fileKinds";
     import Lightbox from "./Lightbox.svelte";
+    import ViewableFileCard from "./ViewableFileCard.svelte";
 
     export let content: Readable<ChatMessageContent>;
 
@@ -367,45 +369,50 @@
             <!-- Document files -->
             {#each docItems as item (item.url)}
                 {@const info = getFileTypeInfo(item.url)}
-                <a
-                    href={item.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    download={item.filename}
-                    on:click|preventDefault={() => saveItem(item)}
-                    class="flex items-center gap-3 p-2 rounded-lg bg-white/5 hover:bg-white/10 transition-colors group"
-                >
-                    <!-- File type icon -->
-                    <div
-                        class="flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center text-white text-[10px] font-bold tracking-wide"
-                        style="background: {info.color};"
+                {#if chatFileOpensInViewer(item.filename)}
+                    <!-- A file the viewer can show opens beside the map, with a separate Download button. -->
+                    <ViewableFileCard url={item.url} name={item.filename} />
+                {:else}
+                    <a
+                        href={item.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        download={item.filename}
+                        on:click|preventDefault={() => saveItem(item)}
+                        class="flex items-center gap-3 p-2 rounded-lg bg-white/5 hover:bg-white/10 transition-colors group"
                     >
-                        {info.label}
-                    </div>
-                    <!-- Filename + open link -->
-                    <div class="flex-1 min-w-0">
-                        <div class="text-sm text-white/90 truncate">{item.filename}</div>
-                        <div class="text-[10px] text-white/40">{$LL.chat.file.clickToOpen()}</div>
-                    </div>
-                    <!-- Download/open icon -->
-                    <div class="flex-shrink-0 opacity-40 group-hover:opacity-80 transition-opacity">
-                        <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            width="18"
-                            height="18"
-                            viewBox="0 0 24 24"
-                            stroke="#ffffff"
-                            fill="none"
-                            stroke-width="2"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
+                        <!-- File type icon -->
+                        <div
+                            class="flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center text-white text-[10px] font-bold tracking-wide"
+                            style="background: {info.color};"
                         >
-                            <path d="M21 15v4a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-4" />
-                            <path d="M7 10l5 5l5 -5" />
-                            <path d="M12 15l0 -12" />
-                        </svg>
-                    </div>
-                </a>
+                            {info.label}
+                        </div>
+                        <!-- Filename + open link -->
+                        <div class="flex-1 min-w-0">
+                            <div class="text-sm text-white/90 truncate">{item.filename}</div>
+                            <div class="text-[10px] text-white/40">{$LL.chat.file.clickToOpen()}</div>
+                        </div>
+                        <!-- Download/open icon -->
+                        <div class="flex-shrink-0 opacity-40 group-hover:opacity-80 transition-opacity">
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="18"
+                                height="18"
+                                viewBox="0 0 24 24"
+                                stroke="#ffffff"
+                                fill="none"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                            >
+                                <path d="M21 15v4a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-4" />
+                                <path d="M7 10l5 5l5 -5" />
+                                <path d="M12 15l0 -12" />
+                            </svg>
+                        </div>
+                    </a>
+                {/if}
             {/each}
 
             <!-- Audio files: inline player cards -->

@@ -1,4 +1,4 @@
-import type { MatrixEvent, Room } from "matrix-js-sdk";
+import type { IContent, MatrixEvent, Room } from "matrix-js-sdk";
 import { Direction, EventStatus, EventType, MatrixEventEvent, MsgType, RelationType } from "matrix-js-sdk";
 import type { Writable } from "svelte/store";
 import { writable } from "svelte/store";
@@ -22,6 +22,20 @@ interface MyReaction {
 
 /** Clicks closer together than this count as one burst: only where the burst ends is sent. */
 const REACTION_BURST_MS = 300;
+
+/** A Matrix reply's plain body can start with the quoted lines ("> <@name> text"), then a blank line, then the reply. */
+const REPLY_FALLBACK_START = /^> (?:\* )?<[^>\n]+>/;
+
+function withoutReplyFallback(body: unknown): string | undefined {
+    if (typeof body !== "string") return undefined;
+    // Only a body that starts like a quote has one: a caption that merely starts with ">" is the sender's own text.
+    if (!REPLY_FALLBACK_START.test(body)) return body;
+    const lines = body.split("\n");
+    let first = 0;
+    while (first < lines.length && lines[first].startsWith(">")) first++;
+    if (lines[first] === "") first++;
+    return lines.slice(first).join("\n");
+}
 
 export class MatrixChatMessage implements ChatMessage {
     id: string;
@@ -192,27 +206,43 @@ export class MatrixChatMessage implements ChatMessage {
         if (quotedMessage !== undefined && content.formatted_body) {
             this.quotedMessage = quotedMessage;
             return {
-                body: content.formatted_body.replace(/^(<mx-reply>).*(<\/mx-reply>)/, ""),
+                // A picture's text is plain: the reply fallback comes off its body, and its HTML form is not shown.
+                body:
+                    this.type === "text"
+                        ? content.formatted_body.replace(/^(<mx-reply>).*(<\/mx-reply>)/, "")
+                        : withoutReplyFallback(content.body) ?? "",
                 url: undefined,
                 urls: undefined,
-                filename: undefined,
+                // A picture sent as a reply still tells its body from its name.
+                filename: this.type === "text" ? undefined : this.getMediaFileName(content),
                 fileNames: undefined,
             };
         }
 
         if (this.type !== "text") {
             return {
-                body: content.body,
+                // A reply picture whose app sends no HTML form still has the quoted lines in its plain text.
+                body: withoutReplyFallback(content.body) ?? "",
                 // Set by loadMediaUrl once the file is fetched.
                 url: undefined,
                 urls: undefined,
                 // The body of a Matrix file is its name: the blob: URL it loads from has none.
-                filename: content.filename ?? (this.type === "file" ? content.body : undefined),
+                filename: this.getMediaFileName(content),
                 fileNames: undefined,
             };
         }
 
         return { body: content.body, url: undefined, urls: undefined, filename: undefined, fileNames: undefined };
+    }
+
+    /**
+     * The name of the file a media message carries. Without a `filename` field, the body is the name and there is no
+     * caption (Matrix, MSC2530): so what we show under a picture is only a body that differs from this name.
+     */
+    private getMediaFileName(content: IContent): string | undefined {
+        if (typeof content.filename === "string") return content.filename;
+        // The body is shown without the quoted lines of a reply, so the name is read from it the same way.
+        return withoutReplyFallback(content.body);
     }
 
     public initReactions() {
