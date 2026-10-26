@@ -34,9 +34,10 @@ vi.mock("@sentry/core", () => ({
 
 // --- Mock PostHog telemetry so the captured generations can be inspected ---
 const mockCaptureAiGeneration = vi.fn();
+const mockCaptureAiTrace = vi.fn();
 vi.mock("../ai/PostHogClient", () => ({
     captureAiGeneration: mockCaptureAiGeneration,
-    captureAiTrace: vi.fn(),
+    captureAiTrace: mockCaptureAiTrace,
     flushPostHog: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -100,6 +101,25 @@ async function* plainAnswerWithUsageStream() {
         content: "",
         done: true,
         metadata: { tokensUsed: 33, promptTokens: 30, completionTokens: 3, latency: 10, error: false, truncated: false },
+    };
+}
+
+// Same turn, but the provider reports how much of each prompt came from its cache.
+async function* toolCallWithCacheStream() {
+    yield { content: "", done: false, toolCalls: [{ id: "call_1", name: "get_bot_position", arguments: "{}" }] };
+    yield {
+        content: "",
+        done: true,
+        metadata: { tokensUsed: 110, promptTokens: 100, cachedPromptTokens: 60, completionTokens: 10, latency: 20, error: false, truncated: false },
+    };
+}
+
+async function* followUpAnswerWithCacheStream() {
+    yield { content: "I'm right by the fountain.", done: false };
+    yield {
+        content: "",
+        done: true,
+        metadata: { tokensUsed: 220, promptTokens: 200, cachedPromptTokens: 150, completionTokens: 20, latency: 30, error: false, truncated: false },
     };
 }
 
@@ -207,5 +227,39 @@ describe("AIService – token accounting on tool-calling turns", () => {
         expect(usage.promptTokens).toBe(30);
         expect(usage.completionTokens).toBe(3);
         expect(usage.tokensUsed).toBe(33);
+    });
+
+    it("sends each call's cached tokens to PostHog and the turn total on the trace", async () => {
+        const { mockAdminApiService, mockConversationMemory } = buildMocks();
+        mockGenerateStream
+            .mockImplementationOnce(toolCallWithCacheStream)
+            .mockImplementationOnce(followUpAnswerWithCacheStream);
+
+        const service = new AIService(mockConversationMemory, mockAdminApiService, "http://admin.local");
+        await drain(service.generateBotResponseStream(
+            "bot-1", 42, "where are you?", "You are a bot.", "test-provider", "space-1", ""
+        ));
+
+        const generations = mockCaptureAiGeneration.mock.calls.map((c) => c[0]);
+        expect(generations[0].cachedInputTokens).toBe(60);
+        expect(generations[generations.length - 1].cachedInputTokens).toBe(150);
+        expect(mockCaptureAiTrace).toHaveBeenCalledTimes(1);
+        expect(mockCaptureAiTrace.mock.calls[0][0].cachedInputTokens).toBe(210);
+        expect(mockParentSpan.setAttribute).toHaveBeenCalledWith("gen_ai.usage.cache_read.input_tokens", 210);
+    });
+
+    it("leaves the cached figure out when the provider reports none", async () => {
+        const { mockAdminApiService, mockConversationMemory } = buildMocks();
+        mockGenerateStream.mockImplementationOnce(plainAnswerWithUsageStream);
+
+        const service = new AIService(mockConversationMemory, mockAdminApiService, "http://admin.local");
+        await drain(service.generateBotResponseStream(
+            "bot-1", 42, "hi", "You are a bot.", "test-provider", "space-1", ""
+        ));
+
+        expect(mockCaptureAiGeneration.mock.calls[0][0].cachedInputTokens).toBeUndefined();
+        expect(mockCaptureAiTrace.mock.calls[0][0].cachedInputTokens).toBeUndefined();
+        const names = mockParentSpan.setAttribute.mock.calls.map((c) => c[0]);
+        expect(names).not.toContain("gen_ai.usage.cache_read.input_tokens");
     });
 });
