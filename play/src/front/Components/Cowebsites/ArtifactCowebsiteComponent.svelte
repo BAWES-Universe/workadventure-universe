@@ -36,6 +36,8 @@
     let opened: OpenedArtifact | undefined;
     let versions: ArtifactVersionInfo[] | undefined;
     let versionsFailed = false;
+    /** Another version was asked for and could not be opened; the one that was showing stays. */
+    let switchFailed = false;
     let menuOpen = false;
     let codeOn = false;
     let text: { number: number; content: string } | undefined;
@@ -84,6 +86,7 @@
 
     async function load(version: number | undefined) {
         const mine = ++request;
+        switchFailed = false;
         phase = "opening";
         try {
             const answer = await fetchArtifact(id, actualCowebsite.chat, version);
@@ -103,6 +106,13 @@
         } catch (error) {
             if (destroyed || mine !== request) return;
             failure = error instanceof ArtifactRequestError && error.status === 404 ? "gone" : "offline";
+            if (opened) {
+                // Another version could not be opened: keep the one showing, and say so.
+                switchFailed = true;
+                versionStore.set(opened.version.number);
+                phase = "ready";
+                return;
+            }
             phase = "failed";
         }
     }
@@ -195,6 +205,12 @@
             <span class="old-actions">
                 <button type="button" class="quiet" on:click={backToLatest}>{$LL.chat.artifacts.backToLatest()}</button>
             </span>
+        </div>
+    {/if}
+
+    {#if switchFailed}
+        <div class="old-note" role="alert" data-testid="artifactSwitchFailed">
+            <span>{failure === "gone" ? $LL.chat.artifacts.cantOpen() : $LL.chat.artifacts.cantReach()}</span>
         </div>
     {/if}
 

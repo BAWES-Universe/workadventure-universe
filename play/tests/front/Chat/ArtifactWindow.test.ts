@@ -135,6 +135,27 @@ describe("the artifact window", () => {
         expect(api.fetchArtifact).toHaveBeenCalledTimes(3);
     });
 
+    it("keeps the version on show when another one cannot be opened, and still opens it again", async () => {
+        api.fetchArtifact.mockResolvedValueOnce(opened(3));
+        const website = mountWindow(3);
+        await vi.waitFor(() => expect(byTestId("artifactFrame")).not.toBeNull());
+
+        api.fetchArtifact.mockRejectedValueOnce(new api.ArtifactRequestError(404, "version_not_found"));
+        website.version.set(1);
+        await vi.waitFor(() => expect(byTestId("artifactSwitchFailed")).not.toBeNull());
+        expect(byTestId("artifactFrame")?.getAttribute("src")).toBe("https://artifacts.test/v3.html");
+        let shown: number | undefined;
+        website.version.subscribe((value) => (shown = value))();
+        expect(shown).toBe(3);
+
+        api.fetchArtifact.mockResolvedValueOnce(opened(1));
+        website.version.set(1);
+        await vi.waitFor(() =>
+            expect(byTestId("artifactFrame")?.getAttribute("src")).toBe("https://artifacts.test/v1.html")
+        );
+        expect(byTestId("artifactSwitchFailed")).toBeNull();
+    });
+
     it("reads the code of the version on show when Code is on", async () => {
         api.fetchArtifact.mockResolvedValue(opened(2, 2));
         api.fetchArtifactCode.mockResolvedValue({ version: opened(2, 2).version, content: "<h1>Hi</h1>\n<p>x</p>" });
