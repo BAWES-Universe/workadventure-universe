@@ -124,6 +124,13 @@ describe("other providers, from the list", () => {
         expect(priceCall({ config, usage: usage({ inputTokens: 300000, reasoningTokens: 1000 }), at: monday("05:00") }).micros).toBe(300000 * 0.5 + 1000 * 3);
     });
 
+    it("raises a tier's cache prices with its input price when the tier lists none (Claude Sonnet 4.6 above 200k: 1000 x 6 + 20000 x 0.6 + 5000 x 7.5 + 500 x 22.5)", () => {
+        const config = { type: "openai", endpoint: "https://api.302.ai/v1", model: "claude-sonnet-4-6" };
+        expect(priceCall({ config, usage: usage({ inputTokens: 1000, cachedTokens: 20000, cacheWriteTokens: 190000, outputTokens: 500 }), at: monday("05:00") }).micros).toBe(1000 * 6 + 20000 * 0.6 + 190000 * 7.5 + 500 * 22.5);
+        // below the tier the base cache prices stand
+        expect(priceCall({ config, usage: usage({ inputTokens: 1000, cachedTokens: 20000, cacheWriteTokens: 5000, outputTokens: 500 }), at: monday("05:00") }).micros).toBe(1000 * 3 + 20000 * 0.3 + 5000 * 3.75 + 500 * 15);
+    });
+
     it("finds a model whose id differs only in capital letters", () => {
         const config = { type: "openai", endpoint: "https://api.openai.com/v1", model: "GPT-5" };
         expect(priceCall({ config, usage: usage({ inputTokens: 1000 }), at: monday("05:00") }).basis).toBe("priced");
