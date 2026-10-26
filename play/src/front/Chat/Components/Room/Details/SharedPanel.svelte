@@ -25,6 +25,8 @@
     export let tab: SharedTab;
     /** In a direct chat, the other person: the chat is named after the name they go by now. */
     export let partnerChatId: string | undefined = undefined;
+    /** What to call the chat under the title, when its own name isn't what its header shows (nearby chat). */
+    export let chatTitle: string | undefined = undefined;
 
     const direction = document.documentElement.getAttribute("dir") || "ltr";
     const shared = sharedItemsStore(room);
@@ -37,7 +39,7 @@
     const nameByChatId: Readable<Map<string, string>> = hasContext(NAME_BY_CHAT_ID_CONTEXT)
         ? getContext(NAME_BY_CHAT_ID_CONTEXT)
         : readable(new Map<string, string>());
-    $: chatName = personName($nameByChatId, partnerChatId, $roomName);
+    $: chatName = chatTitle ?? personName($nameByChatId, partnerChatId, $roomName);
 
     $: tabs = [
         { id: "media" as const, label: $LL.chat.details.tabs.media(), count: $shared.media.length },

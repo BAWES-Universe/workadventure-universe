@@ -65,6 +65,7 @@
     import SessionDivider from "./Thread/SessionDivider.svelte";
     import ProximityThreadTitle from "./Thread/ProximityThreadTitle.svelte";
     import ProximityEndedFooter from "./Thread/ProximityEndedFooter.svelte";
+    import { nearbyChatName } from "./Thread/nearbyTitle";
     import RoomMenu from "./RoomMenu/RoomMenu.svelte";
     import DirectChatTitle from "./DirectChat/DirectChatTitle.svelte";
     import PartnerProfilePanel from "./DirectChat/PartnerProfilePanel.svelte";
@@ -191,10 +192,18 @@
     // The nearby chat's details belong to one conversation: a new one starts on the conversation, not over it.
     $: nearbyJoinedAt = proximityRoom?.spaceJoinedAt;
     let seenNearbyJoinedAt: number | undefined;
-    $: if ($nearbyJoinedAt !== undefined && $nearbyJoinedAt !== seenNearbyJoinedAt) {
-        if (seenNearbyJoinedAt !== undefined) closeNearbyDetails();
-        seenNearbyJoinedAt = $nearbyJoinedAt;
+    let nearbyJoinWatched = false;
+    $: watchNearbyJoin($nearbyJoinedAt);
+    // Any conversation starting after this timeline opened is a new one, even when there was none before.
+    function watchNearbyJoin(joinedAt: number | undefined) {
+        if (nearbyJoinWatched && joinedAt !== undefined && joinedAt !== seenNearbyJoinedAt) closeNearbyDetails();
+        nearbyJoinWatched = true;
+        seenNearbyJoinedAt = joinedAt;
     }
+    $: nearbySpaceKind = proximityRoom?.spaceKind;
+    $: nearbySpaceName = proximityRoom?.name;
+    $: nearbyName =
+        proximityRoom && $nearbySpaceKind ? nearbyChatName($nearbySpaceKind, $nearbySpaceName ?? "", $LL) : undefined;
 
     function closeNearbyDetails() {
         if (!proximityRoom) return;
@@ -830,7 +839,7 @@
     <!-- Made again when the chat is, so a panel never shows the old one. -->
     {#key roomInstance}
         {#if sharedOpen}
-            <SharedPanel {room} tab={sharedOpen.tab} partnerChatId={$directPartner?.chatId} />
+            <SharedPanel {room} tab={sharedOpen.tab} partnerChatId={$directPartner?.chatId} chatTitle={nearbyName} />
         {:else if profileOpen && matrixRoom && $directPartner}
             <!-- Over the conversation, which stays as it was (draft, files, scroll) for when you come back. Above the
                  message options (z-50) and menus that live in it; "isolate" keeps all of that inside this panel. -->
