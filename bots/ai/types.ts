@@ -37,6 +37,19 @@ export interface ToolCall {
 }
 
 /**
+ * What a provider said a call used (#1173). Each figure is absent when the provider did not say. Cached, cache-write and
+ * reasoning tokens are parts of the prompt and completion totals, not extra.
+ */
+export interface AIUsageDetail {
+    promptTokens?: number;
+    completionTokens?: number;
+    cachedPromptTokens?: number;
+    cacheWriteTokens?: number;
+    reasoningTokens?: number;
+    costUsd?: number;
+}
+
+/**
  * Streaming response chunk
  */
 export interface AIStreamChunk {
@@ -50,7 +63,13 @@ export interface AIStreamChunk {
         promptTokens?: number;
         /** Prompt tokens the provider served from its cache (a subset of promptTokens). Undefined when the provider does not report it. */
         cachedPromptTokens?: number;
+        /** Prompt tokens the provider wrote to its cache on this call (a subset of promptTokens). Undefined when it does not say. */
+        cacheWriteTokens?: number;
         completionTokens?: number;
+        /** Reasoning tokens inside completionTokens. Undefined when the provider does not say. */
+        reasoningTokens?: number;
+        /** What the provider charged for this call, in dollars (OpenRouter sends it). Undefined when it does not say. */
+        costUsd?: number;
         latency?: number;
         durationSeconds?: number; // For voice AI
         error?: boolean;
@@ -81,6 +100,8 @@ export interface AIStreamChunk {
 export interface AIResponse {
     content: string;
     tokensUsed: number;
+    /** The split of tokensUsed and what the provider said about caching, reasoning and cost. Absent when the provider gave none. */
+    usage?: AIUsageDetail;
     latency: number;
     error?: boolean;
     truncated?: boolean; // true when the provider hit finish_reason='length' (max_tokens cap)
