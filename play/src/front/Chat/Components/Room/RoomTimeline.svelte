@@ -938,11 +938,14 @@
                 {/if}
             </div>
             {#if matrixRoom}
-                <PinnedBar
-                    room={matrixRoom}
-                    onShowAll={() =>
-                        directPartner ? openProfileRoomIdStore.set(room.id) : openRoomDetailsIdStore.set(room.id)}
-                />
+                <!-- Made again when the chat is (its type can be found out later), so it never shows the old one's pins. -->
+                {#key matrixRoom}
+                    <PinnedBar
+                        room={matrixRoom}
+                        onShowAll={() =>
+                            directPartner ? openProfileRoomIdStore.set(room.id) : openRoomDetailsIdStore.set(room.id)}
+                    />
+                {/key}
             {/if}
             {#if liveElsewhere && proximityRoom}
                 <div

@@ -528,10 +528,10 @@ export class MatrixChatRoom
         if (eventRelation) {
             const event_id = eventRelation.event_id;
             if (event_id) {
-                const messageToUpdate = this.messages.get(event_id);
-                if (messageToUpdate !== undefined) {
-                    messageToUpdate.modifyContent(event.getOriginalContent()["m.new_content"].body);
-                }
+                const newBody = event.getOriginalContent()["m.new_content"].body;
+                this.messages.get(event_id)?.modifyContent(newBody);
+                // A pinned message loaded on its own, outside the loaded conversation, gets the edit too.
+                this.detachedMessages.get(event_id)?.modifyContent(newBody);
             }
         }
     }

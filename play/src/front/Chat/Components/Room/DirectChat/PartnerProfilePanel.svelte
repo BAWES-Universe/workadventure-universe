@@ -251,7 +251,9 @@
             </div>
         {/if}
 
-        <PinnedSummary {room} />
+        {#key room}
+            <PinnedSummary {room} />
+        {/key}
         <SharedSummary {room} />
 
         {#if friendAction && !friendAction.danger}
