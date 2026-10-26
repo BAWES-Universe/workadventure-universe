@@ -29,6 +29,8 @@ describe("a voice note that is still being stopped", () => {
         createUrl = vi.fn(() => "blob:note");
         URL.createObjectURL = createUrl as unknown as typeof URL.createObjectURL;
         URL.revokeObjectURL = vi.fn();
+        // jsdom does not play media.
+        HTMLMediaElement.prototype.pause = vi.fn();
         cancel = vi.fn();
         recorder.start.mockResolvedValue({
             level: () => 0,
@@ -74,6 +76,31 @@ describe("a voice note that is still being stopped", () => {
 
         expect(target.querySelector('[data-testid="voiceReview"]')).toBeNull();
         expect(createUrl).not.toHaveBeenCalled();
+        expect(target.querySelector('[data-testid="voiceRecordButton"]')).not.toBeNull();
+    });
+
+    it("tells the box when a recording starts, and a note held for review is dropped by discard()", async () => {
+        const onStart = vi.fn();
+        const composer = new VoiceNoteComposer({
+            target,
+            props: { canRecord: true, onSend: () => Promise.resolve(true), onError: vi.fn(), onStart },
+        });
+        shown = composer;
+        await tick();
+        await click("voiceRecordButton");
+        expect(onStart).toHaveBeenCalledTimes(1);
+
+        await click("voiceStopButton");
+        finish({ file: new File([new Uint8Array(10)], "Voice message.m4a"), details });
+        await tick();
+        await Promise.resolve();
+        await tick();
+        expect(target.querySelector('[data-testid="voiceReview"]')).not.toBeNull();
+
+        composer.discard();
+        await tick();
+
+        expect(target.querySelector('[data-testid="voiceReview"]')).toBeNull();
         expect(target.querySelector('[data-testid="voiceRecordButton"]')).not.toBeNull();
     });
 });

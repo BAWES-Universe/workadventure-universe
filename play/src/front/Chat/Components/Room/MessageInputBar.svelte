@@ -764,12 +764,28 @@
         isEmptyMessage(message) &&
         files.length === 0;
 
+    // The nearby chat keeps one room while the people in it change. A note is for the people nearby when it was
+    // started: once they are gone it is dropped, never sent on to whoever is nearby next.
+    let voiceComposer: VoiceNoteComposer | undefined;
+    let voiceSpaceGeneration = spaceGenerationOf(room);
+    $: if ($proximitySessions) dropVoiceNoteOfEndedStay();
+
+    function dropVoiceNoteOfEndedStay(): boolean {
+        if (voiceSpaceGeneration === spaceGenerationOf(room)) return false;
+        voiceSpaceGeneration = spaceGenerationOf(room);
+        if (!voiceActive) return false;
+        voiceComposer?.discard();
+        showUploadError($LL.chat.voiceNote.stayEnded());
+        return true;
+    }
+
     /**
      * Sends a recorded note: to the uploader for the nearby chat, into the room for the others, like a file but with the
      * voice flag. Says whether it went; when it did not, the recorder keeps the note and the error line says how to retry.
      */
     async function sendVoiceNote(file: File, details: VoiceNoteDetails): Promise<boolean> {
         stopTypingNow();
+        if (dropVoiceNoteOfEndedStay()) return false;
         const destination = captureSendDestination(room);
         clearUploadError();
         isUploading = true;
@@ -1020,7 +1036,9 @@
         </button>
     </div>
     <VoiceNoteComposer
+        bind:this={voiceComposer}
         bind:active={voiceActive}
+        onStart={() => (voiceSpaceGeneration = spaceGenerationOf(room))}
         canRecord={canRecordVoice}
         onSend={sendVoiceNote}
         onError={(text) => showUploadError(text)}

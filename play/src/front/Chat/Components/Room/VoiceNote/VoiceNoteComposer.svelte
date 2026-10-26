@@ -20,6 +20,8 @@
     export let onSend: (file: File, details: VoiceNoteDetails) => Promise<boolean>;
     /** Says why recording could not start (the microphone is blocked or missing). */
     export let onError: (message: string) => void;
+    /** Called when a recording has started, so the box can note who the note is for. */
+    export let onStart: () => void = () => undefined;
     /** True from the first tap on the mic until the note is sent or deleted: the message box gives way to this. */
     export let active = false;
 
@@ -79,6 +81,7 @@
         }
         // eslint-disable-next-line require-atomic-updates
         state = "recording";
+        onStart();
         startedAt = Date.now();
         seconds = 0;
         live = new Array<number>(LIVE_BARS).fill(0);
@@ -114,7 +117,8 @@
         }
     }
 
-    function discard() {
+    /** Drops the recording or the note held for review, and lets the microphone go. */
+    export function discard() {
         dropped++;
         clearInterval(timer);
         recording?.cancel();

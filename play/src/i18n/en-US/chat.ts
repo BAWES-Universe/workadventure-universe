@@ -654,6 +654,7 @@ const chat: BaseTranslation = {
         micMissing: "No microphone was found.",
         recordingFailed: "The recording could not start. Try again.",
         notSent: "The voice note wasn't sent.",
+        stayEnded: "The voice note was dropped: the people it was for are no longer nearby.",
     },
     loginTokenError: "An error occurred. Please try to reconnect",
     reconnect: "Reconnect",
