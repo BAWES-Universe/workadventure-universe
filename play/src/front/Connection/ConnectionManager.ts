@@ -162,6 +162,8 @@ class ConnectionManager {
     public loadOpenIDScreen(manuallyTriggered: boolean, providerId?: string, providerScopes?: string[]): URL | null {
         // A guest's name is kept aside too, for when they sign out again (not an account's: see backupGuestName).
         localUserStore.backupGuestName();
+        // A guest's own id goes with them to the sign-in, so their visits can join the account (#1430).
+        localUserStore.keepGuestTokenAside();
         localUserStore.setAuthToken(null);
         // Clear guest-picked textures/name/companion so OIDC user's
         // saved data loads from DB via the /room/access fallback.
@@ -223,6 +225,7 @@ class ConnectionManager {
     public logout() {
         // save the current token to use it in the redirect logout url
         const tokenTmp = localUserStore.getAuthToken();
+        localUserStore.dropGuestTokenAside();
         // Read before the token goes: a guest whose token was refused is not an account that signs out.
         const wasSignedIn = localUserStore.isLogged();
         //remove token in localstorage
@@ -533,6 +536,8 @@ class ConnectionManager {
 
     public async anonymousLogin(isBenchmark = false): Promise<void> {
         const data = await axiosWithRetry.post("anonymLogin").then((res) => res.data);
+        // A new guest: the old guest's id kept for a sign-in that never happened is not this person's to hand over.
+        localUserStore.dropGuestTokenAside();
         this.localUser = new LocalUser(data.userUuid, data.email);
         this.authToken = data.authToken;
         if (!isBenchmark) {
@@ -835,6 +840,11 @@ class ConnectionManager {
             throw new Error("playUri is undefined");
         }
 
+        // Right after a sign-in: the guest token this device kept aside goes along once, so Orbit can join the guest's
+        // visits to the account. Only with an account's token; it is taken either way so it is never sent twice.
+        const guestToken = localUserStore.takeGuestTokenAside();
+        const sendGuestToken = guestToken !== null && localUserStore.storedTokenIsAccounts();
+
         // TODO: the call to "/me" could be completely removed and the request data could come from the FrontController
         // For this to work, the authToken should be stored in a cookie instead of localStorage.
         const data = await axiosToPusher
@@ -846,6 +856,7 @@ class ConnectionManager {
                     localStorageCompanionTextureId: localUserStore.getCompanionTextureId() ?? undefined,
                     chatID: localUserStore.getChatId() ?? undefined,
                     name: localUserStore.getName() ?? undefined,
+                    guestToken: sendGuestToken ? guestToken : undefined,
                 },
             })
             .then((res) => {

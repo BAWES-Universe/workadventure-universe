@@ -36,6 +36,9 @@ const decreaseAudioPlayerVolumeWhileTalking = "decreaseAudioPlayerVolumeWhileTal
 const disableAnimations = "disableAnimations";
 const lastRoomUrl = "lastRoomUrl";
 const authToken = "authToken";
+const guestTokenAsideKey = "guestTokenAside";
+/** How long a guest's token kept aside for sign-in stays good: long enough to sign in, not for the next person on a shared device. */
+const GUEST_TOKEN_ASIDE_MS = 30 * 60 * 1000;
 const notification = "notificationPermission";
 const allowPictureInPicture = "allowPictureInPicture";
 const chatSounds = "chatSounds";
@@ -473,6 +476,34 @@ class LocalUserStore {
 
     getAuthToken(): string | null {
         return localStorage.getItem(authToken);
+    }
+
+    /**
+     * Before signing in, keeps the guest's own token aside (never an account's) so that, once signed in, the game can
+     * tell Orbit which guest id this device used and the guest's visits join the account. Gone after one use, after
+     * 30 minutes, on logout and when the device gets a new guest.
+     */
+    keepGuestTokenAside(now = Date.now()): void {
+        const token = localStorage.getItem(authToken);
+        if (!token || this.storedTokenIsAccounts()) return;
+        localStorage.setItem(guestTokenAsideKey, JSON.stringify({ token, at: now }));
+    }
+
+    /** The guest token kept aside, once: asking removes it. Null when there is none or it is too old. */
+    takeGuestTokenAside(now = Date.now()): string | null {
+        const raw = localStorage.getItem(guestTokenAsideKey);
+        this.dropGuestTokenAside();
+        if (!raw) return null;
+        try {
+            const kept = z.object({ token: z.string().min(1), at: z.number().finite() }).parse(JSON.parse(raw));
+            return now - kept.at <= GUEST_TOKEN_ASIDE_MS ? kept.token : null;
+        } catch {
+            return null;
+        }
+    }
+
+    dropGuestTokenAside(): void {
+        localStorage.removeItem(guestTokenAsideKey);
     }
 
     isLogged(): boolean {
