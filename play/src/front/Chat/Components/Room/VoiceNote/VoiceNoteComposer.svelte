@@ -31,6 +31,8 @@
     const LIVE_BARS = 28;
 
     let recording: VoiceNoteRecording | undefined;
+    // The chat can close while the browser is still asking for the microphone.
+    let destroyed = false;
     let starting = false;
     let sending = false;
     let seconds = 0;
@@ -65,6 +67,12 @@
         } finally {
             // eslint-disable-next-line require-atomic-updates
             starting = false;
+        }
+        if (destroyed) {
+            // Allowed after the chat was left: let the microphone go at once.
+            recording.cancel();
+            recording = undefined;
+            return;
         }
         // eslint-disable-next-line require-atomic-updates
         state = "recording";
@@ -141,6 +149,7 @@
 
     onDestroy(() => {
         // Leaving the chat lets the microphone go.
+        destroyed = true;
         discard();
     });
 </script>

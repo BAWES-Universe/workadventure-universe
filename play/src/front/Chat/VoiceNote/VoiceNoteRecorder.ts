@@ -55,8 +55,21 @@ async function wire(stream: MediaStream, context: AudioContext, format: Recordin
         if (event.data.size > 0) chunks.push(event.data);
     };
 
+    // Listening from the start: a recorder that stops by itself (the microphone was unplugged) has already said so by
+    // the time `stop` is asked, and would never say it again.
+    const stopped = new Promise<void>((resolve) => {
+        recorder.onstop = () => resolve();
+        recorder.onerror = () => resolve();
+    });
+
     const levels: number[] = [];
     let level = 0;
+    let finished = false;
+
+    // A slice each second, so a crash or a closed tab does not lose the whole note, and `stop` has little left to wait for.
+    // Started before the meter: when it throws, there is no timer left running.
+    recorder.start(1000);
+    const startedAt = performance.now();
     const meter = setInterval(() => {
         analyser.getFloatTimeDomainData(samples);
         let sum = 0;
@@ -65,26 +78,17 @@ async function wire(stream: MediaStream, context: AudioContext, format: Recordin
         level = Math.min(1, Math.sqrt(sum / samples.length) * 4);
         levels.push(level);
     }, LEVEL_INTERVAL_MS);
-
-    const startedAt = performance.now();
-    let finished = false;
     const release = async () => {
         clearInterval(meter);
         stream.getTracks().forEach((track) => track.stop());
         await context.close().catch(() => {});
     };
 
-    // A slice each second, so a crash or a closed tab does not lose the whole note, and `stop` has little left to wait for.
-    recorder.start(1000);
-
     return {
         level: () => level,
         stop: async () => {
             if (finished) throw new Error("The recording is already finished");
             finished = true;
-            const stopped = new Promise<void>((resolve) => {
-                recorder.onstop = () => resolve();
-            });
             if (recorder.state !== "inactive") recorder.stop();
             await stopped;
             await release();
@@ -97,7 +101,6 @@ async function wire(stream: MediaStream, context: AudioContext, format: Recordin
         cancel: () => {
             if (finished) return;
             finished = true;
-            recorder.onstop = null;
             if (recorder.state !== "inactive") recorder.stop();
             release().catch(() => {});
         },
