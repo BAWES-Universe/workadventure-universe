@@ -1,7 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { get, writable } from "svelte/store";
 import type { ChatMessage, ChatMessageContent, ChatRoom } from "../../../../Connection/ChatConnection";
 import { sharedItemsStore } from "../SharedItemsStore";
+
+vi.mock("../../../../../Enum/EnvironmentVariable", () => ({ UPLOADER_URL: "https://uploader.example.com" }));
+// Only the nearby chat joins in what was kept on the account.
+vi.mock("../NearbySavedStore", () => ({ nearbySavedFor: () => undefined }));
 
 /** A message whose content counts who listens, as a Matrix message counts it as shown while anyone does. */
 function countedMessage(id: string, body: string) {
