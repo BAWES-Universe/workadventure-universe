@@ -162,4 +162,18 @@ describe("AIService – what a reply cost", () => {
         await run({ tokensUsed: 0, error: false, cancelled: true });
         expect(ledger.summary()).toMatchObject({ basis: "priced", micros: 282 });
     });
+    it("records a reply's cost once even when something fails after the provider call finished (#1173)", async () => {
+        vi.setSystemTime(new Date("2026-10-26T05:00:00Z"));
+        const { admin, memory } = buildMocks(provider());
+        mockGenerateStream.mockImplementation(async function* () {
+            yield* finished(cached)();
+            throw new Error("connection dropped after the last chunk");
+        });
+        const service = new AIService(memory, admin, "http://admin.local");
+        await drain(service.generateBotResponseStream("bot-1", 42, "hello", "You are a bot.", "deepseek-flash", "space-1", ""));
+        const withCost = admin.trackAIUsage.mock.calls.map((call: any[]) => call[0]).filter((sent: any) => sent.price?.costMicros > 0);
+        expect(admin.trackAIUsage.mock.calls.length).toBeGreaterThan(1);
+        expect(withCost).toHaveLength(1);
+        expect(withCost[0].price.costMicros).toBe(282);
+    });
 });

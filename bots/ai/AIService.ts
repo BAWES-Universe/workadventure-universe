@@ -379,6 +379,8 @@ export class AIService {
         const startTime = Date.now();
         // What each call to the provider cost, priced as it finishes; the reply's cost is their sum (#1173)
         const ledger = new UsageLedger();
+        // Whether the reply's usage has been recorded, so a failure after that is not recorded with the same cost again
+        let usageRecorded = false;
         // Buffer for content received before tool calls are detected
         // Discarded if tool calls arrive (was filler/thinking text);
         // flushed as final response if no tool calls.
@@ -1990,6 +1992,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 }
                 
                 // Always track usage - fire and forget
+                usageRecorded = true;
                 this.trackUsage(botId, usageProviderId, {
                     tokensUsed,
                     promptTokens,
@@ -2033,7 +2036,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 tokensUsed: 0,
                 latency,
                 error: true,
-            }, ledger.summary()).catch(() => {});
+            }, usageRecorded ? null : ledger.summary()).catch(() => {});
 
             // Yield error chunk — content was already streamed word-by-word
             // so don't replay preToolBuffer (would duplicate on frontend).
