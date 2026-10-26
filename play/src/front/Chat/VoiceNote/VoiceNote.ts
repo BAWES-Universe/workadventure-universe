@@ -177,3 +177,8 @@ export function isVoiceNoteUnplayed(messageId: string | undefined, sentAt: Date 
     if (sentAt !== undefined && sentAt.getTime() < playedSince()) return false;
     return !hasPlayedVoiceNote(messageId);
 }
+
+// Set when the chat code loads, before any message is shown: a note that arrives in this session was sent after it,
+// while the history loaded with the chat was sent before it. Set only when a note is first drawn, it would sit after
+// the first note and leave that one unmarked.
+playedSince();

@@ -103,6 +103,23 @@ describe("which received notes are new on this device", () => {
         expect(isVoiceNoteUnplayed("$old", new Date(Date.now() - 24 * 3600 * 1000))).toBe(false);
     });
 
+    it("marks the first note of a new device when it arrives after the code loaded", async () => {
+        vi.useFakeTimers();
+        try {
+            localStorage.clear();
+            vi.resetModules();
+            const fresh = await import("./VoiceNote");
+            const sentAt = new Date(Date.now() + 1000);
+            // The note is drawn some time after it was sent.
+            await vi.advanceTimersByTimeAsync(5000);
+
+            expect(fresh.isVoiceNoteUnplayed("$first", sentAt)).toBe(true);
+            expect(fresh.isVoiceNoteUnplayed("$history", new Date(Date.now() - 3600 * 1000))).toBe(false);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it("keeps the newest 500 played notes", () => {
         for (let i = 0; i < 510; i++) markVoiceNotePlayed(`$m${i}`);
         expect(hasPlayedVoiceNote("$m0")).toBe(false);

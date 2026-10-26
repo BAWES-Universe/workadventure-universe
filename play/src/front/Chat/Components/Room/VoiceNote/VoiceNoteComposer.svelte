@@ -31,6 +31,9 @@
     const LIVE_BARS = 28;
 
     let recording: VoiceNoteRecording | undefined;
+    // Counts the notes dropped: a stop that finishes after Delete was pressed (or the chat closed) must not bring the
+    // note back.
+    let dropped = 0;
     // The chat can close while the browser is still asking for the microphone.
     let destroyed = false;
     let starting = false;
@@ -92,8 +95,10 @@
         const finishing = recording;
         recording = undefined;
         if (!finishing) return;
+        const droppedBefore = dropped;
         try {
             const done = await finishing.stop();
+            if (dropped !== droppedBefore) return;
             note = {
                 ...done,
                 url: URL.createObjectURL(done.file),
@@ -103,12 +108,14 @@
             state = "review";
         } catch (error) {
             console.error(error);
+            if (dropped !== droppedBefore) return;
             discard();
             onError($LL.chat.voiceNote.recordingFailed());
         }
     }
 
     function discard() {
+        dropped++;
         clearInterval(timer);
         recording?.cancel();
         recording = undefined;
