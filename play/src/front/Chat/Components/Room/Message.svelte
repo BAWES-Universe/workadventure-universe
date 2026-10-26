@@ -12,6 +12,7 @@
     import { selectedChatMessageToEdit } from "../../Stores/ChatStore";
     import { ProximityChatMessage } from "../../Connection/Proximity/ProximityChatRoom";
     import LinkPreview from "../../LinkPreview/LinkPreview.svelte";
+    import BotRoomCard from "../../Bots/BotRoomCard.svelte";
     import { bodyShownWithCard } from "../../LinkPreview/ChatLinkKind";
     import MessageOptions from "./MessageOptions.svelte";
     import MessageImage from "./Message/MessageImage.svelte";
@@ -274,6 +275,9 @@
                             />
                         {/if}
                         <LinkPreview body={$content?.body} mine={isMyMessage} alone={shownBody === ""} />
+                    {/if}
+                    {#if message.roomLink && !$isDeleted}
+                        <BotRoomCard link={message.roomLink} botName={sender?.username} />
                     {/if}
                 {:else if $content.body.trim() !== ""}
                     <div class="opacity-70">

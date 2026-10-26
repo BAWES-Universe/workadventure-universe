@@ -230,10 +230,12 @@ describe("the Permissions screens", () => {
         destroy = () => component.$destroy();
         await settle();
         expect(text()).toContain("Member's rules for this bot");
+        expect(text()).toContain("Direct messages");
+        expect(text()).toContain("From anywhere, one to one. Needs sign-in");
         expect(text()).toContain("Default: Yes, from Member");
         expect(text()).toContain("Default: No");
-        // Summon is the second group of three choices; No is its first
-        byTestId("bot-rule-no")[1].click();
+        // Summon is the third group of three choices, after nearby chat and direct messages; No is its first
+        byTestId("bot-rule-no")[2].click();
         await settle();
         expect(mocks.saveBotRule).toHaveBeenCalledWith("b1", { roleId: "role-member" }, { summon: "no" });
         expect(get(botPermissionsStore)?.data?.rules[0].summon).toBe("no");
