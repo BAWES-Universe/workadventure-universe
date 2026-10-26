@@ -40,6 +40,24 @@ describe("the pinned messages of a chat", () => {
         stop();
     });
 
+    it("keeps asking, less often, while the server stays out of reach", async () => {
+        vi.useFakeTimers();
+        let online = false;
+        const room = roomPinning(["$a"], (id) =>
+            online ? Promise.resolve(pinnedMessage(id)) : Promise.reject(new Error("offline"))
+        );
+        const entries = pinnedEntriesStore(room);
+        const stop = entries.subscribe(() => undefined);
+        // 3s, 6s, 9s, 12s, 15s: five tries after the first.
+        await vi.advanceTimersByTimeAsync(45000);
+        expect(room.getMessageById).toHaveBeenCalledTimes(6);
+
+        online = true;
+        await vi.advanceTimersByTimeAsync(30000);
+        expect(get(entries)[0].message?.id).toBe("$a");
+        stop();
+    });
+
     it("leaves out a pinned message the server says is gone", async () => {
         const room = roomPinning(["$a", "$b"], (id) =>
             id === "$a"
