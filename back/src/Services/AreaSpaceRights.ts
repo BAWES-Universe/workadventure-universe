@@ -84,7 +84,7 @@ function canEditMaps(user: { tags: string[]; permissions?: number }): boolean {
     return hasPermission(user.permissions ?? permissionsFrom(undefined, user.tags), Permission.EDIT_MAPS);
 }
 
-function isBot(user: { tags: string[]; uuid: string }): boolean {
+export function isBot(user: { tags: string[]; uuid: string }): boolean {
     return user.tags.includes("bot") || user.uuid.startsWith("bot-");
 }
 
