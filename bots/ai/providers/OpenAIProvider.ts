@@ -15,6 +15,19 @@ import { resolveVisionSupport } from './visionModels';
 import * as Sentry from '@sentry/node';
 
 /**
+ * True only for OpenAI's own API. The prompt-cache hints below are OpenAI
+ * request fields; DeepSeek and other compatible endpoints must keep getting
+ * exactly the request they get today.
+ */
+export function isOpenAIHost(endpoint: string | undefined): boolean {
+    try {
+        return new URL(endpoint || 'https://api.openai.com/v1').hostname === 'api.openai.com';
+    } catch {
+        return false;
+    }
+}
+
+/**
  * Prompt tokens the provider served from its cache, or undefined when the
  * response carries no cache figure. DeepSeek reports prompt_cache_hit_tokens;
  * OpenAI and compatible endpoints report prompt_tokens_details.cached_tokens.
@@ -145,6 +158,19 @@ export class OpenAIProvider implements AIProvider {
         if (tools && tools.length > 0) {
             body.tools = tools;
             body.tool_choice = 'auto';
+        }
+
+        // OpenAI only (issue #1333): route this bot's requests to the same cache
+        // (prompt_cache_key) and ask streams to report usage, which carries the
+        // cached-token count. Not sent to DeepSeek or any other endpoint.
+        if (isOpenAIHost(config.endpoint)) {
+            const cacheKey = (config as any).__promptCacheKey;
+            if (typeof cacheKey === 'string' && cacheKey) {
+                body.prompt_cache_key = cacheKey;
+            }
+            if (stream) {
+                body.stream_options = { include_usage: true };
+            }
         }
 
         // Handle temperature: some models only support default (1)
