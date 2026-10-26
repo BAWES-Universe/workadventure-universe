@@ -15,15 +15,24 @@ export interface SharedItem {
     size?: number;
     /** For an image or video: whether it is a video. */
     isVideo?: boolean;
-    /** For one image of a gallery, which holds several in one message: its own link. */
+    /** For one image or file of a gallery, which holds several in one message: its own link. */
     src?: string;
 }
 
+const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "avif", "bmp", "svg", "heic", "heif"]);
 const VIDEO_EXTENSIONS = new Set(["mp4", "webm", "ogg", "mov", "avi", "mkv"]);
 
-function isVideoUrl(url: string): boolean {
-    const name = url.split("?")[0].split("#")[0].split("/").pop() ?? "";
-    return name.includes(".") && VIDEO_EXTENSIONS.has(name.split(".").pop()?.toLowerCase() ?? "");
+function extensionOf(nameOrUrl: string): string | undefined {
+    const name = nameOrUrl.split("?")[0].split("#")[0].split("/").pop() ?? "";
+    return name.includes(".") ? name.split(".").pop()?.toLowerCase() : undefined;
+}
+
+/** What one file of a gallery is, by its name or else its link: an image, a video, or any other file. */
+function galleryFileKind(url: string, name: string): "image" | "video" | "file" {
+    const extension = extensionOf(name) ?? extensionOf(url) ?? "";
+    if (IMAGE_EXTENSIONS.has(extension)) return "image";
+    if (VIDEO_EXTENSIONS.has(extension)) return "video";
+    return "file";
 }
 
 export type SharedItems = Record<SharedTab, SharedItem[]>;
@@ -53,14 +62,15 @@ export function sharedItemsOf(
                 isVideo: message.type === "video",
             });
         } else if (message.type === "gallery") {
+            // A gallery can mix images with other files: each goes to its own tab.
             filesOf(message).forEach(({ url, name }, position) => {
-                shared.media.push({
-                    key: `${message.id} ${position}`,
-                    message,
-                    name,
-                    src: url,
-                    isVideo: isVideoUrl(url),
-                });
+                const kind = galleryFileKind(url, name);
+                const key = `${message.id} ${position}`;
+                if (kind === "file") {
+                    shared.files.push({ key, message, name, src: url });
+                } else {
+                    shared.media.push({ key, message, name, src: url, isVideo: kind === "video" });
+                }
             });
         } else if ((message.type === "file" || message.type === "audio") && file && !file.voice) {
             shared.files.push({ key: message.id, message, name: file.name, size: file.size });

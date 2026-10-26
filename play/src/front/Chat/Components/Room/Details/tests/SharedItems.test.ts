@@ -53,6 +53,20 @@ describe("what a chat shared", () => {
         ]);
     });
 
+    it("puts a file sent in a gallery with images under Files, with its own link", () => {
+        const shared = sharedItemsOf([message("g2", "gallery")], bodyOf, isDeleted, () => [
+            { url: "https://cdn.test/door.jpg", name: "door.jpg" },
+            { url: "https://cdn.test/0b5c.pdf", name: "Lobby floor plan.pdf" },
+            { url: "https://cdn.test/notes", name: "notes" },
+        ]);
+
+        expect(shared.media.map((item) => item.key)).toEqual(["g2 0"]);
+        expect(shared.files).toEqual([
+            expect.objectContaining({ key: "g2 1", name: "Lobby floor plan.pdf", src: "https://cdn.test/0b5c.pdf" }),
+            expect.objectContaining({ key: "g2 2", name: "notes", src: "https://cdn.test/notes" }),
+        ]);
+    });
+
     it("sorts images and videos, links and files, newest first", () => {
         const shared = sharedItemsOf(
             [
