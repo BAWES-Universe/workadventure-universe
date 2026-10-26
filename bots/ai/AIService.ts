@@ -15,6 +15,7 @@ import type { AIProviderConfig, AIStreamChunk, AIUsageMetadata, ToolCall } from 
 import type { AIProvider } from './AIProvider';
 import { decryptApiKey } from './encryption';
 import { AIProviderRegistry } from './AIProviderRegistry';
+import { sortToolsByName } from './toolOrder';
 import type { MapDataService } from '../server/MapDataService';
 import * as Sentry from '@sentry/node';
 import { MCPConnector, toolTimeoutMs } from '../mcp/MCPConnector';
@@ -736,6 +737,10 @@ export class AIService {
             // interface is updated to accept it directly
             const configWithParent: AIProviderConfig = { ...config };
             (configWithParent as any).__sentryParentSpan = parentSpan;
+            // One cache route per bot: requests with the same bot prompt prefix
+            // land on the same cache (OpenAI's prompt_cache_key; other
+            // providers ignore it).
+            (configWithParent as any).__promptCacheKey = botId;
 
             try {
                 // Set attributes on the parent span
@@ -2375,7 +2380,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 // Build a set of existing tool names for deduplication
                 const existingToolNames = new Set(tools.map(t => t.function.name));
 
-                for (const mcpTool of mcpTools) {
+                // Tools are part of the cached prefix, so their order must not
+                // depend on which MCP server answered first (issue #1333):
+                // built-in tools first, then MCP tools by name.
+                for (const mcpTool of sortToolsByName(mcpTools)) {
                     if (!existingToolNames.has(mcpTool.function.name)) {
                         tools.push(mcpTool);
                         existingToolNames.add(mcpTool.function.name);
