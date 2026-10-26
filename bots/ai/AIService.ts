@@ -59,9 +59,6 @@ import {
     type ArtifactCard,
 } from './ArtifactTools';
 
-/** How long the same make or change counts as the same turn asked again. */
-const ARTIFACT_REPEAT_WINDOW_MS = 5 * 60 * 1000;
-
 /** A bot's provider, resolved by bot id (#374): the settings to call, where they came from, or "resting". */
 type ResolvedProvider =
     | { resting: false; config: AIProviderConfig; source: 'provider' | 'universe-ai' | 'own-key' }
@@ -443,9 +440,13 @@ export class AIService {
         /** The bot's room, for a caller with no bot client (a direct message), so it still knows where it lives. */
         homeRoomUrl?: string,
         /** Who is in that room right now, for a direct message; null while the bot isn't there to see. */
-        peopleInRoom?: string[] | null
+        peopleInRoom?: string[] | null,
+        /** True when a repeated reply is being asked for again: the same turn, so what it made already still counts. */
+        isRetry = false
     ): AsyncGenerator<AIStreamChunk> {
         const startTime = Date.now();
+        // A new turn starts clean: an artifact call is only the same as an earlier one while that turn is asked again
+        if (!isRetry && playerId !== undefined) this.conversationMemory?.getMemory(botId, playerId)?.artifactCalls?.clear();
         // Buffer for content received before tool calls are detected
         // Discarded if tool calls arrive (was filler/thinking text);
         // flushed as final response if no tool calls.
@@ -2573,18 +2574,14 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             chat = { kind: 'dm', ref: memory.dmRoomId };
         }
 
-        // The same make or change asked again within minutes is the turn being regenerated: answer with what it did
+        // The same make or change asked again in the same turn is that turn being regenerated: answer with what it did
         const repeatKey = writesArtifact(name) ? `${name}:${JSON.stringify(args)}` : undefined;
         const earlier = repeatKey ? memory?.artifactCalls?.get(repeatKey) : undefined;
-        if (earlier && Date.now() - earlier.at < ARTIFACT_REPEAT_WINDOW_MS) return earlier.result;
+        if (earlier) return earlier;
 
         const run = await runArtifactTool(name, args, { admin, botId, person, chat });
         if (run.card) this.deliverArtifactCard(run.card, botClient, spaceName, memory);
-        if (repeatKey && run.card && memory) {
-            const calls = (memory.artifactCalls ??= new Map());
-            for (const [key, call] of calls) if (Date.now() - call.at >= ARTIFACT_REPEAT_WINDOW_MS) calls.delete(key);
-            calls.set(repeatKey, { at: Date.now(), result: run.result });
-        }
+        if (repeatKey && run.card && memory) (memory.artifactCalls ??= new Map()).set(repeatKey, run.result);
         return run.result;
     }
 

@@ -133,10 +133,22 @@ describe('artifact tools in AIService', () => {
         expect(orbit.makeArtifact).toHaveBeenCalledTimes(1);
         expect(memory.pendingArtifacts).toHaveLength(1);
 
+        // The next turn is a new ask, even for the same file: it makes a new one
+        vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        const generate = ai.generateBotResponseStream.bind(ai);
+        // Asking again for the same turn (a retry) keeps what the turn made; a new message starts clean
+        await generate('bot1', -3, 'again', '', 'none', 'matrix-dm', '', undefined, undefined, undefined, undefined, 'dm', undefined, undefined, undefined, true).next().catch(() => undefined);
+        expect((memory.artifactCalls as Map<string, unknown>).size).toBe(1);
+        await generate('bot1', -3, 'a new message', '', 'none', 'matrix-dm', '').next().catch(() => undefined);
+        expect((memory.artifactCalls as Map<string, unknown>).size).toBe(0);
+        await call();
+        expect(orbit.makeArtifact).toHaveBeenCalledTimes(2);
+        expect(memory.pendingArtifacts).toHaveLength(2);
+
         // Another file is another make
         const other = { id: 't9', name: 'make_artifact', arguments: JSON.stringify({ title: 'Other', kind: 'page', content: '<p>y</p>' }) };
         await ai['executeToolCalls']([other], undefined, orbit as never, undefined, 'uuid-9', 'matrix-dm', 'bot1', -3);
-        expect(orbit.makeArtifact).toHaveBeenCalledTimes(2);
+        expect(orbit.makeArtifact).toHaveBeenCalledTimes(3);
     });
 
     it('does not remember a make that failed, so asking again tries again', async () => {
