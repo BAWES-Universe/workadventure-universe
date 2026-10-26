@@ -777,7 +777,7 @@ export class AdminApiService {
     }
 
     private async fetchBotPrivacy(botId: string, lastKnown: boolean | undefined): Promise<boolean> {
-        // BOT_SERVICE_TOKEN is preferred, the admin token is the fallback (same as the memory endpoints)
+        // BOT_SERVICE_TOKEN is preferred, the admin token is the fallback. Memory itself takes only BOT_SERVICE_TOKEN (#444).
         const token = process.env.BOT_SERVICE_TOKEN || this.adminApiToken;
         try {
             const response: AxiosResponse = await axios.get(
