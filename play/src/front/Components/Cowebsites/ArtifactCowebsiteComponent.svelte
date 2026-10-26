@@ -46,6 +46,7 @@
     /** The version showing now; what the version asked for is compared with. Counts the tries to open again. */
     let shownNumber: number | undefined;
     let attempt = 0;
+    let textAttempt = 0;
     let destroyed = false;
 
     onDestroy(() => {
@@ -72,14 +73,15 @@
 
     // Open when the window starts, and again whenever a version other than the one showing is asked for.
     $: syncVersion($versionStore, attempt);
-    $: if (phase === "ready" && opened && needsText) ensureText(opened.version.number);
+    // Clearing a failure (a tap on Try again) reads the text again
+    $: if (phase === "ready" && opened && needsText) ensureText(opened.version.number, textAttempt);
 
     function syncVersion(wanted: number | undefined, _attempt: number) {
         if (shownNumber !== undefined && (wanted === undefined || wanted === shownNumber)) return;
         void load(wanted);
     }
 
-    function ensureText(number: number) {
+    function ensureText(number: number, _attempt: number) {
         if (text?.number === number || textFailed) return;
         void loadText(number);
     }
@@ -157,9 +159,14 @@
         versionStore.set(latest);
     }
 
+    function retryText() {
+        textFailed = false;
+        textAttempt++;
+    }
+
     function toggleCode() {
         codeOn = !codeOn;
-        textFailed = false;
+        retryText();
     }
 
     $: codeLines = text ? text.content.split("\n") : [];
@@ -243,7 +250,7 @@
                     {:else if textFailed}
                         <div class="state" role="alert">
                             <b>{$LL.chat.artifacts.cantReach()}</b>
-                            <button type="button" class="quiet" on:click={toggleCode}
+                            <button type="button" class="quiet" on:click={retryText}
                                 >{$LL.chat.artifacts.tryAgain()}</button
                             >
                         </div>
@@ -257,7 +264,12 @@
                         <!-- eslint-disable-next-line svelte/no-at-html-tags -->
                         {@html documentHtml}
                     {:else if textFailed}
-                        <div class="state" role="alert"><b>{$LL.chat.artifacts.cantReach()}</b></div>
+                        <div class="state" role="alert">
+                            <b>{$LL.chat.artifacts.cantReach()}</b>
+                            <button type="button" class="quiet" on:click={retryText}
+                                >{$LL.chat.artifacts.tryAgain()}</button
+                            >
+                        </div>
                     {:else}
                         <div class="state" role="status"><IconLoader font-size="28" class="spin" /></div>
                     {/if}

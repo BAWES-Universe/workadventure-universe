@@ -156,6 +156,22 @@ describe("the artifact window", () => {
         expect(byTestId("artifactSwitchFailed")).toBeNull();
     });
 
+    it("reads a document again when its text could not be read and Try again is tapped", async () => {
+        api.fetchArtifact.mockResolvedValue(opened(1, 1, "markdown"));
+        api.fetchArtifactCode.mockRejectedValueOnce(new Error("offline"));
+        api.fetchArtifactCode.mockResolvedValueOnce({ version: opened(1, 1).version, content: "# Notes" });
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        mountWindow(1, "markdown");
+        await vi.waitFor(() =>
+            expect(document.querySelector('[data-testid="artifactDocument"] button')).not.toBeNull()
+        );
+
+        document.querySelector<HTMLButtonElement>('[data-testid="artifactDocument"] button')?.click();
+        await vi.waitFor(() => expect(byTestId("artifactDocument")?.textContent).toContain("Notes"));
+        expect(api.fetchArtifactCode).toHaveBeenCalledTimes(2);
+        warn.mockRestore();
+    });
+
     it("reads the code of the version on show when Code is on", async () => {
         api.fetchArtifact.mockResolvedValue(opened(2, 2));
         api.fetchArtifactCode.mockResolvedValue({ version: opened(2, 2).version, content: "<h1>Hi</h1>\n<p>x</p>" });

@@ -7,6 +7,7 @@ import { PerUserRateLimiter } from "../services/LinkPreviewService";
 import { ArtifactsError, artifactsService } from "../services/ArtifactsService";
 import type { ArtifactViewer } from "../services/ArtifactsService";
 import { socketManager } from "../services/SocketManager";
+import { isBubbleSpaceName } from "../services/SpaceJoinPolicy";
 import { BaseHttpController } from "./BaseHttpController";
 
 const debug = Debug("pusher:requests");
@@ -39,7 +40,7 @@ export function viewerOf(
 ): ArtifactViewer {
     return {
         person: { signedIn: isLogged, identifier: userIdentifier },
-        inChat: chat?.kind === "nearby" && isUserInSpace(userIdentifier, chat.ref),
+        inChat: chat?.kind === "nearby" && isBubbleSpaceName(chat.ref) && isUserInSpace(userIdentifier, chat.ref),
         // Orbit counts inChat only when this is the chat the artifact was made in
         ...(chat ? { chat } : {}),
     };
