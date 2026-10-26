@@ -7,6 +7,8 @@
  *   - tools are `{name, description, input_schema}` and come back as `tool_use` blocks
  *   - images are `{type: 'image', source: {type: 'url', url}}` blocks
  *   - a stream is SSE events (`content_block_delta`, `message_delta`, ...), not `choices[0].delta`
+ *   - caching is explicit: a block carrying `cache_control` marks the end of a prefix Claude keeps for 5 minutes, and a
+ *     second reply that starts with the same prefix reads it back at a tenth of the price (see `cacheMarks`)
  * Endpoint: https://api.anthropic.com/v1/messages (default). The caller keeps handing us OpenAI-shaped tool definitions and
  * expects `{id, name, arguments}` tool calls back, so this file does that translation and nothing else changes upstream.
  */
@@ -20,6 +22,42 @@ import { resolveVisionSupport } from './visionModels';
 import * as Sentry from '@sentry/node';
 
 const ANTHROPIC_VERSION = '2023-06-01';
+
+/** The 5-minute cache only (never the 1-hour one: 91% of follow-up replies arrive within 5 minutes), and at most 4 markers. */
+const CACHE_CONTROL = { type: 'ephemeral' } as const;
+const MAX_CACHE_MARKS = 4;
+
+/**
+ * The smallest prefix, in tokens, Claude will cache. A marker below it is not an error: Claude just doesn't cache, and
+ * the write premium is not charged either, but we send no marker we know cannot work. A model not listed here gets no
+ * markers (unknown minimums are not worth a guess). Names are matched without a date suffix.
+ */
+const CACHE_MIN_TOKENS: Record<string, number> = {
+    'claude-fable-5-1': 512, 'claude-mythos-5-1': 512, 'claude-opus-5-5': 512, 'claude-opus-5': 512,
+    'claude-sonnet-5-5': 512, 'claude-fable-5': 512, 'claude-mythos-5': 512, 'claude-haiku-5-5': 512,
+    'claude-opus-4-8': 1024, 'claude-sonnet-5': 1024, 'claude-sonnet-4-6': 1024, 'claude-sonnet-4-5': 1024,
+    'claude-opus-4-1': 1024, 'claude-opus-4': 1024, 'claude-sonnet-4': 1024,
+    'claude-mythos-preview': 2048, 'claude-opus-4-7': 2048, 'claude-haiku-3-5': 2048, 'claude-3-5-haiku': 2048,
+    'claude-opus-4-6': 4096, 'claude-opus-4-5': 4096, 'claude-haiku-4-5': 4096,
+};
+
+function cacheMinimumTokens(model: string): number | undefined {
+    return CACHE_MIN_TOKENS[(model || '').toLowerCase().replace(/-(?:\d{8}|latest)$/, '')];
+}
+
+/** Tokens in a piece of text, counted low on purpose (4 characters each; prompts run nearer 3), so a marker is only sent when the part really is big enough. */
+function estimateTokens(text: string): number {
+    return Math.floor(text.length / 4);
+}
+
+/** The offsets the caller gave, kept only when they are usable: whole numbers inside the prompt, rising. */
+function usableEnds(ends: number[] | undefined, length: number): number[] {
+    const kept: number[] = [];
+    for (const end of ends ?? []) {
+        if (Number.isInteger(end) && end > (kept[kept.length - 1] ?? 0) && end <= length) kept.push(end);
+    }
+    return kept;
+}
 
 /** Models released after Claude Opus 4.6 answer 400 to any temperature but 1, so it is left out for them. */
 const FIXED_TEMPERATURE_MODEL = /^claude-(?:opus-4-[7-9]|(?:opus|sonnet|haiku|fable|mythos)-[5-9])/i;
@@ -62,6 +100,14 @@ interface ClaudeUsage {
 function promptTokensOf(usage: ClaudeUsage | undefined): number | undefined {
     if (!usage || typeof usage.input_tokens !== 'number') return undefined;
     return usage.input_tokens + (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0);
+}
+
+/** Cache reads and writes of a reply: both are inside promptTokens (Claude reports them next to `input_tokens`, not in it). */
+function cacheTokensOf(usage: ClaudeUsage | undefined): { read?: number; write?: number } {
+    return {
+        ...(typeof usage?.cache_read_input_tokens === 'number' ? { read: usage.cache_read_input_tokens } : {}),
+        ...(typeof usage?.cache_creation_input_tokens === 'number' ? { write: usage.cache_creation_input_tokens } : {}),
+    };
 }
 
 export class AnthropicProvider implements AIProvider {
@@ -160,6 +206,49 @@ export class AnthropicProvider implements AIProvider {
         return converted;
     }
 
+    /**
+     * Mark what repeats from one reply to the next, so a later reply reads it from Claude's cache. A request is read as
+     * tools, then system, then messages, and a cached prefix is everything up to a marked block, so the order matters:
+     *   1. the last tool (the tools are the same for every reply of a bot)
+     *   2. each end the caller named in the system prompt (the instructions, the room): the part that stays put
+     * A marker goes on a part only when the prefix up to it reaches Claude's minimum size, and never more than 4. The
+     * system prompt becomes blocks only when at least one block is marked; otherwise the request is exactly what it
+     * was before caching (and the other providers never get here at all).
+     */
+    private cacheMarks(body: Record<string, any>, systemPrompt: string, config: AIProviderConfig): void {
+        const minimum = cacheMinimumTokens(config.model);
+        if (!minimum) return;
+
+        let marks = 0;
+        let prefix = 0; // estimated tokens in front of the next candidate
+        if (Array.isArray(body.tools) && body.tools.length > 0) {
+            prefix = estimateTokens(JSON.stringify(body.tools));
+            if (prefix >= minimum) {
+                body.tools[body.tools.length - 1].cache_control = CACHE_CONTROL;
+                marks++;
+            }
+        }
+
+        const ends = usableEnds(config.promptCacheEnds, systemPrompt.length);
+        if (ends.length === 0) return;
+        const blocks: Array<Record<string, unknown>> = [];
+        let from = 0;
+        for (const end of ends) {
+            const text = systemPrompt.slice(from, end);
+            from = end;
+            const block: Record<string, unknown> = { type: 'text', text };
+            prefix += estimateTokens(text);
+            if (prefix >= minimum && marks < MAX_CACHE_MARKS) {
+                block.cache_control = CACHE_CONTROL;
+                marks++;
+            }
+            blocks.push(block);
+        }
+        // What follows the fixed part changes with every reply: it is never marked
+        if (from < systemPrompt.length) blocks.push({ type: 'text', text: systemPrompt.slice(from) });
+        if (blocks.some((block) => block.cache_control)) body.system = blocks;
+    }
+
     private buildRequestBody(
         systemPrompt: string,
         userMessage: string,
@@ -196,6 +285,8 @@ export class AnthropicProvider implements AIProvider {
                 body.tool_choice = { type: 'auto' };
             }
         }
+
+        this.cacheMarks(body, systemPrompt, config);
 
         if (!FIXED_TEMPERATURE_MODEL.test(model || '') && typeof config.temperature === 'number') {
             body.temperature = Math.min(1, Math.max(0, config.temperature));
@@ -273,6 +364,8 @@ export class AnthropicProvider implements AIProvider {
         const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
         let promptTokens = 0;
         let completionTokens = 0;
+        let cacheReadTokens = 0;
+        let cacheWriteTokens = 0;
         let streamEnded = false;
         let stopReason: string | undefined;
         let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
@@ -328,6 +421,9 @@ export class AnthropicProvider implements AIProvider {
                         case 'message_start': {
                             const prompt = promptTokensOf(event.message?.usage);
                             if (prompt !== undefined) promptTokens = prompt;
+                            const cache = cacheTokensOf(event.message?.usage);
+                            cacheReadTokens = cache.read ?? cacheReadTokens;
+                            cacheWriteTokens = cache.write ?? cacheWriteTokens;
                             break;
                         }
                         case 'content_block_start': {
@@ -362,6 +458,9 @@ export class AnthropicProvider implements AIProvider {
                             if (event.delta?.stop_reason) stopReason = event.delta.stop_reason;
                             const prompt = promptTokensOf(event.usage);
                             if (prompt !== undefined) promptTokens = prompt;
+                            const cache = cacheTokensOf(event.usage);
+                            cacheReadTokens = cache.read ?? cacheReadTokens;
+                            cacheWriteTokens = cache.write ?? cacheWriteTokens;
                             if (typeof event.usage?.output_tokens === 'number') completionTokens = event.usage.output_tokens;
                             break;
                         }
@@ -389,6 +488,8 @@ export class AnthropicProvider implements AIProvider {
                     tokensUsed: promptTokens + completionTokens,
                     promptTokens,
                     completionTokens,
+                    cacheReadTokens,
+                    cacheWriteTokens,
                     latency: Date.now() - startTime,
                     error: !streamEnded || refused,
                     // A refusal is Claude's answer to one message, not a problem with the key, so it is a 400 (not counted against the key)
@@ -462,6 +563,10 @@ export class AnthropicProvider implements AIProvider {
                     span.setAttribute('gen_ai.response.model', data.model || config.model);
                     span.setAttribute('gen_ai.usage.input_tokens', promptTokens);
                     span.setAttribute('gen_ai.usage.output_tokens', completionTokens);
+                    // Sentry's input_tokens counts the cached ones too; the two cache figures are parts of it
+                    const cache = cacheTokensOf(data.usage);
+                    if (cache.read) span.setAttribute('gen_ai.usage.cache_read.input_tokens', cache.read);
+                    if (cache.write) span.setAttribute('gen_ai.usage.cache_creation.input_tokens', cache.write);
                     span.setAttribute('gen_ai.agent.name', config.name || '');
 
                     return {

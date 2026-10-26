@@ -25,6 +25,14 @@ export interface AIProviderConfig {
      * (their own computer, or their own NIM), so every call to it goes through the address guard.
      */
     ownKey?: { addressTyped: boolean };
+    /**
+     * Where the part of the system prompt that stays the same from message to message ends, as character offsets into
+     * the system prompt, in order. Only the Claude provider reads this (it marks those ends for Claude's cache); every
+     * other provider ignores it, so their requests are unchanged.
+     */
+    promptCacheEnds?: number[];
+    /** Called with the cache reads and writes of each finished call (only when there were any), so the caller can total a turn. */
+    onCacheTokens?: (read: number, write: number) => void;
 }
 
 /**
@@ -49,6 +57,9 @@ export interface AIStreamChunk {
         tokensUsed?: number;
         promptTokens?: number;
         completionTokens?: number;
+        /** Part of promptTokens that was read from the provider's cache, and part that was written to it (Claude only for now). */
+        cacheReadTokens?: number;
+        cacheWriteTokens?: number;
         latency?: number;
         durationSeconds?: number; // For voice AI
         error?: boolean;
@@ -91,6 +102,9 @@ export interface AIUsageMetadata {
     tokensUsed?: number;
     promptTokens?: number;
     completionTokens?: number;
+    /** Part of promptTokens read from / written to the provider's cache (both are inside promptTokens, not on top of it). */
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
     apiCalls?: number;
     latency?: number;
     durationSeconds?: number; // For voice AI

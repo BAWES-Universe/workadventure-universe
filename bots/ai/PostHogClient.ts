@@ -44,13 +44,30 @@ export interface CapturedGeneration {
     provider: string;
     input: string;
     output: string;
+    /** All input tokens of the call, the cached ones included */
     inputTokens: number;
     outputTokens: number;
+    /** Part of inputTokens read from / written to the provider's cache. Left out (not zero) when the provider reported none. */
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
     latency?: number;
     cost?: number;
     botId?: string;
     playerId?: string;
     space?: string;
+}
+
+/**
+ * The cache figures of a call, in PostHog's names. Our input tokens already include the cached ones (for every
+ * provider, Claude too), so the event says so: PostHog otherwise reads a Claude event's cache tokens as extra input.
+ */
+function cacheProperties(params: CapturedGeneration): Record<string, unknown> {
+    if (!params.cacheReadTokens && !params.cacheWriteTokens) return {};
+    return {
+        $ai_cache_read_input_tokens: params.cacheReadTokens ?? 0,
+        $ai_cache_creation_input_tokens: params.cacheWriteTokens ?? 0,
+        $ai_cache_reporting_exclusive: false,
+    };
 }
 
 /**
@@ -76,6 +93,7 @@ export function captureAiGeneration(params: CapturedGeneration): void {
                 $ai_input: [{role: 'user', content: params.input}],
                 $ai_input_tokens: params.inputTokens,
                 $ai_output_tokens: params.outputTokens,
+                ...cacheProperties(params),
                 $ai_latency: params.latency,
                 $ai_cost: params.cost,
                 $ai_output_choices: [{role: 'assistant', content: params.output}],
@@ -113,6 +131,7 @@ export function captureAiTrace(params: CapturedGeneration): void {
                 $ai_input: [{role: 'user', content: params.input}],
                 $ai_input_tokens: params.inputTokens,
                 $ai_output_tokens: params.outputTokens,
+                ...cacheProperties(params),
                 $ai_latency: params.latency,
                 $ai_cost: params.cost,
                 $ai_output: params.output,

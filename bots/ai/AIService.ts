@@ -571,9 +571,13 @@ The technical rules below are guidelines for HOW to respond (formatting, tool us
             } else {
                 systemPrompt = 'You are a friendly bot.';
             }
+            // Where the part of the prompt that is the same for every message ends (the Claude provider marks these ends
+            // for its cache): the instructions, then the room. Everything after changes with the day, the person or the message.
+            const promptCacheEnds = [systemPrompt.length];
 
             if (mapContextInfo) {
                 systemPrompt += mapContextInfo;
+                promptCacheEnds.push(systemPrompt.length);
             }
             // Current date context — lets the bot reason about time gaps when
             // recalling past conversations (issue #268). Without a date anchor
@@ -839,6 +843,17 @@ Everything above is technical guidance. Follow your personality as defined in th
             const sentryScope = Sentry.getCurrentScope();
             const previousSpan = Sentry.getActiveSpan();
             sentrySetSpan?.(sentryScope, parentSpan);
+            // What the turn's calls read from and wrote to the provider's cache (Claude only; both are inside promptTokens)
+            const cacheLedger = { read: 0, write: 0 };
+            const cacheCursor = { read: 0, write: 0 };
+            /** Cache tokens since the last generation event, so each event carries its own call's share */
+            const takeCache = (): { cacheReadTokens?: number; cacheWriteTokens?: number } => {
+                const read = cacheLedger.read - cacheCursor.read;
+                const write = cacheLedger.write - cacheCursor.write;
+                cacheCursor.read = cacheLedger.read;
+                cacheCursor.write = cacheLedger.write;
+                return read || write ? { cacheReadTokens: read, cacheWriteTokens: write } : {};
+            };
             // Pass the parent span to providers via config so they can
             // explicitly set it in startSpanManual({parentSpan: ...})
             // This bypasses async-context scope lookup which doesn't
@@ -846,7 +861,14 @@ Everything above is technical guidance. Follow your personality as defined in th
             // Clone config to avoid mutating the shared cached object (race condition)
             // TODO: Refactor to pass parentSpan as a parameter once the provider
             // interface is updated to accept it directly
-            const configWithParent: AIProviderConfig = { ...config };
+            const configWithParent: AIProviderConfig = {
+                ...config,
+                promptCacheEnds,
+                onCacheTokens: (read, write) => {
+                    cacheLedger.read += read;
+                    cacheLedger.write += write;
+                },
+            };
             (configWithParent as any).__sentryParentSpan = parentSpan;
 
             try {
@@ -982,6 +1004,7 @@ Everything above is technical guidance. Follow your personality as defined in th
                         // done chunk, killing the turn).
                         try {
                             captureGeneration({
+                                ...takeCache(),
                                 distinctId: `bot-${botId}`,
                                 traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
                                 sessionId: `conversation-${botId}-player-${playerId}`,
@@ -1355,6 +1378,7 @@ Everything above is technical guidance. Follow your personality as defined in th
                                     // propagate (it would abort the follow-up loop mid-turn).
                                     try {
                                         captureGeneration({
+                                            ...takeCache(),
                                             distinctId: `bot-${botId}`,
                                             traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
                                             sessionId: `conversation-${botId}-player-${playerId}`,
@@ -1692,6 +1716,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             // propagate (it would abort the turn after the answer).
                             try {
                                 captureGeneration({
+                                    ...takeCache(),
                                     distinctId: `bot-${botId}`,
                                     traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
                                     sessionId: `conversation-${botId}-player-${playerId}`,
@@ -1822,6 +1847,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     // Non-tool-call path: capture $ai_generation for the first (only) LLM call
                     if (!privateBot && !initialGenCaptured && streamCompleted && firstCallContent && !hadToolCalls) {
                         captureAiGeneration({
+                            ...takeCache(),
                             distinctId: `bot-${botId}`,
                             traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
                             sessionId: `conversation-${botId}-player-${playerId}`,
@@ -1848,6 +1874,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     // Tool follow-up path: capture $ai_generation for the follow-up LLM call
                     if (!privateBot && !followUpGenCaptured && hadToolCalls && (followUpContent || followUpError)) {
                         captureAiGeneration({
+                            ...takeCache(),
                             distinctId: `bot-${botId}`,
                             traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
                             sessionId: `conversation-${botId}-player-${playerId}`,
@@ -1875,6 +1902,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     if (!privateBot && streamCompleted && (accumulatedContent || error)) {
                         const generationLatency = (Date.now() - startTime) / 1000;
                         captureAiTrace({
+                            ...(cacheLedger.read || cacheLedger.write ? { cacheReadTokens: cacheLedger.read, cacheWriteTokens: cacheLedger.write } : {}),
                             distinctId: `bot-${botId}`,
                             traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
                             sessionId: `conversation-${botId}-player-${playerId}`,
@@ -1908,6 +1936,14 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         console.error('[AIService] Telemetry capture failed (swallowed):', telemetryError);
                     }
                 } finally {
+                    // A turn that used the provider's cache says so on its span. Sentry's input_tokens counts the cached
+                    // tokens too; the two cache figures are parts of it.
+                    if (cacheLedger.read || cacheLedger.write) {
+                        parentSpan?.setAttribute('gen_ai.usage.input_tokens', promptTokens);
+                        parentSpan?.setAttribute('gen_ai.usage.output_tokens', completionTokens);
+                        parentSpan?.setAttribute('gen_ai.usage.cache_read.input_tokens', cacheLedger.read);
+                        parentSpan?.setAttribute('gen_ai.usage.cache_creation.input_tokens', cacheLedger.write);
+                    }
                     // Always close Sentry span and restore scope, even if PostHog fails
                     parentSpan?.end();
                     sentrySetSpan?.(sentryScope, previousSpan);
@@ -1937,6 +1973,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     tokensUsed,
                     promptTokens,
                     completionTokens,
+                    ...(cacheLedger.read || cacheLedger.write ? { cacheReadTokens: cacheLedger.read, cacheWriteTokens: cacheLedger.write } : {}),
                     latency,
                     error,
                 }).catch(err => {
@@ -2027,6 +2064,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 tokensUsed: metadata.tokensUsed || 0,
                 promptTokens: metadata.promptTokens || 0,
                 completionTokens: metadata.completionTokens || 0,
+                ...(metadata.cacheReadTokens ? { cacheReadTokens: metadata.cacheReadTokens } : {}),
+                ...(metadata.cacheWriteTokens ? { cacheWriteTokens: metadata.cacheWriteTokens } : {}),
                 apiCalls: 1,
                 durationSeconds: metadata.durationSeconds ?? null,
                 cost,

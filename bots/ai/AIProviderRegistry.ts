@@ -115,7 +115,13 @@ export class AIProviderRegistry {
         }
 
         // Use streaming
-        yield* provider.generateStream(systemPrompt, userMessage, config, tools, signal, images);
+        for await (const chunk of provider.generateStream(systemPrompt, userMessage, config, tools, signal, images)) {
+            // Tell the caller what this call read from and wrote to the provider's cache, before it sees the chunk
+            if (chunk.done && config.onCacheTokens && (chunk.metadata?.cacheReadTokens || chunk.metadata?.cacheWriteTokens)) {
+                config.onCacheTokens(chunk.metadata.cacheReadTokens ?? 0, chunk.metadata.cacheWriteTokens ?? 0);
+            }
+            yield chunk;
+        }
     }
 
     /**
