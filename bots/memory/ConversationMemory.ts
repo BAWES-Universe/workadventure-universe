@@ -119,6 +119,14 @@ export interface BotPlayerMemory {
     // Pending media delivery (items that were uploaded but couldn't be sent)
     pendingMedia: PendingMedia[];
     maxPendingMedia: number;
+
+    // Live artifacts a direct-message turn made, waiting to go out as cards with the reply, and the Matrix room the
+    // turn is in. Runtime only: nothing here is saved.
+    pendingArtifacts?: Array<{ id: string; version: number; title: string; kind: 'app' | 'page' | 'markdown' | 'svg'; maker: string }>;
+    dmRoomId?: string;
+    /** What make and change did in the turn being answered, by their arguments, so asking the model again for the same
+     * turn (a repeated reply is regenerated) does not make a second copy. Cleared when the next turn starts. Runtime only. */
+    artifactCalls?: Map<string, Record<string, unknown>>;
 }
 
 export class ConversationMemory {

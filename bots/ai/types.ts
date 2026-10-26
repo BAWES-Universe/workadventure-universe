@@ -48,6 +48,8 @@ export interface AIStreamChunk {
     metadata?: {
         tokensUsed?: number;
         promptTokens?: number;
+        /** Prompt tokens the provider served from its cache (a subset of promptTokens). Undefined when the provider does not report it. */
+        cachedPromptTokens?: number;
         completionTokens?: number;
         latency?: number;
         durationSeconds?: number; // For voice AI

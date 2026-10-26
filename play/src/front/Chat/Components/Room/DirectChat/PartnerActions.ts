@@ -13,7 +13,12 @@ import type { DirectPartner } from "./DirectPartnerStore";
 
 function personOf(partner: DirectPartner) {
     const user = partner.user;
-    return { spaceUserId: user?.spaceUserId, uuid: user?.uuid, playUri: user?.playUri };
+    return {
+        spaceUserId: user?.spaceUserId,
+        uuid: user?.uuid,
+        playUri: user?.playUri,
+        pictureStore: user?.pictureStore,
+    };
 }
 
 /** Walk to them on your map, or travel to their map and walk to them there. */

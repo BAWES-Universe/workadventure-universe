@@ -15,6 +15,7 @@ import {
 } from './BotStatusNotes';
 import { ACCESS_CACHE_TTL_MS } from '../server/BotAccessGate';
 import { BotWokaAvatar } from './BotWokaAvatar';
+import { ARTIFACT_KEY, artifactDirectMessage } from '../ai/ArtifactTools';
 
 /** The field of a reply that names the bot's room: the game shows a card under it to go there. */
 export const ROOM_LINK_KEY = 'universe.room_link';
@@ -569,6 +570,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         if (!catchUp) this.answeringLive.set(event.room_id, sentAt);
         try {
             const reply = await this.deps.reply(botId, person, text, attachments, {
+                roomId: event.room_id,
                 onInterimMessage: async (interim) => {
                     // A lost "let me look" line must not cost the person the real answer, so it never throws.
                     try {
@@ -581,7 +583,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
             });
             // No reply at all means the bot couldn't be set up to answer (no AI service here), and an empty one leaves the
             // person with nothing: say so, as for a failure.
-            if (!reply || reply.failed || (!reply.text && !reply.media?.length)) {
+            if (!reply || reply.failed || (!reply.text && !reply.media?.length && !reply.artifacts?.length)) {
                 await couldNotAnswer(config);
                 return;
             }
@@ -596,6 +598,13 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 await this.client.sendText(botUserId, event.room_id, reply.text);
             }
             reply.keep?.();
+            for (const card of reply.artifacts ?? []) {
+                // A live artifact the bot made or changed: the game shows a card to open it
+                const { body, field } = artifactDirectMessage(card);
+                await this.client
+                    .sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body, [ARTIFACT_KEY]: field })
+                    .catch((error) => console.warn(`[MatrixDmBridge] Could not send an artifact card from bot ${botId}:`, error?.message ?? error));
+            }
             for (const item of reply.media ?? []) {
                 await this.sendMedia(botUserId, event.room_id, item).catch((error) =>
                     console.warn(`[MatrixDmBridge] Could not send media from bot ${botId}:`, error?.message ?? error)
