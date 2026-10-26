@@ -30,7 +30,8 @@ export async function runPinAction(message: ChatMessage, action: PinAction): Pro
 }
 
 const FETCH_RETRY_MS = 3000;
-const MAX_FETCH_TRIES = 4;
+// The wait between tries grows to this many times FETCH_RETRY_MS (30 seconds), then stays there.
+const MAX_RETRY_STEPS = 10;
 
 /** The server says the message isn't there (deleted for good, or never seen by this person). */
 function isNotFound(error: unknown): boolean {
@@ -72,14 +73,13 @@ export function pinnedEntriesStore(room: ChatRoom & ChatRoomPins): Readable<Pinn
                                 fetched.update((map) => new Map(map).set(id, null));
                                 return;
                             }
-                            // Offline for a moment: asked again a little later, a few times.
+                            // Offline for a moment: asked again a little later, less and less often.
                             const tries = (failures.get(id) ?? 0) + 1;
                             failures.set(id, tries);
-                            if (tries >= MAX_FETCH_TRIES) return;
                             setTimeout(() => {
                                 asking.delete(id);
                                 fetched.update((map) => new Map(map));
-                            }, FETCH_RETRY_MS * tries);
+                            }, FETCH_RETRY_MS * Math.min(tries, MAX_RETRY_STEPS));
                         }
                     )
                     .catch((error) => console.error(error));
