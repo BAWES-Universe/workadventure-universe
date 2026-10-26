@@ -1,15 +1,22 @@
 /**
- * The name of the person last looked for from the People tab. The server's answer only carries their avatar id, and
- * their avatar may not be on this map yet, so the card shows this name while searching instead of a placeholder.
+ * The name and Woka of the person last looked for from the People tab. The server's answer only carries their avatar
+ * id, and their avatar may not be on this map yet (far away on a large map), so the card shows these while searching
+ * instead of a placeholder and an empty space where the Woka goes.
  */
+
+import type { PictureStore } from "../../Stores/PictureStore";
 
 /** An answer later than this belongs to some other request. */
 export const LOCATE_REQUEST_TTL_MS = 15_000;
 
-let pending: { name: string | undefined; at: number; cancelled: boolean } | undefined;
+let pending: { name: string | undefined; picture?: PictureStore; at: number; cancelled: boolean } | undefined;
 
-export function rememberLocateRequest(name: string | undefined, now: number = Date.now()): void {
-    pending = { name, at: now, cancelled: false };
+export function rememberLocateRequest(
+    name: string | undefined,
+    picture?: PictureStore,
+    now: number = Date.now()
+): void {
+    pending = { name, picture, at: now, cancelled: false };
 }
 
 /** The name asked for, if a request was made recently (the answer being awaited is for it). */
@@ -28,8 +35,8 @@ export function cancelLocateRequest(): void {
  */
 export function takeLocateRequest(
     now: number = Date.now()
-): { name: string | undefined; cancelled: boolean } | undefined {
+): { name: string | undefined; picture?: PictureStore; cancelled: boolean } | undefined {
     const request = pending && now - pending.at <= LOCATE_REQUEST_TTL_MS ? pending : undefined;
     pending = undefined;
-    return request ? { name: request.name, cancelled: request.cancelled } : undefined;
+    return request ? { name: request.name, picture: request.picture, cancelled: request.cancelled } : undefined;
 }
