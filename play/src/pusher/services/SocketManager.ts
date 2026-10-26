@@ -91,6 +91,7 @@ import type { ShortMapDescription } from "./ShortMapDescription";
 import { matrixProvider } from "./MatrixProvider";
 import { MatrixAreaMembership } from "./MatrixAreaMembership";
 import { checkSpaceJoin } from "./SpaceJoinPolicy";
+import { toGlobalSpaceName } from "./SpaceNames";
 import { BubbleSpaceGrants } from "./BubbleSpaceGrants";
 import { FriendsPresence } from "./FriendsPresence";
 import type { UniverseRoomsData } from "./UniverseRooms";
@@ -460,6 +461,17 @@ export class SocketManager implements ZoneEventListener {
             Sentry.captureException(error);
             console.error(`An error occurred on "update_space_metadata" event`, error);
         }
+    }
+
+    /**
+     * Whether an account (or guest) has a tab in the space with this name (the name the browser and the bots use,
+     * without the world). The pusher uses it to vouch that a person is in the chat an artifact was made in.
+     */
+    public isUserInSpace(userUuid: string, localSpaceName: string): boolean {
+        return this.friendsPresence.reachableSocketsOf(userUuid).some((socket) => {
+            const socketData = socket.getUserData();
+            return !socketData.disconnecting && socketData.spaces.has(toGlobalSpaceName(socketData, localSpaceName));
+        });
     }
 
     public async handleJoinSpace(

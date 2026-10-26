@@ -72,7 +72,7 @@ describe('artifact tools in AIService', () => {
             expect.objectContaining({ title: 'Quests board', kind: 'app' })
         );
         expect(client.getPersonForArtifacts).toHaveBeenCalledWith(7);
-        expect(client.sendChatMessage).toHaveBeenCalledWith('bubble-1', '::artifact:art-1:1::Quests board');
+        expect(client.sendChatMessage).toHaveBeenCalledWith('bubble-1', '::artifact:art-1:1:app::Quests board');
         expect(result.result).toEqual({ success: true, id: 'art-1', title: 'Quests board', kind: 'app', version: 1 });
     });
 
@@ -99,7 +99,7 @@ describe('artifact tools in AIService', () => {
         const client = botClient();
         const change = { id: 't2', name: 'change_artifact', arguments: JSON.stringify({ id: 'art-1', edits: [{ old: 'a', new: 'b' }] }) };
         await service()['executeToolCalls']([change], client as never, admin() as never, undefined, 'uuid-1', 'bubble-1', 'bot1', 7);
-        expect(client.sendChatMessage).toHaveBeenCalledWith('bubble-1', '::artifact:art-1:2::Quests board');
+        expect(client.sendChatMessage).toHaveBeenCalledWith('bubble-1', '::artifact:art-1:2:app::Quests board');
 
         client.sendChatMessage.mockClear();
         const refusing = admin({ changeArtifact: vi.fn(async () => { throw Object.assign(new Error('no'), { code: 'change_not_allowed' }); }) });
@@ -187,7 +187,7 @@ describe('artifact tools in AIService', () => {
         // Asked again with the bubble back, the card goes out
         const [again] = await call();
         expect(again.result).not.toHaveProperty('notShown');
-        expect(client.sendChatMessage).toHaveBeenCalledWith('bubble-1', '::artifact:art-1:1::Quests board');
+        expect(client.sendChatMessage).toHaveBeenCalledWith('bubble-1', '::artifact:art-1:1:app::Quests board');
     });
 
     it('leaves the results of a same-named MCP tool alone when artifacts are off', async () => {

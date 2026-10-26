@@ -28,7 +28,7 @@ telemetry works as for any chat text: a bot that hides its chats sends none of i
 
 A made or changed artifact puts a card in the chat the message came from:
 
-- **Nearby chat** carries text only. The line is `::artifact:<id>:<version>::<title>` (`artifactMarker`). The game draws it as
+- **Nearby chat** carries text only. The line is `::artifact:<id>:<version>:<kind>::<title>` (`artifactMarker`). The game draws it as
   a card (APP badge, title, "Mini app · Version N · Tap to open"); any other reader sees the title.
 - **Direct message** (Matrix): an `m.text` message whose body is "Title · Mini app · Version N" and whose `universe.artifact`
   field is `{ id, version, title, kind, maker }`, as `universe.room_link` does for a room. It is sent after the reply text.
