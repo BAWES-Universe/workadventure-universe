@@ -1,3 +1,4 @@
+import { savedNearbyPage, type SavedNearbyItem } from "../../../Chat/Components/Room/Details/NearbySaved";
 import type { BotAiOptions, BotData } from "../types";
 import {
     readPermissions,
@@ -500,6 +501,44 @@ export class BotApiService {
         try {
             const response = await this.fetch("/api/me/ai-keys");
             return myAiKeyNames(await response.json());
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Whether what is shared in the nearby chat can be kept on this player's account (#1424): only when signed in to an
+     * Orbit. A guest keeps nothing.
+     */
+    canKeepNearbyShared(): boolean {
+        return this.adminUrl !== null && this.accessToken !== null;
+    }
+
+    /** Keeps these nearby chat items on the player's account (#1424). False when they couldn't be kept. */
+    async saveNearbyShared(items: SavedNearbyItem[]): Promise<boolean> {
+        if (!this.canKeepNearbyShared() || items.length === 0) return false;
+        try {
+            const response = await this.fetch("/api/me/nearby-shared", {
+                method: "POST",
+                body: JSON.stringify({ items }),
+            });
+            return response.ok;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * One page of what the player's nearby chats shared, newest first (#1424), and the cursor of the older page. Null
+     * when it can't be known: a guest, no Orbit, an older Orbit, or Orbit didn't answer.
+     */
+    async getNearbyShared(cursor?: string): Promise<{ items: SavedNearbyItem[]; next: string | null } | null> {
+        if (!this.canKeepNearbyShared()) return null;
+        try {
+            const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+            const response = await this.fetch(`/api/me/nearby-shared${query}`);
+            if (!response.ok) return null;
+            return savedNearbyPage(await response.json());
         } catch {
             return null;
         }

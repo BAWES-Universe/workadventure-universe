@@ -83,7 +83,7 @@
             </div>
         </div>
 
-        <SharedSummary {room} />
+        <SharedSummary {room} note={$LL.chat.details.keptOnAccount()} />
 
         <div class="details-group" data-testid="nearbyDetailsHereNow">
             <div class="details-heading">{$LL.chat.details.hereNow()} · {people.length}</div>

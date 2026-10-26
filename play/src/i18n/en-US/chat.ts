@@ -478,6 +478,7 @@ const chat: BaseTranslation = {
         lookingFurther: "Looking further back…",
         people: "People",
         hereNow: "Here now",
+        keptOnAccount: "Kept on your account when you're signed in",
         pinned: "Pinned",
         pinnedOf: "Pinned · {index:number} of {count:number}",
         allPins: "All",
