@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { EventType } from "matrix-js-sdk";
 import { get, writable } from "svelte/store";
 
@@ -22,10 +22,15 @@ import { MatrixChatRoom } from "../MatrixChatRoom";
 /** Only what the pin methods read: the room's state and a client that sends state events. */
 function roomWithPins(pinned: unknown, maySend = true) {
     const state = { pinned };
+    const sent: string[][] = [];
     const sendStateEvent = vi.fn((_roomId: string, _type: string, content: { pinned: string[] }) => {
-        state.pinned = content.pinned;
+        sent.push(content.pinned);
         return Promise.resolve({ event_id: "$state" });
     });
+    // The room's state catches up with what was sent, as a sync brings it back.
+    const echo = () => {
+        state.pinned = sent.shift();
+    };
     const matrixRoom = {
         currentState: {
             getStateEvents: (type: string) =>
@@ -44,7 +49,7 @@ function roomWithPins(pinned: unknown, maySend = true) {
         pinnedMessageIds: writable<string[]>([]),
         canPinMessages: writable(false),
     });
-    return { room, sendStateEvent, state };
+    return { room, sendStateEvent, state, echo };
 }
 
 function stateEvent(type: string) {
@@ -64,9 +69,15 @@ describe("pinned messages in a Matrix chat", () => {
         expect(get(room.pinnedMessageIds)).toEqual([]);
     });
 
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
     it("pins a message at the end (the newest pin) and moves one pinned again there", async () => {
-        const { room, sendStateEvent } = roomWithPins(["$a", "$b"]);
+        const { room, sendStateEvent, echo } = roomWithPins(["$a", "$b"]);
         await room.setMessagePinned("$c", true);
+        echo();
+        room["onRoomStateEvent"](stateEvent(EventType.RoomPinnedEvents), {} as never, null);
         expect(sendStateEvent).toHaveBeenLastCalledWith(
             "!room:chat.example.com",
             EventType.RoomPinnedEvents,
@@ -91,6 +102,53 @@ describe("pinned messages in a Matrix chat", () => {
             { pinned: ["$a", "$c"] },
             ""
         );
+    });
+
+    it("builds a pin made right after another on it, before the room's state has caught up", async () => {
+        const { room, sendStateEvent, echo, state } = roomWithPins(["$a"]);
+        await room.setMessagePinned("$b", true);
+        expect(get(room.pinnedMessageIds)).toEqual(["$a", "$b"]);
+        await room.setMessagePinned("$c", true);
+        expect(sendStateEvent).toHaveBeenLastCalledWith(
+            "!room:chat.example.com",
+            EventType.RoomPinnedEvents,
+            { pinned: ["$a", "$b", "$c"] },
+            ""
+        );
+
+        // The first pin coming back doesn't take the second away.
+        echo();
+        room["onRoomStateEvent"](stateEvent(EventType.RoomPinnedEvents), {} as never, null);
+        expect(get(room.pinnedMessageIds)).toEqual(["$a", "$b", "$c"]);
+        await room.setMessagePinned("$a", false);
+        expect(sendStateEvent).toHaveBeenLastCalledWith(
+            "!room:chat.example.com",
+            EventType.RoomPinnedEvents,
+            { pinned: ["$b", "$c"] },
+            ""
+        );
+        echo();
+        echo();
+        room["onRoomStateEvent"](stateEvent(EventType.RoomPinnedEvents), {} as never, null);
+        expect(get(room.pinnedMessageIds)).toEqual(["$b", "$c"]);
+
+        // Caught up: someone else's pin shows again.
+        state.pinned = ["$b", "$c", "$d"];
+        room["onRoomStateEvent"](stateEvent(EventType.RoomPinnedEvents), {} as never, null);
+        expect(get(room.pinnedMessageIds)).toEqual(["$b", "$c", "$d"]);
+    });
+
+    it("goes back to the room's pins when sending fails, or when what was sent never shows", async () => {
+        vi.useFakeTimers();
+        const { room, sendStateEvent } = roomWithPins(["$a"]);
+        sendStateEvent.mockRejectedValueOnce(new Error("offline"));
+        await expect(room.setMessagePinned("$b", true)).rejects.toThrow("offline");
+        expect(get(room.pinnedMessageIds)).toEqual(["$a"]);
+
+        await room.setMessagePinned("$c", true);
+        expect(get(room.pinnedMessageIds)).toEqual(["$a", "$c"]);
+        await vi.advanceTimersByTimeAsync(10000);
+        expect(get(room.pinnedMessageIds)).toEqual(["$a"]);
     });
 
     it("follows whether this person may pin when the room's power levels change", () => {
