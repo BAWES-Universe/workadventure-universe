@@ -2137,7 +2137,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     ): AsyncGenerator<AIStreamChunk> {
         const sentAt = new Date();
         for await (const chunk of this.providerRegistry.generateStream(providerId, systemPrompt, userMessage, config, tools, signal, images)) {
-            if (chunk.done) ledger.add(priceMetadata(config, chunk.metadata, sentAt));
+            // A call that was stopped before it said what it used has no figure to add; the calls that finished keep theirs
+            if (chunk.done && !chunk.metadata?.cancelled) ledger.add(priceMetadata(config, chunk.metadata, sentAt));
             yield chunk;
         }
     }

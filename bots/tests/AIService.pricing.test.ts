@@ -148,4 +148,18 @@ describe("AIService – what a reply cost", () => {
         const sent = await priceOf(provider(), { tokensUsed: 0 });
         expect(sent.price).toMatchObject({ costMicros: null, costBasis: "unknown" });
     });
+    it("leaves a call that was stopped from outside out of the reply's cost, and keeps the cost of the calls that finished (#1173)", async () => {
+        vi.setSystemTime(new Date("2026-10-26T05:00:00Z"));
+        const { admin, memory } = buildMocks(provider());
+        const service = new AIService(memory, admin, "http://admin.local");
+        const { UsageLedger } = await import("../ai/pricing/ledger");
+        const ledger = new UsageLedger();
+        const run = async (metadata: Record<string, unknown>) => {
+            mockGenerateStream.mockImplementation(finished(metadata));
+            await drain(service.meteredStream(ledger, "deepseek-flash", "sys", "hi", provider(), undefined, undefined, undefined));
+        };
+        await run(cached);
+        await run({ tokensUsed: 0, error: false, cancelled: true });
+        expect(ledger.summary()).toMatchObject({ basis: "priced", micros: 282 });
+    });
 });
