@@ -44,6 +44,13 @@ function ratesFor(prices: ModelPrices, context: number): Rates {
     const { from: _from, ...tierRates } = tier;
     // Reasoning follows output unless the list prices it: a base reasoning price belongs to the base output price
     if (tierRates.output !== undefined && tierRates.reasoning === undefined) delete base.reasoning;
+    // A tier that raises the input price without listing the cache prices raises them by the same factor (a cache price is a share of input)
+    if (tierRates.input !== undefined && base.input > 0) {
+        const factor = tierRates.input / base.input;
+        for (const key of ['cache_read', 'cache_write'] as const) {
+            if (tierRates[key] === undefined && base[key] !== undefined) base[key] = base[key]! * factor;
+        }
+    }
     return { ...base, ...tierRates };
 }
 
