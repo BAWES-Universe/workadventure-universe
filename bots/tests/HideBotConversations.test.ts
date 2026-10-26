@@ -102,7 +102,7 @@ function adminApiMock(isBotPrivate?: (botId: string) => Promise<boolean>) {
 
 async function runTurn(adminApi: any) {
     const { AIService } = await import("../ai/AIService");
-    const memory: any = { getMemory: vi.fn(() => ({ userUuid: "test-uuid" })) };
+    const memory: any = { getMemory: vi.fn(() => ({ userUuid: "test-uuid" })), getPendingMediaNotice: vi.fn(() => "") };
     const service = new AIService(memory, adminApi, "http://admin.local");
     return drain(service.generateBotResponseStream("bot-1", 42, "my secret plan", "You are a bot.", "test-provider", "space-1", ""));
 }

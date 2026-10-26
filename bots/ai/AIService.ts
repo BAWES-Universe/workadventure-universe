@@ -615,7 +615,15 @@ export class AIService {
 
             // Build system prompt. Order matters for provider prompt caching
             // (issue #1333): see ai/systemPrompt.ts.
-            const systemPrompt = buildSystemPrompt({ chatInstructions, mapContextInfo, conversationContext, channel });
+            const systemPrompt = buildSystemPrompt({
+                chatInstructions,
+                mapContextInfo,
+                conversationContext,
+                // Reads pendingMedia directly so the AI always knows about
+                // pending items at turn start.
+                pendingMediaNotice: this.conversationMemory.getPendingMediaNotice(botId, playerId),
+                channel,
+            });
 
             // Check if Qwen model (for /no_think directive)
             const isQwenModel = config.model.toLowerCase().includes('qwen');
@@ -759,7 +767,7 @@ export class AIService {
                 // NOTE: Pre-AI flush removed. It caused images to appear BEFORE
                 // the "New discussion with..." header. The post-stream flush
                 // (in the finally block below) is the single delivery point.
-                // getConversationContext reads pendingMedia directly (no fact)
+                // getPendingMediaNotice reads pendingMedia directly (no fact)
                 // so the AI always knows about pending items at turn start.
 
                 firstCallStartTime = Date.now();

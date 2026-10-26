@@ -76,7 +76,7 @@ async function* plainStream() {
     yield { content: "", done: true, metadata: { tokensUsed: 3, promptTokens: 2, completionTokens: 1, latency: 1, error: false, truncated: false } };
 }
 
-async function promptFor(AIService: any, type: string, context: string): Promise<string> {
+async function promptFor(AIService: any, type: string, context: string, notice = ""): Promise<string> {
     const admin: any = {
         getAIProviderCredentials: vi.fn().mockResolvedValue({
             providerId: "p", name: "B", type, enabled: true, endpoint: "http://x", apiKeyEncrypted: null,
@@ -88,7 +88,7 @@ async function promptFor(AIService: any, type: string, context: string): Promise
     };
     mockGenerateStream.mockReset();
     mockGenerateStream.mockImplementationOnce(plainStream);
-    const svc = new AIService({ getMemory: vi.fn(() => ({ userUuid: "u" })) }, admin, "http://admin.local");
+    const svc = new AIService({ getMemory: vi.fn(() => ({ userUuid: "u" })), getPendingMediaNotice: vi.fn(() => notice) }, admin, "http://admin.local");
     for await (const _ of svc.generateBotResponseStream("bot-1", 42, "hi", "You are Zed.", "p", "space-1", context)) { /* drain */ }
     return mockGenerateStream.mock.calls[0][1];
 }
@@ -108,17 +108,24 @@ describe("AIService – system prompt handed to the provider", () => {
         vi.resetModules();
     });
 
-    it.each(["openai", "lmstudio"])("%s bots get the rules before the memory and today's date last", async (type) => {
+    it.each(["openai", "lmstudio"])("%s bots get the rules before the memory and the current time last", async (type) => {
         const prompt = await promptFor(AIService, type, "Recent conversation:\nThey: \"hi\" (just now)");
         expect(prompt.startsWith("You are Zed.")).toBe(true);
         expect(prompt.indexOf("**HOW TO CONVERSE NATURALLY")).toBeLessThan(prompt.indexOf("Conversation Context:"));
-        expect(prompt).toContain("**TODAY'S DATE:** Saturday, October 24, 2026");
-        expect(prompt.indexOf("Conversation Context:")).toBeLessThan(prompt.indexOf("**TODAY'S DATE:**"));
+        expect(prompt).toContain("**NOW:** Saturday, October 24, 2026, 11:30 UTC");
+        expect(prompt.indexOf("Conversation Context:")).toBeLessThan(prompt.indexOf("**NOW:**"));
     });
 
     it("sends openai and lmstudio bots the same prompt", async () => {
         const a = await promptFor(AIService, "openai", "ctx");
         const b = await promptFor(AIService, "lmstudio", "ctx");
         expect(a).toBe(b);
+    });
+
+    it("puts the pending-media notice after the current time", async () => {
+        const notice = "[System: 1 media item(s) from the previous session are being delivered alongside this message. Do NOT generate or request them again.]";
+        const prompt = await promptFor(AIService, "openai", "ctx", notice);
+        expect(prompt.indexOf(notice)).toBeGreaterThan(prompt.indexOf("**NOW:**"));
+        expect(prompt.indexOf("**BEFORE YOU ANSWER:**")).toBeGreaterThan(prompt.indexOf(notice));
     });
 });

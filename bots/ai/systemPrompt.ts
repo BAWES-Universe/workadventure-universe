@@ -9,7 +9,7 @@
  *   2. the fixed rules                                  (same for everyone)
  *   3. the current location                             (same for the room)
  *   4. the memory of this person                        (changes per person)
- *   5. today's date                                     (changes daily)
+ *   5. now: date, time and the pending-media notice     (changes every call)
  *
  * Do not put anything that changes per message above the memory block, and do
  * not make the fixed rules conditional: either one shortens the shared prefix
@@ -183,38 +183,37 @@ export interface SystemPromptParts {
     mapContextInfo?: string;
     /** This person's memory from ConversationMemory.getConversationContext; empty when there is none. */
     conversationContext?: string;
+    /** Notice that queued media is being delivered with this reply; empty when none. */
+    pendingMediaNotice?: string;
     /** In a bubble on the map (default) or a direct message; picks the media and place rules. */
     channel?: PromptChannel;
-    /** Clock for the date line; injectable for tests. */
+    /** Clock for the Now line; injectable for tests. */
     now?: Date;
 }
 
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
 /**
- * Today's date anchor (issue #268). The memory context carries relative deltas
- * ("3 days ago"); the bot needs today's date to frame them.
+ * The current day, date and time, in UTC (issues #268 and #1333). The history
+ * lines carry the UTC date and time they were written; the bot compares them
+ * with this line to judge how long ago something was said, so a three-day-old
+ * conversation is not treated as "just happened". Always the last thing in the
+ * prompt, with the pending-media notice, because it changes on every call.
  */
-export function buildTodayLine(now: Date = new Date()): string {
-    try {
-        const dateStr = now.toLocaleDateString('en-US', {
-            weekday: 'long',
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric',
-            // Pin to UTC: memory context time deltas ("N days ago")
-            // are computed from epoch timestamps, which are
-            // timezone-independent. Without an explicit timeZone the
-            // calendar date would follow the host TZ and could be
-            // off-by-one from the epoch-based deltas near midnight.
-            timeZone: 'UTC',
-        });
-        return `\n\n**TODAY'S DATE:** ${dateStr}\nUse this date to judge how long ago past conversations happened. If the conversation context mentions events from days ago, acknowledge the time gap naturally instead of acting like they just occurred.`;
-    } catch {
-        return '';
+export function buildNowLine(now: Date = new Date(), pendingMediaNotice?: string): string {
+    const hh = String(now.getUTCHours()).padStart(2, '0');
+    const mm = String(now.getUTCMinutes()).padStart(2, '0');
+    const when = `${WEEKDAYS[now.getUTCDay()]}, ${MONTH_NAMES[now.getUTCMonth()]} ${now.getUTCDate()}, ${now.getUTCFullYear()}, ${hh}:${mm} UTC`;
+    let line = `\n\n**NOW:** ${when}\nUse this date and time to judge how long ago past conversations happened. The times in "Recent conversation" are UTC too. If the conversation context mentions events from days ago, acknowledge the time gap naturally instead of acting like they just occurred.`;
+    if (pendingMediaNotice) {
+        line += `\n\n${pendingMediaNotice}`;
     }
+    return line;
 }
 
 export function buildSystemPrompt(parts: SystemPromptParts): string {
-    const { chatInstructions, mapContextInfo, conversationContext, now, channel = 'world' } = parts;
+    const { chatInstructions, mapContextInfo, conversationContext, pendingMediaNotice, now, channel = 'world' } = parts;
 
     // CRITICAL: Chat instructions define the bot's personality and MUST be followed
     let systemPrompt = '';
@@ -240,7 +239,7 @@ export function buildSystemPrompt(parts: SystemPromptParts): string {
     if (conversationContext) {
         systemPrompt += `\n\nConversation Context:\n${conversationContext}`;
     }
-    systemPrompt += buildTodayLine(now);
+    systemPrompt += buildNowLine(now, pendingMediaNotice);
     systemPrompt += CLOSING_REMINDER;
     return systemPrompt;
 }
