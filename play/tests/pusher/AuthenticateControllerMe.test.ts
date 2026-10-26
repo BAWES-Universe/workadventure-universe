@@ -1,15 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Application, Request, Response } from "express";
 
-const { verifyJWTToken, createAuthToken, checkTokenAuth, refreshAccessToken, fetchMemberDataByUuid } = vi.hoisted(
-    () => ({
+const { verifyJWTToken, createAuthToken, checkTokenAuth, refreshAccessToken, fetchMemberDataByUuid, captureException } =
+    vi.hoisted(() => ({
         verifyJWTToken: vi.fn(),
         createAuthToken: vi.fn(),
         checkTokenAuth: vi.fn(),
         refreshAccessToken: vi.fn(),
         fetchMemberDataByUuid: vi.fn(),
-    })
-);
+        captureException: vi.fn(),
+    }));
+
+vi.mock("@sentry/node", async (importOriginal) => ({
+    ...(await importOriginal<object>()),
+    captureException,
+}));
 
 vi.mock("../../src/pusher/services/JWTTokenManager", () => ({ jwtTokenManager: { verifyJWTToken, createAuthToken } }));
 vi.mock("../../src/pusher/services/OpenIDClient", () => ({ openIDClient: { checkTokenAuth, refreshAccessToken } }));
@@ -58,6 +63,9 @@ class FakeResponse {
         return this;
     }
 }
+
+// What the provider answers a refresh token that is revoked, used or past its life: asking again changes nothing.
+const refused = () => new openIdErrors.OPError({ error: "invalid_grant" }, { statusCode: 400 } as never);
 
 const playUri = "http://play.workadventure.localhost/_/global/maps.workadventure.localhost/map.json";
 
@@ -119,7 +127,7 @@ describe("GET /me with refresh", () => {
     });
 
     it("falls back to the token it has when the asked-for renewal fails", async () => {
-        refreshAccessToken.mockRejectedValue(new Error("provider down"));
+        refreshAccessToken.mockRejectedValue(refused());
         const res = await callMe({ token: "game-token", playUri, refresh: "true" });
         expect(refreshAccessToken).toHaveBeenCalledTimes(1);
         expect(res.body).toEqual(expect.objectContaining({ authToken: "game-token" }));
@@ -193,7 +201,7 @@ describe("GET /me asked again for a token it already renewed", () => {
     });
 
     it("does not remember a renewal that failed", async () => {
-        refreshAccessToken.mockRejectedValueOnce(new Error("provider down"));
+        refreshAccessToken.mockRejectedValueOnce(refused());
         const failed = await callMe({ token: "game-token", playUri, refresh: "true" });
         expect(failed.body).toEqual(expect.objectContaining({ authToken: "game-token" }));
         refreshAccessToken.mockResolvedValueOnce({ access_token: "new-access", refresh_token: "new-refresh" });
@@ -321,7 +329,7 @@ describe("GET /me for a member whose access token ran out (Orbit #306)", () => {
     });
 
     it("answers with Orbit's refusal when the token can't be renewed", async () => {
-        refreshAccessToken.mockRejectedValue(new Error("provider down"));
+        refreshAccessToken.mockRejectedValue(refused());
         const res = await callMe({ token: "game-token", playUri });
         expect(refreshAccessToken).toHaveBeenCalledTimes(1);
         expect(res.body).toEqual(membersOnly);
@@ -346,9 +354,54 @@ describe("GET /me for a member whose access token ran out (Orbit #306)", () => {
     });
 
     it("asks Orbit with the token that ran out when it can't be renewed", async () => {
-        refreshAccessToken.mockRejectedValue(new Error("provider down"));
+        refreshAccessToken.mockRejectedValue(refused());
         await callMe({ token: "game-token", playUri });
         expect(fetchMemberDataByUuid.mock.calls.map((call) => call[1])).toEqual(["expired-access"]);
+    });
+
+    it("asks the provider to renew again when it could not be reached the first time, and uses that answer", async () => {
+        refreshAccessToken
+            .mockRejectedValueOnce(new Error("socket hang up"))
+            .mockResolvedValueOnce({ access_token: "new-access", refresh_token: "new-refresh" });
+        const res = await callMe({ token: "game-token", playUri });
+        expect(refreshAccessToken).toHaveBeenCalledTimes(2);
+        expect(fetchMemberDataByUuid.mock.calls.map((call) => call[1])).toEqual(["new-access"]);
+        expect(res.body).toEqual(expect.objectContaining({ status: "ok", authToken: "renewed-game-token" }));
+        expect(captureException).not.toHaveBeenCalled();
+    });
+
+    it("renews at most twice when the provider can't be reached, then asks Orbit as before", async () => {
+        refreshAccessToken.mockRejectedValue(new Error("socket hang up"));
+        await callMe({ token: "game-token", playUri });
+        expect(refreshAccessToken).toHaveBeenCalledTimes(2);
+        expect(fetchMemberDataByUuid.mock.calls.map((call) => call[1])).toEqual(["expired-access"]);
+    });
+
+    it("does not ask the provider again when it refused the refresh token", async () => {
+        refreshAccessToken.mockRejectedValue(refused());
+        await callMe({ token: "game-token", playUri });
+        expect(refreshAccessToken).toHaveBeenCalledTimes(1);
+    });
+
+    it("reports why a renewal failed to Sentry, saying whether the provider refused, and never the tokens", async () => {
+        refreshAccessToken.mockRejectedValue(refused());
+        await callMe({ token: "game-token", playUri });
+        expect(captureException).toHaveBeenCalledTimes(1);
+        const [, hint] = captureException.mock.calls[0];
+        expect(hint).toEqual({
+            level: "warning",
+            tags: { area: "oidc-renew", refused: "true" },
+            extra: { oidcError: "invalid_grant", status: 400 },
+        });
+        expect(JSON.stringify(hint)).not.toContain("refresh");
+    });
+
+    it("reports a provider that could not be reached as not refused", async () => {
+        refreshAccessToken.mockRejectedValue(new Error("socket hang up"));
+        await callMe({ token: "game-token", playUri });
+        expect(captureException.mock.calls[0][1]).toEqual(
+            expect.objectContaining({ tags: { area: "oidc-renew", refused: "false" } })
+        );
     });
 
     it("lets the same owner into a public room (control: Orbit answers ok to a guest)", async () => {
@@ -503,7 +556,7 @@ describe("GET /me for a signed-in player Orbit answers as a guest though the pro
     });
 
     it("lets them in with Orbit's first answer and the token they have when it can't be renewed", async () => {
-        refreshAccessToken.mockRejectedValue(new Error("provider down"));
+        refreshAccessToken.mockRejectedValue(refused());
         const res = await callMe({ token: "game-token", playUri });
         expect(fetchMemberDataByUuid).toHaveBeenCalledTimes(1);
         expect(res.body).toEqual(
