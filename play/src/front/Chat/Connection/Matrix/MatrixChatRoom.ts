@@ -74,6 +74,13 @@ const FRESH_EVENT_MAX_AGE_MS = 2000;
 /** After the list is built again, earlier messages are paged back in until it is as long as it was, up to this many. */
 const MAX_RESTORED_MESSAGES = 100;
 
+/** How long a pinned list this person sent may take to show in the room's state before the state is trusted again. */
+const PINS_ECHO_WAIT_MS = 10000;
+
+function samePins(a: readonly string[], b: readonly string[]): boolean {
+    return a.length === b.length && a.every((id, index) => id === b[index]);
+}
+
 type EventId = string;
 
 type ModerationAction = "ban" | "kick" | "invite" | "redact";
@@ -102,6 +109,9 @@ export class MatrixChatRoom
     areNotificationsMuted = writable(false);
     currentRoomMember: Readable<MatrixChatRoomMember>;
     readonly pinnedMessageIds: Writable<string[]>;
+    // The pinned list this person sent last, until the room's state shows it.
+    private pinsAwaitingEcho: string[] | undefined;
+    private pinsEchoTimeout: ReturnType<typeof setTimeout> | undefined;
     readonly canPinMessages: Writable<boolean>;
     private notSentEvents: MapStore<string, MatrixEvent> = new MapStore<string, MatrixEvent>();
     shouldRetrySendingEvents = derived(this.notSentEvents, (notSentEvents) => notSentEvents.size > 0);
@@ -301,7 +311,13 @@ export class MatrixChatRoom
     private onRoomStateEvent(event: MatrixEvent, state: RoomState, lastStateEvent: MatrixEvent | null) {
         const eventType = event.getType();
         if (eventType === EventType.RoomPinnedEvents) {
-            this.pinnedMessageIds.set(this.readPinnedMessageIds());
+            const pinned = this.readPinnedMessageIds();
+            if (this.pinsAwaitingEcho) {
+                // An older pin of ours coming back: the list we sent last is still on its way.
+                if (!samePins(pinned, this.pinsAwaitingEcho)) return;
+                this.stopAwaitingPinsEcho();
+            }
+            this.pinnedMessageIds.set(pinned);
         }
         if (eventType === EventType.RoomPowerLevels || eventType === EventType.RoomMember) {
             this.canPinMessages.set(this.mayPinMessages());
@@ -930,6 +946,7 @@ export class MatrixChatRoom
         this.matrixRoom.off(RoomStateEvent.Events, this.handleStateEvent);
         this.matrixRoom.off(RoomEvent.MyMembership, this.handleMyMembership);
         this.matrixRoom.off(RoomStateEvent.NewMember, this.handleNewMember);
+        this.stopAwaitingPinsEcho();
         get(this.members).forEach((member) => {
             member.destroy();
         });
@@ -1021,13 +1038,33 @@ export class MatrixChatRoom
 
     /** Pins or unpins a message for everyone in the chat. A message pinned again moves to the end (the newest pin). */
     public async setMessagePinned(messageId: string, pinned: boolean): Promise<void> {
-        const others = this.readPinnedMessageIds().filter((id) => id !== messageId);
-        await this.matrixRoom.client.sendStateEvent(
-            this.id,
-            EventType.RoomPinnedEvents,
-            { pinned: pinned ? [...others, messageId] : others },
-            ""
-        );
+        // A pin made right after another builds on it, even before the room's state has caught up.
+        const current = this.pinsAwaitingEcho ?? this.readPinnedMessageIds();
+        const others = current.filter((id) => id !== messageId);
+        const next = pinned ? [...others, messageId] : others;
+        if (samePins(next, current)) return;
+        this.pinsAwaitingEcho = next;
+        clearTimeout(this.pinsEchoTimeout);
+        this.pinsEchoTimeout = setTimeout(() => {
+            this.stopAwaitingPinsEcho();
+            this.pinnedMessageIds.set(this.readPinnedMessageIds());
+        }, PINS_ECHO_WAIT_MS);
+        this.pinnedMessageIds.set(next);
+        try {
+            await this.matrixRoom.client.sendStateEvent(this.id, EventType.RoomPinnedEvents, { pinned: next }, "");
+        } catch (error) {
+            if (this.pinsAwaitingEcho === next) {
+                this.stopAwaitingPinsEcho();
+                this.pinnedMessageIds.set(this.readPinnedMessageIds());
+            }
+            throw error;
+        }
+    }
+
+    private stopAwaitingPinsEcho(): void {
+        this.pinsAwaitingEcho = undefined;
+        clearTimeout(this.pinsEchoTimeout);
+        this.pinsEchoTimeout = undefined;
     }
 
     public hasPermissionForRoomStateEvent(eventType: keyof StateEvents): Readable<boolean> {

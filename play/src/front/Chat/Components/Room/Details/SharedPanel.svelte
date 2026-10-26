@@ -195,7 +195,7 @@
                         <h3 class="shared-heading">{sectionLabel(section)}</h3>
                         <div class="shared-group">
                             {#each items as item (item.key)}
-                                <FileRow message={item.message} name={item.name} size={item.size} />
+                                <FileRow message={item.message} name={item.name} size={item.size} src={item.src} />
                             {/each}
                         </div>
                     </section>

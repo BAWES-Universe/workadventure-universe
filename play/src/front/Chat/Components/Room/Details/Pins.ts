@@ -29,6 +29,16 @@ export async function runPinAction(message: ChatMessage, action: PinAction): Pro
     await room.setMessagePinned(message.id, action === "pin");
 }
 
+const FETCH_RETRY_MS = 3000;
+// The wait between tries grows to this many times FETCH_RETRY_MS (30 seconds), then stays there.
+const MAX_RETRY_STEPS = 10;
+
+/** The server says the message isn't there (deleted for good, or never seen by this person). */
+function isNotFound(error: unknown): boolean {
+    const status = (error as { httpStatus?: unknown } | null)?.httpStatus;
+    return status === 404 || status === 403;
+}
+
 export interface PinnedEntry {
     id: string;
     /** Undefined while a pinned message that is not loaded is fetched, or when it can't be found any more. */
@@ -43,6 +53,7 @@ export function pinnedEntriesStore(room: ChatRoom & ChatRoomPins): Readable<Pinn
     const fetched = writable(new Map<string, ChatMessage | null>());
     const messages: Readable<readonly ChatMessage[]> = { subscribe: (run) => room.messages.subscribe(run) };
     const asking = new Set<string>();
+    const failures = new Map<string, number>();
     return derived([room.pinnedMessageIds, messages, fetched], ([$ids, $messages, $fetched], set) => {
         const loaded = new Map($messages.map((message) => [message.id, message]));
         const entries: PinnedEntry[] = [];
@@ -51,9 +62,26 @@ export function pinnedEntriesStore(room: ChatRoom & ChatRoomPins): Readable<Pinn
             if (!message && !$fetched.has(id) && !asking.has(id)) {
                 asking.add(id);
                 room.getMessageById(id)
-                    .catch(() => undefined)
-                    .then((found) => fetched.update((map) => new Map(map).set(id, found ?? null)))
-                    .finally(() => asking.delete(id))
+                    .then(
+                        (found) => {
+                            asking.delete(id);
+                            fetched.update((map) => new Map(map).set(id, found ?? null));
+                        },
+                        (error: unknown) => {
+                            if (isNotFound(error)) {
+                                asking.delete(id);
+                                fetched.update((map) => new Map(map).set(id, null));
+                                return;
+                            }
+                            // Offline for a moment: asked again a little later, less and less often.
+                            const tries = (failures.get(id) ?? 0) + 1;
+                            failures.set(id, tries);
+                            setTimeout(() => {
+                                asking.delete(id);
+                                fetched.update((map) => new Map(map));
+                            }, FETCH_RETRY_MS * Math.min(tries, MAX_RETRY_STEPS));
+                        }
+                    )
                     .catch((error) => console.error(error));
             }
             if ($fetched.get(id) === null && !loaded.has(id)) continue;

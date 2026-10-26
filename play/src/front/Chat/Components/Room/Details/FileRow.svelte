@@ -16,8 +16,10 @@
     export let message: ChatMessage;
     export let name: string;
     export let size: number | undefined;
+    /** For one file of a gallery: its own link, as the message's link is the first file's. */
+    export let src: string | undefined = undefined;
 
-    let url: string | undefined;
+    let url: string | undefined = src;
     let unsubscribe: Unsubscriber | undefined;
     let waiting = false;
 

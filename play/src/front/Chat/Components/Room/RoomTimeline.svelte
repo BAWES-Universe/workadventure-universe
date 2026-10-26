@@ -179,6 +179,19 @@
     // A group's details, and the page of what a chat shared over either, sit over the conversation like the profile.
     $: roomDetailsOpen = matrixRoom !== undefined && directPartner === undefined && $openRoomDetailsIdStore === room.id;
     $: nearbyDetailsOpen = proximityRoom !== undefined && $openRoomDetailsIdStore === room.id;
+    // The nearby chat's details belong to one conversation: a new one starts on the conversation, not over it.
+    $: nearbyJoinedAt = proximityRoom?.spaceJoinedAt;
+    let seenNearbyJoinedAt: number | undefined;
+    $: if ($nearbyJoinedAt !== undefined && $nearbyJoinedAt !== seenNearbyJoinedAt) {
+        if (seenNearbyJoinedAt !== undefined) closeNearbyDetails();
+        seenNearbyJoinedAt = $nearbyJoinedAt;
+    }
+
+    function closeNearbyDetails() {
+        if (!proximityRoom) return;
+        if (get(openRoomDetailsIdStore) === room.id) openRoomDetailsIdStore.set(undefined);
+        if (get(openSharedItemsStore)?.roomId === room.id) openSharedItemsStore.set(undefined);
+    }
     $: sharedOpen =
         (matrixRoom !== undefined || proximityRoom !== undefined) && $openSharedItemsStore?.roomId === room.id
             ? $openSharedItemsStore
@@ -771,6 +784,8 @@
     }
 
     onDestroy(() => {
+        // Closing or leaving the nearby chat closes its details too.
+        closeNearbyDetails();
         resizeObserver?.disconnect();
         childListObserver?.disconnect();
         clearTimeout(redrawTimer);
