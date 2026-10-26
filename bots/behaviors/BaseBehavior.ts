@@ -1600,6 +1600,14 @@ export abstract class BaseBehavior {
         debugLabel: string;
         /** Image URLs to carry into the regenerated attempt (vision context must survive repetition retries). */
         images?: string[];
+        /** 'dm' when regenerating a direct message reply, so the retry keeps the direct message prompt. */
+        channel?: 'world' | 'dm';
+        /** The bot's Patience for tools, for a caller with no bot client (a direct message). */
+        toolTimeoutSeconds?: number | null;
+        /** The bot's room, for a caller with no bot client (a direct message), so the retry still knows it. */
+        homeRoomUrl?: string;
+        /** Who is in that room right now, so the retry sees the same people. */
+        peopleInRoom?: string[] | null;
     }): Promise<{ processed: ProcessedResponse; processedMessage: string; responseId: string }> {
         const {
             botId,
@@ -1673,7 +1681,11 @@ export abstract class BaseBehavior {
                     this.bot,
                     this.adminApiService,
                     abortSignal,
-                    images
+                    images,
+                    params.channel ?? 'world',
+                    params.toolTimeoutSeconds,
+                    params.homeRoomUrl,
+                    params.peopleInRoom
                 )) {
                     if (chunk.reset) {
                         const showToolCalls = chunk.toolNames?.length ? await this.shouldShowToolCalls(botId) : false;

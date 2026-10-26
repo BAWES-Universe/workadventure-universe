@@ -167,6 +167,21 @@ const chat: DeepPartial<Translation["chat"]> = {
     anAdmin: "jen administrator",
     messageDeletedByYou: "Wy sće tutu powěsć zhašał.",
     waiting: "Čakajucy",
+    botStatus: {
+        online: "Online",
+        resting: "Wotpočuje",
+        unready: "Hišće njeje přihotowany",
+        gone: "Wotešoł",
+        restingPlaceholder: "Wotmołwy su zastajene",
+        unreadyPlaceholder: "Hišće njemóže wotmołwić",
+        closed: "Tutón chat je začinjeny",
+        left: "{name} je wotešoł",
+        visit: "Wopytać",
+        visitAria: "{name} w {room} wopytać",
+        livesIn: "Bydli w",
+        nowIn: "Nětko w",
+        inThisRoom: "Sy w tutej rumnosći",
+    },
 };
 
 export default chat;
