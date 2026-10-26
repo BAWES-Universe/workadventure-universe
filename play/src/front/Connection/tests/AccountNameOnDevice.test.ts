@@ -195,3 +195,27 @@ describe("signing out", () => {
         expect(localUserStore.getName()).toBeNull();
     });
 });
+
+// The Sign in buttons keep the guest's token aside too, since the account's token replaces it when they come back.
+describe("signing in from a Sign in button as a guest", () => {
+    const guestToken = `header.${window.btoa(
+        JSON.stringify({ identifier: "5b522f38-d7d2-4e37-be94-2476cb1efdfe" })
+    )}.signature`;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        localStorage.clear();
+        localUserStore.setAuthToken(guestToken);
+        mocks.me.mockResolvedValue(meAnswer("Khalid"));
+    });
+
+    it("tells the pusher which guest this device was, once, with the account's token", async () => {
+        connectionManager.goToSignIn();
+        localUserStore.setAuthToken(gameToken);
+        await openTheGame();
+        expect(mocks.me.mock.calls[0][1].params.guestToken).toBe(guestToken);
+
+        await openTheGame();
+        expect(mocks.me.mock.calls[1][1].params.guestToken).toBeUndefined();
+    });
+});

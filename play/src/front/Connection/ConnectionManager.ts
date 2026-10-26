@@ -211,6 +211,8 @@ class ConnectionManager {
      */
     public goToSignIn(): void {
         localUserStore.backupGuestName();
+        // The guest's token stays in place here, but the account's token replaces it on the way back: keep it aside (#1430).
+        localUserStore.keepGuestTokenAside();
         if (!ENABLE_OPENID || !this._currentRoom) {
             window.location.assign("/login");
             return;
