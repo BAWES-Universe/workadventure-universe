@@ -309,7 +309,7 @@ test.describe("Matrix chat tests @oidc @matrix @nowebkit", () => {
     await page.getByTestId("createRoomEncryption").check();
     await page.getByTestId("createRoomButton").click();
     await ChatUtils.initEndToEndEncryption(privateChatRoom, page, page.context());
-    await page.getByText(privateChatRoom).click();
+    await ChatUtils.showRoom(page, privateChatRoom);
     const chatMessageContent = "This is a test message";
     await page.getByTestId("messageInput").fill(chatMessageContent);
 
@@ -356,7 +356,7 @@ test.describe("Matrix chat tests @oidc @matrix @nowebkit", () => {
     await page.getByTestId("createRoomEncryption").check();
     await page.getByTestId("createRoomButton").click();
     await ChatUtils.initEndToEndEncryption(privateChatRoom, page, page.context());
-    await page.getByText(privateChatRoom).click();
+    await ChatUtils.showRoom(page, privateChatRoom);
     const chatMessageContent = "This is a test message";
     await page.getByTestId("messageInput").fill(chatMessageContent);
 
