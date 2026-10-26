@@ -114,24 +114,31 @@ export function summarizeForReply(type: ChatMessageType, content: ChatMessageCon
 /**
  * The one line a chat list row or a desktop notification shows for a message. Text stays as it is; a picture, video
  * or voice message says what it is (or shows its caption) instead of its file name. A document keeps its name.
+ * It works from the message alone: a file's URL is loaded later, so it is not there yet when a message arrives.
  */
 export function previewLine(
     type: ChatMessageType,
     content: ChatMessageContent,
     labels: { photo: string; photos: (count: number) => string; video: string; voice: string; audio: string }
 ): string {
-    const summary = summarizeForReply(type, content);
-    switch (summary.kind) {
-        case "text":
-            return bodyToPlainText(content.body ?? "");
-        case "photos":
-            return summary.caption ?? (summary.count > 1 ? labels.photos(summary.count) : labels.photo);
-        case "files":
-            return summary.caption ?? summary.name;
+    if (!MEDIA_TYPES.has(type)) return bodyToPlainText(content.body ?? "");
+    const body = bodyToPlainText(getMediaCaption(content) ?? "");
+    // A gallery's body can be the name of any of its files.
+    const caption = content.fileNames?.some((name) => name.trim() === body) ? "" : body;
+    if (caption !== "") return caption;
+    switch (type) {
+        case "image":
+            return labels.photo;
+        case "gallery": {
+            const count = Math.max(content.fileNames?.length ?? 0, 1 + (content.urls?.length ?? 0));
+            return count > 1 ? labels.photos(count) : labels.photo;
+        }
         case "video":
-            return summary.caption ?? labels.video;
+            return labels.video;
+        case "audio":
+            return content.isVoice === true ? labels.voice : labels.audio;
         default:
-            return summary.caption ?? (summary.voice ? labels.voice : labels.audio);
+            return content.filename?.trim() || bodyToPlainText(content.body ?? "");
     }
 }
 

@@ -148,22 +148,17 @@ describe("the line a chat list row and a notification show", () => {
     };
 
     it("says Photo for an image whose body is its file name", () => {
-        const image = content({ body: "IMG_4821.jpg", filename: "IMG_4821.jpg", url: "blob:chat/a1" });
-        expect(previewLine("image", image, labels)).toBe("Photo");
-    });
-
-    it("says Photo for a Matrix image that has no filename field, only the name as body", () => {
-        const image = content({ body: "image.png", url: "blob:chat/a2" });
+        const image = content({ body: "IMG_4821.jpg", filename: "IMG_4821.jpg" });
         expect(previewLine("image", image, labels)).toBe("Photo");
     });
 
     it("shows the caption of an image sent with one", () => {
-        const image = content({ body: "Look at the new map!", filename: "IMG_5530.jpg", url: "blob:chat/a3" });
+        const image = content({ body: "Look at the new map!", filename: "IMG_5530.jpg" });
         expect(previewLine("image", image, labels)).toBe("Look at the new map!");
     });
 
     it("says Video for a video and keeps its caption", () => {
-        const video = content({ body: "VID_1930.mp4", filename: "VID_1930.mp4", url: "blob:chat/b1" });
+        const video = content({ body: "VID_1930.mp4", filename: "VID_1930.mp4" });
         expect(previewLine("video", video, labels)).toBe("Video");
         expect(previewLine("video", { ...video, body: "Mariam at the HQ" }, labels)).toBe("Mariam at the HQ");
     });
@@ -172,16 +167,20 @@ describe("the line a chat list row and a notification show", () => {
         const voice = content({
             body: "voice-message.ogg",
             filename: "voice-message.ogg",
-            url: "blob:chat/c1",
             isVoice: true,
         });
-        const song = content({ body: "Interview-final.mp3", filename: "Interview-final.mp3", url: "blob:chat/c2" });
+        const song = content({ body: "Interview-final.mp3", filename: "Interview-final.mp3" });
         expect(previewLine("audio", voice, labels)).toBe("Voice");
         expect(previewLine("audio", song, labels)).toBe("Audio");
     });
 
+    it("does not need the file to be loaded: a message that has just arrived has no URL yet", () => {
+        const arriving = content({ body: "IMG_4821.jpg", filename: "IMG_4821.jpg", url: undefined });
+        expect(previewLine("image", arriving, labels)).toBe("Photo");
+    });
+
     it("keeps the file name of a document", () => {
-        const pdf = content({ body: "Budget-Q4.pdf", filename: "Budget-Q4.pdf", url: "blob:chat/d1" });
+        const pdf = content({ body: "Budget-Q4.pdf", filename: "Budget-Q4.pdf" });
         expect(previewLine("file", pdf, labels)).toBe("Budget-Q4.pdf");
     });
 

@@ -225,6 +225,7 @@ export class MatrixChatMessage implements ChatMessage {
                 // A picture sent as a reply still tells its body from its name.
                 filename: this.type === "text" ? undefined : this.getMediaFileName(content),
                 fileNames: undefined,
+                isVoice: this.isVoiceMessage(content),
             };
         }
 
@@ -238,11 +239,19 @@ export class MatrixChatMessage implements ChatMessage {
                 // The body of a Matrix file is its name: the blob: URL it loads from has none.
                 filename: this.getMediaFileName(content),
                 fileNames: undefined,
-                isVoice: this.type === "audio" && content["org.matrix.msc3245.voice"] !== undefined,
+                isVoice: this.isVoiceMessage(content),
             };
         }
 
         return { body: content.body, url: undefined, urls: undefined, filename: undefined, fileNames: undefined };
+    }
+
+    /** A recorded voice message, flagged by Element (MSC3245) as `org.matrix.msc3245.voice`, or `m.voice` once stable. */
+    private isVoiceMessage(content: IContent): boolean {
+        return (
+            this.type === "audio" &&
+            (content["org.matrix.msc3245.voice"] !== undefined || content["m.voice"] !== undefined)
+        );
     }
 
     /**
