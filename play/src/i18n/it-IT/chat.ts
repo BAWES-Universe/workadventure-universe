@@ -322,12 +322,6 @@ const chat: DeepPartial<Translation["chat"]> = {
         },
     },
     connectionError: "Chat non disponibile",
-    requiresLoginForChatModal: {
-        title: "Accedi per sbloccare la chat!",
-        content_1: "Per godere appieno di questa funzione di chat, devi essere loggato nel tuo account.",
-        content_2: "Accedere ti dà accesso a tutte le opzioni e ti consente di continuare senza interruzioni.",
-        content_3: " Per favore, accedi per procedere con l'esperienza.",
-    },
     requiresLoginForChat: "Accedi per accedere ai messaggi della chat",
     fileAttachment: {
         title: "Allega file",

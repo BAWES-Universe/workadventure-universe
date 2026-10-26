@@ -360,12 +360,6 @@ const chat: DeepPartial<Translation["chat"]> = {
         },
     },
     connectionError: "Chat não disponível",
-    requiresLoginForChatModal: {
-        title: "Faça login para desbloquear o chat!",
-        content_1: "Para aproveitar totalmente este recurso de chat, você precisa estar logado em sua conta.",
-        content_2: "Fazer login dá acesso a todas as opções e permite continuar sem interrupção.",
-        content_3: " Por favor, faça login para prosseguir com a experiência.",
-    },
     verificationEmojiDialog: {
         confirmation: "Eles coincidem",
         mismatch: "Eles não coincidem",
