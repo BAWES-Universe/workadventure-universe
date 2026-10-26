@@ -1,4 +1,4 @@
-import type { AvailabilityStatus } from "@workadventure/messages";
+import { AvailabilityStatus } from "@workadventure/messages";
 import type { StatusStrategyInterface } from "./StatusStrategyInterface";
 import { BasicStatusStrategy } from "./StatusStrategy/BasicStatusStrategy";
 import type { StatusRulesVerificationInterface } from "./statusRules";
@@ -20,8 +20,13 @@ export class StatusChanger {
         return this._statusStrategy.getActualStatus();
     }
     changeStatusTo(newStatus: AvailabilityStatus) {
-        if (!this._rulesVerification.canChangeStatus(this._statusStrategy.getActualStatus()).to(newStatus)) {
-            throw new InvalidStatusTransitionError("");
+        const actualStatus = this._statusStrategy.getActualStatus();
+        if (!this._rulesVerification.canChangeStatus(actualStatus).to(newStatus)) {
+            throw new InvalidStatusTransitionError(
+                `Cannot change status from ${AvailabilityStatus[actualStatus] ?? actualStatus} to ${
+                    AvailabilityStatus[newStatus] ?? newStatus
+                }`
+            );
         }
         this._statusStrategy.cleanTimedRules();
         this.setStrategy(newStatus);
