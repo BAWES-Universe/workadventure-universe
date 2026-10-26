@@ -109,6 +109,8 @@ export class MatrixChatRoom
     areNotificationsMuted = writable(false);
     currentRoomMember: Readable<MatrixChatRoomMember>;
     readonly pinnedMessageIds: Writable<string[]>;
+    // Messages read on their own, outside the loaded conversation (an older pin): kept to be told when deleted.
+    private readonly detachedMessages = new Map<string, MatrixChatMessage>();
     // The pinned list this person sent last, until the room's state shows it.
     private pinsAwaitingEcho: string[] | undefined;
     private pinsEchoTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -537,6 +539,7 @@ export class MatrixChatRoom
     private handleDeletion(redactionEvent: MatrixEvent) {
         const sourceEventId = redactionEvent.getAssociatedId();
         if (sourceEventId !== undefined) {
+            this.detachedMessages.get(sourceEventId)?.markAsRemoved();
             const sourceEvent = this.matrixRoom.findEventById(sourceEventId);
             if (sourceEvent !== undefined) {
                 const sourceEventType = sourceEvent.getType();
@@ -946,13 +949,15 @@ export class MatrixChatRoom
         this.matrixRoom.off(RoomStateEvent.Events, this.handleStateEvent);
         this.matrixRoom.off(RoomEvent.MyMembership, this.handleMyMembership);
         this.matrixRoom.off(RoomStateEvent.NewMember, this.handleNewMember);
-        this.stopAwaitingPinsEcho();
+        clearTimeout(this.pinsEchoTimeout);
         get(this.members).forEach((member) => {
             member.destroy();
         });
         this.messages.forEach((message) => {
             message.destroy();
         });
+        this.detachedMessages.forEach((message) => message.destroy());
+        this.detachedMessages.clear();
     }
 
     startTyping(): Promise<object> {
@@ -1155,9 +1160,17 @@ export class MatrixChatRoom
             messageId
         );
         const event = timeline?.getEvents().find((ev) => ev.getId() === messageId);
-        if (event) {
-            return new MatrixChatMessage(event, this.matrixRoom, false, this.type === "direct");
+        if (!event) return;
+        // Read once decrypted, so it is known as an image or a file from the start.
+        if (event.isEncrypted()) {
+            await this.matrixRoom.client.decryptEventIfNeeded(event).catch(() => {
+                console.error("Failed to decrypt");
+            });
         }
-        return;
+        const loaded = this.messages.get(messageId) ?? this.detachedMessages.get(messageId);
+        if (loaded) return loaded;
+        const detached = new MatrixChatMessage(event, this.matrixRoom, false, this.type === "direct");
+        this.detachedMessages.set(messageId, detached);
+        return detached;
     }
 }
