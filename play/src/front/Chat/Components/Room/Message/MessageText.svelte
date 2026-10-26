@@ -16,28 +16,7 @@
         updateMessageBody: void;
     }>();
 
-    async function getMarked(body: string): Promise<Marked> {
-        let marked: Marked;
-
-        // Let's lazy load hljs and markedHighlight if the message contains ```.
-        if (body.includes("```")) {
-            const hljsPromise = import("highlight.js");
-            const markedHighlightPromise = import("marked-highlight");
-            const [hljsModule, markedHighlightModule] = await Promise.all([hljsPromise, markedHighlightPromise]);
-
-            marked = new Marked(
-                markedHighlightModule.markedHighlight({
-                    langPrefix: "hljs language-",
-                    highlight(code, lang) {
-                        const language = hljsModule.default.getLanguage(lang) ? lang : "plaintext";
-                        return hljsModule.default.highlight(code, { language }).value;
-                    },
-                })
-            );
-        } else {
-            marked = new Marked();
-        }
-
+    function configured(marked: Marked): Marked {
         // Custom renderer for links
         const renderer = new marked.Renderer();
         renderer.link = (href: string, title: string, text: string) => {
@@ -54,35 +33,75 @@
         return marked;
     }
 
+    // Lazy loads hljs and markedHighlight, for a message that contains ```.
+    async function getHighlightingMarked(): Promise<Marked> {
+        const hljsPromise = import("highlight.js");
+        const markedHighlightPromise = import("marked-highlight");
+        const [hljsModule, markedHighlightModule] = await Promise.all([hljsPromise, markedHighlightPromise]);
+
+        return configured(
+            new Marked(
+                markedHighlightModule.markedHighlight({
+                    langPrefix: "hljs language-",
+                    highlight(code, lang) {
+                        const language = hljsModule.default.getLanguage(lang) ? lang : "plaintext";
+                        return hljsModule.default.highlight(code, { language }).value;
+                    },
+                })
+            )
+        );
+    }
+
     let html = "";
     let bubble: HTMLDivElement | undefined;
+    let mounted = false;
+    // The latest body asked for: a slower code render of an earlier body must not replace it.
+    let latestRender = 0;
 
-    let unsubscriber: Unsubscriber | undefined;
+    function bodyUpdated() {
+        if (mounted) dispatch("updateMessageBody");
+    }
+
+    // A message without code is written out at once, so it has its full height the first time it is drawn: older
+    // messages added above the reader land at their size in one go, and nothing grows after (see RoomTimeline).
+    // Code waits for its highlighter.
+    function render(body: string) {
+        const renderId = ++latestRender;
+        const healed = remend(body);
+        if (!healed.includes("```")) {
+            try {
+                html = linkifyBareDomains(configured(new Marked()).parse(healed) as string);
+            } catch (error) {
+                console.error("Failed to parse markdown content", error);
+                html = body;
+            }
+            bodyUpdated();
+            return;
+        }
+        getHighlightingMarked()
+            .then((marked) => marked.parse(healed))
+            .then((result) => {
+                if (renderId === latestRender) html = linkifyBareDomains(result);
+            })
+            .catch((error) => {
+                console.error("Failed to parse markdown content", error);
+                if (renderId === latestRender) html = body;
+            })
+            .finally(bodyUpdated);
+    }
+
+    const unsubscriber: Unsubscriber = content.subscribe((value) => render(value.body));
+
     onMount(() => {
+        mounted = true;
         // Links inside the message's HTML: one listener on the bubble (Enter on a focused link is a click too).
         bubble?.addEventListener("click", openLinkHere);
-        unsubscriber = content.subscribe((value) => {
-            const healed = remend(value.body);
-            let promiseHtml = getMarked(healed).then((marked) => marked.parse(healed));
-            promiseHtml
-                .then((result) => {
-                    html = linkifyBareDomains(result);
-                })
-                .catch((error) => {
-                    console.error("Failed to parse markdown content", error);
-                    html = $content.body;
-                })
-                .finally(() => {
-                    dispatch("updateMessageBody");
-                });
-        });
+        if (html !== "") dispatch("updateMessageBody");
     });
 
     onDestroy(() => {
         bubble?.removeEventListener("click", openLinkHere);
-        if (unsubscriber) {
-            unsubscriber();
-        }
+        unsubscriber();
     });
 
     /**
