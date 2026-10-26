@@ -32,6 +32,11 @@ const MAX_NAME = 300;
 const MAX_SENDER = 100;
 const MAX_LINK = 2000;
 
+/** Cuts text to Orbit's length, never through the middle of an emoji, so the kept key matches the one cut here. */
+function clip(value: string, max: number): string {
+    return value.slice(0, max).replace(/[\uD800-\uDBFF]$/, "");
+}
+
 /**
  * The bucket and id of an uploader file behind a signed CDN link ("bucket/id"), which stops working after a while.
  * Nothing for any other link: a public link lasts and is kept as it is.
@@ -74,11 +79,11 @@ export function savedRowsOf(
     const base = (item: SharedItem) => {
         const sender = item.message.isMyMessage ? item.message.sender?.username || you : item.message.sender?.username;
         return {
-            itemKey: item.key.slice(0, MAX_KEY),
-            name: item.name.slice(0, MAX_NAME),
+            itemKey: clip(item.key, MAX_KEY),
+            name: clip(item.name, MAX_NAME),
             mimeType: null,
             size: item.size ?? null,
-            senderName: (sender?.trim() || "?").slice(0, MAX_SENDER),
+            senderName: clip(sender?.trim() || "?", MAX_SENDER),
             mine: item.message.isMyMessage,
             sentAt: (item.message.date ?? now).toISOString(),
         };
@@ -207,7 +212,7 @@ export function mergeShared(live: SharedItems, saved: SharedItems): SharedItems 
     const merge = (liveItems: SharedItem[], savedItems: SharedItem[]) => {
         if (savedItems.length === 0) return liveItems;
         // A kept key was cut to what Orbit takes: the open chat's keys are cut the same way to match.
-        const keys = new Set(liveItems.map((item) => item.key.slice(0, MAX_KEY)));
+        const keys = new Set(liveItems.map((item) => clip(item.key, MAX_KEY)));
         return [...liveItems, ...savedItems.filter((item) => !keys.has(item.key))].sort(
             (a, b) => (b.message.date?.getTime() ?? 0) - (a.message.date?.getTime() ?? 0)
         );

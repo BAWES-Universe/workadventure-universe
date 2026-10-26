@@ -89,6 +89,17 @@ describe("the rows kept for a nearby chat", () => {
         expect(rows[0].itemKey).toHaveLength(300);
         expect(rows[0].name).toHaveLength(300);
     });
+
+    it("never cuts an emoji in half at the limit", () => {
+        const name = "x".repeat(299) + "🚪 door";
+        const rows = savedRowsOf(
+            { media: [], files: [], links: [item(name, message("t", "proximity"), { url: "https://bawes.net" })] },
+            () => undefined,
+            "You"
+        );
+        expect(rows[0].itemKey).toBe("x".repeat(299));
+        expect(rows[0].name).toBe("x".repeat(299));
+    });
 });
 
 describe("Orbit's page of kept items", () => {
