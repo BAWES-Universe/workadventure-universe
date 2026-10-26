@@ -44,6 +44,8 @@ export interface PersonActionsInput {
     isMyAccount?: boolean;
     /** A bot: reached with two direct buttons (Walk to, Locate) instead of a menu. */
     isBot?: boolean;
+    /** A bot whose owner lets you message it (Orbit said yes). Bots get Message only then. */
+    mayMessageBot?: boolean;
     /** Current availability status of the person; UNCHANGED (0) or undefined means disconnected. */
     status: AvailabilityStatus | undefined;
     uuid: string | undefined;
@@ -69,8 +71,9 @@ export interface PersonActions {
     /**
      * Visible "Message" button, only for people who can receive a direct message (they have a chat id), never for
      * your own account: there is no chat with yourself.
-     * People without one (bots, guests) are reached by walking up to them, so no greyed-out button is shown;
-     * they get the button automatically once they have a chat id.
+     * People without one (guests, and bots while bot chats are off) are reached by walking up to them, so no
+     * greyed-out button is shown; they get the button automatically once they have a chat id. A bot also needs its
+     * owner to let you message it: someone who may not never sees the button.
      */
     message: MessageAction;
     /** Menu entries. Locate is listed on the same map; the menu greys it out until the person can be located. */
@@ -106,7 +109,7 @@ export function getPersonActions(input: PersonActionsInput): PersonActions {
 
     let message: MessageAction = "hidden";
     if (!input.isSelf && !input.isMyAccount && input.isMatrixChatEnabled && !input.roomCreationInProgress) {
-        message = input.chatId ? "enabled" : "hidden";
+        message = input.chatId && (!input.isBot || input.mayMessageBot === true) ? "enabled" : "hidden";
     }
 
     return {

@@ -2,7 +2,7 @@
 // page needs about them. No Svelte and no network in here, so it can be tested on its own.
 
 export type RuleValue = "yes" | "no" | "default";
-/** What a rule can say something about. `dm` is Private DM: Orbit keeps it, the bot page shows it once DMs exist. */
+/** What a rule can say something about. `dm` is direct messages, from anywhere. */
 export type RuleAction = "chat" | "dm" | "summon" | "manage";
 
 export interface BotRule {
@@ -36,8 +36,7 @@ export interface BotPermissions {
     roles: BotRole[];
 }
 
-/** Private DM has no screen yet: nobody can message a bot until DMs ship, so a switch for it would promise too much */
-export const SHOWN_ACTIONS: readonly RuleAction[] = ["chat", "summon", "manage"];
+export const SHOWN_ACTIONS: readonly RuleAction[] = ["chat", "dm", "summon", "manage"];
 
 /** Longest line Orbit keeps for people who may not chat with the bot */
 export const REFUSAL_REPLY_MAX = 500;
@@ -163,8 +162,8 @@ export function defaultFor(action: RuleAction, rule: BotRule, roles: readonly Bo
 export interface RuleSummaryText {
     blocked: string;
     follows: string;
-    /** "Chat nearby", "Summon", "Manage" */
-    action: Record<"chat" | "summon" | "manage", string>;
+    /** "Chat nearby", "Direct messages", "Summon", "Manage" */
+    action: Record<RuleAction, string>;
     /** Puts what a row blocks after what it allows: "Chat nearby · Summon blocked" */
     allowsAndBlocks: (allows: string, blocks: string) => string;
     blocksOnly: (blocks: string) => string;
@@ -172,9 +171,9 @@ export interface RuleSummaryText {
 
 /** The line under a row on the bot page: what the row lets the role or person do */
 export function ruleSummary(rule: BotRule, t: RuleSummaryText): string {
-    const using = ["chat", "summon"] as const;
-    const yes = SHOWN_ACTIONS.filter((action) => rule[action] === "yes").map((action) => t.action[action as "chat"]);
-    const no = SHOWN_ACTIONS.filter((action) => rule[action] === "no").map((action) => t.action[action as "chat"]);
+    const using = ["chat", "dm", "summon"] as const;
+    const yes = SHOWN_ACTIONS.filter((action) => rule[action] === "yes").map((action) => t.action[action]);
+    const no = SHOWN_ACTIONS.filter((action) => rule[action] === "no").map((action) => t.action[action]);
     if (using.every((action) => rule[action] === "no") && !yes.length) return t.blocked;
     if (yes.length && no.length) return t.allowsAndBlocks(yes.join(", "), no.join(", "));
     if (yes.length) return yes.join(", ");
