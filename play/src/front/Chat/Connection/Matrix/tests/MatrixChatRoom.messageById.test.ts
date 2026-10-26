@@ -19,12 +19,16 @@ vi.mock("../MatrixChatMessage", () => ({
     MatrixChatMessage: class {
         removed = false;
         destroyed = false;
+        body = "";
         constructor(public event: { decrypted: boolean }) {}
         markAsRemoved() {
             this.removed = true;
         }
         destroy() {
             this.destroyed = true;
+        }
+        modifyContent(body: string) {
+            this.body = body;
         }
     },
 }));
@@ -67,5 +71,15 @@ describe("a message read on its own, outside the loaded conversation", () => {
         const message = (await room.getMessageById("$old")) as unknown as { removed: boolean };
         room["handleDeletion"]({ getAssociatedId: () => "$old" } as never);
         expect(message.removed).toBe(true);
+    });
+
+    it("gets an edit made while it is shown", async () => {
+        const { room } = roomReading();
+        const message = (await room.getMessageById("$old")) as unknown as { body: string };
+        room["handleMessageModification"]({
+            getRelation: () => ({ event_id: "$old" }),
+            getOriginalContent: () => ({ "m.new_content": { body: "Meet at the lobby" } }),
+        } as never);
+        expect(message.body).toBe("Meet at the lobby");
     });
 });
