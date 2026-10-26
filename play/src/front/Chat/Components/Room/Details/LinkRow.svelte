@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onMount } from "svelte";
+    import { onDestroy, onMount } from "svelte";
     import LL, { locale } from "../../../../../i18n/i18n-svelte";
     import type { ChatMessage } from "../../../Connection/ChatConnection";
     import { fetchWebPreview, type WebPreview } from "../../../LinkPreview/LinkPreviewFetcher";
@@ -10,17 +10,44 @@
     import { sharedSender } from "./sharedSender";
     import { IconLink } from "@wa-icons";
 
-    /** A link the chat shared: its page's picture and title when it has a preview, the site, who sent it and when. */
+    /**
+     * A link the chat shared: its page's picture and title when it has a preview, the site, who sent it and when. The
+     * preview is only asked for once the row comes into view, not while its tab waits beside the open one.
+     */
     export let url: string;
     export let message: ChatMessage;
 
     let preview: WebPreview | undefined;
+    let row: HTMLElement;
+    let observer: IntersectionObserver | undefined;
+    let asked = false;
 
-    onMount(() => {
+    function load() {
+        if (asked) return;
+        asked = true;
         fetchWebPreview(url)
             .then((result) => (preview = result))
             .catch((error) => console.error(error));
+    }
+
+    onMount(() => {
+        if (typeof IntersectionObserver === "undefined") {
+            load();
+            return;
+        }
+        observer = new IntersectionObserver(
+            (entries) => {
+                if (!entries.some((entry) => entry.isIntersecting)) return;
+                load();
+                observer?.disconnect();
+            },
+            // Ahead while scrolling down, but not sideways into the next tab.
+            { rootMargin: "200px 0px" }
+        );
+        observer.observe(row);
     });
+
+    onDestroy(() => observer?.disconnect());
 
     function siteOf(link: string): string {
         try {
@@ -51,6 +78,7 @@
     rel="noopener noreferrer"
     class="shared-row flex min-h-[44px] items-center gap-3 rounded-xl p-2 text-inherit no-underline"
     on:click={open}
+    bind:this={row}
     data-testid="sharedLink"
 >
     <span class="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-lg bg-white/10 text-white/70">
