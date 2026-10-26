@@ -1,5 +1,5 @@
 import type { TranslationFunctions } from "../../../../../i18n/i18n-types";
-import type { TopRowPerson, TopRowState } from "../../TopRow/TopRowSummary";
+import type { TopRowPerson, TopRowSpaceKind, TopRowState } from "../../TopRow/TopRowSummary";
 
 /**
  * What the proximity chat is called and the line under it, in its header and its details: the area's name or the
@@ -20,4 +20,9 @@ export function nearbyTitleLines<P extends TopRowPerson>(
         ? LL.chat.nearby.idle()
         : LL.chat.nearby.title();
     return { title, subtitle, isLive };
+}
+
+/** The proximity chat's name on its own, as its header's title says it: a meeting or stream area's name, or the chat's. */
+export function nearbyChatName(spaceKind: TopRowSpaceKind, spaceName: string, LL: TranslationFunctions): string {
+    return ((spaceKind === "meeting" || spaceKind === "stream") && spaceName) || LL.chat.nearby.title();
 }
