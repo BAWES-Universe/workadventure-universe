@@ -802,8 +802,6 @@
     }
 
     onDestroy(() => {
-        // Closing or leaving the nearby chat closes its details too.
-        closeNearbyDetails();
         resizeObserver?.disconnect();
         childListObserver?.disconnect();
         clearTimeout(redrawTimer);
