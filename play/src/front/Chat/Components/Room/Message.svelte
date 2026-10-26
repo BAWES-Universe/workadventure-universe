@@ -30,6 +30,7 @@
     import QuotedMessage from "./MessageActions/QuotedMessage.svelte";
     import { messageGestures } from "./MessageActions/messageGestures";
     import { availableActions, hasAnyAction, replyTo } from "./MessageActions/availableActions";
+    import { flashMessage } from "./Details/Pins";
     import { chatTime } from "./MessageTime";
     import { IconArrowBackUp, IconInfoCircle, IconPaperclip, IconTrash } from "@wa-icons";
 
@@ -141,12 +142,7 @@
     function jumpToQuoted() {
         if (!quotedMessage) return;
         const target = document.querySelector(`[data-event-id="${CSS.escape(quotedMessage.id)}"]`);
-        if (!(target instanceof HTMLElement)) return;
-        target.scrollIntoView({ behavior: "smooth", block: "center" });
-        target.classList.remove("quote-flash");
-        void target.offsetWidth;
-        target.classList.add("quote-flash");
-        setTimeout(() => target.classList.remove("quote-flash"), 1600);
+        if (target instanceof HTMLElement) flashMessage(target);
     }
 
     // An encrypted Matrix message only learns whether it is an image, a file… once decrypted, which updates its content.

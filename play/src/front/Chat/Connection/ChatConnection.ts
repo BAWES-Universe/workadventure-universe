@@ -127,6 +127,21 @@ export class InvitationNoLongerAvailableError extends Error {
     }
 }
 
+/** A chat whose messages can be pinned for everyone in it (Matrix keeps the list in the room's state). */
+export interface ChatRoomPins {
+    /** The pinned messages' ids, the most recently pinned last. */
+    readonly pinnedMessageIds: Readable<string[]>;
+    /** Whether this person may pin and unpin in this chat (both people in a direct chat; Admins and Moderators in a group). */
+    readonly canPinMessages: Readable<boolean>;
+    readonly setMessagePinned: (messageId: string, pinned: boolean) => Promise<void>;
+    /** A pinned message that is not loaded yet is fetched on its own. */
+    readonly getMessageById: (messageId: string) => Promise<ChatMessage | undefined>;
+}
+
+export function hasPins(room: ChatRoom | undefined): room is ChatRoom & ChatRoomPins {
+    return room !== undefined && "pinnedMessageIds" in room && "setMessagePinned" in room;
+}
+
 export interface ChatRoomMembershipManagement {
     readonly name: Readable<string>;
     readonly myMembership: Readable<ChatRoomMembership>;

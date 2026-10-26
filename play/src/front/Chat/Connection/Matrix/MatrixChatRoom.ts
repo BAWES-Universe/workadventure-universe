@@ -36,6 +36,7 @@ import type {
     ChatRoomMembershipManagement,
     ChatRoomModeration,
     ChatRoomNotificationControl,
+    ChatRoomPins,
     memberTypingInformation,
 } from "../ChatConnection";
 import { ChatPermissionLevel, InvitationNoLongerAvailableError } from "../ChatConnection";
@@ -78,7 +79,7 @@ type EventId = string;
 type ModerationAction = "ban" | "kick" | "invite" | "redact";
 
 export class MatrixChatRoom
-    implements ChatRoom, ChatRoomMembershipManagement, ChatRoomModeration, ChatRoomNotificationControl
+    implements ChatRoom, ChatRoomMembershipManagement, ChatRoomModeration, ChatRoomNotificationControl, ChatRoomPins
 {
     readonly id: string;
     readonly name: Writable<string>;
@@ -100,6 +101,8 @@ export class MatrixChatRoom
     isRoomFolder = false;
     areNotificationsMuted = writable(false);
     currentRoomMember: Readable<MatrixChatRoomMember>;
+    readonly pinnedMessageIds: Writable<string[]>;
+    readonly canPinMessages: Writable<boolean>;
     private notSentEvents: MapStore<string, MatrixEvent> = new MapStore<string, MatrixEvent>();
     shouldRetrySendingEvents = derived(this.notSentEvents, (notSentEvents) => notSentEvents.size > 0);
 
@@ -154,6 +157,8 @@ export class MatrixChatRoom
         ]);
 
         this.hasPreviousMessage = writable(false);
+        this.pinnedMessageIds = writable(this.readPinnedMessageIds());
+        this.canPinMessages = writable(this.mayPinMessages());
 
         this.currentRoomMember = derived(
             this.members,
@@ -295,6 +300,12 @@ export class MatrixChatRoom
 
     private onRoomStateEvent(event: MatrixEvent, state: RoomState, lastStateEvent: MatrixEvent | null) {
         const eventType = event.getType();
+        if (eventType === EventType.RoomPinnedEvents) {
+            this.pinnedMessageIds.set(this.readPinnedMessageIds());
+        }
+        if (eventType === EventType.RoomPowerLevels || eventType === EventType.RoomMember) {
+            this.canPinMessages.set(this.mayPinMessages());
+        }
         if (eventType === EventType.RoomAvatar || eventType === EventType.RoomMember) {
             const mxc = this.currentPictureMxc();
             if (mxc !== get(this.pictureMxc)) this.pictureMxc.set(mxc);
@@ -988,6 +999,34 @@ export class MatrixChatRoom
 
                 return hasSufficientPowerLevel && currentRoomMemberPowerLevel > otherUserPowerLevel;
             }
+        );
+    }
+
+    /** The ids in the room's pinned messages state, in its order (the most recently pinned last). */
+    private readPinnedMessageIds(): string[] {
+        const pinned: unknown = this.matrixRoom.currentState
+            ?.getStateEvents(EventType.RoomPinnedEvents, "")
+            ?.getContent()?.pinned;
+        return Array.isArray(pinned) ? pinned.filter((id): id is string => typeof id === "string") : [];
+    }
+
+    private mayPinMessages(): boolean {
+        return (
+            this.matrixRoom.currentState?.maySendStateEvent(
+                EventType.RoomPinnedEvents,
+                this.matrixRoom.client.getSafeUserId()
+            ) ?? false
+        );
+    }
+
+    /** Pins or unpins a message for everyone in the chat. A message pinned again moves to the end (the newest pin). */
+    public async setMessagePinned(messageId: string, pinned: boolean): Promise<void> {
+        const others = this.readPinnedMessageIds().filter((id) => id !== messageId);
+        await this.matrixRoom.client.sendStateEvent(
+            this.id,
+            EventType.RoomPinnedEvents,
+            { pinned: pinned ? [...others, messageId] : others },
+            ""
         );
     }
 

@@ -9,6 +9,7 @@
     import TopRowAvatar from "../../TopRow/TopRowAvatar.svelte";
     import ManageParticipantsModal from "../ManageParticipantsModal.svelte";
     import SharedSummary from "./SharedSummary.svelte";
+    import PinnedSummary from "./PinnedSummary.svelte";
     import MemberRow from "./MemberRow.svelte";
     import { IconChevronLeft, IconChevronRight, IconLogout, IconMute, IconUserEdit } from "@wa-icons";
 
@@ -87,6 +88,7 @@
             <div class="text-xs text-white/60">{$LL.chat.directChat.members({ count: joined.length })}</div>
         </div>
 
+        <PinnedSummary {room} />
         <SharedSummary {room} />
 
         <div class="details-group" data-testid="roomDetailsPeople">

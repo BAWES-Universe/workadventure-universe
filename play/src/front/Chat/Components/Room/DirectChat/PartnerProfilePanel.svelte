@@ -27,6 +27,7 @@
     import TopRowAvatar from "../../TopRow/TopRowAvatar.svelte";
     import VisitCard from "../../../../Components/VisitCard/VisitCard.svelte";
     import SharedSummary from "../Details/SharedSummary.svelte";
+    import PinnedSummary from "../Details/PinnedSummary.svelte";
     import { gameSceneStore } from "../../../../Stores/GameSceneStore";
     import { botApiService } from "../../../../external-modules/bots/services/BotApiService";
     import { botHomeRoom } from "../../../Bots/BotHomeRoom";
@@ -250,6 +251,7 @@
             </div>
         {/if}
 
+        <PinnedSummary {room} />
         <SharedSummary {room} />
 
         {#if friendAction && !friendAction.danger}
