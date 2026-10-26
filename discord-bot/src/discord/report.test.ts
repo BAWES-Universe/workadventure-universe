@@ -145,6 +145,19 @@ test("without Orbit's names the room's address stands in, in Orbit's first unive
     assert.equal(embed.fields![0].value, "main\n**1 person**\nOmar");
 });
 
+test("a universe takes its name from any of its rooms Orbit knows, not only the first", () => {
+    const rooms: RoomDetailsMap = {
+        [url("acme/main/lobby")]: { people: 1, bots: 0, names: ["Omar"] },
+        [url("acme/studio/lab")]: { people: 2, bots: 0, names: ["Sara", "Noor"] },
+    };
+    const metadata = new Map<string, RoomMetadata>([
+        ["acme/studio/lab", { universeName: "Acme Universe", worldName: "Studio World", roomName: "Design Lab", universeColour: "#d946ef" }],
+    ]);
+    const [universe] = groupUniverses(rooms, metadata, "https://play.test");
+    assert.equal(universe.name, "Acme Universe");
+    assert.equal(universe.colour, "#d946ef");
+});
+
 test("ten names, then how many more", () => {
     const names = Array.from({ length: 22 }, (_, index) => `P${index + 1}`);
     assert.equal(namesLine(names), "P1, P2, P3, P4, P5, P6, P7, P8, P9, P10 and 12 more");

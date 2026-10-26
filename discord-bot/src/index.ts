@@ -180,7 +180,12 @@ class DiscordBotService {
             const report = buildReport(rooms, roomMetadataMap, icons, new Date(), this.pusherUrl);
 
             // Clears the channel first, then sends the summary and the universes' posts.
-            await this.discordBot.sendStatsReport(report.summary, report.universes);
+            const sent = await this.discordBot.sendStatsReport(report.summary, report.universes);
+            if (!sent) {
+                // An emoji changed by hand in the Developer Portal would make every post fail: read them again next time.
+                this.appEmoji.forget();
+                return;
+            }
 
             console.log(`Stats channel updated with ${report.universes.length} universe post${report.universes.length === 1 ? "" : "s"}`);
         } catch (error) {

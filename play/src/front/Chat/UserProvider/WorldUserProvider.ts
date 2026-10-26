@@ -23,7 +23,14 @@ export class WorldUserProvider implements UserProviderInterface {
             []
         );
         this.userCount = derived(this.users, countPeople);
-        this.peopleCount = derived(this.users, (users) => countPeople(users.filter((user) => !user.isBot)));
+        // From everyone in the world, not the search results: the badge doesn't change as you type in the People filter.
+        this.peopleCount = derived(allUsersInWorldSpace.usersStore, (users) =>
+            countPeople(
+                Array.from(users.values())
+                    .map(mapExtendedSpaceUserToChatUser)
+                    .filter((user) => !user.isBot)
+            )
+        );
     }
 
     setFilter(searchText: string): Promise<void> {
@@ -47,4 +54,17 @@ export function countPeople(users: { spaceUserId?: string; uuid?: string }[]): n
 export function countPeopleAndBots(users: { isBot?: boolean }[]): { people: number; bots: number } {
     const bots = users.filter((user) => user.isBot).length;
     return { people: users.length - bots, bots };
+}
+
+/** The people in this world's other rooms, for "Elsewhere in this world" (#1396): bots left out, sessions counted as
+ * the list gives them. */
+export function countPeopleElsewhere(
+    usersByRoom: Map<string | undefined, { users: { isBot?: boolean }[] }>,
+    currentRoomUrl: string | undefined
+): number {
+    let people = 0;
+    for (const [playUri, entry] of usersByRoom) {
+        if (playUri !== undefined && playUri !== currentRoomUrl) people += countPeopleAndBots(entry.users).people;
+    }
+    return people;
 }

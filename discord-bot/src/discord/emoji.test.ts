@@ -64,6 +64,18 @@ test("sets them up once", async () => {
     assert.equal(posted.length, 5);
 });
 
+test("reads the emoji again after forget, so ones changed in the Developer Portal are picked up", async () => {
+    const listed = [{ id: "old-planet", name: "universe_planet" }];
+    const { http } = fakeDiscord(listed);
+    const emoji = new AppEmoji("token", http, DIR);
+    assert.equal((await emoji.get()).universe?.id, "old-planet");
+
+    listed[0] = { id: "new-planet", name: "universe_planet" };
+    assert.equal((await emoji.get()).universe?.id, "old-planet", "kept until told to forget");
+    emoji.forget();
+    assert.equal((await emoji.get()).universe?.id, "new-planet");
+});
+
 test("falls back to no icons when Discord says no, and tries again next time", async () => {
     const quiet = console.warn;
     console.warn = () => undefined;

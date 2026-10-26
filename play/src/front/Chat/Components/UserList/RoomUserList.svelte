@@ -22,7 +22,7 @@
         friendsStore,
         relationshipsStore,
     } from "../../Stores/FriendsStore";
-    import { countPeopleAndBots } from "../../UserProvider/WorldUserProvider";
+    import { countPeopleAndBots, countPeopleElsewhere } from "../../UserProvider/WorldUserProvider";
     import UserList from "./UserList.svelte";
     import PeopleAndBots from "./PeopleAndBots.svelte";
     import type { SelfIdentity } from "./PersonActions";
@@ -124,7 +124,7 @@
     }
 
     // Counts are of sessions (one per open tab or device), before the search filters them: "6 people · 21 bots" is
-    // unchanged. People and bots are counted apart (#1389).
+    // unchanged. People and bots are counted apart (#1389), and Elsewhere counts people only (#1396).
     $: hereEntry = $usersByRoom.get(currentRoomUrl);
     $: hereCount = countPeopleAndBots(hereEntry?.users ?? []);
     $: hereCountText =
@@ -134,9 +134,7 @@
               })}`
             : $LL.chat.peopleTab.countPeople({ count: hereCount.people });
     $: hereName = hereEntry?.roomName?.trim() || mapRoomName || $LL.chat.peopleTab.thisRoom();
-    $: elsewhereCount = Array.from($usersByRoom.entries())
-        .filter(([playUri]) => playUri !== undefined && playUri !== currentRoomUrl)
-        .reduce((total, [, entry]) => total + entry.users.length, 0);
+    $: elsewhereCount = countPeopleElsewhere($usersByRoom, currentRoomUrl);
 
     // Rows are of people: all the sessions of one account make one row, shown with the room of its primary session
     // (this tab for you, one on this map when there is one).

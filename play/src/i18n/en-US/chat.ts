@@ -498,10 +498,12 @@ const chat: BaseTranslation = {
     },
     connectionError: "Chat not available",
     requiresLoginForChatModal: {
-        title: "Log in to unlock the chat!",
-        content_1: "To fully enjoy this chat feature, you need to be logged into your account.",
-        content_2: "Logging in gives you access to all options and allows you to continue without interruption.",
-        content_3: " Please log in to proceed with the experience.",
+        titleStart: "Message anyone, ",
+        titleHighlight: "anywhere.",
+        body: "As a guest you can chat with people next to you. Sign in to message anyone, start groups and keep your chats.",
+        notNow: "Not now",
+        signIn: "Sign in",
+        close: "Close",
     },
     verificationEmojiDialog: {
         confirmation: "They match",

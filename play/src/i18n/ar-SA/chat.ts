@@ -365,12 +365,6 @@ const chat: DeepPartial<Translation["chat"]> = {
         },
     },
     connectionError: "الدردشة غير متاحة",
-    requiresLoginForChatModal: {
-        title: "قم بتسجيل الدخول لفتح الدردشة!",
-        content_1: "للاستمتاع الكامل بميزة الدردشة هذه، تحتاج إلى تسجيل الدخول إلى حسابك.",
-        content_2: "يتيح لك تسجيل الدخول الوصول إلى جميع الخيارات ويسمح لك بالاستمرار دون انقطاع.",
-        content_3: " يرجى تسجيل الدخول للمتابعة مع التجربة.",
-    },
     verificationEmojiDialog: {
         confirmation: "تطابقوا",
         mismatch: "لا يتطابقون",

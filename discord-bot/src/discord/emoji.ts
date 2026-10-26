@@ -49,6 +49,11 @@ export class AppEmoji {
         }
     }
 
+    /** Forget the emoji set up so far, so the next report reads them again (after Discord refused a post). */
+    forget(): void {
+        this.icons = undefined;
+    }
+
     private async setUp(): Promise<ReportIcons> {
         const headers = { Authorization: `Bot ${this.botToken}` };
         const app = await this.http.get<{ id: string }>(`${this.baseUrl}/applications/@me`, { headers });

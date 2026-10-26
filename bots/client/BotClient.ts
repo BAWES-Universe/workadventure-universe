@@ -2506,12 +2506,12 @@ export class BotClient {
                 this.emitJoinSpace(worldSpaceName, FilterType.ALL_USERS, ["availabilityStatus", "chatID"])
                     .then((spaceUserId) => {
                         this.spaces.set(worldSpaceName, spaceUserId);
-                        // Send initial user state update with availabilityStatus = ONLINE (1)
+                        // The bot is already ONLINE from its room join (availabilityStatus=1 above). A space update may
+                        // not change it: the pusher refuses the field and reports an error on every join (#1403).
                         this.sendSpaceUserUpdate(worldSpaceName, {
                             cameraState: false,
                             microphoneState: false,
                             screenSharingState: false,
-                            availabilityStatus: 1, // ONLINE
                         });
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                             console.log(`[Bot ${this.config.botId}] Joined world space: ${worldSpaceName}`);
@@ -3032,7 +3032,6 @@ export class BotClient {
         microphoneState: boolean;
         screenSharingState: boolean;
         megaphoneState: boolean;
-        availabilityStatus: number;
     }>): void {
         // Build the updateMask paths based on what we're updating
         const paths: string[] = [];
@@ -3040,7 +3039,6 @@ export class BotClient {
         if ('microphoneState' in updates) paths.push('microphoneState');
         if ('screenSharingState' in updates) paths.push('screenSharingState');
         if ('megaphoneState' in updates) paths.push('megaphoneState');
-        if ('availabilityStatus' in updates) paths.push('availabilityStatus');
         
         // Get our spaceUserId for this space
         const spaceUserId = this.spaces.get(spaceName);
@@ -3063,7 +3061,7 @@ export class BotClient {
                         color: '',
                         characterTextures: [],
                         isLogged: false,
-                        availabilityStatus: updates.availabilityStatus ?? 1, // Default to ONLINE (1) instead of UNCHANGED (0)
+                        availabilityStatus: 1, // ONLINE; not in the update mask, so the pusher ignores it
                         roomName: undefined,
                         visitCardUrl: undefined,
                         tags: ['bot'],
