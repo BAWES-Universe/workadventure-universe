@@ -843,8 +843,8 @@ class ConnectionManager {
         }
 
         // Right after a sign-in: the guest token this device kept aside goes along once, so Orbit can join the guest's
-        // visits to the account. Only with an account's token. It goes once: it is removed when the pusher has answered,
-        // and stays if the request fails, so a retry still carries it (it expires on its own).
+        // visits to the account. Only with an account's token. It goes once: it is removed when the pusher has signed the
+        // person in, and stays if the request fails or is refused, so a retry still carries it (it expires on its own).
         const guestToken = localUserStore.peekGuestTokenAside();
         const sendGuestToken = guestToken !== null && localUserStore.storedTokenIsAccounts();
 
@@ -868,7 +868,6 @@ class ConnectionManager {
             .catch((err) => {
                 throw err;
             });
-        localUserStore.dropGuestTokenAside();
 
         const response = MeResponse.parse(data);
 
@@ -881,6 +880,8 @@ class ConnectionManager {
             }
             return response;
         }
+        // Signed in: the guest token has been sent, so it is removed.
+        localUserStore.dropGuestTokenAside();
 
         const {
             authToken,

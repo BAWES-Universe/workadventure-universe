@@ -228,4 +228,16 @@ describe("signing in from a Sign in button as a guest", () => {
         await openTheGame();
         expect(mocks.me.mock.calls[1][1].params.guestToken).toBe(guestToken);
     });
+
+    it("keeps the guest token when the pusher answers with an error, so a retry still carries it", async () => {
+        connectionManager.goToSignIn();
+        localUserStore.setAuthToken(gameToken);
+        mocks.me.mockResolvedValueOnce({
+            data: { status: "error", type: "error", code: "TOKEN", title: "Sign in again", subtitle: "", details: "" },
+        });
+        await openTheGame();
+
+        await openTheGame();
+        expect(mocks.me.mock.calls[1][1].params.guestToken).toBe(guestToken);
+    });
 });
