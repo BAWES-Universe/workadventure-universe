@@ -7,7 +7,7 @@
  */
 
 import type { AIProvider } from '../AIProvider';
-import type { AIProviderConfig, AIStreamChunk, AIResponse } from '../types';
+import type { AIProviderConfig, AIStreamChunk, AIResponse, AIUsageDetail } from '../types';
 import { decryptApiKey } from '../encryption';
 import { fetchFor, statusFromError } from './ownKeyHttp';
 import { linkExternalAbort } from './abortUtils';
@@ -29,7 +29,33 @@ export function readCachedPromptTokens(usage: any): number | undefined {
     return undefined;
 }
 
+/**
+ * Everything a response's `usage` says beyond the two totals (#1173): cached input (DeepSeek and OpenAI), tokens written
+ * to the cache (OpenRouter), reasoning tokens inside the completion, and the cost the provider charged (OpenRouter).
+ * A figure the provider did not send is left out, so "no cache figure" stays different from "nothing was cached".
+ */
+export function readUsageDetail(usage: any): AIUsageDetail {
+    if (!usage || typeof usage !== 'object') return {};
+    const detail: AIUsageDetail = {};
+    const cached = readCachedPromptTokens(usage);
+    if (cached !== undefined) detail.cachedPromptTokens = cached;
+    const written = usage.prompt_tokens_details?.cache_write_tokens;
+    if (typeof written === 'number') detail.cacheWriteTokens = written;
+    const reasoning = usage.completion_tokens_details?.reasoning_tokens;
+    if (typeof reasoning === 'number') detail.reasoningTokens = reasoning;
+    if (typeof usage.cost === 'number' && Number.isFinite(usage.cost)) detail.costUsd = usage.cost;
+    return detail;
+}
+
+/** Does this error say the provider refused `stream_options` (the request asking a stream to report usage)? */
+export function refusesStreamOptions(status: number, errorText: string): boolean {
+    return (status === 400 || status === 422) && /stream_options|include_usage/i.test(errorText);
+}
+
 export class OpenAIProvider implements AIProvider {
+    /** Endpoints that refused `stream_options` once. They are not asked again, so a provider that does not know it costs one failed request, not one per reply. */
+    private static readonly refusedStreamOptions = new Set<string>();
+
     private readonly DEFAULT_ENDPOINT = 'https://api.openai.com/v1';
     private readonly DEFAULT_TIMEOUT = 30000; // 30 seconds
 
@@ -189,7 +215,7 @@ export class OpenAIProvider implements AIProvider {
         const startTime = Date.now();
         let tokensUsed = 0;
         let promptTokens = 0;
-        let cachedPromptTokens: number | undefined;
+        let usageDetail: AIUsageDetail = {};
         let completionTokens = 0;
         let responseModel = '';
         let streamEnded = false;
@@ -209,6 +235,11 @@ export class OpenAIProvider implements AIProvider {
             timeoutId = setTimeout(() => controller.abort(), timeout);
 
             const requestBody = this.buildRequestBody(systemPrompt, userMessage, config, true, tools, images);
+            // Ask the stream to end with a usage chunk. Without it a provider may leave usage out of a stream, and the reply is
+            // recorded with 0 tokens (#1173). A provider that refuses the field is retried without it below, and remembered.
+            if (!OpenAIProvider.refusedStreamOptions.has(endpoint)) {
+                requestBody.stream_options = { ...requestBody.stream_options, include_usage: true };
+            }
 
             const response = await fetchFor(config)(endpoint, {
                 method: 'POST',
@@ -238,6 +269,35 @@ export class OpenAIProvider implements AIProvider {
                     errorData?.error?.message?.includes('Only the default')) {
                     const retryBody = { ...requestBody };
                     delete retryBody.temperature;
+
+                    const retryController = new AbortController();
+                    externalAbortCleanups.push(linkExternalAbort(externalSignal, retryController));
+                    streamController = retryController; // update for active stream
+                    timeoutId = setTimeout(() => retryController.abort(), timeout);
+                    const retryResponse = await fetchFor(config)(endpoint, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${apiKey}`,
+                        },
+                        body: JSON.stringify(retryBody),
+                        signal: retryController.signal,
+                    });
+
+                    clearTimeout(timeoutId);
+
+                    if (!retryResponse.ok) {
+                        const retryErrorText = await retryResponse.text();
+                        throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
+                    }
+
+                    finalResponse = retryResponse;
+                }
+                // Retry without stream_options if the provider does not know it
+                else if (requestBody.stream_options && refusesStreamOptions(response.status, errorText)) {
+                    OpenAIProvider.refusedStreamOptions.add(endpoint);
+                    const retryBody = { ...requestBody };
+                    delete retryBody.stream_options;
 
                     const retryController = new AbortController();
                     externalAbortCleanups.push(linkExternalAbort(externalSignal, retryController));
@@ -349,10 +409,7 @@ export class OpenAIProvider implements AIProvider {
                                     completionTokens = usage.completion_tokens;
                                 }
                                 tokensUsed = (usage.prompt_tokens || 0) + (usage.completion_tokens || 0);
-                                const cached = readCachedPromptTokens(usage);
-                                if (cached !== undefined) {
-                                    cachedPromptTokens = cached;
-                                }
+                                usageDetail = { ...usageDetail, ...readUsageDetail(usage) };
                             }
 
                             // Track response model
@@ -396,7 +453,10 @@ export class OpenAIProvider implements AIProvider {
                 metadata: {
                     tokensUsed,
                     promptTokens,
-                    ...(cachedPromptTokens !== undefined ? { cachedPromptTokens } : {}),
+                    ...(usageDetail.cachedPromptTokens !== undefined ? { cachedPromptTokens: usageDetail.cachedPromptTokens } : {}),
+                    ...(usageDetail.cacheWriteTokens !== undefined ? { cacheWriteTokens: usageDetail.cacheWriteTokens } : {}),
+                    ...(usageDetail.reasoningTokens !== undefined ? { reasoningTokens: usageDetail.reasoningTokens } : {}),
+                    ...(usageDetail.costUsd !== undefined ? { costUsd: usageDetail.costUsd } : {}),
                     completionTokens,
                     latency,
                     error: !streamEnded && !finishReason,
@@ -564,15 +624,16 @@ export class OpenAIProvider implements AIProvider {
                 span.setAttribute("gen_ai.response.model", data.model || config.model);
                 span.setAttribute("gen_ai.usage.input_tokens", promptTokens);
                 span.setAttribute("gen_ai.usage.output_tokens", completionTokens);
-                const cachedPromptTokens = readCachedPromptTokens(data.usage);
-                if (cachedPromptTokens !== undefined) {
-                    span.setAttribute("gen_ai.usage.cache_read.input_tokens", cachedPromptTokens);
+                const usageDetail = { promptTokens, completionTokens, ...readUsageDetail(data.usage) };
+                if (usageDetail.cachedPromptTokens !== undefined) {
+                    span.setAttribute("gen_ai.usage.cache_read.input_tokens", usageDetail.cachedPromptTokens);
                 }
                 span.setAttribute("gen_ai.agent.name", config.name || '');
 
                 return {
                     content,
                     tokensUsed,
+                    usage: usageDetail,
                     latency,
                     error: false,
                     truncated: data.choices?.[0]?.finish_reason === 'length',

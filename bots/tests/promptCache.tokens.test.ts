@@ -108,7 +108,7 @@ describe("OpenAIProvider.generateStream – cached tokens", () => {
         expect("cachedPromptTokens" in last.metadata).toBe(false);
     });
 
-    it("sends the same request body as before (nothing new is asked of the provider)", async () => {
+    it("sends the same request body as before, apart from asking the stream to end with its usage (#1173)", async () => {
         const fetchMock = sse({ prompt_tokens: 1, completion_tokens: 1 });
         vi.stubGlobal("fetch", fetchMock);
         await done(new OpenAIProvider().generateStream("sys", "hi", buildConfig("openai"), [{ type: "function", function: { name: "t" } }]));
@@ -120,6 +120,7 @@ describe("OpenAIProvider.generateStream – cached tokens", () => {
                 { role: "user", content: "hi" },
             ],
             stream: true,
+            stream_options: { include_usage: true },
             tools: [{ type: "function", function: { name: "t" } }],
             tool_choice: "auto",
             temperature: 0.7,
