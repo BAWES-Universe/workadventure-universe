@@ -1042,6 +1042,7 @@
                         disabled={$shouldRetrySendingEvents}
                         {room}
                         inputHint={botPlaceholder}
+                        allowVoiceNotes={partnerBotId === undefined}
                         bind:this={messageInputBarRef}
                     />
                 {/key}

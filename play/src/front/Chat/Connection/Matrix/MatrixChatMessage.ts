@@ -8,6 +8,7 @@ import { readBotStatusNote, type BotStatusNote } from "../../Bots/BotChatStatus"
 import { readBotRoomLink, type BotRoomLink } from "../../Bots/BotRoomLink";
 import type { ChatMessage, ChatMessageContent, ChatMessageType, ChatUser } from "../ChatConnection";
 import { canRenderAttachmentInline } from "../../../Utils/InlineMimeType";
+import { fromMatrixWaveform, secondsFromMatrixDuration } from "../../VoiceNote/VoiceNote";
 import { chatUserFactory } from "./MatrixChatUser";
 import { MatrixChatMessageReaction } from "./MatrixChatMessageReaction";
 import { MatrixChatRelation } from "./MatrixChatRelation";
@@ -225,7 +226,7 @@ export class MatrixChatMessage implements ChatMessage {
                 // A picture sent as a reply still tells its body from its name.
                 filename: this.type === "text" ? undefined : this.getMediaFileName(content),
                 fileNames: undefined,
-                isVoice: this.isVoiceMessage(content),
+                ...this.voiceDetails(content),
             };
         }
 
@@ -239,11 +240,26 @@ export class MatrixChatMessage implements ChatMessage {
                 // The body of a Matrix file is its name: the blob: URL it loads from has none.
                 filename: this.getMediaFileName(content),
                 fileNames: undefined,
-                isVoice: this.isVoiceMessage(content),
+                ...this.voiceDetails(content),
             };
         }
 
         return { body: content.body, url: undefined, urls: undefined, filename: undefined, fileNames: undefined };
+    }
+
+    /** Whether the message is a voice message, and the length and shape its sender wrote with it (MSC1767). */
+    private voiceDetails(content: IContent): Pick<ChatMessageContent, "isVoice" | "voiceDuration" | "voiceWaveform"> {
+        const isVoice = this.isVoiceMessage(content);
+        if (!isVoice) return { isVoice };
+        const audio: unknown = content["org.matrix.msc1767.audio"];
+        const details = typeof audio === "object" && audio !== null ? (audio as Record<string, unknown>) : {};
+        const info: unknown = content.info;
+        const infoDuration = typeof info === "object" && info !== null ? (info as Record<string, unknown>).duration : 0;
+        return {
+            isVoice,
+            voiceDuration: secondsFromMatrixDuration(details.duration) ?? secondsFromMatrixDuration(infoDuration),
+            voiceWaveform: fromMatrixWaveform(details.waveform),
+        };
     }
 
     /** A recorded voice message, flagged by Element (MSC3245) as `org.matrix.msc3245.voice`, or `m.voice` once stable. */

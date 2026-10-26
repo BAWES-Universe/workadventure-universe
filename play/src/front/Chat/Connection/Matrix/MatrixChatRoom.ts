@@ -48,6 +48,7 @@ import { notificationManager } from "../../../Notification/NotificationManager";
 import type { PictureStore } from "../../../Stores/PictureStore";
 import LL from "../../../../i18n/i18n-svelte";
 import { previewLine } from "../../Components/Room/MessageActions/messageActions";
+import { toMatrixWaveform, VOICE_NOTE_NAME, type VoiceNoteDetails } from "../../VoiceNote/VoiceNote";
 import { MatrixChatMessage } from "./MatrixChatMessage";
 import { MatrixChatMessageReaction } from "./MatrixChatMessageReaction";
 import { matrixSecurity } from "./MatrixSecurity";
@@ -832,30 +833,59 @@ export class MatrixChatRoom
 
     private async sendFile(file: File) {
         try {
-            const uploadResponse = await this.matrixRoom.client.uploadContent(file);
-            const content: Omit<MediaEventContent, "info"> & {
-                info: Partial<MediaEventInfo>;
-                formatted_body?: string;
-                "m.new_content"?: never;
-                "m.relates_to"?: never;
-            } = {
-                body: file.name,
-                formatted_body: file.name,
-                info: {
-                    size: file.size,
-                },
-                msgtype: this.getMessageTypeFromFile(file),
-                url: uploadResponse.content_uri,
-
-                // set more specifically later
-            };
-            this.applyReplyContentIfReplyTo(content);
-
-            return this.matrixRoom.client.sendMessage(this.matrixRoom.roomId, content);
+            return await this.postFile(file);
         } catch (error) {
             console.error(error);
             return;
         }
+    }
+
+    /**
+     * Sends a recorded voice note as an audio message with Element's voice flag, so Element shows it as a voice message
+     * (and draws its shape) as it does ours. Unlike `sendFiles` it fails loudly: the composer keeps the note to retry.
+     */
+    async sendVoiceNote(file: File, details: VoiceNoteDetails): Promise<void> {
+        await this.postFile(file, details);
+    }
+
+    private async postFile(file: File, voice?: VoiceNoteDetails) {
+        const uploadResponse = await this.matrixRoom.client.uploadContent(file);
+        const content: Omit<MediaEventContent, "info"> & {
+            info: Partial<MediaEventInfo>;
+            formatted_body?: string;
+            "m.new_content"?: never;
+            "m.relates_to"?: never;
+        } = {
+            body: file.name,
+            formatted_body: file.name,
+            info: {
+                size: file.size,
+            },
+            msgtype: this.getMessageTypeFromFile(file),
+            url: uploadResponse.content_uri,
+
+            // set more specifically later
+        };
+        if (voice) {
+            // What Element X and Element Web write for a voice message (MSC3245 flag, MSC1767 length and shape).
+            content.body = VOICE_NOTE_NAME;
+            delete content.formatted_body;
+            Object.assign(content, {
+                info: {
+                    size: file.size,
+                    mimetype: file.type,
+                    duration: Math.round(voice.duration * 1000),
+                },
+                "org.matrix.msc1767.audio": {
+                    duration: Math.round(voice.duration * 1000),
+                    waveform: toMatrixWaveform(voice.waveform),
+                },
+                "org.matrix.msc3245.voice": {},
+            });
+        }
+        this.applyReplyContentIfReplyTo(content);
+
+        return this.matrixRoom.client.sendMessage(this.matrixRoom.roomId, content);
     }
 
     private getMessageTypeFromFile(file: File) {
