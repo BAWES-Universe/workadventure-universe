@@ -23,6 +23,11 @@ export interface PriceCallInput {
     reportedCostUsd?: number;
 }
 
+const usageIsReadable = (usage: CallUsage): boolean =>
+    [usage.inputTokens, usage.cachedTokens, usage.cacheWriteTokens, usage.outputTokens, usage.reasoningTokens].every(
+        (count) => typeof count === 'number' && Number.isFinite(count) && count >= 0
+    );
+
 const totalTokens = (usage: CallUsage): number => usage.inputTokens + usage.cachedTokens + usage.cacheWriteTokens + usage.outputTokens + usage.reasoningTokens;
 
 /** Millionths of a dollar for a sum of dollars. A call that cost anything at all is at least 1, so it is never saved as free. */
@@ -37,6 +42,8 @@ function ratesFor(prices: ModelPrices, context: number): Rates {
     const tier = tiers?.filter((candidate) => context >= candidate.from).sort((a, b) => b.from - a.from)[0];
     if (!tier) return base;
     const { from: _from, ...tierRates } = tier;
+    // Reasoning follows output unless the list prices it: a base reasoning price belongs to the base output price
+    if (tierRates.output !== undefined && tierRates.reasoning === undefined) delete base.reasoning;
     return { ...base, ...tierRates };
 }
 
@@ -60,9 +67,12 @@ export function priceCall({ config, usage, at, reportedCostUsd }: PriceCallInput
     // A model on someone's own computer costs Universe nothing; the person pays their own power bill
     if (config.type === 'lmstudio') return { basis: 'own_computer', micros: 0, source: null, version: null };
 
+    // A count that is missing or not a number would turn the sum into NaN, which would be saved as a free call
+    const readable = usageIsReadable(usage);
+
     // A super admin's own rate for this provider wins over every list
     const costPerToken = Number(config.settings?.costPerToken);
-    if (costPerToken > 0) {
+    if (costPerToken > 0 && readable) {
         const markup = Number(config.settings?.markup) > 0 ? Number(config.settings?.markup) : 1;
         return { basis: 'override', micros: toMicros(totalTokens(usage) * costPerToken * markup), source: 'provider settings', version: 'costPerToken' };
     }
@@ -71,6 +81,8 @@ export function priceCall({ config, usage, at, reportedCostUsd }: PriceCallInput
     if (typeof reportedCostUsd === 'number' && Number.isFinite(reportedCostUsd) && reportedCostUsd >= 0) {
         return { basis: 'provider', micros: toMicros(reportedCostUsd), source: 'provider', version: 'usage.cost' };
     }
+
+    if (!readable) return unknown('token counts not readable');
 
     const aliased = MODEL_ALIASES[providerForAddress(config.endpoint) ?? '']?.[config.model ?? ''];
     const found = findPrices(config.endpoint, aliased ?? config.model);

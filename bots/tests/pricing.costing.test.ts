@@ -118,6 +118,12 @@ describe("other providers, from the list", () => {
         expect(priceCall({ config, usage: usage({ inputTokens: 100000, cachedTokens: 150000, outputTokens: 0 }), at: monday("05:00") }).micros).toBe(100000 * 2.5 + 150000 * 0.25);
     });
 
+    it("charges reasoning at the tier's output price when the tier lists no reasoning price of its own (Qwen 3.5 Plus above 256k)", () => {
+        const config = { type: "openai", endpoint: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", model: "qwen3.5-plus" };
+        expect(priceCall({ config, usage: usage({ inputTokens: 1000, reasoningTokens: 1000 }), at: monday("05:00") }).micros).toBe(1000 * 0.4 + 1000 * 2.4);
+        expect(priceCall({ config, usage: usage({ inputTokens: 300000, reasoningTokens: 1000 }), at: monday("05:00") }).micros).toBe(300000 * 0.5 + 1000 * 3);
+    });
+
     it("finds a model whose id differs only in capital letters", () => {
         const config = { type: "openai", endpoint: "https://api.openai.com/v1", model: "GPT-5" };
         expect(priceCall({ config, usage: usage({ inputTokens: 1000 }), at: monday("05:00") }).basis).toBe("priced");
@@ -140,6 +146,22 @@ describe("a call with nothing to price it by", () => {
         expect(model).toBeDefined();
         const call = priceCall({ config: { type: "openai", endpoint: "https://api.z.ai/api/coding/paas/v4", model: model![0] }, usage: usage({ inputTokens: 1000 }), at: monday("05:00") });
         expect(call).toMatchObject({ basis: "unknown", micros: null });
+    });
+});
+
+describe("token counts that cannot be read", () => {
+    const config = { type: "openai", endpoint: "https://api.openai.com/v1", model: "gpt-5" };
+    it("are unknown, never a free call, when a count is missing or not a number", () => {
+        const missing = { ...emptyUsage(), inputTokens: 1000, cachedTokens: undefined } as any;
+        expect(priceCall({ config, usage: missing, at: monday("05:00") })).toMatchObject({ basis: "unknown", micros: null });
+        expect(priceCall({ config, usage: usage({ inputTokens: NaN }), at: monday("05:00") })).toMatchObject({ basis: "unknown", micros: null });
+        expect(priceCall({ config, usage: usage({ outputTokens: -5 }), at: monday("05:00") })).toMatchObject({ basis: "unknown", micros: null });
+    });
+    it("leave a super admin rate unknown too, but the provider own figure still counts", () => {
+        const bad = usage({ inputTokens: NaN });
+        const withRate = { ...config, settings: { costPerToken: 0.000001 } };
+        expect(priceCall({ config: withRate, usage: bad, at: monday("05:00") }).basis).toBe("unknown");
+        expect(priceCall({ config, usage: bad, at: monday("05:00"), reportedCostUsd: 0.002 })).toMatchObject({ basis: "provider", micros: 2000 });
     });
 });
 
