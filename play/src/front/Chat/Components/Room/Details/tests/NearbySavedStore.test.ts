@@ -20,7 +20,7 @@ vi.mock("../../../../../external-modules/bots/services/BotApiService", () => ({
 vi.mock("../../../../../Enum/EnvironmentVariable", () => ({ UPLOADER_URL: "https://uploader.example.com" }));
 vi.mock("../../../../Connection/Proximity/ProximityChatRoom", () => ({ ProximityChatRoom: class {} }));
 
-import { keepNearbyShared } from "../NearbySavedStore";
+import { keepNearbyShared, nearbySavedFor } from "../NearbySavedStore";
 import type { ProximityChatRoom } from "../../../../Connection/Proximity/ProximityChatRoom";
 
 function message(id: string, type: ChatMessageType, content: Partial<ChatMessageContent>) {
@@ -122,5 +122,27 @@ describe("keeping what the nearby chat shows", () => {
         expect(api.saveNearbyShared).toHaveBeenCalledTimes(2);
         expect(get(messages)).toHaveLength(1);
         stop();
+    });
+});
+
+describe("reading what was kept", () => {
+    it("asks again the next time the details open when Orbit didn't answer", async () => {
+        const { ProximityChatRoom } = await import("../../../../Connection/Proximity/ProximityChatRoom");
+        const room = new (ProximityChatRoom as unknown as new () => ProximityChatRoom)();
+        const saved = nearbySavedFor(room);
+        expect(saved).toBeDefined();
+        api.canKeep = true;
+        api.getNearbyShared.mockReset();
+        api.getNearbyShared.mockResolvedValueOnce(null).mockResolvedValueOnce({ items: [], next: "c1" });
+
+        let stop = saved?.items.subscribe(() => undefined);
+        await vi.waitFor(() => expect(api.getNearbyShared).toHaveBeenCalledTimes(1));
+        await Promise.resolve();
+        stop?.();
+
+        stop = saved?.items.subscribe(() => undefined);
+        await vi.waitFor(() => expect(api.getNearbyShared).toHaveBeenCalledTimes(2));
+        await vi.waitFor(() => expect(saved && get(saved.hasMore)).toBe(true));
+        stop?.();
     });
 });

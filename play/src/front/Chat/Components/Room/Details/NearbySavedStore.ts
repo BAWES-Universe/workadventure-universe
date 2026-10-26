@@ -129,7 +129,8 @@ async function loadPage(first: boolean): Promise<void> {
     savedState.update((current) => ({ ...current, loading: true }));
     const page = await botApiService.getNearbyShared(first ? undefined : state.next ?? undefined);
     savedState.update((current) => {
-        if (!page) return { ...current, loading: false, loaded: true };
+        // Not read this time: asked again when the details next open, or on "Look further back".
+        if (!page) return { ...current, loading: false };
         const rows = first ? page.items : [...current.rows, ...page.items];
         return { rows, next: page.next, loaded: true, loading: false };
     });

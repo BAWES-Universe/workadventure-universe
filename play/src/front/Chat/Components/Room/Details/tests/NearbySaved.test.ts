@@ -142,4 +142,18 @@ describe("Orbit's page of kept items", () => {
         expect(mergeShared(live, saved).media.map((one) => one.key)).toEqual(["m0", "m1"]);
         expect(mergeShared(live, saved).media[1]).toBe(live.media[0]);
     });
+
+    it("knows a kept link with a long key is the one the open chat still shows", () => {
+        const long = `t1 https://bawes.net/${"x".repeat(400)}`;
+        const live: SharedItems = {
+            media: [],
+            files: [],
+            links: [item(long, message("t1", "proximity"), { url: long.slice(3) })],
+        };
+        const saved = savedItemsOf(
+            [{ ...row, itemKey: long.slice(0, 300), kind: "link", fileId: null, link: "https://bawes.net/x" }],
+            "https://uploader.example.com"
+        );
+        expect(mergeShared(live, saved).links).toEqual(live.links);
+    });
 });

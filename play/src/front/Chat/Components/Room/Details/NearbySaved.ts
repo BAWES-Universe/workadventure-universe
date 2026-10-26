@@ -206,7 +206,8 @@ export function savedItemsOf(rows: readonly SavedNearbyItem[], uploaderUrl: stri
 export function mergeShared(live: SharedItems, saved: SharedItems): SharedItems {
     const merge = (liveItems: SharedItem[], savedItems: SharedItem[]) => {
         if (savedItems.length === 0) return liveItems;
-        const keys = new Set(liveItems.map((item) => item.key));
+        // A kept key was cut to what Orbit takes: the open chat's keys are cut the same way to match.
+        const keys = new Set(liveItems.map((item) => item.key.slice(0, MAX_KEY)));
         return [...liveItems, ...savedItems.filter((item) => !keys.has(item.key))].sort(
             (a, b) => (b.message.date?.getTime() ?? 0) - (a.message.date?.getTime() ?? 0)
         );
