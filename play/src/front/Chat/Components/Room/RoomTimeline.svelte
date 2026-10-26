@@ -50,6 +50,7 @@
     import { installStrayFileDropGuard, isFileDrag } from "../../../Utils/strayFileDropGuard";
     import { mapEditorToolbarInUseStore } from "../../../Stores/MapEditorStore";
     import { isTouchScreen, SETTLE_CHECKS_MS } from "../../../Utils/ViewportGuard";
+    import { ARTIFACT_CHAT_CONTEXT, type ArtifactChatOf } from "../../../Artifacts/artifactChatContext";
     import Message from "./Message.svelte";
     import {
         firstShowingIndex,
@@ -91,6 +92,16 @@
     // Cards inside messages (a bot's room) act on the other person of a direct chat.
     const partnerForCards = writable<DirectPartner | undefined>(undefined);
     setContext<Readable<DirectPartner | undefined>>(DIRECT_PARTNER_CONTEXT, partnerForCards);
+
+    // An artifact card opens its artifact from the chat it is in, which the game's server checks: the bubble's space,
+    // or the Matrix room of a direct chat. Asked when the card is tapped, since a bubble's space changes over time.
+    setContext<ArtifactChatOf>(ARTIFACT_CHAT_CONTEXT, () => {
+        if (room instanceof ProximityChatRoom) {
+            const ref = room.currentSpaceName;
+            return ref ? { kind: "nearby", ref } : undefined;
+        }
+        return room instanceof MatrixChatRoom && room.type === "direct" ? { kind: "dm", ref: room.id } : undefined;
+    });
 
     // In a direct chat, each person's woka sits on their colour from People (header, profile, messages).
     const isDirectChat = writable(false);

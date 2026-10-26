@@ -474,6 +474,7 @@ export class IoSocketController {
                             roomId,
                             userId: undefined,
                             userUuid: userData.userUuid,
+                            userIdentifier: userIdentifier || undefined,
                             isLogged,
                             ipAddress,
                             name,

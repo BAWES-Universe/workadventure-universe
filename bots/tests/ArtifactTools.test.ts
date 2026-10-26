@@ -45,7 +45,7 @@ describe('artifact tools', () => {
     });
 
     it('makes the card line the game reads, and keeps it to one line', () => {
-        expect(artifactMarker({ id: 'art-1', version: 2, title: 'Quests\n board ' })).toBe('::artifact:art-1:2::Quests board');
+        expect(artifactMarker({ id: 'art-1', version: 2, kind: 'app', title: 'Quests\n board ' })).toBe('::artifact:art-1:2:app::Quests board');
     });
 
     it('words a direct message card for the game and for any other chat app', () => {

@@ -185,6 +185,7 @@ export { default as IconGif } from "~icons/tabler/gif";
 export { default as IconTrendingUp } from "~icons/tabler/trending-up";
 export { default as IconWifiOff } from "~icons/tabler/wifi-off";
 export { default as IconHistory } from "~icons/tabler/history";
+export { default as IconCode } from "~icons/tabler/code";
 export { default as IconArrowRight } from "~icons/tabler/arrow-right";
 export { default as IconShare2 } from "~icons/tabler/share-2";
 export { default as IconMenu2 } from "~icons/tabler/menu-2";
