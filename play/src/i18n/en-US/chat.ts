@@ -75,7 +75,6 @@ const chat: BaseTranslation = {
         badgeLabel: "{name}: {role}",
         badgeLabelMore: "{name}: {role} and {count} more",
         rolesOf: "{name}'s roles",
-        memberNote: "Everyone who joined is also a Member.",
         close: "Close",
     },
     status: {
