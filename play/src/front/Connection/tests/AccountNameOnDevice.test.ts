@@ -218,4 +218,14 @@ describe("signing in from a Sign in button as a guest", () => {
         await openTheGame();
         expect(mocks.me.mock.calls[1][1].params.guestToken).toBeUndefined();
     });
+
+    it("keeps the guest token when the pusher could not be reached, so a retry still carries it", async () => {
+        connectionManager.goToSignIn();
+        localUserStore.setAuthToken(gameToken);
+        mocks.me.mockRejectedValueOnce(new Error("Network Error"));
+        await expect(openTheGame()).rejects.toThrow("Network Error");
+
+        await openTheGame();
+        expect(mocks.me.mock.calls[1][1].params.guestToken).toBe(guestToken);
+    });
 });

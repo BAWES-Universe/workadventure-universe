@@ -489,10 +489,9 @@ class LocalUserStore {
         localStorage.setItem(guestTokenAsideKey, JSON.stringify({ token, at: now }));
     }
 
-    /** The guest token kept aside, once: asking removes it. Null when there is none or it is too old. */
-    takeGuestTokenAside(now = Date.now()): string | null {
+    /** The guest token kept aside, without removing it. Null when there is none or it is too old. */
+    peekGuestTokenAside(now = Date.now()): string | null {
         const raw = localStorage.getItem(guestTokenAsideKey);
-        this.dropGuestTokenAside();
         if (!raw) return null;
         try {
             const kept = z.object({ token: z.string().min(1), at: z.number().finite() }).parse(JSON.parse(raw));
@@ -500,6 +499,13 @@ class LocalUserStore {
         } catch {
             return null;
         }
+    }
+
+    /** The guest token kept aside, once: asking removes it. */
+    takeGuestTokenAside(now = Date.now()): string | null {
+        const token = this.peekGuestTokenAside(now);
+        this.dropGuestTokenAside();
+        return token;
     }
 
     dropGuestTokenAside(): void {

@@ -55,6 +55,16 @@ describe("LocalUserStore guest token kept aside for sign-in (#1430)", () => {
         expect(localUserStore.takeGuestTokenAside(start)).toBeNull();
     });
 
+    it("can be read without being removed", () => {
+        localUserStore.setAuthToken(GUEST);
+        localUserStore.keepGuestTokenAside();
+
+        expect(localUserStore.peekGuestTokenAside()).toBe(GUEST);
+        expect(localUserStore.peekGuestTokenAside()).toBe(GUEST);
+        expect(localUserStore.takeGuestTokenAside()).toBe(GUEST);
+        expect(localUserStore.peekGuestTokenAside()).toBeNull();
+    });
+
     it("can be dropped (logout, a new guest)", () => {
         localUserStore.setAuthToken(GUEST);
         localUserStore.keepGuestTokenAside();

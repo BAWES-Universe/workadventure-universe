@@ -843,8 +843,9 @@ class ConnectionManager {
         }
 
         // Right after a sign-in: the guest token this device kept aside goes along once, so Orbit can join the guest's
-        // visits to the account. Only with an account's token; it is taken either way so it is never sent twice.
-        const guestToken = localUserStore.takeGuestTokenAside();
+        // visits to the account. Only with an account's token. It goes once: it is removed when the pusher has answered,
+        // and stays if the request fails, so a retry still carries it (it expires on its own).
+        const guestToken = localUserStore.peekGuestTokenAside();
         const sendGuestToken = guestToken !== null && localUserStore.storedTokenIsAccounts();
 
         // TODO: the call to "/me" could be completely removed and the request data could come from the FrontController
@@ -867,6 +868,7 @@ class ConnectionManager {
             .catch((err) => {
                 throw err;
             });
+        localUserStore.dropGuestTokenAside();
 
         const response = MeResponse.parse(data);
 
