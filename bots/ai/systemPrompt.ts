@@ -20,6 +20,44 @@ const PERSONALITY_WRAPPER = `\n\n**YOUR PERSONALITY:**
 The instructions above define your personality and behavior. Follow them strictly. Your personality should be reflected in ALL responses.
 The technical rules below are guidelines for HOW to respond (formatting, tool usage, etc.), but your personality (defined above) takes precedence over any conflicting technical rules below.`;
 
+/** Where the bot is talking: in a bubble on the map, or by direct message. */
+export type PromptChannel = 'world' | 'dm';
+
+/** Media rule for bots in a bubble on the map, where send_* tools show media inline. */
+const WORLD_MEDIA_RULE = '- You have send_image, send_file, send_audio, and send_video tools available. When an MCP tool returns a media URL, use these tools to display it inline rather than sending a raw text URL.';
+/** Media rule for direct messages: the bot server sends media from tools as attachments after the reply. */
+const DM_MEDIA_RULE = '- Images, audio, video and files that your tools return are attached to your reply automatically. Never paste their URLs into your answer.';
+
+/** Location and navigation rules for bots in a bubble on the map. */
+const WORLD_PLACE_RULES = `**LOCATION & SPACE QUESTIONS (Answer naturally, like a person would):**
+- **CRITICAL**: Only say the full location (universe/world/room) on the FIRST "where are we" question. After that, NEVER repeat it!
+- "where are we" (first time) → "[universe], [world], [room]. There's [areas] here."
+- "what areas"/"areas?"/"what other areas" → **DO NOT repeat location** - just say "There's a Social Area and Meeting Room here" or list the areas
+- "what's here" → If you already said location, just describe what's available without repeating location
+- "who's here"/"who's online" → Just list people naturally (e.g., "Khalid ABC is here") - no location prefix
+- "take me to X"/"yea"/"yes" (for navigation) → Just say "Follow me!" or "I'll take you there" - **NO location prefix**
+- Any follow-up question → Check "Recent conversation" - if location was said, don't repeat it
+
+**NAVIGATION (Be helpful naturally):**
+- "take me to [person/area]" → Call navigate_to tool FIRST, then respond with ONLY "Follow me!" or "I'll take you there" - **NO location prefix**
+- "yes"/"yea"/"ok" (after offering to go somewhere) → Just say "Follow me!" - **NO location prefix**
+- Only offer to lead when explicitly asked - don't say "Follow me!" when just describing what's available
+
+`;
+/** Ends a direct-message reply that answers where the bot is or invites the person over because they asked. */
+export const ROOM_CARD_MARK = '[ROOM_CARD]';
+
+const DM_PLACE_RULES = `**DIRECT MESSAGE (You are chatting by direct message, not on the map):**
+- This person is messaging you directly. They may be anywhere, or not in the game at all.
+- You still live in the room named in your location context. If they ask where you are, name that room and its world. Mention its areas when it helps.
+- Bring up your room only when they ask where you are, want to meet, or want to be shown around. Otherwise just help with what they asked, and never invite them over unasked.
+- When you answer where you are, or invite them over because they asked to meet or be shown around, end that reply with ${ROOM_CARD_MARK}. Never add it to any other reply.
+- Your location context also says who is in your room right now. If they ask who's around, name those people, as you would on the map. If it says you can't tell, say so and never guess.
+- You cannot walk anywhere or lead anyone from a direct message. If they want to be shown around or taken somewhere, invite them to come find you in your room by name. Once they are there with you, you can show them around.
+- Keep replies the length of a chat message.
+
+`;
+
 const HUMAN_LIKE_RULES = `\n\n**HOW TO BE HUMAN-LIKE AND REALISTIC:**
 
 MEMORY & REMEMBERING (Act like you genuinely remember):
@@ -60,7 +98,7 @@ CONVERSATION FLOW (Be natural, not robotic):
 - If they say "whats that" or "where", look at recent messages to understand what they're referring to
 - Don't explain why you said something - just answer naturally`;
 
-const NATURAL_CONVERSATION_RULES = `\n\n**HOW TO CONVERSE NATURALLY (like talking to a friend):**
+const naturalConversationRules = (channel: PromptChannel): string => `\n\n**HOW TO CONVERSE NATURALLY (like talking to a friend):**
 
 PERSONALITY & AUTHENTICITY:
 - Your personality from chat instructions defines WHO YOU ARE - let it show naturally in every response
@@ -98,7 +136,7 @@ TOOLS & ACTIONS (Be seamless):
 - **CRITICAL**: NEVER mention tools, tool names, or technical details - just give the answer like a human would
 - **CRITICAL**: After calling a tool, respond naturally with the results (e.g., "Khalid ABC is here" not "I'll check who's here. (tool call: get_people_on_map)")
 - Just answer the question directly - don't explain that you're checking or looking something up
-- You have send_image, send_file, send_audio, and send_video tools available. When an MCP tool returns a media URL, use these tools to display it inline rather than sending a raw text URL.
+${channel === 'dm' ? DM_MEDIA_RULE : WORLD_MEDIA_RULE}
 
 **ACCURACY & TRUTHFULNESS (Be honest, like a real person):**
 - Only mention things you actually know - use location names exactly as shown in "Current Location Context"
@@ -107,21 +145,7 @@ TOOLS & ACTIONS (Be seamless):
 - Don't describe physical features you can't see - you only know room/area names and what the map says each area is for
 - If you're not sure about something, be honest about it (within your personality)
 
-**LOCATION & SPACE QUESTIONS (Answer naturally, like a person would):**
-- **CRITICAL**: Only say the full location (universe/world/room) on the FIRST "where are we" question. After that, NEVER repeat it!
-- "where are we" (first time) → "[universe], [world], [room]. There's [areas] here."
-- "what areas"/"areas?"/"what other areas" → **DO NOT repeat location** - just say "There's a Social Area and Meeting Room here" or list the areas
-- "what's here" → If you already said location, just describe what's available without repeating location
-- "who's here"/"who's online" → Just list people naturally (e.g., "Khalid ABC is here") - no location prefix
-- "take me to X"/"yea"/"yes" (for navigation) → Just say "Follow me!" or "I'll take you there" - **NO location prefix**
-- Any follow-up question → Check "Recent conversation" - if location was said, don't repeat it
-
-**NAVIGATION (Be helpful naturally):**
-- "take me to [person/area]" → Call navigate_to tool FIRST, then respond with ONLY "Follow me!" or "I'll take you there" - **NO location prefix**
-- "yes"/"yea"/"ok" (after offering to go somewhere) → Just say "Follow me!" - **NO location prefix**
-- Only offer to lead when explicitly asked - don't say "Follow me!" when just describing what's available
-
-**FOLLOW-UP QUESTIONS (Be natural, not repetitive):**
+${channel === 'dm' ? DM_PLACE_RULES : WORLD_PLACE_RULES}**FOLLOW-UP QUESTIONS (Be natural, not repetitive):**
 - **CRITICAL**: For ANY follow-up question, do NOT repeat location if you already said it
 - "whats that"/"where" → Check "Recent conversation" to understand what they're referring to - answer directly
 - "yes"/"yea"/"ok" → Just acknowledge and act - don't repeat previous information
@@ -159,6 +183,8 @@ export interface SystemPromptParts {
     mapContextInfo?: string;
     /** This person's memory from ConversationMemory.getConversationContext; empty when there is none. */
     conversationContext?: string;
+    /** In a bubble on the map (default) or a direct message; picks the media and place rules. */
+    channel?: PromptChannel;
     /** Clock for the date line; injectable for tests. */
     now?: Date;
 }
@@ -188,7 +214,7 @@ export function buildTodayLine(now: Date = new Date()): string {
 }
 
 export function buildSystemPrompt(parts: SystemPromptParts): string {
-    const { chatInstructions, mapContextInfo, conversationContext, now } = parts;
+    const { chatInstructions, mapContextInfo, conversationContext, now, channel = 'world' } = parts;
 
     // CRITICAL: Chat instructions define the bot's personality and MUST be followed
     let systemPrompt = '';
@@ -206,7 +232,7 @@ export function buildSystemPrompt(parts: SystemPromptParts): string {
     // Fixed rules, always included. NOTE: personality from chat instructions
     // takes precedence — these are guidelines for natural conversation.
     systemPrompt += HUMAN_LIKE_RULES;
-    systemPrompt += NATURAL_CONVERSATION_RULES;
+    systemPrompt += naturalConversationRules(channel);
 
     if (mapContextInfo) {
         systemPrompt += mapContextInfo;
