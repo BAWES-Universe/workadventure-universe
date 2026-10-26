@@ -124,6 +124,9 @@ export interface BotPlayerMemory {
     // turn is in. Runtime only: nothing here is saved.
     pendingArtifacts?: Array<{ id: string; version: number; title: string; kind: 'app' | 'page' | 'markdown' | 'svg'; maker: string }>;
     dmRoomId?: string;
+    /** What make and change just did, by their arguments, so asking the model again for the same turn (a repeated reply
+     * is regenerated) does not make a second copy. Runtime only. */
+    artifactCalls?: Map<string, { at: number; result: Record<string, unknown> }>;
 }
 
 export class ConversationMemory {

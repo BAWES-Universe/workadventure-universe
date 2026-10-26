@@ -53,9 +53,14 @@ import {
     artifactsEnabled,
     formatArtifactResult,
     isArtifactTool,
+    writesArtifact,
+    ARTIFACT_CUT_OFF_MESSAGE,
     runArtifactTool,
     type ArtifactCard,
 } from './ArtifactTools';
+
+/** How long the same make or change counts as the same turn asked again. */
+const ARTIFACT_REPEAT_WINDOW_MS = 5 * 60 * 1000;
 
 /** A bot's provider, resolved by bot id (#374): the settings to call, where they came from, or "resting". */
 type ResolvedProvider =
@@ -1234,7 +1239,10 @@ Everything above is technical guidance. Follow your personality as defined in th
                                     argsLength: tc.arguments.length
                                 })));
                             }
-                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds);
+                            // Tool calls from a reply that hit its length cap may hold half a file (the repair of broken JSON would still
+                            // pass it): the first round reads the cap from this chunk, later rounds from the previous round's last chunk
+                            const replyCutOff = !!(followUpIterations === 1 ? chunk.metadata?.truncated : lastFollowUpDoneChunk?.metadata?.truncated);
+                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff);
 
                             // Collect URLs that were already sent by explicit send_* tool calls
                             // so autoSendMedia doesn't re-send them via parent tool results.
@@ -2565,8 +2573,18 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             chat = { kind: 'dm', ref: memory.dmRoomId };
         }
 
+        // The same make or change asked again within minutes is the turn being regenerated: answer with what it did
+        const repeatKey = writesArtifact(name) ? `${name}:${JSON.stringify(args)}` : undefined;
+        const earlier = repeatKey ? memory?.artifactCalls?.get(repeatKey) : undefined;
+        if (earlier && Date.now() - earlier.at < ARTIFACT_REPEAT_WINDOW_MS) return earlier.result;
+
         const run = await runArtifactTool(name, args, { admin, botId, person, chat });
         if (run.card) this.deliverArtifactCard(run.card, botClient, spaceName, memory);
+        if (repeatKey && run.card && memory) {
+            const calls = (memory.artifactCalls ??= new Map());
+            for (const [key, call] of calls) if (Date.now() - call.at >= ARTIFACT_REPEAT_WINDOW_MS) calls.delete(key);
+            calls.set(repeatKey, { at: Date.now(), result: run.result });
+        }
         return run.result;
     }
 
@@ -2597,7 +2615,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         botId?: string,
         playerId?: number,
         abortSignal?: AbortSignal,
-        toolTimeoutSeconds?: number | null
+        toolTimeoutSeconds?: number | null,
+        /** The reply these calls came from was cut off by its length cap. */
+        replyCutOff = false
     ): Promise<Array<{ id: string; name: string; result: any }>> {
         // Filter out invalid tool calls (empty name, undefined, etc.)
         const validToolCalls = toolCalls.filter(tc => tc && tc.name && tc.name.trim() !== '');
@@ -2904,6 +2924,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     case 'change_artifact':
                     case 'read_artifact':
                     case 'list_artifacts':
+                        if (replyCutOff && writesArtifact(toolCall.name)) {
+                            result = { error: ARTIFACT_CUT_OFF_MESSAGE };
+                            break;
+                        }
                         result = await this.runArtifactToolCall(
                             toolCall.name,
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},

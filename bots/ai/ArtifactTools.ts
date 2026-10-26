@@ -197,6 +197,15 @@ function cardOf(artifact: ArtifactSummary, version: number): ArtifactCard {
     return { id: artifact.id, version, title: artifact.title, kind: artifact.kind, maker: artifact.makerName };
 }
 
+/** What the model hears when its reply was cut off in the middle of a make or change: nothing was saved. */
+export const ARTIFACT_CUT_OFF_MESSAGE =
+    'Your reply was cut off before the file was finished, so nothing was saved. Try again with small edits instead of the whole file, or a smaller file.';
+
+/** Make and change write a file, so a half-written one must never go through. */
+export function writesArtifact(name: string): boolean {
+    return name === MAKE_ARTIFACT_TOOL || name === CHANGE_ARTIFACT_TOOL;
+}
+
 /** What the model hears when Orbit says no, in words it can pass on. Never the content. */
 export function describeArtifactError(error: unknown): string {
     if (error instanceof ArtifactCallError) {

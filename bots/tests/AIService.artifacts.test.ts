@@ -107,6 +107,48 @@ describe('artifact tools in AIService', () => {
         expect(client.sendChatMessage).not.toHaveBeenCalled();
     });
 
+    it('saves nothing from a reply that was cut off by its length cap, but still reads', async () => {
+        const client = botClient();
+        const orbit = admin();
+        const args = [client as never, orbit as never, undefined, 'uuid-1', 'bubble-1', 'bot1', 7, undefined, undefined] as const;
+        const change = { id: 't2', name: 'change_artifact', arguments: JSON.stringify({ id: 'art-1', content: '<h1>half' }) };
+        const cutOff = await service()['executeToolCalls']([make, change], ...args, true);
+        expect(cutOff.map((r) => r.result)).toEqual([{ error: expect.stringContaining('cut off') }, { error: expect.stringContaining('cut off') }]);
+        expect(orbit.makeArtifact).not.toHaveBeenCalled();
+        expect(orbit.changeArtifact).not.toHaveBeenCalled();
+        expect(client.sendChatMessage).not.toHaveBeenCalled();
+
+        const [listed] = await service()['executeToolCalls']([{ id: 't4', name: 'list_artifacts', arguments: '{}' }], ...args, true);
+        expect(listed.result).toHaveProperty('artifacts');
+    });
+
+    it('answers a repeated make with what it did, not a second copy, when the turn is asked again', async () => {
+        const memory: Record<string, unknown> = { userUuid: 'uuid-9', playerName: 'Alice', dmRoomId: '!dm:matrix.test', pendingArtifacts: [] };
+        const orbit = admin();
+        const ai = service(memory);
+        const call = () => ai['executeToolCalls']([make], undefined, orbit as never, undefined, 'uuid-9', 'matrix-dm', 'bot1', -3);
+        const [first] = await call();
+        const [again] = await call();
+        expect(again.result).toEqual(first.result);
+        expect(orbit.makeArtifact).toHaveBeenCalledTimes(1);
+        expect(memory.pendingArtifacts).toHaveLength(1);
+
+        // Another file is another make
+        const other = { id: 't9', name: 'make_artifact', arguments: JSON.stringify({ title: 'Other', kind: 'page', content: '<p>y</p>' }) };
+        await ai['executeToolCalls']([other], undefined, orbit as never, undefined, 'uuid-9', 'matrix-dm', 'bot1', -3);
+        expect(orbit.makeArtifact).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not remember a make that failed, so asking again tries again', async () => {
+        const memory: Record<string, unknown> = { userUuid: 'uuid-9', playerName: 'Alice', dmRoomId: '!dm:matrix.test', pendingArtifacts: [] };
+        const orbit = admin({ makeArtifact: vi.fn().mockRejectedValueOnce(new Error('down')).mockResolvedValue({ artifact: summary, version: { number: 1, summary: null }, hidden: false }) });
+        const ai = service(memory);
+        const [failed] = await ai['executeToolCalls']([make], undefined, orbit as never, undefined, 'uuid-9', 'matrix-dm', 'bot1', -3);
+        expect(failed.result).toHaveProperty('error');
+        const [second] = await ai['executeToolCalls']([make], undefined, orbit as never, undefined, 'uuid-9', 'matrix-dm', 'bot1', -3);
+        expect(second.result).toMatchObject({ success: true });
+    });
+
     it('turns a result into the line the model reads, and keeps the media interceptors away from it', async () => {
         const ai = service();
         const results = [{ id: 't1', name: 'list_artifacts', result: { artifacts: [{ id: 'art-1', title: 'T', kind: 'app', version: 1, madeBy: 'Scout' }] } }];
