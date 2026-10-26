@@ -215,11 +215,12 @@ export class DmReplyService extends BaseBehavior {
         const memory = this.conversationMemory;
 
         await this.ensureMemoriesLoaded(botId);
-        // A direct message takes the media its tools made with its answer, so anything still here is from a turn that
-        // failed: it is dropped, never sent with an answer it doesn't belong to.
-        memory.getMemory(botId, playerId)?.pendingMedia?.splice(0);
         const withUuid = memory as unknown as { setUserUuid?: (b: string, p: number, u: string, l: boolean) => void };
         withUuid.setUserUuid?.(botId, playerId, person.uuid, !person.isGuest);
+        // A direct message takes the media its tools made with its answer, so anything still here is from a turn that
+        // failed, or was queued in a bubble: it is dropped, never sent with an answer it doesn't belong to. After the
+        // uuid is set, because that restores the person's saved memory, queued media included.
+        memory.getMemory(botId, playerId)?.pendingMedia?.splice(0);
 
         // Same attachment handling as a bubble: parsed text for the model, image URLs for vision.
         let augmented = text;
