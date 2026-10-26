@@ -17,6 +17,16 @@ import { BotAPI } from './BotAPI';
 import { AdminApiService } from './AdminApiService';
 import { BotRegistry } from './BotRegistry';
 import { movementLogger } from '../utils/MovementLogger';
+import { DmReplyService, type DmRoomLink } from './DmReplyService';
+import { readMatrixConfig } from '../matrix/MatrixConfig';
+import { verifyMatrixRegistration } from '../matrix/verifyMatrixRegistration';
+import { MatrixAppServiceClient } from '../matrix/MatrixAppServiceClient';
+import { MatrixDmBridge } from '../matrix/MatrixDmBridge';
+import { createMatrixAppServiceRouter, type MatrixAppServiceRouter } from '../matrix/MatrixAppServiceRouter';
+import { uploadAttachment } from '../matrix/uploadAttachment';
+import { botWokaPicture } from '../matrix/wokaPicture';
+import type { BotAvailability } from '../matrix/BotStatusNotes';
+import type { Router } from 'express';
 import * as path from 'path';
 
 // Before anything calls Orbit or an MCP server: a failed call must never put a token or a transcript in the logs
@@ -43,7 +53,52 @@ const botRegistry = new BotRegistry(BOT_SERVER_ID, {
 });
 
 const botManager = new BotManager(adminApiService, botRegistry);
-const botAPI = new BotAPI(botManager, adminApiService, botRegistry);
+
+// Direct messages to bots over Matrix (off unless MATRIX_* is set). Synapse pushes events here; no socket per bot.
+const preRouters: Router[] = [];
+let matrixBridge: MatrixDmBridge | null = null;
+let matrixRouter: MatrixAppServiceRouter | null = null;
+let dmStatus: ((botIds: string[]) => Promise<Record<string, BotAvailability | 'unknown'>>) | undefined;
+let dmRoom: ((botId: string) => Promise<DmRoomLink | undefined>) | undefined;
+
+/** Turns direct messages on once Synapse accepts this bot server's registration; leaves them off otherwise. */
+async function setupMatrix(): Promise<void> {
+    const matrixConfig = readMatrixConfig();
+    if (!matrixConfig) return;
+    const matrixClient = new MatrixAppServiceClient(matrixConfig);
+    if (!(await verifyMatrixRegistration(matrixClient, matrixConfig))) return;
+    const dmReplyService = new DmReplyService(botManager);
+    matrixBridge = new MatrixDmBridge(matrixConfig, matrixClient, {
+        getBotConfig: (botId, fresh) => dmReplyService.getBotConfig(botId, fresh),
+        checkAccess: (botId, chatId) => adminApiService.checkDmAccess(botId, chatId),
+        reply: (botId, person, text, attachments, hooks) => dmReplyService.reply(botId, person, text, attachments, hooks),
+        rooms: botRegistry,
+        uploadAttachment,
+        restingLine: (config, text) => dmReplyService.restingLine(config, text),
+        waiting: botRegistry,
+        wokaPicture: (config) => botWokaPicture(config, { wokaList: (roomUrl, botId) => adminApiService.getBotWokaList(roomUrl, botId) }),
+    });
+    matrixRouter = createMatrixAppServiceRouter(matrixConfig, matrixBridge);
+    preRouters.push(matrixRouter);
+    // The game shows a bot's state in its chat header and the People list. Same cached lookup the replies use.
+    const bridge = matrixBridge;
+    dmStatus = async (botIds) =>
+        Object.fromEntries(
+            await Promise.all(
+                botIds.map(async (botId) => {
+                    try {
+                        return [botId, bridge.availability(botId, await dmReplyService.getBotConfig(botId))] as const;
+                    } catch {
+                        return [botId, 'unknown'] as const;
+                    }
+                })
+            )
+        );
+    dmRoom = (botId) => dmReplyService.roomOf(botId);
+    console.log(`[BotServer] Matrix direct messages on for ${matrixConfig.domain}`);
+}
+// Made in start(), once direct messages are settled: their routes are part of the API.
+let botAPI: BotAPI | undefined;
 
 // Start autopilot improvement system (DEVELOPMENT ONLY - fully autonomous)
 // This system runs tests every 30 seconds and creates improvement task files for AI analysis
@@ -71,6 +126,9 @@ if (isDevelopment) {
     console.log('[BotServer] AutoPilot disabled (production mode)');
 }
 
+/** How long shutdown waits for direct messages being answered. */
+const DM_SHUTDOWN_GRACE_MS = 8000;
+
 // Graceful shutdown handler
 async function shutdown(signal: string) {
     console.log(`[BotServer] Received ${signal}, shutting down gracefully...`);
@@ -83,7 +141,17 @@ async function shutdown(signal: string) {
         stopMovementAnalysis();
         
         // Stop API server
-        await botAPI.stop();
+        // Direct messages already taken in get their answer first; new ones go back to Synapse for the next bot server.
+        // Waiting messages a drain took but hasn't started on go back in line (before the shared store closes), and the
+        // ones being answered get the same time. Kept under the container's stop grace, so nothing is killed mid-way.
+        const [settled, drained] = await Promise.all([
+            matrixRouter ? matrixRouter.settle(DM_SHUTDOWN_GRACE_MS) : true,
+            matrixBridge ? matrixBridge.stop(DM_SHUTDOWN_GRACE_MS) : true,
+        ]);
+        if (!settled || !drained) {
+            console.warn('[BotServer] Some direct messages were still being answered at shutdown');
+        }
+        await botAPI?.stop();
         
         // Shutdown bot manager (disconnects all bots)
         await botManager.shutdown();
@@ -103,11 +171,16 @@ async function start() {
         console.log(`[BotServer] Admin API URL: ${ADMIN_API_URL || 'Not configured'}`);
         console.log(`[BotServer] Redis: ${REDIS_HOST}:${REDIS_PORT} (DB ${REDIS_DB_NUMBER})`);
 
+        // Before any bot connects: a bot shows Message only when Synapse accepted the registration
+        await setupMatrix();
+        botAPI = new BotAPI(botManager, adminApiService, botRegistry, preRouters, { dmStatus, dmRoom });
+
         // Initialize bot manager
         await botManager.initialize();
 
         // Start API server
         botAPI.start(BOT_SERVER_PORT);
+        matrixBridge?.start();
 
         console.log(`[BotServer] Bot server started on port ${BOT_SERVER_PORT}`);
 

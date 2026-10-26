@@ -31,6 +31,8 @@ export class MessageNotification implements NotificationWA {
                 ...this.options,
                 body,
                 data,
+                // The tag the service worker gives a pushed notification of this chat, so one replaces the other.
+                tag: `chat:${this.chatRoomId}`,
             });
         } catch (error) {
             console.error("Error while sending message notification", error);

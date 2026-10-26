@@ -104,6 +104,55 @@ describe("a bot server that does not answer", () => {
     });
 });
 
+describe("a bot state lookup that does not answer", () => {
+    beforeEach(() => {
+        sessionStorage.clear();
+        vi.restoreAllMocks();
+        vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it("gives up after ten seconds and cancels the request, so later lookups are not held back", async () => {
+        let signal: AbortSignal | undefined;
+        vi.spyOn(globalThis, "fetch").mockImplementation((_url, init) => {
+            signal = init?.signal ?? undefined;
+            return new Promise<Response>(() => {
+                // never answers
+            });
+        });
+
+        const asked = service().getDmStatus(["b1"]);
+        await vi.advanceTimersByTimeAsync(10000);
+
+        await expect(asked).resolves.toBeNull();
+        expect(signal?.aborted).toBe(true);
+    });
+
+    it("gives up the same way when it is the Orbit sign-in that stalls", async () => {
+        const api = service();
+        vi.spyOn(
+            api as unknown as { getAdminApiSessionToken: () => Promise<string> },
+            "getAdminApiSessionToken"
+        ).mockImplementation(
+            () =>
+                new Promise<string>(() => {
+                    // never answers, and does not listen for an abort
+                })
+        );
+        const asked = api.getDmStatus(["b1"]);
+        await vi.advanceTimersByTimeAsync(10000);
+        await expect(asked).resolves.toBeNull();
+    });
+
+    it("answers with the states when the bot server answers in time", async () => {
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(json({ bots: { b1: "resting" } }));
+        await expect(service().getDmStatus(["b1"])).resolves.toEqual({ b1: "resting" });
+    });
+});
+
 describe("an Orbit that does not answer about who may use a bot", () => {
     beforeEach(() => {
         sessionStorage.clear();

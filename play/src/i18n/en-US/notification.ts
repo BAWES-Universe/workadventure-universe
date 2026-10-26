@@ -29,6 +29,89 @@ const notification: BaseTranslation = {
     addNewTag: "add a new tag: '{tag}'",
     screenSharingError: "Cannot start screen sharing",
     urlCopiedToClipboard: "Url copied to clipboard",
+    // The card that offers notifications while Universe is closed (#863), shown right after something they help with
+    push: {
+        device: {
+            phone: "phone",
+            tablet: "tablet",
+            computer: "computer",
+        },
+        close: "Close",
+        notNow: "Not now",
+        turnOn: "Turn on",
+        done: "Done",
+        gotIt: "Got it",
+        previewLabel: "Preview",
+        previewApp: "Universe · now",
+        busy: {
+            title: "Get a notification when someone wants you?",
+            body: "You're Busy, so Universe stays quiet. It can still tell this {device} when someone messages you, even when it's closed.",
+            previewName: "Sara",
+            previewLine: "are you free for a minute?",
+            on: "You'll get a notification when someone messages you.",
+        },
+        friendRequest: {
+            title: "Get a notification when {name} accepts?",
+            body: "Universe can send this {device} a notification, even when it's closed.",
+            previewLine: "accepted your friend request",
+            on: "You'll get a notification when {name} accepts.",
+        },
+        reply: {
+            title: "Get a notification when {name} replies?",
+            body: "{name} isn't in Universe right now. Universe can tell this {device} when {name} answers, even when it's closed.",
+            botBody: "Universe can tell this {device} when {name} answers, even when it's closed.",
+            previewLine: "are you coming to standup?",
+            botPreviewLine: "Here's the summary you asked for",
+            on: "You'll get a notification when {name} replies.",
+        },
+        asking: "Your browser is asking now. Choose Allow.",
+        on: {
+            title: "Notifications are on for this {device}",
+            settings: "Change what you get in Settings, Notifications.",
+        },
+        failed: {
+            title: "Notifications couldn't be turned on",
+            body: "Universe couldn't reach this {device} just now. Try again from Settings, Notifications.",
+        },
+        blocked: {
+            title: "Notifications are blocked in this browser",
+            body: '{browser} remembers "Block" for Universe, so only {browser} can undo it:',
+            bodyAnyBrowser: 'Your browser remembers "Block" for Universe, so only it can undo it:',
+            app: "Notifications are off for Universe in your settings. To turn them on:",
+            steps: {
+                android: {
+                    step1: "Tap the icon left of the address",
+                    step2: "Tap Permissions, then Notifications",
+                    step3: "Choose Allow, then come back",
+                },
+                desktop: {
+                    step1: "Click the icon left of the address",
+                    step2: "Turn on Notifications",
+                    step3: "Reload Universe",
+                },
+                firefox: {
+                    step1: "Click the icon left of the address",
+                    step2: "Next to Notifications, clear Blocked",
+                    step3: "Reload Universe",
+                },
+                safari: {
+                    step1: "Open Safari, then Settings, then Websites",
+                    step2: "Choose Notifications and find Universe",
+                    step3: "Set it to Allow, then reload Universe",
+                },
+                iphoneApp: {
+                    step1: "Open the Settings app, then Notifications",
+                    step2: "Choose Universe",
+                    step3: "Turn on Allow Notifications",
+                },
+            },
+        },
+        iphone: {
+            title: "Get notifications on this {device}",
+            body: "Your {device} only sends notifications to Universe on your Home Screen, never to a browser tab.",
+            addToHomeScreen: "Add to Home Screen",
+        },
+    },
 };
 
 export default notification;

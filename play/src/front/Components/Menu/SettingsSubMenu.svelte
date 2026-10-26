@@ -22,6 +22,7 @@
     import { screenShareBandwidthStore } from "../../Stores/ScreenSharingStore";
     import { volumeProximityDiscussionStore } from "../../Stores/PeerStore";
     import { friendsEnabledStore } from "../../Chat/Stores/FriendsStore";
+    import { forgetThisBrowser, refreshThisDevice } from "../../Notification/Push/PushDevice";
     import SettingSection from "./Settings/SettingSection.svelte";
     import SettingSwitch from "./Settings/SettingSwitch.svelte";
     import SettingChoice from "./Settings/SettingChoice.svelte";
@@ -152,11 +153,14 @@
 
         if (Notification.permission === "granted") {
             localUserStore.setNotification(notification);
+            // Also while Universe is closed: off drops this browser's subscription, on saves it in Orbit again.
+            (notification ? refreshThisDevice() : forgetThisBrowser()).catch(() => undefined);
         } else {
             Notification.requestPermission()
                 .then((response) => {
                     if (response === "granted") {
                         localUserStore.setNotification(notification);
+                        refreshThisDevice().catch(() => undefined);
                     } else {
                         localUserStore.setNotification(false);
                         notification = false;

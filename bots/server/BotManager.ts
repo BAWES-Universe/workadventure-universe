@@ -148,7 +148,6 @@ export class BotManager {
             // Use PersistentMemory with MemoryStorage for persistence (works in both dev and production)
             const memoryStorage = new MemoryStorage({
                 adminApiUrl: process.env.ADMIN_API_URL,
-                adminApiToken: process.env.ADMIN_API_TOKEN,
                 botServiceToken: process.env.BOT_SERVICE_TOKEN,
                 saveInterval: 5 * 60 * 1000, // 5 minutes
                 maxRetries: 3,
@@ -157,7 +156,6 @@ export class BotManager {
                 maxHistorySize: 50,
                 maxMemories: 1000,
                 adminApiUrl: process.env.ADMIN_API_URL,
-                adminApiToken: process.env.ADMIN_API_TOKEN,
                 debounceInterval: 30000, // 30 seconds
                 immediateSaveEnabled: true,
             });
@@ -536,6 +534,13 @@ export class BotManager {
      */
     getAIService(): AIService {
         return this.aiService;
+    }
+
+    /**
+     * Get the response processor (cleaning, repetition checks, response metrics)
+     */
+    getResponseProcessor(): ResponseProcessor | null {
+        return this.responseProcessor;
     }
 
     /**

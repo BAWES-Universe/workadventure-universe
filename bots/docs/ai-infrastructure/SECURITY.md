@@ -302,18 +302,18 @@ private async fetchProviderCredentials(providerId: string): Promise<AIProviderCo
 - Unusual API usage patterns
 - Service token usage from unexpected IPs
 
-## Compliance
+## Data handling
 
-### Data Protection
+### Chat and user data
 
 - ✅ No user data in AI prompts (unless explicitly provided)
 - ✅ Conversation history stored securely
 - ✅ Usage tracking anonymized
 
-### Audit Requirements
+### Logging
 
 - ✅ Log all credential fetches
 - ✅ Log all AI usage
 - ✅ Log authentication attempts
-- ✅ Retain logs for compliance period
+- ✅ Keep logs for a set period
 

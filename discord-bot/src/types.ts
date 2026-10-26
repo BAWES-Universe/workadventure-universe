@@ -2,6 +2,27 @@ export interface RoomStats {
     [roomUrl: string]: number;
 }
 
+/** Who is in one open room (the pusher's GET /rooms/details, #1389). */
+export interface RoomDetails {
+    /** People, bots left out. */
+    people: number;
+    bots: number;
+    /** The people's names as shown in game, one per account. */
+    names: string[];
+}
+
+export interface RoomDetailsMap {
+    [roomUrl: string]: RoomDetails;
+}
+
+/** A room's names in Orbit (GET /api/room/info). universeColour is missing on an Orbit that predates it. */
+export interface RoomMetadata {
+    universeName: string;
+    worldName: string;
+    roomName: string;
+    universeColour?: string;
+}
+
 export interface UserCacheEntry {
     name: string;
     roomId: string;

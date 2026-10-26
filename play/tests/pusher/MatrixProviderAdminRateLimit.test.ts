@@ -25,6 +25,7 @@ async function startProvider(matrixDomain: string | undefined) {
     vi.doMock("../../src/pusher/enums/EnvironmentVariable", () => ({
         MATRIX_ADMIN_USER: "admin",
         MATRIX_ADMIN_PASSWORD: "secret",
+        MATRIX_ADMIN_TOKEN: undefined,
         MATRIX_API_URI: "http://matrix.test/",
         MATRIX_DOMAIN: matrixDomain,
     }));

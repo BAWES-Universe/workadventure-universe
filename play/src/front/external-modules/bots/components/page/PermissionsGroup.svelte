@@ -60,6 +60,7 @@
             follows: access.follows(),
             action: {
                 chat: access.actions.chat(),
+                dm: access.actions.dm(),
                 summon: access.actions.summon(),
                 manage: access.actions.manage(),
             },
