@@ -20,7 +20,7 @@ export class MessageNotification implements NotificationWA {
             const numberOfChar = 60;
             const messageToDisplay =
                 this.message.length > numberOfChar ? this.message.slice(0, numberOfChar) + "..." : this.message;
-            const body = `${get(LL).notification.message({ name: this.userName })} : ${messageToDisplay}`;
+            const body = `${get(LL).notification.message({ name: this.userName })}: ${messageToDisplay}`;
 
             const data = {
                 chatRoomId: this.chatRoomId,

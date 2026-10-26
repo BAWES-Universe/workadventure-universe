@@ -29,6 +29,7 @@
     import { formatTypingLine } from "../TopRow/TopRowSummary";
     import { formatRowTime, formatUnreadCount, normalizeTimestamp, toPlainText } from "../OneList/OneListOrder";
     import { minuteClock } from "../OneList/MinuteClock";
+    import { previewLine } from "./MessageActions/messageActions";
     import RoomMenu from "./RoomMenu/RoomMenu.svelte";
     import { IconBellOff } from "@wa-icons";
 
@@ -80,7 +81,18 @@
 
     $: latestMessage = $messages.length > 0 ? $messages[$messages.length - 1] : undefined;
     $: latestMessageContent = latestMessage?.content;
-    $: latestMessageText = $latestMessageContent ? toPlainText($latestMessageContent.body) : "";
+    $: latestMessageText =
+        latestMessage && $latestMessageContent
+            ? toPlainText(
+                  previewLine(latestMessage.type, $latestMessageContent, {
+                      photo: $LL.chat.messageActions.photo(),
+                      photos: (count) => $LL.chat.messageActions.photos({ count }),
+                      video: $LL.chat.messageActions.video(),
+                      voice: $LL.chat.messageActions.voice(),
+                      audio: $LL.chat.messageActions.audio(),
+                  })
+              )
+            : "";
     // In a DM the other person's name is the row's title already: only "You:" is worth saying.
     $: latestMessageSender = latestMessage
         ? latestMessage.isMyMessage

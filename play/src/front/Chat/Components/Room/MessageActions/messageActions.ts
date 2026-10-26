@@ -94,19 +94,45 @@ export type ReplySummary =
     | { kind: "text"; text: string }
     | { kind: "photos"; count: number; thumbnail: string; caption: string | undefined }
     | { kind: "files"; count: number; name: string; caption: string | undefined }
-    | { kind: "video" | "audio"; caption: string | undefined };
+    | { kind: "video"; caption: string | undefined }
+    | { kind: "audio"; caption: string | undefined; voice: boolean };
 
 /** What a reply quotes, in a form the reply box and the quote can show: text, photos (with a thumbnail) or files. */
 export function summarizeForReply(type: ChatMessageType, content: ChatMessageContent): ReplySummary {
     const caption = getCopyableText(type, content);
     if (!MEDIA_TYPES.has(type)) return { kind: "text", text: caption ?? "" };
     const files = getSaveableFiles(type, content);
-    if (type === "video" || type === "audio") return { kind: type, caption };
+    if (type === "video") return { kind: type, caption };
+    if (type === "audio") return { kind: type, caption, voice: content.isVoice === true };
     const images = files.filter((file) => isImageUrl(file.url));
     if (type === "image" || (images.length > 0 && images.length === files.length)) {
         return { kind: "photos", count: Math.max(files.length, 1), thumbnail: files[0]?.url ?? "", caption };
     }
     return { kind: "files", count: Math.max(files.length, 1), name: files[0]?.name ?? "", caption };
+}
+
+/**
+ * The one line a chat list row or a desktop notification shows for a message. Text stays as it is; a picture, video
+ * or voice message says what it is (or shows its caption) instead of its file name. A document keeps its name.
+ */
+export function previewLine(
+    type: ChatMessageType,
+    content: ChatMessageContent,
+    labels: { photo: string; photos: (count: number) => string; video: string; voice: string; audio: string }
+): string {
+    const summary = summarizeForReply(type, content);
+    switch (summary.kind) {
+        case "text":
+            return bodyToPlainText(content.body ?? "");
+        case "photos":
+            return summary.caption ?? (summary.count > 1 ? labels.photos(summary.count) : labels.photo);
+        case "files":
+            return summary.caption ?? summary.name;
+        case "video":
+            return summary.caption ?? labels.video;
+        default:
+            return summary.caption ?? (summary.voice ? labels.voice : labels.audio);
+    }
 }
 
 /** True when every saveable file is an image, so the menu can say "Save photo" instead of "Save file". */

@@ -2,7 +2,7 @@ import type { BaseTranslation } from "../i18n-types";
 
 const notification: BaseTranslation = {
     discussion: "{name} wants to discuss with you",
-    message: "{name} sends a message",
+    message: "{name} sent a message",
     chatRoom: "in the chat room",
     askToMuteMicrophone: "Can I mute your microphone?",
     askToMuteCamera: "Can I mute your camera?",

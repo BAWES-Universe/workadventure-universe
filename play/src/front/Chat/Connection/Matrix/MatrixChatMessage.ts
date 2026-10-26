@@ -238,6 +238,7 @@ export class MatrixChatMessage implements ChatMessage {
                 // The body of a Matrix file is its name: the blob: URL it loads from has none.
                 filename: this.getMediaFileName(content),
                 fileNames: undefined,
+                isVoice: this.type === "audio" && content["org.matrix.msc3245.voice"] !== undefined,
             };
         }
 
