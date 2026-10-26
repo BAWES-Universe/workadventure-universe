@@ -8,6 +8,7 @@ const api = vi.hoisted(() => ({
     canKeep: true,
     saveNearbyShared: vi.fn<(items: SavedNearbyItem[]) => Promise<boolean>>(),
     getNearbyShared: vi.fn<() => Promise<{ items: SavedNearbyItem[]; next: string | null } | null>>(),
+    initialized: [] as (() => void)[],
 }));
 
 vi.mock("../../../../../external-modules/bots/services/BotApiService", () => ({
@@ -15,6 +16,7 @@ vi.mock("../../../../../external-modules/bots/services/BotApiService", () => ({
         canKeepNearbyShared: () => api.canKeep,
         saveNearbyShared: api.saveNearbyShared,
         getNearbyShared: api.getNearbyShared,
+        onInitialize: (listener: () => void) => api.initialized.push(listener),
     },
 }));
 vi.mock("../../../../../Enum/EnvironmentVariable", () => ({ UPLOADER_URL: "https://uploader.example.com" }));
@@ -105,7 +107,29 @@ describe("keeping what the nearby chat shows", () => {
         const stop = keepNearbyShared(room);
         messages.set([message("img-2", "image", { url: "https://cdn.example.com/a.png", filename: "a.png" }).message]);
         await vi.advanceTimersByTimeAsync(10000);
+        // The game learns the player is a guest: what waited is let go.
+        api.initialized.forEach((listener) => listener());
+        await vi.advanceTimersByTimeAsync(10000);
         expect(api.saveNearbyShared).not.toHaveBeenCalled();
+        stop();
+    });
+
+    it("keeps what arrived before the game knew the player's account, once it does", async () => {
+        api.canKeep = false;
+        const { room, messages } = fakeRoom();
+        const stop = keepNearbyShared(room);
+        messages.set([
+            message("img-early", "image", { url: "https://cdn.example.com/e.png", filename: "e.png" }).message,
+        ]);
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(api.saveNearbyShared).not.toHaveBeenCalled();
+
+        api.canKeep = true;
+        api.initialized.forEach((listener) => listener());
+        await vi.advanceTimersByTimeAsync(5000);
+
+        const sent = api.saveNearbyShared.mock.calls.flatMap(([items]) => items);
+        expect(sent.map((row) => row.itemKey)).toEqual(["img-early"]);
         stop();
     });
 

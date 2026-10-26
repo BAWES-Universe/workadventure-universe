@@ -110,6 +110,7 @@ export class BotApiService {
     private roomId: string | null = null;
     private botServerUrl: string | null = null;
     private sessionTokenPromise: Promise<string | null> | null = null; // Cache login attempt to avoid multiple simultaneous calls
+    private readonly initializeListeners = new Set<() => void>();
 
     /**
      * Initialize the API service with extension options
@@ -154,7 +155,14 @@ export class BotApiService {
             this.botServerUrl = null;
         }
         this.roomId = roomId;
+        this.initializeListeners.forEach((listener) => listener());
         return roomIdChanged;
+    }
+
+    /** Called after each initialize(): what waited to know the player's account can go on. Returns how to stop. */
+    onInitialize(listener: () => void): () => void {
+        this.initializeListeners.add(listener);
+        return () => this.initializeListeners.delete(listener);
     }
 
     /**

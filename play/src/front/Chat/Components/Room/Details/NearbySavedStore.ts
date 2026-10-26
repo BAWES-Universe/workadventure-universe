@@ -52,8 +52,21 @@ function flush(): void {
         .catch(retry);
 }
 
+// Messages that arrived before the game knew the player's account (the bots module starts with the map): kept as
+// soon as it does, or let go if the player turns out to be a guest.
+const MAX_WAITING = 500;
+const waiting = new Set<ChatMessage>();
+botApiService.onInitialize(() => {
+    const messages = Array.from(waiting);
+    waiting.clear();
+    if (botApiService.canKeepNearbyShared()) messages.forEach(keep);
+});
+
 function keep(message: ChatMessage): void {
-    if (!botApiService.canKeepNearbyShared()) return;
+    if (!botApiService.canKeepNearbyShared()) {
+        if (waiting.size < MAX_WAITING) waiting.add(message);
+        return;
+    }
     const shared = sharedItemsOf(
         [message],
         (one) => get(one.content).body,
