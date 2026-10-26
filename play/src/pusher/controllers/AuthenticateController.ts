@@ -8,6 +8,7 @@ import Mustache from "mustache";
 import type { Application } from "express";
 import { errors as openIdErrors } from "openid-client";
 import Debug from "debug";
+import * as Sentry from "@sentry/node";
 import type { AuthTokenData } from "../services/JWTTokenManager";
 import { jwtTokenManager } from "../services/JWTTokenManager";
 import { openIDClient } from "../services/OpenIDClient";
@@ -28,12 +29,34 @@ function withNameSource<T extends { username?: string | null }>(response: T, acc
         : { ...response, usernameFromAccount: false };
 }
 
+// What the admin client answers when Orbit can't be reached or sends something it can't read (see AdminApi).
+const ORBIT_UNREACHABLE_CODES = new Set(["ROOM_ACCESS_ERROR", "ROOM_ACCESS_VALIDATION"]);
+
+/** Orbit let them in without the account: it sends an account's email, never a guest's. */
+function answeredAsGuest(userData: { email: string | null }): boolean {
+    return !userData.email;
+}
+
 function shouldRefreshAccessToken(err: unknown): boolean {
     if (!(err instanceof openIdErrors.OPError)) {
         return false;
     }
 
     return err.error === "invalid_token" || err.response?.statusCode === 401;
+}
+
+/** How long to wait before asking the provider to renew a second time after a failure that may not last. */
+const RENEWAL_RETRY_DELAY_MS = 300;
+
+/**
+ * True when the provider answered the renewal with a refusal (a 4xx, e.g. `invalid_grant` for a refresh token that is
+ * revoked, used or past its life): asking again gets the same answer. Anything else (the provider unreachable, a
+ * timeout, a 5xx) may not last.
+ */
+function renewalRefusedByProvider(err: unknown): boolean {
+    if (!(err instanceof openIdErrors.OPError)) return false;
+    const status = err.response?.statusCode;
+    return typeof status === "number" && status >= 400 && status < 500;
 }
 
 /** True when the provider no longer accepts the access token it checked, which is when it can be renewed. */
@@ -251,7 +274,18 @@ export class AuthenticateController extends BaseHttpController {
                 const renewWithProvider = async () => {
                     if (!refreshToken) return null;
                     try {
-                        const refreshed = await openIDClient.refreshAccessToken(refreshToken);
+                        let refreshed: Awaited<ReturnType<typeof openIDClient.refreshAccessToken>>;
+                        try {
+                            refreshed = await openIDClient.refreshAccessToken(refreshToken);
+                        } catch (firstErr) {
+                            // A provider that could not be reached for a moment would otherwise leave the player's
+                            // dead access token to go to Orbit, which answers them as a guest (game #1232).
+                            if (renewalRefusedByProvider(firstErr)) throw firstErr;
+                            await new Promise<void>((resolve) => {
+                                setTimeout(resolve, RENEWAL_RETRY_DELAY_MS);
+                            });
+                            refreshed = await openIDClient.refreshAccessToken(refreshToken);
+                        }
                         const checked = await openIDClient.checkTokenAuth(refreshed.access_token);
                         const authToken = jwtTokenManager.createAuthToken({
                             identifier: authTokenData.identifier,
@@ -265,6 +299,20 @@ export class AuthenticateController extends BaseHttpController {
                         return { authToken, accessToken: refreshed.access_token, checked };
                     } catch (refreshErr) {
                         console.warn("OIDC silent refresh failed, forcing re-login", refreshErr);
+                        // The log line is gone at the next redeploy: keep the reason where it can be read later. A
+                        // refusal (`refused: true`) is a refresh token that is no longer good, so the player has to
+                        // sign in again; anything else is the provider failing us. No token goes in.
+                        Sentry.captureException(refreshErr, {
+                            level: "warning",
+                            tags: { area: "oidc-renew", refused: String(renewalRefusedByProvider(refreshErr)) },
+                            extra: {
+                                oidcError: refreshErr instanceof openIdErrors.OPError ? refreshErr.error : undefined,
+                                status:
+                                    refreshErr instanceof openIdErrors.OPError
+                                        ? refreshErr.response?.statusCode
+                                        : undefined,
+                            },
+                        });
                         return null;
                     }
                 };
@@ -295,9 +343,34 @@ export class AuthenticateController extends BaseHttpController {
                     res.json(renewedFirst ? { ...firstUserData, authToken: renewedFirst.authToken } : firstUserData);
                     return;
                 }
-                const resUserData = firstUserData;
-                // Orbit knew the player with the renewed token: answer with that token, no need to check the old one.
-                const answeredWithRenewedToken = renewedFirst !== null;
+                let resUserData = firstUserData;
+                // Orbit can still answer a signed-in player as a guest, with no email, name or tags, though the provider
+                // accepted the token here: Orbit checks it on its own, a moment later, and a token about to run out can
+                // be refused there. The game then shows whatever name the device kept (game #1232). Renew the token and
+                // ask Orbit once more; if Orbit can't be reached this time (the admin client answers that with an
+                // error, it doesn't throw), the first answer still lets them in.
+                const renewedAfterGuestAnswer =
+                    !renewedFirst && authTokenData.accessToken && refreshToken && answeredAsGuest(firstUserData)
+                        ? await renewTokens()
+                        : null;
+                if (renewedAfterGuestAnswer) {
+                    try {
+                        const askedAgain = await fetchUserData(renewedAfterGuestAnswer.accessToken);
+                        if (askedAgain.status === "error") {
+                            if (!("code" in askedAgain && ORBIT_UNREACHABLE_CODES.has(askedAgain.code))) {
+                                res.json({ ...askedAgain, authToken: renewedAfterGuestAnswer.authToken });
+                                return;
+                            }
+                        } else {
+                            resUserData = askedAgain;
+                        }
+                    } catch (askAgainErr) {
+                        console.warn("Could not ask Orbit again with the renewed token", askAgainErr);
+                    }
+                }
+                // The token was renewed: answer with the renewed one (a provider may have cancelled the old refresh
+                // token), no need to check the old one.
+                const answeredWithRenewedToken = renewedFirst !== null || renewedAfterGuestAnswer !== null;
 
                 if (authTokenData.accessToken == undefined) {
                     //if not nonce and code, anonymous user connected
