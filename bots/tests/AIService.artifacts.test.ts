@@ -30,6 +30,7 @@ function admin(overrides: Record<string, unknown> = {}) {
 
 function botClient() {
     return {
+        isInSpace: vi.fn(() => true),
         getPersonForArtifacts: vi.fn(() => ({ signedIn: true, identifier: 'uuid-1', name: 'Khalid' })),
         sendChatMessage: vi.fn(),
         sendImage: vi.fn(),
@@ -170,6 +171,33 @@ describe('artifact tools in AIService', () => {
         expect(execute).toHaveBeenCalledTimes(1);
         expect(result.result).toEqual({ ok: true });
         expect(orbit.listArtifactsInChat).not.toHaveBeenCalled();
+    });
+
+    it('does not cache or claim a card when the bubble closed while the file was made', async () => {
+        const client = botClient();
+        client.isInSpace.mockReturnValueOnce(false);
+        const memory: Record<string, unknown> = {};
+        const orbit = admin();
+        const ai = service(memory);
+        const call = () => ai['executeToolCalls']([make], client as never, orbit as never, undefined, 'uuid-1', 'bubble-1', 'bot1', 7);
+        const [closed] = await call();
+        expect(closed.result).toHaveProperty('notShown');
+        expect(client.sendChatMessage).not.toHaveBeenCalled();
+        expect(memory.artifactCalls).toBeUndefined();
+        // Asked again with the bubble back, the card goes out
+        const [again] = await call();
+        expect(again.result).not.toHaveProperty('notShown');
+        expect(client.sendChatMessage).toHaveBeenCalledWith('bubble-1', '::artifact:art-1:1::Quests board');
+    });
+
+    it('leaves the results of a same-named MCP tool alone when artifacts are off', async () => {
+        vi.stubEnv('BOT_ARTIFACTS_ENABLED', '');
+        const ai = service();
+        const results = [{ id: 't1', name: 'read_artifact', result: { content: 'plain text', note: 'see https://example.com/pic.png' } }];
+        expect(ai['formatToolResults'](results)).toContain('plain text');
+        const botMemory = { pendingMedia: [] as unknown[], maxPendingMedia: 5 };
+        service(botMemory)['preQueueToolResults'](results, new Set(), 'bot1', 7);
+        expect(botMemory.pendingMedia.length).toBeGreaterThan(0);
     });
 
     it('turns a result into the line the model reads, and keeps the media interceptors away from it', async () => {

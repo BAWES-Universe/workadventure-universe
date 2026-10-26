@@ -2580,8 +2580,12 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         if (earlier) return earlier;
 
         const run = await runArtifactTool(name, args, { admin, botId, person, chat });
-        if (run.card) this.deliverArtifactCard(run.card, botClient, spaceName, memory);
-        if (repeatKey && run.card && memory) (memory.artifactCalls ??= new Map()).set(repeatKey, run.result);
+        if (!run.card) return run.result;
+        if (!this.deliverArtifactCard(run.card, botClient, spaceName, memory)) {
+            // The bubble closed while the file was being made: the file is saved, but nobody was shown it, so a retry may place it
+            return { ...run.result, notShown: 'The conversation ended before the card could be placed in chat. Say so; do not claim it was shown.' };
+        }
+        if (repeatKey && memory) (memory.artifactCalls ??= new Map()).set(repeatKey, run.result);
         return run.result;
     }
 
@@ -2590,12 +2594,15 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         botClient: BotClient | undefined,
         spaceName: string | undefined,
         memory: { pendingArtifacts?: ArtifactCard[] } | undefined
-    ): void {
+    ): boolean {
         if (botClient && spaceName) {
+            if (!botClient.isInSpace(spaceName)) return false;
             botClient.sendChatMessage(spaceName, artifactMarker(card));
-        } else if (memory) {
-            (memory.pendingArtifacts ??= []).push(card);
+            return true;
         }
+        if (!memory) return false;
+        (memory.pendingArtifacts ??= []).push(card);
+        return true;
     }
 
     /**
@@ -3048,7 +3055,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         for (const tr of toolResults) {
             // Skip results from media tools and built-in tools — they don't produce URLs to extract
             if (['send_image', 'send_file', 'send_audio', 'send_video', 'get_people_on_map',
-                 'get_bot_position', 'get_areas_on_map', 'navigate_to', READ_WEB_PAGE_TOOL].includes(tr.name) || isArtifactTool(tr.name)) {
+                 'get_bot_position', 'get_areas_on_map', 'navigate_to', READ_WEB_PAGE_TOOL].includes(tr.name) || (isArtifactTool(tr.name) && artifactsEnabled())) {
                 continue;
             }
 
@@ -3122,7 +3129,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         for (const tr of toolResults) {
             // Skip results from our own media tools (they already handled sending)
             if (['send_image', 'send_file', 'send_audio', 'send_video', 'get_people_on_map',
-                 'get_bot_position', 'get_areas_on_map', 'navigate_to', READ_WEB_PAGE_TOOL].includes(tr.name) || isArtifactTool(tr.name)) {
+                 'get_bot_position', 'get_areas_on_map', 'navigate_to', READ_WEB_PAGE_TOOL].includes(tr.name) || (isArtifactTool(tr.name) && artifactsEnabled())) {
                 continue;
             }
 
@@ -3558,7 +3565,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     return `navigate_to: Successfully started navigating. You are now leading people to the destination. The bot has started moving. If the user asks "why aren't you taking me" or "why aren't you moving", reassure them that you are leading them and they should follow. Do NOT say you can't take them - you already started leading. Respond naturally like "I'm leading you there now, just follow me!" or "Come on, follow me!" - don't mention tools or technical details.`;
                 }
             }
-            if (isArtifactTool(r.name) && r.result) {
+            if (isArtifactTool(r.name) && artifactsEnabled() && r.result) {
                 return formatArtifactResult(r.name, r.result);
             }
             if (r.name === READ_WEB_PAGE_TOOL && r.result) {
