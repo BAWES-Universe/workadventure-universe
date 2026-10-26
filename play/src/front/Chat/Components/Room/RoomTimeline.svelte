@@ -802,8 +802,6 @@
     }
 
     onDestroy(() => {
-        // Closing or leaving the nearby chat closes its details too.
-        closeNearbyDetails();
         resizeObserver?.disconnect();
         childListObserver?.disconnect();
         clearTimeout(redrawTimer);
@@ -812,6 +810,10 @@
         document.removeEventListener("dragenter", onMapFileDragCapture, true);
         document.removeEventListener("dragover", onMapFileDragCapture, true);
         document.removeEventListener("drop", onMapFileDragCapture, true);
+        // However the chat is left (another chat picked, a message opening one), its details close with it: coming
+        // back opens on the conversation.
+        if (get(openRoomDetailsIdStore) === room.id) openRoomDetailsIdStore.set(undefined);
+        if (get(openSharedItemsStore)?.roomId === room.id) openSharedItemsStore.set(undefined);
     });
 </script>
 
