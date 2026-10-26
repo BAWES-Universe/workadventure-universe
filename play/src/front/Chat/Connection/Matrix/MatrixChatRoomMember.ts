@@ -18,7 +18,8 @@ export class MatrixChatRoomMember implements ChatRoomMember {
     readonly permissionLevel: Writable<ChatPermissionLevel>;
     readonly isTypingInformation: Writable<{ id: string; name: string | null; pictureStore: PictureStore } | null> =
         writable(null);
-    private pictureStore: PictureStore;
+    /** Their chat account picture (the Woka their game saved there), as the chat shows it. */
+    readonly pictureStore: PictureStore;
     private typingGraceTimer: ReturnType<typeof setTimeout> | undefined;
     private readonly pictureMxc: Writable<string | undefined>;
 

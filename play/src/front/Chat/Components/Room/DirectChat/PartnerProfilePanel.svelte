@@ -26,6 +26,7 @@
     import { invitesEnabledStore } from "../../../Stores/RingStore";
     import TopRowAvatar from "../../TopRow/TopRowAvatar.svelte";
     import VisitCard from "../../../../Components/VisitCard/VisitCard.svelte";
+    import SharedSummary from "../Details/SharedSummary.svelte";
     import { gameSceneStore } from "../../../../Stores/GameSceneStore";
     import { botApiService } from "../../../../external-modules/bots/services/BotApiService";
     import { botHomeRoom } from "../../../Bots/BotHomeRoom";
@@ -63,7 +64,7 @@
 
     /**
      * Who you're chatting with, over the conversation: their woka and where they are, quick ways to reach them,
-     * their profile card, mute, and the safety actions at the bottom. Back returns to the conversation.
+     * their profile card, what the chat shared, mute, and the safety actions at the bottom. Back returns to the conversation.
      */
     export let room: ChatRoom & ChatRoomMembershipManagement & ChatRoomNotificationControl;
     export let partner: DirectPartner;
@@ -248,6 +249,8 @@
                 {/if}
             </div>
         {/if}
+
+        <SharedSummary {room} />
 
         {#if friendAction && !friendAction.danger}
             <div class="partner-group">
