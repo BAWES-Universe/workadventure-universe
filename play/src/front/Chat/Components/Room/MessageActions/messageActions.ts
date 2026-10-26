@@ -138,7 +138,7 @@ export function previewLine(
         case "audio":
             return content.isVoice === true ? labels.voice : labels.audio;
         default:
-            return content.filename?.trim() || bodyToPlainText(content.body ?? "");
+            return content.filename?.trim() || content.fileNames?.[0] || bodyToPlainText(content.body ?? "");
     }
 }
 

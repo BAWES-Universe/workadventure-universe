@@ -21,6 +21,7 @@ import type {
 } from "../ChatConnection";
 import { TYPING_STOP_GRACE_MS } from "../ChatConnection";
 import LL, { locale } from "../../../../i18n/i18n-svelte";
+import { previewLine } from "../../Components/Room/MessageActions/messageActions";
 import { iframeListener } from "../../../Api/IframeListener";
 import type { SpaceInterface, SpaceUserExtended } from "../../../Space/SpaceInterface";
 import type { SpaceRegistryInterface } from "../../../Space/SpaceRegistry/SpaceRegistryInterface";
@@ -304,7 +305,13 @@ export class ProximityChatRoom implements ChatRoom {
             notificationManager.createNotification(
                 new MessageNotification(
                     message.sender.username ?? "unknown",
-                    get(message.content).body,
+                    previewLine(message.type, get(message.content), {
+                        photo: get(LL).chat.messageActions.photo(),
+                        photos: (count) => get(LL).chat.messageActions.photos({ count }),
+                        video: get(LL).chat.messageActions.video(),
+                        voice: get(LL).chat.messageActions.voice(),
+                        audio: get(LL).chat.messageActions.audio(),
+                    }),
                     this.id,
                     get(this.name)
                 )
