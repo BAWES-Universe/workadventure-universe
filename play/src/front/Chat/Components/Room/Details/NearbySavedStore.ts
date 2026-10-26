@@ -73,25 +73,24 @@ function isConversation(message: ProximityChatMessage): boolean {
     return !message.session && !message.notSent && message.type !== "incoming" && message.type !== "outcoming";
 }
 
+interface Settling {
+    timer?: ReturnType<typeof setTimeout>;
+    unsubscribe?: Unsubscriber;
+}
+
 /** Sends what this nearby chat shows to the player's account as it arrives. Returns how to stop. */
 export function keepNearbyShared(room: ProximityChatRoom): Unsubscriber {
     const watched = new Set<ChatMessage>();
-    const settling = new Map<ChatMessage, { timer: ReturnType<typeof setTimeout>; unsubscribe: Unsubscriber }>();
+    const settling = new Map<ChatMessage, Settling>();
 
+    // A text can still grow after a pause (a slow reply, an edit), so each quiet spell keeps what is new in it.
     const settle = (message: ChatMessage) => {
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const done = () => {
-            settling.get(message)?.unsubscribe();
-            settling.delete(message);
-            keep(message);
-        };
-        const unsubscribe = message.content.subscribe(() => {
-            if (timer) clearTimeout(timer);
-            timer = setTimeout(done, SETTLE_MS);
-            const entry = settling.get(message);
-            if (entry) entry.timer = timer;
+        const entry: Settling = {};
+        settling.set(message, entry);
+        entry.unsubscribe = message.content.subscribe(() => {
+            clearTimeout(entry.timer);
+            entry.timer = setTimeout(() => keep(message), SETTLE_MS);
         });
-        if (timer) settling.set(message, { timer, unsubscribe });
     };
 
     const unsubscribeMessages = room.messages.subscribe((messages) => {
@@ -108,7 +107,7 @@ export function keepNearbyShared(room: ProximityChatRoom): Unsubscriber {
         unsubscribeMessages();
         for (const { timer, unsubscribe } of settling.values()) {
             clearTimeout(timer);
-            unsubscribe();
+            unsubscribe?.();
         }
         settling.clear();
     };

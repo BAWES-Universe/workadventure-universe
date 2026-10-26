@@ -84,6 +84,21 @@ describe("keeping what the nearby chat shows", () => {
         stop();
     });
 
+    it("keeps a link a reply brings after a long pause, and doesn't send the first one twice", async () => {
+        const { room, messages } = fakeRoom();
+        const stop = keepNearbyShared(room);
+        const text = message("txt-2", "proximity", { body: "First https://bawes.net/a" });
+        messages.set([text.message]);
+        await vi.advanceTimersByTimeAsync(6000);
+
+        text.content.update((content) => ({ ...content, body: "First https://bawes.net/a then https://bawes.net/b" }));
+        await vi.advanceTimersByTimeAsync(6000);
+
+        const sent = api.saveNearbyShared.mock.calls.flatMap(([items]) => items);
+        expect(sent.map((row) => row.itemKey)).toEqual(["txt-2 https://bawes.net/a", "txt-2 https://bawes.net/b"]);
+        stop();
+    });
+
     it("sends nothing for a guest", async () => {
         api.canKeep = false;
         const { room, messages } = fakeRoom();
