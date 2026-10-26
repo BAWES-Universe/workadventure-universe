@@ -260,6 +260,22 @@ describe('May I? (the question the game asks before it shows Summon)', () => {
         expect(gate.check).not.toHaveBeenCalled();
     });
 
+    it('answers whether a signed-in member may message the bot, so Message only shows for people the owner allows', async () => {
+        gate.check.mockResolvedValue({ allowed: false, kind: 'refused', code: 'not_allowed', line: "You can't message Nora now." });
+
+        const response = await post('/api/bots/b1/access', { action: 'dm', playerUuid: 'uuid-1' }, { Authorization: `Bearer ${SESSION}` });
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ allowed: false, code: 'not_allowed', reason: "You can't message Nora now." });
+        expect(gate.check).toHaveBeenCalledWith('b1', 'dm', { signedIn: true, identifier: 'uuid-1' }, 'Nora');
+    });
+
+    it('asks about a guest messaging as a guest, which Orbit refuses with "sign in"', async () => {
+        await post('/api/bots/b1/access', { action: 'dm', playerUuid: 'guest-uuid' }, { 'X-WA-Auth': GAME_TOKEN });
+
+        expect(gate.check).toHaveBeenCalledWith('b1', 'dm', { signedIn: false, identifier: undefined }, 'Nora');
+    });
+
     it('only answers for the actions the game asks about', async () => {
         const response = await post('/api/bots/b1/access', { action: 'manage' }, { Authorization: `Bearer ${SESSION}` });
 

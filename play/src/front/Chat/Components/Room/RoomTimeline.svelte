@@ -9,7 +9,7 @@
     import { derived, get, readable, writable } from "svelte/store";
     import type { Readable } from "svelte/store";
     import { gameManager } from "../../../Phaser/Game/GameManager";
-    import type { ChatMessage, ChatRoom } from "../../Connection/ChatConnection";
+    import type { ChatMessage, ChatRoom, ChatRoomMembershipManagement } from "../../Connection/ChatConnection";
     import getCloseImg from "../../images/get-close.png";
     import { selectedChatMessageToReply, shouldRestoreChatStateStore } from "../../Stores/ChatStore";
     import { selectedRoomStore } from "../../Stores/SelectRoomStore";
@@ -29,6 +29,9 @@
     import { selectedProximitySessionStore } from "../../Stores/ProximitySessionStore";
     import LL, { locale } from "../../../../i18n/i18n-svelte";
     import { formatPeopleNames } from "../TopRow/TopRowSummary";
+    import { availabilityFromNote, botChatClosed, botHeaderState, botIdFromChatId } from "../../Bots/BotChatStatus";
+    import { botStatusCache } from "../../Bots/BotStatusStore";
+    import BotStatusNoteCard from "../Bots/BotStatusNoteCard.svelte";
     import {
         PERSON_COLOUR_CONTEXT,
         NAME_BY_CHAT_ID_CONTEXT,
@@ -64,7 +67,7 @@
     import RoomMenu from "./RoomMenu/RoomMenu.svelte";
     import DirectChatTitle from "./DirectChat/DirectChatTitle.svelte";
     import PartnerProfilePanel from "./DirectChat/PartnerProfilePanel.svelte";
-    import { directPartnerStore } from "./DirectChat/DirectPartnerStore";
+    import { DIRECT_PARTNER_CONTEXT, directPartnerStore, type DirectPartner } from "./DirectChat/DirectPartnerStore";
     import { dayLabel, messageRuns, runSenderKey } from "./MessageRuns";
     import { IconChevronLeft, IconChevronRight, IconLoader, IconLock, IconMailBox } from "@wa-icons";
 
@@ -84,6 +87,10 @@
             createNameByChatIdStore(gameManager.getCurrentGameScene().userProviderMerger, currentChatPeople()?.store)
         );
     }
+
+    // Cards inside messages (a bot's room) act on the other person of a direct chat.
+    const partnerForCards = writable<DirectPartner | undefined>(undefined);
+    setContext<Readable<DirectPartner | undefined>>(DIRECT_PARTNER_CONTEXT, partnerForCards);
 
     // In a direct chat, each person's woka sits on their colour from People (header, profile, messages).
     const isDirectChat = writable(false);
@@ -165,6 +172,7 @@
     $: directPartner = matrixRoom?.type === "direct" ? directPartnerStore(matrixRoom) : undefined;
     $: profileOpen = directPartner !== undefined && $openProfileRoomIdStore === room.id;
     $: isDirectChat.set(directPartner !== undefined);
+    $: partnerForCards.set(directPartner ? $directPartner : undefined);
     $: roomMembers = matrixRoom ? matrixRoom.members : readable([]);
     $: memberCount = $roomMembers.length;
     // The proximity chat is one timeline across every stay. The thread shows one stay at a time: the live one,
@@ -250,6 +258,49 @@
     $: isLoadingMessages = room?.isLoadingMessages ?? readable(false);
     $: firstFillPending = !proximityRoom && !initialLoadDone;
     $: showLoading = !proximityRoom && (!initialLoadDone || ($isLoadingMessages && $messages.length === 0));
+
+    // A direct chat with a bot shows the bot's state under its name and in the message box. The state comes from the bot
+    // server. The bot's account being out of the room does not mean it was deleted: it also leaves when it declines an
+    // invite (resting, not ready, no access). So the chat closes only when the state, or the bot's own goodbye note, says
+    // it is gone.
+    $: members = "members" in room ? (room as ChatRoom & ChatRoomMembershipManagement).members : readable([]);
+    $: partner = room.type === "direct" ? $members.find((member) => member.id !== myChatID) : undefined;
+    $: partnerBotId = botIdFromChatId(partner?.id);
+    $: partnerMembership = partner?.membership ?? readable(undefined);
+    $: botLeft = partnerBotId !== undefined && $partnerMembership === "leave";
+    $: botAvailability = partnerBotId ? botStatusCache.store(partnerBotId) : readable(undefined);
+    $: botState = partnerBotId ? $botAvailability : undefined;
+    $: botClosed = botChatClosed(botState);
+    $: lastBotMessage = partnerBotId ? [...$messages].reverse().find((message) => !message.isMyMessage) : undefined;
+    $: lastBotNote = lastBotMessage?.botStatus;
+    // A note saying the bot is resting, not ready or gone updates the header at once, unless a lookup that started after
+    // the note was written knows better.
+    $: lastNoteAvailability = lastBotNote ? availabilityFromNote(lastBotNote.state) : undefined;
+    $: noteWrittenAt = lastBotMessage?.botStatusAt ?? lastBotMessage?.date?.getTime();
+    $: if (partnerBotId && lastNoteAvailability && noteWrittenAt !== undefined) {
+        botStatusCache.learn(partnerBotId, lastNoteAvailability, noteWrittenAt);
+    }
+    $: shownBotState = botHeaderState(botState, lastBotNote?.state);
+    $: botPlaceholder =
+        botState === "resting"
+            ? $LL.chat.botStatus.restingPlaceholder()
+            : botState === "unready"
+            ? $LL.chat.botStatus.unreadyPlaceholder()
+            : undefined;
+    // The bot's account is out of the room and the bot is gone: say so once, as for a person leaving.
+    $: botLeftLine =
+        botLeft && botClosed
+            ? {
+                  date: null,
+                  content: readable({
+                      body: $LL.chat.botStatus.left({ name: $roomName }),
+                      url: undefined,
+                      urls: undefined,
+                      filename: undefined,
+                      fileNames: undefined,
+                  }),
+              }
+            : undefined;
 
     onMount(() => {
         installStrayFileDropGuard();
@@ -779,6 +830,8 @@
                         <DirectChatTitle
                             room={matrixRoom}
                             partner={$directPartner}
+                            bot={partnerBotId !== undefined}
+                            botState={shownBotState}
                             on:openProfile={() => openProfileRoomIdStore.set(room.id)}
                         />
                     {:else}
@@ -945,6 +998,8 @@
                             />
                         {:else if entry.message.type === "outcoming" || entry.message.type === "incoming"}
                             <MessageSystem message={entry.message} />
+                        {:else if entry.message.botStatus}
+                            <BotStatusNoteCard note={entry.message.botStatus} />
                         {:else}
                             <Message
                                 on:updateMessageBody={onUpdateMessageBody}
@@ -959,6 +1014,9 @@
                         {/if}
                     </li>
                 {/each}
+                {#if botLeftLine}
+                    <li class="last:pb-3" data-testid="botLeftLine"><MessageSystem message={botLeftLine} /></li>
+                {/if}
             </ul>
         </div>
 
@@ -970,9 +1028,24 @@
         {:else}
             <!-- One composer per conversation: its draft, files and pending sends belong to this room only.
                  Keyed by id: re-selecting the same room must not remount it (files, focus and uploads are kept). -->
-            {#key room.id}
-                <MessageInputBar disabled={$shouldRetrySendingEvents} {room} bind:this={messageInputBarRef} />
-            {/key}
+            {#if botClosed}
+                <!-- The bot was deleted: nothing can reach it, so the message box gives way to a plain closed bar. -->
+                <div
+                    class="mx-2.5 mb-2.5 mt-1.5 flex min-h-12 items-center justify-center rounded-full border border-dashed border-white/12 bg-white/[0.03] px-3.5 text-sm text-white/50"
+                    data-testid="botChatClosed"
+                >
+                    {$LL.chat.botStatus.closed()}
+                </div>
+            {:else}
+                {#key room.id}
+                    <MessageInputBar
+                        disabled={$shouldRetrySendingEvents}
+                        {room}
+                        inputHint={botPlaceholder}
+                        bind:this={messageInputBarRef}
+                    />
+                {/key}
+            {/if}
         {/if}
     {/if}
 </div>
