@@ -94,8 +94,9 @@ export async function shareArtifact(
     sharing: { openScope?: ArtifactOpenScope; changeScope?: ArtifactChangeScope },
     chat: ArtifactChat | undefined
 ): Promise<OpenedArtifact["artifact"]> {
-    return (await post<{ artifact: OpenedArtifact["artifact"] }>(`${encodeURIComponent(id)}/share`, { chat, ...sharing }))
-        .artifact;
+    return (
+        await post<{ artifact: OpenedArtifact["artifact"] }>(`${encodeURIComponent(id)}/share`, { chat, ...sharing })
+    ).artifact;
 }
 
 /** The page "Anyone with the link" opens: Orbit's, view only and without signing in. None without Orbit. */

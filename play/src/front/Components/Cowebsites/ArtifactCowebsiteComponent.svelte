@@ -271,7 +271,11 @@
                 if (opened) {
                     opened = {
                         ...opened,
-                        artifact: { ...opened.artifact, openScope: artifact.openScope, changeScope: artifact.changeScope },
+                        artifact: {
+                            ...opened.artifact,
+                            openScope: artifact.openScope,
+                            changeScope: artifact.changeScope,
+                        },
                     };
                 }
             },

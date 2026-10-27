@@ -31,7 +31,11 @@ const OpenBody = z.object({
 const ViewerBody = z.object({ chat: Chat.optional() });
 const RestoreBody = z.object({ chat: Chat.optional(), number: z.number().int().min(1) });
 const ShareBody = z
-    .object({ chat: Chat.optional(), openScope: z.enum(OPEN_SCOPES).optional(), changeScope: z.enum(CHANGE_SCOPES).optional() })
+    .object({
+        chat: Chat.optional(),
+        openScope: z.enum(OPEN_SCOPES).optional(),
+        changeScope: z.enum(CHANGE_SCOPES).optional(),
+    })
     .refine((body) => body.openScope !== undefined || body.changeScope !== undefined);
 
 /** Who is looking and whether they are in the chat, as the pusher knows it (never as the browser claims it). */
@@ -174,14 +178,18 @@ export class ArtifactController extends BaseHttpController {
          *       404:
          *         description: No such artifact, or the person may not open it
          */
-        this.app.post("/artifacts/:id/share", [authenticated], async (req: Request, res: ResponseWithUserIdentifier) => {
-            await this.answer(req, res, "share", async (viewer, id) => {
-                const body = ShareBody.safeParse(req.body ?? {});
-                if (!body.success) throw new ArtifactsError("invalid_request", 400);
-                const { chat, ...sharing } = body.data;
-                return artifactsService.share(id, sharing, viewer(chat));
-            });
-        });
+        this.app.post(
+            "/artifacts/:id/share",
+            [authenticated],
+            async (req: Request, res: ResponseWithUserIdentifier) => {
+                await this.answer(req, res, "share", async (viewer, id) => {
+                    const body = ShareBody.safeParse(req.body ?? {});
+                    if (!body.success) throw new ArtifactsError("invalid_request", 400);
+                    const { chat, ...sharing } = body.data;
+                    return artifactsService.share(id, sharing, viewer(chat));
+                });
+            }
+        );
     }
 
     private async answer(
