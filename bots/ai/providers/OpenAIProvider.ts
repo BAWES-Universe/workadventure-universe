@@ -502,6 +502,7 @@ export class OpenAIProvider implements AIProvider {
                     tokensUsed: 0,
                     latency,
                     error: !externallyCancelled,
+                    ...(externallyCancelled ? { cancelled: true } : {}),
                     errorStatus: statusFromError(error),
                 },
             };

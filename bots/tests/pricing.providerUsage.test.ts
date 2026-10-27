@@ -153,3 +153,18 @@ describe("plain replies", () => {
         expect(last.metadata).toMatchObject({ tokensUsed: 130, promptTokens: 100, completionTokens: 30, cachedPromptTokens: 60, costUsd: 0.5 });
     });
 });
+
+describe("a stream stopped from outside (#1173)", () => {
+    it("says it was cancelled, so the reply's cost leaves it out, and is still not reported as an error", async () => {
+        const controller = new AbortController();
+        vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => {
+            controller.abort();
+            throw new DOMException("aborted", "AbortError");
+        }));
+        const chunks: any[] = [];
+        for await (const chunk of new OpenAIProvider().generateStream("sys", "hi", config("https://api.deepseek.com"), undefined, controller.signal)) chunks.push(chunk);
+        const last = chunks[chunks.length - 1];
+        expect(last.metadata).toMatchObject({ cancelled: true, error: false, tokensUsed: 0 });
+        vi.unstubAllGlobals();
+    });
+});

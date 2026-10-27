@@ -73,6 +73,8 @@ export interface AIStreamChunk {
         latency?: number;
         durationSeconds?: number; // For voice AI
         error?: boolean;
+        /** The call was stopped from outside (a stop or a correction) before it said what it used; it cannot be priced and is left out of the reply's cost. */
+        cancelled?: boolean;
         errorStatus?: number; // HTTP status the provider answered with when the call failed (401/403 = the key was rejected)
         truncated?: boolean; // true when the provider hit finish_reason='length' (max_tokens cap)
         // MultiPromptAIService analysis metadata
@@ -114,6 +116,10 @@ export interface AIUsageMetadata {
     tokensUsed?: number;
     promptTokens?: number;
     completionTokens?: number;
+    /** Parts of promptTokens the provider read from / wrote to its cache, and of completionTokens spent reasoning. */
+    cachedPromptTokens?: number;
+    cacheWriteTokens?: number;
+    reasoningTokens?: number;
     apiCalls?: number;
     latency?: number;
     durationSeconds?: number; // For voice AI

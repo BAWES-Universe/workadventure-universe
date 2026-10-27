@@ -1097,7 +1097,21 @@ export class AdminApiService {
         completionTokens?: number;
         apiCalls?: number;
         durationSeconds?: number | null;
+        /** Dollars, the old estimate. Orbit keeps it as one only when no `price` comes with it. */
         cost?: number;
+        /** What the reply cost and how that was worked out (#1173). */
+        price?: {
+            inputTokens: number;
+            cachedTokens: number;
+            cacheWriteTokens: number;
+            outputTokens: number;
+            reasoningTokens: number;
+            /** Millionths of a dollar; null when the price is unknown. */
+            costMicros: number | null;
+            costBasis: string;
+            priceSource: string | null;
+            priceVersion: string | null;
+        };
         latency?: number;
         error?: boolean;
         timestamp?: string;
@@ -1122,7 +1136,8 @@ export class AdminApiService {
                 tokensUsed: usage.tokensUsed || 0,
                 apiCalls: usage.apiCalls || 1,
                 durationSeconds: usage.durationSeconds ?? null,
-                cost: usage.cost ?? null,
+                cost: usage.price ? null : usage.cost ?? null,
+                ...(usage.price ?? {}),
                 latency: usage.latency ?? null,
                 error: usage.error || false,
                 timestamp: usage.timestamp || new Date().toISOString(),

@@ -48,6 +48,8 @@ const sentrySetSpan: ((scope: any, span: any) => void) | undefined =
 
 // PostHog LLM Analytics — captures $ai_trace + $ai_generation events alongside Sentry
 import { captureAiGeneration, captureAiTrace, flushPostHog } from './PostHogClient';
+import { priceCall } from './pricing/costing';
+import { UsageLedger, priceMetadata, type TurnCost } from './pricing/ledger';
 import { buildSystemPrompt } from './systemPrompt';
 /** Ends a direct-message reply that answers where the bot is or invites the person over because they asked. */
 export { ROOM_CARD_MARK } from './systemPrompt';
@@ -419,6 +421,10 @@ export class AIService {
         isRetry = false
     ): AsyncGenerator<AIStreamChunk> {
         const startTime = Date.now();
+        // What each call to the provider cost, priced as it finishes; the reply's cost is their sum (#1173)
+        const ledger = new UsageLedger();
+        // Whether the reply's usage has been recorded, so a failure after that is not recorded with the same cost again
+        let usageRecorded = false;
         // A new turn starts clean: an artifact call is only the same as an earlier one while that turn is asked again
         if (!isRetry && playerId !== undefined) this.conversationMemory?.getMemory(botId, playerId)?.artifactCalls?.clear();
         // Buffer for content received before tool calls are detected
@@ -772,7 +778,8 @@ export class AIService {
 
                 firstCallStartTime = Date.now();
 
-                for await (const chunk of this.providerRegistry.generateStream(
+                for await (const chunk of this.meteredStream(
+                    ledger,
                     providerId,
                     systemPrompt,
                     userMessageForQwen,
@@ -898,6 +905,7 @@ export class AIService {
                                 outputTokens: completionTokens,
                                 latency: (Date.now() - firstCallStartTime) / 1000,
                                 cost: this.calculateCost(providerId, {
+                                    cachedPromptTokens: cachedPromptTokens,
                                     tokensUsed,
                                     promptTokens,
                                     completionTokens,
@@ -954,7 +962,8 @@ export class AIService {
                             let retryTruncated = false;
                             let retryMeta: AIStreamChunk['metadata'] | undefined;
                             try {
-                                for await (const retryChunk of this.providerRegistry.generateStream(
+                                for await (const retryChunk of this.meteredStream(
+                                    ledger,
                                     providerId,
                                     systemPrompt,
                                     userMessageForQwen,
@@ -1000,6 +1009,7 @@ export class AIService {
                                     accumulatedContent,
                                     configWithParent,
                                     abortSignal,
+                                    ledger,
                                     visionImages,
                                     (text) => {
                                         accumulatedContent += text;
@@ -1161,7 +1171,8 @@ export class AIService {
                             }
                             followUpStartTime = Date.now();
 
-                            for await (const resultChunk of this.providerRegistry.generateStream(
+                            for await (const resultChunk of this.meteredStream(
+                                ledger,
                                 providerId,
                                 systemPrompt,
                                 followUpMessageWithNoThink,
@@ -1279,6 +1290,7 @@ export class AIService {
                                             outputTokens: followUpCompletionTokens,
                                             latency: (Date.now() - followUpStartTime) / 1000,
                                             cost: this.calculateCost(providerId, {
+                                                cachedPromptTokens: followUpCachedPromptTokens,
                                                 tokensUsed: followUpTokens,
                                                 promptTokens: followUpPromptTokens,
                                                 completionTokens: followUpCompletionTokens,
@@ -1397,7 +1409,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 let synthCompletion = 0;
                                 const synthStartTime = Date.now();
                                 try {
-                                    for await (const synthChunk of this.providerRegistry.generateStream(
+                                    for await (const synthChunk of this.meteredStream(
+                                        ledger,
                                         providerId,
                                         systemPrompt,
                                         synthesisMsg,
@@ -1480,7 +1493,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     // at followUpInput = followUpMessageWithNoThink) and is in scope
                                     // after the while loop.
                                     const retryMessage = followUpInput || message;
-                                    for await (const retryChunk of this.providerRegistry.generateStream(
+                                    for await (const retryChunk of this.meteredStream(
+                                        ledger,
                                         providerId,
                                         systemPrompt,
                                         retryMessage,
@@ -1534,6 +1548,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                         followUpContent,
                                         configWithParent,
                                         abortSignal,
+                                        ledger,
                                         visionImages,
                                         (text) => {
                                             followUpContent += text;
@@ -1585,6 +1600,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     followUpContent,
                                     configWithParent,
                                     abortSignal,
+                                    ledger,
                                     visionImages,
                                     (text) => {
                                         followUpContent += text;
@@ -1627,6 +1643,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     outputTokens: followUpCompletionTokens,
                                     latency: (Date.now() - followUpStartTime) / 1000,
                                     cost: this.calculateCost(providerId, {
+                                        cachedPromptTokens: followUpCachedPromptTokens,
                                         tokensUsed: followUpTokens,
                                         promptTokens: followUpPromptTokens,
                                         completionTokens: followUpCompletionTokens,
@@ -1714,6 +1731,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 configWithParent,
                                 abortSignal,
                                 contTokens,
+                                ledger,
                                 visionImages
                             )) {
                                 if (contChunk.content) {
@@ -1761,6 +1779,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             outputTokens: followUpCompletionTokens > 0 ? (completionTokens - followUpCompletionTokens) : completionTokens,
                             latency: (Date.now() - firstCallStartTime) / 1000,
                             cost: this.calculateCost(providerId, {
+                                cachedPromptTokens: followUpCachedPromptTokens !== undefined && cachedPromptTokens !== undefined ? cachedPromptTokens - followUpCachedPromptTokens : cachedPromptTokens,
                                 tokensUsed,
                                 promptTokens: followUpPromptTokens > 0 ? (promptTokens - followUpPromptTokens) : promptTokens,
                                 completionTokens: followUpCompletionTokens > 0 ? (completionTokens - followUpCompletionTokens) : completionTokens,
@@ -1788,6 +1807,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             outputTokens: followUpCompletionTokens,
                             latency: (Date.now() - followUpStartTime) / 1000,
                             cost: this.calculateCost(providerId, {
+                                cachedPromptTokens: followUpCachedPromptTokens,
                                 tokensUsed: followUpTokens,
                                 promptTokens: followUpPromptTokens,
                                 completionTokens: followUpCompletionTokens,
@@ -1816,6 +1836,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             outputTokens: completionTokens,
                             latency: generationLatency,
                             cost: this.calculateCost(providerId, {
+                                cachedPromptTokens: cachedPromptTokens,
                                 tokensUsed,
                                 promptTokens,
                                 completionTokens,
@@ -1866,13 +1887,14 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 }
                 
                 // Always track usage - fire and forget
+                usageRecorded = true;
                 this.trackUsage(botId, usageProviderId, {
                     tokensUsed,
                     promptTokens,
                     completionTokens,
                     latency,
                     error,
-                }).catch(err => {
+                }, ledger.summary()).catch(err => {
                     // Always log errors, even without debug mode
                     console.error('[AIService] Failed to track usage:', err);
                     if (err instanceof Error) {
@@ -1909,7 +1931,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 tokensUsed: 0,
                 latency,
                 error: true,
-            }).catch(() => {});
+            }, usageRecorded ? null : ledger.summary()).catch(() => {});
 
             // Yield error chunk — content was already streamed word-by-word
             // so don't replay preToolBuffer (would duplicate on frontend).
@@ -1939,18 +1961,27 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
     /**
      * Track AI usage (fire-and-forget)
+     *
+     * `turn` is what the reply cost, worked out call by call as each finished (#1173). A reply that never got as far as a
+     * finished call (the provider could not be reached) was not billed, so it is saved as a real zero.
      */
     private async trackUsage(
         botId: string,
         providerId: string,
-        metadata: AIUsageMetadata
+        metadata: AIUsageMetadata,
+        turn: TurnCost | null
     ): Promise<void> {
         try {
-            // Calculate cost
-            const cost = this.calculateCost(providerId, metadata);
+            const cost: TurnCost = turn ?? {
+                basis: 'priced',
+                micros: 0,
+                source: null,
+                version: null,
+                usage: { inputTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, outputTokens: 0, reasoningTokens: 0 },
+            };
 
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.log(`[AIService] trackUsage called: botId=${botId}, providerId=${providerId}, tokensUsed=${metadata.tokensUsed}, cost=${cost}`);
+                console.log(`[AIService] trackUsage called: botId=${botId}, providerId=${providerId}, tokensUsed=${metadata.tokensUsed}, cost=${cost.micros} micro-dollars (${cost.basis})`);
             }
 
             // Track via Admin API
@@ -1962,7 +1993,13 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 completionTokens: metadata.completionTokens || 0,
                 apiCalls: 1,
                 durationSeconds: metadata.durationSeconds ?? null,
-                cost,
+                price: {
+                    ...cost.usage,
+                    costMicros: cost.micros,
+                    costBasis: cost.basis,
+                    priceSource: cost.source,
+                    priceVersion: cost.version,
+                },
                 latency: metadata.latency,
                 error: metadata.error || false,
                 timestamp: new Date().toISOString(),
@@ -1982,30 +2019,27 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     }
 
     /**
-     * Per-model pricing table (USD per 1K tokens)
-     * Sourced from official provider pricing pages.
-     * Cache-miss pricing used for DeepSeek (we can't detect cache hits from API response).
+     * One call to a provider, priced as it finishes and added to the reply's ledger (#1173). Passes every chunk through
+     * unchanged. The time the call was sent picks DeepSeek's peak or off-peak price; the call's own context picks a
+     * long-context tier. A call that is stopped before it finishes adds nothing, as it recorded no tokens before either.
      */
-    private static readonly MODEL_PRICING: Record<string, { in: number; out: number }> = {
-        // DeepSeek (official: https://api-docs.deepseek.com/quick_start/pricing/)
-        'deepseek-v4-flash':          { in: 0.00014,   out: 0.00028 },
-        'deepseek-v4-pro':            { in: 0.000435,  out: 0.00087 },
-        'deepseek-chat':              { in: 0.00014,   out: 0.00028 },   // deprecated, maps to v4-flash
-        'deepseek-reasoner':          { in: 0.00014,   out: 0.00028 },   // deprecated, maps to v4-flash thinking
-        'deepseek/deepseek-v4-flash': { in: 0.00014,   out: 0.00028 },   // OpenRouter prefix
-        'deepseek/deepseek-v4-pro':   { in: 0.000435,  out: 0.00087 },
-        'deepseek/deepseek-chat':     { in: 0.00014,   out: 0.00028 },
-        // OpenAI
-        'gpt-4o':            { in: 0.0025,   out: 0.01 },
-        'gpt-4o-mini':       { in: 0.00015,  out: 0.0006 },
-        'gpt-3.5-turbo':     { in: 0.0015,   out: 0.002 },
-        // Anthropic
-        'claude-sonnet-4':   { in: 0.003,    out: 0.015 },
-        'claude-3.5-haiku':  { in: 0.0008,   out: 0.004 },
-        'claude-3-haiku':    { in: 0.00025,  out: 0.00125 },
-        'claude-3-sonnet':   { in: 0.003,    out: 0.015 },
-        'claude-3-opus':     { in: 0.015,    out: 0.075 },
-    };
+    private async *meteredStream(
+        ledger: UsageLedger,
+        providerId: string,
+        systemPrompt: string,
+        userMessage: string,
+        config: AIProviderConfig,
+        tools?: any[],
+        signal?: AbortSignal,
+        images?: string[]
+    ): AsyncGenerator<AIStreamChunk> {
+        const sentAt = new Date();
+        for await (const chunk of this.providerRegistry.generateStream(providerId, systemPrompt, userMessage, config, tools, signal, images)) {
+            // A call that was stopped before it said what it used has no figure to add; the calls that finished keep theirs
+            if (chunk.done && !chunk.metadata?.cancelled) ledger.add(priceMetadata(config, chunk.metadata, sentAt));
+            yield chunk;
+        }
+    }
 
     /**
      * Continue a response that hit finish_reason='length' (max_tokens cap).
@@ -2025,6 +2059,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         config: AIProviderConfig,
         abortSignal: AbortSignal | undefined,
         tokenSink: { used: number; prompt: number; completion: number },
+        ledger: UsageLedger,
         visionImages?: string[] | undefined
     ): AsyncGenerator<AIStreamChunk> {
         const MAX_TRUNCATION_CONTINUATIONS = 2;
@@ -2040,7 +2075,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
             let stillTruncated = false;
             try {
-                for await (const chunk of this.providerRegistry.generateStream(
+                for await (const chunk of this.meteredStream(
+                    ledger,
                     providerId,
                     systemPrompt,
                     continueMessage,
@@ -2095,6 +2131,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         partialContent: string,
         config: AIProviderConfig,
         abortSignal: AbortSignal | undefined,
+        ledger: UsageLedger,
         visionImages: string[] | undefined,
         accumulateContent: (text: string) => void,
         accumulateTokens: (used: number, prompt: number, completion: number) => void
@@ -2107,6 +2144,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             config,
             abortSignal,
             contTokens,
+            ledger,
             visionImages
         )) {
             if (contChunk.content) {
@@ -2118,18 +2156,17 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     }
 
     /**
-     * Calculate cost based on provider and model pricing
-     * Uses per-model rates when available, falls back to config/default flat rate.
+     * What a generation cost in dollars, for PostHog (#1173). Undefined when the price is unknown, so PostHog shows no
+     * figure and not a made-up one. Orbit gets the exact figure from the ledger, call by call; this works from the totals
+     * a telemetry event has.
      */
-    private calculateCost(providerId: string, metadata: AIUsageMetadata): number {
+    private calculateCost(providerId: string, metadata: AIUsageMetadata): number | undefined {
         try {
             const config = this.credentialCache.get(providerId)?.credentials ?? this.botRoutePricing.get(providerId);
             if (!config) {
-                return 0;
+                return undefined;
             }
 
-            const promptTokens = metadata.promptTokens || 0;
-            const completionTokens = metadata.completionTokens || 0;
             const durationSeconds = metadata.durationSeconds;
 
             // Voice AI: per-minute pricing (unchanged)
@@ -2142,33 +2179,28 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 return actualMinutes * costPerMinute;
             }
 
-            // LMStudio: always $0 (local models)
-            if (config.type === 'lmstudio') {
-                return 0;
-            }
-
-            // Try per-model pricing lookup
-            const modelName = config.model || '';
-            const pricing = AIService.MODEL_PRICING[modelName];
-
-            if (pricing && (promptTokens > 0 || completionTokens > 0)) {
-                return (promptTokens / 1000 * pricing.in) + (completionTokens / 1000 * pricing.out);
-            }
-
-            // Fallback: existing flat rate from config or default
-            const tokensUsed = metadata.tokensUsed || 0;
-            if (config.type === 'openai' || config.type === 'anthropic') {
-                const costPerToken = config.settings?.costPerToken || 0.00003;
-                const markup = config.settings?.markup || 1.0;
-                return (tokensUsed * costPerToken) * markup;
-            }
-
-            return 0;
+            const prompt = metadata.promptTokens || 0;
+            const completion = metadata.completionTokens || 0;
+            const cached = Math.min(metadata.cachedPromptTokens || 0, prompt);
+            const written = Math.min(metadata.cacheWriteTokens || 0, prompt - cached);
+            const reasoning = Math.min(metadata.reasoningTokens || 0, completion);
+            const cost = priceCall({
+                config,
+                usage: {
+                    inputTokens: prompt - cached - written,
+                    cachedTokens: cached,
+                    cacheWriteTokens: written,
+                    outputTokens: completion - reasoning,
+                    reasoningTokens: reasoning,
+                },
+                at: new Date(),
+            });
+            return cost.micros === null ? undefined : cost.micros / 1e6;
         } catch (error) {
             if (process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.error('[AIService] Error calculating cost:', error);
             }
-            return 0;
+            return undefined;
         }
     }
 

@@ -109,7 +109,7 @@ describe("OpenAIProvider request body", () => {
         expect(body.stream_options).toBeUndefined();
     });
 
-    it("sends the DeepSeek request exactly as before", async () => {
+    it("sends the DeepSeek request as before, apart from asking the stream to end with its usage (#1173)", async () => {
         const body = await bodyFor(config("https://api.deepseek.com/v1", { model: "deepseek-v4-flash", __promptCacheKey: "bot-1" }));
         expect(body).toEqual({
             model: "deepseek-v4-flash",
@@ -118,6 +118,7 @@ describe("OpenAIProvider request body", () => {
                 { role: "user", content: "hi" },
             ],
             stream: true,
+            stream_options: { include_usage: true },
             tools: [{ type: "function", function: { name: "t" } }],
             tool_choice: "auto",
             temperature: 0.7,
@@ -125,8 +126,8 @@ describe("OpenAIProvider request body", () => {
         });
     });
 
-    it("sends other compatible endpoints the same body as before", async () => {
+    it("sends other compatible endpoints the same body as before, apart from the stream usage request (#1173)", async () => {
         const body = await bodyFor(config("https://llm.example.com/v1", { __promptCacheKey: "bot-1" }));
-        expect(Object.keys(body).sort()).toEqual(["max_tokens", "messages", "model", "stream", "temperature", "tool_choice", "tools"]);
+        expect(Object.keys(body).sort()).toEqual(["max_tokens", "messages", "model", "stream", "stream_options", "temperature", "tool_choice", "tools"]);
     });
 });
