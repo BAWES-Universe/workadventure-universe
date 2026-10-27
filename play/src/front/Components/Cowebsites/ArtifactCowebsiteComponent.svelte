@@ -4,10 +4,14 @@
     import type { ArtifactCoWebsite } from "../../WebRtc/CoWebsite/ArtifactCoWebsite";
     import {
         ArtifactRequestError,
+        artifactLink,
         fetchArtifact,
         fetchArtifactCode,
         fetchArtifactVersions,
         restoreArtifactVersion,
+        shareArtifact,
+        type ArtifactChangeScope,
+        type ArtifactOpenScope,
         type ArtifactVersionInfo,
         type OpenedArtifact,
     } from "../../Artifacts/ArtifactApi";
@@ -21,7 +25,17 @@
     import { askOpenHereForRoom } from "../../Stores/OpenHereSheetStore";
     import OpenHereRow from "../EmbedScreens/OpenHereRow.svelte";
     import OpenHereItemIcon from "../EmbedScreens/OpenHereItemIcon.svelte";
-    import { IconAlertTriangle, IconCode, IconEye, IconHistory, IconLoader, IconRefresh } from "@wa-icons";
+    import {
+        IconAlertTriangle,
+        IconCheck,
+        IconCode,
+        IconCopy,
+        IconEye,
+        IconHistory,
+        IconLoader,
+        IconRefresh,
+        IconShare,
+    } from "@wa-icons";
 
     export let actualCowebsite: ArtifactCoWebsite;
     export let visible: boolean;
@@ -34,6 +48,7 @@
     const id = actualCowebsite.artifactId;
     const versionStore = actualCowebsite.version;
     const summaryStore = actualCowebsite.summary;
+    const link = artifactLink(id);
 
     let panelWidth = 0;
     let panelHeight = 0;
@@ -48,8 +63,15 @@
     /** The owner asked to restore the version showing, and the answer is on its way. */
     let restoring = false;
     let restoreFailed = false;
+    /** The owner's Share list is open (one list drops down at a time). */
+    let shareOpen = false;
+    /** A choice the owner just made, showing at once while it is on its way to be saved. */
+    let pendingShare: { openScope?: ArtifactOpenScope; changeScope?: ArtifactChangeScope } | undefined;
+    let shareFailed = false;
+    let copied: "no" | "yes" | "failed" = "no";
     let menu: HTMLElement | undefined;
     let versionsButton: HTMLButtonElement | undefined;
+    let shareButton: HTMLButtonElement | undefined;
     /** How tall the list may be, so it ends above the chat where the chat covers the window. */
     let menuRoom: number | undefined;
     /** The window was asked for room once while the list is open; it is not asked again until the list opens again. */
@@ -87,6 +109,8 @@
         ? $LL.chat.artifacts.by({ maker: makerName })
         : "";
     $: badge = artifactBadge(kind, $LL);
+    $: openScope = pendingShare?.openScope ?? opened?.artifact.openScope;
+    $: changeScope = pendingShare?.changeScope ?? opened?.artifact.changeScope;
     // A document is drawn from its text, a drawing as a picture, a page or app in the locked frame.
     $: needsText = codeOn || kind === "markdown";
 
@@ -168,7 +192,7 @@
 
     // The list drops down from the button. On a phone the window sits behind the chat, so the list ends above the chat,
     // and is measured again as the window or the chat moves.
-    $: if (menuOpen && menu) measureMenu(panelHeight, $windowSize.height, $chatOwnSheetHeightStore);
+    $: if ((menuOpen || shareOpen) && menu) measureMenu(panelHeight, $windowSize.height, $chatOwnSheetHeightStore);
 
     function measureMenu(_panelHeight: number, viewportHeight: number, chatHeight: number) {
         const panel = menu?.parentElement;
@@ -187,15 +211,22 @@
 
     // A tap anywhere else puts the list away. A tap inside the app does not reach the game, so it leaves the list open.
     function onPointerDown(event: PointerEvent) {
-        if (!menuOpen) return;
+        if (!menuOpen && !shareOpen) return;
         const target = event.target;
-        if (target instanceof Node && (menu?.contains(target) || versionsButton?.contains(target))) return;
+        if (
+            target instanceof Node &&
+            (menu?.contains(target) || versionsButton?.contains(target) || shareButton?.contains(target))
+        ) {
+            return;
+        }
         menuOpen = false;
+        shareOpen = false;
     }
 
     function toggleVersions() {
         menuOpen = !menuOpen;
         if (!menuOpen) return;
+        shareOpen = false;
         roomAsked = false;
         menuRoom = undefined;
         void loadVersions();
@@ -209,6 +240,61 @@
             console.warn("Could not list an artifact's versions", error);
             versionsFailed = true;
         }
+    }
+
+    function toggleShare() {
+        shareOpen = !shareOpen;
+        if (!shareOpen) return;
+        menuOpen = false;
+        roomAsked = false;
+        menuRoom = undefined;
+        shareFailed = false;
+        copied = "no";
+    }
+
+    // Saved at once, one choice at a time: the list shows the choice while it is on its way, and goes back if it fails.
+    function setSharing(change: { openScope?: ArtifactOpenScope; changeScope?: ArtifactChangeScope }) {
+        if (!opened || pendingShare) return;
+        if (
+            (change.openScope ?? openScope) === opened.artifact.openScope &&
+            (change.changeScope ?? changeScope) === opened.artifact.changeScope
+        ) {
+            return;
+        }
+        pendingShare = change;
+        shareFailed = false;
+        copied = "no";
+        void shareArtifact(id, change, actualCowebsite.chat).then(
+            (artifact) => {
+                if (destroyed) return;
+                pendingShare = undefined;
+                if (opened) {
+                    opened = {
+                        ...opened,
+                        artifact: { ...opened.artifact, openScope: artifact.openScope, changeScope: artifact.changeScope },
+                    };
+                }
+            },
+            (error) => {
+                console.warn("Could not change who can open an artifact", error);
+                if (destroyed) return;
+                pendingShare = undefined;
+                shareFailed = true;
+            }
+        );
+    }
+
+    function copyLink() {
+        if (!link) return;
+        const copying = navigator.clipboard?.writeText(link) ?? Promise.reject(new Error("No clipboard"));
+        copying.then(
+            () => {
+                if (!destroyed) copied = "yes";
+            },
+            () => {
+                if (!destroyed) copied = "failed";
+            }
+        );
     }
 
     function pickVersion(number: number) {
@@ -291,6 +377,19 @@
                 bind:this={versionsButton}
                 on:click={toggleVersions}><IconHistory font-size="22" /></button
             >
+            {#if opened.you.owner}
+                <button
+                    type="button"
+                    class="open-here-action"
+                    class:picked={shareOpen}
+                    title={$LL.chat.artifacts.share()}
+                    aria-label={$LL.chat.artifacts.share()}
+                    aria-expanded={shareOpen}
+                    data-testid="artifactShare"
+                    bind:this={shareButton}
+                    on:click={toggleShare}><IconShare font-size="22" /></button
+                >
+            {/if}
             {#if !compact}
                 <button
                     type="button"
@@ -411,46 +510,136 @@
         {/if}
     </div>
 
-    {#if menuOpen}
+    {#if menuOpen || shareOpen}
         <div
             class="menu"
             bind:this={menu}
             style:max-height={menuRoom !== undefined ? `${menuRoom}px` : undefined}
-            data-testid="artifactVersionMenu"
+            data-testid={shareOpen ? "artifactShareMenu" : "artifactVersionMenu"}
         >
-            <b class="menu-title">{$LL.chat.artifacts.versions()}</b>
-            {#if versionsFailed}
-                <p class="menu-note">{$LL.chat.artifacts.cantReach()}</p>
-            {:else if !versions}
-                <p class="menu-note">{$LL.chat.artifacts.loadingVersions()}</p>
-            {:else}
-                {#each versions as version (version.number)}
+            {#if shareOpen}
+                <b class="menu-title" id="artifact-open-scope-{id}">{$LL.chat.artifacts.whoCanOpen()}</b>
+                <div class="choices" role="radiogroup" aria-labelledby="artifact-open-scope-{id}">
                     <button
                         type="button"
-                        class="menu-row"
-                        class:picked={opened?.version.number === version.number}
-                        on:click={() => pickVersion(version.number)}
+                        role="radio"
+                        class="choice"
+                        class:picked={openScope === "chat"}
+                        aria-checked={openScope === "chat"}
+                        disabled={!!pendingShare}
+                        data-testid="artifactOpenChat"
+                        on:click={() => setSharing({ openScope: "chat" })}
                     >
-                        <span class="vnum">{version.number}</span>
-                        <span class="menu-text">
-                            <b>
-                                {version.number === latest
-                                    ? $LL.chat.artifacts.versionLatest({ version: version.number })
-                                    : $LL.chat.artifacts.versionRow({ version: version.number })}
-                            </b>
-                            {#if version.summary}<small>{version.summary}</small>{/if}
-                            <small>
-                                {version.askedByName
-                                    ? $LL.chat.artifacts.askedAt({
-                                          name: version.askedByName,
-                                          time: whenLabel(version.createdAt),
-                                      })
-                                    : $LL.chat.artifacts.madeAt({ time: whenLabel(version.createdAt) })}
-                            </small>
-                        </span>
+                        <span class="menu-text"><b>{$LL.chat.artifacts.openChat()}</b></span>
+                        <span class="radio" />
                     </button>
-                {/each}
-                <p class="menu-note">{$LL.chat.artifacts.versionsNote()}</p>
+                    <button
+                        type="button"
+                        role="radio"
+                        class="choice"
+                        class:picked={openScope === "link"}
+                        aria-checked={openScope === "link"}
+                        disabled={!!pendingShare}
+                        data-testid="artifactOpenLink"
+                        on:click={() => setSharing({ openScope: "link" })}
+                    >
+                        <span class="menu-text"
+                            ><b>{$LL.chat.artifacts.openLink()}</b><small>{$LL.chat.artifacts.openLinkHelp()}</small
+                            ></span
+                        >
+                        <span class="radio" />
+                    </button>
+                </div>
+                <b class="menu-title" id="artifact-change-scope-{id}">{$LL.chat.artifacts.whoCanChange()}</b>
+                <div class="choices" role="radiogroup" aria-labelledby="artifact-change-scope-{id}">
+                    <button
+                        type="button"
+                        role="radio"
+                        class="choice"
+                        class:picked={changeScope === "owner"}
+                        aria-checked={changeScope === "owner"}
+                        disabled={!!pendingShare}
+                        data-testid="artifactChangeOwner"
+                        on:click={() => setSharing({ changeScope: "owner" })}
+                    >
+                        <span class="menu-text"><b>{$LL.chat.artifacts.changeOwner()}</b></span>
+                        <span class="radio" />
+                    </button>
+                    <button
+                        type="button"
+                        role="radio"
+                        class="choice"
+                        class:picked={changeScope === "openers"}
+                        aria-checked={changeScope === "openers"}
+                        disabled={!!pendingShare}
+                        data-testid="artifactChangeOpeners"
+                        on:click={() => setSharing({ changeScope: "openers" })}
+                    >
+                        <span class="menu-text"><b>{$LL.chat.artifacts.changeOpeners()}</b></span>
+                        <span class="radio" />
+                    </button>
+                </div>
+                {#if shareFailed}
+                    <p class="menu-note" role="alert" data-testid="artifactShareFailed">
+                        {$LL.chat.artifacts.shareFailed()}
+                    </p>
+                {:else if openScope === "link" && link}
+                    {#if copied === "yes"}
+                        <p class="copied" role="status" data-testid="artifactLinkCopied">
+                            <IconCheck font-size="18" />
+                            {$LL.chat.artifacts.linkCopied()}
+                        </p>
+                    {:else}
+                        <button
+                            type="button"
+                            class="go"
+                            disabled={!!pendingShare}
+                            data-testid="artifactCopyLink"
+                            on:click={copyLink}><IconCopy font-size="18" /> {$LL.chat.artifacts.copyLink()}</button
+                        >
+                    {/if}
+                    {#if copied === "failed"}
+                        <p class="menu-note" role="alert">{$LL.chat.artifacts.copyFailed()}</p>
+                        <code class="link-text" data-testid="artifactLinkText">{link}</code>
+                    {/if}
+                {:else if openScope === "chat"}
+                    <p class="menu-note">{$LL.chat.artifacts.openChatNote()}</p>
+                {/if}
+            {:else}
+                <b class="menu-title">{$LL.chat.artifacts.versions()}</b>
+                {#if versionsFailed}
+                    <p class="menu-note">{$LL.chat.artifacts.cantReach()}</p>
+                {:else if !versions}
+                    <p class="menu-note">{$LL.chat.artifacts.loadingVersions()}</p>
+                {:else}
+                    {#each versions as version (version.number)}
+                        <button
+                            type="button"
+                            class="menu-row"
+                            class:picked={opened?.version.number === version.number}
+                            on:click={() => pickVersion(version.number)}
+                        >
+                            <span class="vnum">{version.number}</span>
+                            <span class="menu-text">
+                                <b>
+                                    {version.number === latest
+                                        ? $LL.chat.artifacts.versionLatest({ version: version.number })
+                                        : $LL.chat.artifacts.versionRow({ version: version.number })}
+                                </b>
+                                {#if version.summary}<small>{version.summary}</small>{/if}
+                                <small>
+                                    {version.askedByName
+                                        ? $LL.chat.artifacts.askedAt({
+                                              name: version.askedByName,
+                                              time: whenLabel(version.createdAt),
+                                          })
+                                        : $LL.chat.artifacts.madeAt({ time: whenLabel(version.createdAt) })}
+                                </small>
+                            </span>
+                        </button>
+                    {/each}
+                    <p class="menu-note">{$LL.chat.artifacts.versionsNote()}</p>
+                {/if}
             {/if}
         </div>
     {/if}
@@ -615,7 +804,9 @@
         opacity: 0.7;
     }
     .quiet:focus-visible,
-    .menu-row:focus-visible {
+    .menu-row:focus-visible,
+    .choice:focus-visible,
+    .go:focus-visible {
         outline: 2px solid #c4b5fd;
         outline-offset: 2px;
     }
@@ -722,5 +913,87 @@
         margin: 4px 6px 2px;
         font-size: 12px;
         color: rgba(255, 255, 255, 0.55);
+    }
+    .choices {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+    .choice {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-height: 44px;
+        padding: 5px 12px;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(255, 255, 255, 0.03);
+        color: #fff;
+        font: inherit;
+        text-align: start;
+        cursor: pointer;
+    }
+    .choice .menu-text {
+        flex: 1;
+    }
+    .choice:hover {
+        background: rgba(255, 255, 255, 0.08);
+    }
+    .choice.picked {
+        background: rgba(134, 41, 252, 0.18);
+        border-color: rgba(167, 139, 250, 0.7);
+    }
+    .choice:disabled {
+        cursor: default;
+    }
+    .radio {
+        flex: none;
+        width: 20px;
+        height: 20px;
+        box-sizing: border-box;
+        border-radius: 50%;
+        border: 2px solid rgba(255, 255, 255, 0.35);
+    }
+    .choice.picked .radio {
+        border: 0;
+        background: radial-gradient(circle, #fff 0 4px, transparent 4.5px), linear-gradient(135deg, #8629fc, #4156f6);
+    }
+    .go,
+    .copied {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        min-height: 44px;
+        margin: 4px 0 0;
+        border-radius: 999px;
+        font-family: inherit;
+        font-size: 14px;
+        font-weight: 600;
+    }
+    .go {
+        border: 0;
+        background: linear-gradient(135deg, #8629fc, #4156f6);
+        box-shadow: 0 8px 24px -8px rgba(134, 41, 252, 0.7);
+        color: #fff;
+        cursor: pointer;
+    }
+    .go:disabled {
+        cursor: default;
+        opacity: 0.7;
+    }
+    .copied {
+        background: rgba(74, 222, 128, 0.14);
+        border: 1px solid rgba(74, 222, 128, 0.5);
+        color: #bbf7d0;
+    }
+    .link-text {
+        margin: 0 6px 2px;
+        padding: 8px 10px;
+        border-radius: 10px;
+        background: #0f0c19;
+        font-size: 12px;
+        overflow-wrap: anywhere;
+        user-select: all;
     }
 </style>
