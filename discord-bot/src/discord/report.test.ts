@@ -82,7 +82,7 @@ test("one post per universe, most people first, rooms most people first, bots ne
 });
 
 test("a universe card has its colour, its counts, each room and a Visit button per room", () => {
-    const { universes } = buildReport(ROOMS, METADATA, ICONS, NOW);
+    const { posts: universes } = buildReport(ROOMS, METADATA, ICONS, NOW);
     assert.equal(universes.length, 2);
 
     const acme = universes[1];
@@ -115,16 +115,60 @@ test("a universe card has its colour, its counts, each room and a Visit button p
     assert.match(universes[0].embeds![0].fields![0].value, /AH\\\(Melon\\\)/);
 });
 
-test("nobody online: only the summary, saying so, with Last updated", () => {
-    const report = buildReport({ [url("u/w/r")]: { people: 0, bots: 3, names: [] } }, new Map(), ICONS, NOW);
-    assert.deepEqual(report.universes, []);
-    const embed = report.summary.embeds![0];
-    assert.equal(embed.description, "No one is online right now.");
-    assert.deepEqual(embed.fields!.map((field) => field.name), ["<:universe_clock:5> Last updated"]);
+test("no one in: the summary shows 0 people and the bots, then All Quiet with Enter the Universe", () => {
+    const report = buildReport(
+        {
+            [url("u/w/r")]: { people: 0, bots: 3, names: [] },
+            [url("u/w/s")]: { people: 0, bots: 18, names: [] },
+            [url("u/w/t")]: { people: 0, bots: 0, names: [] },
+        },
+        new Map(),
+        ICONS,
+        NOW
+    );
+    const summary = report.summary.embeds![0];
+    assert.equal(summary.title, "Universe right now");
+    assert.equal(summary.description, undefined);
+    assert.deepEqual(summary.fields, [
+        { name: "<:universe_people:4> People online", value: "**0** · 21 bots", inline: true },
+        { name: "<:universe_clock:5> Last updated", value: "<t:1792924500:R>", inline: true },
+    ]);
+
+    assert.equal(report.posts.length, 1);
+    const quiet = report.posts[0];
+    assert.deepEqual(quiet.embeds, [
+        { title: "🌙 All Quiet", description: "No active rooms at the moment. Be the first to explore!", color: 0x99aab5 },
+    ]);
+    assert.deepEqual(quiet.components, [
+        {
+            type: 1,
+            components: [
+                {
+                    type: 2,
+                    style: 5,
+                    label: "Enter the Universe",
+                    url: "https://universe.bawes.net",
+                    emoji: { id: "1", name: "universe_planet" },
+                },
+            ],
+        },
+    ]);
+});
+
+test("no one in and no bots: 0 people with no bot count, and the button carries no emoji without icons", () => {
+    const report = buildReport({}, new Map(), {}, NOW);
+    assert.equal(report.summary.embeds![0].fields![0].value, "**0**");
+    assert.equal(report.posts[0].embeds![0].title, "🌙 All Quiet");
+    assert.deepEqual(report.posts[0].components![0].components[0], {
+        type: 2,
+        style: 5,
+        label: "Enter the Universe",
+        url: "https://universe.bawes.net",
+    });
 });
 
 test("without icons (Discord said no) the words still read, and buttons carry no emoji", () => {
-    const { summary, universes } = buildReport(ROOMS, METADATA, {}, NOW);
+    const { summary, posts: universes } = buildReport(ROOMS, METADATA, {}, NOW);
     assert.equal(summary.embeds![0].fields![0].name, "People online");
     assert.equal(universes[0].embeds![0].title, "BAWES Universe");
     assert.equal(universes[0].embeds![0].fields![0].name, "Headquarters");
@@ -137,7 +181,7 @@ test("without icons (Discord said no) the words still read, and buttons carry no
 });
 
 test("without Orbit's names the room's address stands in, in Orbit's first universe colour", () => {
-    const { universes } = buildReport({ [url("acme/main/lobby")]: { people: 1, bots: 0, names: ["Omar"] } }, new Map(), {}, NOW);
+    const { posts: universes } = buildReport({ [url("acme/main/lobby")]: { people: 1, bots: 0, names: ["Omar"] } }, new Map(), {}, NOW);
     const embed = universes[0].embeds![0];
     assert.equal(embed.title, "acme");
     assert.equal(embed.color, 0x8b5cf6);

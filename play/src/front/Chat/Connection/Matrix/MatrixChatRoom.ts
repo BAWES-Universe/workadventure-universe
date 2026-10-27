@@ -135,6 +135,7 @@ export class MatrixChatRoom
                     previewLine(message.type, get(message.content), {
                         photo: get(LL).chat.messageActions.photo(),
                         photos: (count) => get(LL).chat.messageActions.photos({ count }),
+                        files: (count) => get(LL).chat.messageActions.files({ count }),
                         video: get(LL).chat.messageActions.video(),
                         voice: get(LL).chat.messageActions.voice(),
                         audio: get(LL).chat.messageActions.audio(),

@@ -1,4 +1,5 @@
 import type { BotConfiguration } from '../server/AdminApiService';
+import type { ReplyLimitReached } from '../ai/types';
 
 /**
  * Plain notes a bot leaves in a direct chat when it can't answer, so nobody mistakes a resting or deleted bot for a
@@ -195,5 +196,29 @@ export function statusNoteContent(state: BotNoteState, language: NoteLanguage, b
         msgtype: 'm.notice',
         body,
         [BOT_STATUS_KEY]: { state, title: words.title, text, lang: language },
+    };
+}
+
+/** The field a reply limit card travels in (#1159): the game draws the fixed card from it, in the person's own clock. */
+export const REPLY_LIMIT_KEY = 'universe.reply_limit';
+
+/**
+ * The Matrix content of a reply limit card (#1159): a notice other apps show as plain English, plus what the game needs
+ * to draw the card (which limit, when it ends, which button fits the person).
+ */
+export function replyLimitContent(limit: ReplyLimitReached, botName: string): Record<string, unknown> {
+    const at = new Date(limit.resetsAt);
+    const time = `${String(at.getUTCHours()).padStart(2, '0')}:${String(at.getUTCMinutes()).padStart(2, '0')} UTC`;
+    // The same titles as the game's card (approved mock, 26 Oct 2026); the game draws the card from the field below
+    const title =
+        limit.limit === 'bot'
+            ? `You've reached ${botName}'s reply limit for now.`
+            : limit.who === 'guest'
+              ? "You've used your guest replies for now."
+              : "You've used your Universe AI replies for now.";
+    return {
+        msgtype: 'm.notice',
+        body: `${title} ${botName} answers you again at ${time}.`,
+        [REPLY_LIMIT_KEY]: { limit: limit.limit, resetsAt: limit.resetsAt, who: limit.who },
     };
 }

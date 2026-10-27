@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@mozilla/readability": "^0.6.0",
+    "@napi-rs/canvas": "0.1.80",
     "@sentry/core": "^10.56.0",
     "@sentry/node": "^10.56.0",
     "@workadventure/messages": "1.0.0",

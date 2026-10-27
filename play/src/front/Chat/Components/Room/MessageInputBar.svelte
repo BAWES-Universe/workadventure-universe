@@ -35,6 +35,7 @@
     import GifPicker from "../../Gif/GifPicker.svelte";
     import { withoutPreview } from "../../LinkPreview/ChatLinks";
     import { isVoiceNoteFileName, type VoiceNoteDetails } from "../../VoiceNote/VoiceNote";
+    import { askForNotifications, replyMoment } from "../../../Notification/Push/NotificationAsk";
     import { appendEmoji } from "./AppendEmoji";
     import { withoutBlankEdges } from "./BlankEdges";
     import { canHover } from "./FocusAfterSend";
@@ -46,6 +47,7 @@
     import { TypingSignal } from "./TypingSignal";
     import TypingUsers from "./TypingUsers.svelte";
     import VoiceNoteComposer from "./VoiceNote/VoiceNoteComposer.svelte";
+    import type { DirectPartner } from "./DirectChat/DirectPartnerStore";
     import { IconGif, IconMoodSmile, IconPaperclip, IconSend, IconX } from "@wa-icons";
 
     // Frontend pre-check constants (server enforces the real limits)
@@ -73,6 +75,8 @@
 
     export let room: ChatRoom;
     export let disabled = false;
+    /** The other one of a direct chat: writing to a bot, or to someone not in Universe, may offer notifications. */
+    export let partner: DirectPartner | undefined = undefined;
     /** Replaces "Enter your message..." when the other side can't answer now (a resting bot). */
     export let inputHint: string | undefined = undefined;
     /** Whether the mic shows. A bot's direct messages hide it until bots can hear notes. */
@@ -426,6 +430,8 @@
                 }
             } else {
                 destination.room.sendMessage(messageToSend);
+                const moment = partner ? replyMoment(partner, get(destination.room.name)) : undefined;
+                if (moment) askForNotifications(moment);
             }
             clearComposerIfUnchanged(submittedDraft);
         }

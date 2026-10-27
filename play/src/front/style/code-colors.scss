@@ -1,0 +1,84 @@
+// The colors of code in the code view and in Markdown code blocks: bawes.net's code colors (Tailwind's 300 and 400
+// shades) on the dark panels. Scoped to .code-colors so chat messages keep the highlight.js theme above.
+.code-colors {
+    // The highlight.js theme above makes some parts bold; here only the colors tell them apart.
+    [class^="hljs-"] {
+        font-weight: inherit;
+        font-style: inherit;
+    }
+    // A colored Markdown code block: what the colors leave plain reads like the code view's text.
+    pre > code[data-code-colored] {
+        color: rgba(255, 255, 255, 0.84);
+    }
+    .hljs-comment,
+    .hljs-meta {
+        color: #7c7f8c;
+    }
+    .hljs-keyword,
+    .hljs-name,
+    .hljs-selector-tag,
+    .hljs-built_in,
+    .hljs-type,
+    .hljs-section,
+    .hljs-variable.language_ {
+        color: #c084fc;
+    }
+    .hljs-title,
+    .hljs-attr,
+    .hljs-attribute,
+    .hljs-property,
+    .hljs-variable,
+    .hljs-template-variable,
+    .hljs-operator,
+    .hljs-link {
+        color: #93c5fd;
+    }
+    .hljs-string,
+    .hljs-regexp,
+    .hljs-meta .hljs-string,
+    .hljs-template-tag,
+    .hljs-code {
+        color: #86efac;
+    }
+    .hljs-literal,
+    .hljs-selector-class,
+    .hljs-selector-pseudo,
+    .hljs-selector-id,
+    .hljs-bullet {
+        color: #fde047;
+    }
+    .hljs-number,
+    .hljs-symbol {
+        color: #fdba74;
+    }
+    .hljs-tag {
+        color: rgba(255, 255, 255, 0.5);
+    }
+    .hljs-tag .hljs-name {
+        color: #c084fc;
+    }
+    .hljs-tag .hljs-attr {
+        color: #93c5fd;
+    }
+    .hljs-tag .hljs-string {
+        color: #86efac;
+    }
+    .hljs-emphasis {
+        font-style: italic;
+    }
+    .hljs-strong {
+        font-weight: 700;
+    }
+}
+
+// Object keys read like the website's: violet in JSON and in script objects.
+.code-colors.language-json .hljs-attr,
+.code-colors.language-typescript .hljs-attr,
+.code-colors.language-javascript .hljs-attr {
+    color: #c084fc;
+}
+
+// JSON's true, false and null are keywords to the highlighter; the website shows them yellow.
+.code-colors.language-json .hljs-keyword {
+    color: #fde047;
+}

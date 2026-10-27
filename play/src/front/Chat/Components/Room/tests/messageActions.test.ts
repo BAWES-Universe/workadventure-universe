@@ -142,6 +142,7 @@ describe("the line a chat list row and a notification show", () => {
     const labels = {
         photo: "Photo",
         photos: (count: number) => `${count} photos`,
+        files: (count: number) => `${count} files`,
         video: "Video",
         voice: "Voice",
         audio: "Audio",
@@ -174,6 +175,11 @@ describe("the line a chat list row and a notification show", () => {
         expect(previewLine("audio", song, labels)).toBe("Audio");
     });
 
+    it("counts several documents as files, not photos", () => {
+        const documents = content({ body: "a.pdf", fileNames: ["a.pdf", "b.docx"] });
+        expect(previewLine("gallery", documents, labels)).toBe("2 files");
+    });
+
     it("does not need the file to be loaded: a message that has just arrived has no URL yet", () => {
         const arriving = content({ body: "IMG_4821.jpg", filename: "IMG_4821.jpg", url: undefined });
         expect(previewLine("image", arriving, labels)).toBe("Photo");
@@ -184,11 +190,11 @@ describe("the line a chat list row and a notification show", () => {
         expect(previewLine("file", pdf, labels)).toBe("Budget-Q4.pdf");
     });
 
-    it("keeps the text of a text message, as plain text", () => {
+    it("keeps the text of a text message as it was sent", () => {
         expect(previewLine("text", content({ body: "See you at the HQ in five" }), labels)).toBe(
             "See you at the HQ in five"
         );
-        expect(previewLine("text", content({ body: "<b>bold</b> news" }), labels)).toBe("bold news");
+        expect(previewLine("text", content({ body: "<b>bold</b> news" }), labels)).toBe("<b>bold</b> news");
     });
 
     it("counts the photos of a gallery", () => {

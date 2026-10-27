@@ -179,15 +179,15 @@ class DiscordBotService {
             const icons = await this.appEmoji.get();
             const report = buildReport(rooms, roomMetadataMap, icons, new Date(), this.pusherUrl);
 
-            // Clears the channel first, then sends the summary and the universes' posts.
-            const sent = await this.discordBot.sendStatsReport(report.summary, report.universes);
+            // Clears the channel first, then sends the summary and the universes' posts (or the "All Quiet" post).
+            const sent = await this.discordBot.sendStatsReport(report.summary, report.posts);
             if (!sent) {
                 // An emoji changed by hand in the Developer Portal would make every post fail: read them again next time.
                 this.appEmoji.forget();
                 return;
             }
 
-            console.log(`Stats channel updated with ${report.universes.length} universe post${report.universes.length === 1 ? "" : "s"}`);
+            console.log(`Stats channel updated with ${report.posts.length} post${report.posts.length === 1 ? "" : "s"} under the summary`);
         } catch (error) {
             console.error("Failed to update stats channel:", error);
         }

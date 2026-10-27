@@ -2270,6 +2270,53 @@ button[data-testid="actionBarLogin"]:hover {
     }
 }
 
+// The raised hand above a Woka (RaisedHandBadge.ts): the ✋ and the place in line, on an ink pill with a gold edge, as
+// on the raise hand button while the hand is up. Sizes in game pixels, scaled by --raised-hand-scale.
+.raised-hand-badge {
+    position: absolute;
+    top: 0;
+    left: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    height: calc(13px * var(--raised-hand-scale, 1));
+    min-width: calc(13px * var(--raised-hand-scale, 1));
+    padding: 0 calc(2.5px * var(--raised-hand-scale, 1));
+    gap: calc(0.5px * var(--raised-hand-scale, 1));
+    border: calc(0.8px * var(--raised-hand-scale, 1)) solid #f5c451;
+    border-radius: 999px;
+    background: #14121e;
+    transform-origin: center center;
+    will-change: transform;
+    pointer-events: none;
+    user-select: none;
+    white-space: nowrap;
+    line-height: 1;
+}
+
+.game-scene-loaded .raised-hand-badge.is-shown {
+    display: flex;
+}
+
+.raised-hand-badge-icon {
+    width: calc(9px * var(--raised-hand-scale, 1));
+    text-align: center;
+    font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+    font-size: calc(8.5px * var(--raised-hand-scale, 1));
+}
+
+.raised-hand-badge-number {
+    font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: calc(8.5px * var(--raised-hand-scale, 1));
+    font-weight: 700;
+    color: #f5c451;
+
+    &:empty {
+        display: none;
+    }
+}
+
 /* The hint pill: the one ink pill for every "Press Space / Tap to ..." hint, above a player or an object and in the
    popups. A key chip sits centred inside the line. Sizes in em, so the chip follows the text it sits in. */
 .u-hint {

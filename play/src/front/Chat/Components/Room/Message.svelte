@@ -13,6 +13,8 @@
     import { ProximityChatMessage } from "../../Connection/Proximity/ProximityChatRoom";
     import LinkPreview from "../../LinkPreview/LinkPreview.svelte";
     import BotRoomCard from "../../Bots/BotRoomCard.svelte";
+    import ArtifactCardView from "../../../Artifacts/ArtifactCardView.svelte";
+    import { readArtifactLine } from "../../../Artifacts/artifactCard";
     import { bodyShownWithCard } from "../../LinkPreview/ChatLinkKind";
     import MessageOptions from "./MessageOptions.svelte";
     import MessageImage from "./Message/MessageImage.svelte";
@@ -158,6 +160,10 @@
     $: contentType = $content ? message.type : type;
 
     // A text message with a link gets a card under it.
+    // A bot's artifact is a card, not text: from the field of its direct message, or from the line it put in nearby chat.
+    $: artifactCard = $isDeleted
+        ? undefined
+        : message.artifact ?? readArtifactLine($content?.body, sender?.isBot === true);
     $: hasLinkCard = replyDepth === 0 && !isQuotedMessage && (contentType === "text" || contentType === "proximity");
     // A video or app link that ends the message is shown by its card, not as a long address. Only what is shown
     // changes: the message keeps its link for copying, replies and bots.
@@ -265,7 +271,9 @@
                 {/if}
 
                 {#if !notSent}
-                    {#if !hasLinkCard}
+                    {#if artifactCard}
+                        <ArtifactCardView card={artifactCard} makerName={sender?.username} />
+                    {:else if !hasLinkCard}
                         <svelte:component
                             this={messageType[contentType]}
                             on:updateMessageBody={updateMessageBody}

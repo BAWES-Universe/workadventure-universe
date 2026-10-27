@@ -6,6 +6,8 @@ import { v4 as uuidv4 } from "uuid";
 import { MapStore } from "@workadventure/store-utils";
 import { readBotStatusNote, type BotStatusNote } from "../../Bots/BotChatStatus";
 import { readBotRoomLink, type BotRoomLink } from "../../Bots/BotRoomLink";
+import { readBotReplyLimit, type BotReplyLimit } from "../../Bots/BotReplyLimit";
+import { readArtifactField, type ArtifactCard } from "../../../Artifacts/artifactCard";
 import type { ChatMessage, ChatMessageContent, ChatMessageType, ChatUser } from "../ChatConnection";
 import { canRenderAttachmentInline } from "../../../Utils/InlineMimeType";
 import { fromMatrixWaveform, secondsFromMatrixDuration } from "../../VoiceNote/VoiceNote";
@@ -57,6 +59,8 @@ export class MatrixChatMessage implements ChatMessage {
     readonly botStatus: BotStatusNote | undefined;
     readonly botStatusAt: number | undefined;
     readonly roomLink: BotRoomLink | undefined;
+    readonly replyLimit: BotReplyLimit | undefined;
+    readonly artifact: ArtifactCard | undefined;
     readonly canReact = writable(true);
     readonly canReply = writable(true);
     private isShown = false;
@@ -71,6 +75,12 @@ export class MatrixChatMessage implements ChatMessage {
         // The homeserver's clock can differ from ours: the SDK's local timestamp is the send time on our clock.
         this.botStatusAt = this.botStatus ? event.localTimestamp : undefined;
         this.roomLink = readBotRoomLink(event.getSender(), event.getOriginalContent(), window.location.origin);
+        this.replyLimit = readBotReplyLimit(
+            event.getSender(),
+            event.getOriginalContent(),
+            room.getMember(event.getSender() ?? "")?.name ?? ""
+        );
+        this.artifact = readArtifactField(event.getSender(), event.getOriginalContent());
         this.date = event.getDate();
         this.sender = this.getSender();
         this.isMyMessage = this.room.client.getUserId() === event.getSender();

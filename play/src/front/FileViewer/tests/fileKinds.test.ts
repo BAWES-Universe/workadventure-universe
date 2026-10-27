@@ -37,9 +37,16 @@ describe("picking how a file is shown", () => {
         }
         expect(fileKindOf("a.docx")).toBe("word");
         expect(fileKindOf("a.doc")).toBe("oldword");
-        for (const name of ["a.zip", "a.pptx", "a.html", "a.exe", "a"]) {
+        for (const name of ["a.zip", "a.pptx", "a.exe", "a.rs", "a"]) {
             expect(fileKindOf(name)).toBeUndefined();
         }
+        for (const name of ["a.js", "a.ts", "a.html", "a.css", "a.py", "a.yml", "a.sh", "a.sql"]) {
+            expect(fileKindOf(name)).toBe("code");
+        }
+        // Markdown, JSON and SVG keep their own readers.
+        expect(fileKindOf("a.md")).toBe("markdown");
+        expect(fileKindOf("a.json")).toBe("json");
+        expect(fileKindOf("a.svg")).toBe("image");
     });
 
     it("opens only PDFs from a chat card: pictures keep the picture viewer, other files stay downloads", () => {
@@ -47,7 +54,9 @@ describe("picking how a file is shown", () => {
         expect(chatFileOpensInViewer("photo.png")).toBe(false);
         expect(chatFileOpensInViewer("archive.zip")).toBe(false);
         expect(chatFileOpensInViewer("slides.pptx")).toBe(false);
-        expect(chatFileOpensInViewer("page.html")).toBe(false);
+        expect(chatFileOpensInViewer("page.html")).toBe(true);
+        expect(chatFileOpensInViewer("welcome.ts")).toBe(true);
+        expect(chatFileOpensInViewer("program.exe")).toBe(false);
         expect(chatFileOpensInViewer(undefined)).toBe(false);
     });
 
