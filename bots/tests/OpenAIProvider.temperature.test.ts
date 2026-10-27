@@ -13,6 +13,8 @@ vi.mock("../ai/encryption", () => ({ decryptApiKey: vi.fn(() => "sk-person") }))
 import { OpenAIProvider } from "../ai/providers/OpenAIProvider";
 import type { AIProviderConfig } from "../ai/types";
 
+// A refusal is remembered per endpoint and model for as long as the server runs, so each test gets a model of its own
+let models = 0;
 const config = (extra: Partial<AIProviderConfig> = {}): AIProviderConfig => ({
     providerId: "key-kimi",
     name: "Kimi",
@@ -20,7 +22,7 @@ const config = (extra: Partial<AIProviderConfig> = {}): AIProviderConfig => ({
     enabled: true,
     endpoint: "https://api.moonshot.ai/v1",
     apiKeyEncrypted: "iv:tag:data",
-    model: "kimi-k2.6",
+    model: `kimi-k2.6-${models}`,
     temperature: 0.7,
     maxTokens: 300,
     supportsStreaming: true,
@@ -54,6 +56,7 @@ describe("OpenAIProvider and a refused temperature", () => {
     const originalFetch = global.fetch;
     let fetchMock: ReturnType<typeof vi.fn>;
     beforeEach(() => {
+        models += 1;
         fetchMock = vi.fn();
         global.fetch = fetchMock as unknown as typeof fetch;
     });
@@ -110,6 +113,20 @@ describe("OpenAIProvider and a refused temperature", () => {
         const chunks = await drain(new OpenAIProvider().generateStream("s", "hi", config()));
         expect(fetchMock).toHaveBeenCalledTimes(2);
         expect(chunks[chunks.length - 1].metadata).toMatchObject({ error: true, errorStatus: 400 });
+    });
+
+    it("remembers the refusal: the next replies do not send the temperature at all", async () => {
+        fetchMock.mockResolvedValueOnce(failure(400, KIMI_REFUSAL)).mockResolvedValueOnce(sse());
+        await drain(new OpenAIProvider().generateStream("s", "hi", config()));
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        fetchMock.mockReset();
+        fetchMock.mockResolvedValue(sse());
+        await drain(new OpenAIProvider().generateStream("s", "again", config()));
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(sent(fetchMock, 0)).not.toHaveProperty("temperature");
+        // Another model on the same endpoint still gets its temperature
+        await drain(new OpenAIProvider().generateStream("s", "other", config({ model: "kimi-other" })));
+        expect(sent(fetchMock, 1)).toMatchObject({ temperature: 0.7 });
     });
 
     it("leaves a normal call exactly as it was: one call, temperature and Bearer key sent", async () => {
