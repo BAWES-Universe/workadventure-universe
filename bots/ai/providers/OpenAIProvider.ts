@@ -68,25 +68,52 @@ export function refusesStreamOptions(status: number, errorText: string): boolean
 /** Orbit's smallest longest reply: a stated maximum below it is a number about something else. */
 const SMALLEST_OUTPUT_CEILING = 256;
 
+/** The words of an error answer (message, code, type), so numbers elsewhere in the JSON are never read as a cap. */
+function errorWords(errorText: string): string {
+    try {
+        const data = JSON.parse(errorText);
+        const error = data && typeof data.error === 'object' && data.error !== null ? data.error : data;
+        const parts = [error?.message, data?.message, data?.detail, data?.error].filter((part): part is string => typeof part === 'string');
+        if (parts.length > 0) return parts.join('\n');
+    } catch {
+        // Not JSON: the plain text is what it said
+    }
+    return errorText;
+}
+
 /**
- * The most output tokens a model says it allows, read from the error it gave for being asked more (Orbit #666
- * recommends 32,000 by default, above what some older models take). Undefined when the error is about something else.
- * The forms providers use:
- * - OpenAI: "max_tokens is too large: 32000. This model supports at most 16384 completion tokens, whereas you provided 32000."
+ * How each provider words the most output tokens a model allows, the number being the first group:
+ * - OpenAI: "This model supports at most 16384 completion tokens, whereas you provided 32000."
  * - Anthropic: "max_tokens: 32000 > 8192, which is the maximum allowed number of output tokens for ..."
  * - DeepSeek: "Invalid max_tokens value, the valid range of max_tokens is [1, 8192]"
- * - Groq: "`max_tokens` must be less than or equal to `8192`, the maximum value for `max_tokens` is ..."
- * - vLLM and others: "maximum context length is 131072 tokens. However, you requested 140000 tokens (108000 in the
- *   messages, 32000 in the completion)": what is left of the context after the messages.
+ * - Groq and others: "`max_tokens` must be less than or equal to `8192`", "max_tokens must be at most 4096"
  */
-export function statedOutputCeiling(status: number, errorText: string, asked: number | undefined): number | undefined {
+const MODEL_CAP_WORDING = [
+    /supports at most (\d+) (?:completion|output) tokens/i,
+    /max_(?:completion_)?tokens:\s*\d+\s*>\s*(\d+)/i,
+    /valid range of `?max_(?:completion_)?tokens`? is \[\d+,\s*(\d+)\]/i,
+    /`?max_(?:completion_)?tokens`? must be (?:less than or equal to|at most|<=) `?(\d+)/i,
+];
+
+/** vLLM and others: "maximum context length is 131072 tokens. However, you requested 140000 tokens (108000 in the messages, 32000 in the completion)". */
+const CONTEXT_WORDING = /maximum context length is (\d+) tokens[\s\S]*?\((\d+) in the messages/i;
+
+/**
+ * The most output tokens a model allows, read from the error it gave for being asked more (Orbit #666 recommends 32,000
+ * by default, above what some older models take). `lasting` is false when it is only what this request's messages left
+ * of the context: it fits this request, not the model. Undefined when the error is about something else.
+ */
+export function statedOutputCeiling(status: number, errorText: string, asked: number | undefined): { tokens: number; lasting: boolean } | undefined {
     if ((status !== 400 && status !== 422) || !asked) return undefined;
-    if (!/max_(?:completion_)?tokens|output tokens|completion tokens|in the completion/i.test(errorText)) return undefined;
-    const context = /maximum context length is (\d+)[\s\S]*?(\d+) in the messages/i.exec(errorText);
-    const ceiling = context
-        ? Number(context[1]) - Number(context[2])
-        : Math.max(0, ...(errorText.match(/\d+/g) ?? []).map(Number).filter((n) => n < asked));
-    return ceiling >= SMALLEST_OUTPUT_CEILING && ceiling < asked ? ceiling : undefined;
+    const words = errorWords(errorText);
+    const fits = (tokens: number) => tokens >= SMALLEST_OUTPUT_CEILING && tokens < asked;
+    for (const wording of MODEL_CAP_WORDING) {
+        const match = wording.exec(words);
+        if (match && fits(Number(match[1]))) return { tokens: Number(match[1]), lasting: true };
+    }
+    const context = CONTEXT_WORDING.exec(words);
+    const left = context ? Number(context[1]) - Number(context[2]) : 0;
+    return context && fits(left) ? { tokens: left, lasting: false } : undefined;
 }
 
 export class OpenAIProvider implements AIProvider {
@@ -100,12 +127,12 @@ export class OpenAIProvider implements AIProvider {
         return `${endpoint} ${config.model}`;
     }
 
-    /** The body asked again within the cap the model stated, and the cap kept for its next requests. */
-    private withinOutputCeiling(requestBody: Record<string, any>, config: AIProviderConfig, endpoint: string, ceiling: number): Record<string, any> {
-        OpenAIProvider.outputCeilings.set(OpenAIProvider.outputCeilingKey(config, endpoint), ceiling);
+    /** The body asked again within the cap the model stated, and the cap kept for its next requests when it is the model's own. */
+    private withinOutputCeiling(requestBody: Record<string, any>, config: AIProviderConfig, endpoint: string, ceiling: { tokens: number; lasting: boolean }): Record<string, any> {
+        if (ceiling.lasting) OpenAIProvider.outputCeilings.set(OpenAIProvider.outputCeilingKey(config, endpoint), ceiling.tokens);
         const retryBody = { ...requestBody };
-        if (retryBody.max_completion_tokens !== undefined) retryBody.max_completion_tokens = ceiling;
-        else retryBody.max_tokens = ceiling;
+        if (retryBody.max_completion_tokens !== undefined) retryBody.max_completion_tokens = ceiling.tokens;
+        else retryBody.max_tokens = ceiling.tokens;
         return retryBody;
     }
 

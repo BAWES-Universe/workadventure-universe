@@ -50,13 +50,23 @@ afterEach(() => {
 });
 
 describe("statedOutputCeiling", () => {
+    const lasting = (tokens: number) => ({ tokens, lasting: true });
     it("reads the cap from each provider's words", () => {
-        expect(statedOutputCeiling(400, OPENAI_REFUSAL, 32000)).toBe(16384);
-        expect(statedOutputCeiling(400, "max_tokens: 32000 > 8192, which is the maximum allowed number of output tokens for claude-3-5-haiku-20241022", 32000)).toBe(8192);
-        expect(statedOutputCeiling(400, "Invalid max_tokens value, the valid range of max_tokens is [1, 8192]", 32000)).toBe(8192);
-        expect(statedOutputCeiling(400, "`max_tokens` must be less than or equal to `8192`, the maximum value for `max_tokens` is less than the `context_window` for this model", 32000)).toBe(8192);
-        expect(statedOutputCeiling(400, "This model's maximum context length is 131072 tokens. However, you requested 140000 tokens (108000 in the messages, 32000 in the completion).", 32000)).toBe(23072);
-        expect(statedOutputCeiling(422, '{"detail":"max_tokens must be at most 4096"}', 32000)).toBe(4096);
+        expect(statedOutputCeiling(400, OPENAI_REFUSAL, 32000)).toEqual(lasting(16384));
+        expect(statedOutputCeiling(400, "max_tokens: 32000 > 8192, which is the maximum allowed number of output tokens for claude-3-5-haiku-20241022", 32000)).toEqual(lasting(8192));
+        expect(statedOutputCeiling(400, "Invalid max_tokens value, the valid range of max_tokens is [1, 8192]", 32000)).toEqual(lasting(8192));
+        expect(statedOutputCeiling(400, "`max_tokens` must be less than or equal to `8192`, the maximum value for `max_tokens` is less than the `context_window` for this model", 32000)).toEqual(lasting(8192));
+        expect(statedOutputCeiling(422, '{"detail":"max_tokens must be at most 4096"}', 32000)).toEqual(lasting(4096));
+    });
+
+    it("reads what the messages left of the context as this request's only", () => {
+        const context = "This model's maximum context length is 131072 tokens. However, you requested 140000 tokens (108000 in the messages, 32000 in the completion).";
+        expect(statedOutputCeiling(400, context, 32000)).toEqual({ tokens: 23072, lasting: false });
+    });
+
+    it("reads only the error's words, never other numbers in the answer", () => {
+        const body = JSON.stringify({ error: { message: "max_tokens is invalid for this model", code: 4000, context_window: 8192 }, status: 400 });
+        expect(statedOutputCeiling(400, body, 32000)).toBeUndefined();
     });
 
     it("leaves every other error alone", () => {
@@ -64,8 +74,8 @@ describe("statedOutputCeiling", () => {
         expect(statedOutputCeiling(400, "temperature must be at most 2", 32000)).toBeUndefined();
         expect(statedOutputCeiling(400, "max_tokens must be an integer", 32000)).toBeUndefined();
         // A number that is no real cap, or one that is not below what was asked
-        expect(statedOutputCeiling(400, "max_tokens must be at most 5 times the input", 32000)).toBeUndefined();
-        expect(statedOutputCeiling(400, "max_tokens is too large: 32000, at most 64000", 32000)).toBeUndefined();
+        expect(statedOutputCeiling(400, "max_tokens must be at most 5", 32000)).toBeUndefined();
+        expect(statedOutputCeiling(400, "max_tokens must be at most 64000", 32000)).toBeUndefined();
         // The messages alone fill the context: a smaller reply would not help
         expect(statedOutputCeiling(400, "maximum context length is 131072 tokens. However, you requested 163072 tokens (131000 in the messages, 32000 in the completion)", 32000)).toBeUndefined();
         expect(statedOutputCeiling(400, OPENAI_REFUSAL, undefined)).toBeUndefined();
@@ -98,6 +108,19 @@ describe("a model that takes fewer output tokens", () => {
         expect(fetchMock).toHaveBeenCalledTimes(2);
         expect(sent(fetchMock, 1)).toMatchObject({ max_completion_tokens: 16384 });
         expect("max_tokens" in sent(fetchMock, 1)).toBe(false);
+    });
+
+    it("does not keep what one request's messages left of the context", async () => {
+        const context = "maximum context length is 131072 tokens. However, you requested 140000 tokens (108000 in the messages, 32000 in the completion).";
+        const fetchMock = vi.fn().mockResolvedValueOnce(refused(context)).mockResolvedValue(streamResponse());
+        vi.stubGlobal("fetch", fetchMock);
+        const provider = new OpenAIProvider();
+        const endpoint = "https://context-left.example/v1";
+
+        await lastChunk(provider.generateStream("sys", "a long one", config(endpoint)));
+        expect(sent(fetchMock, 1).max_tokens).toBe(23072);
+        await lastChunk(provider.generateStream("sys", "short", config(endpoint)));
+        expect(sent(fetchMock, 2).max_tokens).toBe(32000);
     });
 
     it("keeps the cap to that model on that endpoint, and asks only once", async () => {
