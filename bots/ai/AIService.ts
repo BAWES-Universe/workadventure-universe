@@ -1038,7 +1038,7 @@ export class AIService {
                                 botId,
                                 playerId: String(playerId),
                                 space: spaceName,
-                                ...failedCall(error, errorStatus),
+                                ...failedCall(!!chunk.metadata?.error, chunk.metadata?.errorStatus),
                             });
                         } catch (captureError) {
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -1902,8 +1902,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     // "Couldn't answer"): say why in the logs, on the span and on the trace (#1498)
                     const problem = streamCompleted && !abortSignal?.aborted
                         ? replyProblem({
-                              // A call after a tool ran (or the retry without tools) can fail too
-                              error: error || followUpFailedForHealth,
+                              // A call after a tool ran (or a retry) can fail too; one that a later call made up for, with words, is no problem
+                              error: error || (followUpFailedForHealth && !accumulatedContent.trim()),
                               errorStatus: errorStatus ?? followUpErrorStatus,
                               // A private bot's provider text can quote the conversation: only its status is kept
                               errorText: privateBot ? 'details left out for a private bot' : errorText,

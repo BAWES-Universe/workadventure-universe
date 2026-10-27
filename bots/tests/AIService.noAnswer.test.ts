@@ -95,6 +95,12 @@ async function* followUpErrorStream() {
     yield { content: "", done: true, metadata: { tokensUsed: 0, latency: 300, error: true, errorStatus: 502, errorText: "OpenAI API error: 502 bad gateway" } };
 }
 
+// The first call asked for a tool, then broke off.
+async function* brokenToolCallStream() {
+    yield { content: "", done: false, toolCalls: [{ id: "call_1", name: "get_bot_position", arguments: "{}" }] };
+    yield { content: "", done: true, metadata: { tokensUsed: 110, promptTokens: 100, completionTokens: 10, latency: 20, error: true, errorStatus: 500, errorText: "OpenAI API error: 500 stream broke" } };
+}
+
 // DeepSeek's empty-name tool call: the bot retries once without tools, and that retry thinks until the limit.
 async function* emptyNameToolCallStream() {
     yield { content: "", done: false, toolCalls: [{ id: "call_1", name: "", arguments: "" }] };
@@ -205,6 +211,24 @@ describe("AIService – a reply that leaves the person nothing (#1498)", () => {
         const generations = mockCaptureAiGeneration.mock.calls.map((call: any[]) => call[0]);
         expect(generations[0].error).toBeUndefined();
         expect(generations.at(-1).error).toBe("the provider failed (502): OpenAI API error: 502 bad gateway");
+    });
+
+    it("leaves a reply alone when a later call made up for a failed one", async () => {
+        mockGenerateStream
+            .mockImplementationOnce(toolCallStream)
+            .mockImplementationOnce(followUpErrorStream)
+            .mockImplementationOnce(plainAnswerStream);
+        await run();
+
+        expect(warnings()).toEqual([]);
+        expect(mockParentSpan.setStatus).not.toHaveBeenCalled();
+    });
+
+    it("flags the first call's own event when it broke off after its tool call", async () => {
+        mockGenerateStream.mockImplementationOnce(brokenToolCallStream).mockImplementationOnce(plainAnswerStream);
+        await run();
+
+        expect(mockCaptureAiGeneration.mock.calls[0][0].error).toBe("the provider failed (500): OpenAI API error: 500 stream broke");
     });
 
     it("gives the retry's own reason after an empty-name tool call", async () => {
