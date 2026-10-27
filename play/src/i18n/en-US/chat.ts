@@ -414,7 +414,7 @@ const chat: BaseTranslation = {
     roomMenu: {
         leaveRoom: {
             label: "Leave group",
-            notification: "You have left the group",
+            notification: "Left {name:string}",
         },
         muteRoom: "Mute group",
         unmuteRoom: "Unmute group",
@@ -441,7 +441,7 @@ const chat: BaseTranslation = {
             confirm: "Delete this chat?",
             confirmButton: "Delete",
             cancel: "Cancel",
-            notification: "Chat deleted",
+            notification: "Deleted your chat with {name:string}",
         },
         profile: {
             title: "Profile",
@@ -763,6 +763,21 @@ const chat: BaseTranslation = {
         nowIn: "Now in",
         inThisRoom: "You're in this room",
     },
+    replyLimit: {
+        titleUniverseAi: "You've used your Universe AI replies for now",
+        titleGuest: "You've used your guest replies for now",
+        titleBot: "You've reached {name}'s reply limit for now",
+        lineMember: "{name} answers you again at {time}. Bots that run on their maker's own AI key keep answering.",
+        lineMaker: "Run {name} on your AI key and your chats with {name} stop counting. Or wait until {time}.",
+        lineGuest: "Sign in to keep chatting, or come back at {time}.",
+        lineBot: "{name} answers you again at {time}.",
+        askMaker: "Ask {name}'s maker",
+        asked: "Asked",
+        askFailed: "Couldn't ask right now. Try again.",
+        signIn: "Sign in",
+        useMyKey: "Use my AI key",
+        onlyYou: "Only you see this",
+    },
     artifacts: {
         kindApp: "Mini app",
         kindPage: "Page",
@@ -795,6 +810,8 @@ const chat: BaseTranslation = {
         versionsNote: "Every change is a new version. Nothing is lost.",
         oldVersionNote: "You're looking at version {version}. The latest is version {latest}.",
         backToLatest: "Back to latest",
+        restoreThis: "Restore this one",
+        restoreFailed: "Could not restore it. Try again.",
         codeCut: "Showing the first part of the file.",
         loadingVersions: "Loading the versions…",
         frameTitle: "{title}, by {maker}",

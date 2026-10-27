@@ -1007,6 +1007,8 @@ export class SocialBehavior extends BaseBehavior {
                     latency = chunk.metadata.latency;
                 }
                 
+                // A reply limit (#1159): no AI was called; only this person sees the fixed card
+                if (chunk.replyLimit) this.showReplyLimit(spaceName, playerId, chunk.replyLimit);
                 if (chunk.done) {
                     batchFlush(batchState, sendBatch);
                     // Stop typing indicator

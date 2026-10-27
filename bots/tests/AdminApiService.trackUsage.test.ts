@@ -60,4 +60,16 @@ describe('tracking AI usage in Orbit', () => {
         expect(sent).toMatchObject({ cost: 0.0123 });
         expect(sent).not.toHaveProperty('costBasis');
     });
+
+    it('sends where the reply was given and who it was for (Orbit #491)', async () => {
+        await service.trackAIUsage({ botId: 'b1', providerId: 'x', channel: 'dm', userId: 'wa-uuid-sara', isGuest: false });
+        expect(sent).toMatchObject({ channel: 'dm', userId: 'wa-uuid-sara', isGuest: false });
+    });
+
+    it('sends neither when the bot does not know them, as before', async () => {
+        await service.trackAIUsage({ botId: 'b1', providerId: 'x', tokensUsed: 10 });
+        expect(sent).not.toHaveProperty('channel');
+        expect(sent).not.toHaveProperty('userId');
+        expect(sent).not.toHaveProperty('isGuest');
+    });
 });

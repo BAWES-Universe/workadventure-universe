@@ -1,5 +1,6 @@
 <script lang="ts">
     import { onDestroy, tick } from "svelte";
+    import { get } from "svelte/store";
     import { coWebsiteRatio, fullScreenCowebsite, windowSize } from "../../Stores/CoWebsiteStore";
     import { closeAllOpenItems, closeFrontItem } from "../../Stores/ClosedItemsStore";
     import { modalVisibilityStore } from "../../Stores/ModalStore";
@@ -18,6 +19,7 @@
     import {
         openHereBehindChatMin,
         openHereListOpenStore,
+        openHereRoomRequestStore,
         openHereSheetHeight,
         openHereSheetRelease,
         openHereSheetRestStore,
@@ -195,6 +197,19 @@
 
     // Chat taking over mid-drag ends the drag: the finger no longer moves the sheet.
     $: if (chatOverSheet) sheetDragHeight = undefined;
+
+    // Something open in the window asked for room (a list dropped down with none to show): a tucked sheet comes up, and
+    // behind the chat it rises to the top. Only a new ask counts, not one made before this window opened.
+    let seenRoomRequest = get(openHereRoomRequestStore);
+    onDestroy(
+        openHereRoomRequestStore.subscribe((request) => {
+            if (request === seenRoomRequest) return;
+            seenRoomRequest = request;
+            if (floating) return;
+            if (tucked) openHereTuckedStore.set(false);
+            behindRest = undefined;
+        })
+    );
 
     function onSheetRelease(height: number) {
         const dragged = sheetDragHeight;

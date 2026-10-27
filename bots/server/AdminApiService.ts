@@ -19,6 +19,14 @@ const captureException = (error: Error) => {
     console.error('AdminApiService error:', error);
 };
 
+/** Which reply limit stopped a reply (#1159): a person's Universe AI replies, a guest's, a bot's guests' pool, or the bot's own. */
+export const REPLY_LIMIT_KINDS = ['universe-ai', 'guest', 'guests', 'bot'] as const;
+export type ReplyLimitKind = (typeof REPLY_LIMIT_KINDS)[number];
+/** Who reached it, so the card shows the one button that fits them: Sign in, Ask the maker, or Use my AI key. */
+export const REPLY_ASKERS = ['guest', 'member', 'maker'] as const;
+export type ReplyAsker = (typeof REPLY_ASKERS)[number];
+export type ReplyAllowance = { allowed: true } | { allowed: false; limit: ReplyLimitKind; resetsAt: string; who: ReplyAsker };
+
 export function resolveAdminApiEndpoint(adminApiUrl: string | URL, endpoint: string): string {
     const baseUrl = new URL(adminApiUrl.toString());
     if (!baseUrl.pathname.endsWith('/')) {
@@ -727,6 +735,38 @@ export class AdminApiService {
     }
 
     /**
+     * May this person get one more reply from this bot now (#1159)? Orbit counts their Universe AI replies (30 every 5
+     * hours signed in, 10 for a guest, 200 shared by a bot's guests) and the bot's own limit per person. `source` is
+     * what the reply would run on, from the bot's AI credentials. Never stops a reply because Orbit can't be asked:
+     * anything but a clear "no" (not configured, an Orbit from before, a timeout, an error) lets the reply through.
+     */
+    async checkReplyAllowance(
+        botId: string,
+        input: { userId: string; isGuest?: boolean; source: 'universe-ai' | 'provider' | 'own-key' }
+    ): Promise<ReplyAllowance> {
+        if (!this.isConfigured()) return { allowed: true };
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!botServiceToken) return { allowed: true };
+        try {
+            const response = await axios.post(
+                `${this.adminApiUrl}/api/bots/${encodeURIComponent(botId)}/reply-allowance`,
+                input,
+                { headers: { Authorization: `Bearer ${botServiceToken}` }, timeout: 5000 }
+            );
+            const body = response.data as Partial<{ allowed: boolean; limit: string; resetsAt: string; who: string }>;
+            if (body?.allowed !== false) return { allowed: true };
+            const limit = REPLY_LIMIT_KINDS.find((kind) => kind === body.limit);
+            const who = REPLY_ASKERS.find((asker) => asker === body.who);
+            if (!limit || !who || typeof body.resetsAt !== 'string' || Number.isNaN(Date.parse(body.resetsAt))) return { allowed: true };
+            return { allowed: false, limit, resetsAt: body.resetsAt, who };
+        } catch (error) {
+            const msg = (axios.isAxiosError(error) && error.response?.status) || (error as Error)?.message || 'Unknown error';
+            console.warn(`[AdminApiService] Reply limit check failed, letting the reply through: ${msg}`);
+            return { allowed: true };
+        }
+    }
+
+    /**
      * Get available AI providers
      * Uses BOT_SERVICE_TOKEN (separate from ADMIN_API_TOKEN)
      */
@@ -1115,6 +1155,11 @@ export class AdminApiService {
         latency?: number;
         error?: boolean;
         timestamp?: string;
+        /** Where the reply was given: direct messages or nearby chat (Orbit #491). */
+        channel?: "dm" | "nearby";
+        /** Who it was for, as the bot knows them (WorkAdventure uuid or email); Orbit matches it to their account. */
+        userId?: string;
+        isGuest?: boolean;
     }): Promise<void> {
         if (!this.isConfigured()) {
             if (process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -1141,6 +1186,9 @@ export class AdminApiService {
                 latency: usage.latency ?? null,
                 error: usage.error || false,
                 timestamp: usage.timestamp || new Date().toISOString(),
+                ...(usage.channel ? { channel: usage.channel } : {}),
+                ...(usage.userId ? { userId: usage.userId } : {}),
+                ...(typeof usage.isGuest === "boolean" ? { isGuest: usage.isGuest } : {}),
             };
 
             if (process.env.ENABLE_BOT_DEBUG === 'true') {

@@ -75,6 +75,15 @@ export async function fetchArtifactVersions(
     return (await post<{ versions: ArtifactVersionInfo[] }>(`${encodeURIComponent(id)}/versions`, { chat })).versions;
 }
 
+/** The owner makes an older version the latest again; the answer is the artifact with that new latest version. */
+export function restoreArtifactVersion(
+    id: string,
+    number: number,
+    chat: ArtifactChat | undefined
+): Promise<OpenedArtifact> {
+    return post<OpenedArtifact>(`${encodeURIComponent(id)}/restore`, { chat, number });
+}
+
 /** The text of one version, for the Code view and for a document. */
 export function fetchArtifactCode(
     id: string,
