@@ -131,12 +131,12 @@ export interface BotPlayerMemory {
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-/** "Oct 24, 14:32" in UTC; the prompt's current-time line says the times are UTC. */
+/** "Oct 24, 2026, 14:32" in UTC; the prompt's current-time line says the times are UTC. */
 export function formatHistoryTime(timestamp: number): string {
     const d = new Date(timestamp);
     const hh = String(d.getUTCHours()).padStart(2, '0');
     const mm = String(d.getUTCMinutes()).padStart(2, '0');
-    return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${hh}:${mm}`;
+    return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}, ${hh}:${mm}`;
 }
 
 export class ConversationMemory {

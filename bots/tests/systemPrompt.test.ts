@@ -10,8 +10,8 @@ import { buildSystemPrompt, buildNowLine } from '../ai/systemPrompt';
 
 const INSTRUCTIONS = 'You are Zed, a grumpy guard.';
 const MAP = `\n\nCurrent Location Context (you are always here):\n- Universe: BAWES\n- World: Hub\n- Room: Lobby`;
-const ALICE = 'Relationship: friends\nWhat you know about them: They mentioned they\'re hungry right now.\nRecent conversation:\nThey: "hi" (Oct 24, 11:29)';
-const BOB = 'Relationship: new\nRecent conversation:\nThey: "yo" (Oct 24, 11:28)';
+const ALICE = 'Relationship: friends\nWhat you know about them: They mentioned they\'re hungry right now.\nRecent conversation:\nThey: "hi" (Oct 24, 2026, 11:29)';
+const BOB = 'Relationship: new\nRecent conversation:\nThey: "yo" (Oct 24, 2026, 11:28)';
 const NOW = new Date('2026-10-24T11:30:00Z'); // Saturday
 
 function commonPrefixLength(a: string, b: string): number {

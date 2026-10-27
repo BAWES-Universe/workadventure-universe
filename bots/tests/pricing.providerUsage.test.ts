@@ -114,6 +114,27 @@ describe("streamed replies", () => {
         expect("stream_options" in JSON.parse(fetchMock.mock.calls[2][1].body)).toBe(false);
     });
 
+    it("drop the temperature too when the retry without the option is refused for it", async () => {
+        const temperatureRefused = {
+            ok: false,
+            status: 400,
+            text: vi.fn().mockResolvedValue(JSON.stringify({ error: { code: "unsupported_value", param: "temperature", message: "Only the default (1) value is supported" } })),
+        };
+        const fetchMock = vi
+            .fn()
+            .mockResolvedValueOnce(refused("Unknown parameter: stream_options"))
+            .mockResolvedValueOnce(temperatureRefused)
+            .mockResolvedValue(streamResponse({ prompt_tokens: 7, completion_tokens: 3 }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        const last = await lastChunk(new OpenAIProvider().generateStream("sys", "hi", config("https://picky-provider.example/v1")));
+        expect(fetchMock).toHaveBeenCalledTimes(3);
+        const third = JSON.parse(fetchMock.mock.calls[2][1].body);
+        expect("stream_options" in third).toBe(false);
+        expect("temperature" in third).toBe(false);
+        expect(last.metadata).toMatchObject({ promptTokens: 7, completionTokens: 3, error: false });
+    });
+
     it("are not retried for an error that is about something else", async () => {
         const fetchMock = vi.fn().mockResolvedValue(refused("Invalid API key", 401));
         vi.stubGlobal("fetch", fetchMock);

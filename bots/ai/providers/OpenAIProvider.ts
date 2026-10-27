@@ -341,12 +341,46 @@ export class OpenAIProvider implements AIProvider {
 
                     clearTimeout(timeoutId);
 
-                    if (!retryResponse.ok) {
+                    if (retryResponse.ok) {
+                        finalResponse = retryResponse;
+                    } else {
                         const retryErrorText = await retryResponse.text();
-                        throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
+                        let retryErrorData: any;
+                        try {
+                            retryErrorData = JSON.parse(retryErrorText);
+                        } catch {
+                            retryErrorData = undefined;
+                        }
+                        // The model can refuse both fields: drop the temperature too, once.
+                        if (
+                            retryErrorData?.error?.code === 'unsupported_value' &&
+                            retryErrorData?.error?.param === 'temperature' &&
+                            retryErrorData?.error?.message?.includes('Only the default')
+                        ) {
+                            delete retryBody.temperature;
+                            const secondController = new AbortController();
+                            externalAbortCleanups.push(linkExternalAbort(externalSignal, secondController));
+                            streamController = secondController;
+                            timeoutId = setTimeout(() => secondController.abort(), timeout);
+                            const secondResponse = await fetchFor(config)(endpoint, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'Authorization': `Bearer ${apiKey}`,
+                                },
+                                body: JSON.stringify(retryBody),
+                                signal: secondController.signal,
+                            });
+                            clearTimeout(timeoutId);
+                            if (!secondResponse.ok) {
+                                const secondErrorText = await secondResponse.text();
+                                throw new Error(`OpenAI API error: ${secondResponse.status} ${secondErrorText}`);
+                            }
+                            finalResponse = secondResponse;
+                        } else {
+                            throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
+                        }
                     }
-
-                    finalResponse = retryResponse;
                 }
                 // Retry with max_completion_tokens if model rejects max_tokens
                 else if (errorData?.error?.code === 'unsupported_parameter' && 
