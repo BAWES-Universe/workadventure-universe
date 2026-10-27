@@ -1150,6 +1150,7 @@ export class AIService {
                             // see the retry's real token counts and truncation status.
                             yield {content: '', done: true, metadata: retryMeta || chunk.metadata};
                             streamCompleted = true;
+                            finishReason = (retryMeta || chunk.metadata)?.finishReason;
                             break;
                         }
                         
@@ -1895,8 +1896,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     // "Couldn't answer"): say why in the logs, on the span and on the trace (#1498)
                     const problem = streamCompleted && !abortSignal?.aborted
                         ? replyProblem({
-                              error,
-                              errorStatus,
+                              // A call after a tool ran (or the retry without tools) can fail too
+                              error: error || followUpFailedForHealth,
+                              errorStatus: errorStatus ?? followUpErrorStatus,
                               // A private bot's provider text can quote the conversation: only its status is kept
                               errorText: privateBot ? 'details left out for a private bot' : errorText,
                               finishReason,

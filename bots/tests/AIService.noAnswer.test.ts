@@ -85,6 +85,22 @@ async function* providerErrorStream() {
     };
 }
 
+// A tool ran, then the call after it failed: the person gets nothing.
+async function* toolCallStream() {
+    yield { content: "", done: false, toolCalls: [{ id: "call_1", name: "get_bot_position", arguments: "{}" }] };
+    yield { content: "", done: true, metadata: { tokensUsed: 110, promptTokens: 100, completionTokens: 10, latency: 20, error: false, truncated: false, finishReason: "tool_calls" } };
+}
+
+async function* followUpErrorStream() {
+    yield { content: "", done: true, metadata: { tokensUsed: 0, latency: 300, error: true, errorStatus: 502, errorText: "OpenAI API error: 502 bad gateway" } };
+}
+
+// DeepSeek's empty-name tool call: the bot retries once without tools, and that retry thinks until the limit.
+async function* emptyNameToolCallStream() {
+    yield { content: "", done: false, toolCalls: [{ id: "call_1", name: "", arguments: "" }] };
+    yield { content: "", done: true, metadata: { tokensUsed: 110, promptTokens: 100, completionTokens: 10, latency: 20, error: false, truncated: false, finishReason: "tool_calls" } };
+}
+
 async function* plainAnswerStream() {
     yield { content: "Hello there.", done: false };
     yield { content: "", done: true, metadata: { tokensUsed: 33, promptTokens: 30, completionTokens: 3, latency: 10, error: false, truncated: false, finishReason: "stop" } };
@@ -175,6 +191,24 @@ describe("AIService – a reply that leaves the person nothing (#1498)", () => {
             "[AIService] Bot bot-1 gave no answer on llama3 (test-provider): the provider failed (400): OpenAI API error: 400 max_tokens is too large",
         ]);
         expect(mockCaptureAiTrace.mock.calls[0][0].error).toBe("the provider failed (400): OpenAI API error: 400 max_tokens is too large");
+    });
+
+    it("says why when the call after a tool failed", async () => {
+        mockGenerateStream.mockImplementationOnce(toolCallStream).mockImplementationOnce(followUpErrorStream);
+        await run();
+
+        expect(warnings()).toEqual([
+            "[AIService] Bot bot-1 gave no answer on llama3 (test-provider): the provider failed (502): OpenAI API error: 502 bad gateway",
+        ]);
+        expect(mockParentSpan.setStatus).toHaveBeenCalledWith({ code: 2, message: expect.stringContaining("502") });
+    });
+
+    it("gives the retry's own reason after an empty-name tool call", async () => {
+        mockGenerateStream.mockImplementationOnce(emptyNameToolCallStream).mockImplementationOnce(thinkingOnlyStream);
+        await run();
+
+        expect(warnings()).toHaveLength(1);
+        expect(warnings()[0]).toContain("no words and no tool call: it reached the longest reply");
     });
 
     it("keeps a private bot's provider text out of the line", async () => {
