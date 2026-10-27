@@ -15,23 +15,21 @@ let pending:
           picture?: PictureStore;
           at: number;
           cancelled: boolean;
-          avatarId?: number;
           uuid?: string;
       }
     | undefined;
 
 /**
- * `avatarId` and `uuid` are the avatar and account asked for, when known. The server may answer with another avatar of
- * the same account (the asked one left), so an answer is told apart by account, never by avatar alone.
+ * `uuid` is the account asked for, when known. The server may answer with another avatar of the same account (the
+ * asked one left), so an answer is told apart by account, never by avatar.
  */
 export function rememberLocateRequest(
     name: string | undefined,
     picture?: PictureStore,
     now: number = Date.now(),
-    avatarId?: number,
     uuid?: string
 ): void {
-    pending = { name, picture, at: now, cancelled: false, avatarId, uuid };
+    pending = { name, picture, at: now, cancelled: false, uuid };
 }
 
 /** The name asked for, if a request was made recently (the answer being awaited is for it). */
@@ -48,18 +46,11 @@ export function cancelLocateRequest(): void {
 /**
  * An answer about another person than the one now asked for: the one asked for first, which another search replaced.
  * Told apart only when both accounts are known: the same account answering with another of its avatars, or an account
- * not known on this map, is taken for the answer awaited.
+ * not known on this map, is taken for the answer awaited. The avatar ids are not compared: one may be unknown.
  */
-export function isStaleLocateAnswer(
-    now: number = Date.now(),
-    answeredAvatarId?: number,
-    answeredUuid?: string
-): boolean {
+export function isStaleLocateAnswer(now: number = Date.now(), answeredUuid?: string): boolean {
     return (
         pending !== undefined &&
-        pending.avatarId !== undefined &&
-        answeredAvatarId !== undefined &&
-        pending.avatarId !== answeredAvatarId &&
         pending.uuid !== undefined &&
         answeredUuid !== undefined &&
         pending.uuid !== answeredUuid &&
@@ -74,10 +65,9 @@ export function isStaleLocateAnswer(
  */
 export function takeLocateRequest(
     now: number = Date.now(),
-    answeredAvatarId?: number,
     answeredUuid?: string
 ): { name: string | undefined; picture?: PictureStore; cancelled: boolean } | undefined {
-    if (isStaleLocateAnswer(now, answeredAvatarId, answeredUuid)) return undefined;
+    if (isStaleLocateAnswer(now, answeredUuid)) return undefined;
     const request = pending && now - pending.at <= LOCATE_REQUEST_TTL_MS ? pending : undefined;
     pending = undefined;
     return request ? { name: request.name, picture: request.picture, cancelled: request.cancelled } : undefined;

@@ -84,10 +84,10 @@ export class LocateManager {
         // The account the answer is about comes with it, as the avatar may not be on this map (far away).
         const answeredUuid = message.userUuid || userData?.userUuid;
         // The answer for a search another one replaced moves nothing: the newer search has its own answer coming.
-        if (isStaleLocateAnswer(Date.now(), message.userId, answeredUuid)) {
+        if (isStaleLocateAnswer(Date.now(), answeredUuid)) {
             return;
         }
-        const request = takeLocateRequest(Date.now(), message.userId, answeredUuid);
+        const request = takeLocateRequest(Date.now(), answeredUuid);
         if (request?.cancelled) {
             return;
         }
