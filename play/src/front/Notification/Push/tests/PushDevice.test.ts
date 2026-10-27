@@ -337,16 +337,25 @@ describe("saving this device", () => {
     it("waits for the worker to be active on a first visit before subscribing", async () => {
         const { turnOnThisDevice } = await import("../PushDevice");
         const { localUserStore } = await import("../../../Connection/LocalUserStore");
-        const subscription = { unsubscribe: vi.fn(), toJSON: () => ({ endpoint: "https://push.example/5" }), options: {} };
+        const subscription = {
+            unsubscribe: vi.fn(),
+            toJSON: () => ({ endpoint: "https://push.example/5" }),
+            options: {},
+        };
         let active = false;
-        const subscribe = vi.fn(() => (active ? Promise.resolve(subscription) : Promise.reject(new Error("no worker"))));
+        const subscribe = vi.fn(() =>
+            active ? Promise.resolve(subscription) : Promise.reject(new Error("no worker"))
+        );
         vi.stubGlobal("navigator", {
             userAgent: UA.windowsEdge,
             platform: "",
             maxTouchPoints: 0,
             serviceWorker: {
                 register: () =>
-                    Promise.resolve({ active: null, pushManager: { getSubscription: () => Promise.resolve(null), subscribe } }),
+                    Promise.resolve({
+                        active: null,
+                        pushManager: { getSubscription: () => Promise.resolve(null), subscribe },
+                    }),
                 ready: new Promise((resolve) => {
                     setTimeout(() => {
                         active = true;
