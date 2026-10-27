@@ -72,6 +72,9 @@ export interface CreateBotDto {
     aiProviderRef?: string;
     /** "Patience": how long the bot waits for a tool to answer, in seconds; null = the bot server's default */
     toolTimeoutSeconds?: number | null;
+    /** "Longest reply" and "Steps in one reply", lower than the key's (Orbit #666); null follows the key */
+    maxReplyTokens?: number | null;
+    maxSteps?: number | null;
     /** The companion (pet) that walks with the bot: a companion texture id, or null for none */
     companionTextureId?: string | null;
 }

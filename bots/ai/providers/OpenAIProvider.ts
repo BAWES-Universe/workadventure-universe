@@ -459,7 +459,7 @@ export class OpenAIProvider implements AIProvider {
                     errorData?.error?.message?.includes('max_completion_tokens')) {
                     const retryBody = { ...requestBody };
                     delete retryBody.max_tokens;
-                    retryBody.max_completion_tokens = config.maxTokens;
+                    retryBody.max_completion_tokens = requestBody.max_tokens ?? config.maxTokens;
 
                     const retryController = new AbortController();
                     externalAbortCleanups.push(linkExternalAbort(externalSignal, retryController));
@@ -744,7 +744,7 @@ export class OpenAIProvider implements AIProvider {
                         }
                         const retryBody = { ...requestBody };
                         delete retryBody.max_tokens;
-                        retryBody.max_completion_tokens = config.maxTokens;
+                        retryBody.max_completion_tokens = requestBody.max_tokens ?? config.maxTokens;
 
                         const retryController = new AbortController();
                         externalAbortCleanups.push(linkExternalAbort(externalSignal, retryController));

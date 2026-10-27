@@ -81,13 +81,15 @@
     /** The key and the model on it the bot is saved with, to send a model only when it changed */
     let lastSavedAi: { ref?: string | null; model?: string | null } = {};
 
-    /** What the "ai" save sends besides the behavior: the bot's mind, chat instructions, Patience and description */
+    /** What the "ai" save sends besides the behavior: the bot's mind, chat instructions, Patience, reply limits and description */
     function aiConfigOf(bot: BotData): string {
         return JSON.stringify({
             aiProviderRef: bot.aiProviderRef,
             aiModel: bot.aiModel ?? null,
             chatInstructions: bot.chatInstructions,
             toolTimeoutSeconds: bot.toolTimeoutSeconds ?? null,
+            maxReplyTokens: bot.maxReplyTokens ?? null,
+            maxSteps: bot.maxSteps ?? null,
             description: bot.description ?? "",
         });
     }
@@ -277,6 +279,8 @@
                                     ...(providerChanged ? { aiProviderRef: bot.aiProviderRef } : {}),
                                     chatInstructions: bot.chatInstructions,
                                     toolTimeoutSeconds: bot.toolTimeoutSeconds ?? null,
+                                    maxReplyTokens: bot.maxReplyTokens ?? null,
+                                    maxSteps: bot.maxSteps ?? null,
                                     description: bot.description ?? "",
                                 });
                             });

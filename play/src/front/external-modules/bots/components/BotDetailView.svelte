@@ -12,7 +12,7 @@
     import LL from "../../../../i18n/i18n-svelte";
     import { ABSOLUTE_PUSHER_URL } from "../../../Enum/ComputedConst";
     import { mobileLayoutStore } from "../../../Stores/MobileLayoutStore";
-    import type { BotData } from "../types";
+    import type { BotAiOptions, BotData } from "../types";
     import WokaImage from "../../../Components/Woka/WokaImage.svelte";
     import { botPreviewsStore, selectedBotStore, startWaypointEditing, upsertBot } from "../stores/BotEditorStore";
     import { botApiService } from "../services/BotApiService";
@@ -49,6 +49,8 @@
     export let onLocate: (() => void) | undefined = undefined;
 
     let currentBot: BotData | null = null;
+    /** What "Runs on" offers this bot, as the Mind group loads it: the Tools group's reply limits come from it */
+    let aiOptions: BotAiOptions | null = null;
     /** The WOKA picker fills the panel in place of the page, as the companion picker does */
     export let editingTexture = false;
     /** The companion picker fills the panel in place of the page (BotEditor puts its title and back circle up) */
@@ -652,6 +654,7 @@
                 open={openGroup === "mind"}
                 onToggle={toggleGroup}
                 onChange={(next) => apply(next)}
+                onOptions={(loaded) => (aiOptions = loaded)}
             />
             <SayGroup bot={currentBot} open={openGroup === "say"} onToggle={toggleGroup} onChange={apply} />
             <BehaviorGroup
@@ -668,6 +671,7 @@
                 onChange={(next) => apply(next)}
                 wide={!$mobileLayoutStore}
                 {onToolCount}
+                {aiOptions}
             />
             {#if askLimit && currentBot}
                 <LimitSuggestion

@@ -271,7 +271,7 @@ export class DmReplyService extends BaseBehavior {
         const [primary, ...gallery] = attachments;
         if (primary) {
             const galleryUrls = gallery.map((a) => a.url);
-            augmented = await this.formatParsedAttachment(text, primary.url, primary.mimeType, primary.mediaType, galleryUrls);
+            augmented = await this.formatParsedAttachment(text, primary.url, primary.mimeType, primary.mediaType, galleryUrls, botId);
             images = await this.collectImageUrls(primary.url, primary.mediaType, primary.mimeType, galleryUrls);
         }
         const original = text || (primary ? `[sent a ${primary.mediaType || 'file'}]` : '');
