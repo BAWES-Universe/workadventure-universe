@@ -8,6 +8,7 @@ import type { SpaceUser } from '@workadventure/messages';
 import { PositionMessage_Direction } from '@workadventure/messages';
 import { facingOf, resolveBehaviorModel, type BotFacing } from './behaviorModel';
 import type { AIService, InterruptionAction } from '../ai/AIService';
+import type { ReplyLimitReached } from '../ai/types';
 import type { AdminApiService } from '../server/AdminApiService';
 import type { ConversationStorage } from '../memory/ConversationStorage';
 import type { ConversationMemory } from '../memory/ConversationMemory';
@@ -15,6 +16,9 @@ import type { ResponseProcessor, ProcessedResponse } from '../ai/ResponseProcess
 import { parseEmotionsFromResponse, appendStreamedChunk, detectEmotionPrefixAtEnd } from '../ai/EmotionParser';
 import type { BotMetricsCollector } from '../metrics/BotMetricsCollector';
 import { BotBusyError } from '../utils/summonErrors';
+
+/** What a bot says when someone keeps writing while it is still answering (#1159): fixed, so it never calls the AI. */
+export const BUSY_LINE = "I'll answer your messages once I've finished this one.";
 
 /**
  * Per-player conversation state for mid-stream interruption handling.
@@ -1988,8 +1992,21 @@ export abstract class BaseBehavior {
         // leave the message queued instead of dropping it.
         if (state.isGenerating) return;
 
-        const queued = state.messageQueue.shift();
-        if (!queued) return;
+        const first = state.messageQueue.shift();
+        if (!first) return;
+        // One answer for the words that waited together (#1159). A message with a file is answered on its own, as before.
+        let queued = first;
+        if (!first.url) {
+            const words = [first];
+            while (state.messageQueue.length > 0 && !state.messageQueue[0].url) words.push(state.messageQueue.shift()!);
+            if (words.length > 1) {
+                queued = {
+                    ...first,
+                    originalMessage: words.map((item) => item.originalMessage).join('\n'),
+                    message: words.map((item) => item.message).join('\n'),
+                };
+            }
+        }
 
         const botId = this.bot?.getBotId() || '';
         this.bot?.startTyping(state.spaceName);
@@ -2128,32 +2145,12 @@ export abstract class BaseBehavior {
         if (!state) return;
 
         if (state.messageQueue.length >= this.MAX_QUEUED_MESSAGES) {
-            // Overflow ack is LLM-generated (no hardcoded strings) — in-character
-            // acknowledgment that several messages are waiting.
-            const ack = await this.generateOverflowAck(state.currentTask);
-            if (ack) {
-                this.sendStatusAck(state.spaceName, ack);
-            }
+            // The busy line is fixed text, never an AI call (#1159): a burst of messages must not cost replies
+            this.sendStatusAck(state.spaceName, BUSY_LINE);
             return;
         }
 
         state.messageQueue.push({ originalMessage, message, url, mediaType, mimeType, galleryUrls, classification, timestamp: Date.now() });
-    }
-
-    /**
-     * Generate an in-character acknowledgment for queue overflow via the bot's
-     * own provider. Returns '' if the LLM call fails (silent — no hardcoded text).
-     */
-    private async generateOverflowAck(currentTask: string): Promise<string> {
-        if (!this.aiService) return '';
-        const botConfig = this.bot?.getFullConfig();
-        const providerId = botConfig?.aiProviderRef;
-        if (!providerId) return '';
-        const chatInstructions = botConfig?.chatInstructions || 'You are a friendly bot.';
-        const prompt = `Current task: "${currentTask}"
-
-The person you're talking to just sent several more messages while you were still finishing a response. Acknowledge this in one short sentence, in your own voice — you've noticed and will get to them.`;
-        return this.aiService.quickGenerate(providerId, chatInstructions, prompt, botConfig?.botId);
     }
 
     /**
@@ -2168,6 +2165,11 @@ The person you're talking to just sent several more messages while you were stil
                 this.activeConversations.delete(senderId);
             }
         }
+    }
+
+    /** The fixed reply limit card (#1159), to this person only, in place of an answer. */
+    protected showReplyLimit(spaceName: string, playerId: number, limit: ReplyLimitReached): void {
+        this.bot?.sendReplyLimitCard(spaceName, playerId, limit);
     }
 
     private sendStatusAck(spaceName: string, text: string): void {
