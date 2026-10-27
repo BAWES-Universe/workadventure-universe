@@ -300,16 +300,27 @@ describe("the artifact window", () => {
         api.fetchArtifact.mockImplementation((_id: string, _chat: unknown, version?: number) =>
             Promise.resolve(opened(version ?? 3, version === 4 ? 4 : 3))
         );
-        api.restoreArtifactVersion.mockResolvedValue(opened(4, 4));
+        let restored: (answer: ReturnType<typeof opened>) => void = () => {};
+        api.restoreArtifactVersion.mockReturnValue(
+            new Promise((resolve) => {
+                restored = resolve;
+            })
+        );
+        api.fetchArtifactVersions.mockResolvedValue([opened(3, 3).version, opened(1, 3).version]);
         mountWindow(1);
         await vi.waitFor(() => expect(byTestId("artifactRestore")).not.toBeNull());
 
+        // The list opened while the restore is on its way is put away once it is done.
         byTestId("artifactRestore")?.click();
+        byTestId("artifactVersions")?.click();
+        await vi.waitFor(() => expect(byTestId("artifactVersionMenu")?.querySelectorAll(".menu-row")).toHaveLength(2));
+        restored(opened(4, 4));
         await vi.waitFor(() =>
             expect(byTestId("artifactFrame")?.getAttribute("src")).toBe("https://artifacts.test/v4.html")
         );
         expect(api.restoreArtifactVersion).toHaveBeenCalledWith(ID, 1, { kind: "nearby", ref: "bubble" });
         expect(byTestId("artifactOldNote")).toBeNull();
+        expect(byTestId("artifactVersionMenu")).toBeNull();
     });
 
     it("offers no restore to someone who is not the owner, and says so when a restore fails", async () => {

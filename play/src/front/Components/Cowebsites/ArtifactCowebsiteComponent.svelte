@@ -225,7 +225,9 @@
             (answer) => {
                 if (destroyed) return;
                 restoring = false;
-                // The list is read again the next time it opens, with the new version in it.
+                // The list is read again the next time it opens, with the new version in it. One opened while the
+                // restore was on its way is put away, as picking a version does.
+                menuOpen = false;
                 versions = undefined;
                 versionStore.set(answer.version.number);
             },
