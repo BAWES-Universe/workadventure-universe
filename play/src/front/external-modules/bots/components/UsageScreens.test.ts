@@ -161,6 +161,16 @@ describe("the bot page's Usage (Orbit #491)", () => {
         expect(byTestId("bot-usage-chart")).toHaveLength(1);
     });
 
+    it("names the numbers on screen by their own range while the picked one loads", async () => {
+        await mountGroup();
+        mocks.api.getBotUsage.mockReturnValueOnce(new Promise<never>(() => {}));
+        byTestId("bot-usage-30d")[0].click();
+        await settle();
+        expect(byTestId("bot-usage-30d")[0].getAttribute("aria-checked")).toBe("true");
+        expect(text()).toContain("this week");
+        expect(text()).not.toContain("in 30 days");
+    });
+
     it("opens each screen from its row", async () => {
         const onOpenScreen = await mountGroup();
         byTestId("bot-usage-people")[0].click();

@@ -43,6 +43,8 @@
     $: state = $botUsageStore && $botUsageStore.botId === bot.id ? $botUsageStore : undefined;
     $: usage = state?.data;
     $: range = state?.range ?? "7d";
+    // The words and day names follow the numbers on screen, so a range still loading never names numbers from another
+    $: shownRange = usage?.range ?? range;
     // Opening the group after a failed read asks Orbit again
     let wasOpen = false;
     $: {
@@ -61,9 +63,9 @@
             ? text.briefFailed()
             : !usage.hasUsage
             ? text.briefNone({ name })
-            : range === "today"
+            : shownRange === "today"
             ? text.briefToday({ replies: usage.totals.replies, people: usage.totals.people })
-            : range === "30d"
+            : shownRange === "30d"
             ? text.briefMonth({ replies: usage.totals.replies, people: usage.totals.people })
             : text.briefWeek({ replies: usage.totals.replies, people: usage.totals.people });
 
@@ -116,7 +118,7 @@
 
     function dayTitle(day: BotUsage["perDay"][number]): string {
         return text.dayReplies({
-            day: dayLabel(day.day, range, $locale),
+            day: dayLabel(day.day, shownRange, $locale),
             dm: day.dm,
             nearby: day.nearby,
             notSplit: day.notSplit,
@@ -233,7 +235,7 @@
                         {/if}
                         {#if i % labelEvery === 0 || i === chart.bars.length - 1}
                             <text x={bar.x + bar.width / 2} y={CHART.height - 8} text-anchor="middle" class="us-ax"
-                                >{dayLabel(bar.day, range, $locale)}</text
+                                >{dayLabel(bar.day, shownRange, $locale)}</text
                             >
                         {/if}
                     {/each}

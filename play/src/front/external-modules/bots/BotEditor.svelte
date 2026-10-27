@@ -837,8 +837,9 @@
     // Under the title: how many people in the range on Who uses, the range itself on the other two
     function usageScreenSubtitle(screen: UsageScreen, state: BotUsageState | undefined, botId: string): string {
         const usage = $LL.mapEditor.edit.bots.page.usage;
-        const range = state?.botId === botId ? state.range : "7d";
         const data = state?.botId === botId ? state.data : undefined;
+        // The range of the numbers on screen, which is the one picked once it has loaded
+        const range = data?.range ?? (state?.botId === botId ? state.range : "7d");
         if (screen === "people" && data) {
             const words =
                 range === "today" ? usage.rangeToday() : range === "30d" ? usage.rangeMonth() : usage.rangeWeek();
