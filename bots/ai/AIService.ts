@@ -66,6 +66,9 @@ import {
 } from './ArtifactTools';
 
 /** A bot's provider, resolved by bot id (#374): the settings to call, where they came from, or "resting". */
+/** Where a reply was given and who it was for, sent with its usage (Orbit #491). */
+type UsageTalker = { channel: 'dm' | 'nearby'; userId?: string; isGuest?: boolean };
+
 type ResolvedProvider =
     | { resting: false; config: AIProviderConfig; source: 'provider' | 'universe-ai' | 'own-key' }
     | { resting: true; line: string };
@@ -1894,7 +1897,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     completionTokens,
                     latency,
                     error,
-                }, ledger.summary()).catch(err => {
+                }, ledger.summary(), this.whoTalked(botId, playerId, channel)).catch(err => {
                     // Always log errors, even without debug mode
                     console.error('[AIService] Failed to track usage:', err);
                     if (err instanceof Error) {
@@ -1931,7 +1934,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 tokensUsed: 0,
                 latency,
                 error: true,
-            }, usageRecorded ? null : ledger.summary()).catch(() => {});
+            }, usageRecorded ? null : ledger.summary(), this.whoTalked(botId, playerId, channel)).catch(() => {});
 
             // Yield error chunk — content was already streamed word-by-word
             // so don't replay preToolBuffer (would duplicate on frontend).
@@ -1960,6 +1963,20 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     }
 
     /**
+     * Where a reply was given and who it was for, as usage rows keep them (Orbit #491, #1159 step 6). The person is their
+     * WorkAdventure uuid once the bot knows it; a temporary one means it doesn't yet, and is never sent.
+     */
+    private whoTalked(botId: string, playerId: number, channel: 'world' | 'dm'): UsageTalker {
+        const memory = playerId !== undefined ? this.conversationMemory?.getMemory(botId, playerId) : null;
+        const uuid = memory?.userUuid && !memory.userUuid.startsWith('temp-') ? memory.userUuid : undefined;
+        return {
+            channel: channel === 'dm' ? 'dm' : 'nearby',
+            ...(uuid ? { userId: uuid } : {}),
+            ...(uuid && typeof memory?.isGuest === 'boolean' ? { isGuest: memory.isGuest } : {}),
+        };
+    }
+
+    /**
      * Track AI usage (fire-and-forget)
      *
      * `turn` is what the reply cost, worked out call by call as each finished (#1173). A reply that never got as far as a
@@ -1969,7 +1986,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         botId: string,
         providerId: string,
         metadata: AIUsageMetadata,
-        turn: TurnCost | null
+        turn: TurnCost | null,
+        talker?: UsageTalker
     ): Promise<void> {
         try {
             const cost: TurnCost = turn ?? {
@@ -2003,6 +2021,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 latency: metadata.latency,
                 error: metadata.error || false,
                 timestamp: new Date().toISOString(),
+                ...(talker ?? {}),
             });
 
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
