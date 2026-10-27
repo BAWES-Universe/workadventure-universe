@@ -893,6 +893,10 @@ const mapEditor: BaseTranslation = {
                     stepsHint: "Tools it may use before it answers.",
                     keysLimit: "Key's limit",
                     keysLimitIs: "Key's limit · {limit:string}",
+                    modelsLimitIs: "Model's limit · {limit:string}",
+                    modelStops: "{model:string} writes up to {limit:string} tokens, so this bot stops there.",
+                    modelStopsKey:
+                        "{model:string} writes up to {limit:string} tokens, so this bot stops there. The key allows {key:string}.",
                     showToolCalls: "Show tool calls",
                     showToolCallsOff: "Tool calls stay hidden",
                     showToolCallsOn: "Shows tool names in chat",
