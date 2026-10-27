@@ -143,6 +143,13 @@ describe("an audio file in chat", () => {
         expect(visibleText()).toContain("MP3");
     });
 
+    it("can be played as soon as the file is here, before the browser has read anything of it", async () => {
+        const holder = await show("Desert Drive.mp3");
+
+        expect(visibleText()).not.toContain("Loading");
+        expect((holder.querySelector(".voice-play") as HTMLButtonElement).disabled).toBe(false);
+    });
+
     it("says when the file can't play here and keeps Download", async () => {
         const holder = await show("old-recording.wma");
         holder.querySelector("audio")?.dispatchEvent(new Event("error"));

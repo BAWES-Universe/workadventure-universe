@@ -40,8 +40,7 @@
     let heard = isMine || !isVoiceNoteUnplayed(sender?.messageId, sender?.sentAt);
     let speed = 0;
     let shapeFor: string | undefined;
-    // An audio file: the player has read enough to play, or has said it cannot play this file.
-    let ready = false;
+    // An audio file the browser has said it cannot play.
     let failed = false;
 
     $: isVoice = $content.isVoice === true;
@@ -54,7 +53,8 @@
         audioFileTitle(fileName) ??
         (sender?.name ? $LL.chat.audioFile.from({ name: sender.name }) : $LL.chat.audioFile.untitled());
     $: kind = audioFileKind(fileName);
-    $: loading = !isVoice && !failed && (!$content.url || !ready);
+    // Only until the file is here: some phone browsers read nothing of a file before the first tap on play.
+    $: loading = !isVoice && !failed && !$content.url;
     $: caption = getMediaCaption($content);
     $: needsFile = $content.voiceWaveform === undefined || $content.voiceDuration === undefined;
     $: if ($content.url && needsFile && $content.url !== shapeFor) readShape($content.url);
@@ -209,7 +209,6 @@
             }}
             on:loadedmetadata={() => {
                 if (player) player.playbackRate = SPEEDS[speed];
-                ready = true;
             }}
             on:error={() => {
                 // The browser cannot play this format (or the file is gone): Download is what is left.
@@ -219,7 +218,6 @@
                 // A browser-made file can have no length in its header (the player says Infinity): it is not used then.
                 playerDuration =
                     player && Number.isFinite(player.duration) && player.duration > 0 ? player.duration : undefined;
-                ready = true;
             }}
         />
     {/if}
