@@ -413,18 +413,6 @@
                         <IconDoorIn font-size="20" />
                     </PersonActionButton>
                 {/if}
-                {#if actions.locateButton}
-                    <PersonActionButton
-                        class="locate"
-                        label={$LL.chat.userList.follow()}
-                        ariaLabel={$LL.chat.userList.locateUser({ userName: displayName })}
-                        testId={`locate-${user.username}`}
-                        expanded={choosesSession ? sessionsOpen : undefined}
-                        on:click={locate}
-                    >
-                        <IconMapPin font-size="20" />
-                    </PersonActionButton>
-                {/if}
                 {#if canRing && user.uuid}
                     <RingButton
                         uuid={user.uuid}
@@ -445,6 +433,19 @@
                     <div class="min-h-[30px] text-md flex gap-2 justify-center flex-row items-center p-1">
                         <IconLoader class="animate-spin" />
                     </div>
+                {/if}
+                <!-- A bot's Locate comes after Message, so Message sits second in every row, people's and bots'. -->
+                {#if actions.locateButton}
+                    <PersonActionButton
+                        class="locate"
+                        label={$LL.chat.userList.follow()}
+                        ariaLabel={$LL.chat.userList.locateUser({ userName: displayName })}
+                        testId={`locate-${user.username}`}
+                        expanded={choosesSession ? sessionsOpen : undefined}
+                        on:click={locate}
+                    >
+                        <IconMapPin font-size="20" />
+                    </PersonActionButton>
                 {/if}
                 {#if hasMenu}
                     <UserActionButton
