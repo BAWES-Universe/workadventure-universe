@@ -145,6 +145,23 @@ describe("the headings shared items go under", () => {
         ]);
     });
 
+    it("show each heading once when an item comes out of date order", () => {
+        const items = [
+            { key: "a", message: message("$a", "image", { date: new Date(2026, 9, 25) }), name: "a" },
+            { key: "b", message: message("$b", "image", { date: new Date(2026, 9, 15) }), name: "b" },
+            { key: "c", message: message("$c", "image", { date: new Date(2026, 9, 24) }), name: "c" },
+            { key: "d", message: message("$d", "image", { date: null }), name: "d" },
+            { key: "e", message: message("$e", "image", { date: null }), name: "e" },
+        ];
+        expect(
+            sharedSections(items, now).map(({ section, items }) => [section.kind, items.map((one) => one.key)])
+        ).toEqual([
+            ["thisWeek", ["a", "c"]],
+            ["lastWeek", ["b"]],
+            ["undated", ["d", "e"]],
+        ]);
+    });
+
     it("say when an item was sent, short", () => {
         expect(sentLabel(new Date(2026, 9, 26, 9, 12), "en-US", now)).toBe("9:12 AM");
         expect(sentLabel(new Date(2026, 9, 25, 9), "en-US", now)).toBe("Yesterday");
