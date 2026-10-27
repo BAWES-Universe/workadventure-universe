@@ -29,14 +29,14 @@ export function tokensLabel(tokens: number): string {
 
 /**
  * The chips for one limit and which one is picked. 0 is "Key's limit" (saved as null), named with the key's value once
- * known. A saved value at or above the key's limit is never used, so "Key's limit" shows as picked for it.
+ * known (`words` are the page's own, so they follow its language). A saved value at or above the key's limit is never used, so "Key's limit" shows as picked for it.
  */
 export function limitChips(
     ceiling: number | null,
     choices: number[],
     saved: number | null | undefined,
     label: (value: number) => string,
-    keysLimit: (limit: string | null) => string
+    words: { keysLimit: () => string; keysLimitIs: (values: { limit: string }) => string }
 ): { options: Array<{ value: number; label: string }>; value: number } {
     const value = saved && (ceiling === null || saved < ceiling) ? saved : 0;
     const lower = choices.filter((choice) => ceiling === null || choice < ceiling);
@@ -44,7 +44,7 @@ export function limitChips(
     return {
         value,
         options: [
-            { value: 0, label: keysLimit(ceiling === null ? null : label(ceiling)) },
+            { value: 0, label: ceiling === null ? words.keysLimit() : words.keysLimitIs({ limit: label(ceiling) }) },
             ...values.map((choice) => ({ value: choice, label: label(choice) })),
         ],
     };

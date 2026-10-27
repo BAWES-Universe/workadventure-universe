@@ -39,7 +39,10 @@ const myKey: BotAiOptions["keys"][number] = {
     limits: { reply: 8000, steps: 12 },
 };
 
-const keysLimit = (limit: string | null) => (limit === null ? "Key's limit" : `Key's limit · ${limit}`);
+const keysLimit = {
+    keysLimit: () => "Key's limit",
+    keysLimitIs: ({ limit }: { limit: string }) => `Key's limit · ${limit}`,
+};
 
 describe("the bot page's reply limits (Orbit #666)", () => {
     it("follows the key the bot is on, someone else's key it is on now, or Universe AI", () => {

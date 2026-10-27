@@ -56,10 +56,8 @@
     $: waits = page.tools.waits({ patience: durationLabel(patience) });
     $: brief = names ? `${names} · ${waits}` : waits;
     $: ceiling = ceilingFor(aiOptions, bot.aiProviderRef);
-    $: keysLimit = (limit: string | null) =>
-        limit === null ? page.tools.keysLimit() : page.tools.keysLimitIs({ limit });
-    $: replyLimit = limitChips(ceiling?.reply ?? null, REPLY_CHOICES, bot.maxReplyTokens, tokensLabel, keysLimit);
-    $: stepLimit = limitChips(ceiling?.steps ?? null, STEP_CHOICES, bot.maxSteps, String, keysLimit);
+    $: replyLimit = limitChips(ceiling?.reply ?? null, REPLY_CHOICES, bot.maxReplyTokens, tokensLabel, page.tools);
+    $: stepLimit = limitChips(ceiling?.steps ?? null, STEP_CHOICES, bot.maxSteps, String, page.tools);
 </script>
 
 <PageGroup id="tools" icon={IconTool} title={page.tools.title()} {brief} {open} {onToggle}>
