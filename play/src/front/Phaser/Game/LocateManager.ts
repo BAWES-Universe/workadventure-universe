@@ -6,7 +6,7 @@ import { wokaMenuStore, wokaMenuProgressStore } from "../../Stores/WokaMenuStore
 import LL from "../../../i18n/i18n-svelte";
 import { peopleCardReturn } from "../../Chat/Stores/PeopleCardReturnStore";
 import type { CameraManager } from "./CameraManager";
-import { cancelLocateRequest, takeLocateRequest } from "./LocateRequest";
+import { cancelLocateRequest, isStaleLocateAnswer, takeLocateRequest } from "./LocateRequest";
 import type { GameScene } from "./GameScene";
 
 /**
@@ -80,7 +80,14 @@ export class LocateManager {
         if (!message.position) {
             return;
         }
-        const request = takeLocateRequest();
+        const userData = this.scene.getRemotePlayersRepository().getPlayers().get(message.userId);
+        // The account the answer is about comes with it, as the avatar may not be on this map (far away).
+        const answeredUuid = message.userUuid || userData?.userUuid;
+        // The answer for a search another one replaced moves nothing: the newer search has its own answer coming.
+        if (isStaleLocateAnswer(Date.now(), answeredUuid)) {
+            return;
+        }
+        const request = takeLocateRequest(Date.now(), answeredUuid);
         if (request?.cancelled) {
             return;
         }
@@ -101,14 +108,14 @@ export class LocateManager {
         );
 
         // Get user data to initialize woka menu
-        const userData = this.scene.getRemotePlayersRepository().getPlayers().get(message.userId);
         const userName = userData?.name ?? request?.name ?? get(LL).locate.userSearching();
         const userUuid = userData?.userUuid ?? "";
         const visitCardUrl = userData?.visitCardUrl ?? undefined;
 
         // Initialize woka menu with progress
         this.searchingFor = userUuid;
-        wokaMenuStore.initialize(userName, -1, userUuid, visitCardUrl || undefined);
+        // Far away on a large map, their avatar isn't on this map yet: the card shows their Woka from People meanwhile.
+        wokaMenuStore.initialize(userName, -1, userUuid, visitCardUrl || undefined, false, request?.picture);
 
         // Set up progress messages with fun explanations
         const progressMessages = [

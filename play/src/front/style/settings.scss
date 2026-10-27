@@ -116,13 +116,14 @@
     justify-content: center;
     height: 2.75rem;
     margin: 0;
-    padding: 0 1rem;
+    /* General, Sound & video and Notifications fit across a 390px phone, as in the approved mock. */
+    padding: 0 0.75rem;
     border: 0;
     border-radius: 9999px;
     background: transparent;
     color: rgba(255, 255, 255, 0.62);
     font: inherit;
-    font-size: 0.9375rem;
+    font-size: 0.875rem;
     font-weight: 700;
     white-space: nowrap;
     cursor: pointer;
@@ -639,4 +640,49 @@ a.u-set-row:hover {
     .u-set-row.u-set-danger:hover .u-set-label {
         color: #e96d51;
     }
+}
+
+/* ─── Settings > Notifications ─── */
+/* A row that only says something (blocked, the iPhone way in): no hover, it opens nothing. */
+.u-set-notice {
+    cursor: default;
+}
+/* The three steps that undo "Block", numbered under the line that says so. */
+.u-set-steps {
+    display: grid;
+    gap: 6px;
+    margin: 0 0 8px;
+    padding-left: 22px;
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 0.875rem;
+    line-height: 1.4;
+}
+/* Your devices: a name, when it last got one, and Remove as plain bold text, a full 44px tap. */
+.u-set-device {
+    cursor: default;
+}
+.u-set-device-remove {
+    flex: none;
+    min-width: 44px;
+    min-height: 44px;
+    margin: -8px -10px -8px 0;
+    padding: 0 10px;
+    border: 0;
+    border-radius: 12px;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.75);
+    font: inherit;
+    font-size: 0.875rem;
+    font-weight: 700;
+    cursor: pointer;
+}
+@media (hover: hover) {
+    .u-set-device-remove:hover {
+        background: rgba(255, 255, 255, 0.08);
+        color: #fff;
+    }
+}
+.u-set-device-remove:focus-visible {
+    outline: 2px solid rgba(196, 181, 253, 0.9);
+    outline-offset: -2px;
 }

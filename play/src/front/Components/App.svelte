@@ -42,6 +42,7 @@
     import { errorStore } from "../Stores/ErrorStore";
     import { wokaRefusedStore } from "../Stores/WokaRefusedStore";
     import { refreshPromptStore } from "../Stores/RefreshPromptStore";
+    import ChatDoneToast from "../Chat/Components/ChatDoneToast.svelte";
     import BrowserNotSupported from "./BrowserNotSupported/BrowserNotSupported.svelte";
     import OpenHereWindow from "./EmbedScreens/OpenHereWindow.svelte";
     import OpenHereChatButton from "./EmbedScreens/OpenHereChatButton.svelte";
@@ -316,6 +317,7 @@
 {:else}
     <ClosedItemsToast />
     <LinkCopiedToast />
+    <ChatDoneToast />
     <div
         class="h-dvh w-dvw flex landscape:flex-row portrait:flex-col-reverse"
         id="main-container"

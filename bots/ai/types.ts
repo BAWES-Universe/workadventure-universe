@@ -25,6 +25,63 @@ export interface AIProviderConfig {
      * (their own computer, or their own NIM), so every call to it goes through the address guard.
      */
     ownKey?: { addressTyped: boolean };
+    /** The bot's limits (Orbit #666), when Orbit served them with the bot's credentials. */
+    limits?: BotLimits;
+}
+
+/**
+ * A bot's limits as Orbit serves them with its credentials (Orbit #666): set by a super admin for Universe AI, by a
+ * key's owner for their key, lowered by the bot's editors. Each one is read with its recommended value as the fallback
+ * (BOT_LIMIT_DEFAULTS), for an Orbit that does not send them yet.
+ */
+export interface BotLimits {
+    replyTokens: number;
+    /** Tool steps in one reply. */
+    steps: number;
+    /** Times a cut-off chat answer carries on by itself. */
+    continuations: number;
+    /** Earlier messages in the chat the bot reads before each reply. */
+    messages: number;
+    /** Characters it takes in from one web page or file. */
+    readChars: number;
+    /** Seconds it waits when its AI goes quiet. */
+    waitSeconds: number;
+    artifactBytes: number;
+    /** 0 keeps every version. */
+    artifactVersions: number;
+    artifactSaveSeconds: number;
+    /** "Say when nothing was saved". */
+    guard: boolean;
+}
+
+/** The recommended limits, the same as Orbit's (lib/bot-limit-values.ts there). */
+export const BOT_LIMIT_DEFAULTS: BotLimits = {
+    replyTokens: 32000,
+    steps: 30,
+    continuations: 2,
+    messages: 20,
+    readChars: 50000,
+    waitSeconds: 60,
+    artifactBytes: 2 * 1024 * 1024,
+    artifactVersions: 0,
+    artifactSaveSeconds: 30,
+    guard: true,
+};
+
+/** The limits Orbit sent, each checked, with the recommended value for any that is missing or broken. */
+export function readBotLimits(raw: unknown): BotLimits {
+    const out: BotLimits = { ...BOT_LIMIT_DEFAULTS };
+    if (!raw || typeof raw !== 'object') return out;
+    const given = raw as Record<string, unknown>;
+    for (const key of Object.keys(BOT_LIMIT_DEFAULTS) as (keyof BotLimits)[]) {
+        const value = given[key];
+        if (key === 'guard') {
+            if (typeof value === 'boolean') out.guard = value;
+        } else if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+            (out as unknown as Record<string, number>)[key] = value;
+        }
+    }
+    return out;
 }
 
 /**
@@ -37,21 +94,55 @@ export interface ToolCall {
 }
 
 /**
+ * What a provider said a call used (#1173). Each figure is absent when the provider did not say. Cached, cache-write and
+ * reasoning tokens are parts of the prompt and completion totals, not extra.
+ */
+export interface AIUsageDetail {
+    promptTokens?: number;
+    completionTokens?: number;
+    cachedPromptTokens?: number;
+    cacheWriteTokens?: number;
+    reasoningTokens?: number;
+    costUsd?: number;
+}
+
+/**
  * Streaming response chunk
  */
+/** A reply limit the person reached (#1159): no AI was called, and the caller shows them the fixed card instead. */
+export interface ReplyLimitReached {
+    limit: 'universe-ai' | 'guest' | 'guests' | 'bot';
+    /** When the bot answers them again (ISO). */
+    resetsAt: string;
+    /** Which button the card shows: Sign in (guest), Ask the maker (member) or Use my AI key (maker). */
+    who: 'guest' | 'member' | 'maker';
+}
+
 export interface AIStreamChunk {
     content: string; // Token content (empty string if done)
     done: boolean; // Whether this is the final chunk
+    /** Set on the only chunk of a reply stopped by a reply limit (#1159). */
+    replyLimit?: ReplyLimitReached;
     reset?: boolean; // If true, frontend should clear current stream content before processing this chunk
     toolNames?: string[]; // Names of tools being called (for status display in the new bubble)
     toolCalls?: ToolCall[]; // Tool calls requested by AI
     metadata?: {
         tokensUsed?: number;
         promptTokens?: number;
+        /** Prompt tokens the provider served from its cache (a subset of promptTokens). Undefined when the provider does not report it. */
+        cachedPromptTokens?: number;
+        /** Prompt tokens the provider wrote to its cache on this call (a subset of promptTokens). Undefined when it does not say. */
+        cacheWriteTokens?: number;
         completionTokens?: number;
+        /** Reasoning tokens inside completionTokens. Undefined when the provider does not say. */
+        reasoningTokens?: number;
+        /** What the provider charged for this call, in dollars (OpenRouter sends it). Undefined when it does not say. */
+        costUsd?: number;
         latency?: number;
         durationSeconds?: number; // For voice AI
         error?: boolean;
+        /** The call was stopped from outside (a stop or a correction) before it said what it used; it cannot be priced and is left out of the reply's cost. */
+        cancelled?: boolean;
         errorStatus?: number; // HTTP status the provider answered with when the call failed (401/403 = the key was rejected)
         truncated?: boolean; // true when the provider hit finish_reason='length' (max_tokens cap)
         // MultiPromptAIService analysis metadata
@@ -79,6 +170,8 @@ export interface AIStreamChunk {
 export interface AIResponse {
     content: string;
     tokensUsed: number;
+    /** The split of tokensUsed and what the provider said about caching, reasoning and cost. Absent when the provider gave none. */
+    usage?: AIUsageDetail;
     latency: number;
     error?: boolean;
     truncated?: boolean; // true when the provider hit finish_reason='length' (max_tokens cap)
@@ -91,6 +184,10 @@ export interface AIUsageMetadata {
     tokensUsed?: number;
     promptTokens?: number;
     completionTokens?: number;
+    /** Parts of promptTokens the provider read from / wrote to its cache, and of completionTokens spent reasoning. */
+    cachedPromptTokens?: number;
+    cacheWriteTokens?: number;
+    reasoningTokens?: number;
     apiCalls?: number;
     latency?: number;
     durationSeconds?: number; // For voice AI

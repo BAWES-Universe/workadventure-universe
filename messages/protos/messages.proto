@@ -981,6 +981,8 @@ message MoveToPositionMessage{
 message LocatePositionMessage{
   PositionMessage position = 1;
   int32 userId = 2;
+  // The account of that avatar, so an answer is told apart by person even when another avatar of theirs answers.
+  string userUuid = 3;
 }
 
 message SubMessage {
@@ -1303,6 +1305,7 @@ message PrivateSpaceEvent {
     BlockUserMessage blockUserMessage = 20;
     UnblockUserMessage unblockUserMessage = 21;
     LowerHandPrivateMessage lowerHand = 22;
+    BotReplyLimitMessage botReplyLimit = 23;
     // From 30: upstream WorkAdventure uses the numbers right after ours.
     InviteToSpeakPrivateMessage inviteToSpeak = 30;
     DeclineToSpeakPrivateMessage declineToSpeak = 31;
@@ -1312,6 +1315,18 @@ message PrivateSpaceEvent {
 
 message CommunicationStrategyMessage {
   string strategy = 1;
+}
+
+/**
+ * A bot tells one person they reached a reply limit (#1159): the game draws the fixed card only they see. Only a bot
+ * may send it (the pusher refuses anyone else).
+ */
+message BotReplyLimitMessage {
+  string limit = 1;     // "universe-ai" | "guest" | "guests" | "bot"
+  string resetsAt = 2;  // ISO time the bot answers them again
+  string who = 3;       // "guest" | "member" | "maker": which button the card shows
+  string botId = 4;
+  string botName = 5;
 }
 
 message SwitchMessage {

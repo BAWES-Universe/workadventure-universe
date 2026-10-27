@@ -321,7 +321,7 @@ const chat: DeepPartial<Translation["chat"]> = {
     roomMenu: {
         leaveRoom: {
             label: "방 나가기",
-            notification: "방을 나갔습니다",
+            notification: "{name}에서 나갔습니다",
         },
         muteRoom: "방 알림 끄기",
         unmuteRoom: "방 알림 켜기",

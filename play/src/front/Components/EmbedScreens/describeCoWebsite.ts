@@ -5,6 +5,8 @@ import type { CoWebsite } from "../../WebRtc/CoWebsite/CoWebsite";
 import { JitsiCoWebsite } from "../../WebRtc/CoWebsite/JitsiCoWebsite";
 import { BBBCoWebsite } from "../../WebRtc/CoWebsite/BBBCoWebsite";
 import { FileViewerCoWebsite } from "../../WebRtc/CoWebsite/FileViewerCoWebsite";
+import { ArtifactCoWebsite } from "../../WebRtc/CoWebsite/ArtifactCoWebsite";
+import { artifactBadge } from "../../Artifacts/artifactBadge";
 import { badgeOfKind, extensionOf, fileKindOf } from "../../FileViewer/fileKinds";
 import jitsiIcon from "../images/jitsi.png";
 import meetingIcon from "../images/meeting.svg";
@@ -34,6 +36,14 @@ export function fileBadgeFor(name: string): { label: string; color: string } {
 /** `texts` is the current translations; pass `$LL` so the description follows a change of language. */
 export function describeCoWebsite(coWebsite: CoWebsite, texts: TranslationFunctions = get(LL)): CoWebsiteDescription {
     const line = coWebsite.getHideUrl() ? "" : coWebsite.getUrl().hostname;
+    if (coWebsite instanceof ArtifactCoWebsite) {
+        const { title, kind, makerName } = get(coWebsite.summary);
+        return {
+            name: title,
+            line: makerName ? texts.chat.artifacts.by({ maker: makerName }) : "",
+            badge: artifactBadge(kind, texts),
+        };
+    }
     if (coWebsite instanceof FileViewerCoWebsite) {
         const { source } = coWebsite;
         return {

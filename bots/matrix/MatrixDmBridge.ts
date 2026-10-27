@@ -8,12 +8,15 @@ import type { PendingMedia } from '../memory/ConversationMemory';
 import {
     availabilityOf,
     detectLanguage,
+    replyLimitContent,
     statusNoteContent,
     type BotAvailability,
     type BotNoteState,
     type NoteLanguage,
 } from './BotStatusNotes';
 import { ACCESS_CACHE_TTL_MS } from '../server/BotAccessGate';
+import { BotWokaAvatar } from './BotWokaAvatar';
+import { ARTIFACT_KEY, artifactDirectMessage } from '../ai/ArtifactTools';
 
 /** The field of a reply that names the bot's room: the game shows a card under it to go there. */
 export const ROOM_LINK_KEY = 'universe.room_link';
@@ -54,6 +57,8 @@ export interface MatrixDmBridgeDeps {
     uploadAttachment?(data: Buffer, mimeType: string, filename: string): Promise<string | null>;
     /** One short in-character "not now" from a resting bot, or '' to leave only the plain note. */
     restingLine?(config: BotConfiguration, text: string): Promise<string>;
+    /** The bot's Woka as a PNG for its chat picture, or null when it has none. Without it bots keep no picture. */
+    wokaPicture?(config: BotConfiguration): Promise<Buffer | null>;
     /**
      * Optional shared store for messages left with a resting bot. Without it (or while it is down) they wait in this
      * process only.
@@ -140,7 +145,13 @@ export class MatrixDmBridge implements MatrixEventHandler {
         private config: MatrixAppServiceConfig,
         private client: MatrixAppServiceClient,
         private deps: MatrixDmBridgeDeps
-    ) {}
+    ) {
+        const draw = deps.wokaPicture;
+        this.avatars = draw ? new BotWokaAvatar(client, (botConfig) => draw(botConfig)) : undefined;
+    }
+
+    /** Keeps each bot's chat picture its Woka, for chat apps outside the game (Element). */
+    private avatars?: BotWokaAvatar;
 
     /** A resting bot still exists, so a chat can be started with it; it declines that invite and the game shows it as resting. */
     async userExists(userId: string): Promise<boolean> {
@@ -148,7 +159,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         if (!botId) return false;
         const config = await this.deps.getBotConfig(botId);
         if (!config) return false;
-        await this.ensureBotAccount(botId, config.name);
+        await this.ensureBotAccount(botId, config);
         return true;
     }
 
@@ -195,8 +206,11 @@ export class MatrixDmBridge implements MatrixEventHandler {
         return `@${BOT_LOCALPART_PREFIX}${botId}:${this.config.domain}`;
     }
 
-    private async ensureBotAccount(botId: string, name?: string): Promise<void> {
+    private async ensureBotAccount(botId: string, config: BotConfiguration): Promise<void> {
         await this.client.ensureRegistered(`${BOT_LOCALPART_PREFIX}${botId}`);
+        // In the background: the picture never holds up an answer, and a failure is tried again next time.
+        void this.avatars?.update(this.botUserId(botId), config);
+        const name = config.name;
         if (name && this.botNames.get(botId) !== name) {
             // Only a name that got through is remembered, so a failed one is tried again next time.
             await this.client.setDisplayName(this.botUserId(botId), name).then(
@@ -354,7 +368,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         let config: BotConfiguration | null;
         try {
             config = await this.deps.getBotConfig(botId);
-            if (config) await this.ensureBotAccount(botId, config.name);
+            if (config) await this.ensureBotAccount(botId, config);
         } catch (error: any) {
             // Synapse sends the invite only once, so decline it rather than leave the bot invited and silent; the
             // person can invite it again.
@@ -514,6 +528,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
             return;
         }
         const user = access.user!;
+        // Chats started before bots had pictures get theirs with the next message; after that this costs nothing.
+        void this.avatars?.update(this.botUserId(botId), config);
         if (config.enabled === false) {
             // Resting again is not a failed answer, so a message already tried keeps its count.
             await this.rememberWaiting(botId, event, attemptsOf(event));
@@ -555,6 +571,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         if (!catchUp) this.answeringLive.set(event.room_id, sentAt);
         try {
             const reply = await this.deps.reply(botId, person, text, attachments, {
+                roomId: event.room_id,
                 onInterimMessage: async (interim) => {
                     // A lost "let me look" line must not cost the person the real answer, so it never throws.
                     try {
@@ -565,9 +582,20 @@ export class MatrixDmBridge implements MatrixEventHandler {
                     if (typing) startTyping();
                 },
             });
+            // Answered together with the messages that waited with it (#1159): that one answer was sent for all of them
+            if (reply?.answeredTogether !== undefined) {
+                answered = reply.answeredTogether;
+                return;
+            }
+            // A reply limit (#1159): the fixed card instead of an answer, and the message is not tried again
+            if (reply?.replyLimit) {
+                await this.client.sendMessage(botUserId, event.room_id, replyLimitContent(reply.replyLimit, await this.botName(botId, config)));
+                answered = true;
+                return;
+            }
             // No reply at all means the bot couldn't be set up to answer (no AI service here), and an empty one leaves the
             // person with nothing: say so, as for a failure.
-            if (!reply || reply.failed || (!reply.text && !reply.media?.length)) {
+            if (!reply || reply.failed || (!reply.text && !reply.media?.length && !reply.artifacts?.length)) {
                 await couldNotAnswer(config);
                 return;
             }
@@ -582,6 +610,13 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 await this.client.sendText(botUserId, event.room_id, reply.text);
             }
             reply.keep?.();
+            for (const card of reply.artifacts ?? []) {
+                // A live artifact the bot made or changed: the game shows a card to open it
+                const { body, field } = artifactDirectMessage(card);
+                await this.client
+                    .sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body, [ARTIFACT_KEY]: field })
+                    .catch((error) => console.warn(`[MatrixDmBridge] Could not send an artifact card from bot ${botId}:`, error?.message ?? error));
+            }
             for (const item of reply.media ?? []) {
                 await this.sendMedia(botUserId, event.room_id, item).catch((error) =>
                     console.warn(`[MatrixDmBridge] Could not send media from bot ${botId}:`, error?.message ?? error)

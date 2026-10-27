@@ -311,7 +311,7 @@ const chat: DeepPartial<Translation["chat"]> = {
     roomMenu: {
         leaveRoom: {
             label: "مغادرة المجموعة",
-            notification: "لقد غادرت المجموعة",
+            notification: "غادرت {name}",
         },
         muteRoom: "كتم المجموعة",
         unmuteRoom: "إلغاء كتم المجموعة",

@@ -876,6 +876,8 @@ export function loadBotPreviews(apiBots: Array<Record<string, unknown>>): void {
             aiProviderRef: (apiBot.aiProviderRef as string) || undefined,
             aiModel: typeof apiBot.aiModel === "string" ? apiBot.aiModel : undefined,
             toolTimeoutSeconds: typeof apiBot.toolTimeoutSeconds === "number" ? apiBot.toolTimeoutSeconds : null,
+            maxReplyTokens: typeof apiBot.maxReplyTokens === "number" ? apiBot.maxReplyTokens : null,
+            maxSteps: typeof apiBot.maxSteps === "number" ? apiBot.maxSteps : null,
             companionTextureId: typeof apiBot.companionTextureId === "string" ? apiBot.companionTextureId : null,
             chatInstructions: (apiBot.chatInstructions as string) || "",
             createdAt: (apiBot.createdAt as string) || new Date().toISOString(),
