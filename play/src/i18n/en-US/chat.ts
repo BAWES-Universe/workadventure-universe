@@ -662,6 +662,13 @@ const chat: BaseTranslation = {
         notSent: "The voice note wasn't sent.",
         stayEnded: "The voice note was dropped: the people it was for are no longer nearby.",
     },
+    audioFile: {
+        from: "Audio from {name:string}",
+        untitled: "Audio",
+        download: "Download",
+        loading: "Loading…",
+        cantPlay: "Can't play this file here. Download it instead.",
+    },
     loginTokenError: "An error occurred. Please try to reconnect",
     reconnect: "Reconnect",
     failedToJoinRoom: "Failed to join group",
