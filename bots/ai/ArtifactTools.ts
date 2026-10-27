@@ -239,7 +239,7 @@ const ARTIFACT_CUE = /\b(?:artifacts?|(?:tap|open|see|in) (?:the|its) card|card 
  * of the library"): those are someone else's software (Sentry on #1499).
  */
 const VERSION_SAID =
-    /(?:^|[,;:(]|\b(?:the|its|this|a|new|and|as|now|saved|made|built|here(?:'s|’s| is)|it(?:'s|’s| is)))\s*(?:v\d+|version \d+)(?=\s*(?:$|[,;:)—-]|(?:is|has|adds|includes|with|now|shows|keeps|looks|should|will)\b))/;
+    /(?:^|[,;:(]|\b(?:the|its|this|a|new|and|as|now|saved|made|built|here(?:'s|’s| is)|it(?:'s|’s| is)))\s*(?:v\d+|version \d+)(?:\.\d+)*(?=\s*(?:$|[,;:)—-]|(?:is|has|adds|includes|with|now|shows|keeps|looks|should|will)\b))/;
 /** Saying it was made or changed. */
 const DONE_VERB =
     '(?:made|built|created|updated|changed|rebuilt|redesigned|redid|reworked|added|fixed|saved|ready|live|finished|upgraded|improved)';
@@ -266,7 +266,8 @@ const EARLIER_SAID = /\b(?:earlier|before|previously|already|yesterday|ago|last 
 export function claimsArtifactSaved(reply: string): boolean {
     const text = reply.toLowerCase();
     if (!text.trim() || NOT_DONE_SAID.test(text)) return false;
-    const sentences = text.split(/[.!?\n]+/);
+    // A period between digits ("v2.0") does not end a sentence
+    const sentences = text.split(/(?:(?<!\d)\.|\.(?!\d)|[!?\n])+/);
     // An app, game, board or tracker counts with a cue in the same sentence or the one after ("... the game. Tap the card")
     const cued = (index: number) => ARTIFACT_CUE.test(sentences[index]) || ARTIFACT_CUE.test(sentences[index + 1] ?? '');
     return sentences.some(
