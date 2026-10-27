@@ -207,6 +207,8 @@ describe("the artifact window", () => {
 
         byTestId("artifactCode")?.click();
         await vi.waitFor(() => expect(byTestId("artifactCodeView")?.textContent).toContain("<h1>Hi</h1>"));
+        expect(byTestId("codeView")?.querySelector(".code-meta")?.textContent).toContain("HTML");
+        expect(byTestId("codeView")?.querySelectorAll(".code-line")).toHaveLength(2);
         expect(api.fetchArtifactCode).toHaveBeenCalledTimes(1);
         expect(byTestId("artifactFrame")).toBeNull();
     });

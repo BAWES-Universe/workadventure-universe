@@ -1,7 +1,13 @@
 <script lang="ts">
     import { createEventDispatcher, onMount } from "svelte";
     import LL from "../../../../i18n/i18n-svelte";
-    import type { FileViewerKind } from "../../../FileViewer/fileKinds";
+    import {
+        codeKindOfExtension,
+        codeLinesOf,
+        coloredCodeBlocks,
+        type CodeKind,
+    } from "../../../FileViewer/codeHighlight";
+    import { extensionOf, type FileViewerKind } from "../../../FileViewer/fileKinds";
     import {
         MAX_TABLE_COLUMNS,
         MAX_TABLE_ROWS,
@@ -11,11 +17,16 @@
         renderMarkdown,
         type ParsedTable,
     } from "../../../FileViewer/textFiles";
+    import CodeView from "./CodeView.svelte";
     import FileViewerLimitNote from "./FileViewerLimitNote.svelte";
     import FileViewerTable from "./FileViewerTable.svelte";
 
     export let bytes: ArrayBuffer;
     export let kind: FileViewerKind;
+    export let name: string;
+
+    /** The most lines of code drawn at once: the rest is one tap away as a download. */
+    const MAX_CODE_LINES = 10_000;
 
     const dispatch = createEventDispatcher<{ loaded: { rowCount?: number }; failed: void; download: void }>();
 
@@ -23,13 +34,15 @@
     let plain = "";
     let table: ParsedTable | undefined;
     let truncated = false;
+    /** Code (JSON included) as it is shown, the text as the file has it, and what language it is. */
+    let code: { shown: string; written: string; kind: CodeKind; lineCount: number; linesCut: boolean } | undefined;
 
     onMount(() => {
         try {
             const decoded = decodeText(new Uint8Array(bytes));
             truncated = decoded.truncated;
             if (kind === "markdown") html = renderMarkdown(decoded.text);
-            else if (kind === "json") plain = indentJson(decoded.text);
+            else if (kind === "json" || kind === "code") code = codeOf(decoded.text);
             else if (kind === "csv") table = parseCsv(decoded.text, !decoded.truncated);
             else plain = decoded.text;
             dispatch("loaded", { rowCount: table?.totalRows });
@@ -38,6 +51,19 @@
             dispatch("failed");
         }
     });
+
+    function codeOf(written: string) {
+        const laidOut = kind === "json" ? indentJson(written) : written;
+        const lines = codeLinesOf(laidOut);
+        const linesCut = lines.length > MAX_CODE_LINES;
+        return {
+            shown: (linesCut ? lines.slice(0, MAX_CODE_LINES) : lines).join("\n"),
+            written,
+            kind: codeKindOfExtension(extensionOf(name)),
+            lineCount: lines.length,
+            linesCut,
+        };
+    }
 
     $: tableMessage = table
         ? [
@@ -64,12 +90,31 @@
             on:action={() => dispatch("download")}
         />
     {/if}
+{:else if code}
+    <div class="text-area code" data-testid="fileViewerText">
+        <!-- A text cut at its first megabyte has more lines than it shows, and how many is not known. -->
+        <CodeView
+            code={code.shown}
+            copyText={code.written}
+            codeKind={code.kind}
+            totalLines={truncated ? undefined : code.lineCount}
+        />
+    </div>
+    {#if truncated || code.linesCut}
+        <FileViewerLimitNote
+            message={code.linesCut
+                ? $LL.chat.fileViewer.codeLinesCut({ shown: MAX_CODE_LINES })
+                : $LL.chat.fileViewer.textCut()}
+            action={$LL.chat.fileViewer.downloadRest()}
+            on:action={() => dispatch("download")}
+        />
+    {/if}
 {:else}
     <div class="text-area" data-testid="fileViewerText">
         {#if kind === "markdown"}
             <!-- The text was cleaned by renderMarkdown: no scripts, styles, forms or outside pictures. -->
             <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-            <div class="md">{@html html}</div>
+            <div class="md code-colors" use:coloredCodeBlocks={html}>{@html html}</div>
         {:else}
             <pre class="plain">{plain}</pre>
         {/if}
@@ -95,6 +140,11 @@
         font-size: 14px;
         -webkit-overflow-scrolling: touch;
         user-select: text;
+    }
+
+    .text-area.code {
+        --code-view-background: #1b1a2b;
+        padding: 0;
     }
 
     .plain {
