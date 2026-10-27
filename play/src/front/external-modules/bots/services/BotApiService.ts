@@ -10,6 +10,8 @@ import {
 } from "../accessModel";
 import { resolveCredentialUrl } from "../../admin-api/iframeAuth";
 import { freshOrbitAccessToken, type GameTokenHolder } from "../../admin-api/orbitAccessToken";
+import type { PushOverview, PushSettings } from "../../../Notification/Push/PushSettings";
+import { ChatPusherSchema, type ChatPusher, type PushActivityReport } from "../../../Notification/Push/PushChat";
 import { classifySummonFailure, type SummonResult } from "./summonFailure";
 
 interface AuthError extends Error {
@@ -107,6 +109,8 @@ export class BotApiService {
     /** The game's token this service signs in with; renewed in place when its OIDC access token runs out. */
     private gameToken: GameTokenHolder | null = null;
     private adminUrl: string | null = null;
+    /** Set up by a room yet: until then a missing Orbit address says nothing about the server */
+    private initialized = false;
     private roomId: string | null = null;
     private botServerUrl: string | null = null;
     private sessionTokenPromise: Promise<string | null> | null = null; // Cache login attempt to avoid multiple simultaneous calls
@@ -123,6 +127,7 @@ export class BotApiService {
         botServerUrl?: string
     ): boolean {
         const roomIdChanged = this.roomId !== null && this.roomId !== roomId;
+        this.initialized = true;
         const previousAdminUrl = this.adminUrl;
         const nextAccessToken = this.getAccessTokenFromJwt(userAccessToken);
         if (this.accessToken !== nextAccessToken) {
@@ -192,6 +197,15 @@ export class BotApiService {
     /**
      * Get the opaque Admin API session from this tab's sessionStorage.
      */
+    /** The saved Orbit session while it has not run out yet, however soon it will. */
+    private unexpiredSessionToken(): string | null {
+        if (typeof sessionStorage === "undefined") return null;
+        const sessionToken = sessionStorage.getItem(SESSION_KEY);
+        const expiresAt = parseInt(sessionStorage.getItem(SESSION_EXPIRES_KEY) ?? "", 10);
+        if (!sessionToken || !OPAQUE_SESSION_PATTERN.test(sessionToken) || !(expiresAt > Date.now())) return null;
+        return sessionToken;
+    }
+
     private async getAdminApiSessionToken(): Promise<string | null> {
         if (typeof window === "undefined" || typeof sessionStorage === "undefined") {
             return null;
@@ -379,8 +393,11 @@ export class BotApiService {
             throw new Error("BotApiService not initialized. Missing adminUrl.");
         }
 
-        // Try to get Admin API session token first (async - may fetch new one if missing/expired)
-        const sessionToken = await this.getAdminApiSessionToken();
+        // Try to get Admin API session token first (async - may fetch new one if missing/expired). A keepalive
+        // request goes out while the page closes, when renewing first would be cut off: it takes the session as it
+        // is while that still works.
+        const sessionToken =
+            (options.keepalive ? this.unexpiredSessionToken() : null) ?? (await this.getAdminApiSessionToken());
 
         const url = `${this.adminUrl}${endpoint}`;
 
@@ -458,7 +475,9 @@ export class BotApiService {
                 throw authError;
             }
 
-            throw new Error(errorMessage);
+            const error = new Error(errorMessage) as Error & { status?: number };
+            error.status = response.status;
+            throw error;
         }
 
         return response;
@@ -511,6 +530,155 @@ export class BotApiService {
             return myAiKeyNames(await response.json());
         } catch {
             return null;
+        }
+    }
+
+    /**
+     * Whether Orbit can send this player notifications (#863): the key a browser subscribes with, or null when there
+     * is none (no Orbit on this server, or notifications are not set up there). Undefined when it can't be known: a
+     * guest, or Orbit didn't answer.
+     */
+    async getPushPublicKey(): Promise<string | null | undefined> {
+        if (!this.adminUrl) return this.orbitAnswer();
+        if (!this.accessToken) return undefined;
+        try {
+            const response = await this.fetch("/api/me/push");
+            const data = (await response.json()) as { publicKey?: unknown };
+            if (data.publicKey === null) return null;
+            return typeof data.publicKey === "string" && data.publicKey ? data.publicKey : undefined;
+        } catch {
+            return undefined;
+        }
+    }
+
+    /**
+     * No Orbit address: null (a server without Orbit) once a room has set this service up, or when the server has
+     * none. Undefined (not known yet) while a room that has not set it up runs on a server with Orbit, so nothing
+     * saved for this device is forgotten there.
+     */
+    private orbitAnswer(): null | undefined {
+        // Read from the page's config directly: this service is also used where that config is not loaded
+        const serverHasOrbit = typeof window !== "undefined" && !!window.env?.ADMIN_URL;
+        return this.initialized || !serverHasOrbit ? null : undefined;
+    }
+
+    /** Saves this browser's push subscription for the player, under a name for Your devices. The device id, or null. */
+    async registerPushDevice(subscription: PushSubscriptionJSON, label: string): Promise<string | null> {
+        if (!this.adminUrl || !this.accessToken) return null;
+        try {
+            const response = await this.fetch("/api/me/push/devices", {
+                method: "POST",
+                body: JSON.stringify({ endpoint: subscription.endpoint, keys: subscription.keys, label }),
+            });
+            const data = (await response.json()) as { device?: { id?: unknown } };
+            return typeof data.device?.id === "string" ? data.device.id : null;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * What Synapse needs (`pushers/set`) so direct messages reach this device while Universe is closed: Orbit's
+     * gateway and the device's secret (#863). Null when Orbit has none for it.
+     */
+    async getChatPusher(deviceId: string): Promise<ChatPusher | null> {
+        if (!this.adminUrl || !this.accessToken) return null;
+        try {
+            const response = await this.fetch(`/api/me/push/devices/${encodeURIComponent(deviceId)}/pusher`, {
+                method: "POST",
+            });
+            const parsed = ChatPusherSchema.safeParse(((await response.json()) as { pusher?: unknown }).pusher);
+            return parsed.success ? parsed.data : null;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Where this tab is (#863): Universe in front or not, and the chat open there, so Orbit sends no notification for
+     * what is already seen. `keepalive` for the last report of a page that is closing. True when Orbit has it.
+     */
+    async reportPushActivity(report: PushActivityReport, keepalive = false): Promise<boolean> {
+        if (!this.adminUrl || !this.accessToken) return false;
+        try {
+            const response = await this.fetch("/api/me/push/activity", {
+                method: "POST",
+                body: JSON.stringify(report),
+                keepalive,
+            });
+            return response.ok;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Everything Settings > Notifications shows. Null when this server has no Orbit, so nothing is sent while Universe
+     * is closed; undefined when Orbit can't be reached.
+     */
+    async getPushOverview(): Promise<PushOverview | null | undefined> {
+        if (!this.adminUrl) return this.orbitAnswer();
+        if (!this.accessToken) return undefined;
+        try {
+            const response = await this.fetch("/api/me/push");
+            if (!response.ok) return undefined;
+            const data = (await response.json()) as Partial<PushOverview>;
+            if (!data.settings || !Array.isArray(data.devices)) return undefined;
+            return { publicKey: data.publicKey ?? null, settings: data.settings, devices: data.devices };
+        } catch {
+            return undefined;
+        }
+    }
+
+    /** Changes some notification settings. All of them as saved, or undefined when Orbit refused or can't be reached. */
+    async updatePushSettings(change: Partial<PushSettings>): Promise<PushSettings | undefined> {
+        if (!this.adminUrl || !this.accessToken) return undefined;
+        try {
+            // Settings queues its saves one after another: one that hangs gives up rather than hold back the rest
+            return await this.withPermissionsTimeout(async (signal) => {
+                const response = await this.fetch("/api/me/push/settings", {
+                    method: "PATCH",
+                    body: JSON.stringify(change),
+                    signal,
+                });
+                if (!response.ok) return undefined;
+                const data = (await response.json()) as { settings?: PushSettings };
+                return data.settings;
+            });
+        } catch {
+            return undefined;
+        }
+    }
+
+    /** A device's own switch in Orbit. True when saved. */
+    async setPushDeviceEnabled(deviceId: string, enabled: boolean): Promise<boolean> {
+        if (!this.adminUrl || !this.accessToken) return false;
+        try {
+            const response = await this.fetch(`/api/me/push/devices/${encodeURIComponent(deviceId)}`, {
+                method: "PATCH",
+                body: JSON.stringify({ enabled }),
+            });
+            return response.ok;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Remove in Your devices. True when it is gone, including when it already was. `keepalive` on the way out of the
+     * account: it goes on the saved Orbit session and outlives the page.
+     */
+    async removePushDevice(deviceId: string, keepalive = false): Promise<boolean> {
+        if (!this.adminUrl || !this.accessToken) return false;
+        try {
+            const response = await this.fetch(`/api/me/push/devices/${encodeURIComponent(deviceId)}`, {
+                method: "DELETE",
+                keepalive,
+            });
+            return response.ok;
+        } catch (error) {
+            // Orbit answers 404 for a device it already removed, and the fetch throws on it
+            return (error as { status?: number }).status === 404;
         }
     }
 

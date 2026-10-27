@@ -87,7 +87,10 @@
                 console.error("Failed to parse markdown content", error);
                 if (renderId === latestRender) html = body;
             })
-            .finally(bodyUpdated);
+            .finally(() => {
+                // A render that was replaced by a newer one has nothing new to tell the timeline.
+                if (renderId === latestRender) bodyUpdated();
+            });
     }
 
     const unsubscriber: Unsubscriber = content.subscribe((value) => render(value.body));

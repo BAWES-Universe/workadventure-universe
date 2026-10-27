@@ -4,9 +4,11 @@ import type { MapStore } from "@workadventure/store-utils";
 import type { StateEvents } from "matrix-js-sdk";
 import type { BotStatusNote } from "../Bots/BotChatStatus";
 import type { BotRoomLink } from "../Bots/BotRoomLink";
+import type { ArtifactCard } from "../../Artifacts/artifactCard";
 import type { RoomConnection } from "../../Connection/RoomConnection";
 import type { PictureStore } from "../../Stores/PictureStore";
 import type { HeldRole } from "../Roles/WorldRoles";
+import type { ChatPusher } from "../../Notification/Push/PushChat";
 
 export type memberTypingInformation = { id: string; name: string | null; pictureStore: PictureStore };
 /**
@@ -196,6 +198,8 @@ export interface ChatMessage {
     botStatusAt?: number;
     /** Set when a bot's reply names the room it lives in: a card under the message takes you there. */
     roomLink?: BotRoomLink;
+    /** Set when a bot's direct message carries an artifact it made: drawn as a card the person taps to open. */
+    artifact?: ArtifactCard;
     /** Whether reactions on this message reach the other people in the chat. */
     canReact: Readable<boolean>;
     /** Whether a reply to this message is sent as a reply (with its quote) to the other people in the chat. */
@@ -312,6 +316,11 @@ export interface ChatConnectionInterface {
     /** People you blocked in chat: their messages are hidden on every device. */
     ignoredUsers: Readable<string[]>;
     setUserIgnored(userChatId: string, ignored: boolean): Promise<void>;
+    /**
+     * Sends this account's notifications for one device to a push gateway while Universe is closed (#863). False when
+     * this connection has nowhere to set it: no chat here, or a guest.
+     */
+    setPusher(pusher: ChatPusher): Promise<boolean>;
 }
 
 export type Connection = Pick<RoomConnection, "queryChatMembers" | "emitPlayerChatID" | "emitBanPlayerMessage">;

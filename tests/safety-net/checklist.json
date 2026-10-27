@@ -983,7 +983,7 @@
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "`getByTestId('notification-toggle')` (SettingsSubMenu.svelte:333-340); `ignoreFollowRequests-toggle` (:341-346)"
+      "hooks": "`getByTestId('notification-toggle')` and `ignoreFollowRequests-toggle` (Settings > Notifications, NotificationsSettings.svelte)"
     },
     {
       "id": "JN-083",

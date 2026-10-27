@@ -8,10 +8,14 @@
  * and act on it locally, without asking the server.
  */
 
+import type { PictureStore } from "../../../Stores/PictureStore";
+
 export interface PersonLocation {
     spaceUserId?: string;
     uuid?: string;
     playUri?: string;
+    /** Their Woka as People shows it: it doesn't need them near you on the map. */
+    pictureStore?: PictureStore;
 }
 
 /**
