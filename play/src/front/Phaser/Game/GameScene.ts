@@ -1355,9 +1355,10 @@ export class GameScene extends DirtyScene {
         }
     }
 
-    public playSound(sound: string) {
-        if (!statusChanger.allowNotificationSound()) return;
-        this.sound.play(sound, {
+    /** Whether the sound plays: the status (busy, away) can keep it quiet. */
+    public playSound(sound: string): boolean {
+        if (!statusChanger.allowNotificationSound()) return false;
+        return this.sound.play(sound, {
             volume: 0.2,
         });
     }

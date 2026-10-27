@@ -27,14 +27,15 @@ export class MessageNotification implements NotificationWA {
                 tabUrl: window.location.href,
             };
 
-            // renotify is not in the DOM typings: a replacing notification still has to make its sound.
-            const options: NotificationOptions & { renotify: boolean } = {
+            const options: NotificationOptions = {
                 ...this.options,
                 body,
                 data,
                 // The tag the service worker gives a pushed notification of this chat, so one replaces the other.
                 tag: `chat:${this.chatRoomId}`,
-                renotify: true,
+                // Universe is open, and it has just played its own chat sound: the system's sound would be a second
+                // one (#1493).
+                silent: true,
             };
             await registration.showNotification(this.chatRoomName, options);
         } catch (error) {

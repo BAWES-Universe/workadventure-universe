@@ -73,10 +73,20 @@ vi.mock("../../../Stores/SelectRoomStore", async () => {
     const { writable } = await import("svelte/store");
     return { selectedRoomStore: writable(undefined) };
 });
-vi.mock("../../../../Phaser/Game/GameManager", () => ({ gameManager: {} }));
-vi.mock("../../../../Connection/LocalUserStore", () => ({ localUserStore: {} }));
+/** The game's chat sound, for the room's own way of telling about a message. */
+const ringing = vi.hoisted(() => ({
+    playSound: vi.fn((_sound: string) => true),
+    chatSoundPlayed: vi.fn(),
+}));
+vi.mock("../../../../Phaser/Game/GameManager", () => ({
+    gameManager: { getCurrentGameScene: () => ({ playSound: ringing.playSound }) },
+}));
+vi.mock("../../../../Connection/LocalUserStore", () => ({ localUserStore: { getChatSounds: () => true } }));
 vi.mock("../../../../Notification/MessageNotification", () => ({ MessageNotification: class {} }));
-vi.mock("../../../../Notification/NotificationManager", () => ({ notificationManager: {} }));
+vi.mock("../../../../Notification/NotificationManager", () => ({
+    notificationManager: { createNotification: vi.fn() },
+}));
+vi.mock("../../../../Notification/ChatSound", () => ({ chatSoundPlayed: ringing.chatSoundPlayed }));
 vi.mock("../MatrixMedia", () => ({
     holdMatrixMedia: vi.fn(),
     changingMatrixAvatarStore: () => ({ subscribe: () => () => {} }),
@@ -224,6 +234,35 @@ describe("MatrixChatRoom catching up after a reload or a sleeping tab", () => {
 
         expect(ids(room)).toContain(fresh.getId());
         expect(notify).toHaveBeenCalledTimes(1);
+    });
+
+    it("plays the chat sound for each new message, and notes it for the notification that follows (#1493)", async () => {
+        ringing.playSound.mockClear();
+        ringing.chatSoundPlayed.mockClear();
+        timeline.events = [message()];
+        new MatrixChatRoom(fakeRoom());
+        await settle();
+
+        emitTimeline(message(300));
+        emitTimeline(message(300));
+        await settle();
+
+        expect(ringing.playSound.mock.calls).toEqual([["new-message"], ["new-message"]]);
+        expect(ringing.chatSoundPlayed.mock.calls).toEqual([["!dm:matrix.test"], ["!dm:matrix.test"]]);
+    });
+
+    it("notes no sound when the status keeps the chat sound quiet", async () => {
+        ringing.playSound.mockClear().mockReturnValueOnce(false);
+        ringing.chatSoundPlayed.mockClear();
+        timeline.events = [message()];
+        new MatrixChatRoom(fakeRoom());
+        await settle();
+
+        emitTimeline(message(300));
+        await settle();
+
+        expect(ringing.playSound).toHaveBeenCalledWith("new-message");
+        expect(ringing.chatSoundPlayed).not.toHaveBeenCalled();
     });
 
     it("does not add a catch-up message the list already has, or replace it", async () => {

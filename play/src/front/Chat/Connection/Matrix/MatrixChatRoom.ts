@@ -44,6 +44,7 @@ import { selectedRoomStore } from "../../Stores/SelectRoomStore";
 import { gameManager } from "../../../Phaser/Game/GameManager";
 import { localUserStore } from "../../../Connection/LocalUserStore";
 import { MessageNotification } from "../../../Notification/MessageNotification";
+import { chatSoundPlayed } from "../../../Notification/ChatSound";
 import { notificationManager } from "../../../Notification/NotificationManager";
 import type { PictureStore } from "../../../Stores/PictureStore";
 import { MatrixChatMessage } from "./MatrixChatMessage";
@@ -125,7 +126,7 @@ export class MatrixChatRoom
         private matrixRoom: Room,
         private notifyNewMessage = (message: MatrixChatMessage) => {
             if (!localUserStore.getChatSounds() || get(this.areNotificationsMuted)) return;
-            gameManager.getCurrentGameScene().playSound("new-message");
+            if (gameManager.getCurrentGameScene().playSound("new-message")) chatSoundPlayed(this.id);
             notificationManager.createNotification(
                 new MessageNotification(
                     message.sender?.username ?? "unknown",
