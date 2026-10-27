@@ -273,9 +273,14 @@ describe('a reply that says it saved an artifact (Orbit #666)', () => {
         expect(claimsArtifactSaved("I've updated the tracker you keep in Notion with this week's numbers.")).toBe(false);
         expect(claimsArtifactSaved("I've added dark mode to the game. Tap the card to open it.")).toBe(true);
         expect(claimsArtifactSaved("I've rebuilt the app, v2 has the charts.")).toBe(true);
+        expect(claimsArtifactSaved("Here's version 3 with the new colors, all fixed.")).toBe(true);
+        expect(claimsArtifactSaved('Saved as v2, the charts are updated.')).toBe(true);
+        expect(claimsArtifactSaved('v2 is ready.')).toBe(true);
         // The cue has to be next to the claim, not anywhere in the reply (Sentry on #1499)
         expect(claimsArtifactSaved("I've fixed the bug in your app. Node v18 or later is needed. The card reader works now too.")).toBe(false);
         expect(claimsArtifactSaved("I've fixed the bug in your app. Upgrade to Node v18.")).toBe(false);
+        expect(claimsArtifactSaved("I've upgraded your project to Node v18.")).toBe(false);
+        expect(claimsArtifactSaved('Done, Python version 3 is installed and your script is fixed.')).toBe(false);
         // Sentry on #1499: an ordinary "Tap Save" is no cue, and "of" only matters for the words that are sometimes artifacts
         expect(claimsArtifactSaved("I've fixed the bug in your app. Tap Save and it works.")).toBe(false);
         expect(claimsArtifactSaved("Here's the updated mockup of your landing page.")).toBe(true);
