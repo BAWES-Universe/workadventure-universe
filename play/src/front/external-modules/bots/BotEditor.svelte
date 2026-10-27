@@ -16,6 +16,8 @@
     import BotDetailView from "./components/BotDetailView.svelte";
     import NewBotView from "./components/NewBotView.svelte";
     import type { BotData } from "./types";
+    import type { UsageScreen } from "./usageModel";
+    import { botUsageStore, type BotUsageState } from "./stores/BotUsageStore";
     import {
         botEditorModeStore,
         selectedBotStore,
@@ -822,6 +824,32 @@
     let addingRule = false;
     // Advanced settings the same way
     let editingAdvanced = false;
+    // And Usage's screens: who uses it, what it ran on, its limits
+    let usageScreen: UsageScreen | null = null;
+    function usageScreenTitle(screen: UsageScreen, name: string): string {
+        const usage = $LL.mapEditor.edit.bots.page.usage;
+        return screen === "people"
+            ? usage.whoTitle({ name })
+            : screen === "ranOn"
+            ? usage.ranOnTitle()
+            : usage.limitsTitle();
+    }
+    // Under the title: how many people in the range on Who uses, the range itself on the other two
+    function usageScreenSubtitle(screen: UsageScreen, state: BotUsageState | undefined, botId: string): string {
+        const usage = $LL.mapEditor.edit.bots.page.usage;
+        const range = state?.botId === botId ? state.range : "7d";
+        const data = state?.botId === botId ? state.data : undefined;
+        if (screen === "people" && data) {
+            const words =
+                range === "today" ? usage.rangeToday() : range === "30d" ? usage.rangeMonth() : usage.rangeWeek();
+            return usage.peopleCount({ count: data.totals.people, range: words });
+        }
+        return range === "today"
+            ? usage.subtitleToday()
+            : range === "30d"
+            ? usage.subtitleMonth()
+            : usage.subtitleWeek();
+    }
     function editedRuleName(ruleId: string | null, botId: string | undefined, someone: string): string | undefined {
         const held = get(botPermissionsStore);
         const rule = ruleId && held && held.botId === botId ? held.data?.rules.find((r) => r.id === ruleId) : undefined;
@@ -847,6 +875,13 @@
                   label: $LL.mapEditor.edit.bots.page.companion.back({ name: selectedBot.name ?? "" }),
                   title: selectedBot.name || undefined,
                   subtitle: $LL.mapEditor.edit.bots.page.body.title(),
+              }
+            : currentMode === "detail" && selectedBot && usageScreen
+            ? {
+                  onBack: () => (usageScreen = null),
+                  label: $LL.mapEditor.edit.bots.page.companion.back({ name: selectedBot.name ?? "" }),
+                  title: usageScreenTitle(usageScreen, selectedBot.name || "Bot"),
+                  subtitle: usageScreenSubtitle(usageScreen, $botUsageStore, selectedBot.id),
               }
             : currentMode === "detail" && selectedBot && editingAdvanced
             ? {
@@ -1004,6 +1039,7 @@
                 bind:editingRuleId
                 bind:addingRule
                 bind:editingAdvanced
+                bind:usageScreen
                 bot={selectedBot}
                 onSave={handleSave}
                 onDelete={handleDelete}
