@@ -10,6 +10,7 @@ import {
 import { resolveCredentialUrl } from "../../admin-api/iframeAuth";
 import { freshOrbitAccessToken, type GameTokenHolder } from "../../admin-api/orbitAccessToken";
 import type { PushOverview, PushSettings } from "../../../Notification/Push/PushSettings";
+import { ChatPusherSchema, type ChatPusher, type PushActivityReport } from "../../../Notification/Push/PushChat";
 import { classifySummonFailure, type SummonResult } from "./summonFailure";
 
 interface AuthError extends Error {
@@ -187,6 +188,15 @@ export class BotApiService {
     /**
      * Get the opaque Admin API session from this tab's sessionStorage.
      */
+    /** The saved Orbit session while it has not run out yet, however soon it will. */
+    private unexpiredSessionToken(): string | null {
+        if (typeof sessionStorage === "undefined") return null;
+        const sessionToken = sessionStorage.getItem(SESSION_KEY);
+        const expiresAt = parseInt(sessionStorage.getItem(SESSION_EXPIRES_KEY) ?? "", 10);
+        if (!sessionToken || !OPAQUE_SESSION_PATTERN.test(sessionToken) || !(expiresAt > Date.now())) return null;
+        return sessionToken;
+    }
+
     private async getAdminApiSessionToken(): Promise<string | null> {
         if (typeof window === "undefined" || typeof sessionStorage === "undefined") {
             return null;
@@ -374,8 +384,11 @@ export class BotApiService {
             throw new Error("BotApiService not initialized. Missing adminUrl.");
         }
 
-        // Try to get Admin API session token first (async - may fetch new one if missing/expired)
-        const sessionToken = await this.getAdminApiSessionToken();
+        // Try to get Admin API session token first (async - may fetch new one if missing/expired). A keepalive
+        // request goes out while the page closes, when renewing first would be cut off: it takes the session as it
+        // is while that still works.
+        const sessionToken =
+            (options.keepalive ? this.unexpiredSessionToken() : null) ?? (await this.getAdminApiSessionToken());
 
         const url = `${this.adminUrl}${endpoint}`;
 
@@ -556,6 +569,41 @@ export class BotApiService {
     }
 
     /**
+     * What Synapse needs (`pushers/set`) so direct messages reach this device while Universe is closed: Orbit's
+     * gateway and the device's secret (#863). Null when Orbit has none for it.
+     */
+    async getChatPusher(deviceId: string): Promise<ChatPusher | null> {
+        if (!this.adminUrl || !this.accessToken) return null;
+        try {
+            const response = await this.fetch(`/api/me/push/devices/${encodeURIComponent(deviceId)}/pusher`, {
+                method: "POST",
+            });
+            const parsed = ChatPusherSchema.safeParse(((await response.json()) as { pusher?: unknown }).pusher);
+            return parsed.success ? parsed.data : null;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Where this tab is (#863): Universe in front or not, and the chat open there, so Orbit sends no notification for
+     * what is already seen. `keepalive` for the last report of a page that is closing. True when Orbit has it.
+     */
+    async reportPushActivity(report: PushActivityReport, keepalive = false): Promise<boolean> {
+        if (!this.adminUrl || !this.accessToken) return false;
+        try {
+            const response = await this.fetch("/api/me/push/activity", {
+                method: "POST",
+                body: JSON.stringify(report),
+                keepalive,
+            });
+            return response.ok;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
      * Everything Settings > Notifications shows. Null when this server has no Orbit, so nothing is sent while Universe
      * is closed; undefined when Orbit can't be reached.
      */
@@ -607,12 +655,16 @@ export class BotApiService {
         }
     }
 
-    /** Remove in Your devices. True when it is gone, including when it already was. */
-    async removePushDevice(deviceId: string): Promise<boolean> {
+    /**
+     * Remove in Your devices. True when it is gone, including when it already was. `keepalive` on the way out of the
+     * account: it goes on the saved Orbit session and outlives the page.
+     */
+    async removePushDevice(deviceId: string, keepalive = false): Promise<boolean> {
         if (!this.adminUrl || !this.accessToken) return false;
         try {
             const response = await this.fetch(`/api/me/push/devices/${encodeURIComponent(deviceId)}`, {
                 method: "DELETE",
+                keepalive,
             });
             return response.ok;
         } catch (error) {

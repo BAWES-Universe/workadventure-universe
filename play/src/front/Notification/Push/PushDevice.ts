@@ -105,6 +105,9 @@ function sameKey(subscription: PushSubscription, key: Uint8Array): boolean {
     return bytes.length === key.length && bytes.every((byte, index) => byte === key[index]);
 }
 
+/** Set once signing out starts, for the rest of this page: signing in again loads a new one. */
+let signingOut = false;
+
 /** Each time this device is switched off or removed: a save on its way when it happens saves nothing. */
 let switchOffs = 0;
 /** Each time this browser starts being saved: a switch-off still on its way then leaves the browser as it is. */
@@ -138,9 +141,10 @@ export async function subscribeThisDevice(): Promise<"saved" | "notSetUp" | "fai
         console.warn("Notifications: this browser could not subscribe to push", error);
         return "notSetUp";
     }
-    // Switched off while this was on its way, and still off: Off stands, so nothing is saved and nothing can arrive
+    // Switched off while this was on its way and still off, or signing out: that stands, so nothing is saved and
+    // nothing can arrive
     const switchedOff = () => switchOffs !== offsAtStart && localUserStore.getNotificationChoice() === false;
-    if (switchedOff()) {
+    if (switchedOff() || signingOut) {
         await subscription.unsubscribe();
         return "failed";
     }
@@ -149,6 +153,12 @@ export async function subscribeThisDevice(): Promise<"saved" | "notSetUp" | "fai
         deviceLabel(describeDevice(currentInstallEnvironment()))
     );
     if (id === null) return "failed";
+    // Signed out while Orbit was saving it: it leaves again rather than stay for an account no longer here
+    if (signingOut) {
+        await subscription.unsubscribe();
+        botApiService.removePushDevice(id).catch(() => undefined);
+        return "failed";
+    }
     setThisDeviceId(id);
     // Switched off while Orbit was saving it: it is this device, kept as off there, and nothing reaches the browser
     if (switchedOff()) {
@@ -156,6 +166,10 @@ export async function subscribeThisDevice(): Promise<"saved" | "notSetUp" | "fai
         await botApiService.setPushDeviceEnabled(id, false);
         return "failed";
     }
+    // Direct messages reach it through Synapse: point this account's pusher for this device at Orbit
+    import("./PushChatLink")
+        .then(({ linkChatToDevice }) => linkChatToDevice(id))
+        .catch((error) => console.warn("Notifications: direct messages could not be sent to this device", error));
     return "saved";
 }
 
@@ -242,6 +256,20 @@ export async function turnOffThisDevice(deviceId: string | undefined, remove: bo
     // way (Orbit forgets the device at its next send there).
     if ((remove || !told) && !onAgain) await forgetThisBrowser();
     if (remove && !told) throw new Error("Orbit did not remove the device");
+}
+
+/**
+ * Signing out: this browser drops its subscription first, so nothing for the account reaches it however long Orbit
+ * takes, then leaves Your devices. A save still on its way saves nothing. Signing in again saves it again, for
+ * whoever signs in.
+ */
+export async function forgetThisDeviceOnSignOut(): Promise<void> {
+    signingOut = true;
+    const id = get(thisDeviceIdStore);
+    setThisDeviceId(undefined);
+    await forgetThisBrowser();
+    // The account's token is already gone: this goes on the saved Orbit session, and still goes as the page leaves
+    if (id) await botApiService.removePushDevice(id, true);
 }
 
 /** This browser drops its subscription, so nothing more reaches it while Universe is closed. */

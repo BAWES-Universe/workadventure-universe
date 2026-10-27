@@ -39,6 +39,7 @@ import { gameManager } from "../Phaser/Game/GameManager";
 import { locales } from "../../i18n/i18n-util";
 import type { Locales } from "../../i18n/i18n-types";
 import { setCurrentLocale } from "../Utils/locales";
+import { raceTimeout } from "../Utils/PromiseUtils";
 import { ABSOLUTE_PUSHER_URL } from "../Enum/ComputedConst";
 import { openChatRoom } from "../Chat/Utils";
 import LL from "../../i18n/i18n-svelte";
@@ -238,9 +239,21 @@ class ConnectionManager {
         // it shortly displays the "sign in" button before redirect happens)
         //userIsConnected.set(false);
 
+        // This browser leaves the account's devices, so no notification for it arrives once signed out (#863). It has
+        // a moment to tell Orbit, and the sign-out goes on either way: the browser's own subscription goes first, and
+        // Orbit drops a device whose subscription is gone the next time it sends to it.
+        const deviceForgotten = wasSignedIn
+            ? raceTimeout(
+                  import("../Notification/Push/PushDevice").then(({ forgetThisDeviceOnSignOut }) =>
+                      forgetThisDeviceOnSignOut()
+                  ),
+                  2_000
+              ).catch((error) => console.warn("Notifications: this device could not leave the account", error))
+            : Promise.resolve();
+
         // check if we are in a room
         if (!ENABLE_OPENID || !this._currentRoom) {
-            window.location.assign("/login");
+            deviceForgotten.finally(() => window.location.assign("/login")).catch(() => undefined);
             return;
         }
         // redirect to logout url
@@ -248,8 +261,8 @@ class ConnectionManager {
         redirectUrl.searchParams.append("playUri", this._currentRoom.key);
         redirectUrl.searchParams.append("token", tokenTmp ?? "");
 
-        gameManager
-            .logout()
+        deviceForgotten
+            .then(() => gameManager.logout())
             .catch((e) => {
                 console.error(e);
                 Sentry.captureException(e);

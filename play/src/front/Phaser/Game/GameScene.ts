@@ -2621,6 +2621,12 @@ export class GameScene extends DirtyScene {
         if (!this._room.modules?.includes("bots")) {
             botApiService.initialize(localUserStore.getAuthToken(), ADMIN_URL, this.roomUrl, getBotServerUrl());
             refreshThisDeviceOnce();
+            // This tab tells Orbit while it is in front here too, so what is seen here sends no notification
+            if (localUserStore.isLogged()) {
+                import("../../Notification/Push/PushActivity")
+                    .then(({ startPushActivity }) => startPushActivity())
+                    .catch((error) => console.warn("Notifications: could not start reporting this tab", error));
+            }
         }
         if (this._room.modules) {
             const externalModules = import.meta.glob("../../external-modules/*/index.ts");

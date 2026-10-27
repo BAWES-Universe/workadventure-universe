@@ -489,3 +489,85 @@ describe("saving this device", () => {
         vi.unstubAllGlobals();
     });
 });
+
+describe("signing out", () => {
+    it("takes this browser out of Your devices and drops its subscription", async () => {
+        const { forgetThisDeviceOnSignOut, thisDeviceIdStore } = await import("../PushDevice");
+        const unsubscribe = vi.fn(() => Promise.resolve(true));
+        const registration = { pushManager: { getSubscription: () => Promise.resolve({ unsubscribe }) } };
+        vi.stubGlobal("navigator", { serviceWorker: { getRegistration: () => Promise.resolve(registration) } });
+        thisDeviceIdStore.set("d1");
+        removePushDevice.mockClear();
+        await forgetThisDeviceOnSignOut();
+        expect(removePushDevice).toHaveBeenCalledWith("d1", true);
+        expect(unsubscribe).toHaveBeenCalledOnce();
+        let id: string | undefined = "x";
+        thisDeviceIdStore.subscribe((value) => (id = value))();
+        expect(id).toBeUndefined();
+        vi.unstubAllGlobals();
+    });
+
+    it("drops the subscription before Orbit answers, so a slow Orbit still leaves nothing arriving", async () => {
+        const { forgetThisDeviceOnSignOut, thisDeviceIdStore } = await import("../PushDevice");
+        const unsubscribe = vi.fn(() => Promise.resolve(true));
+        const registration = { pushManager: { getSubscription: () => Promise.resolve({ unsubscribe }) } };
+        vi.stubGlobal("navigator", { serviceWorker: { getRegistration: () => Promise.resolve(registration) } });
+        thisDeviceIdStore.set("d2");
+        // Orbit never answers: sign-out gives up waiting on it
+        removePushDevice.mockImplementationOnce(() => new Promise<boolean>(() => {}));
+        const leaving = forgetThisDeviceOnSignOut();
+        await vi.waitFor(() => expect(removePushDevice).toHaveBeenCalledWith("d2", true));
+        expect(unsubscribe).toHaveBeenCalledOnce();
+        void leaving;
+        vi.unstubAllGlobals();
+    });
+
+    it("saves nothing from a save still on its way once signing out has started", async () => {
+        // A page that has not signed out yet
+        vi.resetModules();
+        const { forgetThisDeviceOnSignOut, subscribeThisDevice, thisDeviceIdStore } = await import("../PushDevice");
+        const { localUserStore } = await import("../../../Connection/LocalUserStore");
+        const { get } = await import("svelte/store");
+        const unsubscribe = vi.fn(() => Promise.resolve(true));
+        const subscription = { unsubscribe, toJSON: () => ({ endpoint: "https://push.example/2" }), options: {} };
+        const pushManager = {
+            getSubscription: () => Promise.resolve(null),
+            subscribe: () => Promise.resolve(subscription),
+        };
+        vi.stubGlobal("navigator", {
+            userAgent: UA.windowsEdge,
+            platform: "",
+            maxTouchPoints: 0,
+            serviceWorker: {
+                register: () => Promise.resolve({ pushManager }),
+                getRegistration: () => Promise.resolve({ pushManager }),
+            },
+        });
+        vi.stubGlobal("Notification", { permission: "granted" });
+        vi.stubGlobal("PushManager", class {});
+        localUserStore.setNotification(true);
+        thisDeviceIdStore.set(undefined);
+        removePushDevice.mockClear();
+        setPushDeviceId.mockClear();
+        registerPushDevice.mockClear();
+        let saved: (id: string) => void = () => undefined;
+        registerPushDevice.mockImplementationOnce(
+            () =>
+                new Promise<string>((resolve) => {
+                    saved = resolve;
+                })
+        );
+        getPushPublicKey.mockResolvedValueOnce("AAAA");
+        const saving = subscribeThisDevice();
+        await vi.waitFor(() => expect(registerPushDevice).toHaveBeenCalled());
+        await forgetThisDeviceOnSignOut();
+        // Orbit answers after the sign-out: the device leaves again and this browser keeps no id
+        saved("d-late");
+        expect(await saving).toBe("failed");
+        expect(removePushDevice).toHaveBeenCalledWith("d-late");
+        expect(unsubscribe).toHaveBeenCalled();
+        expect(get(thisDeviceIdStore)).toBeUndefined();
+        expect(setPushDeviceId).not.toHaveBeenCalledWith("d-late");
+        vi.unstubAllGlobals();
+    });
+});

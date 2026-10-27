@@ -633,8 +633,14 @@ function setupBotEditor(options: ExtensionModuleOptions) {
             options.roomId,
             botServerUrl
         );
-        // Orbit can be reached now: a browser that already allows notifications is saved there again (#863).
+        // Orbit can be reached now: a browser that already allows notifications is saved there again, and this tab
+        // tells Orbit while it is in front, so what is seen here sends no notification (#863).
         refreshThisDeviceOnce();
+        if (localUserStore.isLogged()) {
+            import("../../Notification/Push/PushActivity")
+                .then(({ startPushActivity }) => startPushActivity())
+                .catch((error) => console.warn("Notifications: could not start reporting this tab", error));
+        }
 
         // If room changed and bot editor is open, trigger a reload
         if (roomIdChanged && botEditorOpen) {
