@@ -82,7 +82,12 @@ export interface BotAiOptions {
     current: string | null;
     /** The bot's own model on its key (null: the key's check model, or not on a key). Missing on an older Orbit. */
     currentModel?: string | null;
-    universeAi: { available: boolean; model?: string | null; supportsVision?: boolean | null; limits?: BotLimitCeiling };
+    universeAi: {
+        available: boolean;
+        model?: string | null;
+        supportsVision?: boolean | null;
+        limits?: BotLimitCeiling;
+    };
     maker: { id: string; name: string | null } | null;
     viewerIsMaker: boolean;
     keys: Array<{
