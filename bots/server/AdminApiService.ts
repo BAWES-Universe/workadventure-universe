@@ -19,6 +19,14 @@ const captureException = (error: Error) => {
     console.error('AdminApiService error:', error);
 };
 
+/** Which reply limit stopped a reply (#1159): a person's Universe AI replies, a guest's, a bot's guests' pool, or the bot's own. */
+export const REPLY_LIMIT_KINDS = ['universe-ai', 'guest', 'guests', 'bot'] as const;
+export type ReplyLimitKind = (typeof REPLY_LIMIT_KINDS)[number];
+/** Who reached it, so the card shows the one button that fits them: Sign in, Ask the maker, or Use my AI key. */
+export const REPLY_ASKERS = ['guest', 'member', 'maker'] as const;
+export type ReplyAsker = (typeof REPLY_ASKERS)[number];
+export type ReplyAllowance = { allowed: true } | { allowed: false; limit: ReplyLimitKind; resetsAt: string; who: ReplyAsker };
+
 export function resolveAdminApiEndpoint(adminApiUrl: string | URL, endpoint: string): string {
     const baseUrl = new URL(adminApiUrl.toString());
     if (!baseUrl.pathname.endsWith('/')) {
@@ -106,8 +114,11 @@ export class ArtifactCallError extends Error {
     }
 }
 
-/** A make or a change takes a little longer than the access check: Orbit saves the file first. */
-const ARTIFACT_TIMEOUT_MS = 20_000;
+/**
+ * A make or a change takes a little longer than the access check: Orbit saves the file first. How long it may take is a
+ * super admin's "Time to save" (Orbit #666), passed with the call; this is for a call without it (a read or a list).
+ */
+const ARTIFACT_TIMEOUT_MS = 30_000;
 
 /** What people do with a bot, as Orbit's check names it. */
 export type BotAccessAction = 'chat' | 'dm' | 'summon';
@@ -158,6 +169,10 @@ export interface BotConfiguration {
     // How long the bot waits for a tool (MCP) call to answer, in seconds ("Patience").
     // Null or missing means the bot server's default (REQUEST_TIMEOUT, 90 s).
     toolTimeoutSeconds?: number | null;
+
+    // The bot's own longest reply (tokens) and steps in one reply, lower than its key's (Orbit #666). Null follows the key.
+    maxReplyTokens?: number | null;
+    maxSteps?: number | null;
     
     // Assigned space defines where the bot operates (center + radius)
     // Required: All bots must have an assigned space
@@ -227,6 +242,8 @@ export interface AIProviderCredentials {
     visionModel: string | null;
     defaultVision: boolean;
     settings?: Record<string, any>;
+    /** The bot's limits (Orbit #666); only on an answer for one bot, from an Orbit that has them. */
+    limits?: unknown;
 }
 
 /**
@@ -727,6 +744,38 @@ export class AdminApiService {
     }
 
     /**
+     * May this person get one more reply from this bot now (#1159)? Orbit counts their Universe AI replies (30 every 5
+     * hours signed in, 10 for a guest, 200 shared by a bot's guests) and the bot's own limit per person. `source` is
+     * what the reply would run on, from the bot's AI credentials. Never stops a reply because Orbit can't be asked:
+     * anything but a clear "no" (not configured, an Orbit from before, a timeout, an error) lets the reply through.
+     */
+    async checkReplyAllowance(
+        botId: string,
+        input: { userId: string; isGuest?: boolean; source: 'universe-ai' | 'provider' | 'own-key' }
+    ): Promise<ReplyAllowance> {
+        if (!this.isConfigured()) return { allowed: true };
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!botServiceToken) return { allowed: true };
+        try {
+            const response = await axios.post(
+                `${this.adminApiUrl}/api/bots/${encodeURIComponent(botId)}/reply-allowance`,
+                input,
+                { headers: { Authorization: `Bearer ${botServiceToken}` }, timeout: 5000 }
+            );
+            const body = response.data as Partial<{ allowed: boolean; limit: string; resetsAt: string; who: string }>;
+            if (body?.allowed !== false) return { allowed: true };
+            const limit = REPLY_LIMIT_KINDS.find((kind) => kind === body.limit);
+            const who = REPLY_ASKERS.find((asker) => asker === body.who);
+            if (!limit || !who || typeof body.resetsAt !== 'string' || Number.isNaN(Date.parse(body.resetsAt))) return { allowed: true };
+            return { allowed: false, limit, resetsAt: body.resetsAt, who };
+        } catch (error) {
+            const msg = (axios.isAxiosError(error) && error.response?.status) || (error as Error)?.message || 'Unknown error';
+            console.warn(`[AdminApiService] Reply limit check failed, letting the reply through: ${msg}`);
+            return { allowed: true };
+        }
+    }
+
+    /**
      * Get available AI providers
      * Uses BOT_SERVICE_TOKEN (separate from ADMIN_API_TOKEN)
      */
@@ -1026,7 +1075,7 @@ export class AdminApiService {
      * One call to Orbit's artifact routes with the bot service token. A refusal comes back as an ArtifactCallError with
      * Orbit's own code and line (no content is ever logged); anything that stops Orbit answering is `orbit_unavailable`.
      */
-    private async artifactCall<T>(path: string, body: object): Promise<T> {
+    private async artifactCall<T>(path: string, body: object, timeoutMs = ARTIFACT_TIMEOUT_MS): Promise<T> {
         const botServiceToken = process.env.BOT_SERVICE_TOKEN;
         if (!this.isConfigured() || !botServiceToken) {
             throw new ArtifactCallError('orbit_unavailable', 503, 'Orbit is not set up for artifacts.');
@@ -1034,7 +1083,7 @@ export class AdminApiService {
         try {
             const response: AxiosResponse<T> = await axios.post(resolveAdminApiEndpoint(this.adminApiUrl, path), body, {
                 headers: { Authorization: `Bearer ${botServiceToken}`, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-                timeout: ARTIFACT_TIMEOUT_MS,
+                timeout: timeoutMs,
                 maxBodyLength: Infinity,
             });
             return response.data;
@@ -1056,18 +1105,20 @@ export class AdminApiService {
     /** Make an artifact for the person who asked, in the chat they asked in. */
     makeArtifact(
         call: ArtifactCall,
-        artifact: { title: string; kind: ArtifactKind; content: string; summary?: string | null }
+        artifact: { title: string; kind: ArtifactKind; content: string; summary?: string | null },
+        timeoutMs?: number
     ): Promise<{ artifact: ArtifactSummary; version: ArtifactVersionSummary; hidden: boolean }> {
-        return this.artifactCall('api/artifacts', { ...call, ...artifact });
+        return this.artifactCall('api/artifacts', { ...call, ...artifact }, timeoutMs);
     }
 
     /** Change one with small edits (or the whole new file). Every change is a new version. */
     changeArtifact(
         id: string,
         call: ArtifactCall,
-        change: { edits?: ArtifactEdit[]; content?: string; summary?: string | null; title?: string | null; baseVersion?: number | null }
+        change: { edits?: ArtifactEdit[]; content?: string; summary?: string | null; title?: string | null; baseVersion?: number | null },
+        timeoutMs?: number
     ): Promise<{ artifact: ArtifactSummary; version: ArtifactVersionSummary; hidden: boolean }> {
-        return this.artifactCall(`api/artifacts/${encodeURIComponent(id)}/change`, { ...call, ...change });
+        return this.artifactCall(`api/artifacts/${encodeURIComponent(id)}/change`, { ...call, ...change }, timeoutMs);
     }
 
     /** Read one version of an artifact, with its text. */
@@ -1115,6 +1166,11 @@ export class AdminApiService {
         latency?: number;
         error?: boolean;
         timestamp?: string;
+        /** Where the reply was given: direct messages or nearby chat (Orbit #491). */
+        channel?: "dm" | "nearby";
+        /** Who it was for, as the bot knows them (WorkAdventure uuid or email); Orbit matches it to their account. */
+        userId?: string;
+        isGuest?: boolean;
     }): Promise<void> {
         if (!this.isConfigured()) {
             if (process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -1141,6 +1197,9 @@ export class AdminApiService {
                 latency: usage.latency ?? null,
                 error: usage.error || false,
                 timestamp: usage.timestamp || new Date().toISOString(),
+                ...(usage.channel ? { channel: usage.channel } : {}),
+                ...(usage.userId ? { userId: usage.userId } : {}),
+                ...(typeof usage.isGuest === "boolean" ? { isGuest: usage.isGuest } : {}),
             };
 
             if (process.env.ENABLE_BOT_DEBUG === 'true') {

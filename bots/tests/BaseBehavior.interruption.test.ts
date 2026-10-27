@@ -13,7 +13,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-import { BaseBehavior } from '../behaviors/BaseBehavior';
+import { BaseBehavior, BUSY_LINE } from '../behaviors/BaseBehavior';
 import type { BehaviorConfig } from '../behaviors/BaseBehavior';
 
 class TestableBehavior extends BaseBehavior {
@@ -180,10 +180,9 @@ describe('BaseBehavior interruption routing', () => {
         expect(ackCalls).toHaveLength(2);
     });
 
-    it('queue overflow: capped at MAX_QUEUED_MESSAGES with an overflow ack', async () => {
+    it('queue overflow: capped at MAX_QUEUED_MESSAGES with the fixed busy line, no AI call (#1159)', async () => {
         behavior.testStartGeneration(SENDER, SPACE);
         ai.quickClassify.mockResolvedValue({ action: 'queue', message: 'one moment' });
-        ai.quickGenerate.mockResolvedValue('lots of messages, one sec');
 
         for (let i = 0; i < 4; i++) {
             await behavior.testHandleInterruption(SENDER, `msg-${i}`, `msg-${i}`);
@@ -191,8 +190,9 @@ describe('BaseBehavior interruption routing', () => {
 
         const state = behavior.getState(SENDER);
         expect(state.messageQueue).toHaveLength(3); // capped, 4th overflowed
-        const overflowAck = bot.sendStreamMessage.mock.calls.find((c: any[]) => c[4] === 'lots of messages, one sec');
+        const overflowAck = bot.sendStreamMessage.mock.calls.find((c: any[]) => c[4] === BUSY_LINE);
         expect(overflowAck).toBeTruthy();
+        expect(ai.quickGenerate).not.toHaveBeenCalled();
     });
 
     it('finishGeneration: stale call from an aborted stream is ignored', () => {
@@ -221,6 +221,29 @@ describe('BaseBehavior interruption routing', () => {
         // The message must still be there — the guard runs BEFORE shift
         expect(state.messageQueue).toHaveLength(1);
         expect(state.messageQueue[0].originalMessage).toBe('queued-msg');
+    });
+
+    it('flushMessageQueue: the words that waited get one answer together, a file its own (#1159)', () => {
+        behavior.testStartGeneration(SENDER, SPACE);
+        const state = behavior.getState(SENDER);
+        state.isGenerating = false;
+        const at = Date.now();
+        state.messageQueue.push(
+            { originalMessage: 'and', message: 'and', timestamp: at },
+            { originalMessage: 'also', message: 'also', timestamp: at },
+            { originalMessage: 'look', message: 'look', url: 'https://x/a.png', mediaType: 'image', timestamp: at },
+            { originalMessage: 'after', message: 'after', timestamp: at }
+        );
+        const answer = vi.spyOn(behavior as any, 'safeGenerateResponse').mockResolvedValue(undefined);
+
+        behavior.testFlushMessageQueue(SENDER);
+        expect(answer).toHaveBeenCalledTimes(1);
+        expect(answer.mock.calls[0].slice(2, 4)).toEqual(['and\nalso', 'and\nalso']);
+        expect(state.messageQueue.map((m: any) => m.originalMessage)).toEqual(['look', 'after']);
+
+        behavior.testFlushMessageQueue(SENDER);
+        expect(answer.mock.calls[1][2]).toBe('look');
+        expect(state.messageQueue.map((m: any) => m.originalMessage)).toEqual(['after']);
     });
 
     it('abortCurrentStream: finalizes the active bubble id, not a phantom (fix C1)', () => {
