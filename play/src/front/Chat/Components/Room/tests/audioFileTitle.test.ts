@@ -6,6 +6,8 @@ describe("audio file titles", () => {
         expect(audioFileTitle("Desert Drive.mp3")).toBe("Desert Drive");
         expect(audioFileTitle("studio_take_3.wav")).toBe("studio take 3");
         expect(audioFileTitle("Recording 2026-10-26.m4a")).toBe("Recording 2026-10-26");
+        expect(audioFileTitle("my_favourite_summer_song_2024.mp3")).toBe("my favourite summer song 2024");
+        expect(audioFileTitle("the-long-road-home-acoustic-version.mp3")).toBe("the-long-road-home-acoustic-version");
     });
 
     it("gives no title for a name a machine made", () => {

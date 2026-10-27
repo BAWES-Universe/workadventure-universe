@@ -14,7 +14,8 @@ export function isMachineMadeName(fileName: string): boolean {
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(stem) ||
         /^[0-9a-f]{16,}$/i.test(stem) ||
         /\d{8,}/.test(stem) ||
-        /^[A-Za-z0-9_-]{24,}$/.test(stem)
+        // One long unbroken run of letters and digits mixed, like a storage key. Words joined by _ or - are a name.
+        (/^[A-Za-z0-9]{20,}$/.test(stem) && /\d/.test(stem) && /[A-Za-z]/.test(stem))
     );
 }
 
