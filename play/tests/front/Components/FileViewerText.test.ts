@@ -113,6 +113,18 @@ describe("the text reader", () => {
         expect(target.querySelector('[data-testid="codeView"] .code-meta')?.textContent).toContain('"count":2');
     });
 
+    it("keeps a blank line that closes the file as a row of its own", async () => {
+        mount("code", encode("let a = 1;\n\n"), "a.js");
+        await tick();
+
+        expect(codeLines()).toEqual(["let a = 1;", " "]);
+        expect(target.querySelector('[data-testid="codeView"] .code-meta')?.textContent).toContain('"count":2');
+        await vi.waitFor(() =>
+            expect(target.querySelector('[data-testid="codeViewLines"]')?.getAttribute("data-colored")).toBe("true")
+        );
+        expect(codeLines()).toEqual(["let a = 1;", " "]);
+    });
+
     it("copies the code as the file has it", async () => {
         const writeText = vi.fn().mockResolvedValue(undefined);
         Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });

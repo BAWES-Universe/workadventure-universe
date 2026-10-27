@@ -35,7 +35,7 @@
     let table: ParsedTable | undefined;
     let truncated = false;
     /** Code (JSON included) as it is shown, the text as the file has it, and what language it is. */
-    let code: { shown: string; written: string; kind: CodeKind; lineCount: number; linesCut: boolean } | undefined;
+    let code: { shown: string[]; written: string; kind: CodeKind; lineCount: number; linesCut: boolean } | undefined;
 
     onMount(() => {
         try {
@@ -57,7 +57,7 @@
         const lines = codeLinesOf(laidOut);
         const linesCut = lines.length > MAX_CODE_LINES;
         return {
-            shown: (linesCut ? lines.slice(0, MAX_CODE_LINES) : lines).join("\n"),
+            shown: linesCut ? lines.slice(0, MAX_CODE_LINES) : lines,
             written,
             kind: codeKindOfExtension(extensionOf(name)),
             lineCount: lines.length,
@@ -94,7 +94,7 @@
     <div class="text-area code" data-testid="fileViewerText">
         <!-- A text cut at its first megabyte has more lines than it shows, and how many is not known. -->
         <CodeView
-            code={code.shown}
+            lines={code.shown}
             copyText={code.written}
             codeKind={code.kind}
             totalLines={truncated ? undefined : code.lineCount}

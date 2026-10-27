@@ -1,11 +1,14 @@
 <script lang="ts">
     import { onDestroy } from "svelte";
     import LL from "../../../../i18n/i18n-svelte";
-    import { codeLinesOf, colorLines, loadHighlighter, type CodeKind } from "../../../FileViewer/codeHighlight";
+    import { colorLines, loadHighlighter, type CodeKind } from "../../../FileViewer/codeHighlight";
     import { IconCheck, IconCopy } from "@wa-icons";
 
-    /** The code as shown, with numbered lines (the first part of it when it is cut). */
-    export let code: string;
+    /**
+     * The lines shown, numbered (the first ones when the code is cut). Given as lines, not as text: a blank line that
+     * closes the file stays a row of its own.
+     */
+    export let lines: string[];
     /** What Copy puts on the clipboard, when it is not the code shown: the whole text as written. */
     export let copyText: string | undefined = undefined;
     /** The language it is colored as, and the name shown over it. */
@@ -24,7 +27,6 @@
         if (copyTimer) clearTimeout(copyTimer);
     });
 
-    $: lines = codeLinesOf(code);
     $: shown = lines.join("\n");
     $: lineCount = totalLines ?? lines.length;
     // Line numbers keep one width, from the widest number.
@@ -52,7 +54,7 @@
 
     async function copy() {
         try {
-            await navigator.clipboard.writeText(copyText ?? code);
+            await navigator.clipboard.writeText(copyText ?? shown);
             showCopyState("copied");
         } catch (error) {
             console.warn("Could not copy the code", error);

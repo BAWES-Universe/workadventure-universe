@@ -183,7 +183,6 @@
     }
 
     $: codeLines = text ? codeLinesOf(text.content) : [];
-    $: codeShown = codeLines.slice(0, MAX_CODE_LINES).join("\n");
     $: documentHtml = kind === "markdown" && text ? renderMarkdown(text.content) : "";
 </script>
 
@@ -257,7 +256,7 @@
                 <div class="code" data-testid="artifactCodeView">
                     {#if text}
                         <CodeView
-                            code={codeShown}
+                            lines={codeLines.slice(0, MAX_CODE_LINES)}
                             copyText={text.content}
                             codeKind={codeKindOfArtifact(kind)}
                             totalLines={codeLines.length}
