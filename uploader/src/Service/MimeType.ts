@@ -3,7 +3,8 @@ import mime from "mime-types";
 export const DEFAULT_MIME_TYPE = "application/octet-stream";
 
 // The extension becomes a storage key, a URL and a response type. Keep it short and free of path/header syntax.
-const EXTENSION_REGEXP = /^[a-z0-9]{1,16}$/i;
+export const EXTENSION_PATTERN = "[a-z0-9]{1,16}";
+const EXTENSION_REGEXP = new RegExp(`^${EXTENSION_PATTERN}$`, "i");
 
 class MimeTypeManager {
     getExtensionByFileName(name: string): string | undefined {
