@@ -1828,6 +1828,41 @@ describe('DmReplyService history', () => {
         expect(meet.text).toBe('Come over');
     });
 
+    it("sends no room card to someone who is already in the bot's room, even when they ask where it is", async () => {
+        const { DmReplyService } = await import('../server/DmReplyService');
+        const { PersistentMemory } = await import('../memory/PersistentMemory');
+        const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
+        const replies = ['Hey! Welcome to the Lobby.', "I'm in the Lobby at BAWES HQ, come find me! [ROOM_CARD]", 'Back in the Lobby I keep a list of those.'];
+        const answering = vi.fn(async function* () {
+            yield { content: replies.shift()!, done: true };
+        });
+        let people = [{ userId: 1, uuid: 'uuid-alice', name: 'Alice' }];
+        const live = { isConnected: () => true, getAllPeople: () => people };
+        const getRoomMetadata = vi.fn(async () => ({ universeName: 'BAWES', worldName: 'BAWES HQ', roomName: 'Lobby' }));
+        Object.assign(service, {
+            playerIds: new Map(),
+            nextPlayerId: -1,
+            loadedBots: new Set([BOT]),
+            roomCards: new Map(),
+            botManager: { getBot: () => live },
+            adminApiService: { getRoomMetadata },
+            getBotConfig: async () => ({ botId: BOT, name: 'Guide', aiProviderRef: 'p', roomUrl: 'https://play.example/@/bawes/hq/lobby' }),
+            aiService: { generateBotResponseStream: answering },
+            conversationMemory: new PersistentMemory({}),
+            conversationStorage: { startConversation: vi.fn(), addMessage: vi.fn(async () => undefined) },
+        });
+        const person = { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false };
+        const ask = (text: string) => (service as any).replyNow(BOT, person, text, [], {});
+        // A hello that names the room in passing, and an answer to where it is: no card while she stands there
+        expect((await ask('Hello')).roomLink).toBeUndefined();
+        const where = await ask('where are you?');
+        expect(where.roomLink).toBeUndefined();
+        expect(where.text).toBe("I'm in the Lobby at BAWES HQ, come find me!");
+        // Once she left, a passing mention gets its card again (none was counted while she was there)
+        people = [];
+        expect((await ask('any tips?')).roomLink?.room).toBe('Lobby');
+    });
+
     it('goes by the mark of the reply that is sent, when a repeated answer was asked for again', async () => {
         const { DmReplyService } = await import('../server/DmReplyService');
         const { PersistentMemory } = await import('../memory/PersistentMemory');

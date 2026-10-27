@@ -182,6 +182,13 @@ export class DmReplyService extends BaseBehavior {
             .map((person) => person.name || `User ${person.userId}`);
     }
 
+    /** The person is in the bot's room right now, as its bubble on the map sees them: no card to come over. */
+    private isInBotRoom(botId: string, uuid: string): boolean {
+        const bot = this.botManager.getBot(botId);
+        if (!uuid || !bot?.isConnected()) return false;
+        return bot.getAllPeople().some((person) => person.uuid === uuid);
+    }
+
     /**
      * The bot's configuration: the live one when it is spawned, else Orbit's (cached briefly). `fresh` skips the cache,
      * for checking whether a resting bot is back.
@@ -414,7 +421,10 @@ export class DmReplyService extends BaseBehavior {
         const playerMemory = memory.getMemory(botId, playerId);
         const media = playerMemory?.pendingMedia?.splice(0) ?? [];
         const artifacts = playerMemory?.pendingArtifacts?.splice(0) ?? [];
-        const roomLink = await this.roomLinkFor(config.roomUrl, replyText, askedForRoom, `${botId}:${person.matrixUserId}`);
+        // Someone already standing in the bot's room gets no card asking them to come visit it
+        const roomLink = this.isInBotRoom(botId, person.uuid)
+            ? undefined
+            : await this.roomLinkFor(config.roomUrl, replyText, askedForRoom, `${botId}:${person.matrixUserId}`);
         return { text: replyText, media, keep, ...(roomLink ? { roomLink } : {}), ...(artifacts.length ? { artifacts } : {}) };
     }
 
