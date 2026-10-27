@@ -1,3 +1,4 @@
+import { get, writable } from "svelte/store";
 import { botApiService } from "../../external-modules/bots/services/BotApiService";
 import { localUserStore } from "../../Connection/LocalUserStore";
 import { SERVICE_WORKER_URL } from "../../Network/ServiceWorker";
@@ -104,26 +105,64 @@ function sameKey(subscription: PushSubscription, key: Uint8Array): boolean {
     return bytes.length === key.length && bytes.every((byte, index) => byte === key[index]);
 }
 
+/** Each time this device is switched off or removed: a save on its way when it happens saves nothing. */
+let switchOffs = 0;
+/** Each time this browser starts being saved: a switch-off still on its way then leaves the browser as it is. */
+let saves = 0;
+
 /**
  * Subscribes this browser (the permission is already given) and saves it in Orbit. A subscription made with an
- * older key is replaced. True when Orbit has it.
+ * older key is replaced. "notSetUp" when nothing can arrive while Universe is closed: a browser without Web Push,
+ * a guest, or a server that sends none (no Orbit, or no keys there). Notifications then only come while it is open.
  */
-export async function subscribeThisDevice(): Promise<boolean> {
+export async function subscribeThisDevice(): Promise<"saved" | "notSetUp" | "failed"> {
+    const offsAtStart = switchOffs;
+    saves++;
+    if (pushAvailability() !== "ready" || !localUserStore.isLogged()) return notInOrbit();
     const publicKey = await botApiService.getPushPublicKey();
-    if (!publicKey) return false;
+    if (publicKey === null) return notInOrbit();
+    if (!publicKey) return "failed";
     const key = keyBytes(publicKey);
-    const registration = await navigator.serviceWorker.register(SERVICE_WORKER_URL);
-    let subscription = await registration.pushManager.getSubscription();
-    if (subscription && !sameKey(subscription, key)) {
-        await subscription.unsubscribe();
-        subscription = null;
+    let subscription: PushSubscription | null;
+    try {
+        const registration = await navigator.serviceWorker.register(SERVICE_WORKER_URL);
+        subscription = await registration.pushManager.getSubscription();
+        if (subscription && !sameKey(subscription, key)) {
+            await subscription.unsubscribe();
+            subscription = null;
+        }
+        subscription ??= await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+    } catch (error) {
+        // The browser refuses push (Brave with it switched off, a push service that fails): it still shows them while
+        // Universe is open, as the permission is given. A device already in Orbit stays this device: this may pass.
+        console.warn("Notifications: this browser could not subscribe to push", error);
+        return "notSetUp";
     }
-    subscription ??= await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+    // Switched off while this was on its way, and still off: Off stands, so nothing is saved and nothing can arrive
+    const switchedOff = () => switchOffs !== offsAtStart && localUserStore.getNotificationChoice() === false;
+    if (switchedOff()) {
+        await subscription.unsubscribe();
+        return "failed";
+    }
     const id = await botApiService.registerPushDevice(
         subscription.toJSON(),
         deviceLabel(describeDevice(currentInstallEnvironment()))
     );
-    return id !== null;
+    if (id === null) return "failed";
+    setThisDeviceId(id);
+    // Switched off while Orbit was saving it: it is this device, kept as off there, and nothing reaches the browser
+    if (switchedOff()) {
+        await subscription.unsubscribe();
+        await botApiService.setPushDeviceEnabled(id, false);
+        return "failed";
+    }
+    return "saved";
+}
+
+/** Nothing is saved in Orbit for this browser now: an id kept from an earlier sign-in no longer stands for it. */
+function notInOrbit(): "notSetUp" {
+    setThisDeviceId(undefined);
+    return "notSetUp";
 }
 
 /**
@@ -132,11 +171,14 @@ export async function subscribeThisDevice(): Promise<boolean> {
  */
 export async function refreshThisDevice(): Promise<void> {
     if (pushAvailability() !== "ready" || Notification.permission !== "granted") return;
-    // Switched off here: stays off until switched on again. Allowed in the browser's own site settings, with no choice
-    // made here: on, as the browser says.
+    // Switched off (or removed) here: stays off until switched on again. Allowed in the browser's own site settings,
+    // with no choice made here: on, as the browser says.
     const choice = localUserStore.getNotificationChoice();
     if (choice === false) return;
-    if (choice === null) localUserStore.setNotification(true);
+    if (choice === null) {
+        localUserStore.setNotification(true);
+        updateThisDeviceState();
+    }
     try {
         await subscribeThisDevice();
     } catch (error) {
@@ -153,11 +195,57 @@ export function refreshThisDeviceOnce(): void {
     refreshThisDevice().catch(() => undefined);
 }
 
+/** This device's id in Orbit, once it has been saved there: kept, so Your devices knows it while switched off too. */
+export const thisDeviceIdStore = writable<string | undefined>(localUserStore.getPushDeviceId() ?? undefined);
+
+function setThisDeviceId(id: string | undefined): void {
+    localUserStore.setPushDeviceId(id ?? null);
+    thisDeviceIdStore.set(id);
+}
+
+/** What the Notifications row of the menu and This device say: on, off, or blocked by the browser. */
+export type ThisDeviceState = "on" | "off" | "blocked";
+
+export function readThisDeviceState(): ThisDeviceState {
+    if (typeof Notification === "undefined") return "off";
+    if (Notification.permission === "denied") return "blocked";
+    return Notification.permission === "granted" && localUserStore.getNotification() ? "on" : "off";
+}
+
+export const thisDeviceStateStore = writable<ThisDeviceState>(readThisDeviceState());
+
+/** After anything that may have changed it: the card, the switch, Remove. */
+export function updateThisDeviceState(): void {
+    thisDeviceStateStore.set(readThisDeviceState());
+}
+
 /**
- * Switched off in the settings: this browser drops its subscription, so nothing more reaches it while Universe is
- * closed. Orbit forgets the device the next time it tries to send there (the push service answers that it is gone).
+ * This device's switch turned off, or Remove on this device: nothing arrives here any more, from Orbit or from the
+ * open window, until it is switched on again. `remove` also takes it out of Your devices.
  */
-export async function forgetThisBrowser(): Promise<void> {
+export async function turnOffThisDevice(deviceId: string | undefined, remove: boolean): Promise<void> {
+    switchOffs++;
+    const savesAtStart = saves;
+    localUserStore.setNotification(false);
+    updateThisDeviceState();
+    let told = false;
+    if (deviceId) {
+        told = remove
+            ? await botApiService.removePushDevice(deviceId)
+            : await botApiService.setPushDeviceEnabled(deviceId, false);
+    }
+    // Switched on again while Orbit was answering: that save owns the browser and its id now
+    const onAgain = saves !== savesAtStart;
+    // Still listed when Orbit refused: it stays This device there until Orbit forgets it
+    if (remove && told && !onAgain) setThisDeviceId(undefined);
+    // Removed, or Orbit could not be told: this browser drops its subscription as well, so nothing reaches it either
+    // way (Orbit forgets the device at its next send there).
+    if ((remove || !told) && !onAgain) await forgetThisBrowser();
+    if (remove && !told) throw new Error("Orbit did not remove the device");
+}
+
+/** This browser drops its subscription, so nothing more reaches it while Universe is closed. */
+async function forgetThisBrowser(): Promise<void> {
     try {
         const registration = await navigator.serviceWorker?.getRegistration(SERVICE_WORKER_URL);
         await (await registration?.pushManager.getSubscription())?.unsubscribe();
@@ -169,10 +257,32 @@ export async function forgetThisBrowser(): Promise<void> {
 export type TurnOnResult = "on" | "blocked" | "dismissed" | "failed";
 
 /**
+ * A device switched off before keeps that in Orbit when saved again: turning it on here says so. False when Orbit has
+ * not got it on. Nothing to tell for a browser with nothing in Orbit, or a guest, who may still hold an earlier id.
+ */
+export async function enableThisDeviceInOrbit(): Promise<boolean> {
+    const id = get(thisDeviceIdStore);
+    if (!id || !localUserStore.isLogged()) return true;
+    return botApiService.setPushDeviceEnabled(id, true);
+}
+
+/**
+ * It said it couldn't turn on: Off is the choice now, so the next page load does not turn it on unasked, and nothing
+ * reaches this browser while it says Off (Orbit drops a device whose subscription is gone the next time it sends).
+ */
+async function couldNotTurnOn(): Promise<"failed"> {
+    localUserStore.setNotification(false);
+    await forgetThisBrowser();
+    return "failed";
+}
+
+/**
  * Turn on, from the tap itself: the browser's own box opens straight away (Safari and Firefox only open it from a
  * tap), then this browser is subscribed and saved.
  */
 export function turnOnThisDevice(): Promise<TurnOnResult> {
+    // Switched off again while the browser asked or this was saved: Off stands, and nothing went wrong
+    const offsAtStart = switchOffs;
     let asking: Promise<NotificationPermission>;
     try {
         asking = Notification.requestPermission();
@@ -183,13 +293,17 @@ export function turnOnThisDevice(): Promise<TurnOnResult> {
     return asking
         .then(async (permission) => {
             if (permission === "denied") return "blocked";
-            if (permission !== "granted") return "dismissed";
-            if (!(await subscribeThisDevice())) return "failed";
+            if (permission !== "granted" || switchOffs !== offsAtStart) return "dismissed";
+            const result = await subscribeThisDevice();
+            if (switchOffs !== offsAtStart) return "dismissed";
+            if (result === "failed") return couldNotTurnOn();
+            if (!(await enableThisDeviceInOrbit())) return couldNotTurnOn();
             localUserStore.setNotification(true);
             return "on";
         })
         .catch((error) => {
             console.error("Notifications: turning on failed", error);
-            return "failed" as const;
-        });
+            return couldNotTurnOn();
+        })
+        .finally(updateThisDeviceState);
 }

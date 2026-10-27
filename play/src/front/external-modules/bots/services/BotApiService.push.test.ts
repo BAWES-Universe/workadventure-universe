@@ -1,0 +1,99 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { BotApiService } from "./BotApiService";
+
+vi.mock("../../../Connection/LocalUserStore", () => ({
+    localUserStore: { getAuthToken: () => null, setAuthToken: vi.fn() },
+}));
+vi.mock("../../../Connection/AxiosUtils", () => ({ axiosToPusher: { get: vi.fn() } }));
+
+const ORBIT = "https://orbit.test";
+const ROOM = "https://play.test/@/bawes/hq/lobby";
+const SESSION = `orb_sess_v2_${"d".repeat(64)}`;
+
+function service(adminUrl: string | undefined = ORBIT): BotApiService {
+    const api = new BotApiService();
+    api.initialize("header.e30.signature", adminUrl, ROOM, "https://bots.test");
+    (api as unknown as { accessToken: string }).accessToken = "token";
+    vi.spyOn(
+        api as unknown as { getAdminApiSessionToken: () => Promise<string> },
+        "getAdminApiSessionToken"
+    ).mockResolvedValue(SESSION);
+    return api;
+}
+
+const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+
+describe("removing a device in Your devices", () => {
+    beforeEach(() => {
+        sessionStorage.clear();
+        vi.restoreAllMocks();
+    });
+
+    it("is gone when Orbit removes it", async () => {
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ ok: true }));
+        await expect(service().removePushDevice("d1")).resolves.toBe(true);
+    });
+
+    it("is gone when Orbit had already removed it", async () => {
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ error: "Not found" }, 404));
+        await expect(service().removePushDevice("d1")).resolves.toBe(true);
+    });
+
+    it.each([
+        ["an error", () => Promise.resolve(json({ error: "nope" }, 500))],
+        ["no answer", () => Promise.reject(new Error("offline"))],
+    ])("is not gone on %s", async (_name, answer) => {
+        vi.spyOn(globalThis, "fetch").mockImplementation(answer);
+        await expect(service().removePushDevice("d1")).resolves.toBe(false);
+    });
+});
+
+describe("loading Settings > Notifications", () => {
+    beforeEach(() => {
+        sessionStorage.clear();
+        vi.restoreAllMocks();
+    });
+
+    it("is null on a server without Orbit, so only the switch shows", async () => {
+        const fetchMock = vi.spyOn(globalThis, "fetch");
+        await expect(service("").getPushOverview()).resolves.toBeNull();
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("is not known before a room has set the service up, so nothing saved for this device is forgotten", async () => {
+        vi.stubGlobal("env", { ADMIN_URL: ORBIT });
+        const fetchMock = vi.spyOn(globalThis, "fetch");
+        const api = new BotApiService();
+        await expect(api.getPushOverview()).resolves.toBeUndefined();
+        await expect(api.getPushPublicKey()).resolves.toBeUndefined();
+        expect(fetchMock).not.toHaveBeenCalled();
+        vi.unstubAllGlobals();
+    });
+
+    it("is null before a room has set the service up on a server without Orbit, so only the switch shows", async () => {
+        vi.stubGlobal("env", { ADMIN_URL: "" });
+        const api = new BotApiService();
+        await expect(api.getPushOverview()).resolves.toBeNull();
+        await expect(api.getPushPublicKey()).resolves.toBeNull();
+        vi.unstubAllGlobals();
+    });
+
+    it("is undefined when Orbit can't be reached, so it says so", async () => {
+        vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"));
+        await expect(service().getPushOverview()).resolves.toBeUndefined();
+    });
+});
+
+describe("saving Settings > Notifications", () => {
+    it("gives up on a save Orbit does not answer, so the saves after it are not held back", async () => {
+        vi.useFakeTimers();
+        // Never answers
+        vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise<Response>(() => {}));
+        const saving = service().updatePushSettings({ previews: false });
+        await vi.advanceTimersByTimeAsync(20_000);
+        await expect(saving).resolves.toBeUndefined();
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+    });
+});

@@ -64,6 +64,9 @@ import { Room } from "../../Connection/Room";
 import { rememberRoomLeft } from "../../Connection/MembersOnlyExit";
 import { CharacterTextureError } from "../../Exception/CharacterTextureError";
 import { localUserStore } from "../../Connection/LocalUserStore";
+import { botApiService } from "../../external-modules/bots/services/BotApiService";
+import { getBotServerUrl } from "../../external-modules/bots/services/BotServerUrl";
+import { refreshThisDeviceOnce } from "../../Notification/Push/PushDevice";
 import { myHandRaisedStore, raisedHandsStore } from "../../Space/RaiseHand/RaiseHandStore";
 import { bindPodiumToRaiseHand } from "../../Space/RaiseHand/PodiumStore";
 import { Loader } from "../Components/Loader";
@@ -2613,6 +2616,12 @@ export class GameScene extends DirtyScene {
     }
 
     private initExtensionModule() {
+        // Notifications reach Orbit in every room (#863), also one without the bots module, which sets this up there
+        // with the same bot server, so direct chats with bots keep theirs
+        if (!this._room.modules?.includes("bots")) {
+            botApiService.initialize(localUserStore.getAuthToken(), ADMIN_URL, this.roomUrl, getBotServerUrl());
+            refreshThisDeviceOnce();
+        }
         if (this._room.modules) {
             const externalModules = import.meta.glob("../../external-modules/*/index.ts");
 

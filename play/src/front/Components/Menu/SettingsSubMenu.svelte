@@ -22,38 +22,35 @@
     import { screenShareBandwidthStore } from "../../Stores/ScreenSharingStore";
     import { volumeProximityDiscussionStore } from "../../Stores/PeerStore";
     import { friendsEnabledStore } from "../../Chat/Stores/FriendsStore";
-    import { forgetThisBrowser, refreshThisDevice } from "../../Notification/Push/PushDevice";
     import SettingSection from "./Settings/SettingSection.svelte";
     import SettingSwitch from "./Settings/SettingSwitch.svelte";
     import SettingChoice from "./Settings/SettingChoice.svelte";
     import SettingLink from "./Settings/SettingLink.svelte";
     import FriendsSettings from "./Settings/FriendsSettings.svelte";
+    import NotificationsSettings from "./Settings/NotificationsSettings.svelte";
     import { IconMute, IconPlayFilled, IconUnMute } from "@wa-icons";
 
     /**
-     * The settings, as two pages of plain rows under violet labels, like the profile menu: "general" and "sound"
-     * (Sound and video). Choices show their value and open underneath; switches are the brand gradient when on.
-     * On a computer each page is two columns.
+     * The settings, as pages of plain rows under violet labels, like the profile menu: "general", "sound" (Sound and
+     * video) and "notifications". Choices show their value and open underneath; switches are the brand gradient when
+     * on. On a computer each page is two columns.
      */
-    export let section: "general" | "sound" = "general";
+    export let section: "general" | "sound" | "notifications" = "general";
     /** The pages a row here opens inside the settings window (Map credits, and Report when the room has it). */
     export let pages: { key: string; label: string }[] = [];
     export let onOpenPage: (key: string) => void = () => {};
 
     let fullscreen: boolean = localUserStore.getFullscreen();
-    let notification: boolean = localUserStore.getNotification();
     let allowPictureInPicture: boolean = localUserStore.getAllowPictureInPicture();
     let blockAudio: boolean = localUserStore.getBlockAudio();
     let forceCowebsiteTrigger: boolean = localUserStore.getForceCowebsiteTrigger();
-    let ignoreFollowRequests: boolean = localUserStore.getIgnoreFollowRequests();
     let decreaseAudioPlayerVolumeWhileTalking: boolean = localUserStore.getDecreaseAudioPlayerVolumeWhileTalking();
     let disableAnimations: boolean = localUserStore.getDisableAnimations();
     let valueCameraPrivacySettings = localUserStore.getCameraPrivacySettings();
     let valueMicrophonePrivacySettings = localUserStore.getMicrophonePrivacySettings();
 
-    // Safari on iPhone has neither full screen nor (outside a home screen app) notifications: no row for them there.
+    // Safari on iPhone has no full screen: no row for it there.
     const canFullscreen = typeof document !== "undefined" && document.fullscreenEnabled === true;
-    const canNotify = typeof Notification !== "undefined";
 
     type Quality = "low" | "recommended" | "unlimited";
 
@@ -148,28 +145,6 @@
     document.addEventListener("fullscreenchange", onFullscreenChange);
     onDestroy(() => document.removeEventListener("fullscreenchange", onFullscreenChange));
 
-    function changeNotification() {
-        analyticsClient.settingNotification(notification ? "true" : "false");
-
-        if (Notification.permission === "granted") {
-            localUserStore.setNotification(notification);
-            // Also while Universe is closed: off drops this browser's subscription, on saves it in Orbit again.
-            (notification ? refreshThisDevice() : forgetThisBrowser()).catch(() => undefined);
-        } else {
-            Notification.requestPermission()
-                .then((response) => {
-                    if (response === "granted") {
-                        localUserStore.setNotification(notification);
-                        refreshThisDevice().catch(() => undefined);
-                    } else {
-                        localUserStore.setNotification(false);
-                        notification = false;
-                    }
-                })
-                .catch((e) => console.error(e));
-        }
-    }
-
     function changePictureInPicture() {
         analyticsClient.settingPictureInPicture(allowPictureInPicture ? "true" : "false");
         localUserStore.setAllowPictureInPicture(allowPictureInPicture);
@@ -186,11 +161,6 @@
     function changeForceCowebsiteTrigger() {
         analyticsClient.settingAskWebsite(forceCowebsiteTrigger ? "true" : "false");
         localUserStore.setForceCowebsiteTrigger(forceCowebsiteTrigger);
-    }
-
-    function changeIgnoreFollowRequests() {
-        analyticsClient.settingRequestFollow(ignoreFollowRequests ? "true" : "false");
-        localUserStore.setIgnoreFollowRequests(ignoreFollowRequests);
     }
 
     function changeDecreaseAudioPlayerVolumeWhileTalking() {
@@ -242,7 +212,9 @@
 </script>
 
 <div class="u-set-page" data-testid="settings-{section}">
-    {#if section === "sound"}
+    {#if section === "notifications"}
+        <NotificationsSettings {openChoice} onToggleChoice={toggleChoice} />
+    {:else if section === "sound"}
         <div class="u-set-col">
             <SettingSection title={$LL.menu.settings.sections.video()}>
                 <SettingChoice
@@ -331,22 +303,6 @@
                     open={openChoice === "language"}
                     onToggle={() => toggleChoice("language")}
                     onSelect={selectLocale}
-                />
-            </SettingSection>
-            <SettingSection title={$LL.menu.settings.sections.notifications()}>
-                {#if canNotify}
-                    <SettingSwitch
-                        id="notification-toggle"
-                        label={$LL.menu.settings.notifications()}
-                        bind:checked={notification}
-                        onChange={changeNotification}
-                    />
-                {/if}
-                <SettingSwitch
-                    id="ignoreFollowRequests-toggle"
-                    label={$LL.menu.settings.ignoreFollowRequests()}
-                    bind:checked={ignoreFollowRequests}
-                    onChange={changeIgnoreFollowRequests}
                 />
             </SettingSection>
             {#if $friendsEnabledStore}

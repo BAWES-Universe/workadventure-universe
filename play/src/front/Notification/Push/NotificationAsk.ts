@@ -1,6 +1,8 @@
 import { localUserStore } from "../../Connection/LocalUserStore";
 import type { PartnerPlace } from "../../Chat/Components/Room/DirectChat/PartnerPlace";
 import { popupStore } from "../../Stores/PopupStore";
+import { botApiService } from "../../external-modules/bots/services/BotApiService";
+import { raceTimeout } from "../../Utils/PromiseUtils";
 import NotificationCard from "./NotificationCard.svelte";
 import { pushAvailability, refreshThisDevice } from "./PushDevice";
 
@@ -20,6 +22,8 @@ export type NotificationMoment =
 export const NOTIFICATION_CARD_ID = "notification_permission_modal";
 export const ASK_AGAIN_AFTER_MS = 4 * 60 * 60 * 1000;
 export const ASK_AGAIN_WHEN_BLOCKED_AFTER_MS = 14 * 24 * 60 * 60 * 1000;
+/** The card waits this long at most to know whether this server sends notifications while Universe is closed. */
+export const ORBIT_ANSWER_WITHIN_MS = 3000;
 
 function permission(): NotificationPermission | undefined {
     return typeof window !== "undefined" && "Notification" in window ? Notification.permission : undefined;
@@ -47,8 +51,15 @@ export function askForNotifications(moment: NotificationMoment): void {
     }
     if (!shouldAsk(Date.now(), localUserStore.getLastNotificationPermissionRequest())) return;
     localUserStore.setLastNotificationPermissionRequest();
-    popupStore.removePopup(NOTIFICATION_CARD_ID);
-    popupStore.addPopup(NotificationCard, { moment }, NOTIFICATION_CARD_ID);
+    // A server that sends none while Universe is closed (no Orbit, or no keys there): the card only promises them
+    // while it is open. Orbit not answering, or not in time, is not known to be that.
+    raceTimeout(botApiService.getPushPublicKey(), ORBIT_ANSWER_WITHIN_MS)
+        .catch(() => undefined)
+        .then((publicKey) => {
+            popupStore.removePopup(NOTIFICATION_CARD_ID);
+            popupStore.addPopup(NotificationCard, { moment, whileClosed: publicKey !== null }, NOTIFICATION_CARD_ID);
+        })
+        .catch((error) => console.error(error));
 }
 
 /** Writing in a direct chat is a moment when the other one is a bot, or isn't in Universe to answer now. */
