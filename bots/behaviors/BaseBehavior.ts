@@ -1685,7 +1685,8 @@ export abstract class BaseBehavior {
                     params.channel ?? 'world',
                     params.toolTimeoutSeconds,
                     params.homeRoomUrl,
-                    params.peopleInRoom
+                    params.peopleInRoom,
+                    true
                 )) {
                     if (chunk.reset) {
                         const showToolCalls = chunk.toolNames?.length ? await this.shouldShowToolCalls(botId) : false;

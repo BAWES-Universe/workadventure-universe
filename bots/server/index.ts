@@ -24,6 +24,7 @@ import { MatrixAppServiceClient } from '../matrix/MatrixAppServiceClient';
 import { MatrixDmBridge } from '../matrix/MatrixDmBridge';
 import { createMatrixAppServiceRouter, type MatrixAppServiceRouter } from '../matrix/MatrixAppServiceRouter';
 import { uploadAttachment } from '../matrix/uploadAttachment';
+import { botWokaPicture } from '../matrix/wokaPicture';
 import type { BotAvailability } from '../matrix/BotStatusNotes';
 import type { Router } from 'express';
 import * as path from 'path';
@@ -75,6 +76,7 @@ async function setupMatrix(): Promise<void> {
         uploadAttachment,
         restingLine: (config, text) => dmReplyService.restingLine(config, text),
         waiting: botRegistry,
+        wokaPicture: (config) => botWokaPicture(config, { wokaList: (roomUrl, botId) => adminApiService.getBotWokaList(roomUrl, botId) }),
     });
     matrixRouter = createMatrixAppServiceRouter(matrixConfig, matrixBridge);
     preRouters.push(matrixRouter);

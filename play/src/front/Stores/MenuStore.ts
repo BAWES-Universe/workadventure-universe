@@ -523,3 +523,13 @@ export function showMenuItem(key: MenuKeys | string) {
     modalIframeStore.set(null);
     broadcastPanelOpenStore.set(false);
 }
+
+/** The settings page the next opening of Settings shows, set by a row that opens one (Notifications in the menu). */
+export const requestedSettingsPageStore = writable<"general" | "sound" | "notifications" | undefined>(undefined);
+
+/** Opens the settings window on one of its pages. */
+export function showSettingsPage(page: "general" | "sound" | "notifications") {
+    requestedSettingsPageStore.set(page);
+    if (get(menuVisiblilityStore)) menuVisiblilityStore.set(false);
+    showMenuItem(SubMenusInterface.settings);
+}
