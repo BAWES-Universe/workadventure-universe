@@ -2331,11 +2331,12 @@ export abstract class BaseBehavior {
                 case 'webpage':
                     augmentedMessage = `${augmentedMessage}\n[User shared a web page]${parsed.text ? `\n--- BEGIN WEB PAGE CONTENT ---\n${sanitize(parsed.text)}\n--- END WEB PAGE CONTENT ---\n(Summary: ${parsed.summary})` : `\n(Summary: ${parsed.summary})`}`;
                     break;
+                // With the address, so the bot can put it in an artifact (#1510): the turn's media list reads it from this line
                 case 'audio':
-                    augmentedMessage = `${augmentedMessage}\n[User sent an audio file — can't be played inline]`;
+                    augmentedMessage = `${augmentedMessage}\n[User sent an audio file: ${fileUrl}]`;
                     break;
                 case 'video':
-                    augmentedMessage = `${augmentedMessage}\n[User sent a video file — can't be played inline]`;
+                    augmentedMessage = `${augmentedMessage}\n[User sent a video file: ${fileUrl}]`;
                     break;
                 default:
                     augmentedMessage = `${augmentedMessage}\n[User sent a file (${parsed.mimeType || 'unknown'}) — content not extracted]`;

@@ -70,7 +70,8 @@ describe('artifact tools in AIService', () => {
         expect(orbit.makeArtifact).toHaveBeenCalledWith(
             { botId: 'bot1', person: { signedIn: true, identifier: 'uuid-1', name: 'Khalid' }, chat: { kind: 'nearby', ref: 'bubble-1' } },
             expect.objectContaining({ title: 'Quests board', kind: 'app' }),
-            30_000
+            30_000,
+            []
         );
         expect(client.getPersonForArtifacts).toHaveBeenCalledWith(7);
         expect(client.sendChatMessage).toHaveBeenCalledWith('bubble-1', '::artifact:art-1:1:app::Quests board');
@@ -84,7 +85,8 @@ describe('artifact tools in AIService', () => {
         expect(orbit.makeArtifact).toHaveBeenCalledWith(
             { botId: 'bot1', person: { signedIn: true, identifier: 'uuid-9', name: 'Alice' }, chat: { kind: 'dm', ref: '!dm:matrix.test' } },
             expect.anything(),
-            30_000
+            30_000,
+            []
         );
         expect(memory.pendingArtifacts).toEqual([{ id: 'art-1', version: 1, title: 'Quests board', kind: 'app', maker: 'Scout' }]);
         expect(result.result).toMatchObject({ success: true });

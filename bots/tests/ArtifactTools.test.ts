@@ -87,7 +87,8 @@ describe('make_artifact', () => {
         expect(ctx.admin.makeArtifact).toHaveBeenCalledWith(
             { botId: 'bot1', person: { signedIn: true, identifier: 'uuid-1', name: 'Khalid' }, chat: { kind: 'nearby', ref: 'bubble-1' } },
             { title: 'Quests board', kind: 'app', content: '<h1>x</h1>', summary: 'First' },
-            undefined
+            undefined,
+            []
         );
         expect(run.card).toEqual({ id: 'art-1', version: 1, title: 'Quests board', kind: 'app', maker: 'Scout' });
         expect(run.result).toEqual({ success: true, id: 'art-1', title: 'Quests board', kind: 'app', version: 1 });
@@ -116,7 +117,7 @@ describe('change_artifact', () => {
             summary: 'Bigger',
             title: null,
             baseVersion: 1,
-        }, undefined);
+        }, undefined, []);
         expect(run.card).toMatchObject({ id: 'art-1', version: 2 });
         expect(run.result).toMatchObject({ success: true, version: 2 });
     });
@@ -124,7 +125,7 @@ describe('change_artifact', () => {
     it('sends the whole file when there are no edits', async () => {
         const ctx = context();
         await runArtifactTool('change_artifact', { id: 'art-1', content: '<p>new</p>' }, ctx);
-        expect(ctx.admin.changeArtifact).toHaveBeenCalledWith('art-1', expect.anything(), expect.objectContaining({ content: '<p>new</p>' }), undefined);
+        expect(ctx.admin.changeArtifact).toHaveBeenCalledWith('art-1', expect.anything(), expect.objectContaining({ content: '<p>new</p>' }), undefined, []);
         expect(vi.mocked(ctx.admin.changeArtifact).mock.calls[0][2]).not.toHaveProperty('edits');
     });
 

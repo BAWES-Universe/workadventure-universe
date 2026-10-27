@@ -68,6 +68,7 @@ import {
     runArtifactTool,
     type ArtifactCard,
 } from './ArtifactTools';
+import { addTurnMedia, startTurnMedia, turnMediaNotice, type TurnMedia } from './ArtifactMedia';
 
 /** What one turn did, for the "Say when nothing was saved" check (Orbit #666). */
 interface TurnFacts {
@@ -518,6 +519,11 @@ export class AIService {
         let usageRecorded = false;
         // A new turn starts clean: an artifact call is only the same as an earlier one while that turn is asked again
         if (!isRetry && playerId !== undefined) this.conversationMemory?.getMemory(botId, playerId)?.artifactCalls?.clear();
+        // This turn's media (#1510): what the person sent with this message; its tools add theirs as they run
+        if (!isRetry && playerId !== undefined) {
+            const turnMemory = this.conversationMemory?.getMemory(botId, playerId);
+            if (turnMemory) turnMemory.turnMedia = startTurnMedia(message, images);
+        }
         // Buffer for content received before tool calls are detected
         // Discarded if tool calls arrive (was filler/thinking text);
         // flushed as final response if no tool calls.
@@ -736,7 +742,10 @@ export class AIService {
                 conversationContext,
                 // Reads pendingMedia directly so the AI always knows about
                 // pending items at turn start.
-                pendingMediaNotice: this.conversationMemory.getPendingMediaNotice(botId, playerId),
+                pendingMediaNotice: [
+                    this.conversationMemory.getPendingMediaNotice(botId, playerId),
+                    artifactsEnabled() ? turnMediaNotice(this.conversationMemory.getMemory(botId, playerId)?.turnMedia ?? []) : '',
+                ].filter(Boolean).join('\n\n') || undefined,
                 channel,
             });
 
@@ -1237,6 +1246,8 @@ export class AIService {
                             // (user leaves mid-turn), the URLs are already persisted
                             // and will be delivered by flushPendingMedia on re-entry.
                             this.preQueueToolResults(toolResults, iterationSentUrls, botId, playerId);
+                            // Before the auto-send below replaces results that carried media with a short note
+                            const newTurnMedia = this.noteTurnMedia(toolResults, botId, playerId);
 
                             // Cancellation during tool execution: persist the queued
                             // media (safety net above) but skip inline delivery and
@@ -1257,7 +1268,8 @@ export class AIService {
                             }
 
                             // Continue conversation with tool results
-                            const toolResultsMessage = this.formatToolResults(toolResults);
+                            let toolResultsMessage = this.formatToolResults(toolResults);
+                            if (newTurnMedia.length > 0) toolResultsMessage += `\n\n${turnMediaNotice(newTurnMedia)}`;
                             if (allToolResults.length <= MAX_SYNTHESIS_CHARS) {
                                 allToolResults += `\n\n=== Research Step ${followUpIterations} ===\n${toolResultsMessage}`;
                                 // Guard: after appending, trim at EXACTLY the cap boundary.
@@ -2603,7 +2615,15 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const earlier = repeatKey ? memory?.artifactCalls?.get(repeatKey) : undefined;
         if (earlier) return earlier;
 
-        const run = await runArtifactTool(name, args, { admin, botId, person, chat, saveTimeoutMs: this.limitsFor(botId).artifactSaveSeconds * 1000 });
+        const limits = this.limitsFor(botId);
+        const run = await runArtifactTool(name, args, {
+            admin,
+            botId,
+            person,
+            chat,
+            saveTimeoutMs: limits.artifactSaveSeconds * 1000,
+            media: { turn: memory?.turnMedia ?? [], maxBytes: limits.artifactMediaBytes },
+        });
         if (!run.card) return run.result;
         if (!this.deliverArtifactCard(run.card, botClient, spaceName, memory)) {
             // The bubble closed while the file was being made: the file is saved, but nobody was shown it, so a retry may place it
@@ -3047,6 +3067,23 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             // truncated JSON, unescaped strings, comments, Python constants, etc.
             return JSON.parse(jsonrepair(raw));
         }
+    }
+
+    /**
+     * The songs, images and videos this round's tools made or found, added to the turn's list (#1510) so the bot can put
+     * them in an artifact by their short names. Only while artifacts are on; the media tools and artifact tools are left
+     * out as autoSendMedia leaves them, since they made nothing new.
+     */
+    private noteTurnMedia(toolResults: Array<{ id: string; name: string; result: any }>, botId?: string, playerId?: number): TurnMedia[] {
+        if (!artifactsEnabled() || !botId || playerId === undefined) return [];
+        const memory = this.conversationMemory?.getMemory(botId, playerId);
+        if (!memory) return [];
+        const found: Array<{ url: string }> = [];
+        for (const tr of toolResults) {
+            if (['send_image', 'send_file', 'send_audio', 'send_video', READ_WEB_PAGE_TOOL].includes(tr.name) || isArtifactTool(tr.name)) continue;
+            for (const url of this.extractUrlsFromResult(tr.result)) found.push({ url });
+        }
+        return addTurnMedia((memory.turnMedia ??= []), found, 'tool');
     }
 
     /**

@@ -50,6 +50,8 @@ export interface BotLimits {
     /** 0 keeps every version. */
     artifactVersions: number;
     artifactSaveSeconds: number;
+    /** Songs, images and videos one version may carry, in bytes (#1510); 0 lets none in. */
+    artifactMediaBytes: number;
     /** "Say when nothing was saved". */
     guard: boolean;
 }
@@ -65,6 +67,7 @@ export const BOT_LIMIT_DEFAULTS: BotLimits = {
     artifactBytes: 2 * 1024 * 1024,
     artifactVersions: 0,
     artifactSaveSeconds: 30,
+    artifactMediaBytes: 50 * 1024 * 1024,
     guard: true,
 };
 
