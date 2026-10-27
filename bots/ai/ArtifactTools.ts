@@ -55,7 +55,10 @@ const ARTIFACT_TITLE_MAX = 120;
  * the kind, `::artifact:<id>:<version>::<title>`, is read the same way, with a plain badge.)
  */
 export function artifactMarker(card: Pick<ArtifactCard, 'id' | 'version' | 'title' | 'kind'>): string {
-    return `::artifact:${card.id}:${card.version}:${card.kind}::${card.title.replace(/\s+/g, ' ').trim().slice(0, ARTIFACT_TITLE_MAX).trim()}`;
+    let title = card.title.replace(/\s+/g, ' ').trim().slice(0, ARTIFACT_TITLE_MAX);
+    // A cut through an emoji leaves half of it, which draws as a broken character.
+    if (/[\uD800-\uDBFF]$/.test(title)) title = title.slice(0, -1);
+    return `::artifact:${card.id}:${card.version}:${card.kind}::${title.trim()}`;
 }
 
 /** The field a direct message carries its card in (`universe.artifact`), as `universe.room_link` does for a room. */

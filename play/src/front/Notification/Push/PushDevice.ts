@@ -105,6 +105,24 @@ function sameKey(subscription: PushSubscription, key: Uint8Array): boolean {
     return bytes.length === key.length && bytes.every((byte, index) => byte === key[index]);
 }
 
+/** How long a first visit waits for the worker to become active before giving up on push for now. */
+const WORKER_ACTIVE_WAIT_MS = 10_000;
+
+/** Waits for the service worker to be active, or fails after `ms`: an install that fails would never say so. */
+async function activeWorkerWithin(ms: number): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+        await Promise.race([
+            navigator.serviceWorker.ready,
+            new Promise<never>((_, reject) => {
+                timer = setTimeout(() => reject(new Error("the service worker did not become active")), ms);
+            }),
+        ]);
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 /** Set once signing out starts, for the rest of this page: signing in again loads a new one. */
 let signingOut = false;
 
@@ -130,7 +148,7 @@ export async function subscribeThisDevice(): Promise<"saved" | "notSetUp" | "fai
     try {
         const registration = await navigator.serviceWorker.register(SERVICE_WORKER_URL);
         // Subscribing needs an active worker, which a first visit has only once it is installed.
-        if (!registration.active) await navigator.serviceWorker.ready;
+        if (!registration.active) await activeWorkerWithin(WORKER_ACTIVE_WAIT_MS);
         subscription = await registration.pushManager.getSubscription();
         if (subscription && !sameKey(subscription, key)) {
             await subscription.unsubscribe();

@@ -6,6 +6,7 @@ import {
     locateRequestName,
     rememberLocateRequest,
     takeLocateRequest,
+    isStaleLocateAnswer,
 } from "../LocateRequest";
 
 describe("LocateRequest", () => {
@@ -39,10 +40,27 @@ describe("LocateRequest", () => {
     });
 
     it("keeps the request for its own answer when another avatar's answer comes first", () => {
-        rememberLocateRequest("First", undefined, 1000, 5);
-        rememberLocateRequest("Second", undefined, 1100, 7);
-        expect(takeLocateRequest(1200, 5)).toBeUndefined();
-        expect(takeLocateRequest(1300, 7)).toEqual({ name: "Second", cancelled: false });
+        rememberLocateRequest("First", undefined, 1000, 5, "u-first");
+        rememberLocateRequest("Second", undefined, 1100, 7, "u-second");
+        expect(takeLocateRequest(1200, 5, "u-first")).toBeUndefined();
+        expect(takeLocateRequest(1300, 7, "u-second")).toEqual({ name: "Second", cancelled: false });
+    });
+
+    it("tells an answer for a replaced search from one with no search pending", () => {
+        rememberLocateRequest("Second", undefined, 1000, 7, "u-second");
+        expect(isStaleLocateAnswer(1200, 5, "u-first")).toBe(true);
+        expect(isStaleLocateAnswer(1200, 7, "u-second")).toBe(false);
+        expect(isStaleLocateAnswer(1200)).toBe(false);
+        expect(isStaleLocateAnswer(20_000, 5, "u-first")).toBe(false);
+        takeLocateRequest(1300, 7, "u-second");
+        expect(isStaleLocateAnswer(1400, 5, "u-first")).toBe(false);
+    });
+
+    it("takes another avatar of the same account for the answer awaited, and an unknown account too", () => {
+        rememberLocateRequest("Second", undefined, 1000, 7, "u-second");
+        expect(isStaleLocateAnswer(1200, 9, "u-second")).toBe(false);
+        expect(isStaleLocateAnswer(1200, 9)).toBe(false);
+        expect(takeLocateRequest(1300, 9, "u-second")).toEqual({ name: "Second", cancelled: false });
     });
 
     it("hands the request to any answer when the avatar asked for is not known", () => {

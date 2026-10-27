@@ -6,7 +6,7 @@ import { wokaMenuStore, wokaMenuProgressStore } from "../../Stores/WokaMenuStore
 import LL from "../../../i18n/i18n-svelte";
 import { peopleCardReturn } from "../../Chat/Stores/PeopleCardReturnStore";
 import type { CameraManager } from "./CameraManager";
-import { cancelLocateRequest, takeLocateRequest } from "./LocateRequest";
+import { cancelLocateRequest, isStaleLocateAnswer, takeLocateRequest } from "./LocateRequest";
 import type { GameScene } from "./GameScene";
 
 /**
@@ -80,7 +80,14 @@ export class LocateManager {
         if (!message.position) {
             return;
         }
-        const request = takeLocateRequest(Date.now(), message.userId);
+        const userData = this.scene.getRemotePlayersRepository().getPlayers().get(message.userId);
+        // The account the answer is about comes with it, as the avatar may not be on this map (far away).
+        const answeredUuid = message.userUuid || userData?.userUuid;
+        // The answer for a search another one replaced moves nothing: the newer search has its own answer coming.
+        if (isStaleLocateAnswer(Date.now(), message.userId, answeredUuid)) {
+            return;
+        }
+        const request = takeLocateRequest(Date.now(), message.userId, answeredUuid);
         if (request?.cancelled) {
             return;
         }
@@ -101,7 +108,6 @@ export class LocateManager {
         );
 
         // Get user data to initialize woka menu
-        const userData = this.scene.getRemotePlayersRepository().getPlayers().get(message.userId);
         const userName = userData?.name ?? request?.name ?? get(LL).locate.userSearching();
         const userUuid = userData?.userUuid ?? "";
         const visitCardUrl = userData?.visitCardUrl ?? undefined;
