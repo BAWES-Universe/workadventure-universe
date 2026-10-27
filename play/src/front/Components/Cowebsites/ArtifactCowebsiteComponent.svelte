@@ -193,11 +193,15 @@
         menuOpen = false;
     }
 
-    async function toggleVersions() {
+    function toggleVersions() {
         menuOpen = !menuOpen;
         if (!menuOpen) return;
         roomAsked = false;
         menuRoom = undefined;
+        void loadVersions();
+    }
+
+    async function loadVersions() {
         versionsFailed = false;
         try {
             versions = await fetchArtifactVersions(id, actualCowebsite.chat);
@@ -219,12 +223,19 @@
     // The version showing becomes the latest again, as a new version made from it: the window then shows that one.
     function restoreShown() {
         if (!opened || restoring) return;
+        const number = opened.version.number;
         restoring = true;
         restoreFailed = false;
-        void restoreArtifactVersion(id, opened.version.number, actualCowebsite.chat).then(
+        void restoreArtifactVersion(id, number, actualCowebsite.chat).then(
             (answer) => {
                 if (destroyed) return;
                 restoring = false;
+                if ($versionStore !== number) {
+                    // The person went on to another version meanwhile and stays there; the list shows the new one.
+                    if (menuOpen) void loadVersions();
+                    else versions = undefined;
+                    return;
+                }
                 // The list is read again the next time it opens, with the new version in it. One opened while the
                 // restore was on its way is put away, as picking a version does.
                 menuOpen = false;
@@ -235,7 +246,8 @@
                 console.warn("Could not restore a version of an artifact", error);
                 if (destroyed) return;
                 restoring = false;
-                restoreFailed = true;
+                // Said only over the version it was about
+                if ($versionStore === number) restoreFailed = true;
             }
         );
     }

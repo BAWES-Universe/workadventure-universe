@@ -323,6 +323,31 @@ describe("the artifact window", () => {
         expect(byTestId("artifactVersionMenu")).toBeNull();
     });
 
+    it("stays on the version the person went on to while a restore was on its way", async () => {
+        api.fetchArtifact.mockImplementation((_id: string, _chat: unknown, version?: number) =>
+            Promise.resolve(opened(version ?? 3, 3))
+        );
+        let restored: (answer: ReturnType<typeof opened>) => void = () => {};
+        api.restoreArtifactVersion.mockReturnValue(
+            new Promise((resolve) => {
+                restored = resolve;
+            })
+        );
+        const website = mountWindow(1);
+        await vi.waitFor(() => expect(byTestId("artifactRestore")).not.toBeNull());
+
+        byTestId("artifactRestore")?.click();
+        website.version.set(2);
+        await vi.waitFor(() =>
+            expect(byTestId("artifactFrame")?.getAttribute("src")).toBe("https://artifacts.test/v2.html")
+        );
+        restored(opened(4, 4));
+        await tick();
+        await tick();
+        expect(byTestId("artifactFrame")?.getAttribute("src")).toBe("https://artifacts.test/v2.html");
+        expect(api.fetchArtifact).not.toHaveBeenCalledWith(ID, expect.anything(), 4);
+    });
+
     it("offers no restore to someone who is not the owner, and says so when a restore fails", async () => {
         api.fetchArtifact.mockResolvedValue(opened(1, 3, "app", false));
         mountWindow(1);
