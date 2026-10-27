@@ -256,7 +256,7 @@ const chat: DeepPartial<Translation["chat"]> = {
     roomMenu: {
         leaveRoom: {
             label: "退室する",
-            notification: "ルームを退室しました",
+            notification: "{name}を退室しました",
         },
         muteRoom: "ルームをミュートにする",
         unmuteRoom: "ルームのミュートを解除する",

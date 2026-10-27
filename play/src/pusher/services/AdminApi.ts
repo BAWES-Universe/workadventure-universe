@@ -407,7 +407,8 @@ class AdminApi implements AdminInterface {
         locale?: string,
         tags?: string[],
         chatID?: string,
-        guestName?: string
+        guestName?: string,
+        previousGuestUuid?: string
     ): Promise<FetchMemberDataByUuidResponse> {
         try {
             /**
@@ -463,6 +464,10 @@ class AdminApi implements AdminInterface {
              *        description: "The name a guest (not logged in) typed. Only sent for guests."
              *        type: "string"
              *        example: "Nova"
+             *      - name: "previousGuestUuid"
+             *        in: "query"
+             *        description: "Right after sign-in: the guest id this device used before (checked by the pusher), so the guest's visits can join the account."
+             *        type: "string"
              *     responses:
              *       200:
              *         description: The details of the member
@@ -480,6 +485,7 @@ class AdminApi implements AdminInterface {
                     isLogged: accessToken ? "1" : "0", // deprecated, use accessToken instead,
                     chatID,
                     name: guestName,
+                    previousGuestUuid,
                 },
                 headers: { Authorization: `${ADMIN_API_TOKEN}`, "Accept-Language": locale ?? "en" },
             });

@@ -306,7 +306,7 @@ const chat: DeepPartial<Translation["chat"]> = {
     roomMenu: {
         leaveRoom: {
             label: "Sair da sala",
-            notification: "Você saiu da sala",
+            notification: "Você saiu de {name}",
         },
         muteRoom: "Silenciar Sala",
         unmuteRoom: "Reativar Som da Sala",

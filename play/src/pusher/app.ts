@@ -34,6 +34,7 @@ import { MatrixRoomAreaController } from "./controllers/MatrixRoomAreaController
 import { LocalScriptController } from "./controllers/LocalScriptController";
 import { BanController } from "./controllers/BanController";
 import { LinkPreviewController } from "./controllers/LinkPreviewController";
+import { ArtifactController } from "./controllers/ArtifactController";
 
 class App {
     private readonly app: Application;
@@ -114,6 +115,7 @@ class App {
         new BanController(this.app);
         new MatrixRoomAreaController(this.app);
         new LinkPreviewController(this.app);
+        new ArtifactController(this.app);
 
         const staticOptions = {
             extensions: [

@@ -91,6 +91,8 @@ import type { ShortMapDescription } from "./ShortMapDescription";
 import { matrixProvider } from "./MatrixProvider";
 import { MatrixAreaMembership } from "./MatrixAreaMembership";
 import { checkSpaceJoin } from "./SpaceJoinPolicy";
+import { toGlobalSpaceName } from "./SpaceNames";
+import { SocketsByIdentifier } from "./SocketsByIdentifier";
 import { BubbleSpaceGrants } from "./BubbleSpaceGrants";
 import { FriendsPresence } from "./FriendsPresence";
 import type { UniverseRoomsData } from "./UniverseRooms";
@@ -129,6 +131,8 @@ export class SocketManager implements ZoneEventListener {
     });
     // The leaves in progress, per socket and space, so that two leaves of the same space do not both unregister
     private readonly leavingSpaces = new WeakMap<Socket, Map<string, Promise<void>>>();
+    private readonly socketsByIdentifier = new SocketsByIdentifier<Socket>();
+
     public readonly friendsPresence = new FriendsPresence<Socket>({
         send: (socket, friendsUpdateMessage) => this.sendFriendsUpdate(socket, friendsUpdateMessage),
         lookupPlaces: (playUris) => friendsService.getPlaces(playUris),
@@ -417,6 +421,8 @@ export class SocketManager implements ZoneEventListener {
             const pusherRoom = await this.getOrCreateRoom(socketData.roomId);
             pusherRoom.join(client);
             this.friendsPresence.track(client);
+            // The socket may have left while the room was being made
+            if (!client.getUserData().disconnecting) this.socketsByIdentifier.add(socketData.userIdentifier, client);
             this.friendsRings.joined(client);
         } catch (e) {
             Sentry.captureException(e);
@@ -460,6 +466,17 @@ export class SocketManager implements ZoneEventListener {
             Sentry.captureException(error);
             console.error(`An error occurred on "update_space_metadata" event`, error);
         }
+    }
+
+    /**
+     * Whether an account (or guest) has a tab in the space with this name (the name the browser and the bots use,
+     * without the world). The pusher uses it to vouch that a person is in the chat an artifact was made in.
+     */
+    public isUserInSpace(userIdentifier: string, localSpaceName: string): boolean {
+        return this.socketsByIdentifier.of(userIdentifier).some((socket) => {
+            const socketData = socket.getUserData();
+            return !socketData.disconnecting && socketData.spaces.has(toGlobalSpaceName(socketData, localSpaceName));
+        });
     }
 
     public async handleJoinSpace(
@@ -588,6 +605,7 @@ export class SocketManager implements ZoneEventListener {
             console.error("Error while leaving room", e);
         }
         try {
+            this.socketsByIdentifier.remove(client.getUserData().userIdentifier, client);
             this.friendsPresence.untrack(client);
         } catch (e) {
             Sentry.captureException(e);

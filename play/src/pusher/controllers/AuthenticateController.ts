@@ -22,6 +22,26 @@ import { BaseHttpController } from "./BaseHttpController";
 const debug = Debug("pusher:requests");
 // The account's name from Orbit wins over any other the answer carries (the game token's from sign-in, which can be
 // older, or a provider claim), and /me says whether it had one (#1192). The game keeps only the account's.
+const GUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The guest id in a guest token this pusher signed, for a person who just signed in as `accountIdentifier`; undefined
+ * for anything else (no token, not ours, expired, an account's token, the account's own id). Only this id ever goes to
+ * Orbit: it proves which guest id this device held, so the guest's visits can join the account.
+ */
+function guestIdFromToken(guestToken: string | undefined, accountIdentifier: string): string | undefined {
+    if (!guestToken) return undefined;
+    try {
+        const guest = jwtTokenManager.verifyJWTToken(guestToken, false);
+        if (guest.accessToken || guest.identifier === accountIdentifier || !GUEST_ID.test(guest.identifier)) {
+            return undefined;
+        }
+        return guest.identifier;
+    } catch {
+        return undefined;
+    }
+}
+
 function withNameSource<T extends { username?: string | null }>(response: T, accountName: string | null | undefined) {
     return accountName
         ? { ...response, username: accountName, usernameFromAccount: true }
@@ -216,13 +236,16 @@ export class AuthenticateController extends BaseHttpController {
             }
             // The chat ID in the query is not passed on: the browser could claim anyone's. Orbit only saves one the
             // game checked with the Matrix server (SocketManager.handleUpdateChatId).
-            const { token, playUri, localStorageCompanionTextureId, refresh, name } = query;
+            const { token, playUri, localStorageCompanionTextureId, refresh, name, guestToken } = query;
             let localStorageCharacterTextureIds = query["localStorageCharacterTextureIds[]"];
             if (typeof localStorageCharacterTextureIds === "string") {
                 localStorageCharacterTextureIds = [localStorageCharacterTextureIds];
             }
             try {
                 const authTokenData: AuthTokenData = jwtTokenManager.verifyJWTToken(token, false);
+                const previousGuestUuid = authTokenData.accessToken
+                    ? guestIdFromToken(guestToken, authTokenData.identifier)
+                    : undefined;
 
                 //Get user data from Admin Back Office
                 //This is very important to create User Local in LocalStorage in WorkAdventure
@@ -239,7 +262,8 @@ export class AuthenticateController extends BaseHttpController {
                         undefined,
                         // The visit this call records belongs to a guest by the name they saved, like a join does.
                         // A member's name comes from their account.
-                        authTokenData.accessToken ? undefined : name?.trim().slice(0, 100) || undefined
+                        authTokenData.accessToken ? undefined : name?.trim().slice(0, 100) || undefined,
+                        previousGuestUuid
                     );
                 const { refreshToken } = authTokenData;
                 // The access token the game sent is checked with the provider at most once per request.

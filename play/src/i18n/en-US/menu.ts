@@ -65,6 +65,8 @@ const menu: BaseTranslation = {
         tabs: {
             general: "General",
             soundAndVideo: "Sound and video",
+            soundAndVideoShort: "Sound & video",
+            notifications: "Notifications",
             keyboard: "Keyboard",
         },
         sections: {

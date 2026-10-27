@@ -185,6 +185,7 @@ export { default as IconGif } from "~icons/tabler/gif";
 export { default as IconTrendingUp } from "~icons/tabler/trending-up";
 export { default as IconWifiOff } from "~icons/tabler/wifi-off";
 export { default as IconHistory } from "~icons/tabler/history";
+export { default as IconCode } from "~icons/tabler/code";
 export { default as IconArrowRight } from "~icons/tabler/arrow-right";
 export { default as IconShare2 } from "~icons/tabler/share-2";
 export { default as IconMenu2 } from "~icons/tabler/menu-2";
@@ -193,3 +194,5 @@ export { default as IconDeviceMobilePlus } from "~icons/tabler/device-mobile-plu
 export { default as IconDeviceDesktopDown } from "~icons/tabler/device-desktop-down";
 export { default as IconLoader2 } from "~icons/tabler/loader-2";
 export { default as IconLayoutSidebar } from "~icons/tabler/layout-sidebar";
+export { default as IconChartBar } from "~icons/tabler/chart-bar";
+export { default as IconGauge } from "~icons/tabler/gauge";

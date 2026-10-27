@@ -78,7 +78,7 @@ export interface PersonActions {
     message: MessageAction;
     /** Menu entries. Locate is listed on the same map; the menu greys it out until the person can be located. */
     locate: boolean;
-    /** Visible "Locate" button beside Walk to, for bots on this map, in place of the menu entry. */
+    /** Visible "Locate" button after Message, for bots on this map, in place of the menu entry. */
     locateButton: boolean;
     /** "View profile": their profile in Orbit, for a signed-in person (one with a chat id), never a bot. */
     viewProfile: boolean;

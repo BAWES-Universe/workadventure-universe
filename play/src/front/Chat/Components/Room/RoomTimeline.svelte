@@ -31,7 +31,9 @@
     import { formatPeopleNames } from "../TopRow/TopRowSummary";
     import { availabilityFromNote, botChatClosed, botHeaderState, botIdFromChatId } from "../../Bots/BotChatStatus";
     import { botStatusCache } from "../../Bots/BotStatusStore";
+    import { nextReplyLimitExpiry, shownReplyLimitIds } from "../../Bots/BotReplyLimit";
     import BotStatusNoteCard from "../Bots/BotStatusNoteCard.svelte";
+    import BotReplyLimitCard from "../Bots/BotReplyLimitCard.svelte";
     import {
         PERSON_COLOUR_CONTEXT,
         NAME_BY_CHAT_ID_CONTEXT,
@@ -50,6 +52,7 @@
     import { installStrayFileDropGuard, isFileDrag } from "../../../Utils/strayFileDropGuard";
     import { mapEditorToolbarInUseStore } from "../../../Stores/MapEditorStore";
     import { isTouchScreen, SETTLE_CHECKS_MS } from "../../../Utils/ViewportGuard";
+    import { ARTIFACT_CHAT_CONTEXT, type ArtifactChatOf } from "../../../Artifacts/artifactChatContext";
     import Message from "./Message.svelte";
     import {
         firstShowingIndex,
@@ -91,6 +94,16 @@
     // Cards inside messages (a bot's room) act on the other person of a direct chat.
     const partnerForCards = writable<DirectPartner | undefined>(undefined);
     setContext<Readable<DirectPartner | undefined>>(DIRECT_PARTNER_CONTEXT, partnerForCards);
+
+    // An artifact card opens its artifact from the chat it is in, which the game's server checks: the bubble's space,
+    // or the Matrix room of a direct chat. Asked when the card is tapped, since a bubble's space changes over time.
+    setContext<ArtifactChatOf>(ARTIFACT_CHAT_CONTEXT, () => {
+        if (room instanceof ProximityChatRoom) {
+            const ref = room.currentSpaceName;
+            return ref ? { kind: "nearby", ref } : undefined;
+        }
+        return room instanceof MatrixChatRoom && room.type === "direct" ? { kind: "dm", ref: room.id } : undefined;
+    });
 
     // In a direct chat, each person's woka sits on their colour from People (header, profile, messages).
     const isDirectChat = writable(false);
@@ -273,6 +286,21 @@
     $: botClosed = botChatClosed(botState);
     $: lastBotMessage = partnerBotId ? [...$messages].reverse().find((message) => !message.isMyMessage) : undefined;
     $: lastBotNote = lastBotMessage?.botStatus;
+    // One reply limit card per bot (#1159): the newest, and only until its time is up. The clock moves on when the next
+    // card runs out, so it goes away then even when nothing new is said.
+    let replyLimitNow = Date.now();
+    let replyLimitTimer: ReturnType<typeof setTimeout> | undefined;
+    $: shownReplyLimits = shownReplyLimitIds($messages, replyLimitNow);
+    $: wakeAtReplyLimitExpiry(nextReplyLimitExpiry($messages, replyLimitNow));
+    function wakeAtReplyLimitExpiry(expiry: number | undefined) {
+        clearTimeout(replyLimitTimer);
+        replyLimitTimer = undefined;
+        if (expiry === undefined) return;
+        replyLimitTimer = setTimeout(tickReplyLimitClock, Math.min(expiry - Date.now() + 50, 2 ** 31 - 1));
+    }
+    function tickReplyLimitClock() {
+        replyLimitNow = Date.now();
+    }
     // A note saying the bot is resting, not ready or gone updates the header at once, unless a lookup that started after
     // the note was written knows better.
     $: lastNoteAvailability = lastBotNote ? availabilityFromNote(lastBotNote.state) : undefined;
@@ -762,6 +790,7 @@
         clearTimeout(redrawTimer);
         if (redrawFrame !== undefined) cancelAnimationFrame(redrawFrame);
         clearTimeout(fileDragTimer);
+        clearTimeout(replyLimitTimer);
         document.removeEventListener("dragenter", onMapFileDragCapture, true);
         document.removeEventListener("dragover", onMapFileDragCapture, true);
         document.removeEventListener("drop", onMapFileDragCapture, true);
@@ -998,6 +1027,10 @@
                             />
                         {:else if entry.message.type === "outcoming" || entry.message.type === "incoming"}
                             <MessageSystem message={entry.message} />
+                        {:else if entry.message.replyLimit}
+                            {#if shownReplyLimits.has(entry.message.id)}
+                                <BotReplyLimitCard replyLimit={entry.message.replyLimit} />
+                            {/if}
                         {:else if entry.message.botStatus}
                             <BotStatusNoteCard note={entry.message.botStatus} />
                         {:else}
@@ -1041,6 +1074,7 @@
                     <MessageInputBar
                         disabled={$shouldRetrySendingEvents}
                         {room}
+                        partner={$directPartner}
                         inputHint={botPlaceholder}
                         bind:this={messageInputBarRef}
                     />

@@ -14,6 +14,8 @@ import { BotClient } from '../client/BotClient';
 import { parseEmotionsFromResponse, appendStreamedChunk } from '../ai/EmotionParser';
 import { ROOM_CARD_MARK } from '../ai/AIService';
 import type { PendingMedia } from '../memory/ConversationMemory';
+import type { ArtifactCard } from '../ai/ArtifactTools';
+import type { ReplyLimitReached } from '../ai/types';
 import type { BotConfiguration } from './AdminApiService';
 import type { BotManager } from './BotManager';
 
@@ -54,6 +56,8 @@ export interface DmAttachment {
 export interface DmReplyHooks {
     /** Text the bot says before it runs a tool ("Let me look that up"), sent as its own message like a bubble. */
     onInterimMessage?: (text: string) => Promise<void>;
+    /** The Matrix room the message came in. Live artifacts made in this chat belong to it. */
+    roomId?: string;
 }
 
 export interface DmReply {
@@ -66,6 +70,15 @@ export interface DmReply {
     keep?: () => void;
     /** The bot's room, when the text names it: the game shows a card under the message to go there. */
     roomLink?: DmRoomLink;
+    /** Live artifacts the bot made or changed in this turn: a card for each, sent after the text. */
+    artifacts?: ArtifactCard[];
+    /** The person reached a reply limit (#1159): no AI was called, and the game shows the fixed card instead. */
+    replyLimit?: ReplyLimitReached;
+    /**
+     * This message waited behind an answer in progress and was answered together with the others that waited (#1159):
+     * nothing is sent for it. True once that one answer was given, false when it failed or was a reply limit card.
+     */
+    answeredTogether?: boolean;
 }
 
 /** A reply's link to the bot's room (sent as its `universe.room_link` field). */
@@ -84,6 +97,8 @@ const RESTING_PROMPT =
 
 export class DmReplyService extends BaseBehavior {
     private queues = new Map<string, Promise<unknown>>();
+    /** Per chat, the words that wait behind the answer in progress, to be answered together once it is done. */
+    private waiting = new Map<string, { texts: string[]; answer: Promise<DmReply | null> }>();
     private playerIds = new Map<string, number>();
     private nextPlayerId = -1;
     private loadedBots = new Set<string>();
@@ -115,8 +130,29 @@ export class DmReplyService extends BaseBehavior {
      */
     reply(botId: string, person: DmPerson, text: string, attachments: DmAttachment[] = [], hooks: DmReplyHooks = {}): Promise<DmReply | null> {
         const key = `${botId}|${person.matrixUserId}`;
-        const previous = this.queues.get(key) ?? Promise.resolve();
-        const next = previous.catch(() => undefined).then(() => this.replyNow(botId, person, text, attachments, hooks));
+        // One reply at a time (#1159): messages that come in while the bot is answering wait, and the ones that are
+        // only words get one answer together. A message with a file is answered on its own, as before.
+        const waiting = this.waiting.get(key);
+        if (waiting && attachments.length === 0) {
+            waiting.texts.push(text);
+            return waiting.answer.then((reply) => ({
+                text: '',
+                media: [],
+                answeredTogether: !!reply && !reply.failed && !reply.replyLimit,
+            }));
+        }
+        const previous = this.queues.get(key);
+        const batch = { texts: [text] } as { texts: string[]; answer: Promise<DmReply | null> };
+        const next = (previous ?? Promise.resolve())
+            .catch(() => undefined)
+            .then(() => {
+                if (this.waiting.get(key) === batch) this.waiting.delete(key);
+                return this.replyNow(botId, person, batch.texts.join('\n'), attachments, hooks);
+            });
+        batch.answer = next.catch(() => null);
+        // Words that come after a file wait behind the file, never in a batch from before it
+        if (attachments.length > 0) this.waiting.delete(key);
+        else if (previous) this.waiting.set(key, batch);
         this.queues.set(key, next);
         void next.finally(() => {
             if (this.queues.get(key) === next) this.queues.delete(key);
@@ -144,6 +180,13 @@ export class DmReplyService extends BaseBehavior {
             .getAllPeople()
             .filter((person) => !BotClient.isBot(person.userId))
             .map((person) => person.name || `User ${person.userId}`);
+    }
+
+    /** The person is in the bot's room right now, as its bubble on the map sees them: no card to come over. */
+    private isInBotRoom(botId: string, uuid: string): boolean {
+        const bot = this.botManager.getBot(botId);
+        if (!uuid || !bot?.isConnected()) return false;
+        return bot.getAllPeople().some((person) => person.uuid === uuid);
     }
 
     /**
@@ -215,11 +258,12 @@ export class DmReplyService extends BaseBehavior {
         const memory = this.conversationMemory;
 
         await this.ensureMemoriesLoaded(botId);
-        // A direct message takes the media its tools made with its answer, so anything still here is from a turn that
-        // failed: it is dropped, never sent with an answer it doesn't belong to.
-        memory.getMemory(botId, playerId)?.pendingMedia?.splice(0);
         const withUuid = memory as unknown as { setUserUuid?: (b: string, p: number, u: string, l: boolean) => void };
         withUuid.setUserUuid?.(botId, playerId, person.uuid, !person.isGuest);
+        // A direct message takes the media its tools made with its answer, so anything still here is from a turn that
+        // failed, or was queued in a bubble: it is dropped, never sent with an answer it doesn't belong to. After the
+        // uuid is set, because that restores the person's saved memory, queued media included.
+        memory.getMemory(botId, playerId)?.pendingMedia?.splice(0);
 
         // Same attachment handling as a bubble: parsed text for the model, image URLs for vision.
         let augmented = text;
@@ -227,7 +271,7 @@ export class DmReplyService extends BaseBehavior {
         const [primary, ...gallery] = attachments;
         if (primary) {
             const galleryUrls = gallery.map((a) => a.url);
-            augmented = await this.formatParsedAttachment(text, primary.url, primary.mimeType, primary.mediaType, galleryUrls);
+            augmented = await this.formatParsedAttachment(text, primary.url, primary.mimeType, primary.mediaType, galleryUrls, botId);
             images = await this.collectImageUrls(primary.url, primary.mediaType, primary.mimeType, galleryUrls);
         }
         const original = text || (primary ? `[sent a ${primary.mediaType || 'file'}]` : '');
@@ -248,6 +292,13 @@ export class DmReplyService extends BaseBehavior {
         // tools see it.
         if (memory.getMemory(botId, playerId)?.userUuid !== person.uuid) {
             withUuid.setUserUuid?.(botId, playerId, person.uuid, !person.isGuest);
+        }
+
+        // Artifacts made this turn go back as cards in this room; cards left from a turn that failed are dropped
+        const turnMemory = memory.getMemory(botId, playerId);
+        if (turnMemory) {
+            turnMemory.dmRoomId = hooks.roomId;
+            turnMemory.pendingArtifacts = [];
         }
 
         const context = memory.getConversationContext(botId, playerId);
@@ -291,6 +342,8 @@ export class DmReplyService extends BaseBehavior {
                     fullMessage = '';
                     continue;
                 }
+                // A reply limit: nothing was said and nothing is remembered as said
+                if (chunk.replyLimit) return { text: '', media: [], replyLimit: chunk.replyLimit };
                 if (chunk.content) fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                 if (chunk.metadata?.tokensUsed) tokensUsed = chunk.metadata.tokensUsed;
                 if (chunk.metadata?.latency) latency = chunk.metadata.latency;
@@ -367,8 +420,12 @@ export class DmReplyService extends BaseBehavior {
         // Media the tools produced waits in memory; a DM delivers it as attachments right after the text.
         const playerMemory = memory.getMemory(botId, playerId);
         const media = playerMemory?.pendingMedia?.splice(0) ?? [];
-        const roomLink = await this.roomLinkFor(config.roomUrl, replyText, askedForRoom, `${botId}:${person.matrixUserId}`);
-        return { text: replyText, media, keep, ...(roomLink ? { roomLink } : {}) };
+        const artifacts = playerMemory?.pendingArtifacts?.splice(0) ?? [];
+        // Someone already standing in the bot's room gets no card asking them to come visit it
+        const roomLink = this.isInBotRoom(botId, person.uuid)
+            ? undefined
+            : await this.roomLinkFor(config.roomUrl, replyText, askedForRoom, `${botId}:${person.matrixUserId}`);
+        return { text: replyText, media, keep, ...(roomLink ? { roomLink } : {}), ...(artifacts.length ? { artifacts } : {}) };
     }
 
     /**
