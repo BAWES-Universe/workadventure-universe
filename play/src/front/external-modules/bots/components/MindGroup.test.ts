@@ -135,7 +135,9 @@ describe("the bot page's Mind group (#1375)", () => {
         mocks.api.getBotAiOptions.mockResolvedValue(
             options({
                 keys: [lentKey],
-                providers: [{ id: "deepseek-flash", name: "DeepSeek V4 Flash", type: "openai", model: null, enabled: true }],
+                providers: [
+                    { id: "deepseek-flash", name: "DeepSeek V4 Flash", type: "openai", model: null, enabled: true },
+                ],
             })
         );
         await mount();
