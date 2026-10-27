@@ -21,6 +21,18 @@ export function botIdFromChatId(chatId: string | null | undefined): string | und
     return chatId ? BOT_CHAT_ID.exec(chatId)?.[1] : undefined;
 }
 
+/**
+ * Whether a direct message opens with the line that the bot's owner sees who chats: only with a bot, known by its chat
+ * ID so it shows whether or not the bot is on a map right now, and only once nothing older is left to load.
+ */
+export function showsBotDmIntro(
+    partnerChatId: string | null | undefined,
+    hasOlder: boolean,
+    loading: boolean
+): boolean {
+    return botIdFromChatId(partnerChatId) !== undefined && !hasOlder && !loading;
+}
+
 /** The note a bot's notice carries, or undefined when it is anything else (or not sent by a bot). */
 export function readBotStatusNote(
     sender: string | null | undefined,

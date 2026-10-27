@@ -6,6 +6,7 @@ import {
     botIdFromChatId,
     followsPresence,
     readBotStatusNote,
+    showsBotDmIntro,
 } from "../BotChatStatus";
 
 const BOT = "0b7c1d2e-1111-4222-8333-944455556666";
@@ -17,6 +18,19 @@ describe("botIdFromChatId", () => {
         expect(botIdFromChatId("@alice:matrix.bawes.net")).toBeUndefined();
         expect(botIdFromChatId("@robot_1:matrix.bawes.net")).toBeUndefined();
         expect(botIdFromChatId(undefined)).toBeUndefined();
+    });
+});
+
+describe("showsBotDmIntro", () => {
+    it("opens a direct message with a bot by its chat ID, whether or not the bot is on a map", () => {
+        expect(showsBotDmIntro(BOT_CHAT_ID, false, false)).toBe(true);
+        expect(showsBotDmIntro("@alice:matrix.bawes.net", false, false)).toBe(false);
+        expect(showsBotDmIntro(undefined, false, false)).toBe(false);
+    });
+
+    it("waits until nothing older is left to load", () => {
+        expect(showsBotDmIntro(BOT_CHAT_ID, true, false)).toBe(false);
+        expect(showsBotDmIntro(BOT_CHAT_ID, false, true)).toBe(false);
     });
 });
 

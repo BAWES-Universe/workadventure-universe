@@ -29,7 +29,13 @@
     import { selectedProximitySessionStore } from "../../Stores/ProximitySessionStore";
     import LL, { locale } from "../../../../i18n/i18n-svelte";
     import { formatPeopleNames } from "../TopRow/TopRowSummary";
-    import { availabilityFromNote, botChatClosed, botHeaderState, botIdFromChatId } from "../../Bots/BotChatStatus";
+    import {
+        availabilityFromNote,
+        botChatClosed,
+        botHeaderState,
+        botIdFromChatId,
+        showsBotDmIntro,
+    } from "../../Bots/BotChatStatus";
     import { botStatusCache } from "../../Bots/BotStatusStore";
     import { nextReplyLimitExpiry, shownReplyLimitIds } from "../../Bots/BotReplyLimit";
     import BotStatusNoteCard from "../Bots/BotStatusNoteCard.svelte";
@@ -187,7 +193,7 @@
     $: profileOpen = directPartner !== undefined && $openProfileRoomIdStore === room.id;
     // At the very start of a direct message with a bot, once nothing older is left to load
     $: hasPreviousMessage = room.hasPreviousMessage;
-    $: botDmIntroShown = $directPartner?.isBot === true && !$hasPreviousMessage && !showLoading;
+    $: botDmIntroShown = showsBotDmIntro(partner?.id, $hasPreviousMessage, showLoading);
     $: isDirectChat.set(directPartner !== undefined);
     $: partnerForCards.set(directPartner ? $directPartner : undefined);
     $: roomMembers = matrixRoom ? matrixRoom.members : readable([]);
