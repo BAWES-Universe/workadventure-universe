@@ -5,6 +5,7 @@
  * tested. This copy runs before every request the bot sends, so it is the one that also catches a hostname whose DNS
  * changed after it was saved (#435).
  */
+import { lookup as dnsLookup, type LookupAddress, type LookupOptions } from 'dns';
 import { lookup } from 'dns/promises';
 import { isIP } from 'net';
 
@@ -86,4 +87,29 @@ export async function checkOutboundUrl(url: string): Promise<{ allowed: boolean;
     } catch (error: unknown) {
         return { allowed: false, error: `DNS resolution failed: ${error instanceof Error ? error.message : 'Unknown error'}` };
     }
+}
+
+type ResolvedAddress = { address: string; family?: 4 | 6 };
+
+/**
+ * A `lookup` for the request itself, so the address the connection is made to is the one that was checked: the name
+ * is resolved again when the request connects, and a private answer then (a name re-pointed after the check above,
+ * "DNS rebinding") fails the request.
+ */
+export function guardedLookup(
+    hostname: string,
+    options: object,
+    callback: (error: Error | null, address: ResolvedAddress | ResolvedAddress[], family?: 4 | 6) => void
+): void {
+    const { all } = options as { all?: boolean };
+    dnsLookup(hostname, { ...(options as LookupOptions), all: true }, (error, found: LookupAddress[]) => {
+        if (error) return callback(error, []);
+        const addresses = found.map((entry) => ({ address: entry.address, family: entry.family as 4 | 6 }));
+        const blocked = addresses.find((entry) => !isAllowedIp(entry.address));
+        if (blocked || addresses.length === 0) {
+            return callback(new Error(`Refused: ${hostname} resolves to an internal or private address`), []);
+        }
+        if (all) return callback(null, addresses);
+        callback(null, addresses[0], addresses[0].family);
+    });
 }

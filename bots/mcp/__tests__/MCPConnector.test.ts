@@ -16,6 +16,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import axios from 'axios';
 import { lookup } from 'dns/promises';
 import { MCPConnector, REQUEST_TIMEOUT, toolTimeoutMs, type McpToolDefinition } from '../MCPConnector';
+import { guardedLookup } from '../outboundGuard';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -471,14 +472,14 @@ describe('MCPConnector', () => {
             expect(result).toEqual(MOCK_WEATHER_CALL_RESPONSE.result.content);
         });
 
-        it('follows no redirect, on the initialize or the call', async () => {
+        it('follows no redirect and connects only through the guarded lookup, on the initialize and the call', async () => {
             mockedAxios.post.mockImplementation(async (_url: string, body: any) =>
                 body?.method === 'initialize' ? MOCK_INIT_RESPONSE : { data: MOCK_WEATHER_CALL_RESPONSE }
             );
             await MCPConnector.executeToolCall('server-1', 'https://weather.example.com/mcp', 'get_weather', { location: 'Paris' }, 'none');
             expect(mockedAxios.post).toHaveBeenCalledTimes(2);
             for (const call of mockedAxios.post.mock.calls) {
-                expect(call[2]).toMatchObject({ maxRedirects: 0 });
+                expect(call[2]).toMatchObject({ maxRedirects: 0, lookup: guardedLookup });
             }
         });
 

@@ -13,7 +13,7 @@ import axios from 'axios';
 import * as Sentry from '@sentry/node';
 import { decryptApiKey } from '../ai/encryption';
 import { linkExternalAbort } from '../ai/providers/abortUtils';
-import { checkOutboundUrl } from './outboundGuard';
+import { checkOutboundUrl, guardedLookup } from './outboundGuard';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -246,6 +246,8 @@ async function jsonRpcRequest(
                             signal: initController.signal,
                             // A redirect's target is never checked, so none is followed
                             maxRedirects: 0,
+                            // The connection goes only to an address that passes the same check
+                            lookup: guardedLookup,
                         }
                     );
                     const parsed = parseMcpResponse(initResponse);
@@ -363,6 +365,7 @@ async function jsonRpcRequest(
             headers,
             signal: controller.signal,
             maxRedirects: 0,
+            lookup: guardedLookup,
         });
 
         const parsed = parseMcpResponse(response);

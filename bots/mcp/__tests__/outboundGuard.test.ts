@@ -2,8 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const lookup = vi.fn();
 vi.mock('dns/promises', () => ({ lookup: (...args: unknown[]) => lookup(...args) }));
+const callbackLookup = vi.fn();
+vi.mock('dns', () => ({ lookup: (...args: unknown[]) => callbackLookup(...args) }));
 
-import { checkOutboundUrl, isAllowedServerUrl } from '../outboundGuard';
+import { checkOutboundUrl, guardedLookup, isAllowedServerUrl } from '../outboundGuard';
 
 beforeEach(() => {
     lookup.mockReset();
@@ -67,5 +69,33 @@ describe('checkOutboundUrl', () => {
     it('refuses an internal URL without looking it up', async () => {
         expect((await checkOutboundUrl('https://[::ffff:a9fe:a9fe]/')).allowed).toBe(false);
         expect(lookup).not.toHaveBeenCalled();
+    });
+});
+
+describe('guardedLookup (the lookup the request connects with)', () => {
+    const answer = (addresses: { address: string; family: number }[]) =>
+        callbackLookup.mockImplementation((_host: string, _options: unknown, cb: (e: null, a: unknown) => void) => cb(null, addresses));
+    const run = (all: boolean) =>
+        new Promise<{ error: Error | null; address: unknown; family?: number }>((resolve) =>
+            guardedLookup('mcp.example.com', { all }, (error, address, family) => resolve({ error, address, family }))
+        );
+
+    it('connects to a public address, in both answer shapes', async () => {
+        answer([{ address: '93.184.216.34', family: 4 }]);
+        expect(await run(false)).toEqual({ error: null, address: { address: '93.184.216.34', family: 4 }, family: 4 });
+        expect((await run(true)).address).toEqual([{ address: '93.184.216.34', family: 4 }]);
+    });
+
+    it('fails the connection when the name now resolves to a private address (DNS rebinding)', async () => {
+        answer([{ address: '127.0.0.1', family: 4 }]);
+        expect((await run(false)).error).toBeInstanceOf(Error);
+        answer([{ address: '93.184.216.34', family: 4 }, { address: '::ffff:a9fe:a9fe', family: 6 }]);
+        expect((await run(true)).error).toBeInstanceOf(Error);
+    });
+
+    it('passes a DNS error on', async () => {
+        const failure = Object.assign(new Error('ENOTFOUND'), { code: 'ENOTFOUND' });
+        callbackLookup.mockImplementation((_host: string, _options: unknown, cb: (e: Error) => void) => cb(failure));
+        expect((await run(false)).error).toBe(failure);
     });
 });
