@@ -123,6 +123,9 @@ export class OpenAIProvider implements AIProvider {
     /** The output cap each model stated once it refused more (endpoint and model). It is asked within it from then on, so it costs one failed request, not one per reply. */
     private static readonly outputCeilings = new Map<string, number>();
 
+    /** Endpoints and models that refused the temperature we sent (Kimi's fixed-temperature models). It is left out from then on, so it costs one failed request, not one per reply. */
+    private static readonly refusedTemperature = new Set<string>();
+
     private static outputCeilingKey(config: AIProviderConfig, endpoint: string): string {
         return `${endpoint} ${config.model}`;
     }
@@ -301,7 +304,7 @@ export class OpenAIProvider implements AIProvider {
                     console.log(`[OpenAIProvider] Model ${config.model} only supports temperature=1, omitting temperature parameter`);
                 }
             }
-        } else {
+        } else if (!OpenAIProvider.refusedTemperature.has(OpenAIProvider.outputCeilingKey(config, this.getEndpoint(config)))) {
             // Include temperature for models that support custom values
             body.temperature = config.temperature;
         }
@@ -387,6 +390,7 @@ export class OpenAIProvider implements AIProvider {
 
                 // Retry without temperature if model rejects it
                 if (this.rejectsTemperature(response.status, errorData, errorText, requestBody)) {
+                    OpenAIProvider.refusedTemperature.add(OpenAIProvider.outputCeilingKey(config, endpoint));
                     const retryBody = { ...requestBody };
                     delete retryBody.temperature;
 
@@ -726,6 +730,7 @@ export class OpenAIProvider implements AIProvider {
                     // If error is about temperature, retry without temperature (use default)
                     const refusesTemperature = this.rejectsTemperature(response.status, errorData, errorText, requestBody);
                     if (refusesTemperature || this.rejectsThinking(response.status, errorText, requestBody)) {
+                        if (refusesTemperature) OpenAIProvider.refusedTemperature.add(OpenAIProvider.outputCeilingKey(config, endpoint));
                         if (process.env.ENABLE_BOT_DEBUG === 'true') {
                             console.log(
                                 `[OpenAIProvider] Retrying ${refusesTemperature ? 'without temperature' : 'with thinking off'} for model: ${config.model}`
