@@ -234,11 +234,12 @@ const SOMETIMES_ARTIFACT_NOUN = '(?:apps?|games?|boards?|trackers?)(?!\\s+of\\b)
  */
 const ARTIFACT_CUE = /\b(?:artifacts?|(?:tap|open|see|in) (?:the|its) card|card (?:above|below))\b/;
 /**
- * "v2", "version 3": a version said to exist, standing on its own ("v2 has the charts", "here's version 3", "saved as v2").
- * Not straight after a name: "Node v18" and "Python version 3" are someone else's software (Sentry on #1499).
+ * "v2", "version 3": a version said to exist, standing on its own as the thing made ("v2 has the charts", "here's version 3
+ * with", "saved as v2"). Not straight after a name ("Node v18", "Python version 3") nor before one ("the v2 API", "version 2
+ * of the library"): those are someone else's software (Sentry on #1499).
  */
 const VERSION_SAID =
-    /(?:^|[,;:(]|\b(?:the|its|this|a|new|and|as|now|saved|made|built|here(?:'s|’s| is)|it(?:'s|’s| is)))\s*(?:v\d+|version \d+)\b/;
+    /(?:^|[,;:(]|\b(?:the|its|this|a|new|and|as|now|saved|made|built|here(?:'s|’s| is)|it(?:'s|’s| is)))\s*(?:v\d+|version \d+)(?=\s*(?:$|[,;:)—-]|(?:is|has|adds|includes|with|now|shows|keeps|looks|should|will)\b))/;
 /** Saying it was made or changed. */
 const DONE_VERB =
     '(?:made|built|created|updated|changed|rebuilt|redesigned|redid|reworked|added|fixed|saved|ready|live|finished|upgraded|improved)';
