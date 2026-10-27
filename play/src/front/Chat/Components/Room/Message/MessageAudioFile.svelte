@@ -179,6 +179,9 @@
         display: grid;
         grid-template-columns: 44px minmax(0, 1fr) auto;
         grid-template-rows: auto auto;
+        grid-template-areas:
+            "play bars speed"
+            "play time speed";
         column-gap: 10px;
         align-items: center;
         width: 264px;
@@ -187,7 +190,7 @@
         padding: 8px 12px 8px 8px;
     }
     .voice-play {
-        grid-row: 1 / span 2;
+        grid-area: play;
         width: 44px;
         height: 44px;
         padding: 0;
@@ -198,8 +201,7 @@
         font-family: inherit;
     }
     .voice-bars {
-        grid-column: 2;
-        grid-row: 1;
+        grid-area: bars;
         height: 28px;
         display: flex;
         align-items: center;
@@ -216,11 +218,10 @@
         background: #fff;
     }
     .voice-time {
-        grid-column: 2;
-        grid-row: 2;
+        grid-area: time;
         font-size: 11px;
         line-height: 16px;
-        color: rgba(255, 255, 255, 0.7);
+        color: rgba(255, 255, 255, 0.5);
         font-variant-numeric: tabular-nums;
         display: flex;
         align-items: center;
@@ -234,8 +235,7 @@
         background: #c4b5fd;
     }
     .voice-speed {
-        grid-column: 3;
-        grid-row: 1 / span 2;
+        grid-area: speed;
         position: relative;
         min-width: 36px;
         height: 24px;
@@ -243,7 +243,7 @@
         border-radius: 9999px;
         box-sizing: border-box;
         font-size: 11px;
-        font-weight: 700;
+        font-weight: 600;
         line-height: 1;
         font-family: inherit;
     }
