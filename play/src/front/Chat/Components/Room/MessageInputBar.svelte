@@ -194,7 +194,9 @@
 
     const selectedChatChatMessageToReplyUnsubscriber = selectedChatMessageToReply.subscribe((chatMessage) => {
         if (chatMessage !== null) {
-            messageInput.focus();
+            // The store hands its current value over while this bar is still being built, before the input exists:
+            // onMount focuses it then.
+            if (messageInput) messageInput.focus();
             replyMessageId = chatMessage.id;
         }
     });
@@ -528,6 +530,8 @@
     onMount(async () => {
         // A request made before this box existed: the subscription ran before the input did.
         focusOnRequest(get(chatComposerFocusRequestStore));
+        // A reply picked before this box existed: the subscription ran before the input did.
+        if (get(selectedChatMessageToReply) !== null) messageInput?.focus();
         const isUploadEnabled = gameManager.getCurrentGameScene().room.isChatUploadEnabled;
         // Check CDN config for proximity chat before enabling the button
         if (room instanceof ProximityChatRoom && isUploadEnabled) {
