@@ -756,10 +756,13 @@ export class PersistentMemory extends ConversationMemory {
      * the same time, sender and text, except that one may carry a vision note at its end: the longer copy is kept.
      */
     private static mergeHistories(current: ConversationMessage[], other: ConversationMessage[], max: number): ConversationMessage[] {
+        // `longer` is `shorter` plus vision notes (an image sent with no words starts out empty)
+        const withNote = (longer: string, shorter: string) =>
+            longer.startsWith(shorter) && longer.slice(shorter.length).trimStart().startsWith('[Image description:');
         const sameMessage = (a: ConversationMessage, b: ConversationMessage) =>
             a.timestamp === b.timestamp &&
             a.sender === b.sender &&
-            (a.message === b.message || (!!a.message && !!b.message && (a.message.startsWith(b.message) || b.message.startsWith(a.message))));
+            (a.message === b.message || withNote(a.message, b.message) || withNote(b.message, a.message));
         const merged = [...current];
         let changed = false;
         for (const message of other) {

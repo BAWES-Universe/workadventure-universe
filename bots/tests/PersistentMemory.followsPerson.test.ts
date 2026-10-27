@@ -142,6 +142,24 @@ describe('PersistentMemory: memory follows the person across the map and direct 
         expect(map).toEqual(expect.arrayContaining(['first', 'second']));
     });
 
+    it('keeps an image sent with no words once, with its vision note, and a line that only starts like another', () => {
+        chatOnMap([['hi', 'person']]);
+        memory.setUserUuid(BOT, DM_PLAYER, UUID, true);
+        vi.advanceTimersByTime(1000);
+        // An image with no words, then a short answer said in the same millisecond as a longer one on the map
+        memory.addMessage(BOT, DM_PLAYER, '', 'person', 'matrix-dm');
+        memory.addMessage(BOT, DM_PLAYER, 'ok', 'bot', 'matrix-dm');
+        memory.addMessage(BOT, MAP_PLAYER, 'ok thanks', 'bot', 'bubble-space');
+        // The map chat picks up the image line before its note, then again after it
+        memory.setUserUuid(BOT, MAP_PLAYER, UUID, true);
+        memory.appendVisionDescription(BOT, DM_PLAYER, 'a dog');
+        memory.setUserUuid(BOT, MAP_PLAYER, UUID, true);
+
+        const map = history(memory, MAP_PLAYER);
+        expect(map.filter((line) => line === '' || line.includes('[Image description: a dog]'))).toEqual(['\n[Image description: a dog]']);
+        expect(map).toEqual(expect.arrayContaining(['hi', 'ok', 'ok thanks']));
+    });
+
     it("never hands one person's chat to someone else", () => {
         chatOnMap([['my secret plan', 'person']]);
         memory.setUserUuid(BOT, DM_PLAYER, 'someone-else', true);
