@@ -163,9 +163,22 @@ export class PersistentMemory extends ConversationMemory {
         // direct messages while they chat on the map), use that instead when it is more recently updated than the
         // cached snapshot. Also when there is no snapshot: someone who first met the bot in this process has none, and
         // their chat on the map must still be there when they send it a direct message.
-        const activeByUuid = this.freshestOtherMemory(botId, playerId, userUuid);
-        if (activeByUuid && activeByUuid.lastUpdated > (loadedMemory?.lastUpdated || 0)) {
-            loadedMemory = this.cloneMemory(activeByUuid);
+        const others = this.otherMemories(botId, playerId, userUuid);
+        if (others.length > 0) {
+            const snapshot = loadedMemory;
+            const freshest = others.reduce((a, b) => (b.lastUpdated > a.lastUpdated ? b : a));
+            const base = freshest.lastUpdated > (snapshot?.lastUpdated || 0) ? freshest : snapshot!;
+            // A copy, so neither the cached snapshot nor another chat changes with what follows
+            loadedMemory = this.cloneMemory(base);
+            // Lines from every chat of this person (and the snapshot), so none is lost when they have several
+            for (const source of [snapshot, ...others]) {
+                if (!source || source === base) continue;
+                loadedMemory.conversationHistory = PersistentMemory.mergeHistories(
+                    loadedMemory.conversationHistory,
+                    source.conversationHistory ?? [],
+                    this.historyLimit(botId)
+                );
+            }
         }
         
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -259,7 +272,7 @@ export class PersistentMemory extends ConversationMemory {
                     existingOrNew.conversationHistory = PersistentMemory.mergeHistories(
                         existingOrNew.conversationHistory,
                         loadedMemory.conversationHistory ?? [],
-                        existingOrNew.maxHistorySize || 50
+                        Math.max(this.historyLimit(botId), existingOrNew.maxHistorySize || 0)
                     );
                 }
             } else {
@@ -725,30 +738,42 @@ export class PersistentMemory extends ConversationMemory {
     }
 
     /**
-     * The most recently updated active memory of this person on another playerId, e.g. their chat on the map while they
-     * send a direct message. A memory made before the person's uuid was known still says "temp-<playerId>": the
-     * tracked uuid counts for it.
+     * This person's active memories on other playerIds, e.g. their chat on the map while they send a direct message. A
+     * memory made before the person's uuid was known still says "temp-<playerId>": the tracked uuid counts for it.
      */
-    private freshestOtherMemory(botId: string, playerId: number, userUuid: string): BotPlayerMemory | null {
-        let freshest: BotPlayerMemory | null = null;
+    private otherMemories(botId: string, playerId: number, userUuid: string): BotPlayerMemory[] {
+        const others: BotPlayerMemory[] = [];
         for (const [key, memory] of this.getAllMemories().entries()) {
             if (key !== `${botId}_${memory.playerId}` || memory.playerId === playerId) continue;
             const owner = memory.userUuid?.startsWith('temp-') ? this.uuidTracking.get(key)?.userUuid : memory.userUuid;
-            if (owner !== userUuid) continue;
-            if (!freshest || memory.lastUpdated > freshest.lastUpdated) freshest = memory;
+            if (owner === userUuid) others.push(memory);
         }
-        return freshest;
+        return others;
     }
 
     /**
-     * Both histories as one, in time order, each message once (the current copy wins: it may carry a vision note the
-     * other lacks), keeping the last `max`.
+     * Both histories as one, in time order, each message once, keeping the last `max`. Two copies of one message have
+     * the same time, sender and text, except that one may carry a vision note at its end: the longer copy is kept.
      */
     private static mergeHistories(current: ConversationMessage[], other: ConversationMessage[], max: number): ConversationMessage[] {
-        const seen = new Set(current.map((message) => `${message.timestamp}|${message.sender}`));
-        const added = other.filter((message) => !seen.has(`${message.timestamp}|${message.sender}`)).map((message) => ({ ...message }));
-        if (added.length === 0) return current;
-        return [...current, ...added].sort((a, b) => a.timestamp - b.timestamp).slice(-max);
+        const sameMessage = (a: ConversationMessage, b: ConversationMessage) =>
+            a.timestamp === b.timestamp &&
+            a.sender === b.sender &&
+            (a.message === b.message || (!!a.message && !!b.message && (a.message.startsWith(b.message) || b.message.startsWith(a.message))));
+        const merged = [...current];
+        let changed = false;
+        for (const message of other) {
+            const index = merged.findIndex((kept) => sameMessage(kept, message));
+            if (index === -1) {
+                merged.push({ ...message });
+                changed = true;
+            } else if (message.message.length > merged[index].message.length) {
+                merged[index] = { ...merged[index], message: message.message };
+                changed = true;
+            }
+        }
+        if (!changed) return current.length > max ? current.slice(-max) : current;
+        return merged.sort((a, b) => a.timestamp - b.timestamp).slice(-max);
     }
 
     /**

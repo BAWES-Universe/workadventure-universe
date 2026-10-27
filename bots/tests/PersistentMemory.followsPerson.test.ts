@@ -89,6 +89,59 @@ describe('PersistentMemory: memory follows the person across the map and direct 
         expect(history(memory, MAP_PLAYER)).toEqual(['Remind me to look at Tavily pricing', 'Will do.']);
     });
 
+    it("keeps as many lines as the bot's replies read when chats are merged", () => {
+        memory.setHistoryWindow(BOT, 100);
+        memory.setUserUuid(BOT, DM_PLAYER, UUID, true);
+        for (let i = 0; i < 70; i++) {
+            vi.advanceTimersByTime(1000);
+            memory.addMessage(BOT, DM_PLAYER, `dm ${i}`, 'person', 'matrix-dm');
+        }
+        chatOnMap([['on the map', 'person']]);
+
+        vi.advanceTimersByTime(60_000);
+        memory.setUserUuid(BOT, DM_PLAYER, UUID, true);
+
+        const lines = history(memory, DM_PLAYER);
+        expect(lines).toHaveLength(71);
+        expect(lines[0]).toBe('dm 0');
+        expect(lines.at(-1)).toBe('on the map');
+    });
+
+    it('brings in every other chat of the person, not only the newest', () => {
+        const OTHER_TAB = 8;
+        // Two tabs open at once, each with its own chat
+        memory.setUserUuid(BOT, OTHER_TAB, UUID, true);
+        chatOnMap([['said in one tab', 'person']]);
+        vi.advanceTimersByTime(1000);
+        memory.addMessage(BOT, OTHER_TAB, 'said in another tab', 'person', 'bubble-space');
+
+        vi.advanceTimersByTime(60_000);
+        memory.setUserUuid(BOT, DM_PLAYER, UUID, true);
+
+        expect(history(memory, DM_PLAYER)).toEqual(['said in one tab', 'said in another tab']);
+    });
+
+    it('keeps two different lines said in the same millisecond, and a line with a vision note once', () => {
+        memory.setUserUuid(BOT, DM_PLAYER, UUID, true);
+        memory.addMessage(BOT, DM_PLAYER, 'look at this', 'person', 'matrix-dm');
+        chatOnMap([]);
+        // Same millisecond as the map lines below
+        memory.addMessage(BOT, MAP_PLAYER, 'first', 'bot', 'bubble-space');
+        memory.addMessage(BOT, MAP_PLAYER, 'second', 'bot', 'bubble-space');
+        memory.appendVisionDescription(BOT, DM_PLAYER, 'a cat');
+
+        // The map chat started with the line before its vision note; both chats end with the noted copy, once
+        memory.setUserUuid(BOT, DM_PLAYER, UUID, true);
+        memory.setUserUuid(BOT, MAP_PLAYER, UUID, true);
+
+        const dm = history(memory, DM_PLAYER);
+        expect(dm.filter((line) => line.startsWith('look at this'))).toHaveLength(1);
+        expect(dm).toEqual(expect.arrayContaining(['first', 'second']));
+        const map = history(memory, MAP_PLAYER);
+        expect(map.filter((line) => line.startsWith('look at this'))).toEqual([expect.stringContaining('a cat')]);
+        expect(map).toEqual(expect.arrayContaining(['first', 'second']));
+    });
+
     it("never hands one person's chat to someone else", () => {
         chatOnMap([['my secret plan', 'person']]);
         memory.setUserUuid(BOT, DM_PLAYER, 'someone-else', true);
