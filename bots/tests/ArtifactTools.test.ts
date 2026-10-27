@@ -263,6 +263,11 @@ describe('a reply that says it saved an artifact (Orbit #666)', () => {
         expect(claimsArtifactSaved("I've made a list of maps for you: Paris, Rome.")).toBe(false);
         expect(claimsArtifactSaved('Python v3 came out in 2008.')).toBe(false);
         expect(claimsArtifactSaved("I've added a note. The page you linked is about trains.")).toBe(false);
+        // Words that are artifacts only sometimes (Sentry on the R6 release)
+        expect(claimsArtifactSaved("Here's the updated version of your email draft:\n\nHi Sam, ...")).toBe(false);
+        expect(claimsArtifactSaved("I've updated the page title and the site menu in your notes.")).toBe(false);
+        expect(claimsArtifactSaved("Here's the updated board of directors list.")).toBe(false);
+        expect(claimsArtifactSaved("I've made a mock interview plan for Monday.")).toBe(false);
     });
 
     it('asks the second try to use the tool or say plainly, with what the chat now says', () => {

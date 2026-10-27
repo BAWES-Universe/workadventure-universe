@@ -218,9 +218,11 @@ export const ARTIFACT_CUT_OFF_MESSAGE =
 /** What the chat says when a bot said it made or changed an artifact and nothing was saved (Orbit #666). */
 export const NOTHING_SAVED_LINE = 'No new version was saved.';
 
-/** Something a bot makes as an artifact. Not table, list, file or map: those come up in ordinary answers. */
-const ARTIFACT_NOUN =
-    '(?:artifacts?|apps?|pages?|dashboards?|games?|boards?|calculators?|sites?|websites?|trackers?|mocks?|mockups?|versions?)';
+/**
+ * Something a bot makes as an artifact, and not "of" something ("the updated board of directors"). Not table, list, file,
+ * map, page, site, version or mock: those come up in ordinary answers ("here's the updated version of your email").
+ */
+const ARTIFACT_NOUN = '(?:artifacts?|apps?|dashboards?|games?|boards?|calculators?|trackers?|mockups?)(?!\\s+of\\b)';
 /** "v2", "version 3": a version said to exist. */
 const VERSION_SAID = /\b(?:v\d+|version \d+)\b/;
 /** Saying it was made or changed. */
