@@ -4,6 +4,8 @@ import {
     OrbitBridge,
     isOrbitBridgeAckMessage,
     isOrbitBridgeReadyMessage,
+    isOrbitCheckLinksMessage,
+    isOrbitOpenLinkMessage,
     isOrbitInvitePersonMessage,
     isOrbitMessagePersonMessage,
     isOrbitProfileChangedMessage,
@@ -92,6 +94,38 @@ describe("Orbit's invite and message requests", () => {
     });
 });
 
+describe("Orbit's profile link requests", () => {
+    const check = {
+        type: "orbit-check-links",
+        version: 1,
+        requestId: "links-1",
+        roomRevision: revision,
+        urls: ["https://mishari.example/about"],
+    };
+
+    it("accepts a well-formed check of 1 to 10 links", () => {
+        expect(isOrbitCheckLinksMessage(check)).toBe(true);
+        expect(isOrbitCheckLinksMessage({ ...check, urls: [] })).toBe(false);
+        expect(isOrbitCheckLinksMessage({ ...check, urls: Array(11).fill("https://a.example") })).toBe(false);
+        expect(isOrbitCheckLinksMessage({ ...check, urls: [42] })).toBe(false);
+        expect(isOrbitCheckLinksMessage({ ...check, urls: ["https://a.example/" + "x".repeat(2048)] })).toBe(false);
+        expect(isOrbitCheckLinksMessage({ ...check, requestId: undefined })).toBe(false);
+        expect(isOrbitCheckLinksMessage({ ...check, version: 2 })).toBe(false);
+    });
+
+    it("accepts a well-formed request to open one link", () => {
+        const open = {
+            type: "orbit-open-link",
+            version: 1,
+            roomRevision: revision,
+            url: "https://mishari.example/about",
+        };
+        expect(isOrbitOpenLinkMessage(open)).toBe(true);
+        expect(isOrbitOpenLinkMessage({ ...open, url: "" })).toBe(false);
+        expect(isOrbitOpenLinkMessage({ ...open, roomRevision: "short" })).toBe(false);
+    });
+});
+
 describe("OrbitBridge", () => {
     beforeEach(() => vi.restoreAllMocks());
 
@@ -105,7 +139,7 @@ describe("OrbitBridge", () => {
             type: "orbit-bridge-init",
             version: 1,
             roomRevision: revision,
-            capabilities: ["navigate", "event", "view", "profile", "invite", "message"],
+            capabilities: ["navigate", "event", "view", "profile", "invite", "message", "open-link"],
             view: "compact",
         });
         expect(posted[1]).toEqual({
@@ -189,5 +223,25 @@ describe("OrbitBridge", () => {
         expect(isOrbitProfileChangedMessage({ ...good, name: 5 })).toBe(false);
         expect(isOrbitProfileChangedMessage({ ...good, version: 2 })).toBe(false);
         expect(isOrbitProfileChangedMessage({ ...good, roomRevision: "short" })).toBe(false);
+    });
+
+    it("answers a check of links with this visit's revision, and only while Orbit is ready", () => {
+        const { bridge, posted } = makeBridge();
+        bridge.answerLinks("links-1", ["https://mishari.example/about"]);
+        expect(posted).toEqual([]);
+
+        bridge.onReady();
+        bridge.answerLinks("links-1", ["https://mishari.example/about"]);
+        expect(posted[1]).toEqual({
+            type: "orbit-links",
+            version: 1,
+            requestId: "links-1",
+            roomRevision: revision,
+            openHere: ["https://mishari.example/about"],
+        });
+
+        bridge.onClosed();
+        bridge.answerLinks("links-2", []);
+        expect(posted).toHaveLength(2);
     });
 });

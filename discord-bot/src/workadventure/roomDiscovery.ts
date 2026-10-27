@@ -1,5 +1,5 @@
 import axios, { AxiosError } from "axios";
-import type { RoomStats } from "../types";
+import type { RoomDetailsMap, RoomMetadata, RoomStats } from "../types";
 
 export class RoomDiscovery {
     private pusherUrl: string;
@@ -34,6 +34,28 @@ export class RoomDiscovery {
                 console.error("Unexpected error fetching rooms:", error);
             }
             return {};
+        }
+    }
+
+    /**
+     * Who is in each open room, people and bots apart, with the people's names (#1389). Null when the pusher could not
+     * say, so the report keeps what it last posted rather than showing an empty Universe.
+     */
+    async fetchRoomDetails(): Promise<RoomDetailsMap | null> {
+        try {
+            const response = await axios.get<RoomDetailsMap>(`${this.pusherUrl}/rooms/details`, {
+                headers: {
+                    "admin-token": this.adminApiToken,
+                },
+            });
+            return response.data;
+        } catch (error) {
+            if (axios.isAxiosError(error)) {
+                console.error(`Failed to fetch room details: ${error.message}`);
+            } else {
+                console.error("Unexpected error fetching room details:", error);
+            }
+            return null;
         }
     }
 
@@ -114,7 +136,7 @@ export class RoomDiscovery {
      * Get room metadata (names) from room path
      * Calls the public API endpoint /api/room/info
      */
-    async getRoomMetadata(roomPath: string): Promise<{ universeName: string; worldName: string; roomName: string } | null> {
+    async getRoomMetadata(roomPath: string): Promise<RoomMetadata | null> {
         try {
             // Use ADMIN_API_URL if provided, otherwise use pusherUrl base
             let baseUrl: string;
@@ -126,7 +148,7 @@ export class RoomDiscovery {
                 baseUrl = `${url.protocol}//${url.hostname}${url.port ? `:${url.port}` : ""}`;
             }
             
-            const response = await axios.get<{ roomName: string; worldName: string; universeName: string }>(
+            const response = await axios.get<RoomMetadata>(
                 `${baseUrl}/api/room/info`,
                 {
                     params: {

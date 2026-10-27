@@ -118,6 +118,20 @@ describe("LocateManager: a search never opens its card over another one", () => 
         expect(get(wokaMenuStore)).toMatchObject({ userId: -1, wokaName: "Stitch" });
     });
 
+    it("shows the Woka People had for them while searching for someone far away", async () => {
+        const { wokaMenuStore } = await import("../../../Stores/WokaMenuStore");
+        const { rememberLocateRequest } = await import("../LocateRequest");
+        const { readable } = await import("svelte/store");
+        const { stream } = await makeLocateManager();
+        const picture = readable<string | undefined>("data:image/png;base64,stitch");
+        rememberLocateRequest("Stitch", picture);
+
+        stream.next({ userId: 5, position: { x: 1, y: 2 } });
+
+        expect(get(wokaMenuStore)).toMatchObject({ userId: -1, wokaName: "Stitch" });
+        expect(get(wokaMenuStore)?.searchPicture).toBe(picture);
+    });
+
     it("opens the found person's card over their own search card, the second time too", async () => {
         const { wokaMenuStore } = await import("../../../Stores/WokaMenuStore");
         const { stream, remotePlayers, stitch } = await makeLocateManager();
@@ -161,5 +175,24 @@ describe("LocateManager: the camera and the open card", () => {
         wokaMenuStore.initialize("Stitch", -1, "stitch", undefined);
 
         expect(cameraManager.followRemotePlayer).not.toHaveBeenCalled();
+    });
+});
+
+describe("LocateManager: where the search points the camera (#1380)", () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+    });
+    afterEach(async () => {
+        vi.useRealTimers();
+        const { wokaMenuStore, wokaMenuProgressStore } = await import("../../../Stores/WokaMenuStore");
+        wokaMenuStore.clear();
+        wokaMenuProgressStore.set(undefined);
+    });
+
+    it("centres the person in the space the panels and their card leave free, not under the card", async () => {
+        const { stream, cameraManager } = await makeLocateManager();
+        stream.next({ userId: 5, position: { x: 1, y: 2 } });
+
+        expect(cameraManager.centerCameraOn).toHaveBeenCalledWith({ x: 1, y: 2 }, undefined, true);
     });
 });

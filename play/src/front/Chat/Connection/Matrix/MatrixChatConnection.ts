@@ -54,6 +54,7 @@ import { MATRIX_ADMIN_USER, MATRIX_DOMAIN } from "../../../Enum/EnvironmentVaria
 import { currentPlayerWokaLayersStore, currentPlayerWokaStore } from "../../../Stores/CurrentPlayerWokaStore";
 import { MatrixRateLimiter } from "../../Services/MatrixRateLimiter";
 import { ChatsStillLoadingError } from "../ChatsStillLoadingError";
+import type { ChatPusher } from "../../../Notification/Push/PushChat";
 import { MatrixChatRoom } from "./MatrixChatRoom";
 import type { MatrixSecurity } from "./MatrixSecurity";
 import { matrixSecurity as defaultMatrixSecurity } from "./MatrixSecurity";
@@ -1379,6 +1380,15 @@ export class MatrixChatConnection implements ChatConnectionInterface {
             : current.filter((userId) => userId !== userChatId);
         await this.client.setIgnoredUsers(next);
         this._ignoredUsers.set(next);
+    }
+
+    async setPusher(pusher: ChatPusher): Promise<boolean> {
+        if (!this.client) throw new Error(CLIENT_NOT_INITIALIZED_ERROR_MSG);
+        // Guests have no account to send notifications for, and a chat signed out (left for a room without chat) has
+        // no session to set it on
+        if (this.client.isGuest() || !this.client.getAccessToken()) return false;
+        await this.client.setPusher(pusher);
+        return true;
     }
 
     async searchChatUsers(searchText: string, limit = 20) {

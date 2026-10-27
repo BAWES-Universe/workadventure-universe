@@ -1,0 +1,26 @@
+// The frame of a bottom sheet on phones: edge to edge at the bottom of the screen, rounded at the top, resized from its
+// handle (SheetHandle.svelte). The chat and the Open here window are both drawn with it.
+@mixin bottom-sheet {
+    top: auto;
+    bottom: 0;
+    inset-inline: 0;
+    width: 100% !important;
+    min-width: 0;
+    max-width: none;
+    display: flex;
+    flex-direction: column;
+    border-radius: 24px 24px 0 0;
+    // Its height is the sheet's whole height: the padding goes inside it.
+    box-sizing: border-box;
+    // Dragged up under the installed app's see-through status bar (#969), the sheet keeps its colour to the top edge
+    // and starts its handle below the inset (padding-top, set by sheetFrameStyle).
+    transition: height 200ms ease-out, padding-top 200ms ease-out;
+
+    &.dragging {
+        transition: none;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        transition: none;
+    }
+}

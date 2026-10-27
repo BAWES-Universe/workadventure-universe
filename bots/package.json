@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@mozilla/readability": "^0.6.0",
+    "@napi-rs/canvas": "0.1.80",
     "@sentry/core": "^10.56.0",
     "@sentry/node": "^10.56.0",
     "@workadventure/messages": "1.0.0",
@@ -29,7 +30,7 @@
     "turndown": "^7.2.4",
     "uuid": "^9.0.0",
     "ws": "^8.16.0",
-    "xlsx": "^0.18.5",
+    "xlsx": "npm:@e965/xlsx@0.20.3",
     "yauzl": "^3.4.0"
   },
   "devDependencies": {

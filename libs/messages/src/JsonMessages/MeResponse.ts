@@ -23,6 +23,10 @@ export const MeSuccessResponse = extendApi(
             example:
                 "John",
         }),
+        usernameFromAccount: extendApi(z.boolean().optional(), {
+            description:
+                "True when username is the account's name, as the admin just answered it. False or missing when it is only the name the auth token carried from sign-in, which can be older.",
+        }),
         locale: extendApi(z.string().nullable().optional(), {
             description:
                 "The locale (if returned by OpenID Connect).",

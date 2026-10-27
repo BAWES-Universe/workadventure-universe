@@ -15,6 +15,10 @@ on:
       - 'mobile/**'
       - '.github/workflows/mobile-ci.yml'
 
+# Read-only unless a job below says otherwise (#432)
+permissions:
+  contents: read
+
 jobs:
   validate:
     name: Validate Capacitor config

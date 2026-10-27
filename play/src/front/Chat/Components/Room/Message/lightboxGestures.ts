@@ -105,3 +105,20 @@ export function shouldCloseByDrag(dy: number, velocityY: number, stageHeight: nu
     // Fast flicks only count after a small real move, and only in the direction the picture was dragged.
     return distance > 48 && Math.abs(velocityY) > 0.6 && Math.sign(velocityY) === Math.sign(dy);
 }
+
+/** A box on the screen, as `getBoundingClientRect()` gives it. */
+export interface Box {
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+}
+
+/**
+ * True when a point of the screen is on the dark background, outside the picture as it is shown now (zoomed and moved
+ * or not). No picture on screen yet means every point is on the background.
+ */
+export function isOnBackground(point: Point, picture: Box | undefined): boolean {
+    if (!picture || picture.right <= picture.left || picture.bottom <= picture.top) return true;
+    return point.x < picture.left || point.x > picture.right || point.y < picture.top || point.y > picture.bottom;
+}

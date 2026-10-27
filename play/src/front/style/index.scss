@@ -1,5 +1,6 @@
 @charset "UTF-8";
 @import "highlight.js/scss/dark";
+@import "code-colors";
 @import "breakpoints";
 @import "cowebsite.scss";
 @import "style";
@@ -9,6 +10,9 @@
 // and the browser downloads only the alphabets a bubble or a name actually uses.
 @import "@fontsource/inter/500.css";
 @import "@fontsource/inter/600.css";
+// bawes.net's faces for the Universe popups: Space Grotesk for the title, Inter (400) for the line under it.
+@import "@fontsource/inter/400.css";
+@import "@fontsource/space-grotesk/700.css";
 @import "wa-theme/action-menu-bar.scss";
 @import "audio-range";
 @import "map-editor";

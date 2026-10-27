@@ -9,8 +9,11 @@ import LL from "../../../i18n/i18n-svelte";
 import { EditorToolName } from "../../Phaser/Game/MapEditor/MapEditorModeManager";
 import { gameManager } from "../../Phaser/Game/GameManager";
 import { wokaMenuStore, type WokaMenuData, type WokaMenuAction } from "../../Stores/WokaMenuStore";
-import { BOT_SERVER_URL } from "../../Enum/EnvironmentVariable";
+import { warningMessageStore } from "../../Stores/ErrorStore";
+import { refreshThisDeviceOnce } from "../../Notification/Push/PushDevice";
+import { getBotServerUrl } from "./services/BotServerUrl";
 import { botApiService } from "./services/BotApiService";
+import { summonFailureLine, type SummonFailure } from "./services/summonFailure";
 import { destroyBotEditorTool } from "./phaser/BotEditorTool";
 import { IconMapPin, IconRobot } from "@wa-icons";
 
@@ -83,6 +86,28 @@ export function openBotEditorFromMenu(): void {
         }
     };
     tryOpen();
+}
+
+/**
+ * Open one bot's page in the bot editor, for "Use my AI key" on the reply limit card (#1159). The editor loads this
+ * room's bots as it opens; the bot is picked once it is there, or the editor stays on its list.
+ */
+export function openBotPage(botId: string): void {
+    openBotEditorFromMenu();
+    const lifecycle = botEditorLifecycle;
+    const deadline = Date.now() + 8000;
+    void import("./stores/BotEditorStore").then(({ botPreviewsStore, selectBot }) => {
+        const trySelect = () => {
+            if (lifecycle !== botEditorLifecycle) return;
+            const bot = get(botPreviewsStore).get(botId);
+            if (bot) {
+                selectBot(bot);
+            } else if (Date.now() < deadline) {
+                setTimeout(trySelect, 300);
+            }
+        };
+        trySelect();
+    });
 }
 
 let _extensionOptions: ExtensionModuleOptions | null = null;
@@ -630,6 +655,14 @@ function setupBotEditor(options: ExtensionModuleOptions) {
             options.roomId,
             botServerUrl
         );
+        // Orbit can be reached now: a browser that already allows notifications is saved there again, and this tab
+        // tells Orbit while it is in front, so what is seen here sends no notification (#863).
+        refreshThisDeviceOnce();
+        if (localUserStore.isLogged()) {
+            import("../../Notification/Push/PushActivity")
+                .then(({ startPushActivity }) => startPushActivity())
+                .catch((error) => console.warn("Notifications: could not start reporting this tab", error));
+        }
 
         // If room changed and bot editor is open, trigger a reload
         if (roomIdChanged && botEditorOpen) {
@@ -755,50 +788,6 @@ function setupBotEditor(options: ExtensionModuleOptions) {
         tryInject();
         setTimeout(tryInject, 500);
         setTimeout(tryInject, 1000);
-    }
-}
-
-/**
- * Get bot-server URL from current environment
- * BOT_SERVER_URL wins when set. Hosts that don't follow the play.<domain> pattern need it:
- * dev.bawes.net would otherwise derive bot-server.bawes.net, which is production's bot server.
- * Otherwise derives from current window location by replacing the first subdomain with 'bot-server'
- * Works for:
- * - play.workadventure.localhost -> bot-server.workadventure.localhost
- * - play.workadventu.re -> bot-server.workadventu.re
- * - localhost:8080 -> bot-server.workadventure.localhost (fallback)
- * - Any custom domain -> bot-server.{rest of domain}
- */
-function getBotServerUrl(): string {
-    if (BOT_SERVER_URL) {
-        return BOT_SERVER_URL.replace(/\/+$/, "");
-    }
-    try {
-        const { protocol, hostname, port } = window.location;
-
-        // Handle localhost (development)
-        if (hostname === "localhost" || hostname === "127.0.0.1") {
-            // For localhost, use the standard dev domain
-            return `${protocol}//bot-server.workadventure.localhost${port ? `:${port}` : ""}`;
-        }
-
-        // Handle subdomain patterns (most common case)
-        // play.workadventure.localhost -> bot-server.workadventure.localhost
-        // play.workadventu.re -> bot-server.workadventu.re
-        if (hostname.includes(".")) {
-            const parts = hostname.split(".");
-            // Replace first subdomain with 'bot-server'
-            parts[0] = "bot-server";
-            const newHostname = parts.join(".");
-            return `${protocol}//${newHostname}${port ? `:${port}` : ""}`;
-        }
-
-        // Single word hostname (unlikely but handle gracefully)
-        return `${protocol}//bot-server.${hostname}${port ? `:${port}` : ""}`;
-    } catch (e) {
-        console.warn("[Bot Extension] Failed to derive bot-server URL from location:", e);
-        // Ultimate fallback - use standard dev domain
-        return "http://bot-server.workadventure.localhost";
     }
 }
 
@@ -1005,6 +994,9 @@ async function injectEmotionsIntoWokaMenu(menuData: WokaMenuData): Promise<void>
     }
 }
 
+// Counts the menus opened, so an answer that arrives after the card was closed (or reopened) adds nothing to it
+let wokaMenuOpening = 0;
+
 function setupWokaMenuHook() {
     if (wokaMenuUnsubscriber) return; // Already set up
 
@@ -1012,6 +1004,7 @@ function setupWokaMenuHook() {
         // When menu is cleared, cleanup emotions display
         if (!menuData) {
             lastProcessedMenu = null;
+            wokaMenuOpening++;
 
             isInjectingEmotions = false; // Reset guard
             injectionId++;
@@ -1047,13 +1040,25 @@ function setupWokaMenuHook() {
             if (actions && actions.length > 0) {
                 // Mark as processed immediately
                 lastProcessedMenu = currentState;
+                const opening = ++wokaMenuOpening;
 
                 // Check if "Summon" action already exists (safety check)
                 const hasSummon = menuData.actions.some((a) => a.actionName === "Summon");
                 if (!hasSummon) {
                     // Use microtask to add actions after current execution completes
                     // This prevents the subscription from firing again in the same tick
-                    void Promise.resolve().then(() => {
+                    void Promise.resolve().then(async () => {
+                        // A person the owner has refused does not get a Summon button. When it cannot be found out
+                        // (a guest, Orbit not answering) the button shows, and the real answer comes when it is used.
+                        if (menuData.userUuid.startsWith("bot-")) {
+                            const access = await botApiService.getBotAccess(
+                                menuData.userUuid.substring(4),
+                                "summon",
+                                localUserStore.getLocalUser()?.uuid
+                            );
+                            if (access.allowed === false) return;
+                        }
+                        if (opening !== wokaMenuOpening) return;
                         actions.forEach((action: WokaMenuAction) => {
                             // Double-check menu is still valid before adding
                             const currentMenu = get(wokaMenuStore);
@@ -1142,6 +1147,7 @@ function registerSummonButtonsForBots() {
                             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                                 console.warn(`[Bot Extension] Cannot summon - scene not available`);
                             }
+                            showSummonFailure("failed", playerData.name);
                             return;
                         }
 
@@ -1152,6 +1158,7 @@ function registerSummonButtonsForBots() {
                             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                                 console.warn(`[Bot Extension] Cannot summon - current player not available`);
                             }
+                            showSummonFailure("failed", playerData.name);
                             return;
                         }
 
@@ -1170,21 +1177,38 @@ function registerSummonButtonsForBots() {
                         // Bot userUuid is in format "bot-{botId}", but BotManager stores by botId
                         // Strip the "bot-" prefix to get the actual botId
                         const botId = botUuid.startsWith("bot-") ? botUuid.substring(4) : botUuid;
+                        // The owner may have limited who can summon the bot since the menu opened: say so, rather
+                        // than do nothing
+                        const access = await botApiService.getBotAccess(botId, "summon", currentUuid);
+                        if (access.allowed === false) {
+                            showSummonFailure("not_allowed", playerData.name, access.reason);
+                            return;
+                        }
+                        // Their login did not come along: say so up front, as Summon itself would
+                        if (access.allowed === null && access.signIn) {
+                            showSummonFailure("sign_in", playerData.name);
+                            return;
+                        }
                         // Call summon API - it will validate if this is a bot
-                        await botApiService.summonBot(
+                        const result = await botApiService.summonBot(
                             botId, // Use botId (without "bot-" prefix)
                             currentUuid,
                             currentPosition.x,
                             currentPosition.y
                         );
+                        if (!result.summoned) {
+                            showSummonFailure(result.failure, playerData.name, result.reason);
+                            return;
+                        }
                         if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                             console.log(`[Bot Extension] Summon request sent successfully`);
                         }
                     } catch (error) {
-                        // Silently fail if it's not a bot (API will return 404)
+                        // Anything unexpected still tells the player: nothing fails silently.
                         if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                             console.warn(`[Bot Extension] Summon failed for ${botUuid}:`, error);
                         }
+                        showSummonFailure("failed", playerData.name);
                     }
                 },
             };
@@ -1205,6 +1229,18 @@ function registerSummonButtonsForBots() {
     } catch (error) {
         console.error("[Bot Extension] Error registering summon buttons:", error);
     }
+}
+
+/** Tell the player why a Summon did not happen, in a short line. Every failure goes through here. */
+function showSummonFailure(failure: SummonFailure, botName: string | undefined, reason?: string): void {
+    const name = botName || "The bot";
+    // The owner's limits come in the bot server's own words (the owner's line when one is set); without them, plain ones
+    const text =
+        reason ||
+        (failure === "not_allowed"
+            ? get(LL).mapEditor.edit.bots.page.access.summonRefused({ name })
+            : get(LL).woka.summon[summonFailureLine(failure, localUserStore.isLogged())]({ name }));
+    warningMessageStore.addWarningMessage(text, { closable: true });
 }
 
 // Function to initialize the bot editor integration

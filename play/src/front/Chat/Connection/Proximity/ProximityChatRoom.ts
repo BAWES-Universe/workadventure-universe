@@ -19,6 +19,7 @@ import type {
     ChatMessageType,
     ChatRoom,
 } from "../ChatConnection";
+import { TYPING_STOP_GRACE_MS } from "../ChatConnection";
 import LL, { locale } from "../../../../i18n/i18n-svelte";
 import { iframeListener } from "../../../Api/IframeListener";
 import type { SpaceInterface, SpaceUserExtended } from "../../../Space/SpaceInterface";
@@ -32,7 +33,8 @@ import {
     shouldRestoreChatStateStore,
 } from "../../Stores/ChatStore";
 import { selectedRoomStore } from "../../Stores/SelectRoomStore";
-import { mapExtendedSpaceUserToChatUser } from "../../UserProvider/ChatUserMapper";
+import { isBotUser, mapExtendedSpaceUserToChatUser } from "../../UserProvider/ChatUserMapper";
+import { parseBotReplyLimit, type BotReplyLimit } from "../../Bots/BotReplyLimit";
 import { gameManager } from "../../../Phaser/Game/GameManager";
 import { availabilityStatusStore, requestedCameraState, requestedMicrophoneState } from "../../../Stores/MediaStore";
 import { localUserStore } from "../../../Connection/LocalUserStore";
@@ -82,7 +84,7 @@ import {
 const debug = Debug("ProximityChatRoom");
 
 // A typing entry expires on its own if no new "typing" event refreshes it, so a lost "stopped typing" event
-// can never leave the indicator stuck. The sender re-emits "typing" on every keystroke.
+// can never leave the indicator stuck. The sender says "typing" again every few seconds while keys keep coming.
 export const TYPING_EXPIRY_MS = 12000;
 
 /**
@@ -116,6 +118,8 @@ export interface ProximityChatMessageOptions {
      * everyone (sent by this game) get one; without it the message takes no reactions.
      */
     react?: (message: ProximityChatMessage, key: string) => void;
+    /** A reply limit the person reached on a bot (#1159): the message is the fixed card. */
+    replyLimit?: BotReplyLimit;
 }
 
 export class ProximityChatMessage implements ChatMessage {
@@ -142,6 +146,8 @@ export class ProximityChatMessage implements ChatMessage {
      * Local and in memory only.
      */
     stoppedOnLeave?: boolean;
+    /** Set on the fixed card a bot sends one person who reached a reply limit (#1159). Local and in memory only. */
+    replyLimit?: BotReplyLimit;
     constructor(
         public id: string,
         public sender: AnyKindOfUser,
@@ -153,9 +159,10 @@ export class ProximityChatMessage implements ChatMessage {
     ) {
         this.session = options.session;
         this.notSent = options.notSent;
+        this.replyLimit = options.replyLimit;
         this.quotedMessage = options.quotedMessage;
         this.isQuotedMessage = options.isQuotedMessage;
-        const isConversation = !options.session && !options.notSent && !options.isQuotedMessage;
+        const isConversation = !options.session && !options.notSent && !options.isQuotedMessage && !options.replyLimit;
         const hasContent = type !== "incoming" && type !== "outcoming";
         this.canReact.set(isConversation && hasContent && options.react !== undefined);
         this.canReply.set(isConversation && hasContent);
@@ -198,6 +205,9 @@ export class ProximityChatRoom implements ChatRoom {
     private spaceMessageSubscription: Subscription | undefined;
     private spaceIsTypingSubscription: Subscription | undefined;
     private spaceMessageReactionSubscription: Subscription | undefined;
+    private spaceReplyLimitSubscription: Subscription | undefined;
+    /** The reply limit card shown for each bot, by bot id, so a newer one replaces it */
+    private replyLimitCards = new Map<string, string>();
     // Expiry timers of the typing entries, by spaceUserId of the sender
     private typingExpiryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
     private spaceStreamMessageSubscription: Subscription | undefined;
@@ -250,6 +260,11 @@ export class ProximityChatRoom implements ChatRoom {
     private readonly _unsentDrafts: Writable<Map<string, string>> = writable(new Map());
     /** The timeline split into stays, room messages first, the live one last. */
     public readonly sessions: Readable<ProximitySession<ChatMessage>[]>;
+
+    /** The name of the space this tab is in now (as the bots name it), if any: the chat a nearby artifact card belongs to. */
+    public get currentSpaceName(): string | undefined {
+        return this._space && !this._space.destroyed ? this._space.getName() : undefined;
+    }
 
     /** The id of the stay this tab is in now, if any. */
     public get currentSessionId(): string | undefined {
@@ -816,6 +831,29 @@ export class ProximityChatRoom implements ChatRoom {
         });
     };
 
+    /** The fixed reply limit card, in place of the bot's last one, opening the chat if it is closed. */
+    private showReplyLimit(replyLimit: BotReplyLimit, senderSpaceUserId: string): void {
+        const shown = this.replyLimitCards.get(replyLimit.botId);
+        if (shown) this.messages.delete(shown);
+        // The sender as this chat knows them (with their picture and status), as for the bot's streamed replies
+        const spaceUser = this.users?.get(senderSpaceUserId);
+        const card = new ProximityChatMessage(
+            uuidv4(),
+            spaceUser ? mapExtendedSpaceUserToChatUser(spaceUser) : this.unknownUser,
+            writable({ body: "", url: undefined, urls: undefined, filename: undefined, fileNames: undefined }),
+            new Date(),
+            false,
+            "proximity",
+            { replyLimit }
+        );
+        this.replyLimitCards.set(replyLimit.botId, card.id);
+        this.removeTypingUserbyID(senderSpaceUserId);
+        this.messages.push(card);
+        this.lastMessageTimestamp = card.date.getTime();
+        openChat("bubble");
+        this.showIfNothingOpen();
+    }
+
     private applyRemoteReaction(senderUserId: string, event: SpaceMessageReaction): void {
         if (!isUsableReaction(event.reaction)) return;
         const message = this.messages.get(event.messageId);
@@ -1116,6 +1154,17 @@ export class ProximityChatRoom implements ChatRoom {
         });
     }
 
+    /** A "stopped" keeps the dots a moment (TYPING_STOP_GRACE_MS), in case typing starts again right away. */
+    private typingStoppedBy(id: string) {
+        const timer = this.typingExpiryTimers.get(id);
+        if (!timer) return;
+        clearTimeout(timer);
+        this.typingExpiryTimers.set(
+            id,
+            setTimeout(() => this.removeTypingUserbyID(id), TYPING_STOP_GRACE_MS)
+        );
+    }
+
     private removeTypingUserbyID(id: string) {
         const timer = this.typingExpiryTimers.get(id);
         if (timer) {
@@ -1185,6 +1234,9 @@ export class ProximityChatRoom implements ChatRoom {
 
         // TODO: we need to move that elsewhere.
         // Set up manager of audio streams received by the scripting API (useful for bots)
+        // The previous space may have been torn down without going through leaveSpace() (e.g. left directly
+        // through the space registry), so release any managers still registered before creating new ones.
+        this.closeScriptingAudioStreamManagers();
         this.scriptingOutputAudioStreamManager = new ScriptingOutputAudioStreamManager(this._space);
         this.scriptingInputAudioStreamManager = new ScriptingInputAudioStreamManager(this._space);
 
@@ -1279,7 +1331,7 @@ export class ProximityChatRoom implements ChatRoom {
             if (event.spaceIsTyping.isTyping) {
                 this.addTypingUser(event.sender, event.spaceIsTyping.characterTextures, event.spaceIsTyping.name);
             } else {
-                this.removeTypingUserbyID(event.sender);
+                this.typingStoppedBy(event.sender);
             }
         });
 
@@ -1292,6 +1344,20 @@ export class ProximityChatRoom implements ChatRoom {
                 }
                 this.applyRemoteReaction(event.sender, event.spaceMessageReaction);
             });
+
+        // A bot's reply limit card (#1159), sent to this person only. The pusher passes it on only from a bot about
+        // itself; it is checked here again. A newer card from the same bot takes the place of the last one.
+        this.spaceReplyLimitSubscription?.unsubscribe();
+        this.spaceReplyLimitSubscription = this._space.observePrivateEvent("botReplyLimit").subscribe((event) => {
+            if (!isBotUser(event.sender) || event.sender.uuid !== `bot-${event.botReplyLimit.botId}`) return;
+            const replyLimit = parseBotReplyLimit(
+                event.botReplyLimit,
+                event.botReplyLimit.botId,
+                event.botReplyLimit.botName || event.sender.name
+            );
+            if (!replyLimit) return;
+            this.showReplyLimit(replyLimit, event.sender.spaceUserId);
+        });
 
         // Subscribe to streaming bot responses — tokens arrive incrementally
         this.spaceStreamMessageSubscription = this._space
@@ -1470,8 +1536,10 @@ export class ProximityChatRoom implements ChatRoom {
                 this.spaceMessageSubscription?.unsubscribe();
                 this.spaceIsTypingSubscription?.unsubscribe();
                 this.spaceMessageReactionSubscription?.unsubscribe();
+                this.spaceReplyLimitSubscription?.unsubscribe();
                 this.spaceStreamMessageSubscription?.unsubscribe();
                 this.streamMessages.clear();
+                this.closeScriptingAudioStreamManagers();
                 if (this._space) {
                     this.spaceRegistry.leaveSpace(this._space).catch((error) => {
                         console.error("Error leaving space: ", error);
@@ -1691,13 +1759,11 @@ export class ProximityChatRoom implements ChatRoom {
         this.spaceMessageSubscription?.unsubscribe();
         this.spaceIsTypingSubscription?.unsubscribe();
         this.spaceMessageReactionSubscription?.unsubscribe();
+        this.spaceReplyLimitSubscription?.unsubscribe();
         this.spaceStreamMessageSubscription?.unsubscribe();
         this.streamMessages.clear();
 
-        this.scriptingOutputAudioStreamManager?.close();
-        this.scriptingInputAudioStreamManager?.close();
-        this.scriptingOutputAudioStreamManager = undefined;
-        this.scriptingInputAudioStreamManager = undefined;
+        this.closeScriptingAudioStreamManagers();
 
         try {
             await this.spaceRegistry.leaveSpace(space);
@@ -1706,6 +1772,17 @@ export class ProximityChatRoom implements ChatRoom {
             Sentry.captureException(error);
         }
         return undefined;
+    }
+
+    /**
+     * Releases the scripting audio stream managers. Closing the output manager unregisters its iframe answerers,
+     * which must happen before a new manager registers them again.
+     */
+    private closeScriptingAudioStreamManagers(): void {
+        this.scriptingOutputAudioStreamManager?.close();
+        this.scriptingInputAudioStreamManager?.close();
+        this.scriptingOutputAudioStreamManager = undefined;
+        this.scriptingInputAudioStreamManager = undefined;
     }
 
     private restoreChatState() {
@@ -1761,12 +1838,12 @@ export class ProximityChatRoom implements ChatRoom {
         this.spaceMessageSubscription?.unsubscribe();
         this.spaceIsTypingSubscription?.unsubscribe();
         this.spaceMessageReactionSubscription?.unsubscribe();
+        this.spaceReplyLimitSubscription?.unsubscribe();
         this.spaceStreamMessageSubscription?.unsubscribe();
         this.streamMessages.clear();
         this.clearTypingMembers();
 
-        this.scriptingOutputAudioStreamManager?.close();
-        this.scriptingInputAudioStreamManager?.close();
+        this.closeScriptingAudioStreamManagers();
         this.spaceWatcherUserJoinedObserver?.unsubscribe();
         this.spaceWatcherUserLeftObserver?.unsubscribe();
         this.observeUserJoinedSubscription?.unsubscribe();

@@ -119,6 +119,23 @@ describe("UserProviderMerger", () => {
     });
 });
 
+describe("UserProviderMerger roles", () => {
+    const provider = (users: PartialChatUser[]): UserProviderInterface => ({
+        users: writable(users),
+        setFilter: () => Promise.resolve(),
+    });
+    const service = { key: "customer-service", name: "Customer Service", color: "#38BDF8", visibleOnOthers: true };
+
+    it("keeps the roles of a person even when another source knows them without roles", () => {
+        const merger = new UserProviderMerger([
+            provider([{ chatId: "@sara:chat", username: "Sara", roles: [service] }]),
+            provider([{ chatId: "@sara:chat", username: "Sara", roles: [] }]),
+        ]);
+        const sara = [...get(merger.usersByRoomStore).values()][0].users[0];
+        expect(sara.roles).toEqual([service]);
+    });
+});
+
 describe("UserProviderMerger pictures", () => {
     const provider = (users: PartialChatUser[]): UserProviderInterface => ({
         users: writable(users),

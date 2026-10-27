@@ -1,6 +1,6 @@
 <script lang="ts">
     import type { ComponentType } from "svelte";
-    import { createEventDispatcher, getContext, hasContext } from "svelte";
+    import { createEventDispatcher, getContext, hasContext, setContext } from "svelte";
     import { derived, readable } from "svelte/store";
     import type { Readable } from "svelte/store";
     import type { PictureStore } from "../../../Stores/PictureStore";
@@ -12,6 +12,9 @@
     import { selectedChatMessageToEdit } from "../../Stores/ChatStore";
     import { ProximityChatMessage } from "../../Connection/Proximity/ProximityChatRoom";
     import LinkPreview from "../../LinkPreview/LinkPreview.svelte";
+    import BotRoomCard from "../../Bots/BotRoomCard.svelte";
+    import ArtifactCardView from "../../../Artifacts/ArtifactCardView.svelte";
+    import { readArtifactLine } from "../../../Artifacts/artifactCard";
     import { bodyShownWithCard } from "../../LinkPreview/ChatLinkKind";
     import MessageOptions from "./MessageOptions.svelte";
     import MessageImage from "./Message/MessageImage.svelte";
@@ -20,6 +23,7 @@
     import MessageAudioFile from "./Message/MessageAudioFile.svelte";
     import MessageVideoFile from "./Message/MessageVideoFile.svelte";
     import MessageGallery from "./Message/MessageGallery.svelte";
+    import { MESSAGE_SENDER_CONTEXT, type MessageSenderInfo } from "./Message/messageSenderContext";
     import MessageEdition from "./MessageEdition.svelte";
     import MessageReactions from "./MessageReactions.svelte";
     import MessageIncoming from "./Message/MessageIncoming.svelte";
@@ -79,6 +83,9 @@
         isModified,
         reactions,
     } = message;
+
+    // File cards say who sent the file.
+    setContext<MessageSenderInfo>(MESSAGE_SENDER_CONTEXT, { name: sender?.username, isMine: isMyMessage });
 
     $: senderPicture = personPicture($wokaByChatId, sender?.chatId, sender?.pictureStore) ?? readable(undefined);
     $: senderColour = $colourOf(sender?.chatId, sender?.username);
@@ -148,6 +155,10 @@
     $: contentType = $content ? message.type : type;
 
     // A text message with a link gets a card under it.
+    // A bot's artifact is a card, not text: from the field of its direct message, or from the line it put in nearby chat.
+    $: artifactCard = $isDeleted
+        ? undefined
+        : message.artifact ?? readArtifactLine($content?.body, sender?.isBot === true);
     $: hasLinkCard = replyDepth === 0 && !isQuotedMessage && (contentType === "text" || contentType === "proximity");
     // A video or app link that ends the message is shown by its card, not as a long address. Only what is shown
     // changes: the message keeps its link for copying, replies and bots.
@@ -255,7 +266,9 @@
                 {/if}
 
                 {#if !notSent}
-                    {#if !hasLinkCard}
+                    {#if artifactCard}
+                        <ArtifactCardView card={artifactCard} makerName={sender?.username} />
+                    {:else if !hasLinkCard}
                         <svelte:component
                             this={messageType[contentType]}
                             on:updateMessageBody={updateMessageBody}
@@ -270,6 +283,9 @@
                             />
                         {/if}
                         <LinkPreview body={$content?.body} mine={isMyMessage} alone={shownBody === ""} />
+                    {/if}
+                    {#if message.roomLink && !$isDeleted}
+                        <BotRoomCard link={message.roomLink} botName={sender?.username} />
                     {/if}
                 {:else if $content.body.trim() !== ""}
                     <div class="opacity-70">

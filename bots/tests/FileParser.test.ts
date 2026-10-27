@@ -246,8 +246,11 @@ describe('FileParser', () => {
             expect(result.truncated).toBeFalsy();
         });
 
-        it('extracts spreadsheet content via real xlsx parsing', async () => {
-            const url = 'https://cdn.example.com/data.xlsx';
+        it.each([
+            ['xlsx', 'xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+            ['biff8', 'xls', 'application/vnd.ms-excel'],
+        ] as const)('extracts spreadsheet content via real xlsx parsing (%s)', async (bookType, extension, mimeType) => {
+            const url = `https://cdn.example.com/data.${extension}`;
 
             // Create a real xlsx buffer using the actual xlsx library
             const XLSX = await import('xlsx');
@@ -260,12 +263,12 @@ describe('FileParser', () => {
             XLSX.utils.book_append_sheet(realWb, realWs, 'Sheet1');
             const secondWs = XLSX.utils.aoa_to_sheet([['Date', 'Event']]);
             XLSX.utils.book_append_sheet(realWb, secondWs, 'Sheet2');
-            const xlsxBuffer: ArrayBuffer = XLSX.write(realWb, { type: 'array', bookType: 'xlsx' });
+            const xlsxBuffer: ArrayBuffer = XLSX.write(realWb, { type: 'array', bookType });
 
             // Mock the global fetch API that FileParser.fetchBuffer uses
             const originalFetch = globalThis.fetch;
             globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
-                if (url.startsWith('https://cdn.example.com/data.xlsx')) {
+                if (url.startsWith(`https://cdn.example.com/data.${extension}`)) {
                     let streamDone = false;
                     const reader = {
                         read: async () => {
@@ -279,16 +282,13 @@ describe('FileParser', () => {
                         ok: true,
                         status: 200,
                         body: { getReader: () => reader },
-                        headers: new Map([['content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']]),
+                        headers: new Map([['content-type', mimeType]]),
                     };
                 }
                 return new Response(null, { status: 404 });
             });
 
-            const result = await FileParser.parseFile(
-                url,
-                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-            );
+            const result = await FileParser.parseFile(url, mimeType);
 
             // Restore original fetch
             globalThis.fetch = originalFetch;
@@ -331,15 +331,27 @@ describe('FileParser', () => {
         it('truncates text content exceeding MAX_FILE_CHARS', async () => {
             const url = 'https://cdn.example.com/large.txt';
             const line = 'a'.repeat(100);
-            const content = Array.from({ length: 110 }, () => line).join('\n');
+            const content = Array.from({ length: 510 }, () => line).join('\n');
 
             mockFetchOnce(content);
 
             const result = await FileParser.parseFile(url, 'text/plain');
 
             expect(result.type).toBe('text');
+            expect(FileParser.MAX_FILE_CHARS).toBe(50_000);
             expect(result.text!.length).toBeLessThanOrEqual(FileParser.MAX_FILE_CHARS);
             expect(result.truncated).toBe(true);
+        });
+
+        it('reads as much as the bot’s "Reads from a page or file" says (Orbit #666)', async () => {
+            const content = 'a'.repeat(30_000);
+            mockFetchOnce(content);
+            const short = await FileParser.parseFile('https://cdn.example.com/a.txt', 'text/plain', 10_000);
+            expect(short.text).toHaveLength(10_000);
+            expect(short.truncated).toBe(true);
+            mockFetchOnce(content);
+            const whole = await FileParser.parseFile('https://cdn.example.com/a.txt', 'text/plain', 100_000);
+            expect(whole.text).toHaveLength(30_000);
         });
 
         it('returns error summary when text fetch fails', async () => {
@@ -494,14 +506,14 @@ describe('FileParser', () => {
 
         it('truncates long decks at MAX_FILE_CHARS and says so in the summary', async () => {
             const body = 'x'.repeat(400);
-            mockFetchOnce(makeDeck(Array.from({ length: 60 }, (_, i) => slideXml(textShape([`Title ${i}`], 'title') + textShape([body])))));
+            mockFetchOnce(makeDeck(Array.from({ length: 160 }, (_, i) => slideXml(textShape([`Title ${i}`], 'title') + textShape([body])))));
 
             const result = await FileParser.parseFile(url, PPTX_MIME);
 
             expect(result.type).toBe('document');
             expect(result.truncated).toBe(true);
             expect(result.text!.length).toBeLessThanOrEqual(FileParser.MAX_FILE_CHARS);
-            expect(result.summary).toContain('60 slides');
+            expect(result.summary).toContain('160 slides');
             expect(result.summary).toContain('truncated');
         });
 

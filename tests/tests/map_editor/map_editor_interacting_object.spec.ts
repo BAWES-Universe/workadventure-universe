@@ -120,15 +120,11 @@ test.describe("Map editor interacting with object @oidc @nomobile", () => {
     // Move to the entity
     await EntityEditor.moveAndRightClick(page, 0, 8.5 * 32 * 1.5);
 
+    // A PDF opens in the file viewer beside the map, which reads the file from the map storage with the player's pass.
+    const entityFileResponse = page.waitForResponse((response) => response.url().includes("ipsum-lorem"));
     await page.keyboard.press("Space");
-
-    // Wait for iframe to appear (you might need to adjust the selector based on the actual iframe)
-    //eslint-disable-next-line playwright/no-wait-for-selector
-    const iframeE = await page.waitForSelector('iframe[src*="ipsum-lorem"]');
-
-    // Assert that the iframe of the Entity has the correct 'src' attribute
-    const iframeSrcE = await iframeE.getAttribute('src');
-    expect(iframeSrcE).toContain('ipsum-lorem');
+    await expect(page.getByRole("dialog", { name: /ipsum-lorem/ })).toBeVisible();
+    const fileUrlE = (await entityFileResponse).url();
 
     // Refresh the page to create area
     await page.goto(Map.url("empty"));
@@ -151,28 +147,30 @@ test.describe("Map editor interacting with object @oidc @nomobile", () => {
     );
 
     // Walk to the area
+    const areaFileResponse = page.waitForResponse((response) => response.url().includes("lorem-ipsum"));
     await Map.teleportToPosition(page, 9 * 32, 9 * 32);
 
-    // Wait for iframe to appear (you might need to adjust the selector based on the actual iframe)
-    //eslint-disable-next-line playwright/no-wait-for-selector
-    const iframeA = await page.waitForSelector('iframe[src*="lorem-ipsum"]');
+    // The area's PDF opens in the file viewer too
+    await expect(page.getByRole("dialog", { name: /lorem-ipsum/ })).toBeVisible();
+    const fileUrlA = (await areaFileResponse).url();
 
-    // Assert that the iframe of the Area has the correct 'src' attribute
-    const iframeSrcA = await iframeA.getAttribute('src');
-    expect(iframeSrcA).toContain('lorem-ipsum');
-
-    // Check if the PDF files from entity iframe are accessible
-    const uploadFileE1 = request.post(iframeSrcE);
+    // Check if the PDF file of the entity is accessible
+    const uploadFileE1 = request.post(fileUrlE);
     expect((await uploadFileE1).ok()).toBeTruthy();
 
-    // Check if the PDF files from area iframe are accessible
-    const uploadFileA1 = request.post(iframeSrcA);
+    // Check if the PDF file of the area is accessible
+    const uploadFileA1 = request.post(fileUrlA);
     expect((await uploadFileA1).ok()).toBeTruthy();
+
+    // The file's window floats over the right of the map, where the area's panel is: close it, as a person would, to
+    // reach the panel.
+    await page.getByTestId("openHereClose").click();
+    await expect(page.getByTestId("openHereWindow")).toBeHidden();
 
     await AreaEditor.deleteFile(page);
 
-    // Check if the PDF files from area iframe are still accessible
-    const uploadedFileA2 = request.post(iframeSrcA);
+    // Check if the PDF file of the area is still accessible
+    const uploadedFileA2 = request.post(fileUrlA);
     expect((await uploadedFileA2).ok()).toBeFalsy();
 
     await Menu.closeMapEditor(page);
@@ -186,7 +184,7 @@ test.describe("Map editor interacting with object @oidc @nomobile", () => {
     await page.keyboard.press("Delete");
 
     // The deletion travels through the pusher and the back to map-storage; the file is gone a moment later.
-    await expect.poll(async () => (await request.post(iframeSrcE)).ok()).toBeFalsy();
+    await expect.poll(async () => (await request.post(fileUrlE)).ok()).toBeFalsy();
 
 
     await page.context().close();

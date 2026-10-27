@@ -5,6 +5,9 @@
         openedMenuStore,
     } from "../../../Stores/MenuStore";
     import { modalIframeStore, modalVisibilityStore } from "../../../Stores/ModalStore";
+    import { openHereInFrontOfOrbitStore } from "../../../Stores/CoWebsiteStore";
+    import { sideWindowInFrontStore } from "../../../Stores/SideWindowInFrontStore";
+    import { windowInFrontStore } from "../../../Stores/WindowInFrontStore";
     import ActionBarButton from "../ActionBarButton.svelte";
     import { openAdminModalFromMenu } from "../../../external-modules/admin-api/index";
     import OrbitIcon from "../../Icons/OrbitIcon.svelte";
@@ -31,9 +34,18 @@
     $: attention = $orbitAttentionCountStore;
     $: attentionLabel = attention > 99 ? "99+" : String(attention);
 
+    // Orbit is open but the Open here window (files and links) is in front of it.
+    $: orbitBehindWindow = orbitOpen && $openHereInFrontOfOrbitStore;
+
     // The button toggles, like Explore: pressed again while Orbit shows, it closes Orbit the way its close button does.
+    // While the window of files and links is in front of Orbit, the first press brings Orbit forward instead.
     function toggleOrbit() {
         if (pending) return;
+        if (orbitBehindWindow) {
+            sideWindowInFrontStore.set("orbit");
+            windowInFrontStore.set("window");
+            return;
+        }
         if (!orbitOpen) {
             // A menu opened before Orbit would keep the bar in front of it: the window opened last is the one in front.
             openedMenuStore.closeAll();

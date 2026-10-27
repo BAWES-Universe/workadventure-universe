@@ -24,7 +24,7 @@
     const hasChatsTab = gameScene.room.isChatEnabled;
     const hasPeopleTab = gameScene.room.isChatOnlineListEnabled || gameScene.room.isChatDisconnectedListEnabled;
     const showPeopleCount = gameScene.room.isChatOnlineListEnabled;
-    const worldUserCount = gameScene.worldUserCounter;
+    const worldUserCount = gameScene.worldPeopleCounter;
     const proximityChatRoom = gameScene.proximityChatRoom;
     const proximityUnread = proximityChatRoom.hasUnreadMessages;
 

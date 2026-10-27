@@ -983,7 +983,7 @@
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "`getByTestId('notification-toggle')` (SettingsSubMenu.svelte:333-340); `ignoreFollowRequests-toggle` (:341-346)"
+      "hooks": "`getByTestId('notification-toggle')` and `ignoreFollowRequests-toggle` (Settings > Notifications, NotificationsSettings.svelte)"
     },
     {
       "id": "JN-083",
@@ -3612,7 +3612,7 @@
       "area": "Chat",
       "topic": "DM menu",
       "action": "In a DM, open ⋮. Try Walk to, Locate, View profile, Mute notifications, Delete chat (Cancel, then Delete).",
-      "expected": "Walk to and Locate show only when usable: Locate is hidden in another room, and both are hidden when away, offline or talking with you. View profile opens their profile in Orbit, whether they are in Universe or away (the chat's own profile page only for a bot). Mute toggles \"Unmute notifications\". Delete chat asks \"Delete this chat?\" with Cancel/Delete, then shows \"Chat deleted\".",
+      "expected": "Walk to and Locate show only when usable: Locate is hidden in another room, and both are hidden when away, offline or talking with you. View profile opens their profile in Orbit, whether they are in Universe or away (the chat's own profile page only for a bot). Mute toggles \"Unmute notifications\". Delete chat asks \"Delete this chat?\" with Cancel/Delete, then shows \"Deleted your chat with <name>\" in a pill at the top centre for 4 seconds.",
       "source": "approved DM v2 10-04",
       "runs": "needs-chat",
       "runsNote": "needs-chat",
@@ -3648,7 +3648,7 @@
       "area": "Chat",
       "topic": "Groups",
       "action": "In a group, open ⋮: Participants, Mute group, Leave group.",
-      "expected": "Participants opens Manage participants (invite, kick, ban, roles). Mute toggles \"Unmute group\". Leave removes it (\"You have left the group\"). The header shows the group picture, name, lock if encrypted, and \"N members\".",
+      "expected": "Participants opens Manage participants (invite, kick, ban, roles). Mute toggles \"Unmute group\". Leave removes it (\"Left <group name>\" in a pill at the top centre). The header shows the group picture, name, lock if encrypted, and \"N members\".",
       "source": "prod + approved DM v2 (header layout)",
       "runs": "needs-chat",
       "runsNote": "needs-chat",
@@ -7032,12 +7032,12 @@
       "area": "Orbit and map scripts",
       "topic": "Cowebsite: on enter",
       "action": "Phone portrait: same map/area.",
-      "expected": "The cowebsite opens above the map (portrait split) with a horizontal drag bar under it.",
+      "expected": "The cowebsite opens in a bottom sheet over the map, with a drag handle on top of it.",
       "source": "prod",
       "runs": "yes",
       "runsNote": "yes",
       "knownGap": false,
-      "hooks": "`CoWebsitesContainer.svelte:286-299` (`cursor-row-resize` bar in portrait)."
+      "hooks": "`OpenHereWindow.svelte` (`data-testid=\"openHereSheet\"`, handle `openHereSheetHandle`)."
     },
     {
       "id": "OR-079",

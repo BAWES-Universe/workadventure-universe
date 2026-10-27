@@ -70,9 +70,9 @@ test.describe("Universe title bar @nomobile @nowebkit @nofirefox", () => {
         expect(body.top).toBe(STRIP_HEIGHT);
         expect(body.bottom).toBe(body.height);
 
-        // "N here" is the People tab's count, and opens the tab.
+        // "1 person" is the People tab's room count, and opens the tab.
         const here = page.getByTestId("titleBarHere");
-        await expect(here).toHaveText(/1 here/);
+        await expect(here).toHaveText(/1 person/);
         await here.click();
         await expect(page.getByTestId("chatInviteFooter")).toBeVisible();
 

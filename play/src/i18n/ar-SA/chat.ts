@@ -311,7 +311,7 @@ const chat: DeepPartial<Translation["chat"]> = {
     roomMenu: {
         leaveRoom: {
             label: "مغادرة المجموعة",
-            notification: "لقد غادرت المجموعة",
+            notification: "غادرت {name}",
         },
         muteRoom: "كتم المجموعة",
         unmuteRoom: "إلغاء كتم المجموعة",
@@ -365,12 +365,6 @@ const chat: DeepPartial<Translation["chat"]> = {
         },
     },
     connectionError: "الدردشة غير متاحة",
-    requiresLoginForChatModal: {
-        title: "قم بتسجيل الدخول لفتح الدردشة!",
-        content_1: "للاستمتاع الكامل بميزة الدردشة هذه، تحتاج إلى تسجيل الدخول إلى حسابك.",
-        content_2: "يتيح لك تسجيل الدخول الوصول إلى جميع الخيارات ويسمح لك بالاستمرار دون انقطاع.",
-        content_3: " يرجى تسجيل الدخول للمتابعة مع التجربة.",
-    },
     verificationEmojiDialog: {
         confirmation: "تطابقوا",
         mismatch: "لا يتطابقون",
@@ -557,12 +551,28 @@ const chat: DeepPartial<Translation["chat"]> = {
     },
     peopleTab: {
         thisRoom: "هذه الغرفة",
-        countHere: "{count} هنا",
+        countPeople: "{count} {{أشخاص|شخص|شخصان|أشخاص|شخصًا|شخص}}",
+        countBots: "{count} {{روبوتات|روبوت|روبوتان|روبوتات|روبوتًا|روبوت}}",
         elsewhere: "في مكان آخر من هذا العالم",
         offline: "الأعضاء غير المتصلين",
         offlineHint: "أعضاء هذا العالم غير المتصلين الآن.",
         collapse: "طيّ {section}",
         expand: "توسيع {section}",
+    },
+    botStatus: {
+        online: "متصل",
+        resting: "في استراحة",
+        unready: "ليس جاهزًا بعد",
+        gone: "غادر",
+        restingPlaceholder: "الردود متوقفة",
+        unreadyPlaceholder: "لا يمكنه الرد بعد",
+        closed: "هذه الدردشة مغلقة",
+        left: "غادر {name}",
+        visit: "زيارة",
+        visitAria: "زيارة {name} في {room}",
+        livesIn: "يقيم في",
+        nowIn: "موجود الآن في",
+        inThisRoom: "أنت في هذه الغرفة",
     },
     session: {
         live: "مباشر",

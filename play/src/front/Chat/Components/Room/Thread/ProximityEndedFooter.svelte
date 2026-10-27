@@ -17,6 +17,7 @@
     import RingButton from "../../UserList/RingButton.svelte";
     import { localUserStore } from "../../../../Connection/LocalUserStore";
     import { blackListManager } from "../../../../WebRtc/BlackListManager";
+    import { isBotUser } from "../../../UserProvider/ChatUserMapper";
     import {
         IconCheck,
         IconCopy,
@@ -150,6 +151,7 @@
 
     // "You were with": the signed-in people of this chat (only they have a chat id), each with Add friend unless you
     // are friends already or asked. How most friendships start: you met, so you add. Friends can be rung back.
+    // Bots are left out, as in People and on the map card: they can't be friends or come over (Walk to stays).
     $: metPeople = ((): { uuid: string; name: string }[] => {
         if (!$friendsEnabledStore) return [];
         const me = localUserStore.getLocalUser()?.uuid;
@@ -157,7 +159,7 @@
         const people: { uuid: string; name: string }[] = [];
         session.participantIds.forEach((spaceUserId, index) => {
             const user = $worldUsers?.get(spaceUserId);
-            if (!user?.uuid || !user.chatID || user.uuid === me || seen.has(user.uuid)) return;
+            if (!user?.uuid || !user.chatID || user.uuid === me || seen.has(user.uuid) || isBotUser(user)) return;
             seen.add(user.uuid);
             people.push({ uuid: user.uuid, name: user.name || session.participants[index] || "" });
         });
