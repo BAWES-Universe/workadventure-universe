@@ -97,6 +97,45 @@ describe("visionMain", () => {
         expect(visionMain(options(), "key-l")).toMatchObject({ sees: false, group: "own-computer", sameKeyModels: [] });
     });
 
+    it("a bot on its own model on the key: that model, and what the provider says about it, not the key's check model", () => {
+        const withModels = options({
+            keys: [
+                key("key-1", {
+                    models: [{ id: "deepseek-v4-flash" }, { id: "deepseek-v4-vision-exp", vision: true }],
+                }),
+                gemini,
+            ],
+        });
+        expect(visionMain(withModels, "key-1", "deepseek-v4-vision-exp")).toMatchObject({
+            model: "deepseek-v4-vision-exp",
+            sees: true,
+            sameKeyModels: ["deepseek-v4-flash-vision-exp"],
+        });
+        // Its own model is the key's check model, or none yet: as it was
+        expect(visionMain(withModels, "key-1", "deepseek-v4-flash")).toMatchObject({ sees: false });
+        expect(visionMain(withModels, "key-1", null)).toMatchObject({ model: "deepseek-v4-flash", sees: false });
+        // The key's Vision model that is the bot's own is not "another" model
+        expect(visionMain(withModels, "key-1", "deepseek-v4-flash-vision-exp")?.sameKeyModels).toEqual([]);
+    });
+
+    it("visionState takes the bot's model from the bot, else from what Orbit said it was saved with", () => {
+        const withModels = options({
+            current: "key-1",
+            currentModel: "deepseek-v4-vision-exp",
+            keys: [
+                key("key-1", { models: [{ id: "deepseek-v4-flash" }, { id: "deepseek-v4-vision-exp", vision: true }] }),
+            ],
+        });
+        expect(visionState(withModels, "key-1", bot())?.main).toMatchObject({
+            model: "deepseek-v4-vision-exp",
+            sees: true,
+        });
+        expect(visionState(withModels, "key-1", { ...bot(), aiModel: "deepseek-v4-flash" })?.main).toMatchObject({
+            model: "deepseek-v4-flash",
+            sees: false,
+        });
+    });
+
     it("someone else's key the bot is on, read from what Orbit says about it", () => {
         const others = options({
             current: "key-9",

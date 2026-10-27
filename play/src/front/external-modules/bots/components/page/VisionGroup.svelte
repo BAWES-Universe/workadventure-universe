@@ -12,9 +12,12 @@
     export let open: boolean;
     export let onToggle: (id: string) => void;
     export let onChange: (bot: BotData) => void;
+    /** The newest answer the Mind group has (it reloads after a key is lent), so a key lent just now is known here too. */
+    export let aiOptions: BotAiOptions | null = null;
 
     /** What Orbit says about this bot's AI (the same answer the Mind group uses). Null when it can't say: the row stays out. */
-    let options: BotAiOptions | null = null;
+    let loaded: BotAiOptions | null = null;
+    $: options = aiOptions ?? loaded;
     let loadedFor: string | undefined | null = null;
     let loadCount = 0;
 
@@ -23,8 +26,8 @@
         const mine = ++loadCount;
         if (!botApiService.isInitialized()) return;
         try {
-            const loaded = await botApiService.getBotAiOptions(botId ? { botId } : {});
-            if (mine === loadCount) options = loaded;
+            const answer = await botApiService.getBotAiOptions(botId ? { botId } : {});
+            if (mine === loadCount) loaded = answer;
         } catch (e) {
             console.error("[VisionGroup] Failed to load AI options:", e);
         }
@@ -33,7 +36,7 @@
     function showFor(botId: string | undefined) {
         if (loadedFor === botId) return;
         loadedFor = botId;
-        options = null;
+        loaded = null;
         void load(botId);
     }
 

@@ -696,6 +696,7 @@
             />
             <VisionGroup
                 bot={currentBot}
+                {aiOptions}
                 open={openGroup === "vision"}
                 onToggle={toggleGroup}
                 onChange={(next) => apply(next)}

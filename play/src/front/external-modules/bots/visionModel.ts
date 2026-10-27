@@ -1,5 +1,6 @@
 import type { BotAiOptions, BotData, VisionPick } from "./types";
 import { UNIVERSE_AI_REF } from "./mindModel";
+import { botModelOf } from "./modelPickerModel";
 import { resolveVisionSupport } from "./visionModels";
 
 /**
@@ -43,8 +44,15 @@ export interface VisionMain {
     sameKeyModels: string[];
 }
 
-/** The main AI for the ref the page has now (not yet saved, maybe). Null when the row has nothing to say: a pinned provider, no AI, or an Orbit that doesn't tell. */
-export function visionMain(options: BotAiOptions, ref: string | null | undefined): VisionMain | null {
+/**
+ * The main AI for the ref the page has now (not yet saved, maybe). Null when the row has nothing to say: a pinned provider, no AI,
+ * or an Orbit that doesn't tell. `botModel` is the bot's own model on its key (Orbit #575); without one it runs on the key's check model.
+ */
+export function visionMain(
+    options: BotAiOptions,
+    ref: string | null | undefined,
+    botModel?: string | null
+): VisionMain | null {
     const current = ref ?? options.current ?? null;
     if (!current) return null;
     if (current === UNIVERSE_AI_REF) {
@@ -79,13 +87,21 @@ export function visionMain(options: BotAiOptions, ref: string | null | undefined
               }
             : null;
     if (!found) return null;
+    // The bot's own model, when it is another than the key's check model: what it sees is that model's own fact (the key's
+    // `supportsVision` is about the check model), as Orbit works it out when it serves the bot
+    const ownModel = botModel && botModel !== found.model ? botModel : null;
+    const model = ownModel ?? found.model ?? null;
+    const supportsVision = ownModel
+        ? options.keys.find((entry) => entry.id === current)?.models?.find((entry) => entry.id === ownModel)?.vision ??
+          null
+        : found.supportsVision;
     return {
         name: found.name,
-        model: found.model ?? null,
-        sees: resolveVisionSupport(found.model ?? "", found.supportsVision),
+        model,
+        sees: resolveVisionSupport(model ?? "", supportsVision),
         keyId: current,
         group: found.group,
-        sameKeyModels: (found.visionModels ?? []).filter((model) => model !== found.model),
+        sameKeyModels: (found.visionModels ?? []).filter((entry) => entry !== model),
     };
 }
 
@@ -132,10 +148,10 @@ export interface VisionState {
 export function visionState(
     options: BotAiOptions,
     ref: string | null | undefined,
-    bot: Pick<BotData, "behaviorConfig">
+    bot: Pick<BotData, "behaviorConfig"> & { aiModel?: string | null }
 ): VisionState | null {
     if (!options.vision) return null;
-    const main = visionMain(options, ref);
+    const main = visionMain(options, ref, botModelOf(options, { aiProviderRef: ref, aiModel: bot.aiModel }));
     if (!main) return null;
     const candidates = visionCandidates(options, main);
     const pick = readVisionPick(bot);
