@@ -1,5 +1,17 @@
+import { CODE_EXTENSIONS } from "./codeHighlight";
+
 /** The ways the file viewer can show a file. Each reader is loaded only when a file of its kind opens. */
-export type FileViewerKind = "pdf" | "image" | "markdown" | "text" | "json" | "csv" | "word" | "oldword" | "excel";
+export type FileViewerKind =
+    | "pdf"
+    | "image"
+    | "markdown"
+    | "text"
+    | "json"
+    | "code"
+    | "csv"
+    | "word"
+    | "oldword"
+    | "excel";
 
 const KIND_BY_EXTENSION: Record<string, FileViewerKind> = {
     pdf: "pdf",
@@ -20,6 +32,8 @@ const KIND_BY_EXTENSION: Record<string, FileViewerKind> = {
     webp: "image",
     bmp: "image",
     svg: "image",
+    // Code (a script, a web page's source, a stylesheet) is shown as colored text: nothing in it runs.
+    ...Object.fromEntries(CODE_EXTENSIONS.map((extension) => [extension, "code" as const])),
 };
 
 const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
@@ -41,6 +55,7 @@ export const CHAT_VIEWER_KINDS: ReadonlySet<FileViewerKind> = new Set<FileViewer
     "markdown",
     "text",
     "json",
+    "code",
     "csv",
     "word",
     "oldword",
@@ -51,7 +66,13 @@ export const CHAT_VIEWER_KINDS: ReadonlySet<FileViewerKind> = new Set<FileViewer
 export const MAP_VIEWER_KINDS: ReadonlySet<FileViewerKind> = new Set<FileViewerKind>(["pdf", "image"]);
 
 /** The kinds that are text the viewer decodes itself (no reader library). */
-export const TEXT_KINDS: ReadonlySet<FileViewerKind> = new Set<FileViewerKind>(["markdown", "text", "json", "csv"]);
+export const TEXT_KINDS: ReadonlySet<FileViewerKind> = new Set<FileViewerKind>([
+    "markdown",
+    "text",
+    "json",
+    "code",
+    "csv",
+]);
 
 /** The kinds a browser has no viewer for, so "Open in new tab" has nothing to open (Ctrl or Cmd click saves them). */
 export const NO_BROWSER_VIEWER_KINDS: ReadonlySet<FileViewerKind> = new Set<FileViewerKind>([
@@ -109,16 +130,20 @@ const BADGE_BY_KIND: Record<FileViewerKind, FileBadge> = {
     markdown: { label: "MD", color: "#5b6b82", kindName: "Markdown" },
     text: { label: "TXT", color: "#5b6b82", kindName: "Text" },
     json: { label: "JSON", color: "#5b6b82", kindName: "JSON" },
+    code: { label: "CODE", color: "#5b6b82", kindName: "Code" },
     csv: { label: "CSV", color: "#1e7145", kindName: "CSV" },
     word: { label: "DOCX", color: "#2b579a", kindName: "Word" },
     oldword: { label: "DOC", color: "#2b579a", kindName: "Word" },
     excel: { label: "XLSX", color: "#1e7145", kindName: "Excel" },
 };
 
-/** The badge of a file the viewer opens, from its kind. A spreadsheet's badge shows its own ending (XLSX, XLS, ODS). */
+/**
+ * The badge of a file the viewer opens, from its kind. A spreadsheet's badge shows its own ending (XLSX, XLS, ODS), and
+ * so does code (JS, TS, HTML).
+ */
 export function badgeOfKind(kind: FileViewerKind, name?: string): FileBadge {
     const badge = BADGE_BY_KIND[kind];
-    if (kind !== "excel") return badge;
+    if (kind !== "excel" && kind !== "code") return badge;
     const extension = extensionOf(name).toUpperCase();
     return { ...badge, label: extension || badge.label };
 }
