@@ -14,6 +14,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Read-only unless a job below says otherwise (#432)
+permissions:
+  contents: read
+
 jobs:
   continuous-integration-play:
     name: "Continuous Integration Play"
