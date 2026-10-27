@@ -9,6 +9,7 @@
         activeSubMenuStore,
         customMenuIframe,
         menuVisiblilityStore,
+        requestedSettingsPageStore,
         SubMenusInterface,
         subMenusStore,
     } from "../../Stores/MenuStore";
@@ -28,6 +29,7 @@
         IconAdjustmentsHorizontal,
         IconApps,
         IconArrowLeft,
+        IconBell,
         IconKeyboard,
         IconMessageCircle,
         IconUnMute,
@@ -36,7 +38,8 @@
     } from "@wa-icons";
 
     /**
-     * The settings window. Settings are two pages, General and Sound and video, plus Keyboard on computers. Map
+     * The settings window. Settings are three pages, General, Sound and video and Notifications, plus Keyboard on
+     * computers. Map
      * credits (and Report a problem, when the room sets a link for it) open from rows of General, with a
      * back button. The other pages of the menu (the profile, chat, a map's own menus) keep their
      * place after the settings pages, so nothing a room or script adds is lost.
@@ -45,9 +48,15 @@
      * are a side list on the left, with the same gradient for the open page.
      */
 
+    type SettingsSection = "general" | "sound" | "notifications";
+    const SETTINGS_SECTIONS: string[] = ["general", "sound", "notifications"];
+    const isSettingsSection = (id: string): id is SettingsSection => SETTINGS_SECTIONS.includes(id);
+
     type Page = {
         id: string;
         label: string;
+        /** The phone tab's word when the side list's is too long for three tabs. */
+        tabLabel?: string;
         icon: ComponentType | undefined;
         /** The menu item behind the page: Settings for General and Sound and video. */
         item: MenuItem;
@@ -70,6 +79,7 @@
 
     let unsubscriberSubMenuStore: (() => void) | undefined;
     let unsubscriberActiveSubMenuStore: (() => void) | undefined;
+    let unsubscriberRequestedPage: (() => void) | undefined;
 
     function labelOf(item: MenuItem): string {
         return item.type === "scripting" ? item.label : $LL.menu.sub[item.key]();
@@ -110,7 +120,14 @@
               {
                   id: "sound",
                   label: $LL.menu.settings.tabs.soundAndVideo(),
+                  tabLabel: $LL.menu.settings.tabs.soundAndVideoShort(),
                   icon: IconUnMute,
+                  item: settingsItem,
+              },
+              {
+                  id: "notifications",
+                  label: $LL.menu.settings.tabs.notifications(),
+                  icon: IconBell,
                   item: settingsItem,
               },
           ]
@@ -160,8 +177,15 @@
         });
         // A script can remove the page that is open: fall back to General.
         unsubscriberSubMenuStore = subMenusStore.subscribe((items) => {
-            if (current !== "general" && current !== "sound" && !items.some((item) => item.key === current)) {
+            if (!isSettingsSection(current) && !items.some((item) => item.key === current)) {
                 void openSettings("general");
+            }
+        });
+        // A row that opens one page (Notifications in the menu), also while the window is already open.
+        unsubscriberRequestedPage = requestedSettingsPageStore.subscribe((page) => {
+            if (page && activeComponent === SettingsSubMenu) {
+                requestedSettingsPageStore.set(undefined);
+                void openSettings(page);
             }
         });
     });
@@ -170,6 +194,7 @@
         menuInputFocusStore.set(false);
         unsubscriberSubMenuStore?.();
         unsubscriberActiveSubMenuStore?.();
+        unsubscriberRequestedPage?.();
         resizeObserver?.disconnect();
     });
 
@@ -193,11 +218,14 @@
         }
 
         switch (item.key) {
-            case SubMenusInterface.settings:
-                // Coming back to Settings from another page keeps the settings page you were on.
-                if (current !== "general" && current !== "sound") current = "general";
-                await openSettings(current as "general" | "sound");
+            case SubMenusInterface.settings: {
+                // Coming back to Settings from another page keeps the settings page you were on, unless a row asked
+                // for one.
+                const requested = get(requestedSettingsPageStore);
+                requestedSettingsPageStore.set(undefined);
+                await openSettings(requested ?? (isSettingsSection(current) ? current : "general"));
                 return;
+            }
             case SubMenusInterface.profile:
                 show(item.key, ProfileSubMenu, true);
                 analyticsClient.menuProfile();
@@ -234,7 +262,7 @@
         isFrame = frame;
     }
 
-    async function openSettings(section: "general" | "sound") {
+    async function openSettings(section: SettingsSection) {
         const wasSettings = activeComponent === SettingsSubMenu;
         show(section, SettingsSubMenu);
         if (!wasSettings) analyticsClient.menuSetting();
@@ -267,8 +295,8 @@
 
     function selectPage(page: Page) {
         if (page.id === current && rowPage === undefined) return;
-        // Settings is one menu item for two pages: say which one before opening it.
-        if (page.id === "general" || page.id === "sound") current = page.id;
+        // Settings is one menu item for three pages: say which one before opening it.
+        if (isSettingsSection(page.id)) current = page.id;
         activate(page.item);
     }
 
@@ -423,7 +451,7 @@
                             data-testid="settings-tab-{page.id}"
                             on:click={() => selectPage(page)}
                         >
-                            {page.label}
+                            {page.tabLabel ?? page.label}
                         </button>
                     {/each}
                 </div>
@@ -432,7 +460,7 @@
             <div class="u-settings-body" class:is-frame={isFrame} id="submenu">
                 {#if activeComponent === SettingsSubMenu}
                     <SettingsSubMenu
-                        section={current === "sound" ? "sound" : "general"}
+                        section={isSettingsSection(current) ? current : "general"}
                         pages={rowPages}
                         onOpenPage={openRow}
                     />

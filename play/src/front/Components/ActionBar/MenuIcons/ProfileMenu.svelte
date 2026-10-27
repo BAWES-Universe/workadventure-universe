@@ -18,6 +18,7 @@
         userIsConnected,
         openedMenuStore,
         showMenuItem,
+        showSettingsPage,
         rightActionBarMenuItems,
     } from "../../../Stores/MenuStore";
     import { LL } from "../../../../i18n/i18n-svelte";
@@ -48,10 +49,15 @@
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import { warningMessageStore } from "../../../Stores/ErrorStore";
     import { installApp } from "../../../Install/InstallWiring";
+    import {
+        pushAvailability,
+        thisDeviceStateStore,
+        updateThisDeviceState,
+    } from "../../../Notification/Push/PushDevice";
     import ContextualMenuItems from "./ContextualMenuItems.svelte";
     import HeaderMenuItem from "./HeaderMenuItem.svelte";
     import AdditionalMenuItems from "./AdditionalMenuItems.svelte";
-    import { IconBug, IconDownload, IconLogout } from "@wa-icons";
+    import { IconBell, IconBug, IconDownload, IconLogout } from "@wa-icons";
 
     // The ActionBarButton component is displayed differently in the profile menu.
     // We use the context to decide how to render it.
@@ -60,6 +66,9 @@
 
     let userName = gameManager.getPlayerName() || "";
     let profileButton: HTMLButtonElement;
+
+    // Only where this browser can show notifications at all (an iPhone tab can, from the Home Screen).
+    const canShowNotifications = typeof Notification !== "undefined" || pushAvailability() === "iphone-tab";
 
     // Escape closes the open menu and puts the focus back on its button, so the keyboard picks up where it was.
     function closeOnEscape(event: KeyboardEvent) {
@@ -133,6 +142,8 @@
     const unsubscribeOpenedMenuStore = openedMenuStore.subscribe((menuState) => {
         if (checkInterval) clearInterval(checkInterval);
         if (menuState === "profileMenu") {
+            // The browser's notification answer can change in its own settings: read it again each time the menu opens
+            updateThisDeviceState();
             // Menu opened - start checking
             checkPersonalDesk();
             // Start checking periodically
@@ -467,6 +478,22 @@
                 <ActionBarButton label={$LL.actionbar.editCamMic()} chevron on:click={openEnableCameraScene}>
                     <CamSettingsIcon />
                 </ActionBarButton>
+                {#if canShowNotifications}
+                    <!-- On, Off or Blocked for this device; opens Settings > Notifications. -->
+                    <ActionBarButton
+                        label={$LL.menu.settings.tabs.notifications()}
+                        chevron
+                        dataTestId="notifications-menu-row"
+                        on:click={() => {
+                            showSettingsPage("notifications");
+                            openedMenuStore.close("profileMenu");
+                        }}
+                    >
+                        <IconBell font-size="22" />
+                        <span slot="end" class="u-menu-hint">{$LL.notification.push.menu[$thisDeviceStateStore]()}</span
+                        >
+                    </ActionBarButton>
+                {/if}
 
                 {#if $canInstallStore}
                     <!-- Hidden inside the installed app, and where the browser cannot install (Firefox on a computer). -->

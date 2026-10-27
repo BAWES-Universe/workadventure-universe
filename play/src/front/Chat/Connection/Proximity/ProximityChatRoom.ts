@@ -273,6 +273,11 @@ export class ProximityChatRoom implements ChatRoom {
     /** The timeline split into stays, room messages first, the live one last. */
     public readonly sessions: Readable<ProximitySession<ChatMessage>[]>;
 
+    /** The name of the space this tab is in now (as the bots name it), if any: the chat a nearby artifact card belongs to. */
+    public get currentSpaceName(): string | undefined {
+        return this._space && !this._space.destroyed ? this._space.getName() : undefined;
+    }
+
     /** The id of the stay this tab is in now, if any. */
     public get currentSessionId(): string | undefined {
         return this._currentSessionId;

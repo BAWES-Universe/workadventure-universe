@@ -14,6 +14,7 @@ import { BotClient } from '../client/BotClient';
 import { parseEmotionsFromResponse, appendStreamedChunk } from '../ai/EmotionParser';
 import { ROOM_CARD_MARK } from '../ai/AIService';
 import type { PendingMedia } from '../memory/ConversationMemory';
+import type { ArtifactCard } from '../ai/ArtifactTools';
 import type { BotConfiguration } from './AdminApiService';
 import type { BotManager } from './BotManager';
 
@@ -54,6 +55,8 @@ export interface DmAttachment {
 export interface DmReplyHooks {
     /** Text the bot says before it runs a tool ("Let me look that up"), sent as its own message like a bubble. */
     onInterimMessage?: (text: string) => Promise<void>;
+    /** The Matrix room the message came in. Live artifacts made in this chat belong to it. */
+    roomId?: string;
 }
 
 export interface DmReply {
@@ -66,6 +69,8 @@ export interface DmReply {
     keep?: () => void;
     /** The bot's room, when the text names it: the game shows a card under the message to go there. */
     roomLink?: DmRoomLink;
+    /** Live artifacts the bot made or changed in this turn: a card for each, sent after the text. */
+    artifacts?: ArtifactCard[];
 }
 
 /** A reply's link to the bot's room (sent as its `universe.room_link` field). */
@@ -215,11 +220,12 @@ export class DmReplyService extends BaseBehavior {
         const memory = this.conversationMemory;
 
         await this.ensureMemoriesLoaded(botId);
-        // A direct message takes the media its tools made with its answer, so anything still here is from a turn that
-        // failed: it is dropped, never sent with an answer it doesn't belong to.
-        memory.getMemory(botId, playerId)?.pendingMedia?.splice(0);
         const withUuid = memory as unknown as { setUserUuid?: (b: string, p: number, u: string, l: boolean) => void };
         withUuid.setUserUuid?.(botId, playerId, person.uuid, !person.isGuest);
+        // A direct message takes the media its tools made with its answer, so anything still here is from a turn that
+        // failed, or was queued in a bubble: it is dropped, never sent with an answer it doesn't belong to. After the
+        // uuid is set, because that restores the person's saved memory, queued media included.
+        memory.getMemory(botId, playerId)?.pendingMedia?.splice(0);
 
         // Same attachment handling as a bubble: parsed text for the model, image URLs for vision.
         let augmented = text;
@@ -248,6 +254,13 @@ export class DmReplyService extends BaseBehavior {
         // tools see it.
         if (memory.getMemory(botId, playerId)?.userUuid !== person.uuid) {
             withUuid.setUserUuid?.(botId, playerId, person.uuid, !person.isGuest);
+        }
+
+        // Artifacts made this turn go back as cards in this room; cards left from a turn that failed are dropped
+        const turnMemory = memory.getMemory(botId, playerId);
+        if (turnMemory) {
+            turnMemory.dmRoomId = hooks.roomId;
+            turnMemory.pendingArtifacts = [];
         }
 
         const context = memory.getConversationContext(botId, playerId);
@@ -367,8 +380,9 @@ export class DmReplyService extends BaseBehavior {
         // Media the tools produced waits in memory; a DM delivers it as attachments right after the text.
         const playerMemory = memory.getMemory(botId, playerId);
         const media = playerMemory?.pendingMedia?.splice(0) ?? [];
+        const artifacts = playerMemory?.pendingArtifacts?.splice(0) ?? [];
         const roomLink = await this.roomLinkFor(config.roomUrl, replyText, askedForRoom, `${botId}:${person.matrixUserId}`);
-        return { text: replyText, media, keep, ...(roomLink ? { roomLink } : {}) };
+        return { text: replyText, media, keep, ...(roomLink ? { roomLink } : {}), ...(artifacts.length ? { artifacts } : {}) };
     }
 
     /**

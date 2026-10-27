@@ -55,3 +55,31 @@ describe("fetchMemberDataByUuid guest name", () => {
         expect(params.userIdentifier).toBe("uuid-1");
     });
 });
+
+describe("fetchMemberDataByUuid previous guest id", () => {
+    beforeEach(() => {
+        vi.resetAllMocks();
+        vi.spyOn(console, "error").mockImplementation(() => undefined);
+    });
+
+    it("sends the guest id the device used before as `previousGuestUuid`, and nothing otherwise", async () => {
+        get.mockResolvedValue({ data: {} });
+        await adminApi.fetchMemberDataByUuid(
+            "elj@example.test",
+            "access",
+            playUri,
+            "127.0.0.1",
+            [],
+            undefined,
+            "en",
+            [],
+            undefined,
+            undefined,
+            "guest-uuid"
+        );
+        expect(get.mock.calls[0][1].params.previousGuestUuid).toBe("guest-uuid");
+        get.mockClear();
+        await adminApi.fetchMemberDataByUuid("elj@example.test", "access", playUri, "127.0.0.1", []);
+        expect(get.mock.calls[0][1].params.previousGuestUuid).toBeUndefined();
+    });
+});

@@ -450,3 +450,59 @@ describe("GET /me says whether the name is the account's (#1192)", () => {
         expect(refreshAccessToken).not.toHaveBeenCalled();
     });
 });
+
+describe("GET /me right after a guest signs in", () => {
+    const GUEST = "5b522f38-d7d2-4e37-be94-2476cb1efdfe";
+    const previousGuestUuid = () => fetchMemberDataByUuid.mock.calls.map((call) => call[10]);
+
+    beforeEach(() => {
+        vi.resetAllMocks();
+        // The account's token and the guest token the browser kept aside are different tokens.
+        verifyJWTToken.mockImplementation((token: string) => {
+            if (token === "game-token")
+                return { identifier: "elj@example.test", accessToken: "access", refreshToken: "refresh" };
+            if (token === "guest-token") return { identifier: GUEST };
+            if (token === "other-account-token") return { identifier: "someone@example.test", accessToken: "x" };
+            if (token === "same-id-token") return { identifier: "elj@example.test" };
+            if (token === "bot-token") return { identifier: "bot-123" };
+            throw new Error("invalid signature");
+        });
+        fetchMemberDataByUuid.mockResolvedValue({
+            status: "ok",
+            userUuid: "u",
+            isCharacterTexturesValid: true,
+            isCompanionTextureValid: true,
+        });
+        checkTokenAuth.mockResolvedValue({});
+    });
+
+    it("tells Orbit only the guest id in a guest token the pusher signed", async () => {
+        await callMe({ token: "game-token", playUri, guestToken: "guest-token" });
+        expect(previousGuestUuid()).toEqual([GUEST]);
+    });
+
+    it("sends nothing without a guest token", async () => {
+        await callMe({ token: "game-token", playUri });
+        expect(previousGuestUuid()).toEqual([undefined]);
+    });
+
+    it.each([
+        ["a token the pusher did not sign", "forged-token"],
+        ["an account's token", "other-account-token"],
+        ["a token with the account's own id", "same-id-token"],
+        ["a token whose id is not a guest uuid", "bot-token"],
+    ])("sends nothing for %s", async (_label, guestToken) => {
+        const res = await callMe({ token: "game-token", playUri, guestToken });
+        expect(previousGuestUuid()).toEqual([undefined]);
+        // and signing in carries on as before
+        expect(res.body).toEqual(expect.objectContaining({ authToken: "game-token" }));
+    });
+
+    it("sends nothing when the caller is a guest, not a signed-in account", async () => {
+        verifyJWTToken.mockImplementation((token: string) =>
+            token === "guest-token" ? { identifier: GUEST } : { identifier: "11111111-1111-1111-1111-111111111111" }
+        );
+        await callMe({ token: "another-guest-token", playUri, guestToken: "guest-token" });
+        expect(previousGuestUuid()).toEqual([undefined]);
+    });
+});

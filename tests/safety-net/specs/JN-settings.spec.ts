@@ -30,6 +30,7 @@ test.describe("Settings window", () => {
         await expect(nav.locator("h2.u-settings-title")).toHaveText("Settings");
         await expect(player.getByTestId("settings-nav-general")).toContainText("General");
         await expect(player.getByTestId("settings-nav-sound")).toContainText("Sound and video");
+        await expect(player.getByTestId("settings-nav-notifications")).toContainText("Notifications");
         await expect(player.getByTestId("settings-nav-shortcuts")).toContainText("Keyboard");
         await expect(player.getByTestId("settings-nav-general")).toHaveClass(/is-active/);
         await expect(player.getByTestId("settings-nav-general")).toHaveAttribute("aria-current", "page");
@@ -53,7 +54,8 @@ test.describe("Settings window", () => {
         await expect(player.locator("#settings-title .u-settings-title-phone")).toHaveText("Settings");
         await expect(player.locator("#settings-title .u-settings-title-phone")).toBeVisible();
         await expect(player.getByTestId("settings-tab-general")).toHaveText("General");
-        await expect(player.getByTestId("settings-tab-sound")).toHaveText("Sound and video");
+        await expect(player.getByTestId("settings-tab-sound")).toHaveText("Sound & video");
+        await expect(player.getByTestId("settings-tab-notifications")).toHaveText("Notifications");
         await expect(player.getByTestId("settings-tab-shortcuts")).toHaveCount(0);
         await expect(player.getByTestId("closeMenuBtn")).toBeVisible();
         const pillLeft = () =>
@@ -128,6 +130,7 @@ test.describe("Settings: General", () => {
         });
         await join(page, roomUrl(testInfo), "Alice");
         await openSettings(page);
+        await goToPage(page, "notifications", isPhone(testInfo));
         const notifications = switchOf(page, "notification-toggle");
         await expect(notifications).not.toBeChecked();
         await page.locator("label[for=notification-toggle]").click();
@@ -140,9 +143,10 @@ test.describe("Settings: General", () => {
         expect(await page.evaluate(() => localStorage.getItem("ignoreFollowRequests"))).toBe("true");
     });
 
-    test("JN-082 Notifications switch turns on when the browser allows", async ({ player }) => {
+    test("JN-082 Notifications switch turns on when the browser allows", async ({ player }, testInfo) => {
         await player.context().grantPermissions(["camera", "microphone", "notifications"]);
         await openSettings(player);
+        await goToPage(player, "notifications", isPhone(testInfo));
         await player.locator("label[for=notification-toggle]").click();
         await expect(switchOf(player, "notification-toggle")).toBeChecked();
         await expect.poll(() => player.evaluate(() => localStorage.getItem("notificationPermission"))).toBe("true");
@@ -355,8 +359,9 @@ test.describe("Settings: Keyboard, persistence, map pages", () => {
         const phone = isPhone(testInfo);
         await openSettings(player);
         await player.locator("label[for=changeDisableAnimations]").click();
-        await player.locator("label[for=ignoreFollowRequests-toggle]").click();
         await player.locator("label[for=cam-toggle]").click();
+        await goToPage(player, "notifications", phone);
+        await player.locator("label[for=ignoreFollowRequests-toggle]").click();
         await goToPage(player, "sound", phone);
         await player.getByTestId("video-quality").locator("button.u-set-choice-head").click();
         await player.getByTestId("video-quality").getByRole("option", { name: /Best/ }).click();
@@ -366,8 +371,9 @@ test.describe("Settings: Keyboard, persistence, map pages", () => {
         await expect(player.getByTestId("microphone-button")).toBeVisible({ timeout: 60_000 });
         await openSettings(player);
         await expect(switchOf(player, "changeDisableAnimations")).toBeChecked();
-        await expect(switchOf(player, "ignoreFollowRequests-toggle")).toBeChecked();
         await expect(switchOf(player, "cam-toggle")).toBeChecked();
+        await goToPage(player, "notifications", phone);
+        await expect(switchOf(player, "ignoreFollowRequests-toggle")).toBeChecked();
         await goToPage(player, "sound", phone);
         await expect(player.getByTestId("video-quality").locator(".u-set-value")).toHaveText("Best");
         await expect(player.getByTestId("bubble-sound").locator(".u-set-value")).toHaveText("Wobble");
