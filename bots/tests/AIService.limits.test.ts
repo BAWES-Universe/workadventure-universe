@@ -187,6 +187,15 @@ describe("AIService – a bot's limits from Orbit", () => {
         expect(mockGenerateStream).toHaveBeenCalledTimes(2);
     });
 
+    it("says nothing on a reply written again: the first one may have saved it (Sentry on #1486)", async () => {
+        const { admin, memory } = buildMocks();
+        mockGenerateStream.mockImplementation(says("Here's the updated dashboard, v2 is in the chat."));
+        const service = new AIService(memory, admin, "http://admin.local");
+        const chunks = await drain(service.generateBotResponseStream("bot-1", 42, "hello", "You are a bot.", "universe-ai", "!dm:matrix.test", "", undefined, undefined, undefined, undefined, "dm", undefined, undefined, undefined, true));
+        expect(said(chunks)).not.toContain("No new version was saved.");
+        expect(mockGenerateStream).toHaveBeenCalledTimes(1);
+    });
+
     it("says nothing for a reply about something else", async () => {
         const { admin, memory } = buildMocks();
         mockGenerateStream.mockImplementation(says("Hi! What should we build?"));

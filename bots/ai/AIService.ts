@@ -432,12 +432,11 @@ export class AIService {
     }
 
     /**
-     * Generate streaming bot response with function calling support
-     */
-    /**
      * A bot's reply, streamed. With "Say when nothing was saved" on (Orbit #666), a reply that says it made or changed an
      * artifact when no make or change was saved in that turn gets the line "No new version was saved", and the bot
      * tries once more: the first reply and the line go out as their own message (a `reset`), then the second try.
+     * A retry (a reply written again, say after a repetition) is not checked: what it talks about may have been saved
+     * by the first one.
      */
     async *generateBotResponseStream(
         botId: string,
@@ -473,7 +472,7 @@ export class AIService {
             yield chunk;
         }
         if (!done) return;
-        if (abortSignal?.aborted || done.metadata?.error || !turn.guard || !turn.artifactTools || turn.artifactSaved || !claimsArtifactSaved(said)) {
+        if (isRetry || abortSignal?.aborted || done.metadata?.error || !turn.guard || !turn.artifactTools || turn.artifactSaved || !claimsArtifactSaved(said)) {
             yield done;
             return;
         }
