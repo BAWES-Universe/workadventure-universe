@@ -102,6 +102,12 @@ async function* prefaceThenToolCallStream() {
     yield { content: "", done: true, metadata: { tokensUsed: 110, promptTokens: 100, completionTokens: 10, latency: 20, error: false, truncated: false, finishReason: "tool_calls" } };
 }
 
+// The answer after the tool starts, then the stream breaks.
+async function* partialThenErrorStream() {
+    yield { content: "You are by the", done: false };
+    yield { content: "", done: true, metadata: { tokensUsed: 0, latency: 300, error: true, errorStatus: 502, errorText: "OpenAI API error: 502 stream broke" } };
+}
+
 // The first call asked for a tool, then broke off.
 async function* brokenToolCallStream() {
     yield { content: "", done: false, toolCalls: [{ id: "call_1", name: "get_bot_position", arguments: "{}" }] };
@@ -179,14 +185,14 @@ describe("AIService – a reply that leaves the person nothing (#1498)", () => {
         const service = new AIService(mockConversationMemory, mockAdminApiService, "http://admin.local");
         await drain(service.generateBotResponseStream("bot-1", 42, message, "You are a bot.", "test-provider", "space-1", ""));
     };
-    const warnings = () => warn.mock.calls.map((call: unknown[]) => String(call[0])).filter((line: string) => line.includes("gave no answer"));
+    const warnings = () => warn.mock.calls.map((call: unknown[]) => String(call[0])).filter((line: string) => line.includes("did not answer in full"));
 
     it("says why a reply came back with no words", async () => {
         mockGenerateStream.mockImplementationOnce(thinkingOnlyStream);
         await run();
 
         expect(warnings()).toEqual([
-            "[AIService] Bot bot-1 gave no answer on llama3 (test-provider): no words and no tool call: it reached the longest reply, 4000 tokens used of 512 allowed, 4000 on thinking",
+            "[AIService] Bot bot-1 did not answer in full on llama3 (test-provider): no words and no tool call: it reached the longest reply, 4000 tokens used of 512 allowed, 4000 on thinking",
         ]);
         expect(mockParentSpan.setStatus).toHaveBeenCalledWith({ code: 2, message: expect.stringContaining("reached the longest reply") });
         expect(mockCaptureAiTrace).toHaveBeenCalledTimes(1);
@@ -201,17 +207,18 @@ describe("AIService – a reply that leaves the person nothing (#1498)", () => {
         await run();
 
         expect(warnings()).toEqual([
-            "[AIService] Bot bot-1 gave no answer on llama3 (test-provider): the provider failed (400): OpenAI API error: 400 max_tokens is too large",
+            "[AIService] Bot bot-1 did not answer in full on llama3 (test-provider): the provider failed (400): OpenAI API error: 400 max_tokens is too large",
         ]);
         expect(mockCaptureAiTrace.mock.calls[0][0].error).toBe("the provider failed (400): OpenAI API error: 400 max_tokens is too large");
     });
 
     it("says why when the call after a tool failed", async () => {
-        mockGenerateStream.mockImplementationOnce(toolCallStream).mockImplementationOnce(followUpErrorStream);
+        // The follow-up fails, and so does the retry after it
+        mockGenerateStream.mockImplementationOnce(toolCallStream).mockImplementation(followUpErrorStream);
         await run();
 
         expect(warnings()).toEqual([
-            "[AIService] Bot bot-1 gave no answer on llama3 (test-provider): the provider failed (502): OpenAI API error: 502 bad gateway",
+            "[AIService] Bot bot-1 did not answer in full on llama3 (test-provider): the provider failed (502): OpenAI API error: 502 bad gateway",
         ]);
         expect(mockParentSpan.setStatus).toHaveBeenCalledWith({ code: 2, message: expect.stringContaining("502") });
         // The tool call's own call went fine; the call after it carries the error
@@ -225,7 +232,16 @@ describe("AIService – a reply that leaves the person nothing (#1498)", () => {
         await run();
 
         expect(warnings()).toEqual([
-            "[AIService] Bot bot-1 gave no answer on llama3 (test-provider): the provider failed (502): OpenAI API error: 502 bad gateway",
+            "[AIService] Bot bot-1 did not answer in full on llama3 (test-provider): the provider failed (502): OpenAI API error: 502 bad gateway",
+        ]);
+    });
+
+    it("still says why when the answer broke off after its first words", async () => {
+        mockGenerateStream.mockImplementationOnce(toolCallStream).mockImplementation(partialThenErrorStream);
+        await run();
+
+        expect(warnings()).toEqual([
+            "[AIService] Bot bot-1 did not answer in full on llama3 (test-provider): the provider failed (502): OpenAI API error: 502 stream broke",
         ]);
     });
 
@@ -260,7 +276,7 @@ describe("AIService – a reply that leaves the person nothing (#1498)", () => {
         await run("build me an artifact with music", true);
 
         expect(warnings()).toEqual([
-            "[AIService] Bot bot-1 gave no answer on llama3 (test-provider): the provider failed (400): details left out for a private bot",
+            "[AIService] Bot bot-1 did not answer in full on llama3 (test-provider): the provider failed (400): details left out for a private bot",
         ]);
         expect(mockParentSpan.setStatus).toHaveBeenCalledWith({ code: 2, message: expect.not.stringContaining("max_tokens") });
         expect(mockCaptureAiTrace).not.toHaveBeenCalled();

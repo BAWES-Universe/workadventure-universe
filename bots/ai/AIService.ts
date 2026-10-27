@@ -1900,14 +1900,15 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 try {
                     // A reply that failed, or came back with no words and no tool call, leaves the person nothing (a DM shows
                     // "Couldn't answer"): say why in the logs, on the span and on the trace (#1498)
+                    const lastCall = ledger.lastOutcome();
                     const problem = streamCompleted && !abortSignal?.aborted
                         ? replyProblem({
-                              // A call after a tool ran (or a retry) can fail too. It is no problem only when a later call made up
-                              // for it with words: text said before the tool ran ("Let me check") does not count
-                              error: error || (followUpFailedForHealth && !followUpContent.trim()),
-                              errorStatus: errorStatus ?? followUpErrorStatus,
+                              // The reply ends on its last call: a failure that a later call (a retry, the next round) made up for
+                              // is no problem, and any call that ended the reply failing is, whatever was said before it
+                              error: !!lastCall?.failed,
+                              errorStatus: lastCall?.status,
                               // A private bot's provider text can quote the conversation: only its status is kept
-                              errorText: privateBot ? 'details left out for a private bot' : errorText,
+                              errorText: privateBot ? 'details left out for a private bot' : lastCall?.errorText,
                               finishReason,
                               answered: !!accumulatedContent.trim() || hadToolCalls,
                               outputTokens: completionTokens,
@@ -1916,7 +1917,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                           })
                         : undefined;
                     if (problem) {
-                        console.warn(`[AIService] Bot ${botId} gave no answer on ${config.model} (${usageProviderId}): ${problem}`);
+                        console.warn(`[AIService] Bot ${botId} did not answer in full on ${config.model} (${usageProviderId}): ${problem}`);
                         parentSpan?.setStatus({ code: 2, message: problem });
                     }
 
@@ -2211,10 +2212,19 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         images?: string[]
     ): AsyncGenerator<AIStreamChunk> {
         const sentAt = new Date();
-        for await (const chunk of this.providerRegistry.generateStream(providerId, systemPrompt, userMessage, config, tools, signal, images)) {
-            // A call that was stopped before it said what it used has no figure to add; the calls that finished keep theirs
-            if (chunk.done && !chunk.metadata?.cancelled) ledger.add(priceMetadata(config, chunk.metadata, sentAt));
-            yield chunk;
+        try {
+            for await (const chunk of this.providerRegistry.generateStream(providerId, systemPrompt, userMessage, config, tools, signal, images)) {
+                // A call that was stopped before it said what it used has no figure to add; the calls that finished keep theirs
+                if (chunk.done && !chunk.metadata?.cancelled) {
+                    ledger.add(priceMetadata(config, chunk.metadata, sentAt));
+                    const meta = chunk.metadata;
+                    ledger.noteOutcome(meta?.error ? { failed: true, status: meta.errorStatus, errorText: meta.errorText } : { failed: false });
+                }
+                yield chunk;
+            }
+        } catch (error) {
+            if (!signal?.aborted) ledger.noteOutcome({ failed: true, errorText: providerErrorText(error) });
+            throw error;
         }
     }
 
