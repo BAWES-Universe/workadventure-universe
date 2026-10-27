@@ -32,6 +32,7 @@
     import { availabilityFromNote, botChatClosed, botHeaderState, botIdFromChatId } from "../../Bots/BotChatStatus";
     import { botStatusCache } from "../../Bots/BotStatusStore";
     import BotStatusNoteCard from "../Bots/BotStatusNoteCard.svelte";
+    import BotReplyLimitCard from "../Bots/BotReplyLimitCard.svelte";
     import {
         PERSON_COLOUR_CONTEXT,
         NAME_BY_CHAT_ID_CONTEXT,
@@ -284,6 +285,14 @@
     $: botClosed = botChatClosed(botState);
     $: lastBotMessage = partnerBotId ? [...$messages].reverse().find((message) => !message.isMyMessage) : undefined;
     $: lastBotNote = lastBotMessage?.botStatus;
+    // One reply limit card per bot (#1159): the newest, and only until its time is up
+    $: shownReplyLimits = new Set([
+        ...new Map(
+            $messages
+                .filter((message) => message.replyLimit && Date.parse(message.replyLimit.resetsAt) > Date.now())
+                .map((message) => [message.replyLimit?.botId, message.id])
+        ).values(),
+    ]);
     // A note saying the bot is resting, not ready or gone updates the header at once, unless a lookup that started after
     // the note was written knows better.
     $: lastNoteAvailability = lastBotNote ? availabilityFromNote(lastBotNote.state) : undefined;
@@ -1009,6 +1018,10 @@
                             />
                         {:else if entry.message.type === "outcoming" || entry.message.type === "incoming"}
                             <MessageSystem message={entry.message} />
+                        {:else if entry.message.replyLimit}
+                            {#if shownReplyLimits.has(entry.message.id)}
+                                <BotReplyLimitCard replyLimit={entry.message.replyLimit} />
+                            {/if}
                         {:else if entry.message.botStatus}
                             <BotStatusNoteCard note={entry.message.botStatus} />
                         {:else}

@@ -5,7 +5,7 @@ import type { Server } from 'node:http';
 import { MatrixDmBridge } from '../matrix/MatrixDmBridge';
 import { createMatrixAppServiceRouter, type MatrixEvent } from '../matrix/MatrixAppServiceRouter';
 import { botIdFromMatrixId, botMatrixId, readMatrixConfig } from '../matrix/MatrixConfig';
-import { BOT_STATUS_KEY, availabilityOf, detectLanguage, statusNoteContent } from '../matrix/BotStatusNotes';
+import { BOT_STATUS_KEY, REPLY_LIMIT_KEY, availabilityOf, detectLanguage, replyLimitContent, statusNoteContent } from '../matrix/BotStatusNotes';
 
 const config = { homeserverUrl: 'http://hs', domain: 'matrix.test', asToken: 'as-secret', hsToken: 'hs-secret' };
 const BOT = '0b7c1d2e-1111-4222-8333-944455556666';
@@ -83,6 +83,35 @@ describe('MatrixDmBridge', () => {
         client = makeClient();
         deps = makeDeps();
         bridge = new MatrixDmBridge(config, client as never, deps);
+    });
+
+    it('shows the fixed reply limit card instead of an answer, and does not try the message again (#1159)', async () => {
+        await bridge.onEvent(invite());
+        deps.reply.mockResolvedValue({ text: '', media: [], replyLimit: { limit: 'universe-ai', resetsAt: '2026-10-27T20:20:00.000Z', who: 'member' } });
+        await bridge.onEvent(message('one more question'));
+        expect(client.sendText).not.toHaveBeenCalledWith(BOT_USER, ROOM, expect.anything());
+        const card = client.sendMessage.mock.calls.map((call: any[]) => call[2]).find((content: any) => content?.[REPLY_LIMIT_KEY]);
+        expect(card).toEqual({
+            msgtype: 'm.notice',
+            body: "You've used your Universe AI replies for now. Guide answers you again at 20:20 UTC.",
+            [REPLY_LIMIT_KEY]: { limit: 'universe-ai', resetsAt: '2026-10-27T20:20:00.000Z', who: 'member' },
+        });
+        expect((bridge as any).localWaiting.size).toBe(0);
+    });
+
+    it("names the bot's own limit and a guest's on the card's words", () => {
+        expect(replyLimitContent({ limit: 'bot', resetsAt: '2026-10-28T09:05:00.000Z', who: 'member' }, 'Nora').body)
+            .toBe("You've reached Nora's reply limit for now. Nora answers you again at 09:05 UTC.");
+        expect(replyLimitContent({ limit: 'guests', resetsAt: '2026-10-28T09:05:00.000Z', who: 'guest' }, 'Nora').body)
+            .toBe("You've used your guest replies for now. Nora answers you again at 09:05 UTC.");
+    });
+
+    it('sends nothing for a message answered together with others', async () => {
+        await bridge.onEvent(invite());
+        deps.reply.mockResolvedValue({ text: '', media: [], answeredTogether: true });
+        await bridge.onEvent(message('hello?'));
+        expect(client.sendText).not.toHaveBeenCalledWith(BOT_USER, ROOM, expect.anything());
+        expect(client.sendMessage.mock.calls.map((call: any[]) => call[2]).filter((c: any) => c?.msgtype === 'm.notice')).toEqual([]);
     });
 
     it('tries the bot name again next time when setting it failed', async () => {
@@ -1433,6 +1462,53 @@ describe('DmReplyService history', () => {
         // Something new is kept as usual.
         await (service as any).replyNow(BOT, person, 'are you back?', [], {});
         expect(history.map((entry) => entry.message)).toEqual(['left while resting', 'are you back?']);
+    });
+
+    it('answers the words that waited behind an answer once, together; a file on its own (#1159)', async () => {
+        const { DmReplyService } = await import('../server/DmReplyService');
+        const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
+        let release!: () => void;
+        const first = new Promise<void>((resolve) => (release = resolve));
+        const asked: string[] = [];
+        const replyNow = vi.fn(async (_bot: string, _person: unknown, text: string) => {
+            asked.push(text);
+            if (asked.length === 1) await first;
+            return { text: `answer to ${text}`, media: [] };
+        });
+        Object.assign(service, { queues: new Map(), waiting: new Map(), replyNow });
+        const person = { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false };
+        const answering = service.reply(BOT, person, 'hi');
+        const second = service.reply(BOT, person, 'are you there');
+        const third = service.reply(BOT, person, 'hello?');
+        const withFile = service.reply(BOT, person, 'see this', [{ kind: 'image' } as never]);
+        release();
+        expect(await answering).toMatchObject({ text: 'answer to hi' });
+        expect(await second).toMatchObject({ text: 'answer to are you there\nhello?' });
+        expect(await third).toEqual({ text: '', media: [], answeredTogether: true });
+        expect(await withFile).toMatchObject({ text: 'answer to see this' });
+        expect(asked).toEqual(['hi', 'are you there\nhello?', 'see this']);
+    });
+
+    it('hands back a reached reply limit with nothing said (#1159)', async () => {
+        const { DmReplyService } = await import('../server/DmReplyService');
+        const { ConversationMemory } = await import('../memory/ConversationMemory');
+        const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
+        const limit = { limit: 'universe-ai', resetsAt: '2026-10-27T20:20:00.000Z', who: 'member' };
+        const atLimit = vi.fn(async function* () {
+            yield { content: '', done: true, replyLimit: limit };
+        });
+        Object.assign(service, {
+            playerIds: new Map(),
+            nextPlayerId: -1,
+            loadedBots: new Set([BOT]),
+            botManager: { getBot: () => null },
+            getBotConfig: async () => ({ botId: BOT, name: 'Guide', aiProviderRef: 'p' }),
+            aiService: { generateBotResponseStream: atLimit },
+            conversationMemory: new ConversationMemory(),
+            conversationStorage: { startConversation: vi.fn(), addMessage: vi.fn(async () => undefined) },
+        });
+        const person = { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false };
+        expect(await (service as any).replyNow(BOT, person, 'one more', [], {})).toEqual({ text: '', media: [], replyLimit: limit });
     });
 
     it("names a first-time person by their uuid before the model or its tools see them", async () => {

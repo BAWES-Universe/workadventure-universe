@@ -3,9 +3,10 @@ import { Permission } from "@workadventure/shared-utils/src/Permissions/permissi
 import type { SpaceUserExtended } from "../../src/pusher/models/Space";
 import { eventProcessor } from "../../src/pusher/models/eventProcessorInit";
 
-function spaceUser(spaceUserId: string, tags: string[], permissions?: string): SpaceUserExtended {
+function spaceUser(spaceUserId: string, tags: string[], permissions?: string, uuid?: string): SpaceUserExtended {
     return {
         spaceUserId,
+        uuid,
         name: spaceUserId,
         lowercaseName: spaceUserId,
         tags,
@@ -62,6 +63,37 @@ describe("eventProcessorInit", () => {
             const force = processed.$case === "muteAudio" ? processed.muteAudio.force : undefined;
             const forceVideo = processed.$case === "muteVideo" ? processed.muteVideo.force : undefined;
             expect(force ?? forceVideo).toBe(true);
+        });
+    });
+    describe("botReplyLimit", () => {
+        const card = {
+            $case: "botReplyLimit" as const,
+            botReplyLimit: {
+                limit: "universe-ai",
+                resetsAt: "2026-10-27T20:20:00.000Z",
+                who: "member",
+                botId: "b-1",
+                botName: "Nora",
+            },
+        };
+        const person = spaceUser("room_7", []);
+
+        it("passes on a bot's own card", () => {
+            expect(
+                eventProcessor.processPrivateEvent(card, spaceUser("room_12", ["bot"], undefined, "bot-b-1"), person)
+            ).toEqual(card);
+        });
+
+        it("refuses a card from a player, so nobody can fake one", () => {
+            expect(() =>
+                eventProcessor.processPrivateEvent(card, spaceUser("room_9", ["member"], undefined, "u-9"), person)
+            ).toThrow("Only a bot can send a reply limit card");
+        });
+
+        it("refuses a card a bot sends about another bot", () => {
+            expect(() =>
+                eventProcessor.processPrivateEvent(card, spaceUser("room_12", ["bot"], undefined, "bot-b-2"), person)
+            ).toThrow("A bot can only send its own reply limit card");
         });
     });
 });
