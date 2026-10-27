@@ -91,7 +91,7 @@ function buildMocks() {
             { name: "Social Area", x: 30, y: 40 },
         ]),
     };
-    const conversationMemory: any = { getMemory: vi.fn(() => ({ userUuid: "test-uuid" })) };
+    const conversationMemory: any = { getMemory: vi.fn(() => ({ userUuid: "test-uuid" })), getPendingMediaNotice: vi.fn(() => "") };
     return { adminApiService, mapDataService, conversationMemory };
 }
 

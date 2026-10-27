@@ -19,17 +19,19 @@ function describeSaveError(error: unknown): string {
     return error instanceof Error ? error.message : 'unknown error';
 }
 
+/** Said once per process: the bot server cannot save or load what bots remember without its own service token */
+let warnedNoServiceToken = false;
+
 export interface MemoryStorageConfig {
     adminApiUrl?: string;
-    adminApiToken?: string;
-    botServiceToken?: string; // Use BOT_SERVICE_TOKEN for bot endpoints
+    /** The bot server's own token for the memory endpoints. The deployment admin token is not used for memory (#444). */
+    botServiceToken?: string;
     saveInterval: number; // Save interval in milliseconds (default: 5 minutes)
     maxRetries: number;
 }
 
 export class MemoryStorage {
     private adminApiUrl?: string;
-    private adminApiToken?: string;
     private botServiceToken?: string;
     private saveInterval: number;
     private maxRetries: number;
@@ -38,7 +40,6 @@ export class MemoryStorage {
 
     constructor(config: MemoryStorageConfig) {
         this.adminApiUrl = config.adminApiUrl || process.env.ADMIN_API_URL;
-        this.adminApiToken = config.adminApiToken || process.env.ADMIN_API_TOKEN;
         this.botServiceToken = config.botServiceToken || process.env.BOT_SERVICE_TOKEN;
         this.saveInterval = config.saveInterval || 5 * 60 * 1000; // 5 minutes
         this.maxRetries = config.maxRetries || 3;
@@ -53,7 +54,16 @@ export class MemoryStorage {
      * Check if storage is configured
      */
     isConfigured(): boolean {
-        return !!(this.adminApiUrl && (this.botServiceToken || this.adminApiToken));
+        if (this.adminApiUrl && !this.botServiceToken) {
+            // No quiet fallback to the admin token (#444): without BOT_SERVICE_TOKEN what bots remember is neither
+            // saved nor loaded, so say so where it can be seen
+            if (!warnedNoServiceToken) {
+                warnedNoServiceToken = true;
+                console.error('[MemoryStorage] BOT_SERVICE_TOKEN is not set: bot memory is not saved or loaded. Set it on the bot server and on Orbit.');
+            }
+            return false;
+        }
+        return !!(this.adminApiUrl && this.botServiceToken);
     }
 
     /**
@@ -109,14 +119,8 @@ export class MemoryStorage {
             return;
         }
 
-        // Use BOT_SERVICE_TOKEN for bot endpoints (preferred), fallback to ADMIN_API_TOKEN
-        const authToken = this.botServiceToken || this.adminApiToken;
-        if (!authToken) {
-            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.warn('[MemoryStorage] No authentication token available');
-            }
-            return;
-        }
+        const authToken = this.botServiceToken;
+        if (!authToken) return;
 
         let retries = 0;
         while (retries < this.maxRetries) {
@@ -170,6 +174,30 @@ export class MemoryStorage {
     }
 
     /**
+     * Tell Orbit these Forgets are dropped from memory, by row id. Orbit keeps a Forget, and keeps skipping that person
+     * in saves, until it hears this (#493). True when Orbit took it. A report that fails is not retried here: Orbit
+     * keeps sending the Forget, and the next answer that carries it reports again.
+     */
+    async acknowledgeForgets(botId: string, ids: string[]): Promise<boolean> {
+        if (!this.isConfigured() || !this.botServiceToken || !botId || ids.length === 0) return false;
+        try {
+            await axios.post(
+                `${this.adminApiUrl}/api/bots/memory/${encodeURIComponent(botId)}/forgotten`,
+                { ids },
+                { headers: { Authorization: `Bearer ${this.botServiceToken}`, 'Content-Type': 'application/json' }, timeout: 10000 }
+            );
+            return true;
+        } catch (error) {
+            // An Orbit that does not have the route yet answers 404 or 405: it deletes by time as before, nothing to say
+            const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+            if (status !== 404 && status !== 405) {
+                console.warn(`[MemoryStorage] Could not report forgotten memories for bot ${botId}: ${describeSaveError(error)}`);
+            }
+            return false;
+        }
+    }
+
+    /**
      * Pass on who Orbit asked us to forget. A handler that fails must never turn a save that worked into a retry.
      */
     private applyForgetNotice(botId: string, forget: unknown): void {
@@ -190,14 +218,8 @@ export class MemoryStorage {
             return [];
         }
 
-        // Use BOT_SERVICE_TOKEN for bot endpoints (preferred), fallback to ADMIN_API_TOKEN
-        const authToken = this.botServiceToken || this.adminApiToken;
-        if (!authToken) {
-            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.warn('[MemoryStorage] No authentication token available');
-            }
-            return [];
-        }
+        const authToken = this.botServiceToken;
+        if (!authToken) return [];
 
         const url = `${this.adminApiUrl}/api/bots/memory/${botId}`;
 

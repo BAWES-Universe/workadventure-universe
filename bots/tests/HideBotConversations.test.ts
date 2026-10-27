@@ -102,7 +102,7 @@ function adminApiMock(isBotPrivate?: (botId: string) => Promise<boolean>) {
 
 async function runTurn(adminApi: any) {
     const { AIService } = await import("../ai/AIService");
-    const memory: any = { getMemory: vi.fn(() => ({ userUuid: "test-uuid" })) };
+    const memory: any = { getMemory: vi.fn(() => ({ userUuid: "test-uuid" })), getPendingMediaNotice: vi.fn(() => "") };
     const service = new AIService(memory, adminApi, "http://admin.local");
     return drain(service.generateBotResponseStream("bot-1", 42, "my secret plan", "You are a bot.", "test-provider", "space-1", ""));
 }
@@ -520,7 +520,7 @@ describe("memory: always kept, and forgotten when Orbit says so", () => {
 
     async function newMemory() {
         const { PersistentMemory } = await import("../memory/PersistentMemory");
-        return new PersistentMemory({ adminApiUrl: "http://orbit.local", adminApiToken: "admin-secret" });
+        return new PersistentMemory({ adminApiUrl: "http://orbit.local" });
     }
 
     function seed(memory: any, uuid: string, playerId: number) {
@@ -696,6 +696,172 @@ describe("memory: always kept, and forgotten when Orbit says so", () => {
         memory.uuidTracking.set("bot-1_7", { userUuid: "uuid-bob", isLogged: true });
         memory.forget("bot-1", { everyone: false, userUuids: ["uuid-bob"] });
         expect(memory.memories.has("bot-1_7")).toBe(false);
+    });
+
+    describe("memory takes only the bot server's own service token (Orbit #444)", () => {
+        beforeEach(() => {
+            vi.resetModules();
+            process.env.ADMIN_API_TOKEN = "admin-secret";
+        });
+        afterEach(() => {
+            delete process.env.ADMIN_API_TOKEN;
+            vi.restoreAllMocks();
+        });
+
+        async function storage(config: Record<string, unknown> = {}) {
+            const { MemoryStorage } = await import("../memory/MemoryStorage");
+            return new MemoryStorage({ adminApiUrl: "http://orbit.local", saveInterval: 1000, maxRetries: 1, ...config });
+        }
+        const person = () => {
+            const holder: any = { memories: new Map(), loadedMemoriesByUuid: new Map(), pendingSaves: new Map(), debounceTimers: new Map() };
+            return seed(holder, "uuid-bob", 7);
+        };
+
+        it("saves and loads with the service token, for a private bot and a normal one alike", async () => {
+            const memoryStorage = await storage({ botServiceToken: "service-secret" });
+            for (const botId of ["bot-private", "bot-normal"]) {
+                await memoryStorage.saveMemories(botId, [person()], "immediate");
+                hoisted.axios.get.mockResolvedValue({ data: { memories: [] } });
+                await memoryStorage.loadMemories(botId);
+            }
+            expect(hoisted.axios.post).toHaveBeenCalledTimes(2);
+            expect(hoisted.axios.get).toHaveBeenCalledTimes(2);
+            for (const callArgs of [...hoisted.axios.post.mock.calls, ...hoisted.axios.get.mock.calls]) {
+                const headers = callArgs[callArgs.length - 1].headers;
+                expect(headers.Authorization).toBe("Bearer service-secret");
+            }
+        });
+
+        it("never sends the admin token: with no service token it saves and loads nothing, and says so", async () => {
+            delete process.env.BOT_SERVICE_TOKEN;
+            const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+            const memoryStorage = await storage({ adminApiToken: "admin-secret" });
+            expect(memoryStorage.isConfigured()).toBe(false);
+            await memoryStorage.saveMemories("bot-1", [person()]);
+            expect(await memoryStorage.loadMemories("bot-1")).toEqual([]);
+            expect(await memoryStorage.acknowledgeForgets("bot-1", ["f1"])).toBe(false);
+            expect(hoisted.axios.post).not.toHaveBeenCalled();
+            expect(hoisted.axios.get).not.toHaveBeenCalled();
+            expect(error).toHaveBeenCalledTimes(1);
+            expect(error.mock.calls[0][0]).toContain("BOT_SERVICE_TOKEN is not set");
+        });
+
+        it("reads the service token from the environment like it always did", async () => {
+            const memoryStorage = await storage();
+            expect(memoryStorage.isConfigured()).toBe(true);
+            await memoryStorage.saveMemories("bot-1", [person()]);
+            expect(hoisted.axios.post.mock.calls[0][2].headers.Authorization).toBe("Bearer service-secret");
+        });
+    });
+
+    describe("a Forget is reported to Orbit once dropped, and applied once however long that takes (Orbit #493)", () => {
+        const rows = [{ id: "f1", userUuid: "uuid-bob" }];
+        const notice = { everyone: false, userUuids: ["uuid-bob"], rows };
+        const reports = () => hoisted.axios.post.mock.calls.filter((callArgs) => String(callArgs[0]).endsWith("/forgotten"));
+        const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+        it("reports the dropped ids with the service token, after dropping the person", async () => {
+            const memory: any = await newMemory();
+            seed(memory, "uuid-bob", 7);
+            memory.forget("bot-1", notice);
+            expect(memory.memories.has("bot-1_7")).toBe(false);
+            await settle();
+            expect(reports()).toHaveLength(1);
+            expect(reports()[0][0]).toBe("http://orbit.local/api/bots/memory/bot-1/forgotten");
+            expect(reports()[0][1]).toEqual({ ids: ["f1"] });
+            expect(reports()[0][2].headers.Authorization).toBe("Bearer service-secret");
+        });
+
+        it("reports a Forget that came with the 30-second privacy check too", async () => {
+            const memory: any = await newMemory();
+            seed(memory, "uuid-bob", 7);
+            const { AdminApiService } = await import("../server/AdminApiService");
+            const admin = new AdminApiService("http://orbit.local", "admin-secret");
+            admin.setForgetHandler((botId, forgetNotice) => memory.forget(botId, forgetNotice));
+            hoisted.axios.get.mockResolvedValue({ data: { hidden: true, forget: notice } });
+            await admin.isBotPrivate("bot-1", { fresh: true });
+            await settle();
+            expect(memory.memories.has("bot-1_7")).toBe(false);
+            expect(reports()).toHaveLength(1);
+        });
+
+        it("keeps the person forgotten, and does not wipe what they said since, when Orbit cannot be reached for longer than a minute", async () => {
+            vi.useFakeTimers();
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            try {
+                const memory: any = await newMemory();
+                seed(memory, "uuid-bob", 7);
+                hoisted.axios.post.mockRejectedValue(Object.assign(new Error("timeout"), { isAxiosError: true, code: "ECONNABORTED" }));
+                memory.forget("bot-1", notice);
+                await vi.advanceTimersByTimeAsync(0);
+                expect(reports()).toHaveLength(1);
+
+                // Bob keeps talking for ten minutes; Orbit keeps repeating the Forget, and the report keeps failing
+                seed(memory, "uuid-bob", 7);
+                for (let minute = 0; minute < 10; minute += 1) {
+                    await vi.advanceTimersByTimeAsync(60_000);
+                    memory.forget("bot-1", notice);
+                    await vi.advanceTimersByTimeAsync(0);
+                }
+                expect(memory.memories.has("bot-1_7")).toBe(true);
+                expect(memory.loadedMemoriesByUuid.has("bot-1_uuid-bob")).toBe(true);
+                // Every repeat tried to report again
+                expect(reports().length).toBeGreaterThan(5);
+
+                // Orbit comes back: the report goes through, and a straggling repeat still does not wipe Bob
+                hoisted.axios.post.mockReset().mockResolvedValue({ data: { acknowledged: 1 } });
+                memory.forget("bot-1", notice);
+                await vi.advanceTimersByTimeAsync(0);
+                expect(reports()).toHaveLength(1);
+                memory.forget("bot-1", notice);
+                expect(memory.memories.has("bot-1_7")).toBe(true);
+            } finally {
+                warn.mockRestore();
+                vi.useRealTimers();
+            }
+        });
+
+        it("does not send two reports for the same Forget at once", async () => {
+            const memory: any = await newMemory();
+            seed(memory, "uuid-bob", 7);
+            let finish: (value: unknown) => void = () => undefined;
+            hoisted.axios.post.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+            memory.forget("bot-1", notice);
+            memory.forget("bot-1", notice);
+            expect(reports()).toHaveLength(1);
+            finish({ data: {} });
+            await settle();
+        });
+
+        it("reports each new Forget by its own id, and a Forget-everyone row too", async () => {
+            const memory: any = await newMemory();
+            seed(memory, "uuid-bob", 7);
+            memory.forget("bot-1", { everyone: true, userUuids: [], rows: [{ id: "f2", userUuid: null }, { id: "f3", userUuid: "uuid-bob" }] });
+            await settle();
+            expect(reports()[0][1]).toEqual({ ids: ["f2", "f3"] });
+            expect(memory.memories.has("bot-1_7")).toBe(false);
+        });
+
+        it("says nothing and keeps working when the Orbit it talks to has no such route yet (404)", async () => {
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            const memory: any = await newMemory();
+            seed(memory, "uuid-bob", 7);
+            hoisted.axios.post.mockRejectedValue({ isAxiosError: true, message: "Not Found", response: { status: 404 } });
+            memory.forget("bot-1", notice);
+            await settle();
+            expect(memory.memories.has("bot-1_7")).toBe(false);
+            expect(warn).not.toHaveBeenCalled();
+            warn.mockRestore();
+        });
+
+        it("reports nothing for a Forget without ids (an older Orbit), which works as it did", async () => {
+            const memory: any = await newMemory();
+            seed(memory, "uuid-bob", 7);
+            memory.forget("bot-1", { everyone: false, userUuids: ["uuid-bob"] });
+            await settle();
+            expect(memory.memories.has("bot-1_7")).toBe(false);
+            expect(reports()).toHaveLength(0);
+        });
     });
 
     it("ignores a forget list that is not one, and never turns a good save into a retry", async () => {

@@ -316,7 +316,7 @@
                             </span>
                         {/if}
                         {#if $worldRolesStore}
-                            <RoleBadge roles={shownRoles} personName={displayName} />
+                            <RoleBadge roles={shownRoles} personName={displayName} isMember={!!user.isMember} />
                         {:else if isAdmin}
                             <div
                                 class="text-xxs bg-secondary rounded-sm px-1 py-0.5 ms-1"

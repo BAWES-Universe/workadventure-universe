@@ -4,6 +4,8 @@
     import { activeCoWebsiteStore, coWebsites, fullScreenCowebsite } from "../../Stores/CoWebsiteStore";
     import JitsiCowebsiteComponent from "../Cowebsites/JistiCowebsiteComponent.svelte";
     import SimpleCowebsiteComponent from "../Cowebsites/SimpleCowebsiteComponent.svelte";
+    import ArtifactCowebsiteComponent from "../Cowebsites/ArtifactCowebsiteComponent.svelte";
+    import { ArtifactCoWebsite } from "../../WebRtc/CoWebsite/ArtifactCoWebsite";
     import FileViewerCowebsiteComponent from "../Cowebsites/FileViewerCowebsiteComponent.svelte";
     import { JitsiCoWebsite } from "../../WebRtc/CoWebsite/JitsiCoWebsite";
     import { SimpleCoWebsite } from "../../WebRtc/CoWebsite/SimpleCoWebsite";
@@ -407,6 +409,8 @@
                         visible={coWebsite === activeCowebsite}
                         parked={!recentlyUsed.includes(coWebsite)}
                     />
+                {:else if coWebsite instanceof ArtifactCoWebsite}
+                    <ArtifactCowebsiteComponent actualCowebsite={coWebsite} visible={coWebsite === activeCowebsite} />
                 {:else if coWebsite instanceof SimpleCoWebsite}
                     <SimpleCowebsiteComponent
                         actualCowebsite={coWebsite}

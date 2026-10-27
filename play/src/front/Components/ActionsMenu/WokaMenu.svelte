@@ -5,6 +5,7 @@
     import ButtonClose from "../Input/ButtonClose.svelte";
     import VisitCard from "../VisitCard/VisitCard.svelte";
     import WokaFromUserId from "../Woka/WokaFromUserId.svelte";
+    import Woka from "../Woka/Woka.svelte";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
     import LL from "../../../i18n/i18n-svelte";
     import { peopleCardReturn } from "../../Chat/Stores/PeopleCardReturnStore";
@@ -20,6 +21,10 @@
     let moreOpenFor: string | undefined;
 
     let wokaMenuStoreUnsubscriber: Unsubscriber | null;
+
+    // Searching for someone far away (not on your screen yet): their Woka as People shows it, until the card turns to
+    // their avatar once found.
+    $: searchPicture = wokaMenuData?.searchPicture;
 
     function onKeyDown(e: KeyboardEvent) {
         if (e.key === "Escape" && wokaMenuData) {
@@ -108,6 +113,13 @@
                                     placeholderSrc="/assets/placeholder-woka.png"
                                     customWidth="4rem"
                                 />
+                            </div>
+                        {:else if $searchPicture}
+                            <div
+                                id="woka"
+                                class=" bt-3 overflow-hidden mt-9 border w-fit h-fit pt-3 rounded-lg cursor-not-allowed bg-[rgb(103,185,133)]"
+                            >
+                                <Woka src={$searchPicture} customWidth="4rem" />
                             </div>
                         {/if}
                         <div class="mt-[29px] max-w-full px-2 text-center">
