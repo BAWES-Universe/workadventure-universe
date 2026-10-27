@@ -273,6 +273,9 @@ describe('a reply that says it saved an artifact (Orbit #666)', () => {
         expect(claimsArtifactSaved("I've updated the tracker you keep in Notion with this week's numbers.")).toBe(false);
         expect(claimsArtifactSaved("I've added dark mode to the game. Tap the card to open it.")).toBe(true);
         expect(claimsArtifactSaved("I've rebuilt the app, v2 has the charts.")).toBe(true);
+        // The cue has to be next to the claim, not anywhere in the reply (Sentry on #1499)
+        expect(claimsArtifactSaved("I've fixed the bug in your app. Node v18 or later is needed. The card reader works now too.")).toBe(false);
+        expect(claimsArtifactSaved("I've fixed the bug in your app. Upgrade to Node v18.")).toBe(false);
     });
 
     it('asks the second try to use the tool or say plainly, with what the chat now says', () => {

@@ -225,8 +225,8 @@ export const NOTHING_SAVED_LINE = 'No new version was saved.';
 const ARTIFACT_NOUN = '(?:artifacts?|dashboards?|calculators?|mockups?)(?!\\s+of\\b)';
 /** Things a bot makes as artifacts that people also have of their own ("I've fixed the bug in your app"): only with a cue below. */
 const SOMETIMES_ARTIFACT_NOUN = '(?:apps?|games?|boards?|trackers?)(?!\\s+of\\b)';
-/** A reply that points at an artifact: its card, opening it, a version named. */
-const ARTIFACT_CUE = /\b(?:card|tap|open it|artifact|preview|v\d+|version \d+)\b/;
+/** Pointing at an artifact: its card, tapping or opening it. A version named counts through VERSION_SAID instead. */
+const ARTIFACT_CUE = /\b(?:the card|tap|open it|artifacts?)\b/;
 /** "v2", "version 3": a version said to exist. */
 const VERSION_SAID = /\b(?:v\d+|version \d+)\b/;
 /** Saying it was made or changed. */
@@ -247,7 +247,7 @@ const EARLIER_SAID = /\b(?:earlier|before|previously|already|yesterday|ago|last 
 /**
  * Whether a reply says an artifact was made or changed. Read only when no make or change was saved in the turn, so it
  * leans on the wording, one sentence at a time: "I've built / here's the updated" followed closely by something an
- * artifact is (an app, game, board or tracker only when the reply also points at a card, opening it or a version), or a
+ * artifact is (an app, game, board or tracker only next to a sentence pointing at its card or opening it), or a
  * version named ("v2", "version 3") next to a word saying it was done. Ordinary answers that mention a
  * table, a list or a page without saying one was made don't count, nor a sentence about one from before ("the dashboard I
  * built earlier"): that one was saved in an earlier turn.
@@ -255,14 +255,16 @@ const EARLIER_SAID = /\b(?:earlier|before|previously|already|yesterday|ago|last 
 export function claimsArtifactSaved(reply: string): boolean {
     const text = reply.toLowerCase();
     if (!text.trim() || NOT_DONE_SAID.test(text)) return false;
-    const cued = ARTIFACT_CUE.test(text);
-    return text
-        .split(/[.!?\n]+/)
-        .some(
-            (sentence) =>
-                !EARLIER_SAID.test(sentence) &&
-                (DONE_SAID.test(sentence) || (cued && DONE_SAID_SOMETIMES.test(sentence)) || (VERSION_SAID.test(sentence) && VERSION_DONE.test(sentence)))
-        );
+    const sentences = text.split(/[.!?\n]+/);
+    // An app, game, board or tracker counts with a cue in the same sentence or the one after ("... the game. Tap the card")
+    const cued = (index: number) => ARTIFACT_CUE.test(sentences[index]) || ARTIFACT_CUE.test(sentences[index + 1] ?? '');
+    return sentences.some(
+        (sentence, index) =>
+            !EARLIER_SAID.test(sentence) &&
+            (DONE_SAID.test(sentence) ||
+                (DONE_SAID_SOMETIMES.test(sentence) && cued(index)) ||
+                (VERSION_SAID.test(sentence) && VERSION_DONE.test(sentence)))
+    );
 }
 
 /** The second try after a reply said it saved an artifact and nothing was saved: do it with the tool, or say it plainly. */
