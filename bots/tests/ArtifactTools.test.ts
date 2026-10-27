@@ -268,6 +268,11 @@ describe('a reply that says it saved an artifact (Orbit #666)', () => {
         expect(claimsArtifactSaved("I've updated the page title and the site menu in your notes.")).toBe(false);
         expect(claimsArtifactSaved("Here's the updated board of directors list.")).toBe(false);
         expect(claimsArtifactSaved("I've made a mock interview plan for Monday.")).toBe(false);
+        // An app, game, board or tracker only with a cue that it is an artifact (CodeRabbit on the R6 release)
+        expect(claimsArtifactSaved("I've fixed the bug in your app. The loop now stops at 10.")).toBe(false);
+        expect(claimsArtifactSaved("I've updated the tracker you keep in Notion with this week's numbers.")).toBe(false);
+        expect(claimsArtifactSaved("I've added dark mode to the game. Tap the card to open it.")).toBe(true);
+        expect(claimsArtifactSaved("I've rebuilt the app, v2 has the charts.")).toBe(true);
     });
 
     it('asks the second try to use the tool or say plainly, with what the chat now says', () => {
