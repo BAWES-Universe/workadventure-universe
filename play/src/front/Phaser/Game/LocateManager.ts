@@ -6,7 +6,7 @@ import { wokaMenuStore, wokaMenuProgressStore } from "../../Stores/WokaMenuStore
 import LL from "../../../i18n/i18n-svelte";
 import { peopleCardReturn } from "../../Chat/Stores/PeopleCardReturnStore";
 import type { CameraManager } from "./CameraManager";
-import { cancelLocateRequest, takeLocateRequest } from "./LocateRequest";
+import { cancelLocateRequest, isStaleLocateAnswer, takeLocateRequest } from "./LocateRequest";
 import type { GameScene } from "./GameScene";
 
 /**
@@ -78,6 +78,10 @@ export class LocateManager {
 
     private handleLocatePositionMessage(message: LocatePositionMessageProto): void {
         if (!message.position) {
+            return;
+        }
+        // The answer for a search another one replaced moves nothing: the newer search has its own answer coming.
+        if (isStaleLocateAnswer(Date.now(), message.userId)) {
             return;
         }
         const request = takeLocateRequest(Date.now(), message.userId);

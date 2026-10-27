@@ -374,6 +374,40 @@ describe("saving this device", () => {
         vi.unstubAllGlobals();
     });
 
+    it("gives up when the worker never becomes active, instead of staying on the spinner", async () => {
+        vi.useFakeTimers();
+        try {
+            const { subscribeThisDevice } = await import("../PushDevice");
+            const subscribe = vi.fn();
+            vi.stubGlobal("navigator", {
+                userAgent: UA.windowsEdge,
+                platform: "",
+                maxTouchPoints: 0,
+                serviceWorker: {
+                    register: () =>
+                        Promise.resolve({
+                            active: null,
+                            pushManager: { getSubscription: () => Promise.resolve(null), subscribe },
+                        }),
+                    ready: new Promise(() => {}),
+                },
+            });
+            vi.stubGlobal("Notification", {
+                permission: "granted",
+                requestPermission: () => Promise.resolve("granted"),
+            });
+            vi.stubGlobal("PushManager", class {});
+            getPushPublicKey.mockResolvedValueOnce("AAAA");
+            const result = subscribeThisDevice();
+            await vi.advanceTimersByTimeAsync(10_000);
+            expect(await result).toBe("notSetUp");
+            expect(subscribe).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+            vi.unstubAllGlobals();
+        }
+    });
+
     it("records Off when it could not turn on, so the next page load does not turn it on unasked", async () => {
         const { turnOnThisDevice } = await import("../PushDevice");
         const { localUserStore } = await import("../../../Connection/LocalUserStore");

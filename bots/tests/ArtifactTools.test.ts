@@ -53,6 +53,11 @@ describe('artifact tools', () => {
         expect(line).toBe(`::artifact:art-1:2:app::${'a'.repeat(119)}`);
     });
 
+    it('does not cut an emoji in half at the title limit', () => {
+        const line = artifactMarker({ id: 'art-1', version: 2, kind: 'app', title: `${'a'.repeat(119)}😀 tail` });
+        expect(line).toBe(`::artifact:art-1:2:app::${'a'.repeat(119)}`);
+    });
+
     it('words a direct message card for the game and for any other chat app', () => {
         const card = { id: 'a', version: 3, title: 'Notes', kind: 'markdown' as const, maker: 'Scout' };
         expect(ARTIFACT_KEY).toBe('universe.artifact');

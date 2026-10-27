@@ -34,6 +34,17 @@ export function cancelLocateRequest(): void {
     if (pending) pending.cancelled = true;
 }
 
+/** An answer about another avatar than the one now asked for: the one asked for first, which another search replaced. */
+export function isStaleLocateAnswer(now: number = Date.now(), answeredAvatarId?: number): boolean {
+    return (
+        pending !== undefined &&
+        pending.avatarId !== undefined &&
+        answeredAvatarId !== undefined &&
+        pending.avatarId !== answeredAvatarId &&
+        now - pending.at <= LOCATE_REQUEST_TTL_MS
+    );
+}
+
 /**
  * Takes the request an answer belongs to (a recent one, or none: a search started elsewhere). Once taken, it's gone.
  * An answer about another avatar than the one asked for (two people looked for in a row) leaves the request for
@@ -43,15 +54,7 @@ export function takeLocateRequest(
     now: number = Date.now(),
     answeredAvatarId?: number
 ): { name: string | undefined; picture?: PictureStore; cancelled: boolean } | undefined {
-    if (
-        pending &&
-        pending.avatarId !== undefined &&
-        answeredAvatarId !== undefined &&
-        pending.avatarId !== answeredAvatarId &&
-        now - pending.at <= LOCATE_REQUEST_TTL_MS
-    ) {
-        return undefined;
-    }
+    if (isStaleLocateAnswer(now, answeredAvatarId)) return undefined;
     const request = pending && now - pending.at <= LOCATE_REQUEST_TTL_MS ? pending : undefined;
     pending = undefined;
     return request ? { name: request.name, picture: request.picture, cancelled: request.cancelled } : undefined;
