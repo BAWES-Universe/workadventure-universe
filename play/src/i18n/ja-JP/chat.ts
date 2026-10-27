@@ -256,7 +256,7 @@ const chat: DeepPartial<Translation["chat"]> = {
     roomMenu: {
         leaveRoom: {
             label: "退室する",
-            notification: "ルームを退室しました",
+            notification: "{name}を退室しました",
         },
         muteRoom: "ルームをミュートにする",
         unmuteRoom: "ルームのミュートを解除する",
@@ -311,6 +311,21 @@ const chat: DeepPartial<Translation["chat"]> = {
         maxFileCount: "最大{count}ファイルまで同時にアップロードできます。",
         unsafeFileType: '"{name}"は安全でないファイルタイプのため、アップロードできません。',
         fileTooLarge: '"{name}"は大きすぎます。最大サイズは{size}MBです。',
+    },
+    botStatus: {
+        online: "オンライン",
+        resting: "お休み中",
+        unready: "準備中",
+        gone: "いなくなりました",
+        restingPlaceholder: "返信は一時停止中",
+        unreadyPlaceholder: "まだ返信できません",
+        closed: "このチャットは終了しました",
+        left: "{name}はいなくなりました",
+        visit: "会いに行く",
+        visitAria: "{room}の{name}に会いに行く",
+        livesIn: "いる場所",
+        nowIn: "今いる場所",
+        inThisRoom: "このルームにいます",
     },
 };
 

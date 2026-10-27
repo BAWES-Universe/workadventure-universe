@@ -12,7 +12,7 @@
     import LL from "../../../../i18n/i18n-svelte";
     import { ABSOLUTE_PUSHER_URL } from "../../../Enum/ComputedConst";
     import { mobileLayoutStore } from "../../../Stores/MobileLayoutStore";
-    import type { BotData } from "../types";
+    import type { BotAiOptions, BotData } from "../types";
     import WokaImage from "../../../Components/Woka/WokaImage.svelte";
     import { botPreviewsStore, selectedBotStore, startWaypointEditing, upsertBot } from "../stores/BotEditorStore";
     import { botApiService } from "../services/BotApiService";
@@ -26,6 +26,9 @@
     import { botPermissionsStore } from "../stores/BotPermissionsStore";
     import { isOpenToEveryone } from "../accessModel";
     import { botTelemetryStore, loadBotTelemetry, setBotTelemetry } from "../stores/BotTelemetryStore";
+    import { botUsageStore } from "../stores/BotUsageStore";
+    import { UNIVERSE_AI_REF } from "../mindModel";
+    import type { UsageScreen } from "../usageModel";
     import BotWokaPicker from "./BotWokaPicker.svelte";
     import BotCompanionPicker from "./BotCompanionPicker.svelte";
     import BotRuleScreen from "./BotRuleScreen.svelte";
@@ -41,6 +44,9 @@
     import BotFooter from "./page/BotFooter.svelte";
     import PageNote from "./page/PageNote.svelte";
     import TelemetryCard from "./page/TelemetryCard.svelte";
+    import UsageGroup from "./page/UsageGroup.svelte";
+    import MakerAskedCard from "./page/MakerAskedCard.svelte";
+    import BotUsageScreen from "./BotUsageScreen.svelte";
     import { IconAdjustmentsHorizontal, IconCurrentLocation, IconPaw, IconPencil } from "@wa-icons";
 
     export let bot: BotData | null = null;
@@ -49,6 +55,8 @@
     export let onLocate: (() => void) | undefined = undefined;
 
     let currentBot: BotData | null = null;
+    /** What "Runs on" offers this bot, as the Mind group loads it: the Tools group's reply limits come from it */
+    let aiOptions: BotAiOptions | null = null;
     /** The WOKA picker fills the panel in place of the page, as the companion picker does */
     export let editingTexture = false;
     /** The companion picker fills the panel in place of the page (BotEditor puts its title and back circle up) */
@@ -59,6 +67,8 @@
     export let addingRule = false;
     /** Advanced settings (Bot chat telemetry) fill the panel in place of the page */
     export let editingAdvanced = false;
+    /** One of Usage's screens: who uses the bot, what it ran on, its limits */
+    export let usageScreen: UsageScreen | null = null;
     $: telemetryState = $botTelemetryStore && $botTelemetryStore.botId === bot?.id ? $botTelemetryStore : undefined;
     $: telemetryLocked = telemetryState?.data?.universeHides === true;
     $: advancedBrief = !telemetryState
@@ -91,7 +101,8 @@
     }
     let switching = false;
     let switchError: string | null = null;
-    let openGroup: string | undefined = lastOpenGroup;
+    // Usage opens first until someone opens another group
+    let openGroup: string | undefined = lastOpenGroup ?? "usage";
 
     function toggleGroup(id: string) {
         openGroup = openGroup === id ? undefined : id;
@@ -105,6 +116,7 @@
             editingRuleId = null;
             addingRule = false;
             editingAdvanced = false;
+            usageScreen = null;
         }
     }
 
@@ -138,6 +150,21 @@
             openGroup = "access";
             lastOpenGroup = openGroup;
         }
+    }
+    // The maker sees how many people asked for more replies while the bot runs on Universe AI
+    $: usageNow = currentBot && $botUsageStore?.botId === currentBot.id ? $botUsageStore.data : undefined;
+    $: askedUsage =
+        usageNow &&
+        usageNow.viewerIsMaker &&
+        usageNow.limits.askedMaker > 0 &&
+        (currentBot?.aiProviderRef
+            ? currentBot.aiProviderRef === UNIVERSE_AI_REF
+            : usageNow.ranOn[usageNow.ranOn.length - 1]?.kind !== "own-key")
+            ? usageNow
+            : undefined;
+    function openMind() {
+        openGroup = "mind";
+        lastOpenGroup = openGroup;
     }
     $: permissions = $botPermissionsStore;
     $: openData = currentBot && permissions?.botId === currentBot.id ? permissions.data : undefined;
@@ -206,6 +233,7 @@
             editingRuleId = null;
             addingRule = false;
             editingAdvanced = false;
+            usageScreen = null;
             toolBaseline = undefined;
             toolAdded = false;
             askedNow = false;
@@ -563,6 +591,8 @@
     />
 {:else if currentBot && editingRuleId}
     <BotRuleScreen botId={currentBot.id} ruleId={editingRuleId} onClose={() => (editingRuleId = null)} />
+{:else if currentBot && usageScreen}
+    <BotUsageScreen bot={currentBot} screen={usageScreen} />
 {:else if currentBot && editingAdvanced}
     <div class="bot-page" data-testid="bot-advanced">
         {#if telemetryState?.data}
@@ -647,11 +677,21 @@
         {/if}
 
         <div class="bp-groups">
+            {#if askedUsage && currentBot}
+                <MakerAskedCard name={currentBot.name || "Bot"} usage={askedUsage} onUseKey={openMind} />
+            {/if}
+            <UsageGroup
+                bot={currentBot}
+                open={openGroup === "usage"}
+                onToggle={toggleGroup}
+                onOpenScreen={(screen) => (usageScreen = screen)}
+            />
             <MindGroup
                 bot={currentBot}
                 open={openGroup === "mind"}
                 onToggle={toggleGroup}
                 onChange={(next) => apply(next)}
+                onOptions={(loaded) => (aiOptions = loaded)}
             />
             <SayGroup bot={currentBot} open={openGroup === "say"} onToggle={toggleGroup} onChange={apply} />
             <BehaviorGroup
@@ -668,6 +708,7 @@
                 onChange={(next) => apply(next)}
                 wide={!$mobileLayoutStore}
                 {onToolCount}
+                {aiOptions}
             />
             {#if askLimit && currentBot}
                 <LimitSuggestion

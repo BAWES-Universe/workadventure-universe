@@ -6,6 +6,7 @@
  */
 
 import WebSocket from 'ws';
+import { activeMatrixConfig, botMatrixId } from '../matrix/MatrixConfig';
 import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
 import {
@@ -192,7 +193,9 @@ export class BotClient {
             // ONLINE (1). This used to send 0, which is UNCHANGED: people saw the bot as offline in the People list
             params.set('availabilityStatus', '1');
             params.set('version', apiVersionHash); // Imported from @workadventure/messages
-            params.set('chatID', '');
+            // With Matrix direct messages on, the bot shows its Matrix ID so people get the Message button for it.
+            const matrixConfig = activeMatrixConfig();
+            params.set('chatID', (matrixConfig && botMatrixId(matrixConfig.domain, this.config.botId)) || '');
             params.set('roomName', '');
             params.set('cameraState', 'false');
             params.set('microphoneState', 'false');
@@ -2013,6 +2016,34 @@ export class BotClient {
     }
 
     /**
+     * Show one person, and only them, the fixed card for a reply limit they reached (#1159). Sent as a private event
+     * to that person in the bot's nearby chat; the pusher passes it on only when a bot sends it.
+     */
+    sendReplyLimitCard(spaceName: string, playerId: number, card: { limit: string; resetsAt: string; who: string }): void {
+        const spaceUserId = this.spaces.get(spaceName);
+        if (!spaceUserId) return;
+        // A space user id is "<room>_<user id>": the person's is the bot's with their own user id at the end
+        const cut = spaceUserId.lastIndexOf('_');
+        if (cut < 0) return;
+        const receiverUserId = `${spaceUserId.slice(0, cut)}_${playerId}`;
+        this.send({
+            message: {
+                $case: 'privateEvent',
+                privateEvent: {
+                    spaceName,
+                    receiverUserId,
+                    spaceEvent: {
+                        event: {
+                            $case: 'botReplyLimit',
+                            botReplyLimit: { ...card, botId: this.config.botId, botName: this.config.name },
+                        },
+                    },
+                },
+            },
+        });
+    }
+
+    /**
      * Start typing indicator in space (shows bot is typing)
      */
     startTyping(spaceName: string): void {
@@ -2171,6 +2202,16 @@ export class BotClient {
      */
     getAllPeople(): PlayerInfo[] {
         return Array.from(this.players.values());
+    }
+
+    /**
+     * Who is asking, for the artifact tools: the same person Orbit's access check sees (signed in, and by which
+     * identifier), and the name they go by here.
+     */
+    getPersonForArtifacts(playerId: number): { signedIn: boolean; identifier: string | null; name: string | null } {
+        const access = this.behavior?.getPersonForAccess(playerId) ?? { signedIn: false, identifier: null };
+        const name = this.players.get(playerId)?.name ?? null;
+        return { signedIn: access.signedIn, identifier: access.identifier, name };
     }
 
     /**

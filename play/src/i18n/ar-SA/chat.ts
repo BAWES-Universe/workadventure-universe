@@ -311,7 +311,7 @@ const chat: DeepPartial<Translation["chat"]> = {
     roomMenu: {
         leaveRoom: {
             label: "مغادرة المجموعة",
-            notification: "لقد غادرت المجموعة",
+            notification: "غادرت {name}",
         },
         muteRoom: "كتم المجموعة",
         unmuteRoom: "إلغاء كتم المجموعة",
@@ -558,6 +558,21 @@ const chat: DeepPartial<Translation["chat"]> = {
         offlineHint: "أعضاء هذا العالم غير المتصلين الآن.",
         collapse: "طيّ {section}",
         expand: "توسيع {section}",
+    },
+    botStatus: {
+        online: "متصل",
+        resting: "في استراحة",
+        unready: "ليس جاهزًا بعد",
+        gone: "غادر",
+        restingPlaceholder: "الردود متوقفة",
+        unreadyPlaceholder: "لا يمكنه الرد بعد",
+        closed: "هذه الدردشة مغلقة",
+        left: "غادر {name}",
+        visit: "زيارة",
+        visitAria: "زيارة {name} في {room}",
+        livesIn: "يقيم في",
+        nowIn: "موجود الآن في",
+        inThisRoom: "أنت في هذه الغرفة",
     },
     session: {
         live: "مباشر",

@@ -1,9 +1,9 @@
 <script lang="ts">
-    // Tools: the bot's MCP servers, its Patience (how long it waits for a tool to answer before giving up), and
-    // whether people near it see which tool it calls.
+    // Tools: the bot's MCP servers, its Patience (how long it waits for a tool to answer before giving up), its longest
+    // reply and steps (lower than its key's, Orbit #666), and whether people near it see which tool it calls.
     import { onMount } from "svelte";
     import LL from "../../../../../i18n/i18n-svelte";
-    import type { BotData } from "../../types";
+    import type { BotAiOptions, BotData } from "../../types";
     import { botApiService, type McpServer } from "../../services/BotApiService";
     import { DEFAULT_TOOL_TIMEOUT_SECONDS, showsToolCalls, withShowToolCalls } from "../../behaviorModel";
     import BotMcpServersEditor from "../BotMcpServersEditor.svelte";
@@ -12,6 +12,7 @@
     import PageChips from "./PageChips.svelte";
     import PageSwitch from "./PageSwitch.svelte";
     import { durationChips, durationLabel } from "./duration";
+    import { REPLY_CHOICES, STEP_CHOICES, ceilingFor, limitChips, tokensLabel } from "./replyLimits";
     import { IconTool } from "@wa-icons";
 
     export let bot: BotData;
@@ -22,6 +23,8 @@
     export let wide = false;
     /** How many tools the bot has, each time that is known or changes */
     export let onToolCount: ((count: number) => void) | undefined = undefined;
+    /** What "Runs on" offers (loaded by the Mind group): each choice's longest reply and steps. */
+    export let aiOptions: BotAiOptions | null = null;
 
     let servers: McpServer[] | undefined;
     $: if (servers) onToolCount?.(servers.length);
@@ -52,6 +55,9 @@
             : page.tools.count({ count: servers.length });
     $: waits = page.tools.waits({ patience: durationLabel(patience) });
     $: brief = names ? `${names} · ${waits}` : waits;
+    $: ceiling = ceilingFor(aiOptions, bot.aiProviderRef);
+    $: replyLimit = limitChips(ceiling?.reply ?? null, REPLY_CHOICES, bot.maxReplyTokens, tokensLabel, page.tools);
+    $: stepLimit = limitChips(ceiling?.steps ?? null, STEP_CHOICES, bot.maxSteps, String, page.tools);
 </script>
 
 <PageGroup id="tools" icon={IconTool} title={page.tools.title()} {brief} {open} {onToggle}>
@@ -66,6 +72,22 @@
                     ...bot,
                     toolTimeoutSeconds: seconds === DEFAULT_TOOL_TIMEOUT_SECONDS ? null : seconds,
                 })}
+        />
+    </PageField>
+    <PageField title={page.tools.longestReply()} hint={page.tools.longestReplyHint()}>
+        <PageChips
+            label={page.tools.longestReply()}
+            options={replyLimit.options}
+            value={replyLimit.value}
+            onPick={(tokens) => onChange({ ...bot, maxReplyTokens: tokens || null })}
+        />
+    </PageField>
+    <PageField title={page.tools.steps()} hint={page.tools.stepsHint()}>
+        <PageChips
+            label={page.tools.steps()}
+            options={stepLimit.options}
+            value={stepLimit.value}
+            onPick={(steps) => onChange({ ...bot, maxSteps: steps || null })}
         />
     </PageField>
     <label class="bp-set" for="bot-show-tool-calls-{bot.id}">

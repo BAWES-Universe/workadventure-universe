@@ -210,7 +210,7 @@ const chat: DeepPartial<Translation["chat"]> = {
     roomMenu: {
         leaveRoom: {
             label: "Kamer verlaten",
-            notification: "Je hebt de kamer verlaten",
+            notification: "Je hebt {name} verlaten",
         },
     },
     e2ee: {
@@ -255,6 +255,21 @@ const chat: DeepPartial<Translation["chat"]> = {
         },
     },
     connectionError: "Chat niet beschikbaar",
+    botStatus: {
+        online: "Online",
+        resting: "Rust",
+        unready: "Nog niet klaar",
+        gone: "Weg",
+        restingPlaceholder: "Antwoorden gepauzeerd",
+        unreadyPlaceholder: "Kan nog niet antwoorden",
+        closed: "Deze chat is gesloten",
+        left: "{name} is weggegaan",
+        visit: "Bezoeken",
+        visitAria: "{name} bezoeken in {room}",
+        livesIn: "Woont in",
+        nowIn: "Nu in",
+        inThisRoom: "Je bent in deze ruimte",
+    },
 };
 
 export default chat;

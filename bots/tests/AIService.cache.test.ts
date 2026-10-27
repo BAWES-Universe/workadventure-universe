@@ -84,7 +84,7 @@ function buildMocks(roomName: string | null = null) {
         getRoomMetadata: vi.fn().mockResolvedValue(roomName ? { universeName: "Uni", worldName: "World", roomName } : null),
         getAvailableAIProviders: vi.fn().mockResolvedValue([]),
     };
-    const memory: any = { getMemory: vi.fn(() => ({ userUuid: "test-uuid" })) };
+    const memory: any = { getMemory: vi.fn(() => ({ userUuid: "test-uuid" })), getPendingMediaNotice: vi.fn(() => undefined) };
     return { admin, memory };
 }
 
@@ -109,7 +109,7 @@ describe("AIService and the provider's prompt cache", () => {
         drain(service.generateBotResponseStream("bot-1", 42, "hi", instructions, "test-provider", "space-1", "", botClient, admin));
 
     describe("the fixed part of the system prompt", () => {
-        it("names the end of the instructions, so everything before it is the same for every message", async () => {
+        it("names the end of the fixed rules, so everything before it is the same for every message", async () => {
             const { admin, memory } = buildMocks();
             let config: any;
             let system = "";
@@ -124,10 +124,11 @@ describe("AIService and the provider's prompt cache", () => {
             expect(config.promptCacheEnds).toHaveLength(1);
             const fixed = system.slice(0, config.promptCacheEnds[0]);
             expect(fixed.startsWith("Be a pirate.")).toBe(true);
-            expect(fixed.endsWith("takes precedence over any conflicting technical rules below.")).toBe(true);
-            // What follows is what changes: the day, the person's memory and the rules
-            expect(system.slice(config.promptCacheEnds[0])).toContain("TODAY'S DATE");
-            expect(fixed).not.toContain("TODAY'S DATE");
+            // The instructions with the personality wrapper, then the rules that are the same for everyone
+            expect(fixed).toContain("takes precedence over any conflicting technical rules below.");
+            // What follows is what changes: the person's memory and the day
+            expect(system.slice(config.promptCacheEnds[0])).toContain("**NOW:**");
+            expect(fixed).not.toContain("**NOW:**");
         });
 
         it("names the end of the room too when the bot knows where it is", async () => {
@@ -143,9 +144,9 @@ describe("AIService and the provider's prompt cache", () => {
             await run(new AIService(memory, admin, "http://admin.local"), admin, "Be a pirate.", { getRoomUrl: () => "https://play.example/@/uni/world/lobby" });
 
             expect(config.promptCacheEnds).toHaveLength(2);
-            const [instructions, room] = config.promptCacheEnds;
-            expect(system.slice(instructions, room)).toMatch(/^\n\nCurrent Location Context[\s\S]*- Room: Lobby/);
-            expect(system.slice(room).startsWith("\n\n**TODAY'S DATE:**")).toBe(true);
+            const [rules, room] = config.promptCacheEnds;
+            expect(system.slice(rules, room)).toMatch(/^\n\nCurrent Location Context[\s\S]*- Room: Lobby/);
+            expect(system.slice(room).startsWith("\n\n**NOW:**")).toBe(true);
         });
 
         it("hands every call of a turn the same hint", async () => {

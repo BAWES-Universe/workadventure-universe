@@ -306,7 +306,7 @@ const chat: DeepPartial<Translation["chat"]> = {
     roomMenu: {
         leaveRoom: {
             label: "Sair da sala",
-            notification: "Você saiu da sala",
+            notification: "Você saiu de {name}",
         },
         muteRoom: "Silenciar Sala",
         unmuteRoom: "Reativar Som da Sala",
@@ -477,6 +477,21 @@ const chat: DeepPartial<Translation["chat"]> = {
         },
     },
     remoteUserNotConnected: "Usuário não autenticado. Não é possível enviar mensagem.",
+    botStatus: {
+        online: "Online",
+        resting: "Descansando",
+        unready: "Ainda não está pronto",
+        gone: "Saiu",
+        restingPlaceholder: "Respostas em pausa",
+        unreadyPlaceholder: "Ainda não pode responder",
+        closed: "Esta conversa está fechada",
+        left: "{name} saiu",
+        visit: "Visitar",
+        visitAria: "Visitar {name} em {room}",
+        livesIn: "Mora em",
+        nowIn: "Agora em",
+        inThisRoom: "Você está nesta sala",
+    },
 };
 
 export default chat;

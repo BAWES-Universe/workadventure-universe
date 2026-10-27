@@ -1,6 +1,7 @@
 import type { ComponentType } from "svelte";
 import { get, writable } from "svelte/store";
 import { v4 } from "uuid";
+import type { PictureStore } from "./PictureStore";
 
 export type WokaMenuAction = {
     uuid?: string;
@@ -22,6 +23,8 @@ export interface WokaMenuData {
     userUuid: string;
     /** Your own card: shows your woka, and none of the actions meant for other players. */
     isSelf?: boolean;
+    /** While searching for someone not on your screen yet (userId -1): their Woka as People shows it. */
+    searchPicture?: PictureStore;
 }
 
 function createWokaMenuStore() {
@@ -34,7 +37,8 @@ function createWokaMenuStore() {
             userId: number,
             userUuid: string,
             visitCardUrl: string | undefined,
-            isSelf = false
+            isSelf = false,
+            searchPicture?: PictureStore
         ) => {
             set({
                 wokaName,
@@ -43,6 +47,7 @@ function createWokaMenuStore() {
                 userId,
                 userUuid,
                 isSelf,
+                searchPicture,
             });
         },
         addAction: (action: WokaMenuAction) => {

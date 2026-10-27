@@ -106,6 +106,12 @@ export class AIProviderRegistry {
                 done: true,
                 metadata: {
                     tokensUsed: response.tokensUsed,
+                    ...(response.usage?.promptTokens !== undefined ? { promptTokens: response.usage.promptTokens } : {}),
+                    ...(response.usage?.completionTokens !== undefined ? { completionTokens: response.usage.completionTokens } : {}),
+                    ...(response.usage?.cachedPromptTokens !== undefined ? { cachedPromptTokens: response.usage.cachedPromptTokens } : {}),
+                    ...(response.usage?.cacheWriteTokens !== undefined ? { cacheWriteTokens: response.usage.cacheWriteTokens } : {}),
+                    ...(response.usage?.reasoningTokens !== undefined ? { reasoningTokens: response.usage.reasoningTokens } : {}),
+                    ...(response.usage?.costUsd !== undefined ? { costUsd: response.usage.costUsd } : {}),
                     latency: response.latency,
                     error: response.error,
                     truncated: response.truncated,

@@ -2,7 +2,7 @@
     import { AvailabilityStatus } from "@workadventure/messages";
     import * as Sentry from "@sentry/svelte";
     import highlightWords from "highlight-words";
-    import { derived } from "svelte/store";
+    import { derived, readable } from "svelte/store";
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import { availabilityStatusStore } from "../../../Stores/MediaStore";
     import { getColorHexOfStatus } from "../../../Utils/AvailabilityStatus";
@@ -18,6 +18,8 @@
     import { requestVisitCardsStore } from "../../../Stores/GameStore";
     import { canOpenOrbit } from "../../../external-modules/admin-api/index";
     import { adminDashboardActivatedStore } from "../../../Stores/MenuStore";
+    import { botIdFromChatId, botStatusColour } from "../../Bots/BotChatStatus";
+    import { botDmAccessCache, botStatusCache } from "../../Bots/BotStatusStore";
     import { friendsEnabledStore, relationshipsStore } from "../../Stores/FriendsStore";
     import { invitesEnabledStore, ringStore } from "../../Stores/RingStore";
     import { blackListManager } from "../../../WebRtc/BlackListManager";
@@ -59,6 +61,13 @@
     let showRoomCreationInProgress = false;
 
     $: ({ chatId, availabilityStatus, username = "", color, isAdmin, pictureStore } = user);
+
+    // A bot here is on (it walks the map), but may have no AI provider yet: say so before anyone writes to it.
+    $: botId = user.isBot ? botIdFromChatId(chatId) : undefined;
+    $: botAvailability = botId ? botStatusCache.store(botId) : readable(undefined);
+    $: botUnready = $botAvailability === "unready";
+    // Message shows only for people the bot's owner lets message it.
+    $: botDmAccess = botId ? botDmAccessCache.store(botId) : readable(false);
 
     // No scene while a reconnect swaps it: the row still shows, without the actions that need the map.
     const currentGameScene = gameManager.tryGetCurrentGameScene();
@@ -114,6 +123,7 @@
         isSelf: isMe,
         isMyAccount: isMine,
         isBot: user.isBot,
+        mayMessageBot: $botDmAccess,
         status: $userStatus,
         uuid: user.uuid,
         chatId: user.chatId,
@@ -306,7 +316,7 @@
                             </span>
                         {/if}
                         {#if $worldRolesStore}
-                            <RoleBadge roles={shownRoles} personName={displayName} />
+                            <RoleBadge roles={shownRoles} personName={displayName} isMember={!!user.isMember} />
                         {:else if isAdmin}
                             <div
                                 class="text-xxs bg-secondary rounded-sm px-1 py-0.5 ms-1"
@@ -320,6 +330,18 @@
                 <div class="text-xs mb-0 font-condensed opacity-75 self-end">
                     {#if isMe}
                         {$LL.chat.you()}
+                    {:else if botUnready}
+                        <div
+                            class="flex items-center"
+                            style="color:{botStatusColour('unready')}"
+                            data-testid="botUnready"
+                        >
+                            <div
+                                class="rounded-full me-1 h-1.5 w-1.5"
+                                style="background:{botStatusColour('unready')}"
+                            />
+                            {$LL.chat.botStatus.unready()}
+                        </div>
                     {:else if $userStatus}
                         <div class="flex items-center brightness-150" style="color:{getColorHexOfStatus($userStatus)}">
                             {#if $userStatus}
@@ -391,18 +413,6 @@
                         <IconDoorIn font-size="20" />
                     </PersonActionButton>
                 {/if}
-                {#if actions.locateButton}
-                    <PersonActionButton
-                        class="locate"
-                        label={$LL.chat.userList.follow()}
-                        ariaLabel={$LL.chat.userList.locateUser({ userName: displayName })}
-                        testId={`locate-${user.username}`}
-                        expanded={choosesSession ? sessionsOpen : undefined}
-                        on:click={locate}
-                    >
-                        <IconMapPin font-size="20" />
-                    </PersonActionButton>
-                {/if}
                 {#if canRing && user.uuid}
                     <RingButton
                         uuid={user.uuid}
@@ -423,6 +433,19 @@
                     <div class="min-h-[30px] text-md flex gap-2 justify-center flex-row items-center p-1">
                         <IconLoader class="animate-spin" />
                     </div>
+                {/if}
+                <!-- A bot's Locate comes after Message, so Message sits second in every row, people's and bots'. -->
+                {#if actions.locateButton}
+                    <PersonActionButton
+                        class="locate"
+                        label={$LL.chat.userList.follow()}
+                        ariaLabel={$LL.chat.userList.locateUser({ userName: displayName })}
+                        testId={`locate-${user.username}`}
+                        expanded={choosesSession ? sessionsOpen : undefined}
+                        on:click={locate}
+                    >
+                        <IconMapPin font-size="20" />
+                    </PersonActionButton>
                 {/if}
                 {#if hasMenu}
                     <UserActionButton

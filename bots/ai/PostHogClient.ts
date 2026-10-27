@@ -46,6 +46,8 @@ export interface CapturedGeneration {
     output: string;
     /** All input tokens of the call, the cached ones included */
     inputTokens: number;
+    /** Input tokens served from the provider's cache (a subset of inputTokens). Omitted when the provider did not report it. */
+    cachedInputTokens?: number;
     outputTokens: number;
     /** Part of inputTokens read from / written to the provider's cache. Left out (not zero) when the provider reported none. */
     cacheReadTokens?: number;
@@ -92,6 +94,7 @@ export function captureAiGeneration(params: CapturedGeneration): void {
                 $ai_provider: params.provider,
                 $ai_input: [{role: 'user', content: params.input}],
                 $ai_input_tokens: params.inputTokens,
+                ...(params.cachedInputTokens !== undefined ? { $ai_cache_read_input_tokens: params.cachedInputTokens } : {}),
                 $ai_output_tokens: params.outputTokens,
                 ...cacheProperties(params),
                 $ai_latency: params.latency,
@@ -130,6 +133,7 @@ export function captureAiTrace(params: CapturedGeneration): void {
                 $ai_provider: params.provider,
                 $ai_input: [{role: 'user', content: params.input}],
                 $ai_input_tokens: params.inputTokens,
+                ...(params.cachedInputTokens !== undefined ? { $ai_cache_read_input_tokens: params.cachedInputTokens } : {}),
                 $ai_output_tokens: params.outputTokens,
                 ...cacheProperties(params),
                 $ai_latency: params.latency,

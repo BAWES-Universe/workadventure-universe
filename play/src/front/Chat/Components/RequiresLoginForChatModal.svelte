@@ -1,4 +1,5 @@
 <script lang="ts">
+    import type { Action } from "svelte/action";
     import { fly } from "svelte/transition";
     import { closeModal } from "svelte-modals";
     import LL from "../../../i18n/i18n-svelte";
@@ -12,6 +13,40 @@
         analyticsClient.login();
         connectionManager.goToSignIn();
     };
+
+    // A dialog keeps the keyboard inside it: focus moves to the sign-in button when it opens, Tab goes round its
+    // buttons, and whatever had focus before gets it back when it closes.
+    const keepFocusInside: Action<HTMLElement> = (node) => {
+        const before = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+        const buttons = () => Array.from(node.querySelectorAll<HTMLElement>("button:not([disabled])"));
+        node.querySelector<HTMLElement>("[data-testid='requiresLoginForChatSignIn']")?.focus();
+
+        function onKeydown(event: KeyboardEvent) {
+            if (event.key !== "Tab") return;
+            const all = buttons();
+            const first = all[0];
+            const last = all[all.length - 1];
+            if (!first || !last) return;
+            if (!node.contains(document.activeElement)) {
+                event.preventDefault();
+                first.focus();
+            } else if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first.focus();
+            }
+        }
+        document.addEventListener("keydown", onKeydown);
+
+        return {
+            destroy() {
+                document.removeEventListener("keydown", onKeydown);
+                before?.focus();
+            },
+        };
+    };
 </script>
 
 {#if isOpen}
@@ -23,6 +58,7 @@
             aria-modal="true"
             aria-labelledby="guest-login-title"
             data-testid="requiresLoginForChatModal"
+            use:keepFocusInside
             transition:fly={{ y: 16, duration: 200 }}
         >
             <button

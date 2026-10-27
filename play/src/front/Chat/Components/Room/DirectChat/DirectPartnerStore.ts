@@ -16,6 +16,7 @@ import { gameManager } from "../../../../Phaser/Game/GameManager";
 import { gameSceneStore } from "../../../../Stores/GameSceneStore";
 import { localUserStore } from "../../../../Connection/LocalUserStore";
 import { friendsStore } from "../../../Stores/FriendsStore";
+import { followsPresence } from "../../../Bots/BotChatStatus";
 import type { PartnerPlace } from "./PartnerPlace";
 import { gameBlockedPeople } from "./gameBlockedPeople";
 import { findAccountUuid, findInUniverse, partnerActions, resolvePartnerPlace } from "./PartnerPlace";
@@ -37,6 +38,9 @@ export interface DirectPartner {
     /** Blocked in the game, from the meeting's Moderation menu (or by a block in chat). */
     isGameBlocked: boolean;
 }
+
+/** The other person of the open direct chat, for cards inside its messages (a bot's room). */
+export const DIRECT_PARTNER_CONTEXT = Symbol("directPartner");
 
 const NO_USERS: UsersByRoom = new Map();
 
@@ -95,9 +99,13 @@ export function directPartnerStore(room: ChatRoomMembershipManagement): Readable
     const partnerMember = derived(room.members, (members: ChatRoomMember[]) =>
         members.find((member) => member.id !== myChatId)
     );
+    // A bot account publishes no presence (the bot server says whether it is on), so nothing is followed for it.
     const presence = derived<Readable<ChatRoomMember | undefined>, ChatPresence>(
         partnerMember,
-        (member, set) => (member ? chatConnection.userPresence(member.id).subscribe(set) : set("offline")),
+        (member, set) =>
+            member && followsPresence(member.id)
+                ? chatConnection.userPresence(member.id).subscribe(set)
+                : set("offline"),
         "offline"
     );
     const seen = derived(

@@ -328,7 +328,7 @@ const chat: DeepPartial<Translation["chat"]> = {
     roomMenu: {
         leaveRoom: {
             label: "Quitter le groupe",
-            notification: "Vous avez quitté le groupe",
+            notification: "Vous avez quitté {name}",
         },
         muteRoom: "Couper les notification",
         unmuteRoom: "Activer les notifications",
@@ -583,6 +583,21 @@ const chat: DeepPartial<Translation["chat"]> = {
         offlineHint: "Membres de ce monde qui ne sont pas en ligne.",
         collapse: "Replier {section}",
         expand: "Déplier {section}",
+    },
+    botStatus: {
+        online: "En ligne",
+        resting: "En pause",
+        unready: "Pas encore prêt",
+        gone: "Parti",
+        restingPlaceholder: "Réponses en pause",
+        unreadyPlaceholder: "Ne peut pas encore répondre",
+        closed: "Cette discussion est fermée",
+        left: "{name} est parti",
+        visit: "Visiter",
+        visitAria: "Rendre visite à {name} dans {room}",
+        livesIn: "Vit dans",
+        nowIn: "En ce moment dans",
+        inThisRoom: "Vous êtes dans cette salle",
     },
     session: {
         live: "En direct",
