@@ -234,19 +234,22 @@ const DONE_SAID = new RegExp(
 const VERSION_DONE = new RegExp(`\\b${DONE_VERB}\\b`);
 /** "couldn't save", "nothing was saved": a bot that says it did not. */
 const NOT_DONE_SAID = /\b(couldn(?:'|’)?t|could not|can(?:'|’)?t|cannot|wasn(?:'|’)?t|was not|didn(?:'|’)?t|did not|failed|unable|not saved|nothing was saved|won(?:'|’)?t)\b/;
+/** "the dashboard I built earlier", "v2 from yesterday": a sentence about one saved in an earlier turn. */
+const EARLIER_SAID = /\b(?:earlier|before|previously|already|yesterday|ago|last time|the other day|last (?:week|night|month|session|chat))\b/;
 
 /**
  * Whether a reply says an artifact was made or changed. Read only when no make or change was saved in the turn, so it
  * leans on the wording, one sentence at a time: "I've built / here's the updated" followed closely by something an
  * artifact is, or a version named ("v2", "version 3") next to a word saying it was done. Ordinary answers that mention a
- * table, a list or a page without saying one was made don't count.
+ * table, a list or a page without saying one was made don't count, nor a sentence about one from before ("the dashboard I
+ * built earlier"): that one was saved in an earlier turn.
  */
 export function claimsArtifactSaved(reply: string): boolean {
     const text = reply.toLowerCase();
     if (!text.trim() || NOT_DONE_SAID.test(text)) return false;
     return text
         .split(/[.!?\n]+/)
-        .some((sentence) => DONE_SAID.test(sentence) || (VERSION_SAID.test(sentence) && VERSION_DONE.test(sentence)));
+        .some((sentence) => !EARLIER_SAID.test(sentence) && (DONE_SAID.test(sentence) || (VERSION_SAID.test(sentence) && VERSION_DONE.test(sentence))));
 }
 
 /** The second try after a reply said it saved an artifact and nothing was saved: do it with the tool, or say it plainly. */

@@ -248,6 +248,15 @@ describe('a reply that says it saved an artifact (Orbit #666)', () => {
         expect(claimsArtifactSaved('')).toBe(false);
     });
 
+    it('does not hear it in a sentence about one saved in an earlier turn (Sentry on #1486)', () => {
+        expect(claimsArtifactSaved("Here's the dashboard I built earlier: tap the card to open it.")).toBe(false);
+        expect(claimsArtifactSaved('I already made the quests board, it has 3 sections.')).toBe(false);
+        expect(claimsArtifactSaved('Version 2 from yesterday is ready whenever you want it.')).toBe(false);
+        expect(claimsArtifactSaved("I've updated the tracker you asked for last week.")).toBe(false);
+        // A new claim in the same reply still counts
+        expect(claimsArtifactSaved('You saw the board before. I just rebuilt the dashboard with dark mode.')).toBe(true);
+    });
+
     it('does not hear it in ordinary answers that mention a table, a list, a page or a version (Sentry on #1486)', () => {
         expect(claimsArtifactSaved("Here's the updated table:\n| Name | Score |\n| Sara | 12 |")).toBe(false);
         expect(claimsArtifactSaved("I've added you to the list.")).toBe(false);
