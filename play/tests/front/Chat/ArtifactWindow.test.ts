@@ -326,6 +326,14 @@ describe("the artifact window", () => {
         byTestId("artifactRestore")?.click();
         await vi.waitFor(() => expect(byTestId("artifactRestoreFailed")).not.toBeNull());
         expect(byTestId("artifactFrame")?.getAttribute("src")).toBe("https://artifacts.test/v1.html");
+
+        // Going back to the latest leaves the failure behind with the version it was about.
+        api.fetchArtifact.mockResolvedValue(opened(3, 3));
+        byTestId("artifactOldNote")?.querySelector<HTMLButtonElement>("button")?.click();
+        await vi.waitFor(() =>
+            expect(byTestId("artifactFrame")?.getAttribute("src")).toBe("https://artifacts.test/v3.html")
+        );
+        expect(byTestId("artifactRestoreFailed")).toBeNull();
     });
 
     it("says it is gone for a missing artifact, and offers another try only when the server cannot be reached", async () => {

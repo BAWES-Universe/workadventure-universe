@@ -115,6 +115,8 @@
     async function load(version: number | undefined) {
         const mine = ++request;
         switchFailed = false;
+        // A failed restore was about the version that was showing
+        restoreFailed = false;
         phase = "opening";
         try {
             const answer = await fetchArtifact(id, actualCowebsite.chat, version);
