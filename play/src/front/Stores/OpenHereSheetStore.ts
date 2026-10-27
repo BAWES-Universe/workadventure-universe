@@ -33,6 +33,16 @@ export const openHereSheetUpStore = derived(
 /** The "N open" list is showing as a sheet of its own over the window's sheet. */
 export const openHereListOpenStore = writable(false);
 
+/**
+ * Counts the asks for room from what is open in the window: a list that dropped down in a tucked window, or in one
+ * left low behind the chat, has no room to show. The window comes up, rising to the top behind the chat.
+ */
+export const openHereRoomRequestStore = writable(0);
+
+export function askOpenHereForRoom(): void {
+    openHereRoomRequestStore.update((count) => count + 1);
+}
+
 /** The tucked sheet is a grabber (28px) and one row (64px) above the bar. */
 export const OPEN_HERE_TUCKED_HEIGHT = 92;
 

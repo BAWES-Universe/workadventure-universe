@@ -788,6 +788,8 @@ const chat: BaseTranslation = {
         versionsNote: "Every change is a new version. Nothing is lost.",
         oldVersionNote: "You're looking at version {version}. The latest is version {latest}.",
         backToLatest: "Back to latest",
+        restoreThis: "Restore this one",
+        restoreFailed: "Could not restore it. Try again.",
         codeLines: "{count:number} {{line|lines}}",
         codeCut: "Showing the first part of the file.",
         loadingVersions: "Loading the versions…",
