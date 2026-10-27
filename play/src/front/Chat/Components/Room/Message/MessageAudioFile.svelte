@@ -30,6 +30,8 @@
     // The shape and length: the sender's own when the message carries them, else read from the file.
     let readLevels: number[] | undefined;
     let readDuration: number | undefined;
+    // The player's own length, for a file whose shape could not be read (too big, or a format the browser cannot decode).
+    let playerDuration: number | undefined;
     let current = 0;
     let playing = false;
     // A note from someone else is new until it is played on this device (their own never is).
@@ -39,7 +41,7 @@
 
     $: isVoice = $content.isVoice === true;
     $: levels = resampleWaveform($content.voiceWaveform ?? readLevels ?? [], VOICE_NOTE_BARS);
-    $: duration = $content.voiceDuration ?? readDuration;
+    $: duration = $content.voiceDuration ?? readDuration ?? playerDuration;
     // What a voice note has to say about itself is its shape: an audio file keeps its name above the player.
     $: name = isVoice ? undefined : $content.filename?.trim() || $content.body?.trim() || undefined;
     $: caption = getMediaCaption($content);
@@ -161,8 +163,12 @@
                 current = 0;
             }}
             on:loadedmetadata={() => {
-                // A browser-made file can have no length in its header: then the player's own length is not used.
                 if (player) player.playbackRate = SPEEDS[speed];
+            }}
+            on:durationchange={() => {
+                // A browser-made file can have no length in its header (the player says Infinity): it is not used then.
+                playerDuration =
+                    player && Number.isFinite(player.duration) && player.duration > 0 ? player.duration : undefined;
             }}
         />
     {/if}

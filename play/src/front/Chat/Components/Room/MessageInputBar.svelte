@@ -820,6 +820,8 @@
                 return false;
             }
             analyticsClient.chatMessageSent(destination.room instanceof ProximityChatRoom ? "proximity" : "matrix");
+            // The note went as a reply when one was chosen: the next message does not reply again.
+            unselectChatMessageToReply();
             return true;
         } catch (error: unknown) {
             console.error("Error sending a voice note:", error);
