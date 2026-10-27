@@ -40,13 +40,18 @@ vi.mock("../../../../Stores/RingStore", async () => {
     const { writable: store } = await import("svelte/store");
     return { invitesEnabledStore: store(true) };
 });
-// Every text is the path it was asked by, except the delete hints, which carry the name they were given.
+// Every text is the path it was asked by, except the delete hints and the notes after deleting or leaving, which carry
+// the name they were given.
 vi.mock("../../../../../../i18n/i18n-svelte", () => {
     const text = (path: string[]): unknown =>
         new Proxy(() => path.join("."), {
             get: (_target, key) => text([...path, String(key)]),
             apply: (_target, _this, args: { name?: string }[]) =>
-                path.at(-1)?.startsWith("hint") ? `${path.at(-1)}:${args[0]?.name}` : path.join("."),
+                path.at(-1)?.startsWith("hint")
+                    ? `${path.at(-1)}:${args[0]?.name}`
+                    : path.at(-1) === "notification"
+                    ? `${path.join(".")}:${args[0]?.name}`
+                    : path.join("."),
         });
     return { default: readable(text([])), LL: readable(text([])) };
 });
@@ -58,6 +63,7 @@ import type {
     ChatRoomNotificationControl,
 } from "../../../../Connection/ChatConnection";
 import { NAME_BY_CHAT_ID_CONTEXT } from "../../../../Stores/ChatUserWokaStore";
+import { chatDoneToastStore } from "../../../../../Stores/ChatDoneToastStore";
 import RoomMenu from "../RoomMenu.svelte";
 import { IconDots } from "@wa-icons";
 
@@ -65,15 +71,30 @@ icon.component = IconDots;
 
 type MenuRoom = ChatRoom & ChatRoomMembershipManagement & ChatRoomNotificationControl & ChatRoomModeration;
 
-function directRoom(name: string): MenuRoom {
+function directRoom(name: string, type: "direct" | "multiple" = "direct"): MenuRoom {
     return {
         id: "!dm:chat.example.com",
-        type: "direct",
+        type,
         name: writable(name),
         members: readable([]),
         areNotificationsMuted: writable(false),
         hasPermissionTo: () => readable(false),
+        leaveRoom: vi.fn(() => Promise.resolve()),
     } as unknown as MenuRoom;
+}
+
+/** Lets the leave finish and the note show. */
+async function settle() {
+    for (let i = 0; i < 3; i++) {
+        // eslint-disable-next-line no-await-in-loop
+        await tick();
+    }
+}
+
+function shownNote(): string | undefined {
+    let note: { text: string } | undefined;
+    chatDoneToastStore.subscribe((value) => (note = value))();
+    return note?.text;
 }
 
 describe("a direct chat's ⋯ menu", () => {
@@ -81,10 +102,10 @@ describe("a direct chat's ⋯ menu", () => {
     let target: HTMLElement;
 
     /** The menu of a chat whose room kept the name "Old Name" while the person now goes by "New Name". */
-    async function open(names: Map<string, string>) {
+    async function open(names: Map<string, string>, room: MenuRoom = directRoom("Old Name")) {
         component = new RoomMenu({
             target,
-            props: { room: directRoom("Old Name") },
+            props: { room },
             context: new Map([[NAME_BY_CHAT_ID_CONTEXT, readable(names)]]),
         });
         await tick();
@@ -99,6 +120,7 @@ describe("a direct chat's ⋯ menu", () => {
     afterEach(() => {
         component?.$destroy();
         document.body.innerHTML = "";
+        chatDoneToastStore.set(undefined);
     });
 
     function click(selector: string) {
@@ -139,5 +161,29 @@ describe("a direct chat's ⋯ menu", () => {
 
         click('[data-testid="inviteOption"]');
         expect(partnerActions.invitePartner).toHaveBeenCalledWith(expect.anything(), "Old Name");
+    });
+
+    it("says whose chat was deleted, by the name they go by now", async () => {
+        const room = directRoom("Old Name");
+        await open(new Map([["@ada:chat.example.com", "New Name"]]), room);
+
+        click('[data-testid="deleteChatOption"]');
+        await tick();
+        click('[data-testid="deleteChatConfirmButton"]');
+        await settle();
+
+        expect(room.leaveRoom).toHaveBeenCalledWith({ forget: true });
+        expect(shownNote()).toBe("chat.directChat.deleteChat.notification:New Name");
+    });
+
+    it("says which group was left", async () => {
+        const room = directRoom("Design team", "multiple");
+        await open(new Map(), room);
+
+        click('[data-testid="leaveGroupOption"]');
+        await settle();
+
+        expect(room.leaveRoom).toHaveBeenCalledWith(undefined);
+        expect(shownNote()).toBe("chat.roomMenu.leaveRoom.notification:Design team");
     });
 });

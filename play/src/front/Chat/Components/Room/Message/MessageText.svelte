@@ -159,17 +159,29 @@
             white-space: nowrap;
             max-width: 100%;
         }
-        pre {
+        /* This style element is global: every rule stays inside the bubble, so it never reaches code elsewhere.
+           :where() keeps the weight of a bare pre/code, so the highlighter's colours still win on a ``` block. */
+        :where(.message-bubble) pre {
             margin: 0;
         }
-        code {
+        /* A ``` block: its own full-width box. */
+        :where(.message-bubble pre) code {
             display: block;
             width: 100%;
             background-color: rgba(255, 255, 255, 0.1);
-            padding: 0.25em 0.5em;
             border-radius: 8px;
             overflow-x: auto;
             padding: 0.2em 0.5em;
+        }
+        /* A ` word: a small chip inside the sentence, wrapping with it on a narrow screen. */
+        :where(.message-bubble :not(pre)) > code {
+            background-color: rgba(255, 255, 255, 0.12);
+            border-radius: 6px;
+            padding: 0.1em 0.35em;
+            font-size: 0.9em;
+            overflow-wrap: anywhere;
+            box-decoration-break: clone;
+            -webkit-box-decoration-break: clone;
         }
         ::-webkit-scrollbar {
             width: 2px;
