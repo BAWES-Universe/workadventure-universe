@@ -239,14 +239,26 @@ class MediaArgError extends Error {}
  * The media the model named, downloaded: each `file` must be one of this turn's (m1, m2...), so nothing from another
  * person, chat or turn can go in. Together they stay inside the super admin's "Media in one artifact" limit.
  */
-async function gatherMedia(value: unknown, context: ArtifactContext): Promise<ArtifactMediaUpload[]> {
-    if (value === undefined || value === null || (Array.isArray(value) && value.length === 0)) return [];
+/** A media file that went in under another name than the page asked for: its type needed another ending ("song.mp3" that is really m4a). */
+interface MediaRename {
+    from: string;
+    to: string;
+}
+
+interface GatheredMedia {
+    uploads: ArtifactMediaUpload[];
+    renames: MediaRename[];
+}
+
+async function gatherMedia(value: unknown, context: ArtifactContext): Promise<GatheredMedia> {
+    if (value === undefined || value === null || (Array.isArray(value) && value.length === 0)) return { uploads: [], renames: [] };
     if (!Array.isArray(value)) throw new MediaArgError('media must be a list of { file, name }.');
     const turn = context.media?.turn ?? [];
     const maxBytes = context.media?.maxBytes ?? 0;
     if (maxBytes <= 0) throw new MediaArgError('Artifacts cannot carry songs, images or videos on this server. Make it without them.');
     let room = maxBytes;
     const uploads: ArtifactMediaUpload[] = [];
+    const renames: MediaRename[] = [];
     for (const item of value) {
         const { file, name } = (item ?? {}) as Record<string, unknown>;
         const entry = typeof file === 'string' ? turn.find((media) => media.ref === file.trim()) : undefined;
@@ -264,9 +276,31 @@ async function gatherMedia(value: unknown, context: ArtifactContext): Promise<Ar
             throw new MediaArgError(`${entry.ref} could not be downloaded. ${error instanceof Error ? error.message : ''}`.trim());
         }
         room -= fetched.body.byteLength;
-        uploads.push({ name: mediaFileName(typeof name === 'string' ? name : entry.ref, fetched.contentType), contentType: fetched.contentType, body: fetched.body });
+        const wanted = typeof name === 'string' && name.trim() ? name.trim() : entry.ref;
+        const saved = mediaFileName(wanted, fetched.contentType);
+        if (saved !== wanted) renames.push({ from: wanted, to: saved });
+        uploads.push({ name: saved, contentType: fetched.contentType, body: fetched.body });
     }
-    return uploads;
+    return { uploads, renames };
+}
+
+function escapeRegExp(text: string): string {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Points the page at the names its media went in under: "song.mp3" in quotes (src="song.mp3", './song.mp3') becomes
+ * "song.m4a". Only quoted, so a name like "song" doesn't change the word in the page's text.
+ */
+function useSavedNames(text: string, renames: MediaRename[]): string {
+    return renames.reduce(
+        (page, { from, to }) => page.replace(new RegExp(`(["'](?:\\./)?)${escapeRegExp(from)}(["'])`, 'g'), (_match, open: string, close: string) => `${open}${to}${close}`),
+        text
+    );
+}
+
+function renamedLine(renames: MediaRename[]): { renamed?: string[] } {
+    return renames.length > 0 ? { renamed: renames.map(({ from, to }) => `"${from}" is "${to}"`) } : {};
 }
 
 function argNames(value: unknown): string[] | undefined {
@@ -399,14 +433,14 @@ export async function runArtifactTool(name: string, args: Record<string, unknown
                     {
                         title: argString(args.title),
                         kind,
-                        content: argString(args.content),
+                        content: useSavedNames(argString(args.content), media.renames),
                         summary: argString(args.summary) || null,
                     },
                     context.saveTimeoutMs,
-                    media
+                    media.uploads
                 );
                 return {
-                    result: { success: true, id: made.artifact.id, title: made.artifact.title, kind, version: made.version.number, ...mediaNames(made.version) },
+                    result: { success: true, id: made.artifact.id, title: made.artifact.title, kind, version: made.version.number, ...mediaNames(made.version), ...renamedLine(media.renames) },
                     card: cardOf(made.artifact, made.version.number),
                 };
             }
@@ -417,19 +451,19 @@ export async function runArtifactTool(name: string, args: Record<string, unknown
                 const hasContent = typeof args.content === 'string';
                 const dropMedia = argNames(args.dropMedia);
                 const media = await gatherMedia(args.media, context);
-                if (!edits && !hasContent && !dropMedia && media.length === 0) {
+                if (!edits && !hasContent && !dropMedia && media.uploads.length === 0) {
                     return { result: { error: 'Send edits (each with old and new), the whole new file in content, or media to add or drop.' } };
                 }
                 const changed = await context.admin.changeArtifact(id, call, {
-                    ...(edits ? { edits } : {}),
-                    ...(!edits && hasContent ? { content: args.content as string } : {}),
+                    ...(edits ? { edits: edits.map((edit) => ({ ...edit, new: useSavedNames(edit.new, media.renames) })) } : {}),
+                    ...(!edits && hasContent ? { content: useSavedNames(args.content as string, media.renames) } : {}),
                     summary: argString(args.summary) || null,
                     title: argString(args.title) || null,
                     baseVersion: argVersion(args.baseVersion),
                     ...(dropMedia ? { dropMedia } : {}),
-                }, context.saveTimeoutMs, media);
+                }, context.saveTimeoutMs, media.uploads);
                 return {
-                    result: { success: true, id: changed.artifact.id, title: changed.artifact.title, version: changed.version.number, ...mediaNames(changed.version) },
+                    result: { success: true, id: changed.artifact.id, title: changed.artifact.title, version: changed.version.number, ...mediaNames(changed.version), ...renamedLine(media.renames) },
                     card: cardOf(changed.artifact, changed.version.number),
                 };
             }
@@ -472,7 +506,10 @@ function mediaNames(version: { media?: Array<{ name: string }> }): { media?: str
 
 function mediaLine(result: Record<string, unknown>): string {
     const names = Array.isArray(result.media) ? (result.media as string[]) : [];
-    return names.length > 0 ? ` It carries ${names.map((name) => `"${name}"`).join(', ')}, beside the page.` : '';
+    const renamed = Array.isArray(result.renamed) ? (result.renamed as string[]) : [];
+    const carries = names.length > 0 ? ` It carries ${names.map((name) => `"${name}"`).join(', ')}, beside the page.` : '';
+    // The page was already pointed at the new names; later edits should use them too
+    return renamed.length > 0 ? `${carries} Their type needed another name: ${renamed.join(', ')} now, and the page uses that.` : carries;
 }
 
 /** The line a tool result becomes in the model's next round. */
