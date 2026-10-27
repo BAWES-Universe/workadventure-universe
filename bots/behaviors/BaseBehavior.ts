@@ -2304,6 +2304,8 @@ export abstract class BaseBehavior {
         const sanitize = (text: string) =>
             text.replace(/---\s*(BEGIN|END)\s+(FILE|DOCUMENT|WEB PAGE)\s+CONTENT\s*---/gi,
                 match => match.replace(/-/g, '−')); // replace hyphens with minus signs
+        // A summary (a web page's title) stays on its line, so it can't start one that reads as an attachment (#1510)
+        const oneLine = (text: string) => text.replace(/\s*[\r\n]+\s*/g, ' ');
 
         for (let i = 0; i < allUrls.length; i++) {
             const fileUrl = allUrls[i];
@@ -2326,10 +2328,10 @@ export abstract class BaseBehavior {
                     augmentedMessage = `${augmentedMessage}\n[User also sent an image: ${fileUrl}]`;
                     break;
                 case 'document':
-                    augmentedMessage = `${augmentedMessage}\n[User sent a document]${parsed.text ? `\n--- BEGIN DOCUMENT CONTENT ---\n${sanitize(parsed.text)}\n--- END DOCUMENT CONTENT ---\n(Summary: ${parsed.summary})` : `\n(Summary: ${parsed.summary})`}`;
+                    augmentedMessage = `${augmentedMessage}\n[User sent a document]${parsed.text ? `\n--- BEGIN DOCUMENT CONTENT ---\n${sanitize(parsed.text)}\n--- END DOCUMENT CONTENT ---\n(Summary: ${oneLine(parsed.summary)})` : `\n(Summary: ${oneLine(parsed.summary)})`}`;
                     break;
                 case 'webpage':
-                    augmentedMessage = `${augmentedMessage}\n[User shared a web page]${parsed.text ? `\n--- BEGIN WEB PAGE CONTENT ---\n${sanitize(parsed.text)}\n--- END WEB PAGE CONTENT ---\n(Summary: ${parsed.summary})` : `\n(Summary: ${parsed.summary})`}`;
+                    augmentedMessage = `${augmentedMessage}\n[User shared a web page]${parsed.text ? `\n--- BEGIN WEB PAGE CONTENT ---\n${sanitize(parsed.text)}\n--- END WEB PAGE CONTENT ---\n(Summary: ${oneLine(parsed.summary)})` : `\n(Summary: ${oneLine(parsed.summary)})`}`;
                     break;
                 // With the address, so the bot can put it in an artifact (#1510): the turn's media list reads it from this line
                 case 'audio':

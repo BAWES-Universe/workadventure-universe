@@ -45,8 +45,16 @@ export function mediaKindOf(url: string, hint?: string): MediaKind {
 /**
  * The lines an attachment leaves in the message the model reads ("[User also sent an image: <url>]", "[User sent an
  * audio file: <url>]"). Only these count as sent by the person: an address they typed in their words is not a file.
+ * A whole line each, so the same words inside a line of something else don't count.
  */
-const ATTACHMENT_LINE = /\[User (?:also )?sent an? (image|audio file|video file|file)[^\]\n]*?: (https?:\/\/[^\s\]]+)/g;
+const ATTACHMENT_LINE = /^\[User (?:also )?sent an? (image|audio file|video file|file)[^\]\n]*?: (https?:\/\/[^\s\]]+)\]$/gm;
+
+/**
+ * What a file or web page the person shared says, between its BEGIN and END lines. Its words are someone else's, so a
+ * line in it that looks like an attachment is not one. A real BEGIN or END line can't be written inside it: the reader
+ * changes those (BaseBehavior.formatParsedAttachment).
+ */
+const CONTENT_BLOCK = /^--- BEGIN (FILE|DOCUMENT|WEB PAGE) CONTENT ---$[\s\S]*?^--- END \1 CONTENT ---$/gm;
 
 function kindOfLine(word: string): string | undefined {
     return word === 'image' ? 'image' : word === 'audio file' ? 'audio' : word === 'video file' ? 'video' : undefined;
@@ -68,7 +76,7 @@ export function addTurnMedia(list: TurnMedia[], items: Array<{ url: string; kind
 export function startTurnMedia(message: string, images: string[] = []): TurnMedia[] {
     const list: TurnMedia[] = [];
     const found: Array<{ url: string; kind?: string }> = [];
-    for (const match of message.matchAll(ATTACHMENT_LINE)) found.push({ url: match[2], kind: kindOfLine(match[1]) });
+    for (const match of message.replace(CONTENT_BLOCK, '').matchAll(ATTACHMENT_LINE)) found.push({ url: match[2], kind: kindOfLine(match[1]) });
     for (const url of images) found.push({ url, kind: 'image' });
     addTurnMedia(list, found, 'person');
     return list;
