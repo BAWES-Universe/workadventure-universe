@@ -207,7 +207,7 @@
                         buttonLabel = $LL.mapEditor.properties.cards.label();
                         break;
                     default:
-                        placeholder = "https://workadventu.re";
+                        placeholder = "https://bawes.net";
                         buttonLabel = $LL.mapEditor.properties.openWebsite.label();
                 }
                 return {

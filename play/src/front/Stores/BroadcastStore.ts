@@ -2,7 +2,7 @@ import { derived, get, writable } from "svelte/store";
 import type { BroadcastMeta, CharacterTextureMessage } from "@workadventure/messages";
 import { gameSceneStore } from "./GameSceneStore";
 import { exploreStore } from "./ExploreStore";
-import { playersStore } from "./PlayersStore";
+import { peopleAmongPlayers, playersStore } from "./PlayersStore";
 
 /** Whether the Broadcast card (what to share, who hears it, the room's broadcast settings) is open. */
 export const broadcastPanelOpenStore = writable(false);
@@ -13,7 +13,7 @@ export type BroadcastKind = "message" | "voice" | "live";
 export type BroadcastReach = "ROOM" | "WORLD" | "UNIVERSE";
 
 export interface BroadcastReachInfo {
-    /** This room's name, and how many people are in it right now (you included). */
+    /** This room's name, and how many people are in it right now (you included, bots not). */
     roomName: string;
     peopleHere: number;
     /** This world's name and how many rooms it has; undefined when the room belongs to no world. */
@@ -49,7 +49,8 @@ export const broadcastReachInfoStore = derived(
         // The room's group is "universe/world" for Orbit's rooms.
         const groupWorld = room?.group?.split("/")[1];
         const currentRoom = currentWorld?.rooms.find((candidate) => candidate.isCurrent);
-        const peopleHere = $players.size + 1;
+        // People only: bots don't hear a broadcast (#1396).
+        const peopleHere = peopleAmongPlayers($players.values()) + 1;
         // The other rooms as the server counted them, this one as you see it now: a world never has fewer
         // people than the room you're in.
         const peopleIn = (rooms: { isCurrent: boolean; peopleNow?: number }[]): number | undefined =>

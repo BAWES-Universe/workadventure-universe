@@ -1255,6 +1255,22 @@ body .u-close:focus {
     outline: 2px solid #fff;
     outline-offset: 2px;
 }
+/* bawes.net's headline look: Space Grotesk, tight, white, with the lavender to amber gradient only on the words
+   that matter (wrap them in .u-text-brand). */
+.u-display {
+    font-family: "Space Grotesk", "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    text-transform: none;
+    color: #fff;
+}
+.u-text-brand {
+    background-image: linear-gradient(120deg, #c4b5fd 0%, #a78bfa 30%, #fbbf24 70%, #f59e0b 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: #a78bfa;
+}
 .u-text-gradient {
     background: linear-gradient(135deg, #c4b5fd 0%, #e9c74c 50%, #c4b5fd 100%);
     background-size: 200% 200%;
@@ -2251,6 +2267,53 @@ button[data-testid="actionBarLogin"]:hover {
     30% {
         transform: translateY(-30%);
         opacity: 1;
+    }
+}
+
+// The raised hand above a Woka (RaisedHandBadge.ts): the ✋ and the place in line, on an ink pill with a gold edge, as
+// on the raise hand button while the hand is up. Sizes in game pixels, scaled by --raised-hand-scale.
+.raised-hand-badge {
+    position: absolute;
+    top: 0;
+    left: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    height: calc(13px * var(--raised-hand-scale, 1));
+    min-width: calc(13px * var(--raised-hand-scale, 1));
+    padding: 0 calc(2.5px * var(--raised-hand-scale, 1));
+    gap: calc(0.5px * var(--raised-hand-scale, 1));
+    border: calc(0.8px * var(--raised-hand-scale, 1)) solid #f5c451;
+    border-radius: 999px;
+    background: #14121e;
+    transform-origin: center center;
+    will-change: transform;
+    pointer-events: none;
+    user-select: none;
+    white-space: nowrap;
+    line-height: 1;
+}
+
+.game-scene-loaded .raised-hand-badge.is-shown {
+    display: flex;
+}
+
+.raised-hand-badge-icon {
+    width: calc(9px * var(--raised-hand-scale, 1));
+    text-align: center;
+    font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+    font-size: calc(8.5px * var(--raised-hand-scale, 1));
+}
+
+.raised-hand-badge-number {
+    font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: calc(8.5px * var(--raised-hand-scale, 1));
+    font-weight: 700;
+    color: #f5c451;
+
+    &:empty {
+        display: none;
     }
 }
 

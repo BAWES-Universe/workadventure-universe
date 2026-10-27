@@ -238,7 +238,7 @@ const actionbar: BaseTranslation = {
         youAreHere: "You are here",
         stars: "{count:number} {{star|stars}}",
         visits: "Visits",
-        peak: "Peak",
+        peak: "Busiest hour",
         never: "—",
         close: "Close",
     },

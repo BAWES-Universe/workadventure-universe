@@ -126,6 +126,48 @@ describe("ProximityEndedFooter", () => {
         expect(friendsHolder.runFriendAction).toHaveBeenCalledWith("uuid-noura", "Noura", "request");
     });
 
+    it("leaves bots out of who you were with, but still offers to walk to them", async () => {
+        sceneHolder.scene = {
+            allUsersInWorldStore: readable(
+                new Map([
+                    [
+                        "space-bot",
+                        {
+                            uuid: "bot-7",
+                            name: "Bot",
+                            chatID: "@bot_7:chat",
+                            tags: ["bot"],
+                            playUri: "https://play.example.test/room",
+                        },
+                    ],
+                    ["space-noura", { uuid: "uuid-noura", name: "Noura", chatID: "@noura:chat", playUri: "x" }],
+                ])
+            ),
+            roomUrl: "https://play.example.test/room",
+            room: { isChatOnlineListEnabled: true, isChatDisconnectedListEnabled: false },
+            userProviderMerger: Promise.resolve({ usersByRoomStore: readable(new Map()) }),
+        };
+        const target = document.createElement("div");
+        document.body.append(target);
+        component = new ProximityEndedFooter({
+            target,
+            props: {
+                session: {
+                    ...endedWithBot,
+                    participants: ["Bot", "Noura"],
+                    participantIds: ["space-bot", "space-noura"],
+                },
+            },
+        });
+        await tick();
+
+        const met = target.querySelector('[data-testid="proximityMetPeople"]');
+        expect(met?.textContent).toContain("Noura");
+        expect(met?.textContent).not.toContain("Bot");
+        expect(target.querySelectorAll('[data-testid="proximityAddFriend"]')).toHaveLength(1);
+        expect(target.querySelector('[data-kind="walk"]')).not.toBeNull();
+    });
+
     it("shows while the map is being swapped, instead of breaking the chat", async () => {
         const target = document.createElement("div");
         document.body.append(target);

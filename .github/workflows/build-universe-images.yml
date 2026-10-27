@@ -496,6 +496,8 @@ jobs:
     if: needs.release.outputs.created == 'true'
     needs: release
     runs-on: ubuntu-latest
+    # Six services one after another, each waited on up to 20 minutes (120 in the worst case).
+    timeout-minutes: 150
     # Recording the deployment uses the deployments API; nothing here reads repository files.
     permissions:
       contents: read
@@ -511,24 +513,77 @@ jobs:
           COOLIFY_BOT_SERVER_UUID: ${{ secrets.COOLIFY_BOT_SERVER_UUID }}
           COOLIFY_DISCORD_BOT_UUID: ${{ secrets.COOLIFY_DISCORD_BOT_UUID }}
           COOLIFY_UPLOADER_UUID: ${{ secrets.COOLIFY_UPLOADER_UUID }}
+          NEW_VERSION: ${{ needs.release.outputs.new_version }}
         run: |
-          echo "Deploying v${{ needs.release.outputs.new_version }}..."
-          failed=""
-          for UUID in \
-            "${COOLIFY_PLAY_UUID}" \
-            "${COOLIFY_BACK_UUID}" \
-            "${COOLIFY_MAP_STORAGE_UUID}" \
-            "${COOLIFY_BOT_SERVER_UUID}" \
-            "${COOLIFY_DISCORD_BOT_UUID}" \
-            "${COOLIFY_UPLOADER_UUID}"; do
-            echo "Deploying $UUID..."
-            if ! curl -sSf -X POST "${COOLIFY_BASE}/api/v1/deploy?uuid=${UUID}" \
-              -H "Authorization: Bearer ${COOLIFY_TOKEN}"; then
-              echo "::error::Coolify did not accept the deploy for $UUID"
-              failed="$failed $UUID"
+          # Coolify answering "queued" only means it took the job. A service counts as deployed once its
+          # deployment reads "finished"; the services go one at a time because six big image pulls at once
+          # failed on the host (v0.3.18: play and map-storage never started and the old version kept serving).
+          deploy_one() {
+            name="$1"; uuid="$2"
+            if ! queued=$(curl -sSf --max-time 60 -X POST "${COOLIFY_BASE}/api/v1/deploy?uuid=${uuid}" \
+              -H "Authorization: Bearer ${COOLIFY_TOKEN}"); then
+              echo "::error::Coolify did not accept the deploy for $name"
+              return 1
             fi
+            deployment=$(echo "$queued" | jq -r '.deployments[0].deployment_uuid // empty')
+            if [ -z "$deployment" ]; then
+              echo "::error::Coolify gave no deployment to follow for $name"
+              return 1
+            fi
+            echo "$name: deployment $deployment queued"
+            last=""
+            end=$((SECONDS + 1200))
+            while [ "$SECONDS" -lt "$end" ]; do
+              sleep 10
+              # A refused or missing read (401, 403, 404) will not get better: stop. Any other failed read
+              # (network blip, 5xx while Coolify restarts) is not a failed deploy: keep waiting.
+              code=$(curl -s --max-time 30 -o "$RUNNER_TEMP/coolify-status.json" -w '%{http_code}' \
+                "${COOLIFY_BASE}/api/v1/deployments/${deployment}" \
+                -H "Authorization: Bearer ${COOLIFY_TOKEN}") || code=000
+              case "$code" in
+                401|403|404)
+                  # 403 usually means the token may start deploys but lacks the Coolify "read" permission.
+                  echo "::error::$name: Coolify answered $code when reading deployment $deployment (COOLIFY_TOKEN needs the read permission)"
+                  return 1 ;;
+              esac
+              status=""
+              if [ "$code" = "200" ]; then status=$(jq -r '.status // empty' "$RUNNER_TEMP/coolify-status.json" || true); fi
+              if [ -n "$status" ] && [ "$status" != "$last" ]; then
+                echo "$name: $status"
+                last="$status"
+              fi
+              case "$status" in
+                finished) return 0 ;;
+                failed|cancelled-by-user)
+                  echo "::error::$name did not deploy: Coolify deployment $deployment is $status"
+                  return 1 ;;
+              esac
+            done
+            echo "::error::$name did not finish within 20 minutes (Coolify deployment $deployment, last status: ${last:-unknown})"
+            return 1
+          }
+
+          # The services play talks to go first, so a new play never starts against an old back or map-storage.
+          echo "Deploying v${NEW_VERSION}..."
+          failed=""
+          for service in \
+            "back ${COOLIFY_BACK_UUID}" \
+            "map-storage ${COOLIFY_MAP_STORAGE_UUID}" \
+            "play ${COOLIFY_PLAY_UUID}" \
+            "bot-server ${COOLIFY_BOT_SERVER_UUID}" \
+            "discord-bot ${COOLIFY_DISCORD_BOT_UUID}" \
+            "uploader ${COOLIFY_UPLOADER_UUID}"; do
+            # shellcheck disable=SC2086
+            set -- $service
+            # play is the only service that depends on the ones before it: never start it against an old back or map-storage.
+            if [ "$1" = "play" ] && [ -n "$failed" ]; then
+              echo "::error::play not deployed: it needs${failed} deployed first"
+              failed="$failed play"
+              continue
+            fi
+            deploy_one "$1" "$2" || failed="$failed $1"
           done
-          # Every service is still attempted; the job fails at the end if any deploy was refused.
+          # The other services are still attempted; the job fails at the end if any did not finish.
           if [ -n "$failed" ]; then
             echo "::error::Not deployed:$failed"
             exit 1
@@ -539,12 +594,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NEW_VERSION: ${{ needs.release.outputs.new_version }}
         run: |
-          DEPLOY_ID=$(printf '{"ref":"%s","environment":"production","description":"v%s","required_contexts":[]}' "${{ github.ref_name }}" "$NEW_VERSION" | \
-            gh api repos/${{ github.repository }}/deployments --input - --jq '.id')
-          gh api repos/${{ github.repository }}/deployments/${DEPLOY_ID}/statuses \
+          DEPLOY_ID=$(printf '{"ref":"%s","environment":"production","description":"v%s","required_contexts":[]}' "$GITHUB_REF_NAME" "$NEW_VERSION" | \
+            gh api "repos/$GITHUB_REPOSITORY/deployments" --input - --jq '.id')
+          gh api "repos/$GITHUB_REPOSITORY/deployments/${DEPLOY_ID}/statuses" \
             -f state=success \
             -f environment_url=https://universe.bawes.net \
-            -f log_url=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            -f "log_url=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 
       - name: Mark Sentry deployment
         if: needs.release.outputs.created == 'true'

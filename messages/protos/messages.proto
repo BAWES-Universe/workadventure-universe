@@ -981,6 +981,8 @@ message MoveToPositionMessage{
 message LocatePositionMessage{
   PositionMessage position = 1;
   int32 userId = 2;
+  // The account of that avatar, so an answer is told apart by person even when another avatar of theirs answers.
+  string userUuid = 3;
 }
 
 message SubMessage {
@@ -1104,6 +1106,22 @@ message RoomJoinedMessage {
   CompanionTextureMessage companionTexture = 18;
   // What this player may do in the world, as a decimal number (see permissionsFrom); empty when Orbit sent none.
   string permissions = 19;
+  // What each role key is called, for the badge next to people. Unset when Orbit sent no list.
+  RoleCatalogue roleCatalogue = 20;
+}
+
+// The roles Orbit named to this player, highest first.
+message RoleCatalogue {
+  repeated RoleLabel roles = 1;
+}
+
+message RoleLabel {
+  // The role's tag, as carried by people in their tags.
+  string key = 1;
+  string name = 2;
+  string color = 3;
+  // False: the badge shows only on the player who holds the role (and to people who manage roles).
+  bool visibleOnOthers = 4;
 }
 
 message MegaphoneSettings{
@@ -1287,6 +1305,7 @@ message PrivateSpaceEvent {
     BlockUserMessage blockUserMessage = 20;
     UnblockUserMessage unblockUserMessage = 21;
     LowerHandPrivateMessage lowerHand = 22;
+    BotReplyLimitMessage botReplyLimit = 23;
     // From 30: upstream WorkAdventure uses the numbers right after ours.
     InviteToSpeakPrivateMessage inviteToSpeak = 30;
     DeclineToSpeakPrivateMessage declineToSpeak = 31;
@@ -1296,6 +1315,18 @@ message PrivateSpaceEvent {
 
 message CommunicationStrategyMessage {
   string strategy = 1;
+}
+
+/**
+ * A bot tells one person they reached a reply limit (#1159): the game draws the fixed card only they see. Only a bot
+ * may send it (the pusher refuses anyone else).
+ */
+message BotReplyLimitMessage {
+  string limit = 1;     // "universe-ai" | "guest" | "guests" | "bot"
+  string resetsAt = 2;  // ISO time the bot answers them again
+  string who = 3;       // "guest" | "member" | "maker": which button the card shows
+  string botId = 4;
+  string botName = 5;
 }
 
 message SwitchMessage {
@@ -1683,7 +1714,12 @@ message BanMessage {
 
 message RoomDescription {
   string roomId = 1;
+  // Everyone in the room, bots included (one per open tab or device).
   int32 nbUsers = 2;
+  // How many of nbUsers are bots (#1389).
+  int32 nbBots = 3;
+  // The people (not bots) in the room, by the name they show in game, one per account, A to Z.
+  repeated string peopleNames = 4;
 }
 
 message RoomsList {

@@ -275,7 +275,7 @@ const chat: DeepPartial<Translation["chat"]> = {
     roomMenu: {
         leaveRoom: {
             label: "Lascia la stanza",
-            notification: "Hai lasciato la stanza",
+            notification: "Hai lasciato {name}",
         },
         muteRoom: "Silenzia stanza",
         unmuteRoom: "Riattiva stanza",
@@ -322,12 +322,6 @@ const chat: DeepPartial<Translation["chat"]> = {
         },
     },
     connectionError: "Chat non disponibile",
-    requiresLoginForChatModal: {
-        title: "Accedi per sbloccare la chat!",
-        content_1: "Per godere appieno di questa funzione di chat, devi essere loggato nel tuo account.",
-        content_2: "Accedere ti dà accesso a tutte le opzioni e ti consente di continuare senza interruzioni.",
-        content_3: " Per favore, accedi per procedere con l'esperienza.",
-    },
     requiresLoginForChat: "Accedi per accedere ai messaggi della chat",
     fileAttachment: {
         title: "Allega file",
@@ -336,6 +330,21 @@ const chat: DeepPartial<Translation["chat"]> = {
         maxFileCount: "Massimo {count} file alla volta.",
         unsafeFileType: '"{name}" ha un tipo di file non sicuro e non può essere caricato.',
         fileTooLarge: '"{name}" è troppo grande. La dimensione massima è {size} MB.',
+    },
+    botStatus: {
+        online: "Online",
+        resting: "In pausa",
+        unready: "Non ancora pronto",
+        gone: "Andato via",
+        restingPlaceholder: "Risposte in pausa",
+        unreadyPlaceholder: "Non può ancora rispondere",
+        closed: "Questa chat è chiusa",
+        left: "{name} è andato via",
+        visit: "Visita",
+        visitAria: "Visita {name} in {room}",
+        livesIn: "Vive in",
+        nowIn: "Ora in",
+        inThisRoom: "Sei in questa stanza",
     },
 };
 

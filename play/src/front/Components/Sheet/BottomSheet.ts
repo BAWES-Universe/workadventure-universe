@@ -46,3 +46,12 @@ export function nearestSnap(height: number, viewportHeight: number, sizes: Sheet
 export function nextSnap(snap: SheetSnap): SheetSnap {
     return SNAP_ORDER[(SNAP_ORDER.indexOf(snap) + 1) % SNAP_ORDER.length];
 }
+
+/**
+ * The style of a sheet's frame: its height, and a top padding that keeps its content below the installed app's
+ * see-through status bar once it is dragged up under it (#969). The sheet keeps its colour to the top edge.
+ */
+export function sheetFrameStyle(sheetHeight: number, viewportHeight: number): string {
+    const underStatusBar = Math.max(0, viewportHeight - sheetHeight);
+    return `height: ${sheetHeight}px; padding-top: max(0px, calc(env(safe-area-inset-top, 0px) - ${underStatusBar}px));`;
+}

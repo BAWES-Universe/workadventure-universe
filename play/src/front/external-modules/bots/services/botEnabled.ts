@@ -2,8 +2,9 @@
  * Turning a bot on or off: the switch flips right away, the change is saved, and the bot is spawned or despawned to
  * match. A failed save flips the switch back and throws, for the caller to show.
  */
+import { get } from "svelte/store";
 import type { BotData } from "../types";
-import { upsertBot } from "../stores/BotEditorStore";
+import { botPreviewsStore, upsertBot } from "../stores/BotEditorStore";
 import { botApiService } from "./BotApiService";
 
 export async function setBotEnabled(bot: BotData, enabled: boolean): Promise<void> {
@@ -19,27 +20,20 @@ export async function setBotEnabled(bot: BotData, enabled: boolean): Promise<voi
             throw new Error("Bot ID is missing");
         }
 
-        const textureId = typeof updatedBot.characterTextureId === "string" ? updatedBot.characterTextureId : "";
+        // Only the on/off state comes from this answer. The rest is taken from the store as it is now, not from the
+        // answer or from when the switch was pressed: an edit made just before (a provider picked, instructions
+        // typed) may still be waiting to save, and the answer still has the old values.
+        const latest = get(botPreviewsStore).get(botId) ?? bot;
         upsertBot({
-            ...bot,
+            ...latest,
             id: botId,
             botId: botId,
-            name: updatedBot.name || bot.name,
-            description: typeof updatedBot.description === "string" ? updatedBot.description : bot.description,
-            characterTexture: textureId || bot.characterTexture,
-            characterTextureIds: textureId ? [textureId] : bot.characterTextureIds || [],
-            behaviorType: (updatedBot.behaviorType as "idle" | "patrol" | "social") || bot.behaviorType,
             enabled: updatedBot.enabled ?? enabled, // Use API response, fallback to requested state
-            behaviorConfig: updatedBot.behaviorConfig || bot.behaviorConfig,
-            chatInstructions: updatedBot.chatInstructions || bot.chatInstructions || "",
-            aiProviderRef: updatedBot.aiProviderRef || bot.aiProviderRef || undefined,
-            createdAt: updatedBot.createdAt || bot.createdAt || new Date().toISOString(),
             updatedAt: updatedBot.updatedAt || new Date().toISOString(),
-            createdBy: updatedBot.createdBy || bot.createdBy || null,
-            updatedBy: updatedBot.updatedBy || bot.updatedBy || null,
+            updatedBy: updatedBot.updatedBy || latest.updatedBy || null,
         });
     } catch (e) {
-        upsertBot({ ...bot, enabled: originalEnabled });
+        upsertBot({ ...(get(botPreviewsStore).get(bot.id) ?? bot), enabled: originalEnabled });
         throw e;
     }
 

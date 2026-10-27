@@ -127,7 +127,7 @@ export class GameManager {
         }
     }
 
-    public setPlayerName(name: string): void {
+    public setPlayerName(name: string | null): void {
         this.playerName = name;
     }
 
