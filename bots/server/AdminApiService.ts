@@ -1115,6 +1115,11 @@ export class AdminApiService {
         latency?: number;
         error?: boolean;
         timestamp?: string;
+        /** Where the reply was given: direct messages or nearby chat (Orbit #491). */
+        channel?: "dm" | "nearby";
+        /** Who it was for, as the bot knows them (WorkAdventure uuid or email); Orbit matches it to their account. */
+        userId?: string;
+        isGuest?: boolean;
     }): Promise<void> {
         if (!this.isConfigured()) {
             if (process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -1141,6 +1146,9 @@ export class AdminApiService {
                 latency: usage.latency ?? null,
                 error: usage.error || false,
                 timestamp: usage.timestamp || new Date().toISOString(),
+                ...(usage.channel ? { channel: usage.channel } : {}),
+                ...(usage.userId ? { userId: usage.userId } : {}),
+                ...(typeof usage.isGuest === "boolean" ? { isGuest: usage.isGuest } : {}),
             };
 
             if (process.env.ENABLE_BOT_DEBUG === 'true') {
