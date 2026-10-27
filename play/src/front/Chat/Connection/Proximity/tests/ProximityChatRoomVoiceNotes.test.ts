@@ -89,6 +89,7 @@ function createFakeSpace() {
         observeUserLeft: new Subject<SpaceUserExtended>(),
         onLeaveSpace: new Subject<void>(),
         observePublicEvent: (name: string) => eventSubject(name).asObservable(),
+        observePrivateEvent: () => new Subject().asObservable(),
         emitPublicMessage: vi.fn(),
         getName: () => "bubble",
         getUsers: () => Promise.resolve(get(space.usersStore)),

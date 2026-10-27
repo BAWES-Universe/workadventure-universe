@@ -1,6 +1,7 @@
 <script lang="ts">
     import { onDestroy } from "svelte";
     import LL from "../../../../../i18n/i18n-svelte";
+    import { singlePlayback } from "../../../../Utils/SinglePlayback";
     import WaveBars from "../../../../Components/Broadcast/WaveBars.svelte";
     import { formatDuration } from "../../../../Components/Broadcast/voiceRecorder";
     import {
@@ -238,6 +239,7 @@
             <audio
                 src={note.url}
                 bind:this={player}
+                use:singlePlayback
                 bind:currentTime={current}
                 on:play={() => (playing = true)}
                 on:pause={() => (playing = false)}

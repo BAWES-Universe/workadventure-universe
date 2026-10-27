@@ -1,8 +1,3 @@
-<script context="module" lang="ts">
-    // Starting one note stops the one playing: two voices at once are never wanted.
-    let playingNow: HTMLAudioElement | undefined;
-</script>
-
 <script lang="ts">
     import { getContext, hasContext, onDestroy } from "svelte";
     import type { Readable } from "svelte/store";
@@ -10,6 +5,7 @@
     import LL from "../../../../../i18n/i18n-svelte";
     import { formatDuration } from "../../../../Components/Broadcast/voiceRecorder";
     import { readAudioShape } from "../../../VoiceNote/AudioShape";
+    import { singlePlayback } from "../../../../Utils/SinglePlayback";
     import {
         isVoiceNoteUnplayed,
         markVoiceNotePlayed,
@@ -64,8 +60,6 @@
     }
 
     function onPlay() {
-        if (playingNow && playingNow !== player) playingNow.pause();
-        playingNow = player;
         playing = true;
         if (!heard) {
             heard = true;
@@ -99,7 +93,6 @@
     }
     onDestroy(() => {
         player?.pause();
-        if (playingNow === player) playingNow = undefined;
     });
 </script>
 
@@ -159,6 +152,7 @@
             src={$content.url}
             preload="metadata"
             bind:this={player}
+            use:singlePlayback
             bind:currentTime={current}
             on:play={onPlay}
             on:pause={() => (playing = false)}
