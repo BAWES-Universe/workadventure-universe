@@ -1891,8 +1891,28 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 // run regardless — wrap them in a try-finally so parentSpan?.end() and
                 // the scope restore always execute, preventing orphaned child spans.
                 try {
+                    // A reply that failed, or came back with no words and no tool call, leaves the person nothing (a DM shows
+                    // "Couldn't answer"): say why in the logs, on the span and on the trace (#1498)
+                    const problem = streamCompleted && !abortSignal?.aborted
+                        ? replyProblem({
+                              error,
+                              errorStatus,
+                              // A private bot's provider text can quote the conversation: only its status is kept
+                              errorText: privateBot ? 'details left out for a private bot' : errorText,
+                              finishReason,
+                              answered: !!accumulatedContent.trim() || hadToolCalls,
+                              outputTokens: completionTokens,
+                              reasoningTokens: ledger.summary()?.usage.reasoningTokens ?? 0,
+                              maxTokens: config.maxTokens,
+                          })
+                        : undefined;
+                    if (problem) {
+                        console.warn(`[AIService] Bot ${botId} gave no answer on ${config.model} (${usageProviderId}): ${problem}`);
+                        parentSpan?.setStatus({ code: 2, message: problem });
+                    }
+
                     // Non-tool-call path: capture $ai_generation for the first (only) LLM call
-                    if (!privateBot && !initialGenCaptured && streamCompleted && firstCallContent && !hadToolCalls) {
+                    if (!privateBot && !initialGenCaptured && streamCompleted && (firstCallContent || problem) && !hadToolCalls) {
                         captureAiGeneration({
                             distinctId: `bot-${botId}`,
                             traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
@@ -1916,6 +1936,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             botId,
                             playerId: String(playerId),
                             space: spaceName,
+                            ...(problem ? { error: problem } : {}),
                         });
                     }
                     
@@ -1944,28 +1965,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             botId,
                             playerId: String(playerId),
                             space: spaceName,
+                            ...(problem ? { error: problem } : {}),
                         });
                     }
                     
-                    // A reply that failed, or came back with no words and no tool call, leaves the person nothing (a DM shows
-                    // "Couldn't answer"): say why in the logs, on the span and on the trace (#1498)
-                    const problem = streamCompleted && !abortSignal?.aborted
-                        ? replyProblem({
-                              error,
-                              errorStatus,
-                              errorText,
-                              finishReason,
-                              answered: !!accumulatedContent.trim() || hadToolCalls,
-                              outputTokens: completionTokens,
-                              reasoningTokens: ledger.summary()?.usage.reasoningTokens ?? 0,
-                              maxTokens: config.maxTokens,
-                          })
-                        : undefined;
-                    if (problem) {
-                        console.warn(`[AIService] Bot ${botId} gave no answer on ${config.model} (${usageProviderId}): ${problem}`);
-                        parentSpan?.setStatus({ code: 2, message: problem });
-                    }
-
                     // Capture $ai_trace (turn-level)
                     if (!privateBot && streamCompleted && (accumulatedContent || error || problem)) {
                         const generationLatency = (Date.now() - startTime) / 1000;

@@ -144,8 +144,9 @@ describe("AIService – a reply that leaves the person nothing (#1498)", () => {
         vi.resetModules();
     });
 
-    const run = async (message = "build me an artifact with music") => {
+    const run = async (message = "build me an artifact with music", privateBot = false) => {
         const { mockAdminApiService, mockConversationMemory } = buildMocks();
+        mockAdminApiService.isBotPrivate = vi.fn().mockResolvedValue(privateBot);
         const service = new AIService(mockConversationMemory, mockAdminApiService, "http://admin.local");
         await drain(service.generateBotResponseStream("bot-1", 42, message, "You are a bot.", "test-provider", "space-1", ""));
     };
@@ -161,6 +162,9 @@ describe("AIService – a reply that leaves the person nothing (#1498)", () => {
         expect(mockParentSpan.setStatus).toHaveBeenCalledWith({ code: 2, message: expect.stringContaining("reached the longest reply") });
         expect(mockCaptureAiTrace).toHaveBeenCalledTimes(1);
         expect(mockCaptureAiTrace.mock.calls[0][0].error).toContain("no words and no tool call");
+        // The call itself is flagged too, even with nothing in it
+        expect(mockCaptureAiGeneration).toHaveBeenCalledTimes(1);
+        expect(mockCaptureAiGeneration.mock.calls[0][0].error).toContain("no words and no tool call");
     });
 
     it("says what the provider answered when the call failed", async () => {
@@ -171,6 +175,18 @@ describe("AIService – a reply that leaves the person nothing (#1498)", () => {
             "[AIService] Bot bot-1 gave no answer on llama3 (test-provider): the provider failed (400): OpenAI API error: 400 max_tokens is too large",
         ]);
         expect(mockCaptureAiTrace.mock.calls[0][0].error).toBe("the provider failed (400): OpenAI API error: 400 max_tokens is too large");
+    });
+
+    it("keeps a private bot's provider text out of the line", async () => {
+        mockGenerateStream.mockImplementationOnce(providerErrorStream);
+        await run("build me an artifact with music", true);
+
+        expect(warnings()).toEqual([
+            "[AIService] Bot bot-1 gave no answer on llama3 (test-provider): the provider failed (400): details left out for a private bot",
+        ]);
+        expect(mockParentSpan.setStatus).toHaveBeenCalledWith({ code: 2, message: expect.not.stringContaining("max_tokens") });
+        expect(mockCaptureAiTrace).not.toHaveBeenCalled();
+        expect(mockCaptureAiGeneration).not.toHaveBeenCalled();
     });
 
     it("never puts the person's words in the line", async () => {
@@ -187,5 +203,6 @@ describe("AIService – a reply that leaves the person nothing (#1498)", () => {
         expect(mockParentSpan.setStatus).not.toHaveBeenCalled();
         expect(mockCaptureAiTrace).toHaveBeenCalledTimes(1);
         expect(mockCaptureAiTrace.mock.calls[0][0].error).toBeUndefined();
+        expect(mockCaptureAiGeneration.mock.calls[0][0].error).toBeUndefined();
     });
 });
