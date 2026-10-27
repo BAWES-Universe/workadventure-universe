@@ -77,3 +77,30 @@ export function replyLimitTime(resetsAt: string, locale: string, now: Date = new
         return at.toLocaleTimeString();
     }
 }
+
+/** The cards a timeline shows (#1159): for each bot only its newest card, and only until its time is up. */
+export function shownReplyLimitIds(
+    messages: ReadonlyArray<{ id: string; replyLimit?: BotReplyLimit }>,
+    now: number
+): Set<string> {
+    const newest = new Map<string, string>();
+    for (const message of messages) {
+        if (message.replyLimit && Date.parse(message.replyLimit.resetsAt) > now) {
+            newest.set(message.replyLimit.botId, message.id);
+        }
+    }
+    return new Set(newest.values());
+}
+
+/** When the next card shown runs out, so the timeline can take it away then; undefined when none will. */
+export function nextReplyLimitExpiry(
+    messages: ReadonlyArray<{ replyLimit?: BotReplyLimit }>,
+    now: number
+): number | undefined {
+    let next: number | undefined;
+    for (const message of messages) {
+        const at = message.replyLimit ? Date.parse(message.replyLimit.resetsAt) : NaN;
+        if (at > now && (next === undefined || at < next)) next = at;
+    }
+    return next;
+}

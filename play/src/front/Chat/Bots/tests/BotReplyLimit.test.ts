@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { parseBotReplyLimit, readBotReplyLimit, replyLimitCardKind, replyLimitTime } from "../BotReplyLimit";
+import {
+    nextReplyLimitExpiry,
+    parseBotReplyLimit,
+    readBotReplyLimit,
+    replyLimitCardKind,
+    replyLimitTime,
+    shownReplyLimitIds,
+    type BotReplyLimit,
+} from "../BotReplyLimit";
 
 const BOT_ID = "0b7c1d2e-1111-4222-8333-944455556666";
 const BOT_CHAT_ID = `@bot_${BOT_ID}:matrix.bawes.net`;
@@ -48,5 +56,35 @@ describe("replyLimitTime", () => {
         const now = new Date(2026, 9, 27, 18, 20);
         expect(replyLimitTime(new Date(2026, 9, 27, 23, 20).toISOString(), "en-US", now)).toBe("11:20 PM");
         expect(replyLimitTime(new Date(2026, 9, 28, 9, 5).toISOString(), "en-US", now)).toBe("Wed 9:05 AM");
+    });
+});
+
+describe("which cards a timeline shows", () => {
+    const card = (botId: string, at: number): BotReplyLimit => ({
+        limit: "universe-ai",
+        resetsAt: new Date(at).toISOString(),
+        who: "member",
+        botId,
+        botName: "Nora",
+    });
+    const now = Date.UTC(2026, 9, 27, 15, 0);
+    const messages = [
+        { id: "m1", replyLimit: card("nora", now + 60_000) },
+        { id: "m2" },
+        { id: "m3", replyLimit: card("nora", now + 120_000) },
+        { id: "m4", replyLimit: card("sam", now - 1) },
+        { id: "m5", replyLimit: card("lina", now + 30_000) },
+    ];
+
+    it("shows each bot's newest card until its time is up", () => {
+        expect(shownReplyLimitIds(messages, now)).toEqual(new Set(["m3", "m5"]));
+        expect(shownReplyLimitIds(messages, now + 30_000)).toEqual(new Set(["m3"]));
+        expect(shownReplyLimitIds(messages, now + 120_000)).toEqual(new Set());
+    });
+
+    it("knows when the next card shown runs out, so it goes away then", () => {
+        expect(nextReplyLimitExpiry(messages, now)).toBe(now + 30_000);
+        expect(nextReplyLimitExpiry(messages, now + 30_000)).toBe(now + 60_000);
+        expect(nextReplyLimitExpiry(messages, now + 120_000)).toBeUndefined();
     });
 });
