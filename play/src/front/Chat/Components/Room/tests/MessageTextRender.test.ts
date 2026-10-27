@@ -72,4 +72,35 @@ describe("a message's text", () => {
 
         await vi.waitFor(() => expect(body()?.querySelector("code.hljs")).not.toBeNull());
     });
+
+    // Game #1479: a word in single backticks stays inside its sentence; a ``` block keeps its own box.
+    it("keeps inline code in its sentence", () => {
+        shown = new MessageText({
+            target,
+            props: { content: writable(content("tagged `Stated` or `Reported`")), hasDepth: false },
+        });
+
+        const chip = body()?.querySelector("p > code");
+        expect(chip?.textContent).toBe("Stated");
+        expect(getComputedStyle(chip as Element).display).not.toBe("block");
+    });
+
+    it("leaves code outside the chat alone", () => {
+        shown = new MessageText({ target, props: { content: writable(content("`a`")), hasDepth: false } });
+        const elsewhere = document.createElement("code");
+        document.body.appendChild(elsewhere);
+
+        expect(getComputedStyle(elsewhere).display).not.toBe("block");
+        elsewhere.remove();
+    });
+
+    it("keeps a code block as its own box", async () => {
+        shown = new MessageText({
+            target,
+            props: { content: writable(content("```\nconst a = 1;\n```")), hasDepth: false },
+        });
+
+        await vi.waitFor(() => expect(body()?.querySelector("pre > code")).not.toBeNull());
+        expect(getComputedStyle(body()?.querySelector("pre > code") as Element).display).toBe("block");
+    });
 });
