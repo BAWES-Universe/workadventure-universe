@@ -53,6 +53,7 @@
     import { mapEditorToolbarInUseStore } from "../../../Stores/MapEditorStore";
     import { isTouchScreen, SETTLE_CHECKS_MS } from "../../../Utils/ViewportGuard";
     import { ARTIFACT_CHAT_CONTEXT, type ArtifactChatOf } from "../../../Artifacts/artifactChatContext";
+    import BotDmIntro from "../Bots/BotDmIntro.svelte";
     import Message from "./Message.svelte";
     import {
         firstShowingIndex,
@@ -184,6 +185,9 @@
     // A direct chat knows who the other person is and where they are right now (header, menu, profile).
     $: directPartner = matrixRoom?.type === "direct" ? directPartnerStore(matrixRoom) : undefined;
     $: profileOpen = directPartner !== undefined && $openProfileRoomIdStore === room.id;
+    // At the very start of a direct message with a bot, once nothing older is left to load
+    $: hasPreviousMessage = room.hasPreviousMessage;
+    $: botDmIntroShown = $directPartner?.isBot === true && !$hasPreviousMessage && !showLoading;
     $: isDirectChat.set(directPartner !== undefined);
     $: partnerForCards.set(directPartner ? $directPartner : undefined);
     $: roomMembers = matrixRoom ? matrixRoom.members : readable([]);
@@ -958,6 +962,9 @@
                 <!--        {/each}-->
                 <!--    </div>-->
                 <!--{/if}-->
+                {#if botDmIntroShown}
+                    <BotDmIntro name={$roomName || "Bot"} />
+                {/if}
                 {#if shownSession && !isEnded && !isRoomMessages}
                     <li class="px-4 pb-2 text-center text-xs text-white/45" data-testid="proximityExplainer">
                         {$LL.chat.session.explainer()}

@@ -763,6 +763,8 @@ const chat: BaseTranslation = {
         nowIn: "Now in",
         inThisRoom: "You're in this room",
     },
+    /** At the start of a direct message with a bot (Orbit #491): the people who manage it see who chats, never the words */
+    botDmIntro: "{name:string}'s owner can see that you chat with {name}, never what you say.",
     replyLimit: {
         titleUniverseAi: "You've used your Universe AI replies for now",
         titleGuest: "You've used your guest replies for now",
