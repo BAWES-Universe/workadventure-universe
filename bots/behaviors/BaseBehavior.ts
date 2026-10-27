@@ -2276,9 +2276,12 @@ The person you're talking to just sent several more messages while you were stil
         url: string,
         mimeType: string,
         mediaType?: string,
-        galleryUrls?: string[]
+        galleryUrls?: string[],
+        /** The bot reading it, for a caller with no bot client (a direct message). */
+        botId?: string
     ): Promise<string> {
         const allUrls = [...new Set([url, ...(galleryUrls || [])])];
+        const readChars = this.aiService?.readCharsFor(botId ?? this.bot?.getBotId());
         let augmentedMessage = message;
 
         // Hoist dynamic import and load all files in parallel
@@ -2291,7 +2294,7 @@ The person you're talking to just sent several more messages while you were stil
             if (!fileMime) {
                 fileMime = (await FileParser.sniffContentType(fileUrl)) || mimeType || 'application/octet-stream';
             }
-            return FileParser.parseFile(fileUrl, fileMime);
+            return FileParser.parseFile(fileUrl, fileMime, readChars);
         }));
 
         // Sanitize extracted text to neutralize embedded boundary markers

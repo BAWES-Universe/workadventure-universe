@@ -172,6 +172,8 @@ export interface ArtifactContext {
     botId: string;
     person: ArtifactPerson;
     chat: ArtifactChat;
+    /** How long a make or a change may take to save, from the super admin's "Time to save" (Orbit #666). */
+    saveTimeoutMs?: number;
 }
 
 export interface ArtifactToolRun {
@@ -204,9 +206,47 @@ function cardOf(artifact: ArtifactSummary, version: number): ArtifactCard {
     return { id: artifact.id, version, title: artifact.title, kind: artifact.kind, maker: artifact.makerName };
 }
 
-/** What the model hears when its reply was cut off in the middle of a make or change: nothing was saved. */
+/**
+ * What the model hears when its reply was cut off in the middle of a make or change: nothing was saved. It builds the
+ * file in parts instead of making it smaller (Orbit #666): a first version that fits, then change_artifact edits that add the rest.
+ */
 export const ARTIFACT_CUT_OFF_MESSAGE =
-    'Your reply was cut off before the file was finished, so nothing was saved. Try again with small edits instead of the whole file, or a smaller file.';
+    'Your reply was cut off before the file was finished, so nothing was saved. Build it in parts: make_artifact with a working first ' +
+    'version that leaves out the largest sections, then add each section with its own change_artifact edits. Do not make it smaller ' +
+    'or simpler than they asked for.';
+
+/** What the chat says when a bot said it made or changed an artifact and nothing was saved (Orbit #666). */
+export const NOTHING_SAVED_LINE = 'No new version was saved.';
+
+/** Something a bot makes as an artifact, or a part of one. */
+const ARTIFACT_WORDS = /\b(artifacts?|apps?|pages?|cards?|versions?|v\d+|dashboards?|games?|calculators?|boards?|mocks?|mockups?|documents?|docs?|charts?|sites?|websites?|trackers?|tabs?|buttons?|layouts?|designs?|drawings?|files?|forms?|sections?|tables?|lists?|quiz(?:zes)?|timers?|maps?)\b/;
+/** "v2", "version 3": a version said to exist. */
+const VERSION_SAID = /\b(v\d+|version \d+)\b/;
+/** "I've rebuilt it", "here's the updated board", "it's ready". */
+const DONE_SAID =
+    /\b(i(?:'ve|’ve| have)?|i just|here(?:'s|’s| is)|it(?:'s|’s| is) (?:now )?|all set|done)\b[^.!?\n]{0,60}\b(made|built|created|updated|changed|rebuilt|redesigned|redid|reworked|added|fixed|saved|ready|live|finished|upgraded|improved)\b/;
+/** "couldn't save", "nothing was saved": a bot that says it did not. */
+const NOT_DONE_SAID = /\b(couldn(?:'|’)?t|could not|can(?:'|’)?t|cannot|wasn(?:'|’)?t|was not|didn(?:'|’)?t|did not|failed|unable|not saved|nothing was saved|won(?:'|’)?t)\b/;
+
+/**
+ * Whether a reply says an artifact was made or changed. Read only when no make or change was saved in the turn, so it
+ * leans on the wording: a version named, or "I've built / here's the updated …", next to something an artifact is.
+ */
+export function claimsArtifactSaved(reply: string): boolean {
+    const text = reply.toLowerCase();
+    if (!text.trim() || NOT_DONE_SAID.test(text) || !ARTIFACT_WORDS.test(text)) return false;
+    return VERSION_SAID.test(text) || DONE_SAID.test(text);
+}
+
+/** The second try after a reply said it saved an artifact and nothing was saved: do it with the tool, or say it plainly. */
+export function nothingSavedRetryMessage(original: string, reply: string): string {
+    return (
+        `${original}\n\n[Your last answer to this was: "${reply.trim().slice(0, 1500)}". But no ${MAKE_ARTIFACT_TOOL} or ${CHANGE_ARTIFACT_TOOL} ` +
+        `call was saved in that turn, so nothing was made or changed, and the chat now says "${NOTHING_SAVED_LINE}". Do it now with ` +
+        `${MAKE_ARTIFACT_TOOL} or ${CHANGE_ARTIFACT_TOOL}. If it is large, build it in parts. If you cannot, say so in one short line. ` +
+        `Never say a version was saved unless the tool said so.]`
+    );
+}
 
 /** Make and change write a file, so a half-written one must never go through. */
 export function writesArtifact(name: string): boolean {
@@ -223,10 +263,11 @@ export function describeArtifactError(error: unknown): string {
                 return "The owner hasn't allowed changes from this person. Say so kindly; they can ask the owner, or make their own copy.";
             case 'not_allowed':
                 return error.message;
+            // Orbit's line names the limit a super admin set, e.g. "An artifact can hold up to 2 MB."
             case 'too_large':
-                return 'That is too large. Make it smaller (under 500 KB).';
+                return `That is too large. ${error.message} Make the file smaller, for example with less inline data or smaller images.`;
             case 'too_many_versions':
-                return 'This artifact has reached its limit of 200 versions. Suggest making a new one.';
+                return `This artifact has no room for another version. ${error.message} Suggest making a new one.`;
             case 'stale_version':
                 return error.message;
             case 'edit_not_found':
@@ -255,12 +296,16 @@ export async function runArtifactTool(name: string, args: Record<string, unknown
             case MAKE_ARTIFACT_TOOL: {
                 const kind = argString(args.kind) as ArtifactKind;
                 if (!KINDS.includes(kind)) return { result: { error: 'kind must be app, page, markdown or svg.' } };
-                const made = await context.admin.makeArtifact(call, {
-                    title: argString(args.title),
-                    kind,
-                    content: argString(args.content),
-                    summary: argString(args.summary) || null,
-                });
+                const made = await context.admin.makeArtifact(
+                    call,
+                    {
+                        title: argString(args.title),
+                        kind,
+                        content: argString(args.content),
+                        summary: argString(args.summary) || null,
+                    },
+                    context.saveTimeoutMs
+                );
                 return {
                     result: { success: true, id: made.artifact.id, title: made.artifact.title, kind, version: made.version.number },
                     card: cardOf(made.artifact, made.version.number),
@@ -278,7 +323,7 @@ export async function runArtifactTool(name: string, args: Record<string, unknown
                     summary: argString(args.summary) || null,
                     title: argString(args.title) || null,
                     baseVersion: argVersion(args.baseVersion),
-                });
+                }, context.saveTimeoutMs);
                 return {
                     result: { success: true, id: changed.artifact.id, title: changed.artifact.title, version: changed.version.number },
                     card: cardOf(changed.artifact, changed.version.number),

@@ -1,0 +1,11 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+html,body{margin:0;background:#05040b;color:#fff;font-family:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;}
+#panel{box-sizing:border-box;width:400px;min-height:100vh;margin-left:auto;padding:16px;background:#0a0814;box-shadow:-1px 0 0 rgba(255,255,255,.08);}
+@media (max-width:500px){#panel{width:100%;}}
+.title{font-size:20px;font-weight:700;margin:4px 8px 14px}
+.groups{display:flex;flex-direction:column;gap:6px}
+</style></head>
+<body><div id="panel"><div class="title">Tinyfish Researcher</div><div class="groups" id="app"></div></div>
+<script type="module" src="./main.ts"></script></body></html>

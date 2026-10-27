@@ -25,6 +25,63 @@ export interface AIProviderConfig {
      * (their own computer, or their own NIM), so every call to it goes through the address guard.
      */
     ownKey?: { addressTyped: boolean };
+    /** The bot's limits (Orbit #666), when Orbit served them with the bot's credentials. */
+    limits?: BotLimits;
+}
+
+/**
+ * A bot's limits as Orbit serves them with its credentials (Orbit #666): set by a super admin for Universe AI, by a
+ * key's owner for their key, lowered by the bot's editors. Each one is read with its recommended value as the fallback
+ * (BOT_LIMIT_DEFAULTS), for an Orbit that does not send them yet.
+ */
+export interface BotLimits {
+    replyTokens: number;
+    /** Tool steps in one reply. */
+    steps: number;
+    /** Times a cut-off chat answer carries on by itself. */
+    continuations: number;
+    /** Earlier messages in the chat the bot reads before each reply. */
+    messages: number;
+    /** Characters it takes in from one web page or file. */
+    readChars: number;
+    /** Seconds it waits when its AI goes quiet. */
+    waitSeconds: number;
+    artifactBytes: number;
+    /** 0 keeps every version. */
+    artifactVersions: number;
+    artifactSaveSeconds: number;
+    /** "Say when nothing was saved". */
+    guard: boolean;
+}
+
+/** The recommended limits, the same as Orbit's (lib/bot-limit-values.ts there). */
+export const BOT_LIMIT_DEFAULTS: BotLimits = {
+    replyTokens: 32000,
+    steps: 30,
+    continuations: 2,
+    messages: 20,
+    readChars: 50000,
+    waitSeconds: 60,
+    artifactBytes: 2 * 1024 * 1024,
+    artifactVersions: 0,
+    artifactSaveSeconds: 30,
+    guard: true,
+};
+
+/** The limits Orbit sent, each checked, with the recommended value for any that is missing or broken. */
+export function readBotLimits(raw: unknown): BotLimits {
+    const out: BotLimits = { ...BOT_LIMIT_DEFAULTS };
+    if (!raw || typeof raw !== 'object') return out;
+    const given = raw as Record<string, unknown>;
+    for (const key of Object.keys(BOT_LIMIT_DEFAULTS) as (keyof BotLimits)[]) {
+        const value = given[key];
+        if (key === 'guard') {
+            if (typeof value === 'boolean') out.guard = value;
+        } else if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+            (out as unknown as Record<string, number>)[key] = value;
+        }
+    }
+    return out;
 }
 
 /**
