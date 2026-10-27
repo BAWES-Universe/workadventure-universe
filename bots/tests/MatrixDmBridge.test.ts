@@ -1168,6 +1168,19 @@ describe('MatrixDmBridge', () => {
         expect(client.sendText).not.toHaveBeenCalled();
     });
 
+    it('logs why when an empty answer turns into "couldn\'t answer" (#1498)', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        await bridge.onEvent(invite());
+        deps.reply.mockResolvedValueOnce({ text: '', media: [] });
+        await bridge.onEvent(message('Build me something impressive'));
+        expect(noteStates()).toEqual(['trouble']);
+        const lines = warn.mock.calls.map((call) => String(call[0]));
+        expect(lines.some((line) => line.includes(`Bot ${BOT} could not answer`) && line.includes('the answer was empty'))).toBe(true);
+        // The person's words never reach the log
+        expect(lines.some((line) => line.includes('impressive'))).toBe(false);
+        warn.mockRestore();
+    });
+
     /** Moves the clock past the spacing between two "no such bot" answers that count. */
     const aMinuteLater = () => vi.setSystemTime(Date.now() + 61_000);
 

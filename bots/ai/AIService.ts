@@ -52,6 +52,8 @@ import { captureAiGeneration, captureAiTrace, flushPostHog } from './PostHogClie
 import { priceCall } from './pricing/costing';
 import { UsageLedger, priceMetadata, type TurnCost } from './pricing/ledger';
 import { buildSystemPrompt } from './systemPrompt';
+import { replyProblem } from './replyProblem';
+import { providerErrorText } from './providers/ownKeyHttp';
 /** Ends a direct-message reply that answers where the bot is or invites the person over because they asked. */
 export { ROOM_CARD_MARK } from './systemPrompt';
 import {
@@ -525,6 +527,8 @@ export class AIService {
         let usageProviderId = providerId;
         // A reply through a person's own key tells Orbit how it went, so a key that keeps failing is marked Down
         let reportHealth = false;
+        // A private bot's failure is logged without the error's words, which could quote what was said (#1166)
+        let privateTurn = false;
 
         try {
             // Get provider credentials. A bot on Universe AI or a person's own key is resolved by Orbit for this bot (#374).
@@ -756,6 +760,10 @@ export class AIService {
             let completionTokens = 0;
             let error = false;
             let errorStatus: number | undefined;
+            // What the provider said when a call failed, and why the reply's call ended, for the line logged when a
+            // reply comes back with nothing (#1498)
+            let errorText: string | undefined;
+            let finishReason: string | undefined;
             let streamCompleted = false;
             let accumulatedContent = '';
             let firstCallContent = '';
@@ -814,6 +822,7 @@ export class AIService {
             // Hide bot conversations (#1166): a private bot sends no conversation or player ids to Sentry and no
             // text to PostHog. Anything else (usage counts, memory, errors) is unchanged.
             const privateBot = await this.isPrivateBot(botId);
+            privateTurn = privateBot;
             // Every PostHog capture of this turn goes through here, so a private bot cannot miss one
             const captureGeneration: typeof captureAiGeneration = (params) => {
                 if (!privateBot) captureAiGeneration(params);
@@ -993,6 +1002,7 @@ export class AIService {
                         if (chunk.metadata?.error) {
                             followUpFailedForHealth = true;
                             if (chunk.metadata.errorStatus) followUpErrorStatus = chunk.metadata.errorStatus;
+                            errorText ??= chunk.metadata.errorText;
                         }
 
                         // Capture $ai_generation for the initial LLM call NOW —
@@ -1100,6 +1110,7 @@ export class AIService {
                                     if (retryChunk.done && retryChunk.metadata?.error) {
                                         followUpFailedForHealth = true;
                                         if (retryChunk.metadata.errorStatus) followUpErrorStatus = retryChunk.metadata.errorStatus;
+                                        errorText ??= retryChunk.metadata.errorText;
                                     }
                                 }
                             } catch (retryError) {
@@ -1315,6 +1326,7 @@ export class AIService {
                                     followUpError = true;
                                     followUpFailedForHealth = true;
                                     if (resultChunk.metadata.errorStatus) followUpErrorStatus = resultChunk.metadata.errorStatus;
+                                    errorText ??= resultChunk.metadata.errorText;
                                 }
                                 // Accumulate content from follow-up response (same as main stream)
                                 if (resultChunk.content) {
@@ -1644,6 +1656,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                         if (retryChunk.done && retryChunk.metadata?.error) {
                                             followUpFailedForHealth = true;
                                             if (retryChunk.metadata.errorStatus) followUpErrorStatus = retryChunk.metadata.errorStatus;
+                                            errorText ??= retryChunk.metadata.errorText;
                                         }
                                     }
                                 } catch (retryError) {
@@ -1817,9 +1830,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     if (chunk.metadata?.error) {
                         error = true;
                         if (chunk.metadata.errorStatus) errorStatus = chunk.metadata.errorStatus;
+                        errorText ??= chunk.metadata.errorText;
                     }
                     if (chunk.done) {
                         streamCompleted = true;
+                        finishReason = chunk.metadata?.finishReason;
                         if (process.env.ENABLE_BOT_DEBUG === 'true') {
                             console.log(`[AIService] Received done chunk, stream completing`);
                         }
@@ -1932,8 +1947,27 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         });
                     }
                     
+                    // A reply that failed, or came back with no words and no tool call, leaves the person nothing (a DM shows
+                    // "Couldn't answer"): say why in the logs, on the span and on the trace (#1498)
+                    const problem = streamCompleted && !abortSignal?.aborted
+                        ? replyProblem({
+                              error,
+                              errorStatus,
+                              errorText,
+                              finishReason,
+                              answered: !!accumulatedContent.trim() || hadToolCalls,
+                              outputTokens: completionTokens,
+                              reasoningTokens: ledger.summary()?.usage.reasoningTokens ?? 0,
+                              maxTokens: config.maxTokens,
+                          })
+                        : undefined;
+                    if (problem) {
+                        console.warn(`[AIService] Bot ${botId} gave no answer on ${config.model} (${usageProviderId}): ${problem}`);
+                        parentSpan?.setStatus({ code: 2, message: problem });
+                    }
+
                     // Capture $ai_trace (turn-level)
-                    if (!privateBot && streamCompleted && (accumulatedContent || error)) {
+                    if (!privateBot && streamCompleted && (accumulatedContent || error || problem)) {
                         const generationLatency = (Date.now() - startTime) / 1000;
                         captureAiTrace({
                             distinctId: `bot-${botId}`,
@@ -1958,6 +1992,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             botId,
                             playerId: String(playerId),
                             space: spaceName,
+                            ...(problem ? { error: problem } : {}),
                         });
                     }
                 } catch (telemetryError) {
@@ -2037,6 +2072,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             if (process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.error('[AIService] Error generating response:', error);
             }
+            // Before this, a reply that broke here left no trace outside debug mode (#1498)
+            console.error(`[AIService] Bot ${botId} could not answer: ${privateTurn ? (error?.name ?? 'Error') : providerErrorText(error)}`);
 
             // Track error
             this.trackUsage(botId, usageProviderId, {

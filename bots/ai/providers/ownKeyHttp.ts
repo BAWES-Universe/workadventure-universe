@@ -27,3 +27,16 @@ export function statusFromError(error: unknown): number | undefined {
     if (status === 429 && /insufficient_quota/.test(message)) return 402;
     return status;
 }
+
+/** A login written into an address (`https://user:password@host`), up to the last `@` before the path. */
+const URL_LOGIN = /([a-z][a-z0-9+.-]*:\/\/)[^/?#\s]*@/gi;
+
+/**
+ * What a failed provider call said, fit for a log line: one line, no login from an address, at most 200 characters.
+ * Provider error answers say what went wrong ("maximum context length", "invalid api key"), never the conversation.
+ */
+export function providerErrorText(error: unknown): string {
+    const message = error instanceof Error ? error.message : typeof error === 'string' ? error : String(error);
+    const line = message.replace(URL_LOGIN, '$1[redacted]@').replace(/\s+/g, ' ').trim();
+    return line.length > 200 ? `${line.slice(0, 199)}…` : line || 'unknown error';
+}
