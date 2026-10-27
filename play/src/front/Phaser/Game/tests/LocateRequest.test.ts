@@ -38,6 +38,18 @@ describe("LocateRequest", () => {
         expect(takeLocateRequest(1100)).toEqual({ name: "Imagine", cancelled: true });
     });
 
+    it("keeps the request for its own answer when another avatar's answer comes first", () => {
+        rememberLocateRequest("First", undefined, 1000, 5);
+        rememberLocateRequest("Second", undefined, 1100, 7);
+        expect(takeLocateRequest(1200, 5)).toBeUndefined();
+        expect(takeLocateRequest(1300, 7)).toEqual({ name: "Second", cancelled: false });
+    });
+
+    it("hands the request to any answer when the avatar asked for is not known", () => {
+        rememberLocateRequest("Imagine", undefined, 1000);
+        expect(takeLocateRequest(1100, 9)).toEqual({ name: "Imagine", cancelled: false });
+    });
+
     it("hands the request to its answer once", () => {
         rememberLocateRequest("Imagine", undefined, 1000);
         expect(takeLocateRequest(1100)).toEqual({ name: "Imagine", cancelled: false });

@@ -153,7 +153,8 @@ describe('BotWokaAvatar', () => {
     it('asks the homeserver only once per Woka, and draws again only when the Woka changes', async () => {
         await avatars.update(BOT_USER, bot());
         await avatars.update(BOT_USER, bot());
-        expect(client.getAvatarUrl).toHaveBeenCalledTimes(1);
+        // Once before drawing, once before setting the picture.
+        expect(client.getAvatarUrl).toHaveBeenCalledTimes(2);
         expect(draw).toHaveBeenCalledTimes(1);
 
         await avatars.update(BOT_USER, bot(['female1']));
@@ -176,6 +177,16 @@ describe('BotWokaAvatar', () => {
         client.setAvatar('mxc://matrix.test/chosen');
         await avatars.update(BOT_USER, bot());
         expect(draw).not.toHaveBeenCalled();
+        expect(client.setAvatarUrl).not.toHaveBeenCalled();
+    });
+
+    it('keeps a picture an admin set while the Woka was being drawn and uploaded', async () => {
+        client.uploadMedia.mockImplementationOnce(async () => {
+            client.setAvatar('mxc://matrix.test/chosen');
+            return 'mxc://matrix.test/woka1';
+        });
+        await avatars.update(BOT_USER, bot());
+        expect(client.setAccountData).not.toHaveBeenCalled();
         expect(client.setAvatarUrl).not.toHaveBeenCalled();
     });
 

@@ -129,6 +129,8 @@ export async function subscribeThisDevice(): Promise<"saved" | "notSetUp" | "fai
     let subscription: PushSubscription | null;
     try {
         const registration = await navigator.serviceWorker.register(SERVICE_WORKER_URL);
+        // Subscribing needs an active worker, which a first visit has only once it is installed.
+        if (!registration.active) await navigator.serviceWorker.ready;
         subscription = await registration.pushManager.getSubscription();
         if (subscription && !sameKey(subscription, key)) {
             await subscription.unsubscribe();

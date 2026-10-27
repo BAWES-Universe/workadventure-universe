@@ -80,7 +80,7 @@ export class LocateManager {
         if (!message.position) {
             return;
         }
-        const request = takeLocateRequest();
+        const request = takeLocateRequest(Date.now(), message.userId);
         if (request?.cancelled) {
             return;
         }

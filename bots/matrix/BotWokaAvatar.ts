@@ -81,6 +81,8 @@ export class BotWokaAvatar {
         if (!picture) return;
         const mxc = await this.client.uploadMedia(userId, picture, 'image/png', 'woka.png');
         if (!mxc) throw new Error('the homeserver gave no address for the picture');
+        // Drawing and uploading take a while: a picture an admin set meanwhile stays.
+        if ((await this.client.getAvatarUrl(userId)) !== current) return;
         const record: SavedWokaAvatar = current ? { hash, mxc, previous: current } : { hash, mxc };
         await this.client.setAccountData(userId, WOKA_AVATAR_ACCOUNT_DATA, record);
         await this.client.setAvatarUrl(userId, mxc);
