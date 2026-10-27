@@ -19,7 +19,7 @@ import { DEPTH_EMOTE_INDEX } from "../Game/DepthIndexes";
 import { getPlayerAnimations, PlayerAnimationTypes } from "../Player/Animation";
 import { ProtobufClientUtils } from "../../Network/ProtobufClientUtils";
 import { SpeakerIcon } from "../Components/SpeakerIcon";
-import { RaisedHandBadge } from "../Components/RaisedHandBadge";
+import { RAISED_HAND_BADGE_HEIGHT, RaisedHandBadge } from "../Components/RaisedHandBadge";
 
 import { lazyLoadPlayerCharacterTextures } from "./PlayerTexturesLoadingManager";
 import { reportWokaLoadFailure } from "./WokaLoadReporter";
@@ -33,8 +33,6 @@ import DOMElement = Phaser.GameObjects.DOMElement;
 const playerNameY = PLAYER_NAME_OFFSET_Y;
 /** Space between the name pill (or the talk bubble) and the badge above it, in game pixels. */
 const ABOVE_NAME_GAP = 2;
-/** Height of the raised hand badge, see RaisedHandBadge. */
-const RAISED_HAND_BADGE_HEIGHT = 13;
 const interactiveRadius = 25;
 
 export const CHARACTER_BODY_WIDTH = 16;
@@ -64,9 +62,14 @@ export abstract class Character extends Container implements OutlineableInterfac
         // The physics moves the player without telling the container: the name follows it every frame.
         this.usernameDisplay?.setPlayerDepth(this.depth);
         this.usernameDisplay?.setPosition(this.x, this.y + playerNameY);
+        this.raisedHandBadge?.setPlayerDepth(this.depth);
+        this.raisedHandBadge?.setPosition(this.x, this.y + this.raisedHandBadgeY);
     };
     protected readonly speakerIcon: SpeakerIcon;
-    private readonly raisedHandBadge: RaisedHandBadge;
+    /** Made the first time this player raises a hand. */
+    private raisedHandBadge: RaisedHandBadge | undefined;
+    /** Centre of the raised hand badge, relative to the player, in game pixels. */
+    private raisedHandBadgeY = playerNameY;
     public readonly playerName: string;
     public sprites: Map<string, Sprite>;
     protected _lastDirection: PositionMessage_Direction = PositionMessage_Direction.DOWN;
@@ -213,8 +216,7 @@ export abstract class Character extends Container implements OutlineableInterfac
 
         scene.events.on(Phaser.Scenes.Events.POST_UPDATE, this.syncUsernameDisplay);
         this.speakerIcon = new SpeakerIcon(scene, 0, -45);
-        this.raisedHandBadge = new RaisedHandBadge(scene, 0, playerNameY - 1);
-        this.add([this.speakerIcon, this.raisedHandBadge]);
+        this.add(this.speakerIcon);
         this.placeAboveName();
 
         if (isClickable) {
@@ -360,8 +362,12 @@ export abstract class Character extends Container implements OutlineableInterfac
 
     /** A gold hand with the number in line above the name, or none (undefined) when the hand is down. */
     public setRaisedHand(position: number | undefined): void {
-        this.raisedHandBadge.showPlace(position);
+        if (position !== undefined) {
+            this.raisedHandBadge ??= new RaisedHandBadge(this.scene.usernameDomLayer);
+        }
+        this.raisedHandBadge?.showPlace(position);
         this.placeAboveName();
+        this.syncUsernameDisplay();
         this.scene.markDirty();
     }
 
@@ -380,8 +386,7 @@ export abstract class Character extends Container implements OutlineableInterfac
             top = pillTop - ABOVE_NAME_GAP * 2 - this.speakerIcon.restingHeight;
         }
         // Centred above the name, so a woka standing close by never covers it.
-        this.raisedHandBadge.x = 0;
-        this.raisedHandBadge.y = top - ABOVE_NAME_GAP - RAISED_HAND_BADGE_HEIGHT / 2;
+        this.raisedHandBadgeY = top - ABOVE_NAME_GAP - RAISED_HAND_BADGE_HEIGHT / 2;
     }
 
     /**
@@ -393,6 +398,7 @@ export abstract class Character extends Container implements OutlineableInterfac
         this.setAlpha(alpha);
         this.companion?.setAlpha(alpha);
         this.usernameDisplay?.setFaded(faded);
+        this.raisedHandBadge?.setFaded(faded);
     }
 
     public getAvailabilityStatus() {
@@ -514,6 +520,7 @@ export abstract class Character extends Container implements OutlineableInterfac
 
     destroy(): void {
         this.usernameDisplay?.destroy();
+        this.raisedHandBadge?.destroy();
         for (const sprite of this.sprites.values()) {
             if (this.scene) {
                 this.scene.sys.updateList.remove(sprite);

@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => {
         PUBLIC_MAP_STORAGE_URL: "http://map-storage.example.com",
         MAX_USERNAME_LENGTH: 25,
     };
-    return { me: vi.fn(), setPlayerName: vi.fn() };
+    return { me: vi.fn(), setPlayerName: vi.fn(), forgetThisDeviceOnSignOut: vi.fn(() => Promise.resolve()) };
 });
 
 vi.mock("../AxiosUtils", () => ({ axiosToPusher: { get: mocks.me }, axiosWithRetry: {} }));
@@ -28,6 +28,7 @@ vi.mock("../../Chat/Utils", () => ({ openChatRoom: vi.fn() }));
 vi.mock("../../external-modules/admin-api/orbitAccessToken", () => ({ gameTokenToJoinWith: vi.fn() }));
 vi.mock("../RoomConnection", () => ({ RoomConnection: class {} }));
 vi.mock("../ConnectAttemptWatch", () => ({ watchConnectAttempt: vi.fn() }));
+vi.mock("../../Notification/Push/PushDevice", () => ({ forgetThisDeviceOnSignOut: mocks.forgetThisDeviceOnSignOut }));
 
 import { connectionManager } from "../ConnectionManager";
 import { localUserStore } from "../LocalUserStore";
@@ -193,5 +194,83 @@ describe("signing out", () => {
         connectionManager.goToSignIn();
         connectionManager.logout();
         expect(localUserStore.getName()).toBeNull();
+    });
+});
+
+// The device leaves the account's notifications on the way out (#863), after the account's token is gone.
+describe("signing out, this device's notifications", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        localStorage.clear();
+    });
+
+    it("drops the token at once, then leaves the account", async () => {
+        mocks.me.mockResolvedValue(meAnswer("Khalid"));
+        await openTheGame();
+        let leaving: () => void = () => undefined;
+        mocks.forgetThisDeviceOnSignOut.mockImplementationOnce(
+            () =>
+                new Promise<void>((resolve) => {
+                    leaving = resolve;
+                })
+        );
+        connectionManager.logout();
+        // Closing the tab now still leaves it signed out
+        expect(localUserStore.getAuthToken()).toBeNull();
+        await vi.waitFor(() => expect(mocks.forgetThisDeviceOnSignOut).toHaveBeenCalledOnce());
+        leaving();
+    });
+
+    it("signs a guest out at once, with no device to leave", () => {
+        localUserStore.setAuthToken(`header.${window.btoa(JSON.stringify({ identifier: "guest" }))}.signature`);
+        connectionManager.logout();
+        expect(localUserStore.getAuthToken()).toBeNull();
+        expect(mocks.forgetThisDeviceOnSignOut).not.toHaveBeenCalled();
+    });
+});
+
+// The Sign in buttons keep the guest's token aside too, since the account's token replaces it when they come back.
+describe("signing in from a Sign in button as a guest", () => {
+    const guestToken = `header.${window.btoa(
+        JSON.stringify({ identifier: "5b522f38-d7d2-4e37-be94-2476cb1efdfe" })
+    )}.signature`;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        localStorage.clear();
+        localUserStore.setAuthToken(guestToken);
+        mocks.me.mockResolvedValue(meAnswer("Khalid"));
+    });
+
+    it("tells the pusher which guest this device was, once, with the account's token", async () => {
+        connectionManager.goToSignIn();
+        localUserStore.setAuthToken(gameToken);
+        await openTheGame();
+        expect(mocks.me.mock.calls[0][1].params.guestToken).toBe(guestToken);
+
+        await openTheGame();
+        expect(mocks.me.mock.calls[1][1].params.guestToken).toBeUndefined();
+    });
+
+    it("keeps the guest token when the pusher could not be reached, so a retry still carries it", async () => {
+        connectionManager.goToSignIn();
+        localUserStore.setAuthToken(gameToken);
+        mocks.me.mockRejectedValueOnce(new Error("Network Error"));
+        await expect(openTheGame()).rejects.toThrow("Network Error");
+
+        await openTheGame();
+        expect(mocks.me.mock.calls[1][1].params.guestToken).toBe(guestToken);
+    });
+
+    it("keeps the guest token when the pusher answers with an error, so a retry still carries it", async () => {
+        connectionManager.goToSignIn();
+        localUserStore.setAuthToken(gameToken);
+        mocks.me.mockResolvedValueOnce({
+            data: { status: "error", type: "error", code: "TOKEN", title: "Sign in again", subtitle: "", details: "" },
+        });
+        await openTheGame();
+
+        await openTheGame();
+        expect(mocks.me.mock.calls[1][1].params.guestToken).toBe(guestToken);
     });
 });

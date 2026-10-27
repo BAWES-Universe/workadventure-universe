@@ -5,7 +5,8 @@ import { getRoomClickableUrl, parseRoomUrl } from "./channels";
  * The stats channel's report (#1389, mock "Discord v3 A"): a summary post, then one post per universe with a card
  * (its rooms, their people and bots, who is there) and a "Visit <room>" button per room. Only rooms with at least one
  * person are listed. Universes with the most people come first, then rooms with the most people inside each; bots
- * never change the order, and a tie goes A to Z.
+ * never change the order, and a tie goes A to Z. With no one in (#1453), the summary shows 0 people (and any bots), then
+ * the "All Quiet" post with an "Enter the Universe" button.
  */
 
 /** Orbit's icons, as the app's own emoji (emoji.ts). A missing one shows as nothing, so the words still read. */
@@ -15,6 +16,9 @@ export type ReportIcons = Partial<Record<IconKey, { id: string; name: string }>>
 /** Orbit's first universe colour, for a universe whose colour Orbit did not send. */
 export const FALLBACK_UNIVERSE_COLOUR = "#8b5cf6";
 const SUMMARY_COLOUR = 0x5865f2;
+const QUIET_COLOUR = 0x99aab5;
+/** Not a room, so the start room can change without touching the report. */
+export const ENTER_UNIVERSE_URL = "https://universe.bawes.net";
 const NAMES_SHOWN = 10;
 const NAME_MAX = 40;
 // Discord's limits: 25 fields per embed and 25 buttons (5 rows of 5) per message, 6000 characters of embed text per
@@ -129,8 +133,24 @@ export function groupUniverses(
     return sorted.sort((a, b) => b.people - a.people || byName(a.name, b.name));
 }
 
-/** The first post: everyone online, the rooms they are in, and when this was written. */
-export function buildSummary(universes: ReportUniverse[], now: Date, icons: ReportIcons): DiscordMessagePayload {
+function peopleOnline(people: number, bots: number, icons: ReportIcons): NonNullable<DiscordEmbed["fields"]>[number] {
+    return {
+        name: `${icon(icons, "people")}People online`,
+        value: bots > 0 ? `**${people}** · ${plural(bots, "bot", "bots")}` : `**${people}**`,
+        inline: true,
+    };
+}
+
+/**
+ * The first post: everyone online, the rooms they are in, and when this was written. With no one in, it shows 0 people
+ * and the bots that are in (idleBots, from rooms with only bots, which get no card).
+ */
+export function buildSummary(
+    universes: ReportUniverse[],
+    now: Date,
+    icons: ReportIcons,
+    idleBots = 0
+): DiscordMessagePayload {
     const lastUpdated = {
         name: `${icon(icons, "clock")}Last updated`,
         value: `<t:${Math.floor(now.getTime() / 1000)}:R>`,
@@ -141,9 +161,8 @@ export function buildSummary(universes: ReportUniverse[], now: Date, icons: Repo
             embeds: [
                 {
                     title: "Universe right now",
-                    description: "No one is online right now.",
                     color: SUMMARY_COLOUR,
-                    fields: [lastUpdated],
+                    fields: [peopleOnline(0, idleBots, icons), lastUpdated],
                 },
             ],
         };
@@ -157,11 +176,7 @@ export function buildSummary(universes: ReportUniverse[], now: Date, icons: Repo
                 title: "Universe right now",
                 color: SUMMARY_COLOUR,
                 fields: [
-                    {
-                        name: `${icon(icons, "people")}People online`,
-                        value: bots > 0 ? `**${people}** · ${plural(bots, "bot", "bots")}` : `**${people}**`,
-                        inline: true,
-                    },
+                    peopleOnline(people, bots, icons),
                     {
                         name: `${icon(icons, "room")}Active rooms`,
                         value: `**${rooms}** in ${plural(universes.length, "universe", "universes")}`,
@@ -243,17 +258,48 @@ export function buildUniversePosts(universe: ReportUniverse, icons: ReportIcons)
     return posts;
 }
 
-/** The whole report: the summary post, then the universes' posts in order. */
+/** The post under the summary when no one is in: the old "All Quiet" card, and a way in. */
+export function buildQuietPost(icons: ReportIcons): DiscordMessagePayload {
+    return {
+        embeds: [
+            {
+                title: "🌙 All Quiet",
+                description: "No active rooms at the moment. Be the first to explore!",
+                color: QUIET_COLOUR,
+            },
+        ],
+        components: [
+            {
+                type: 1,
+                components: [
+                    {
+                        type: 2,
+                        style: 5,
+                        label: "Enter the Universe",
+                        url: ENTER_UNIVERSE_URL,
+                        ...(icons.universe ? { emoji: { id: icons.universe.id, name: icons.universe.name } } : {}),
+                    },
+                ],
+            },
+        ],
+    };
+}
+
+/** The whole report: the summary post, then the universes' posts in order, or the "All Quiet" post when no one is in. */
 export function buildReport(
     rooms: RoomDetailsMap,
     metadata: Map<string, RoomMetadata>,
     icons: ReportIcons,
     now: Date,
     baseUrl?: string
-): { summary: DiscordMessagePayload; universes: DiscordMessagePayload[] } {
+): { summary: DiscordMessagePayload; posts: DiscordMessagePayload[] } {
     const universes = groupUniverses(rooms, metadata, baseUrl);
+    if (universes.length === 0) {
+        const idleBots = Object.values(rooms).reduce((total, details) => total + details.bots, 0);
+        return { summary: buildSummary(universes, now, icons, idleBots), posts: [buildQuietPost(icons)] };
+    }
     return {
         summary: buildSummary(universes, now, icons),
-        universes: universes.flatMap((universe) => buildUniversePosts(universe, icons)),
+        posts: universes.flatMap((universe) => buildUniversePosts(universe, icons)),
     };
 }

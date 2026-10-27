@@ -981,6 +981,8 @@ message MoveToPositionMessage{
 message LocatePositionMessage{
   PositionMessage position = 1;
   int32 userId = 2;
+  // The account of that avatar, so an answer is told apart by person even when another avatar of theirs answers.
+  string userUuid = 3;
 }
 
 message SubMessage {

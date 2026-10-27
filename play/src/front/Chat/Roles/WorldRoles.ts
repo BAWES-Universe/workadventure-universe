@@ -14,6 +14,9 @@ export type RoleLabel = {
  */
 export const worldRolesStore = writable<RoleLabel[] | undefined>(undefined);
 
+/** Member's dot in a person's roles list: Orbit's colour for Member, which it never names to the game. */
+export const MEMBER_COLOR = "#A78BFA";
+
 /** A role a person holds, as Orbit named it. */
 export type HeldRole = RoleLabel;
 
