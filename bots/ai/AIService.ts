@@ -783,6 +783,9 @@ export class AIService {
             // health report needs the reply as a whole, and the provider's status when it gave one.
             let followUpFailedForHealth = false;
             let followUpErrorStatus: number | undefined;
+            // The error a failed call's $ai_generation carries, like the turn's trace does (#1498)
+            const failedCall = (failed: boolean, status?: number) =>
+                failed ? { error: replyProblem({ error: true, errorStatus: status, errorText, answered: false, outputTokens: 0, reasoningTokens: 0 }) } : {};
             // skipping code after the loop but still reaching the finally block.
             let followUpInput = '';
             let overallFollowUpStartTime = 0;
@@ -1035,6 +1038,7 @@ export class AIService {
                                 botId,
                                 playerId: String(playerId),
                                 space: spaceName,
+                                ...failedCall(error, errorStatus),
                             });
                         } catch (captureError) {
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -1425,6 +1429,7 @@ export class AIService {
                                             botId,
                                             playerId: String(playerId),
                                             space: spaceName,
+                                            ...failedCall(followUpError, followUpErrorStatus),
                                         });
                                     } catch (captureError) {
                                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -1779,6 +1784,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     botId,
                                     playerId: String(playerId),
                                     space: spaceName,
+                                    ...failedCall(followUpError, followUpErrorStatus),
                                 });
                             } catch (captureError) {
                                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {

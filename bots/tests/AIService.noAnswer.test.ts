@@ -201,6 +201,10 @@ describe("AIService – a reply that leaves the person nothing (#1498)", () => {
             "[AIService] Bot bot-1 gave no answer on llama3 (test-provider): the provider failed (502): OpenAI API error: 502 bad gateway",
         ]);
         expect(mockParentSpan.setStatus).toHaveBeenCalledWith({ code: 2, message: expect.stringContaining("502") });
+        // The tool call's own call went fine; the call after it carries the error
+        const generations = mockCaptureAiGeneration.mock.calls.map((call: any[]) => call[0]);
+        expect(generations[0].error).toBeUndefined();
+        expect(generations.at(-1).error).toBe("the provider failed (502): OpenAI API error: 502 bad gateway");
     });
 
     it("gives the retry's own reason after an empty-name tool call", async () => {
