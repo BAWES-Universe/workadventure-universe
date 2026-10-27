@@ -100,6 +100,7 @@
     $: canViewProfile = canOpenPartnerProfile(partner);
     $: canInvite = canInvitePartner(partner, $invitesEnabledStore);
     // A person shows where they are now, when they share their room with you and you can enter it (Orbit decides).
+    // It comes after their bio and the buttons, so it doesn't push who they are down.
     $: partnerUuid = partner.isBot ? undefined : partner.uuid;
     $: personRoom = partnerNowIn(partnerUuid, () => botApiService.getLiveView(), window.location.origin);
     $: placeNow = $botRoom ?? $personRoom;
@@ -198,10 +199,10 @@
             </div>
         </div>
 
-        {#if placeNow}
+        {#if $botRoom}
             <PartnerRoomBlock
-                label={$botRoom ? $LL.chat.botStatus.livesIn() : $LL.chat.botStatus.nowIn()}
-                link={placeNow}
+                label={$LL.chat.botStatus.livesIn()}
+                link={$botRoom}
                 {name}
                 {currentRoomUrl}
                 visit={visitRoom}
@@ -249,6 +250,16 @@
                     </button>
                 {/if}
             </div>
+        {/if}
+
+        {#if !$botRoom && $personRoom}
+            <PartnerRoomBlock
+                label={$LL.chat.botStatus.nowIn()}
+                link={$personRoom}
+                {name}
+                {currentRoomUrl}
+                visit={visitRoom}
+            />
         {/if}
 
         {#if friendAction && !friendAction.danger}
