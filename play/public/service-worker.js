@@ -47,6 +47,8 @@ async function showPushed(push) {
         icon: "/static/images/logo-WA-min.png",
         badge: "/static/images/logo-WA-min.png",
         tag,
+        // A newer message in a busy chat replaces the older notification: it still has to make its sound.
+        renotify: Boolean(tag),
         data: { chatRoomId, tabUrl: push.url },
     });
 }

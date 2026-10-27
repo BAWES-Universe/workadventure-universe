@@ -27,13 +27,16 @@ export class MessageNotification implements NotificationWA {
                 tabUrl: window.location.href,
             };
 
-            await registration.showNotification(this.chatRoomName, {
+            // renotify is not in the DOM typings: a replacing notification still has to make its sound.
+            const options: NotificationOptions & { renotify: boolean } = {
                 ...this.options,
                 body,
                 data,
                 // The tag the service worker gives a pushed notification of this chat, so one replaces the other.
                 tag: `chat:${this.chatRoomId}`,
-            });
+                renotify: true,
+            };
+            await registration.showNotification(this.chatRoomName, options);
         } catch (error) {
             console.error("Error while sending message notification", error);
             Sentry.captureException(error);

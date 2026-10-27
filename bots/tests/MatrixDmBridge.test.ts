@@ -113,7 +113,8 @@ describe('MatrixDmBridge', () => {
         await bridge.userExists(BOT_USER);
         await bridge.onEvent(message('again'));
         expect(deps.wokaPicture).toHaveBeenCalledTimes(1);
-        expect(client.getAvatarUrl).toHaveBeenCalledTimes(1);
+        // Once before drawing, once before setting the picture; none after.
+        expect(client.getAvatarUrl).toHaveBeenCalledTimes(2);
     });
 
     it('creates the bot account on first lookup and names it after the bot', async () => {

@@ -4,7 +4,7 @@ import { popupStore } from "../../Stores/PopupStore";
 import { botApiService } from "../../external-modules/bots/services/BotApiService";
 import { raceTimeout } from "../../Utils/PromiseUtils";
 import NotificationCard from "./NotificationCard.svelte";
-import { pushAvailability, refreshThisDevice } from "./PushDevice";
+import { pushAvailability, refreshThisDeviceOnce } from "./PushDevice";
 
 /**
  * When Universe offers notifications (#863): only right after something a notification helps with, in our own card
@@ -46,7 +46,7 @@ export function askForNotifications(moment: NotificationMoment): void {
     if (!localUserStore.isLogged()) return;
     if (permission() === "granted") {
         // Already on here: nothing to ask, but make sure Orbit still has this browser.
-        refreshThisDevice().catch(() => undefined);
+        refreshThisDeviceOnce();
         return;
     }
     if (!shouldAsk(Date.now(), localUserStore.getLastNotificationPermissionRequest())) return;
