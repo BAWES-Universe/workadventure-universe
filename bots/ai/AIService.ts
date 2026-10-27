@@ -449,9 +449,10 @@ export class AIService {
                 return;
             }
             // Reply limits (#1159): asked before any AI call, once the bot knows who is talking and what the reply
-            // would run on. At a limit nothing is called and nothing is tracked; the caller shows the fixed card.
+            // would run on. At a limit nothing is called and nothing is tracked; the caller shows the fixed card. A retry
+            // makes the same reply again, already allowed, so it is never asked twice.
             const talker = this.whoTalked(botId, playerId, channel);
-            if (talker.userId) {
+            if (talker.userId && !isRetry) {
                 const allowance = await (adminApiService || this.adminApiService).checkReplyAllowance?.(botId, {
                     userId: talker.userId,
                     ...(talker.isGuest !== undefined ? { isGuest: talker.isGuest } : {}),

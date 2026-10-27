@@ -53,14 +53,17 @@ function adminApiMock() {
     } as any;
 }
 
-async function ask(person: object | null, allowance: object = { allowed: true }) {
+async function ask(person: object | null, allowance: object = { allowed: true }, isRetry = false) {
     const { AIService } = await import("../ai/AIService");
     const adminApi = adminApiMock();
     adminApi.checkReplyAllowance.mockResolvedValue(allowance);
     const memory: any = { getMemory: vi.fn(() => person), getPendingMediaNotice: vi.fn(() => "") };
     const service = new AIService(memory, adminApi, "http://admin.local");
     const chunks: any[] = [];
-    for await (const chunk of service.generateBotResponseStream("bot-1", 42, "hi", "You are a bot.", "test-provider", "space-1", "")) chunks.push(chunk);
+    for await (const chunk of service.generateBotResponseStream(
+        "bot-1", 42, "hi", "You are a bot.", "test-provider", "space-1", "",
+        undefined, undefined, undefined, undefined, "world", undefined, undefined, undefined, isRetry
+    )) chunks.push(chunk);
     return { adminApi, chunks };
 }
 
@@ -93,6 +96,13 @@ describe("AIService: reply limits (#1159)", () => {
         const { adminApi, chunks } = await ask({ userUuid: "temp-42", isGuest: true }, REACHED);
         expect(adminApi.checkReplyAllowance).not.toHaveBeenCalled();
         expect(chunks.map((c) => c.content).join("")).toBe("Hello there.");
+    });
+
+    it("never asks again for a retry of the same reply, which was already allowed", async () => {
+        const { adminApi, chunks } = await ask(SARA, REACHED, true);
+        expect(adminApi.checkReplyAllowance).not.toHaveBeenCalled();
+        expect(chunks.map((c) => c.content).join("")).toBe("Hello there.");
+        expect(chunks.some((c) => c.replyLimit)).toBe(false);
     });
 
     it("says when the person is a guest", async () => {
