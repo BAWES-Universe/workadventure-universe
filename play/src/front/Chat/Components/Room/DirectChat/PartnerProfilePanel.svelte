@@ -9,7 +9,7 @@
         ChatRoomNotificationControl,
     } from "../../../Connection/ChatConnection";
     import type { PictureStore } from "../../../../Stores/PictureStore";
-    import { notificationPlayingStore } from "../../../../Stores/NotificationStore";
+    import { showChatDoneToast } from "../../../../Stores/ChatDoneToastStore";
     import { warningMessageStore } from "../../../../Stores/ErrorStore";
     import { localUserStore } from "../../../../Connection/LocalUserStore";
     import {
@@ -130,12 +130,14 @@
     }
 
     function deleteChat() {
+        // The name as it is now: once the chat is gone the panel no longer knows it.
+        const notification = $LL.chat.directChat.deleteChat.notification({ name });
         // Deleting a chat leaves it and forgets it, so it goes from the person's lists and not just from view.
         room.leaveRoom({ forget: true })
             .then(() => {
                 dispatch("close");
                 if ($selectedRoomStore?.id === room.id) selectedRoomStore.set(undefined);
-                notificationPlayingStore.playNotification($LL.chat.directChat.deleteChat.notification());
+                showChatDoneToast(notification);
             })
             .catch((error) => {
                 console.error("Failed to delete the chat", error);

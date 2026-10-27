@@ -8,6 +8,7 @@ import type { PendingMedia } from '../memory/ConversationMemory';
 import {
     availabilityOf,
     detectLanguage,
+    replyLimitContent,
     statusNoteContent,
     type BotAvailability,
     type BotNoteState,
@@ -581,6 +582,17 @@ export class MatrixDmBridge implements MatrixEventHandler {
                     if (typing) startTyping();
                 },
             });
+            // Answered together with the messages that waited with it (#1159): that one answer was sent for all of them
+            if (reply?.answeredTogether !== undefined) {
+                answered = reply.answeredTogether;
+                return;
+            }
+            // A reply limit (#1159): the fixed card instead of an answer, and the message is not tried again
+            if (reply?.replyLimit) {
+                await this.client.sendMessage(botUserId, event.room_id, replyLimitContent(reply.replyLimit, await this.botName(botId, config)));
+                answered = true;
+                return;
+            }
             // No reply at all means the bot couldn't be set up to answer (no AI service here), and an empty one leaves the
             // person with nothing: say so, as for a failure.
             if (!reply || reply.failed || (!reply.text && !reply.media?.length && !reply.artifacts?.length)) {

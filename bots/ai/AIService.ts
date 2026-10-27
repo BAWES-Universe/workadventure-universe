@@ -536,6 +536,23 @@ export class AIService {
                 yield { content: '', done: true, metadata: { tokensUsed: 0, latency: Date.now() - startTime } };
                 return;
             }
+            // Reply limits (#1159): asked before any AI call, once the bot knows who is talking and what the reply
+            // would run on. At a limit nothing is called and nothing is tracked; the caller shows the fixed card. A retry
+            // makes the same reply again, already allowed, so it is never asked twice.
+            const talker = this.whoTalked(botId, playerId, channel);
+            if (talker.userId && !isRetry) {
+                const allowance = await (adminApiService || this.adminApiService).checkReplyAllowance?.(botId, {
+                    userId: talker.userId,
+                    ...(talker.isGuest !== undefined ? { isGuest: talker.isGuest } : {}),
+                    source: resolved.source,
+                });
+                if (allowance && 'limit' in allowance) {
+                    const { limit, resetsAt, who } = allowance;
+                    yield { content: '', done: true, replyLimit: { limit, resetsAt, who }, metadata: { tokensUsed: 0, latency: Date.now() - startTime } };
+                    return;
+                }
+            }
+
             let config = resolved.config;
             if (turn) turn.guard = (config.limits ?? BOT_LIMIT_DEFAULTS).guard;
             // Usage is recorded against the provider that really answered (Universe AI is its Default, a key is the key)
