@@ -94,7 +94,17 @@
         }, 100);
     }
 
-    async function stop() {
+    // Set while a recording is being finished: a second Stop, or a Send, in that moment waits for it instead of doing nothing.
+    let stopping: Promise<void> | undefined;
+
+    function stop(): Promise<void> {
+        stopping ??= finishRecording().finally(() => {
+            stopping = undefined;
+        });
+        return stopping;
+    }
+
+    async function finishRecording() {
         clearInterval(timer);
         const finishing = recording;
         recording = undefined;

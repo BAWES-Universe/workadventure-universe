@@ -103,4 +103,21 @@ describe("a voice note that is still being stopped", () => {
         expect(target.querySelector('[data-testid="voiceReview"]')).toBeNull();
         expect(target.querySelector('[data-testid="voiceRecordButton"]')).not.toBeNull();
     });
+
+    it("sends once the stop has finished when Send is pressed while it is still finishing", async () => {
+        const onSend = vi.fn(() => Promise.resolve(true));
+        shown = new VoiceNoteComposer({ target, props: { canRecord: true, onSend, onError: vi.fn() } });
+        await tick();
+        await click("voiceRecordButton");
+
+        await click("voiceStopButton");
+        await click("voiceSendButton");
+        expect(onSend).not.toHaveBeenCalled();
+
+        const file = new File([new Uint8Array(10)], "Voice message.m4a");
+        finish({ file, details });
+
+        await vi.waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+        expect(onSend).toHaveBeenCalledWith(file, details);
+    });
 });
