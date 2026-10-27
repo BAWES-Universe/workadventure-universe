@@ -117,7 +117,10 @@ function sameSection(a: SharedSection, b: SharedSection): boolean {
     return a.kind !== "month" || (b.kind === "month" && a.month === b.month && a.year === b.year);
 }
 
-/** The items under their headings, in the order they come (newest first). */
+/**
+ * The items under their headings, in the order they come (newest first). Each heading shows once: an item out of date
+ * order (a late or backfilled message) joins its heading where it first appeared.
+ */
 export function sharedSections(
     items: readonly SharedItem[],
     now: Date
@@ -125,8 +128,8 @@ export function sharedSections(
     const sections: { section: SharedSection; items: SharedItem[] }[] = [];
     for (const item of items) {
         const section = sharedSectionOf(item.message.date, now);
-        const last = sections[sections.length - 1];
-        if (last && sameSection(last.section, section)) last.items.push(item);
+        const same = sections.find((one) => sameSection(one.section, section));
+        if (same) same.items.push(item);
         else sections.push({ section, items: [item] });
     }
     return sections;
