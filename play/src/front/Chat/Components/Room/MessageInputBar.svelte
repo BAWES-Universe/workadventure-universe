@@ -774,11 +774,23 @@
     // started: once they are gone it is dropped, never sent on to whoever is nearby next.
     let voiceComposer: VoiceNoteComposer | undefined;
     let voiceSpaceGeneration = spaceGenerationOf(room);
+    // False for a note started while alone: the people who arrive later are not people it was left behind by.
+    let voiceForStay = false;
     $: if ($proximitySessions) dropVoiceNoteOfEndedStay();
+
+    function startVoiceNote() {
+        voiceSpaceGeneration = spaceGenerationOf(room);
+        voiceForStay = room instanceof ProximityChatRoom && room.currentSessionId !== undefined;
+    }
 
     function dropVoiceNoteOfEndedStay(): boolean {
         if (voiceSpaceGeneration === spaceGenerationOf(room)) return false;
         voiceSpaceGeneration = spaceGenerationOf(room);
+        if (!voiceForStay) {
+            // Someone came into range of a note recorded alone: it is now for them, and ends with their stay.
+            voiceForStay = true;
+            return false;
+        }
         if (!voiceActive) return false;
         voiceComposer?.discard();
         showUploadError($LL.chat.voiceNote.stayEnded());
@@ -1046,7 +1058,7 @@
     <VoiceNoteComposer
         bind:this={voiceComposer}
         bind:active={voiceActive}
-        onStart={() => (voiceSpaceGeneration = spaceGenerationOf(room))}
+        onStart={startVoiceNote}
         canRecord={canRecordVoice}
         onSend={sendVoiceNote}
         onError={(text) => showUploadError(text)}
