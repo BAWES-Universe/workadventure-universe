@@ -1489,6 +1489,29 @@ describe('DmReplyService history', () => {
         expect(asked).toEqual(['hi', 'are you there\nhello?', 'see this']);
     });
 
+    it('answers words sent after a file after the file, never in a batch from before it (#1159)', async () => {
+        const { DmReplyService } = await import('../server/DmReplyService');
+        const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
+        let release!: () => void;
+        const first = new Promise<void>((resolve) => (release = resolve));
+        const asked: string[] = [];
+        const replyNow = vi.fn(async (_bot: string, _person: unknown, text: string) => {
+            asked.push(text);
+            if (asked.length === 1) await first;
+            return { text: `answer to ${text}`, media: [] };
+        });
+        Object.assign(service, { queues: new Map(), waiting: new Map(), replyNow });
+        const person = { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false };
+        const answering = service.reply(BOT, person, 'hi');
+        const before = service.reply(BOT, person, 'one more thing');
+        const withFile = service.reply(BOT, person, 'see this', [{ kind: 'image' } as never]);
+        const after = service.reply(BOT, person, 'what do you think?');
+        release();
+        await Promise.all([answering, before, withFile, after]);
+        expect(asked).toEqual(['hi', 'one more thing', 'see this', 'what do you think?']);
+        expect(await after).toMatchObject({ text: 'answer to what do you think?' });
+    });
+
     it('hands back a reached reply limit with nothing said (#1159)', async () => {
         const { DmReplyService } = await import('../server/DmReplyService');
         const { ConversationMemory } = await import('../memory/ConversationMemory');

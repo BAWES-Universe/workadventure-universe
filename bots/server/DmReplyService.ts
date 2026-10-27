@@ -150,7 +150,9 @@ export class DmReplyService extends BaseBehavior {
                 return this.replyNow(botId, person, batch.texts.join('\n'), attachments, hooks);
             });
         batch.answer = next.catch(() => null);
-        if (previous && attachments.length === 0) this.waiting.set(key, batch);
+        // Words that come after a file wait behind the file, never in a batch from before it
+        if (attachments.length > 0) this.waiting.delete(key);
+        else if (previous) this.waiting.set(key, batch);
         this.queues.set(key, next);
         void next.finally(() => {
             if (this.queues.get(key) === next) this.queues.delete(key);
