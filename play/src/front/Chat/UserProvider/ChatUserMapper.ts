@@ -1,5 +1,7 @@
+import { get } from "svelte/store";
 import type { AdminUser } from "../Connection/ChatConnection";
 import type { SpaceUserExtended } from "../../Space/SpaceInterface";
+import { resolveRoles, worldRolesStore } from "../Roles/WorldRoles";
 
 export function mapExtendedSpaceUserToChatUser(user: SpaceUserExtended): AdminUser {
     return {
@@ -13,6 +15,7 @@ export function mapExtendedSpaceUserToChatUser(user: SpaceUserExtended): AdminUs
         gameName: user.name || undefined,
         isAdmin: user.tags.includes("admin"),
         isMember: user.tags.includes("member"),
+        roles: resolveRoles(user.tags, get(worldRolesStore)),
         isBot: isBotUser(user),
         visitCardUrl: user.visitCardUrl,
         color: user.color,

@@ -8,6 +8,8 @@
  * - Relationship context (how they met, important events)
  */
 
+/** Recent messages a reply reads until Orbit serves the bot's own number: the recommended "Messages it remembers". */
+const DEFAULT_HISTORY_WINDOW = 20;
 export interface ConversationMessage {
     message: string;
     sender: 'bot' | 'person';
@@ -119,11 +121,31 @@ export interface BotPlayerMemory {
     // Pending media delivery (items that were uploaded but couldn't be sent)
     pendingMedia: PendingMedia[];
     maxPendingMedia: number;
+
+    // Live artifacts a direct-message turn made, waiting to go out as cards with the reply, and the Matrix room the
+    // turn is in. Runtime only: nothing here is saved.
+    pendingArtifacts?: Array<{ id: string; version: number; title: string; kind: 'app' | 'page' | 'markdown' | 'svg'; maker: string }>;
+    dmRoomId?: string;
+    /** What make and change did in the turn being answered, by their arguments, so asking the model again for the same
+     * turn (a repeated reply is regenerated) does not make a second copy. Cleared when the next turn starts. Runtime only. */
+    artifactCalls?: Map<string, Record<string, unknown>>;
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** "Oct 24, 2026, 14:32" in UTC; the prompt's current-time line says the times are UTC. */
+export function formatHistoryTime(timestamp: number): string {
+    const d = new Date(timestamp);
+    const hh = String(d.getUTCHours()).padStart(2, '0');
+    const mm = String(d.getUTCMinutes()).padStart(2, '0');
+    return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}, ${hh}:${mm}`;
 }
 
 export class ConversationMemory {
     private memories: Map<string, BotPlayerMemory> = new Map(); // key: "botId_playerId"
     private maxHistorySize: number = 50; // Keep last 50 messages per player
+    /** "Messages it remembers" for each bot (Orbit #666): how many recent messages a reply reads. */
+    private historyWindow: Map<string, number> = new Map();
     private maxMemories: number = 1000; // Max memories per bot (prevent memory bloat)
 
     constructor(maxHistorySize: number = 50, maxMemories: number = 1000) {
@@ -153,6 +175,15 @@ export class ConversationMemory {
         return cleaned;
     }
 
+    /** How many recent messages this bot's replies read ("Messages it remembers", Orbit #666); 20 until Orbit says. */
+    setHistoryWindow(botId: string, messages: number): void {
+        if (Number.isInteger(messages) && messages > 0) this.historyWindow.set(botId, messages);
+    }
+
+    private windowFor(botId: string): number {
+        return this.historyWindow.get(botId) ?? DEFAULT_HISTORY_WINDOW;
+    }
+
     /**
      * Add a message to conversation history
      */
@@ -180,8 +211,9 @@ export class ConversationMemory {
             spaceName,
         });
 
-        // Trim history if too long
-        if (memory.conversationHistory.length > this.maxHistorySize) {
+        // Trim history if too long: never below what this bot's replies read
+        const keep = Math.max(this.maxHistorySize, this.windowFor(botId));
+        while (memory.conversationHistory.length > keep) {
             memory.conversationHistory.shift();
         }
 
@@ -713,6 +745,36 @@ export class ConversationMemory {
     }
 
     /**
+     * Auto-delivered media notification — tells the bot that media items it
+     * GENERATED SUCCESSFULLY (but couldn't deliver) are being re-sent alongside
+     * the greeting. Media-agnostic — works for images, files, audio, video.
+     * Reads pendingMedia directly (no fact) so the AI always knows about
+     * pending items at turn start, whether from re-entry or orphaned tool
+     * results from a previous turn. Items in retry cooldown (lastRetryAt
+     * within 10s) are excluded — they won't be delivered this turn.
+     *
+     * Kept out of getConversationContext: it toggles between calls, so it
+     * goes at the very end of the system prompt, after everything the
+     * provider can cache (issue #1333).
+     */
+    getPendingMediaNotice(botId: string, playerId: number): string {
+        const memory = this.getMemory(botId, playerId);
+        if (!memory) {
+            return '';
+        }
+        const now = Date.now();
+        const MIN_RETRY_INTERVAL_MS = 10_000;
+        const deliverableCount = memory.pendingMedia?.filter(p =>
+            p.retryCount < 3 &&
+            (!p.lastRetryAt || (now - p.lastRetryAt) >= MIN_RETRY_INTERVAL_MS)
+        ).length || 0;
+        if (deliverableCount === 0) {
+            return '';
+        }
+        return `[System: ${deliverableCount} media item(s) from the previous session are being delivered alongside this message. Do NOT generate or request them again.]`;
+    }
+
+    /**
      * Get conversation context for AI (formatted for prompt)
      * Returns natural, human-like context that feels like remembering a friend
      */
@@ -767,23 +829,6 @@ export class ConversationMemory {
         }
         if (personalInfo.preferences && personalInfo.preferences.length > 0) {
             personalDetails.push(`They like: ${personalInfo.preferences.join(', ')}`);
-        }
-
-        // Auto-delivered media notification — tells the bot that media items it
-        // GENERATED SUCCESSFULLY (but couldn't deliver) are being re-sent alongside
-        // the greeting. Media-agnostic — works for images, files, audio, video.
-        // Reads pendingMedia directly (no fact) so the AI always knows about
-        // pending items at turn start, whether from re-entry or orphaned tool
-        // results from a previous turn. Items in retry cooldown (lastRetryAt
-        // within 10s) are excluded — they won't be delivered this turn.
-        const now = Date.now();
-        const MIN_RETRY_INTERVAL_MS = 10_000;
-        const deliverableCount = memory.pendingMedia?.filter(p =>
-            p.retryCount < 3 &&
-            (!p.lastRetryAt || (now - p.lastRetryAt) >= MIN_RETRY_INTERVAL_MS)
-        ).length || 0;
-        if (deliverableCount > 0) {
-            context.push(`\n[System: ${deliverableCount} media item(s) from the previous session are being delivered alongside this message. Do NOT generate or request them again.]`);
         }
 
         // Natural facts recall (especially current state)
@@ -866,30 +911,17 @@ export class ConversationMemory {
         }
 
         // Recent conversation (natural flow with timestamps for context)
-        const recentHistory = memory.conversationHistory.slice(-8); // Last 8 messages for more natural context
+        const recentHistory = memory.conversationHistory.slice(-this.windowFor(botId)); // "Messages it remembers" (Orbit #666)
         if (recentHistory.length > 0) {
             context.push(`\nRecent conversation:`);
             recentHistory.forEach((msg, index) => {
                 const sender = msg.sender === 'bot' ? 'You' : 'They';
-                const timeAgo = Math.floor((Date.now() - msg.timestamp) / 1000); // seconds ago
-                let timeDesc = '';
-                if (timeAgo < 60) {
-                    timeDesc = ` (just now)`;
-                } else if (timeAgo < 3600) {
-                    const minutesAgo = Math.floor(timeAgo / 60);
-                    timeDesc = ` (${minutesAgo} minute${minutesAgo > 1 ? 's' : ''} ago)`;
-                } else if (timeAgo < 86400) {
-                    const hoursAgo = Math.floor(timeAgo / 3600);
-                    timeDesc = ` (${hoursAgo} hour${hoursAgo > 1 ? 's' : ''} ago)`;
-                } else {
-                    // Multi-day gaps (issue #268): "72 hours ago" reads as if it
-                    // just happened. Render day-level deltas so the bot can
-                    // acknowledge the time gap ("It's been 3 days — let me pull
-                    // fresh data") instead of treating it as the same day.
-                    const daysAgo = Math.floor(timeAgo / 86400);
-                    timeDesc = ` (${daysAgo} day${daysAgo > 1 ? 's' : ''} ago)`;
-                }
-                context.push(`${sender}: "${msg.message}"${timeDesc}`);
+                // Fixed UTC date and time instead of "N minutes ago": a line
+                // that is written once never changes, so the provider can
+                // keep serving it from its prompt cache (issue #1333). The
+                // current date and time sit at the end of the prompt, so the
+                // bot still sees multi-day gaps (issue #268) by comparing.
+                context.push(`${sender}: "${msg.message}" (${formatHistoryTime(msg.timestamp)})`);
             });
         }
 

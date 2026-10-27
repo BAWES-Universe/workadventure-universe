@@ -130,6 +130,8 @@ export async function ownComputerFetch(input: string | URL, init: RequestInit = 
                 port: url.port || 443,
                 path: `${url.pathname}${url.search}`,
                 headers,
+                // A socket of its own: a pooled one that another caller opened without this guard is never reused
+                agent: false,
                 // The name is never looked up again: the socket gets the addresses that were checked, and can fall back between them.
                 lookup: ((_host: string, options: { all?: boolean }, callback: (...args: unknown[]) => void) => {
                     if (options && options.all) callback(null, addresses);

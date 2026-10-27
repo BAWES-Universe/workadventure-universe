@@ -10,8 +10,15 @@ on:
     paths:
       - 'discord-bot/**'
 
+# Read-only unless a job below says otherwise (#432)
+permissions:
+  contents: read
+
 jobs:
   build-discord-bot:
+    permissions:
+      contents: read
+      packages: write
     uses: ./.github/workflows/build-single-image.yml
     secrets: inherit
     with:

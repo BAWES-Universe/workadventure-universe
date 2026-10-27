@@ -321,7 +321,7 @@ const chat: DeepPartial<Translation["chat"]> = {
     roomMenu: {
         leaveRoom: {
             label: "방 나가기",
-            notification: "방을 나갔습니다",
+            notification: "{name}에서 나갔습니다",
         },
         muteRoom: "방 알림 끄기",
         unmuteRoom: "방 알림 켜기",
@@ -374,12 +374,6 @@ const chat: DeepPartial<Translation["chat"]> = {
         },
     },
     connectionError: "채팅을 사용할 수 없습니다",
-    requiresLoginForChatModal: {
-        title: "채팅을 사용하려면 로그인하세요!",
-        content_1: "이 채팅 기능을 온전히 즐기려면 계정에 로그인해야 합니다.",
-        content_2: "로그인하면 모든 옵션을 사용할 수 있고, 끊김 없이 계속 이용할 수 있습니다.",
-        content_3: "계속 이용하려면 로그인해 주세요.",
-    },
     verificationEmojiDialog: {
         confirmation: "같습니다",
         mismatch: "다릅니다",
@@ -497,6 +491,21 @@ const chat: DeepPartial<Translation["chat"]> = {
         },
     },
     remoteUserNotConnected: "사용자가 인증되지 않았습니다. 메시지를 보낼 수 없습니다.",
+    botStatus: {
+        online: "온라인",
+        resting: "휴식 중",
+        unready: "아직 준비 중",
+        gone: "떠났어요",
+        restingPlaceholder: "답장이 일시 중지됨",
+        unreadyPlaceholder: "아직 답장할 수 없어요",
+        closed: "이 채팅은 닫혔어요",
+        left: "{name}님이 떠났어요",
+        visit: "방문",
+        visitAria: "{room}의 {name}님 방문하기",
+        livesIn: "있는 곳",
+        nowIn: "지금 있는 곳",
+        inThisRoom: "이 방에 있어요",
+    },
 };
 
 export default chat;

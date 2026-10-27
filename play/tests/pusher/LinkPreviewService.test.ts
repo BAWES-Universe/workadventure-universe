@@ -243,6 +243,29 @@ describe("LinkPreviewService", () => {
             }
         });
 
+        it("says whether the page lets the game frame it, from both headers", async () => {
+            const framed = http.createServer((req, res) => {
+                res.setHeader("Content-Type", "text/html");
+                if (req.url === "/deny") res.setHeader("X-Frame-Options", "DENY");
+                if (req.url === "/csp") res.setHeader("Content-Security-Policy", "frame-ancestors 'none'");
+                res.end(`<title>Page</title>`);
+            });
+            await new Promise<void>((resolve) => {
+                framed.listen(0, "127.0.0.1", resolve);
+            });
+            const framedPort = (framed.address() as AddressInfo).port;
+            try {
+                const fetchPath = (path: string) => fetchOnce(new URL(`http://127.0.0.1:${framedPort}${path}`));
+                await expect(fetchPath("/")).resolves.toMatchObject({ kind: "page", frameable: true });
+                await expect(fetchPath("/deny")).resolves.toMatchObject({ kind: "page", frameable: false });
+                await expect(fetchPath("/csp")).resolves.toMatchObject({ kind: "page", frameable: false });
+            } finally {
+                await new Promise<void>((resolve) => {
+                    framed.close(() => resolve());
+                });
+            }
+        });
+
         it("never reaches a server on a loopback address", async () => {
             await expect(linkPreviewService.getPreview(`http://127.0.0.1:${port}/`)).rejects.toThrow();
             await expect(linkPreviewService.getPreview("http://localhost/")).rejects.toThrow();

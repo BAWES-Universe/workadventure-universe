@@ -66,7 +66,7 @@ test("OR-077 @local Walking into an openWebsite area opens the cowebsite beside 
     await expect(page.locator('iframe[title="Cowebsite"]')).toHaveCount(0);
 });
 
-test("OR-078 @local Phone: the cowebsite opens above the map with a horizontal drag bar under it", async ({
+test("OR-078 @local Phone: the cowebsite opens in a bottom sheet over the map, with a handle on top", async ({
     page,
 }, testInfo) => {
     test.skip(!isPhone(testInfo), "phone only");
@@ -76,16 +76,18 @@ test("OR-078 @local Phone: the cowebsite opens above the map with a horizontal d
     await expect(cowebsiteFrame(page)).toBeVisible();
 
     const viewport = page.viewportSize()!;
-    const box = (await cowebsite(page).boundingBox())!;
-    expect(box.y).toBeLessThan(5);
+    const sheet = page.getByTestId("openHereSheet");
+    await expect(sheet).toBeVisible();
+    const box = (await sheet.boundingBox())!;
     expect(box.width).toBeGreaterThan(viewport.width - 5);
-    expect(box.y + box.height).toBeLessThan(viewport.height * 0.9);
+    expect(box.y + box.height).toBeGreaterThan(viewport.height - 5);
+    expect(box.y).toBeGreaterThan(viewport.height * 0.2);
 
-    const bar = cowebsite(page).locator(".cursor-row-resize");
-    await expect(bar).toBeVisible();
-    const barBox = (await bar.boundingBox())!;
-    expect(barBox.width).toBeGreaterThan(barBox.height);
-    expect(barBox.y).toBeGreaterThan(box.y + box.height - 20);
+    const handle = page.getByTestId("openHereSheetHandle");
+    await expect(handle).toBeVisible();
+    const handleBox = (await handle.boundingBox())!;
+    expect(handleBox.width).toBeGreaterThan(handleBox.height);
+    expect(handleBox.y).toBeLessThan(box.y + 40);
 });
 
 test("OR-079 @local Desktop: on-action cowebsite shows the SPACE popup; SPACE or the button opens it; leaving removes the popup", async ({

@@ -117,6 +117,7 @@ Environment variables for the Play service (frontend and pusher).
 | `MATRIX_PUBLIC_URI` | No | Matrix homeserver public URI |
 | `MATRIX_ADMIN_USER` | No | Matrix administrator username |
 | `MATRIX_ADMIN_PASSWORD` | No | Matrix administrator password |
+| `MATRIX_ADMIN_TOKEN` | No | Matrix administrator access token made without a device (Synapse admin API, login as a user). When set it is used instead of signing in with the password; the password is kept as the fallback |
 | `MATRIX_DOMAIN` | No | Matrix server domain |
 | `EMBEDLY_KEY` | No | Embedly API key for rich link previews |
 | `GRPC_MAX_MESSAGE_SIZE` | Yes | The maximum size of a gRPC message. Defaults to 20 MB. |

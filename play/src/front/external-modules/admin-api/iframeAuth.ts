@@ -39,10 +39,18 @@ export function resolveCredentialUrl(value: string, baseUrl?: string): URL {
     return url;
 }
 
-export function buildAdminLoginUrl(adminUrl: string, roomId: string, baseUrl?: string, redirect?: string): string {
+export function buildAdminLoginUrl(
+    adminUrl: string,
+    roomId: string,
+    baseUrl?: string,
+    redirect?: string,
+    resume?: boolean
+): string {
     const loginUrl = new URL("/admin/login", resolveCredentialUrl(adminUrl, baseUrl));
     loginUrl.searchParams.set("playUri", roomId);
     // The Orbit page to land on after signing in (Orbit only follows its own /admin paths).
     if (redirect) loginUrl.searchParams.set("redirect", redirect);
+    // Orbit opened again after a reconnect: it lands on the page it was on, kept in its own tab storage.
+    if (resume) loginUrl.searchParams.set("resume", "1");
     return loginUrl.toString();
 }

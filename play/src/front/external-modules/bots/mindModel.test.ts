@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { BotAiOptions } from "./types";
-import { canPick, isOwnKeyRef, mindBriefName, newBotRef, runsOnCards } from "./mindModel";
+import {
+    aiLogoUrl,
+    canPick,
+    cardIcon,
+    isOwnKeyRef,
+    mindBriefName,
+    newBotRef,
+    runsOnCards,
+    unlentKeyNames,
+} from "./mindModel";
 
 const key = (id: string, over: Partial<BotAiOptions["keys"][number]> = {}): BotAiOptions["keys"][number] => ({
     id,
@@ -70,6 +79,8 @@ describe("runsOnCards", () => {
                 selectable: false,
                 status: "working",
                 ifDown: "universe-ai",
+                logo: null,
+                plainIcon: null,
             },
             { kind: "universe-ai", id: "universe-ai", picked: false, selectable: true, available: true },
         ]);
@@ -245,5 +256,85 @@ describe("isOwnKeyRef", () => {
         expect(isOwnKeyRef("deepseek-flash")).toBe(false);
         expect(isOwnKeyRef("universe-ai")).toBe(false);
         expect(isOwnKeyRef(undefined)).toBe(false);
+    });
+});
+
+describe("cardIcon", () => {
+    const iconOf = (over: Partial<BotAiOptions["keys"][number]>) =>
+        cardIcon(runsOnCards(options({ keys: [key("key-1", over)] }), "universe-ai")[1]);
+
+    it("a key of a known provider shows its logo", () => {
+        expect(iconOf({ logo: "deepseek", plainIcon: null })).toEqual({
+            kind: "logo",
+            url: "/static/ai-providers/deepseek.svg",
+        });
+    });
+
+    it("a key with no logo shows a plug for any server, else a chip", () => {
+        expect(iconOf({ logo: null, plainIcon: "plug" })).toEqual({ kind: "plug" });
+        expect(iconOf({ logo: null, plainIcon: "chip" })).toEqual({ kind: "chip" });
+    });
+
+    it("an older Orbit that says nothing keeps the key icon every card had", () => {
+        expect(iconOf({})).toEqual({ kind: "key" });
+    });
+
+    it("the key a bot is on, when it is someone else's, shows its logo too", () => {
+        const cards = runsOnCards(
+            options({
+                current: "key-9",
+                viewerIsMaker: false,
+                currentKey: {
+                    id: "key-9",
+                    name: "Mishari’s Claude",
+                    ownerName: "Mishari",
+                    mine: false,
+                    status: "working",
+                    ifDown: "universe-ai",
+                    logo: "anthropic",
+                    plainIcon: null,
+                },
+            }),
+            "key-9"
+        );
+        expect(cardIcon(cards[0])).toEqual({ kind: "logo", url: "/static/ai-providers/anthropic.svg" });
+    });
+
+    it("Universe AI keeps its own icon, and a pinned server provider the key", () => {
+        const names = new Map([["openai-prod", "OpenAI"]]);
+        const cards = runsOnCards(options({ current: "openai-prod" }), "openai-prod", names);
+        expect(cards.map((card) => [card.kind, cardIcon(card)])).toEqual([
+            ["pinned", { kind: "key" }],
+            ["universe-ai", null],
+        ]);
+    });
+
+    it("only a plain file name becomes an address, so Orbit's word can't reach into the style", () => {
+        expect(aiLogoUrl("fireworks-ai")).toBe("/static/ai-providers/fireworks-ai.svg");
+        for (const bad of ["", null, undefined, "../x", "a/b", "a.svg", "x);y", "A", "a b"]) {
+            expect(aiLogoUrl(bad)).toBeNull();
+        }
+    });
+});
+
+describe("unlentKeyNames", () => {
+    const mine = [
+        { id: "key-1", name: "Opus 5.5" },
+        { id: "key-2", name: "My DeepSeek" },
+    ];
+
+    it("names the maker's keys that aren't lent to this universe, in their order", () => {
+        expect(unlentKeyNames(options({ keys: [key("key-2")] }), mine)).toEqual(["Opus 5.5"]);
+        expect(unlentKeyNames(options({ keys: [] }), mine)).toEqual(["Opus 5.5", "My DeepSeek"]);
+    });
+
+    it("says nothing once every key is lent here, or when there are no keys", () => {
+        expect(unlentKeyNames(options({ keys: [key("key-1"), key("key-2")] }), mine)).toEqual([]);
+        expect(unlentKeyNames(options(), [])).toEqual([]);
+    });
+
+    it("says nothing to someone who didn't make the bot, or when the keys couldn't be loaded", () => {
+        expect(unlentKeyNames(options({ viewerIsMaker: false }), mine)).toEqual([]);
+        expect(unlentKeyNames(options(), null)).toEqual([]);
     });
 });

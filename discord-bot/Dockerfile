@@ -7,10 +7,12 @@ WORKDIR /usr/src/app
     COPY package.json package-lock.json ./
     RUN npm ci
 
-# Copy source and build
+# Copy source, build and test (the tests also check the report's emoji files)
 COPY src ./src
+COPY assets ./assets
 COPY tsconfig.json ./
 RUN npm run build
+RUN npm test
 
 # Production stage
 FROM node:20.18-bookworm-slim
@@ -21,8 +23,9 @@ WORKDIR /usr/src/app
     COPY package.json package-lock.json ./
     RUN npm ci --omit=dev
 
-# Copy compiled output from builder
+# Copy compiled output from builder, and the emoji the report adds to the Discord app (emoji.ts)
 COPY --from=builder /usr/src/app/dist ./dist
+COPY assets ./assets
 
 # Health check (simple process check)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \

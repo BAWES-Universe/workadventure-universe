@@ -12,7 +12,7 @@
     import LL from "../../../../i18n/i18n-svelte";
     import { ABSOLUTE_PUSHER_URL } from "../../../Enum/ComputedConst";
     import { mobileLayoutStore } from "../../../Stores/MobileLayoutStore";
-    import type { BotData } from "../types";
+    import type { BotAiOptions, BotData } from "../types";
     import WokaImage from "../../../Components/Woka/WokaImage.svelte";
     import { botPreviewsStore, selectedBotStore, startWaypointEditing, upsertBot } from "../stores/BotEditorStore";
     import { botApiService } from "../services/BotApiService";
@@ -23,8 +23,16 @@
         ensureBotCompanionCatalog,
         findCompanion,
     } from "../stores/BotCompanionCatalogStore";
+    import { botPermissionsStore } from "../stores/BotPermissionsStore";
+    import { isOpenToEveryone } from "../accessModel";
+    import { botTelemetryStore, loadBotTelemetry, setBotTelemetry } from "../stores/BotTelemetryStore";
+    import { botUsageStore } from "../stores/BotUsageStore";
+    import { UNIVERSE_AI_REF } from "../mindModel";
+    import type { UsageScreen } from "../usageModel";
     import BotWokaPicker from "./BotWokaPicker.svelte";
     import BotCompanionPicker from "./BotCompanionPicker.svelte";
+    import BotRuleScreen from "./BotRuleScreen.svelte";
+    import BotRuleAdd from "./BotRuleAdd.svelte";
     import PageSwitch from "./page/PageSwitch.svelte";
     import PageGroup from "./page/PageGroup.svelte";
     import BehaviorGroup from "./page/BehaviorGroup.svelte";
@@ -32,8 +40,15 @@
     import VisionGroup from "./page/VisionGroup.svelte";
     import SayGroup from "./page/SayGroup.svelte";
     import ToolsGroup from "./page/ToolsGroup.svelte";
+    import PermissionsGroup from "./page/PermissionsGroup.svelte";
+    import LimitSuggestion from "./page/LimitSuggestion.svelte";
     import BotFooter from "./page/BotFooter.svelte";
-    import { IconCurrentLocation, IconPaw, IconPencil } from "@wa-icons";
+    import PageNote from "./page/PageNote.svelte";
+    import TelemetryCard from "./page/TelemetryCard.svelte";
+    import UsageGroup from "./page/UsageGroup.svelte";
+    import MakerAskedCard from "./page/MakerAskedCard.svelte";
+    import BotUsageScreen from "./BotUsageScreen.svelte";
+    import { IconAdjustmentsHorizontal, IconCurrentLocation, IconPaw, IconPencil } from "@wa-icons";
 
     export let bot: BotData | null = null;
     export let onSave: () => void;
@@ -41,13 +56,54 @@
     export let onLocate: (() => void) | undefined = undefined;
 
     let currentBot: BotData | null = null;
+    /** What "Runs on" offers this bot, as the Mind group loads it: the Tools group's reply limits come from it */
+    let aiOptions: BotAiOptions | null = null;
     /** The WOKA picker fills the panel in place of the page, as the companion picker does */
     export let editingTexture = false;
     /** The companion picker fills the panel in place of the page (BotEditor puts its title and back circle up) */
     export let editingCompanion = false;
+    /** One role's or person's rules fill the panel in place of the page (BotEditor puts its title and back circle up) */
+    export let editingRuleId: string | null = null;
+    /** Adding a role or person fills the panel in place of the page */
+    export let addingRule = false;
+    /** Advanced settings (Bot chat telemetry) fill the panel in place of the page */
+    export let editingAdvanced = false;
+    /** One of Usage's screens: who uses the bot, what it ran on, its limits */
+    export let usageScreen: UsageScreen | null = null;
+    $: telemetryState = $botTelemetryStore && $botTelemetryStore.botId === bot?.id ? $botTelemetryStore : undefined;
+    $: telemetryLocked = telemetryState?.data?.universeHides === true;
+    $: advancedBrief = !telemetryState
+        ? $LL.mapEditor.edit.bots.page.telemetry.briefLoading()
+        : telemetryState.status === "failed"
+        ? $LL.mapEditor.edit.bots.page.telemetry.briefFailed()
+        : !telemetryState.data
+        ? $LL.mapEditor.edit.bots.page.telemetry.briefLoading()
+        : telemetryLocked
+        ? $LL.mapEditor.edit.bots.page.telemetry.briefLocked()
+        : telemetryState.data.on
+        ? $LL.mapEditor.edit.bots.page.telemetry.briefOn()
+        : $LL.mapEditor.edit.bots.page.telemetry.briefOff();
+    function changeTelemetry(next: boolean) {
+        if (currentBot) void setBotTelemetry(currentBot.id, next);
+    }
+    let telemetryLoadedFor: string | undefined;
+    $: if (bot && bot.id !== telemetryLoadedFor) {
+        telemetryLoadedFor = bot.id;
+        void loadBotTelemetry(bot.id);
+    }
+    // Opening Advanced settings after the read failed asks Orbit again (once per opening), so there is no need to leave
+    // the bot to retry
+    let advancedWasOpen = false;
+    $: {
+        if (editingAdvanced && !advancedWasOpen && bot && telemetryState?.status === "failed") {
+            void loadBotTelemetry(bot.id);
+        }
+        advancedWasOpen = editingAdvanced;
+    }
     let switching = false;
     let switchError: string | null = null;
-    let openGroup: string | undefined = lastOpenGroup;
+    // Usage opens first until someone opens another group
+    let openGroup: string | undefined = lastOpenGroup ?? "usage";
 
     function toggleGroup(id: string) {
         openGroup = openGroup === id ? undefined : id;
@@ -58,19 +114,80 @@
         if (e.key === "Escape") {
             editingTexture = false;
             editingCompanion = false;
+            editingRuleId = null;
+            addingRule = false;
+            editingAdvanced = false;
+            usageScreen = null;
         }
     }
 
-    // The "Runs on" ref as the store last had it: a change the store makes by itself (a refused save put back) is taken in below,
-    // while a tap not saved yet is kept when the map changes something else
-    let storeAiProviderRef: string | undefined;
+    // Asked once per bot, when the owner gives an open bot a tool (anyone who can walk up to it could make it use that tool)
+    let toolBaseline: number | undefined;
+    let toolAdded = false;
+    function limitAsked(botId: string, set?: boolean): boolean {
+        const key = `bot-limit-asked:${botId}`;
+        try {
+            if (set) localStorage.setItem(key, "1");
+            return localStorage.getItem(key) === "1";
+        } catch {
+            return false;
+        }
+    }
+    // Tried again for as long as this page is open: without storage the card still closes once answered
+    let askedNow = false;
+    function onToolCount(count: number) {
+        if (toolBaseline === undefined || count < toolBaseline) {
+            toolBaseline = count;
+        } else if (count > toolBaseline) {
+            toolBaseline = count;
+            toolAdded = true;
+        }
+    }
+    function answerLimit(choose: boolean) {
+        if (currentBot) limitAsked(currentBot.id, true);
+        askedNow = true;
+        toolAdded = false;
+        if (choose) {
+            openGroup = "access";
+            lastOpenGroup = openGroup;
+        }
+    }
+    // The maker sees how many people asked for more replies while the bot runs on Universe AI
+    $: usageNow = currentBot && $botUsageStore?.botId === currentBot.id ? $botUsageStore.data : undefined;
+    $: askedUsage =
+        usageNow &&
+        usageNow.viewerIsMaker &&
+        usageNow.limits.askedMaker > 0 &&
+        (currentBot?.aiProviderRef
+            ? currentBot.aiProviderRef === UNIVERSE_AI_REF
+            : usageNow.ranOn[usageNow.ranOn.length - 1]?.kind !== "own-key")
+            ? usageNow
+            : undefined;
+    function openMind() {
+        openGroup = "mind";
+        lastOpenGroup = openGroup;
+    }
+    $: permissions = $botPermissionsStore;
+    $: openData = currentBot && permissions?.botId === currentBot.id ? permissions.data : undefined;
+    $: askLimit =
+        toolAdded &&
+        !askedNow &&
+        !!currentBot &&
+        !!openData &&
+        isOpenToEveryone(openData) &&
+        !limitAsked(currentBot.id);
 
     // Subscribe to store for real-time updates from map
     const unsubscribe = selectedBotStore.subscribe((storeBot) => {
-        if (storeBot && currentBot && storeBot.id === currentBot.id && storeBot.aiProviderRef !== storeAiProviderRef) {
-            storeAiProviderRef = storeBot.aiProviderRef;
-            currentBot.aiProviderRef = storeBot.aiProviderRef;
-            currentBot = currentBot; // Trigger reactivity
+        // A provider pick Orbit refused is put back in the store with its model (see BotEditor). Taken from there, the
+        // picker shows the provider and model that are really saved, and the next edit does not send the refused ones.
+        if (
+            storeBot &&
+            currentBot &&
+            storeBot.id === currentBot.id &&
+            storeBot.aiProviderRef !== currentBot.aiProviderRef
+        ) {
+            currentBot = { ...currentBot, aiProviderRef: storeBot.aiProviderRef, aiModel: storeBot.aiModel };
         }
         if (storeBot && currentBot && storeBot.id === currentBot.id && storeBot.behaviorConfig) {
             // Take the whole behavior config from the store, not just the assigned space: the map also changes the
@@ -114,6 +231,13 @@
             // Another bot: its page opens, not the last one's pickers
             editingCompanion = false;
             editingTexture = false;
+            editingRuleId = null;
+            addingRule = false;
+            editingAdvanced = false;
+            usageScreen = null;
+            toolBaseline = undefined;
+            toolAdded = false;
+            askedNow = false;
             // Ensure behaviorType is never undefined - check both top-level and behaviorConfig
             const behaviorType = bot.behaviorType || bot.behaviorConfig?.behaviorType || "idle";
 
@@ -133,7 +257,6 @@
             if (!currentBot.behaviorConfig.behaviorType) {
                 currentBot.behaviorConfig.behaviorType = behaviorType;
             }
-            storeAiProviderRef = bot.aiProviderRef;
             // Reset last saved name when bot changes
             lastSavedName = bot.name || null;
         }
@@ -459,6 +582,35 @@
         onSave={handleCompanionSelect}
         onCancel={() => (editingCompanion = false)}
     />
+{:else if currentBot && addingRule}
+    <BotRuleAdd
+        botId={currentBot.id}
+        onAdded={(rule) => {
+            addingRule = false;
+            editingRuleId = rule.id;
+        }}
+    />
+{:else if currentBot && editingRuleId}
+    <BotRuleScreen botId={currentBot.id} ruleId={editingRuleId} onClose={() => (editingRuleId = null)} />
+{:else if currentBot && usageScreen}
+    <BotUsageScreen bot={currentBot} screen={usageScreen} />
+{:else if currentBot && editingAdvanced}
+    <div class="bot-page" data-testid="bot-advanced">
+        {#if telemetryState?.data}
+            <TelemetryCard
+                on={telemetryState.data.on}
+                locked={telemetryLocked}
+                error={telemetryState.saveError}
+                onChange={changeTelemetry}
+            />
+        {:else}
+            <PageNote
+                >{telemetryState?.status === "failed"
+                    ? page.telemetry.loadFailed()
+                    : page.telemetry.briefLoading()}</PageNote
+            >
+        {/if}
+    </div>
 {:else if currentBot}
     <div class="bot-page" data-testid="bot-page">
         <div class="bp-hd">
@@ -526,11 +678,21 @@
         {/if}
 
         <div class="bp-groups">
+            {#if askedUsage && currentBot}
+                <MakerAskedCard name={currentBot.name || "Bot"} usage={askedUsage} onUseKey={openMind} />
+            {/if}
+            <UsageGroup
+                bot={currentBot}
+                open={openGroup === "usage"}
+                onToggle={toggleGroup}
+                onOpenScreen={(screen) => (usageScreen = screen)}
+            />
             <MindGroup
                 bot={currentBot}
                 open={openGroup === "mind"}
                 onToggle={toggleGroup}
                 onChange={(next) => apply(next)}
+                onOptions={(loaded) => (aiOptions = loaded)}
             />
             <VisionGroup
                 bot={currentBot}
@@ -552,6 +714,22 @@
                 onToggle={toggleGroup}
                 onChange={(next) => apply(next)}
                 wide={!$mobileLayoutStore}
+                {onToolCount}
+                {aiOptions}
+            />
+            {#if askLimit && currentBot}
+                <LimitSuggestion
+                    name={currentBot.name || "Bot"}
+                    onChoose={() => answerLimit(true)}
+                    onKeep={() => answerLimit(false)}
+                />
+            {/if}
+            <PermissionsGroup
+                bot={currentBot}
+                open={openGroup === "access"}
+                onToggle={toggleGroup}
+                onOpenRule={(rule) => (editingRuleId = rule.id)}
+                onAdd={() => (addingRule = true)}
             />
             <!-- An extra, after the bot's own parts: the pet that walks with it -->
             <PageGroup
@@ -561,6 +739,15 @@
                 brief={companionLine}
                 link
                 onToggle={() => (editingCompanion = true)}
+            />
+            <!-- Settings most owners never need, on a screen of their own -->
+            <PageGroup
+                id="advanced"
+                icon={IconAdjustmentsHorizontal}
+                title={page.telemetry.title()}
+                brief={advancedBrief}
+                link
+                onToggle={() => (editingAdvanced = true)}
             />
         </div>
         <BotFooter bot={currentBot} {onDelete} />

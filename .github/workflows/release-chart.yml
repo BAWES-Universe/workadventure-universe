@@ -8,6 +8,10 @@ on:
     types:
       - created
 
+# Read-only unless a job below says otherwise (#432)
+permissions:
+  contents: read
+
 jobs:
   release:
     runs-on: ubuntu-22.04

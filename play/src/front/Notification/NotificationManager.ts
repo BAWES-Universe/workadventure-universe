@@ -8,7 +8,10 @@ import { gameManager } from "../Phaser/Game/GameManager";
 import { selectedRoomStore } from "../Chat/Stores/SelectRoomStore";
 import { proximityMeetingStore } from "../Stores/MyMediaStore";
 import { openChat } from "../Chat/openChat";
+import { gameSceneIsLoadedStore } from "../Stores/GameSceneStore";
+import { waitForStoreValue } from "../Stores/Utils/waitForStoreValue";
 import type { NotificationWA } from "./Notification";
+import { findChatRoom } from "./findChatRoom";
 
 type SelectedRoomStore = {
     subscribe: (this: void, run: Subscriber<ChatRoom | undefined>) => Unsubscriber;
@@ -16,10 +19,9 @@ type SelectedRoomStore = {
 };
 
 class NotificationManager {
-    private channels: Map<string, BroadcastChannel> = new Map();
-
     constructor(private proximityMeetingStore: Writable<boolean>, private selectedRoomStore: SelectedRoomStore) {
-        this.createNotificationMessageChannel();
+        this.listenToServiceWorker();
+        this.openPendingChat();
     }
 
     public hasNotification(): boolean {
@@ -46,26 +48,49 @@ class NotificationManager {
         }
     }
 
-    private createNotificationMessageChannel() {
-        const messageChannel = new BroadcastChannel(NotificationChannel.message);
-        messageChannel.onmessage = async (event) => {
-            try {
-                const result = NotificationSchema.parse(event.data);
-                const validatedData = result.data;
-                const chatRoomId: string = validatedData.chatRoomId;
+    // The service worker sends a tapped chat notification to the one window it brought forward or opened.
+    private listenToServiceWorker() {
+        if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) {
+            return;
+        }
+        // Lives as long as the page, like the manager itself.
+        // eslint-disable-next-line listeners/no-missing-remove-event-listener
+        navigator.serviceWorker.addEventListener("message", this.onServiceWorkerMessage);
+        // Delivers what the worker sent while this page was still loading (a window the tap just opened).
+        navigator.serviceWorker.startMessages();
+    }
 
-                await this.handleMessageNotification(chatRoomId);
-            } catch (error) {
+    private readonly onServiceWorkerMessage = (event: MessageEvent): void => {
+        const result = NotificationSchema.safeParse(event.data);
+        if (!result.success) {
+            return;
+        }
+        const { chatRoomId } = result.data.data;
+        // Kept for this tab until the chat is open: getting in may first go to sign-in and come back as a new page.
+        storePendingChat(chatRoomId);
+        this.openNotificationChat(chatRoomId);
+    };
+
+    /** A tapped chat this tab had not opened yet when it went to sign in. */
+    private openPendingChat() {
+        const chatRoomId = readPendingChat(Date.now());
+        if (chatRoomId) {
+            this.openNotificationChat(chatRoomId);
+        }
+    }
+
+    private openNotificationChat(chatRoomId: string) {
+        this.handleMessageNotification(chatRoomId)
+            .catch((error) => {
                 Sentry.captureException(error);
-                console.error("Invalid notification data:", error);
-                return;
-            }
-        };
-
-        this.channels.set(NotificationChannel.message, messageChannel);
+                console.error("Could not open the chat of a notification:", error);
+            })
+            .finally(() => clearPendingChat(chatRoomId));
     }
 
     private async handleMessageNotification(chatRoomId: string) {
+        // A window the tap just opened is still getting in: its chat is ready once the room is.
+        await waitForStoreValue(gameSceneIsLoadedStore);
         openChat("notification");
         let room: ChatRoom | undefined;
         if (chatRoomId === "proximity") {
@@ -74,17 +99,12 @@ class NotificationManager {
             const liveScene = gameManager.tryGetCurrentGameScene();
             room = liveScene?.hasProximityChatRoom ? liveScene.proximityChatRoom : undefined;
         } else {
-            const chatConnection = await gameManager.getChatConnection();
-            room = chatConnection.getRoomByID(chatRoomId);
+            room = await findChatRoom(await gameManager.getChatConnection(), chatRoomId);
         }
         if (room) {
             this.selectedRoomStore.set(room);
         }
     }
-}
-
-enum NotificationChannel {
-    message = "message",
 }
 
 const NotificationSchema = z.object({
@@ -93,5 +113,45 @@ const NotificationSchema = z.object({
         chatRoomId: z.string(),
     }),
 });
+
+const PENDING_CHAT_KEY = "notificationPendingChat";
+// Longer than signing in takes; a tap older than this is no longer what they came back for.
+export const PENDING_CHAT_MAX_AGE_MS = 10 * 60 * 1000;
+
+function storePendingChat(chatRoomId: string): void {
+    // A nearby chat ends with its page, so it is never kept.
+    if (chatRoomId === "proximity") return;
+    try {
+        sessionStorage.setItem(PENDING_CHAT_KEY, JSON.stringify({ chatRoomId, at: Date.now() }));
+    } catch {
+        // No session storage (private mode, blocked): the chat still opens when no sign-in comes in between.
+    }
+}
+
+export function readPendingChat(now: number): string | undefined {
+    try {
+        const stored = sessionStorage.getItem(PENDING_CHAT_KEY);
+        if (!stored) return undefined;
+        const pending = PendingChatSchema.safeParse(JSON.parse(stored));
+        if (!pending.success || now - pending.data.at > PENDING_CHAT_MAX_AGE_MS) {
+            sessionStorage.removeItem(PENDING_CHAT_KEY);
+            return undefined;
+        }
+        return pending.data.chatRoomId;
+    } catch {
+        return undefined;
+    }
+}
+
+/** Only the chat just opened: a later tap waiting behind it stays kept. */
+function clearPendingChat(chatRoomId: string): void {
+    try {
+        if (readPendingChat(Date.now()) === chatRoomId) sessionStorage.removeItem(PENDING_CHAT_KEY);
+    } catch {
+        // Nothing was kept.
+    }
+}
+
+const PendingChatSchema = z.object({ chatRoomId: z.string(), at: z.number() });
 
 export const notificationManager = new NotificationManager(proximityMeetingStore, selectedRoomStore);

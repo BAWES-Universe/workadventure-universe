@@ -71,7 +71,7 @@ function buildMocks() {
         getRoomMetadata: vi.fn().mockResolvedValue(null),
         getAvailableAIProviders: vi.fn().mockResolvedValue([]),
     };
-    const memory: any = { getMemory: vi.fn(() => ({ userUuid: "test-uuid" })), appendVisionDescription: vi.fn() };
+    const memory: any = { getMemory: vi.fn(() => ({ userUuid: "test-uuid" })), appendVisionDescription: vi.fn(), getPendingMediaNotice: vi.fn(() => "") };
     return { admin, memory };
 }
 
@@ -161,8 +161,8 @@ describe("AIService – finding a bot's AI by bot id", () => {
             expect(service.calculateCost("deepseek-flash", { promptTokens: 1000, completionTokens: 1000 })).toBeGreaterThan(0);
             // the bot is on "universe-ai": the cost is looked up by that ref too
             expect(service.calculateCost("universe-ai", { promptTokens: 1000, completionTokens: 1000 })).toBeGreaterThan(0);
-            // and the same call for a provider the service never saw is still 0, as before
-            expect(service.calculateCost("never-seen", { promptTokens: 1000, completionTokens: 1000 })).toBe(0);
+            // and the same call for a provider the service never saw has no price: unknown, not 0 (#1173)
+            expect(service.calculateCost("never-seen", { promptTokens: 1000, completionTokens: 1000 })).toBeUndefined();
         });
 
         it("is asked again after 30 seconds, so a new Default reaches the next reply", async () => {

@@ -26,16 +26,20 @@ describe("pickFitLevel", () => {
         expect(await pick(() => true)).toEqual({ level: 0, tried: [0] });
     });
 
-    it("turns the two buttons into icons before anything else goes", async () => {
+    it("drops the bots count before anything else goes", async () => {
         expect(await pick((level) => level >= 1)).toEqual({ level: 1, tried: [0, 1] });
     });
 
-    it("drops the faces last, when icons alone are not enough", async () => {
+    it("turns the two buttons into icons when the shorter count and a shorter room name are not enough", async () => {
         expect(await pick((level) => level >= 2)).toEqual({ level: 2, tried: [0, 1, 2] });
     });
 
+    it("drops the faces last, when icons alone are not enough", async () => {
+        expect(await pick((level) => level >= 3)).toEqual({ level: 3, tried: [0, 1, 2, 3] });
+    });
+
     it("ends on the smallest layout when nothing fits, and leaves it laid out that way", async () => {
-        expect(await pick(() => false)).toEqual({ level: 2, tried: [0, 1, 2] });
+        expect(await pick(() => false)).toEqual({ level: 3, tried: [0, 1, 2, 3] });
     });
 });
 

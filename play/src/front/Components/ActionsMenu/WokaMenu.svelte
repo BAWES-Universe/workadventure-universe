@@ -5,6 +5,7 @@
     import ButtonClose from "../Input/ButtonClose.svelte";
     import VisitCard from "../VisitCard/VisitCard.svelte";
     import WokaFromUserId from "../Woka/WokaFromUserId.svelte";
+    import Woka from "../Woka/Woka.svelte";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
     import LL from "../../../i18n/i18n-svelte";
     import { peopleCardReturn } from "../../Chat/Stores/PeopleCardReturnStore";
@@ -20,6 +21,10 @@
     let moreOpenFor: string | undefined;
 
     let wokaMenuStoreUnsubscriber: Unsubscriber | null;
+
+    // Searching for someone far away (not on your screen yet): their Woka as People shows it, until the card turns to
+    // their avatar once found.
+    $: searchPicture = wokaMenuData?.searchPicture;
 
     function onKeyDown(e: KeyboardEvent) {
         if (e.key === "Escape" && wokaMenuData) {
@@ -84,8 +89,9 @@
 <svelte:window on:keydown={onKeyDown} />
 
 {#if wokaMenuData}
+    <!-- screen-blocker: the camera keeps the person this card is about in the space beside it, not under it. -->
     <div
-        class="m-auto my-0 min-h-0 max-w-lg min-w-48 max-sm:max-w-[89%] z-50 bg-contrast/80 transition-all backdrop-blur rounded-lg pointer-events-auto overflow-hidden md:mr-0 flex flex-col"
+        class="m-auto my-0 min-h-0 max-w-lg min-w-48 max-sm:max-w-[89%] z-50 bg-contrast/80 transition-all backdrop-blur rounded-lg pointer-events-auto overflow-hidden md:mr-0 flex flex-col screen-blocker"
         data-testid="actions-menu"
     >
         <!-- Never taller than the space it has: what's above the buttons scrolls, the buttons (and the ⋯ list) stay in view. -->
@@ -107,6 +113,13 @@
                                     placeholderSrc="/assets/placeholder-woka.png"
                                     customWidth="4rem"
                                 />
+                            </div>
+                        {:else if $searchPicture}
+                            <div
+                                id="woka"
+                                class=" bt-3 overflow-hidden mt-9 border w-fit h-fit pt-3 rounded-lg cursor-not-allowed bg-[rgb(103,185,133)]"
+                            >
+                                <Woka src={$searchPicture} customWidth="4rem" />
                             </div>
                         {/if}
                         <div class="mt-[29px] max-w-full px-2 text-center">

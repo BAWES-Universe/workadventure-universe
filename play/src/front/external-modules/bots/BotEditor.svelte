@@ -16,6 +16,8 @@
     import BotDetailView from "./components/BotDetailView.svelte";
     import NewBotView from "./components/NewBotView.svelte";
     import type { BotData } from "./types";
+    import type { UsageScreen } from "./usageModel";
+    import { botUsageStore, type BotUsageState } from "./stores/BotUsageStore";
     import {
         botEditorModeStore,
         selectedBotStore,
@@ -40,6 +42,10 @@
     import { routeStops } from "./behaviorModel";
     import { withoutRefused } from "./visionModel";
     import { newBotRef } from "./mindModel";
+    import { aiModelPlan } from "./modelPickerModel";
+    import { botPermissionsStore } from "./stores/BotPermissionsStore";
+    import { botTelemetryNoticeStore, botTelemetryStore } from "./stores/BotTelemetryStore";
+    import { ruleName } from "./accessModel";
     import { getBotEditorTool } from "./phaser/BotEditorTool";
     import { botApiService } from "./services/BotApiService";
     import { IconMapPin } from "@wa-icons";
@@ -48,6 +54,15 @@
     let botEditorTool = getBotEditorTool();
     let isLoading = false;
     let error: string | null = null;
+    // A new bot was made but its bot chat telemetry "off" was not saved: said until the person sets it, dismisses it or
+    // moves to another bot (kept in botTelemetryNoticeStore, so it outlives the editor)
+    $: if (
+        $botTelemetryNoticeStore &&
+        $botTelemetryStore?.botId === $botTelemetryNoticeStore.botId &&
+        $botTelemetryStore.data?.on === false
+    ) {
+        botTelemetryNoticeStore.set(null);
+    }
 
     // Subscribe to stores
     let currentMode: BotEditorMode = "list";
@@ -64,39 +79,36 @@
     const pendingSaves = new Map<SaveKind, { timeout: ReturnType<typeof setTimeout>; save: () => void }>();
     let lastSavedBotConfig: string | null = null;
     let lastSavedAIConfig: string | null = null;
-    // What each bot last saved successfully, however often it was opened and closed since: a refused save is put back to this
-    const lastSavedByBot = new Map<string, { config?: string; ai?: string }>();
+    // Counts the bots shown (back to the list counts too), so a save can tell the page's record above was reset since
+    let shownBotCount = 0;
+    /** The key and the model on it the bot is saved with, to send a model only when it changed */
+    let lastSavedAi: { ref?: string | null; model?: string | null } = {};
 
-    /** What the "ai" save sends besides the behavior: the bot's mind, chat instructions, Patience and description */
+    /** What the "ai" save sends besides the behavior: the bot's mind, chat instructions, Patience, reply limits and description */
     function aiConfigOf(bot: BotData): string {
         return JSON.stringify({
             aiProviderRef: bot.aiProviderRef,
+            aiModel: bot.aiModel ?? null,
             chatInstructions: bot.chatInstructions,
             toolTimeoutSeconds: bot.toolTimeoutSeconds ?? null,
+            maxReplyTokens: bot.maxReplyTokens ?? null,
+            maxSteps: bot.maxSteps ?? null,
             description: bot.description ?? "",
         });
     }
 
-    /**
-     * A save Orbit refused: put what it refused (the Vision pick, or the Runs on key) back to what was last saved, so the page
-     * shows what is real and the refused value isn't sent again with every later save, such as moving the bot.
-     */
-    function revertRefused(sent: BotData, kind: SaveKind, saved: string | null): void {
-        const current = get(botPreviewsStore).get(sent.id);
-        if (!current) return;
-        // The person may have picked something newer while this save was on its way: that pick has its own save coming, and
-        // putting the old value back over it would leave the page showing one thing and Orbit holding another
-        const stillRefused =
-            kind === "ai"
-                ? current.aiProviderRef === sent.aiProviderRef
-                : JSON.stringify(current.behaviorConfig?.vision ?? null) ===
-                  JSON.stringify(sent.behaviorConfig?.vision ?? null);
-        if (!stillRefused) return;
-        const reverted = withoutRefused(current, kind, saved);
-        // Only when something was really put back: that is what lets the next save through. A refusal that is about something
-        // else changes nothing here, so it can't set off a save that is refused again, and again.
-        if (JSON.stringify(reverted) !== JSON.stringify(current)) upsertBot(reverted);
+    /** The provider in a saved AI config (see aiConfigOf); undefined when the bot had none, null when nothing is saved yet */
+    function savedProviderRef(savedAIConfig: string | null): string | undefined | null {
+        if (savedAIConfig === null) return null;
+        try {
+            return (JSON.parse(savedAIConfig) as { aiProviderRef?: string }).aiProviderRef;
+        } catch {
+            return null;
+        }
     }
+
+    /** Whether the banner shows a save Orbit refused, so the next save that goes through clears it */
+    let refusedSave = false;
 
     /** Debounce a save (wait 1 second after the last change), replacing the pending save of the same kind */
     function scheduleSave(kind: SaveKind, save: () => void): void {
@@ -111,6 +123,24 @@
         pendingSaves.set(kind, { timeout, save });
     }
 
+    /** Drop the pending save of this kind: the page is back to what is saved, so the edit it would send is undone */
+    function cancelSave(kind: SaveKind): void {
+        const pending = pendingSaves.get(kind);
+        if (pending) {
+            clearTimeout(pending.timeout);
+            pendingSaves.delete(kind);
+        }
+    }
+
+    /** Send the pending saves now rather than dropping them */
+    function flushSaves(): void {
+        for (const { timeout, save } of pendingSaves.values()) {
+            clearTimeout(timeout);
+            save();
+        }
+        pendingSaves.clear();
+    }
+
     const unsubscribeSelectedBot = selectedBotStore.subscribe((bot) => {
         if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
             console.log(
@@ -122,6 +152,16 @@
         }
         const previousBot = selectedBot;
         selectedBot = bot || null;
+        // Picking a different bot (the list and the map both end up here) ends a note about another one
+        const notice = get(botTelemetryNoticeStore);
+        if (notice && bot && bot.id !== notice.botId) botTelemetryNoticeStore.set(null);
+
+        // Leaving a bot (another bot, or back to the list) sends its waiting saves now. Left waiting, coming back to it
+        // within the second would take its edit as already saved and drop it, or a save would cross into another bot.
+        if (previousBot?.id !== bot?.id) {
+            shownBotCount++;
+            if (previousBot) flushSaves();
+        }
 
         // Initialize lastSaved values when bot first selected or changes
         if (bot && (!previousBot || previousBot.id !== bot.id)) {
@@ -130,6 +170,7 @@
             }
             lastSavedBotConfig = JSON.stringify(bot.behaviorConfig);
             lastSavedAIConfig = aiConfigOf(bot);
+            lastSavedAi = { ref: bot.aiProviderRef, model: bot.aiModel };
             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                 console.log("[BotEditor] Initialized lastSavedAIConfig:", lastSavedAIConfig.substring(0, 100));
             }
@@ -158,13 +199,11 @@
                 });
             }
 
-            // What was saved for this bot when the change was made: used when it has not saved anything since this page opened.
-            // The shared last-saved values may be another bot's, or re-read from the page after the bot was closed and opened again
-            const savedConfigThen = lastSavedBotConfig;
-            const savedAIConfigThen = lastSavedAIConfig;
-
             // Only save if config actually changed
             if (currentConfig !== lastSavedBotConfig) {
+                // What is saved for this bot, if its save runs after the page left it
+                const savedConfigOnSchedule = lastSavedBotConfig;
+                const shownBotCountOnScheduleForConfig = shownBotCount;
                 scheduleSave("config", () => {
                     void (async () => {
                         try {
@@ -177,32 +216,52 @@
                                     behaviorConfig: bot.behaviorConfig,
                                 })
                             );
-                            lastSavedByBot.set(bot.id, { ...lastSavedByBot.get(bot.id), config: currentConfig });
-                            // Only for the bot that is open: these values are shared, and another bot's page has its own
+                            // Only while the page still shows this bot: the record is the shown bot's
                             if (selectedBot?.id === bot.id) lastSavedBotConfig = currentConfig;
+                            if (refusedSave) {
+                                refusedSave = false;
+                                error = null;
+                            }
                         } catch (e) {
                             console.error("[BotEditor] Failed to auto-save bot:", e);
-                            if ((e as Error & { isRefusal?: boolean })?.isRefusal === true) {
-                                revertRefused(bot, "config", lastSavedByBot.get(bot.id)?.config ?? savedConfigThen);
+
+                            // Orbit refused the save and said why (the Vision pick can't be used): say so, and put the pick back to
+                            // what is really saved, so the refused one isn't sent again with every later save, such as moving the
+                            // bot. Only while the page still shows the refused pick: one made since has its own save coming.
+                            if ((e as Error & { status?: number })?.status === 400) {
+                                error = (e as Error).message;
+                                refusedSave = true;
+                                const currentBot = get(botPreviewsStore).get(bot.id);
+                                const saved =
+                                    shownBotCount === shownBotCountOnScheduleForConfig ? lastSavedBotConfig : savedConfigOnSchedule;
+                                if (
+                                    currentBot &&
+                                    JSON.stringify(currentBot.behaviorConfig?.vision ?? null) ===
+                                        JSON.stringify(bot.behaviorConfig?.vision ?? null)
+                                ) {
+                                    const reverted = withoutRefused(currentBot, "config", saved);
+                                    // Only when something was really put back: a refusal about something else changes nothing here,
+                                    // so it can't set off a save that is refused again, and again
+                                    if (JSON.stringify(reverted) !== JSON.stringify(currentBot)) upsertBot(reverted);
+                                }
+                                return;
                             }
 
-                            // Show auth errors, and a refusal (Orbit said why it can't be saved): the person must hear it
+                            // Check if it's an authentication error - show error for auth issues
                             const isAuthError = (e as Error & { isAuthError?: boolean })?.isAuthError === true;
-                            const isRefusal = (e as Error & { isRefusal?: boolean })?.isRefusal === true;
-                            if (isAuthError || isRefusal) {
+                            if (isAuthError) {
                                 error = (e as Error).message;
-                                // Clear error after 5 seconds (a refusal is longer to read)
-                                setTimeout(
-                                    () => {
-                                        error = null;
-                                    },
-                                    isRefusal ? 10000 : 5000
-                                );
+                                // Clear error after 5 seconds
+                                setTimeout(() => {
+                                    error = null;
+                                }, 5000);
                             }
                             // For other errors, just log (don't show for auto-saves)
                         }
                     })();
                 });
+            } else {
+                cancelSave("config");
             }
 
             // Auto-save when AI config changes (provider, instructions) - debounced
@@ -213,8 +272,18 @@
                         aiProviderRef: bot.aiProviderRef,
                     });
                 }
+                // What is saved for this bot, if its save runs after the page left it: the page's record is then
+                // another bot's, or this bot's reset to what it showed on coming back (edits not saved yet)
+                const savedAIOnSchedule = lastSavedAIConfig;
+                const savedAiOnSchedule = lastSavedAi;
+                const shownBotCountOnSchedule = shownBotCount;
+                const pageRecordIsThisBots = () => shownBotCount === shownBotCountOnSchedule;
+                const savedAIConfig = () => (pageRecordIsThisBots() ? lastSavedAIConfig : savedAIOnSchedule);
                 scheduleSave("ai", () => {
                     void (async () => {
+                        // The provider (and its model) saved when the request went out: what a refusal puts back
+                        let savedRefWhenSent: string | undefined | null = null;
+                        let savedAiWhenSent: { ref?: string | null; model?: string | null } = {};
                         try {
                             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                                 console.log("[BotEditor] Sending AI config update to API:", {
@@ -227,50 +296,98 @@
                             // snapshot: the behavior may have been switched in the meantime, and a stale type would
                             // switch it back.
                             await queueBotSave(bot.id, () => {
+                                // The provider is sent only when it was changed here, against what the saves before
+                                // this one stored. Sent with every save, a page left open would put back a provider
+                                // Orbit has since moved the bot off (a key that was pulled).
+                                const savedRef = savedProviderRef(savedAIConfig());
+                                savedRefWhenSent = savedRef;
+                                savedAiWhenSent = pageRecordIsThisBots() ? lastSavedAi : savedAiOnSchedule;
+                                const providerChanged = savedRef === null || bot.aiProviderRef !== savedRef;
                                 const currentBot = get(botPreviewsStore).get(bot.id) ?? bot;
                                 const behaviorType =
                                     currentBot.behaviorType || currentBot.behaviorConfig?.behaviorType || "idle";
                                 return botApiService.updateBot(bot.id, {
                                     behaviorType, // Include behaviorType explicitly to ensure it's saved
-                                    aiProviderRef: bot.aiProviderRef,
+                                    ...(providerChanged ? { aiProviderRef: bot.aiProviderRef } : {}),
                                     chatInstructions: bot.chatInstructions,
                                     toolTimeoutSeconds: bot.toolTimeoutSeconds ?? null,
+                                    maxReplyTokens: bot.maxReplyTokens ?? null,
+                                    maxSteps: bot.maxSteps ?? null,
                                     description: bot.description ?? "",
                                 });
                             });
+                            // The bot's own model on its key goes to Orbit, once the key it is on is saved (Orbit puts a bot
+                            // that changes key back on the key's check model), and only when it changed
+                            const modelPlan = aiModelPlan(
+                                { ref: bot.aiProviderRef, model: bot.aiModel },
+                                pageRecordIsThisBots() ? lastSavedAi : savedAiOnSchedule
+                            );
+                            if (pageRecordIsThisBots()) lastSavedAi = { ref: bot.aiProviderRef, model: modelPlan.base };
+                            if (modelPlan.send) {
+                                const model = modelPlan.send;
+                                await queueBotSave(bot.id, () => botApiService.saveBotModel(bot.id, model));
+                                // eslint-disable-next-line require-atomic-updates
+                                if (pageRecordIsThisBots()) lastSavedAi = { ref: bot.aiProviderRef, model };
+                            }
                             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                                 console.log("[BotEditor] AI config update successful");
                             }
-                            lastSavedByBot.set(bot.id, { ...lastSavedByBot.get(bot.id), ai: currentAIConfig });
                             if (selectedBot?.id === bot.id) lastSavedAIConfig = currentAIConfig;
+                            if (refusedSave) {
+                                refusedSave = false;
+                                error = null;
+                            }
                         } catch (e) {
                             console.error("[BotEditor] Failed to auto-save bot AI config:", e);
-                            if ((e as Error & { isRefusal?: boolean })?.isRefusal === true) {
-                                revertRefused(bot, "ai", lastSavedByBot.get(bot.id)?.ai ?? savedAIConfigThen);
+
+                            // Orbit refused the save and said why (a key that isn't theirs, or isn't lent here): say so,
+                            // and put the provider back to the one that is really saved, so the page doesn't show a move that didn't happen.
+                            // Only while the page still shows the refused one: a provider picked since has its own save coming.
+                            if ((e as Error & { status?: number })?.status === 400) {
+                                error = (e as Error).message;
+                                refusedSave = true;
+                                const savedRef = savedRefWhenSent;
+                                const currentBot = get(botPreviewsStore).get(bot.id);
+                                if (
+                                    savedRef !== null &&
+                                    currentBot &&
+                                    currentBot.aiProviderRef === bot.aiProviderRef &&
+                                    currentBot.aiProviderRef !== savedRef
+                                ) {
+                                    // The model goes back too: the refused key's model kept on the saved key is an edit
+                                    // nobody made, and would be saved next
+                                    const savedModel =
+                                        (savedAiWhenSent.ref ?? null) === (savedRef ?? null)
+                                            ? savedAiWhenSent.model ?? null
+                                            : null;
+                                    upsertBot({ ...currentBot, aiProviderRef: savedRef, aiModel: savedModel });
+                                }
+                                return;
                             }
 
-                            // Show auth errors, and a refusal (Orbit said why it can't be saved): the person must hear it
+                            // Check if it's an authentication error - show error for auth issues
                             const isAuthError = (e as Error & { isAuthError?: boolean })?.isAuthError === true;
-                            const isRefusal = (e as Error & { isRefusal?: boolean })?.isRefusal === true;
-                            if (isAuthError || isRefusal) {
+                            if (isAuthError) {
                                 error = (e as Error).message;
-                                // Clear error after 5 seconds (a refusal is longer to read)
-                                setTimeout(
-                                    () => {
-                                        error = null;
-                                    },
-                                    isRefusal ? 10000 : 5000
-                                );
+                                // Clear error after 5 seconds
+                                setTimeout(() => {
+                                    error = null;
+                                }, 5000);
                             }
                             // For other errors, just log (don't show for auto-saves)
                         }
                     })();
                 });
+            } else {
+                // Changed and changed back within the debounce (a provider picked, then the saved one again)
+                cancelSave("ai");
             }
         } else if (!bot) {
-            // Reset when no bot selected. A rename alone keeps them: they are what a refused save is put back to
+            // Reset when no bot selected. A rename keeps them: it saves nothing here, and the provider check
+            // above needs what was saved.
             lastSavedBotConfig = null;
             lastSavedAIConfig = null;
+            lastSavedAi = {};
         }
     });
 
@@ -308,6 +425,17 @@
         const capturedPreviousBot = previousPlacingBot;
         previousPlacingBot = bot;
 
+        // Placement ended without the bot being picked (cancelled by the button or Escape): the bot exists in Orbit
+        // with telemetry still on, so it is listed and its note stays, instead of the person's "off" going unsaid
+        if (
+            capturedPreviousBot &&
+            !bot &&
+            get(botTelemetryNoticeStore)?.botId === capturedPreviousBot.id &&
+            get(selectedBotStore)?.id !== capturedPreviousBot.id
+        ) {
+            upsertBot(capturedPreviousBot);
+        }
+
         // If placement was just completed (bot went from defined to undefined)
         if (capturedPreviousBot && !bot && botApiService.isInitialized()) {
             // Find the bot that was just placed
@@ -340,7 +468,10 @@
         // Load bots from API (tool will create previews via store subscription).
         // Reopening the editor in the same room keeps the current list on screen while it refreshes.
         const loadedRoomId = get(botsLoadedForRoomIdStore);
-        await loadBots({ keepCurrent: loadedRoomId !== null && loadedRoomId === botApiService.getRoomId() });
+        const sameRoom = loadedRoomId !== null && loadedRoomId === botApiService.getRoomId();
+        // A note kept from another room points at a bot that is not here
+        if (!sameRoom) botTelemetryNoticeStore.set(null);
+        await loadBots({ keepCurrent: sameRoom });
 
         // The editor was closed while loading: don't reactivate the tool or leave a subscription nothing removes
         if (destroyed) {
@@ -361,6 +492,7 @@
                 return; // Skip initial value
             }
             // Room changed - reload bots for the new room
+            botTelemetryNoticeStore.set(null);
             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                 console.log(`[BotEditor] Room change detected (trigger: ${triggerValue}), reloading bots...`);
             }
@@ -421,11 +553,7 @@
         // detail view's own debounced edits go first, while this component still listens for them (a parent's
         // onDestroy runs before its children's).
         detailView?.flushPendingSaves();
-        for (const { timeout, save } of pendingSaves.values()) {
-            clearTimeout(timeout);
-            save();
-        }
-        pendingSaves.clear();
+        flushSaves();
 
         // Deactivate the Phaser tool
         botEditorTool.deactivate();
@@ -443,14 +571,23 @@
     }
 
     function handleSelectBot(bot: BotData | null) {
+        const notice = get(botTelemetryNoticeStore);
+        if (notice && bot?.id !== notice.botId) botTelemetryNoticeStore.set(null);
         selectBot(bot || undefined);
     }
 
+    // What New bot's Advanced settings hold. Here and not in the form, because the form is rebuilt when the first bot
+    // of a room fails to create.
+    let newBotAdvancedOpen = false;
+    let newBotTelemetryOn = true;
+
     function handleCreateBot() {
+        newBotAdvancedOpen = false;
+        newBotTelemetryOn = true;
         botEditorModeStore.set("create");
     }
 
-    async function handleCreateBotSubmit(name: string, textureId: string) {
+    async function handleCreateBotSubmit(name: string, textureId: string, telemetryOn: boolean) {
         if (!botApiService.isInitialized()) {
             error = "API service not initialized";
             return;
@@ -458,6 +595,8 @@
 
         isLoading = true;
         error = null;
+        // The room the bot is made in: the person may move to another room while it is being made
+        const createdInRoomId = botApiService.getRoomId();
 
         try {
             // A new bot starts on Universe AI when Orbit says it is ready (#374). If Orbit can't say (an older Orbit), or
@@ -521,10 +660,47 @@
                 updatedBy: createdBot.updatedBy || null,
             };
 
+            // Bot chat telemetry is on for a new bot; only an off needs saving. If that cannot be saved the bot still
+            // exists, so say so (its Advanced settings can set it) instead of leaving it on without a word.
+            let telemetryNotSaved = false;
+            if (!telemetryOn) {
+                try {
+                    await botApiService.saveBotTelemetry(createdBot.id, false);
+                } catch (e) {
+                    console.error("[BotEditor] Failed to save bot chat telemetry for the new bot:", e);
+                    telemetryNotSaved = true;
+                }
+            }
+
+            // The person is in another room now: the bot belongs to the room it was made in, so this room's list and
+            // notes are not touched
+            if (botApiService.getRoomId() !== createdInRoomId) {
+                return;
+            }
+
+            // The person may have left the form while the bot was being made: the bot exists, so it is listed (and the
+            // note shown if its telemetry off was not saved), but placement is not theirs to resume
+            if (destroyed || get(botEditorModeStore) !== "create") {
+                upsertBot(newBot);
+                if (telemetryNotSaved) {
+                    botTelemetryNoticeStore.set({
+                        botId: newBot.id,
+                        text: get(LL).mapEditor.edit.bots.page.telemetry.createdButNotSaved(),
+                    });
+                }
+                return;
+            }
+
             // Close modal
 
             // Start placement mode - user will click on map to set position
             startPlacingBot(newBot);
+            if (telemetryNotSaved) {
+                botTelemetryNoticeStore.set({
+                    botId: newBot.id,
+                    text: get(LL).mapEditor.edit.bots.page.telemetry.createdButNotSaved(),
+                });
+            }
         } catch (e) {
             console.error("[BotEditor] Failed to create bot:", e);
             error = e instanceof Error ? e.message : "Failed to create bot";
@@ -534,6 +710,7 @@
     }
 
     function handleBackToList() {
+        botTelemetryNoticeStore.set(null);
         selectBot(undefined);
         botEditorModeStore.set("list");
     }
@@ -589,6 +766,7 @@
                     assignedSpace: { center: { x: 0, y: 0 }, radius: 0 },
                 },
                 aiProviderRef: updatedBot.aiProviderRef,
+                aiModel: selectedBot.aiModel,
                 chatInstructions: updatedBot.chatInstructions || "",
                 createdAt: updatedBot.createdAt || new Date().toISOString(),
                 updatedAt: updatedBot.updatedAt || new Date().toISOString(),
@@ -674,13 +852,78 @@
     let editingCompanion = false;
     // Its WOKA the same way: the bot's name over "Body", and the back circle returns to the page
     let editingTexture = false;
+    // Who may use it the same way: the bot's name over a role's or person's name (or "Add role or person"), and the
+    // back circle returns to the bot's page
+    let editingRuleId: string | null = null;
+    let addingRule = false;
+    // Advanced settings the same way
+    let editingAdvanced = false;
+    // And Usage's screens: who uses it, what it ran on, its limits
+    let usageScreen: UsageScreen | null = null;
+    function usageScreenTitle(screen: UsageScreen, name: string): string {
+        const usage = $LL.mapEditor.edit.bots.page.usage;
+        return screen === "people"
+            ? usage.whoTitle({ name })
+            : screen === "ranOn"
+            ? usage.ranOnTitle()
+            : usage.limitsTitle();
+    }
+    // Under the title: how many people in the range on Who uses, the range itself on the other two
+    function usageScreenSubtitle(screen: UsageScreen, state: BotUsageState | undefined, botId: string): string {
+        const usage = $LL.mapEditor.edit.bots.page.usage;
+        const data = state?.botId === botId ? state.data : undefined;
+        // The range of the numbers on screen, which is the one picked once it has loaded
+        const range = data?.range ?? (state?.botId === botId ? state.range : "7d");
+        if (screen === "people" && data) {
+            const words =
+                range === "today" ? usage.rangeToday() : range === "30d" ? usage.rangeMonth() : usage.rangeWeek();
+            return usage.peopleCount({ count: data.totals.people, range: words });
+        }
+        return range === "today"
+            ? usage.subtitleToday()
+            : range === "30d"
+            ? usage.subtitleMonth()
+            : usage.subtitleWeek();
+    }
+    function editedRuleName(ruleId: string | null, botId: string | undefined, someone: string): string | undefined {
+        const held = get(botPermissionsStore);
+        const rule = ruleId && held && held.botId === botId ? held.data?.rules.find((r) => r.id === ruleId) : undefined;
+        return rule ? ruleName(rule, someone) : undefined;
+    }
     $: editPanelBackStore.set(
-        currentMode === "detail" && selectedBot && editingTexture
+        currentMode === "detail" && selectedBot && (addingRule || editingRuleId)
+            ? {
+                  onBack: () => {
+                      addingRule = false;
+                      editingRuleId = null;
+                  },
+                  label: $LL.mapEditor.edit.bots.page.access.back({ name: selectedBot.name ?? "" }),
+                  title: selectedBot.name || undefined,
+                  subtitle: addingRule
+                      ? $LL.mapEditor.edit.bots.page.access.addTitle()
+                      : editedRuleName(editingRuleId, selectedBot.id, $LL.mapEditor.edit.bots.page.access.someone()) ??
+                        $LL.mapEditor.edit.bots.page.access.title(),
+              }
+            : currentMode === "detail" && selectedBot && editingTexture
             ? {
                   onBack: () => (editingTexture = false),
                   label: $LL.mapEditor.edit.bots.page.companion.back({ name: selectedBot.name ?? "" }),
                   title: selectedBot.name || undefined,
                   subtitle: $LL.mapEditor.edit.bots.page.body.title(),
+              }
+            : currentMode === "detail" && selectedBot && usageScreen
+            ? {
+                  onBack: () => (usageScreen = null),
+                  label: $LL.mapEditor.edit.bots.page.companion.back({ name: selectedBot.name ?? "" }),
+                  title: usageScreenTitle(usageScreen, selectedBot.name || "Bot"),
+                  subtitle: usageScreenSubtitle(usageScreen, $botUsageStore, selectedBot.id),
+              }
+            : currentMode === "detail" && selectedBot && editingAdvanced
+            ? {
+                  onBack: () => (editingAdvanced = false),
+                  label: $LL.mapEditor.edit.bots.page.companion.back({ name: selectedBot.name ?? "" }),
+                  title: $LL.mapEditor.edit.bots.page.telemetry.title(),
+                  subtitle: selectedBot.name || undefined,
               }
             : currentMode === "detail" && selectedBot && editingCompanion
             ? {
@@ -782,6 +1025,17 @@
 </script>
 
 <div class="bot-editor flex flex-col h-full min-h-0">
+    {#if $botTelemetryNoticeStore}
+        <div class="bg-red-500/20 border border-red-500/50 rounded-lg p-4 m-4" data-testid="bot-telemetry-notice">
+            <p class="text-red-200 text-sm">{$botTelemetryNoticeStore.text}</p>
+            <button
+                class="mt-2 px-3 py-1 bg-red-500/20 text-red-200 rounded hover:bg-red-500/30 text-xs"
+                on:click={() => botTelemetryNoticeStore.set(null)}
+            >
+                {$LL.mapEditor.edit.bots.page.telemetry.dismiss()}
+            </button>
+        </div>
+    {/if}
     {#if error}
         <div class="bg-red-500/20 border border-red-500/50 rounded-lg p-4 m-4">
             <p class="text-red-200 text-sm">{error}</p>
@@ -804,13 +1058,23 @@
     {:else if currentMode === "list" || currentMode === "placing"}
         <BotList {bots} onSelectBot={handleSelectBot} onCreateBot={handleCreateBot} />
     {:else if currentMode === "create"}
-        <NewBotView busy={isLoading} onCreate={handleCreateBotSubmit} onCancel={handleBackToList} />
+        <NewBotView
+            busy={isLoading}
+            bind:advancedOpen={newBotAdvancedOpen}
+            bind:telemetryOn={newBotTelemetryOn}
+            onCreate={handleCreateBotSubmit}
+            onCancel={handleBackToList}
+        />
     {:else if currentMode === "detail" || currentMode === "waypoint-edit"}
         {#if selectedBot}
             <BotDetailView
                 bind:this={detailView}
                 bind:editingCompanion
                 bind:editingTexture
+                bind:editingRuleId
+                bind:addingRule
+                bind:editingAdvanced
+                bind:usageScreen
                 bot={selectedBot}
                 onSave={handleSave}
                 onDelete={handleDelete}
