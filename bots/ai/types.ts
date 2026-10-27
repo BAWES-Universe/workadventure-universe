@@ -109,9 +109,20 @@ export interface AIUsageDetail {
 /**
  * Streaming response chunk
  */
+/** A reply limit the person reached (#1159): no AI was called, and the caller shows them the fixed card instead. */
+export interface ReplyLimitReached {
+    limit: 'universe-ai' | 'guest' | 'guests' | 'bot';
+    /** When the bot answers them again (ISO). */
+    resetsAt: string;
+    /** Which button the card shows: Sign in (guest), Ask the maker (member) or Use my AI key (maker). */
+    who: 'guest' | 'member' | 'maker';
+}
+
 export interface AIStreamChunk {
     content: string; // Token content (empty string if done)
     done: boolean; // Whether this is the final chunk
+    /** Set on the only chunk of a reply stopped by a reply limit (#1159). */
+    replyLimit?: ReplyLimitReached;
     reset?: boolean; // If true, frontend should clear current stream content before processing this chunk
     toolNames?: string[]; // Names of tools being called (for status display in the new bubble)
     toolCalls?: ToolCall[]; // Tool calls requested by AI

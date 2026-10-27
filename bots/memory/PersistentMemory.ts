@@ -8,7 +8,7 @@
  * - AI-driven emotion updates (unified in AI response, not separate EmotionAnalyzer)
  */
 
-import { ConversationMemory, type BotPlayerMemory, type EmotionalState } from './ConversationMemory';
+import { ConversationMemory, type BotPlayerMemory, type ConversationMessage, type EmotionalState } from './ConversationMemory';
 import { MemoryStorage } from './MemoryStorage';
 import type { MemoryForgetNotice } from './ForgetNotice';
 
@@ -158,18 +158,14 @@ export class PersistentMemory extends ConversationMemory {
         // Check if we have a loaded memory for this userUuid (lazy restoration)
         const loadedMemoryKey = `${botId}_${userUuid}`;
         let loadedMemory = this.loadedMemoriesByUuid.get(loadedMemoryKey);
-        
-        // If there's an active memory for this userUuid on a different playerId
-        // (e.g., another tab already chatting), use that instead — it's more current
-        // BUT only if that active memory is more recently updated than the cached snapshot
-        // to avoid replacing fresh in-session data with stale cross-tab data.
-        if (loadedMemory) {
-            const activeByUuid = this.getMemoryByUserUuid(botId, userUuid);
-            if (activeByUuid && activeByUuid !== this.getMemory(botId, playerId)) {
-                if (activeByUuid.lastUpdated > (loadedMemory.lastUpdated || 0)) {
-                    loadedMemory = this.cloneMemory(activeByUuid);
-                }
-            }
+
+        // If there's an active memory for this userUuid on a different playerId (another tab, or the person's
+        // direct messages while they chat on the map), use that instead when it is more recently updated than the
+        // cached snapshot. Also when there is no snapshot: someone who first met the bot in this process has none, and
+        // their chat on the map must still be there when they send it a direct message.
+        const activeByUuid = this.freshestOtherMemory(botId, playerId, userUuid);
+        if (activeByUuid && activeByUuid.lastUpdated > (loadedMemory?.lastUpdated || 0)) {
+            loadedMemory = this.cloneMemory(activeByUuid);
         }
         
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -258,7 +254,13 @@ export class PersistentMemory extends ConversationMemory {
                             ? existingOrNew.relationship.importantEvents
                             : loadedMemory.relationship.importantEvents,
                     };
-                    // Keep existing conversationHistory (current session)
+                    // Keep the current conversation and add what was said elsewhere since (on the map or in direct
+                    // messages), so memory follows the person, not the chat
+                    existingOrNew.conversationHistory = PersistentMemory.mergeHistories(
+                        existingOrNew.conversationHistory,
+                        loadedMemory.conversationHistory ?? [],
+                        existingOrNew.maxHistorySize || 50
+                    );
                 }
             } else {
                 // Create new memory with loaded data
@@ -723,6 +725,33 @@ export class PersistentMemory extends ConversationMemory {
     }
 
     /**
+     * The most recently updated active memory of this person on another playerId, e.g. their chat on the map while they
+     * send a direct message. A memory made before the person's uuid was known still says "temp-<playerId>": the
+     * tracked uuid counts for it.
+     */
+    private freshestOtherMemory(botId: string, playerId: number, userUuid: string): BotPlayerMemory | null {
+        let freshest: BotPlayerMemory | null = null;
+        for (const [key, memory] of this.getAllMemories().entries()) {
+            if (key !== `${botId}_${memory.playerId}` || memory.playerId === playerId) continue;
+            const owner = memory.userUuid?.startsWith('temp-') ? this.uuidTracking.get(key)?.userUuid : memory.userUuid;
+            if (owner !== userUuid) continue;
+            if (!freshest || memory.lastUpdated > freshest.lastUpdated) freshest = memory;
+        }
+        return freshest;
+    }
+
+    /**
+     * Both histories as one, in time order, each message once (the current copy wins: it may carry a vision note the
+     * other lacks), keeping the last `max`.
+     */
+    private static mergeHistories(current: ConversationMessage[], other: ConversationMessage[], max: number): ConversationMessage[] {
+        const seen = new Set(current.map((message) => `${message.timestamp}|${message.sender}`));
+        const added = other.filter((message) => !seen.has(`${message.timestamp}|${message.sender}`)).map((message) => ({ ...message }));
+        if (added.length === 0) return current;
+        return [...current, ...added].sort((a, b) => a.timestamp - b.timestamp).slice(-max);
+    }
+
+    /**
      * Get memory storage instance (for external access)
      */
     getMemoryStorage(): MemoryStorage {
@@ -754,6 +783,10 @@ export class PersistentMemory extends ConversationMemory {
                 importantEvents: memory.relationship.importantEvents.map(e => ({ ...e })),
             },
             pendingMedia: memory.pendingMedia ? memory.pendingMedia.map(item => ({ ...item })) : [],
+            // The turn being answered belongs to the chat it is in, never to a copy in another one
+            pendingArtifacts: undefined,
+            dmRoomId: undefined,
+            artifactCalls: undefined,
         };
     }
 

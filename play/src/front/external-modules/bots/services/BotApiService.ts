@@ -1256,6 +1256,19 @@ export class BotApiService {
         }
     }
 
+    /**
+     * "Ask <bot>'s maker" on the reply limit card (#1159): tells the bot's maker that this person wants more replies, as
+     * a count, never who. True once Orbit has it (also when this person already asked in this window).
+     */
+    async askBotMaker(botId: string): Promise<boolean> {
+        try {
+            await this.fetch(`/api/bots/${encodeURIComponent(botId)}/limit-ask`, { method: "POST", body: "{}" });
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
     /** Who may use this bot: Private bot, the line refused people hear, every rule, and the roles a rule can name */
     async getBotPermissions(botId: string): Promise<BotPermissions> {
         return this.withPermissionsTimeout(async (signal) => {
