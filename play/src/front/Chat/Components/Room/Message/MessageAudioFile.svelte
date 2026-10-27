@@ -104,7 +104,7 @@
 <div class="voice-note" class:mine={isMine} data-testid="voiceNote">
     <button
         type="button"
-        class="voice-play"
+        class="voice-play u-cta-secondary"
         on:click={toggle}
         disabled={!$content.url}
         aria-label={playing ? $LL.chat.voiceNote.pause() : $LL.chat.voiceNote.play()}
@@ -135,17 +135,14 @@
         {/each}
     </div>
     <div class="voice-time">
-        {formatDuration(started ? current : duration ?? 0)}
+        {started ? `${formatDuration(current)} / ${formatDuration(duration ?? 0)}` : formatDuration(duration ?? 0)}
         {#if !heard}<span class="voice-unheard" role="img" aria-label={$LL.chat.voiceNote.notPlayed()} />{/if}
     </div>
-    <!-- Its place is kept, so the bars don't move when it shows. -->
     <button
         type="button"
-        class="voice-speed"
-        class:voice-speed-hidden={!started}
+        class="voice-speed u-cta-secondary"
         on:click={cycleSpeed}
         aria-label={$LL.chat.voiceNote.speed()}
-        tabindex={started ? 0 : -1}
     >
         {SPEEDS[speed]}×
     </button>
@@ -197,9 +194,6 @@
         border-radius: 9999px;
         display: grid;
         place-items: center;
-        color: #fff;
-        background: rgba(255, 255, 255, 0.14);
-        border: 1px solid rgba(255, 255, 255, 0.16);
         box-sizing: border-box;
         font-family: inherit;
     }
@@ -224,7 +218,7 @@
     .voice-time {
         grid-column: 2;
         grid-row: 2;
-        font-size: 12px;
+        font-size: 11px;
         line-height: 16px;
         color: rgba(255, 255, 255, 0.7);
         font-variant-numeric: tabular-nums;
@@ -247,16 +241,11 @@
         height: 24px;
         padding: 0 8px;
         border-radius: 9999px;
-        font-size: 12px;
+        box-sizing: border-box;
+        font-size: 11px;
         font-weight: 700;
         line-height: 1;
         font-family: inherit;
-        color: #fff;
-        background: rgba(255, 255, 255, 0.14);
-        border: 0;
-    }
-    .voice-speed-hidden {
-        visibility: hidden;
     }
     /* A 44px target around the 24px pill. */
     .voice-speed::before {

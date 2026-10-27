@@ -59,4 +59,18 @@ describe("an audio file whose shape could not be read", () => {
 
         expect(visibleText()).toContain("0:00");
     });
+
+    it("shows the speed chip before it plays, and the time as played / length while it plays", async () => {
+        await show(14);
+        expect(target.querySelector(".voice-speed")?.textContent?.trim()).toBe("1×");
+        expect(visibleText()).toContain("0:14");
+
+        const audio = target.querySelector("audio") as HTMLAudioElement;
+        audio.currentTime = 5;
+        audio.dispatchEvent(new Event("timeupdate"));
+        audio.dispatchEvent(new Event("play"));
+        await tick();
+
+        expect(visibleText()).toContain("0:05 / 0:14");
+    });
 });
