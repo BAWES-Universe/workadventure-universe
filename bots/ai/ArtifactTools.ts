@@ -46,13 +46,16 @@ export interface ArtifactCard {
     maker: string;
 }
 
+/** The same cap the chat card applies to a title (`TITLE_MAX` in play's artifactCard.ts). */
+const ARTIFACT_TITLE_MAX = 120;
+
 /**
  * The card as a line of nearby chat, which carries text only: `::artifact:<id>:<version>:<kind>::<title>`. The game
  * draws it as a card (APP badge, "Mini app · Version 2 · Tap to open"); anything else sees the title. (A line without
  * the kind, `::artifact:<id>:<version>::<title>`, is read the same way, with a plain badge.)
  */
 export function artifactMarker(card: Pick<ArtifactCard, 'id' | 'version' | 'title' | 'kind'>): string {
-    return `::artifact:${card.id}:${card.version}:${card.kind}::${card.title.replace(/\s+/g, ' ').trim()}`;
+    return `::artifact:${card.id}:${card.version}:${card.kind}::${card.title.replace(/\s+/g, ' ').trim().slice(0, ARTIFACT_TITLE_MAX).trim()}`;
 }
 
 /** The field a direct message carries its card in (`universe.artifact`), as `universe.room_link` does for a room. */

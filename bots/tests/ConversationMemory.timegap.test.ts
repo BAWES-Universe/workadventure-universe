@@ -33,12 +33,12 @@ describe('ConversationMemory time rendering', () => {
     it('renders a multi-day gap with the date it happened, so the gap is visible', () => {
         // Friday July 3, 12:00 -> Monday July 6 = 3 days
         const ctx = memoryWithMessage(3 * 86400).getConversationContext('bot-1', 1);
-        expect(ctx).toContain('They: "Old message" (Jul 3, 12:00)');
+        expect(ctx).toContain('They: "Old message" (Jul 3, 2026, 12:00)');
     });
 
     it('renders same-day messages with the clock time', () => {
-        expect(memoryWithMessage(30 * 60).getConversationContext('bot-1', 1)).toContain('(Jul 6, 11:30)');
-        expect(memoryWithMessage(5 * 3600).getConversationContext('bot-1', 1)).toContain('(Jul 6, 07:00)');
+        expect(memoryWithMessage(30 * 60).getConversationContext('bot-1', 1)).toContain('(Jul 6, 2026, 11:30)');
+        expect(memoryWithMessage(5 * 3600).getConversationContext('bot-1', 1)).toContain('(Jul 6, 2026, 07:00)');
     });
 
     it('never says "ago" for a history line', () => {
@@ -64,7 +64,7 @@ describe('ConversationMemory time rendering', () => {
         mem.addMessage('bot-1', 1, 'late', 'person', 'space');
         const m = (mem as any).getMemory('bot-1', 1);
         m.conversationHistory[0].timestamp = new Date('2026-07-06T00:05:00Z').getTime();
-        expect(mem.getConversationContext('bot-1', 1)).toContain('(Jul 6, 00:05)');
+        expect(mem.getConversationContext('bot-1', 1)).toContain('(Jul 6, 2026, 00:05)');
     });
 });
 

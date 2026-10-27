@@ -557,12 +557,21 @@ class LocalUserStore {
 
     /** This browser's id in Your devices once Orbit saved it (#863), so it is known even while switched off. */
     getPushDeviceId(): string | null {
-        return localStorage.getItem("pushDeviceId");
+        try {
+            return localStorage.getItem("pushDeviceId");
+        } catch (e) {
+            console.warn("Could not read the saved device id", e);
+            return null;
+        }
     }
 
     setPushDeviceId(id: string | null): void {
-        if (id === null) localStorage.removeItem("pushDeviceId");
-        else localStorage.setItem("pushDeviceId", id);
+        try {
+            if (id === null) localStorage.removeItem("pushDeviceId");
+            else localStorage.setItem("pushDeviceId", id);
+        } catch (e) {
+            console.warn("Could not save the device id", e);
+        }
     }
 
     /** Whether notifications were switched on or off here; null when that was never set. */
