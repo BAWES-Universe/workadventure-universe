@@ -69,17 +69,19 @@ describe("a bot's usage as the page reads it (Orbit #491)", () => {
 
     it("rounds the chart's top", () => {
         expect(niceMax(0)).toBe(2);
-        expect(niceMax(7)).toBe(7);
+        expect(niceMax(7)).toBe(8);
         expect(niceMax(63)).toBe(70);
         expect(niceMax(340)).toBe(400);
+        // Its middle line is always a whole number of replies
+        for (let value = 0; value <= 2000; value++) expect(Number.isInteger(niceMax(value) / 2)).toBe(true);
     });
 
     it("stacks direct messages under nearby chat, rounding only the top", () => {
         const { bars, max } = chartBars([
             { day: "2026-10-26", dm: 0, nearby: 0, notSplit: 0 },
-            { day: "2026-10-27", dm: 4, nearby: 2, notSplit: 1 },
+            { day: "2026-10-27", dm: 4, nearby: 3, notSplit: 1 },
         ]);
-        expect(max).toBe(7);
+        expect(max).toBe(8);
         expect(bars[0].parts).toEqual([]);
         expect(bars[1].parts.map((part) => [part.kind, part.top])).toEqual([
             ["dm", false],

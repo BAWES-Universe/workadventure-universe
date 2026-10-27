@@ -231,11 +231,15 @@ export interface ChartBar {
     parts: Array<{ kind: "dm" | "nearby" | "notSplit"; y: number; height: number; top: boolean }>;
 }
 
-/** A round top for the scale: 7 stays 7 or 8, 63 becomes 70, 340 becomes 400. */
+/**
+ * A round top for the scale: 7 becomes 8, 63 becomes 70, 340 becomes 400. Always even, so the middle line is a whole
+ * number of replies too.
+ */
 export function niceMax(value: number): number {
     if (value <= 4) return Math.max(2, Math.ceil(value / 2) * 2);
     const step = 10 ** Math.floor(Math.log10(value));
-    for (const m of [1, 1.5, 2, 2.5, 3, 4, 5, 6, 7, 8, 10]) if (m * step >= value) return m * step;
+    for (const m of [1, 1.5, 2, 2.5, 3, 4, 5, 6, 7, 8, 10])
+        if (m * step >= value && (m * step) % 2 === 0) return m * step;
     return 10 * step;
 }
 
