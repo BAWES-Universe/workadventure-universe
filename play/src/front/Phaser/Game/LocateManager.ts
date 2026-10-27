@@ -80,11 +80,12 @@ export class LocateManager {
         if (!message.position) {
             return;
         }
+        const userData = this.scene.getRemotePlayersRepository().getPlayers().get(message.userId);
         // The answer for a search another one replaced moves nothing: the newer search has its own answer coming.
-        if (isStaleLocateAnswer(Date.now(), message.userId)) {
+        if (isStaleLocateAnswer(Date.now(), message.userId, userData?.userUuid)) {
             return;
         }
-        const request = takeLocateRequest(Date.now(), message.userId);
+        const request = takeLocateRequest(Date.now(), message.userId, userData?.userUuid);
         if (request?.cancelled) {
             return;
         }
@@ -105,7 +106,6 @@ export class LocateManager {
         );
 
         // Get user data to initialize woka menu
-        const userData = this.scene.getRemotePlayersRepository().getPlayers().get(message.userId);
         const userName = userData?.name ?? request?.name ?? get(LL).locate.userSearching();
         const userUuid = userData?.userUuid ?? "";
         const visitCardUrl = userData?.visitCardUrl ?? undefined;
