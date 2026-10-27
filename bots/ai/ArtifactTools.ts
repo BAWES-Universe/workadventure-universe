@@ -219,14 +219,20 @@ export const ARTIFACT_CUT_OFF_MESSAGE =
 export const NOTHING_SAVED_LINE = 'No new version was saved.';
 
 /**
- * Something a bot makes as an artifact, and not "of" something ("the updated board of directors"). Not table, list, file,
- * map, page, site, version or mock: those come up in ordinary answers ("here's the updated version of your email").
+ * Something a bot makes as an artifact. Not table, list, file, map, page, site, version or mock: those come up in ordinary
+ * answers ("here's the updated version of your email").
  */
-const ARTIFACT_NOUN = '(?:artifacts?|dashboards?|calculators?|mockups?)(?!\\s+of\\b)';
-/** Things a bot makes as artifacts that people also have of their own ("I've fixed the bug in your app"): only with a cue below. */
+const ARTIFACT_NOUN = '(?:artifacts?|dashboards?|calculators?|mockups?)';
+/**
+ * Things a bot makes as artifacts that people also have of their own ("I've fixed the bug in your app"): only with a cue
+ * below, and not "of" something ("the board of directors").
+ */
 const SOMETIMES_ARTIFACT_NOUN = '(?:apps?|games?|boards?|trackers?)(?!\\s+of\\b)';
-/** Pointing at an artifact: its card, tapping or opening it. A version named counts through VERSION_SAID instead. */
-const ARTIFACT_CUE = /\b(?:the card|tap|open it|artifacts?)\b/;
+/**
+ * Pointing at an artifact: tapping or opening its card, the card above or below. Not "tap" or "open it" alone: "Tap Save"
+ * is an ordinary instruction. A version named counts through VERSION_SAID instead.
+ */
+const ARTIFACT_CUE = /\b(?:artifacts?|(?:tap|open|see|in) (?:the|its) card|card (?:above|below))\b/;
 /** "v2", "version 3": a version said to exist. */
 const VERSION_SAID = /\b(?:v\d+|version \d+)\b/;
 /** Saying it was made or changed. */
