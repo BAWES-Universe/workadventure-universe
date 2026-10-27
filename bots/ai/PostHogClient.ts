@@ -66,7 +66,8 @@ export interface CapturedGeneration {
 function cacheProperties(params: CapturedGeneration): Record<string, unknown> {
     if (!params.cacheReadTokens && !params.cacheWriteTokens) return {};
     return {
-        $ai_cache_read_input_tokens: params.cacheReadTokens ?? 0,
+        // Only a figure that was reported: a zero here would overwrite the cached count the call itself carries
+        ...(params.cacheReadTokens ? { $ai_cache_read_input_tokens: params.cacheReadTokens } : {}),
         $ai_cache_creation_input_tokens: params.cacheWriteTokens ?? 0,
         $ai_cache_reporting_exclusive: false,
     };
