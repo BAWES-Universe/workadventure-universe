@@ -65,9 +65,49 @@ export function refusesStreamOptions(status: number, errorText: string): boolean
     return (status === 400 || status === 422) && /stream_options|include_usage/i.test(errorText);
 }
 
+/** Orbit's smallest longest reply: a stated maximum below it is a number about something else. */
+const SMALLEST_OUTPUT_CEILING = 256;
+
+/**
+ * The most output tokens a model says it allows, read from the error it gave for being asked more (Orbit #666
+ * recommends 32,000 by default, above what some older models take). Undefined when the error is about something else.
+ * The forms providers use:
+ * - OpenAI: "max_tokens is too large: 32000. This model supports at most 16384 completion tokens, whereas you provided 32000."
+ * - Anthropic: "max_tokens: 32000 > 8192, which is the maximum allowed number of output tokens for ..."
+ * - DeepSeek: "Invalid max_tokens value, the valid range of max_tokens is [1, 8192]"
+ * - Groq: "`max_tokens` must be less than or equal to `8192`, the maximum value for `max_tokens` is ..."
+ * - vLLM and others: "maximum context length is 131072 tokens. However, you requested 140000 tokens (108000 in the
+ *   messages, 32000 in the completion)": what is left of the context after the messages.
+ */
+export function statedOutputCeiling(status: number, errorText: string, asked: number | undefined): number | undefined {
+    if ((status !== 400 && status !== 422) || !asked) return undefined;
+    if (!/max_(?:completion_)?tokens|output tokens|completion tokens|in the completion/i.test(errorText)) return undefined;
+    const context = /maximum context length is (\d+)[\s\S]*?(\d+) in the messages/i.exec(errorText);
+    const ceiling = context
+        ? Number(context[1]) - Number(context[2])
+        : Math.max(0, ...(errorText.match(/\d+/g) ?? []).map(Number).filter((n) => n < asked));
+    return ceiling >= SMALLEST_OUTPUT_CEILING && ceiling < asked ? ceiling : undefined;
+}
+
 export class OpenAIProvider implements AIProvider {
     /** Endpoints that refused `stream_options` once. They are not asked again, so a provider that does not know it costs one failed request, not one per reply. */
     private static readonly refusedStreamOptions = new Set<string>();
+
+    /** The output cap each model stated once it refused more (endpoint and model). It is asked within it from then on, so it costs one failed request, not one per reply. */
+    private static readonly outputCeilings = new Map<string, number>();
+
+    private static outputCeilingKey(config: AIProviderConfig, endpoint: string): string {
+        return `${endpoint} ${config.model}`;
+    }
+
+    /** The body asked again within the cap the model stated, and the cap kept for its next requests. */
+    private withinOutputCeiling(requestBody: Record<string, any>, config: AIProviderConfig, endpoint: string, ceiling: number): Record<string, any> {
+        OpenAIProvider.outputCeilings.set(OpenAIProvider.outputCeilingKey(config, endpoint), ceiling);
+        const retryBody = { ...requestBody };
+        if (retryBody.max_completion_tokens !== undefined) retryBody.max_completion_tokens = ceiling;
+        else retryBody.max_tokens = ceiling;
+        return retryBody;
+    }
 
     private readonly DEFAULT_ENDPOINT = 'https://api.openai.com/v1';
     private readonly DEFAULT_TIMEOUT = 30000; // 30 seconds
@@ -214,16 +254,18 @@ export class OpenAIProvider implements AIProvider {
             body.temperature = config.temperature;
         }
 
-        // Use correct parameter based on model type
+        // Use correct parameter based on model type, within the cap the model stated before
         if (config.maxTokens) {
+            const ceiling = OpenAIProvider.outputCeilings.get(OpenAIProvider.outputCeilingKey(config, this.getEndpoint(config)));
+            const maxTokens = ceiling ? Math.min(config.maxTokens, ceiling) : config.maxTokens;
             const requiresMaxCompletion = this.requiresMaxCompletionTokens(config.model);
             if (process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[OpenAIProvider] Model: ${config.model}, requiresMaxCompletionTokens: ${requiresMaxCompletion}`);
             }
             if (requiresMaxCompletion) {
-                body.max_completion_tokens = config.maxTokens;
+                body.max_completion_tokens = maxTokens;
             } else {
-                body.max_tokens = config.maxTokens;
+                body.max_tokens = maxTokens;
             }
         }
 
@@ -288,6 +330,8 @@ export class OpenAIProvider implements AIProvider {
                 } catch (e) {
                     // Not JSON, use as-is
                 }
+
+                const outputCeiling = statedOutputCeiling(response.status, errorText, requestBody.max_completion_tokens ?? requestBody.max_tokens);
 
                 // Retry without temperature if model rejects it
                 if (errorData?.error?.code === 'unsupported_value' && 
@@ -389,6 +433,33 @@ export class OpenAIProvider implements AIProvider {
                     const retryBody = { ...requestBody };
                     delete retryBody.max_tokens;
                     retryBody.max_completion_tokens = config.maxTokens;
+
+                    const retryController = new AbortController();
+                    externalAbortCleanups.push(linkExternalAbort(externalSignal, retryController));
+                    streamController = retryController; // update for active stream
+                    timeoutId = setTimeout(() => retryController.abort(), timeout);
+                    const retryResponse = await fetchFor(config)(endpoint, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${apiKey}`,
+                        },
+                        body: JSON.stringify(retryBody),
+                        signal: retryController.signal,
+                    });
+
+                    clearTimeout(timeoutId);
+
+                    if (!retryResponse.ok) {
+                        const retryErrorText = await retryResponse.text();
+                        throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
+                    }
+
+                    finalResponse = retryResponse;
+                }
+                // Ask again within the model's own output cap when it refuses the longest reply
+                else if (outputCeiling !== undefined) {
+                    const retryBody = this.withinOutputCeiling(requestBody, config, endpoint, outputCeiling);
 
                     const retryController = new AbortController();
                     externalAbortCleanups.push(linkExternalAbort(externalSignal, retryController));
@@ -600,6 +671,8 @@ export class OpenAIProvider implements AIProvider {
                         // Not JSON, use as-is
                     }
 
+                    const outputCeiling = statedOutputCeiling(response.status, errorText, requestBody.max_completion_tokens ?? requestBody.max_tokens);
+
                     // If error is about temperature, retry without temperature (use default)
                     if (errorData?.error?.code === 'unsupported_value' && 
                         errorData?.error?.param === 'temperature' &&
@@ -645,6 +718,35 @@ export class OpenAIProvider implements AIProvider {
                         const retryBody = { ...requestBody };
                         delete retryBody.max_tokens;
                         retryBody.max_completion_tokens = config.maxTokens;
+
+                        const retryController = new AbortController();
+                        externalAbortCleanups.push(linkExternalAbort(externalSignal, retryController));
+                        const retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
+
+                        try {
+                            const retryResponse = await fetchFor(config)(endpoint, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'Authorization': `Bearer ${apiKey}`,
+                                },
+                                body: JSON.stringify(retryBody),
+                                signal: retryController.signal,
+                            });
+
+                            if (!retryResponse.ok) {
+                                const retryErrorText = await retryResponse.text();
+                                throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
+                            }
+
+                            finalResponse = retryResponse;
+                        } finally {
+                            clearTimeout(retryTimeoutId);
+                        }
+                    }
+                    // Ask again within the model's own output cap when it refuses the longest reply
+                    else if (outputCeiling !== undefined) {
+                        const retryBody = this.withinOutputCeiling(requestBody, config, endpoint, outputCeiling);
 
                         const retryController = new AbortController();
                         externalAbortCleanups.push(linkExternalAbort(externalSignal, retryController));
