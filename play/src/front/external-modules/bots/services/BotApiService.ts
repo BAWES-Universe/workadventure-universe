@@ -11,6 +11,7 @@ import { resolveCredentialUrl } from "../../admin-api/iframeAuth";
 import { freshOrbitAccessToken, type GameTokenHolder } from "../../admin-api/orbitAccessToken";
 import type { PushOverview, PushSettings } from "../../../Notification/Push/PushSettings";
 import { ChatPusherSchema, type ChatPusher, type PushActivityReport } from "../../../Notification/Push/PushChat";
+import { readBotUsage, type BotUsage, type UsageRange } from "../usageModel";
 import { classifySummonFailure, type SummonResult } from "./summonFailure";
 
 interface AuthError extends Error {
@@ -72,6 +73,9 @@ export interface CreateBotDto {
     aiProviderRef?: string;
     /** "Patience": how long the bot waits for a tool to answer, in seconds; null = the bot server's default */
     toolTimeoutSeconds?: number | null;
+    /** "Longest reply" and "Steps in one reply", lower than the key's (Orbit #666); null follows the key */
+    maxReplyTokens?: number | null;
+    maxSteps?: number | null;
     /** The companion (pet) that walks with the bot: a companion texture id, or null for none */
     companionTextureId?: string | null;
 }
@@ -1251,6 +1255,18 @@ export class BotApiService {
         } finally {
             clearTimeout(timer);
         }
+    }
+
+    /**
+     * A bot's usage for the people who manage it (Orbit #491): who chatted by name, how much and when, never what they
+     * said. Days are the viewer's own days.
+     */
+    async getBotUsage(botId: string, range: UsageRange, timeZone: string): Promise<BotUsage> {
+        return this.withPermissionsTimeout(async (signal) => {
+            const query = `range=${encodeURIComponent(range)}&tz=${encodeURIComponent(timeZone)}`;
+            const response = await this.fetch(`/api/bots/${encodeURIComponent(botId)}/usage?${query}`, { signal });
+            return readBotUsage(await response.json());
+        });
     }
 
     /**

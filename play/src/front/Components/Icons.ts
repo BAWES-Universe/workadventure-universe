@@ -194,3 +194,5 @@ export { default as IconDeviceMobilePlus } from "~icons/tabler/device-mobile-plu
 export { default as IconDeviceDesktopDown } from "~icons/tabler/device-desktop-down";
 export { default as IconLoader2 } from "~icons/tabler/loader-2";
 export { default as IconLayoutSidebar } from "~icons/tabler/layout-sidebar";
+export { default as IconChartBar } from "~icons/tabler/chart-bar";
+export { default as IconGauge } from "~icons/tabler/gauge";

@@ -36,6 +36,10 @@ export interface BotData {
     /** The bot's own model on its own AI key (null: the key's check model). Undefined: not known here. */
     aiModel?: string | null;
     toolTimeoutSeconds?: number | null; // "Patience": how long the bot waits for a tool, null = the server's 90 s
+    /** "Longest reply" in tokens, lower than its key's (Orbit #666); null follows the key. */
+    maxReplyTokens?: number | null;
+    /** "Steps in one reply", lower than its key's (Orbit #666); null follows the key. */
+    maxSteps?: number | null;
     companionTextureId?: string | null; // The companion (pet) that walks with it, a companion texture id; null = none
     enabled?: boolean; // Whether bot is active
     createdAt?: string;
@@ -55,6 +59,14 @@ export interface KeyModelOption {
     id: string;
     tools?: boolean;
     vision?: boolean;
+    /** The longest reply it can write, in tokens (Orbit #673). */
+    output?: number;
+}
+
+/** A key's (or Universe AI's) longest reply in tokens and steps in one reply (Orbit #666): a bot on it can lower them only. */
+export interface BotLimitCeiling {
+    reply: number;
+    steps: number;
 }
 
 export interface BotAiOptions {
@@ -62,7 +74,7 @@ export interface BotAiOptions {
     current: string | null;
     /** The bot's own model on its key (null: the key's check model, or not on a key). Missing on an older Orbit. */
     currentModel?: string | null;
-    universeAi: { available: boolean };
+    universeAi: { available: boolean; limits?: BotLimitCeiling };
     maker: { id: string; name: string | null } | null;
     viewerIsMaker: boolean;
     keys: Array<{
@@ -79,10 +91,14 @@ export interface BotAiOptions {
         ifDown: "universe-ai" | "stop";
         /** The key's check model: what a bot on it replies with until it picks its own. */
         model?: string | null;
+        /** The longest reply the check model can write, when its provider says (Orbit #673). */
+        output?: number | null;
         /** The models the lend here allows (null when the provider's list could not be loaded). Missing on an older Orbit. */
         models?: KeyModelOption[] | null;
         /** The lend here allows only some of the key's models. */
         limited?: boolean;
+        /** Its longest reply and steps; a bot on it can only lower them. Missing on an older Orbit. */
+        limits?: BotLimitCeiling;
     }>;
     currentKey: {
         id: string;
@@ -93,6 +109,10 @@ export interface BotAiOptions {
         ifDown: "universe-ai" | "stop";
         logo?: string | null;
         plainIcon?: "plug" | "chip" | null;
+        limits?: BotLimitCeiling;
+        /** The model the bot replies with, and the longest reply it can write when its provider says (Orbit #673). */
+        model?: string | null;
+        output?: number | null;
     } | null;
     providers: Array<{ id: string; name: string; type: string; model: string | null; enabled: boolean }> | null;
 }

@@ -476,6 +476,7 @@
         <FileViewerText
             {bytes}
             {kind}
+            name={source.name}
             on:loaded={(event) => (rowCount = event.detail.rowCount)}
             on:failed={onReaderFailed}
             on:download={download}
