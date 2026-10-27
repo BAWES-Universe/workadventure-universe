@@ -2,6 +2,7 @@
     // Usage (Orbit #491, mock v4 approved 20 Oct 2026): first on the bot page, for the people who manage the bot. The
     // range's numbers, replies a day split into direct messages and nearby chat, and three rows that each open a screen:
     // who uses it, what it ran on, and its limits. Names, never words. A bot nobody has chatted with yet is one line.
+    import { get } from "svelte/store";
     import LL, { locale } from "../../../../../i18n/i18n-svelte";
     import type { BotData } from "../../types";
     import { botUsageStore, loadBotUsage } from "../../stores/BotUsageStore";
@@ -32,10 +33,12 @@
     $: text = page.usage;
     $: name = bot.name || "Bot";
 
+    // Back from one of its screens, the group keeps the range that was picked
     let loadedFor: string | undefined;
     $: if (bot.id !== loadedFor) {
         loadedFor = bot.id;
-        void loadBotUsage(bot.id, "7d");
+        const shown = get(botUsageStore);
+        void loadBotUsage(bot.id, shown?.botId === bot.id ? shown.range : "7d");
     }
     $: state = $botUsageStore && $botUsageStore.botId === bot.id ? $botUsageStore : undefined;
     $: usage = state?.data;

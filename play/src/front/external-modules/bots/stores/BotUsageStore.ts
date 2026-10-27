@@ -32,8 +32,12 @@ export async function loadBotUsage(botId: string, range: UsageRange): Promise<vo
             botUsageStore.set({ botId, range, status: "hidden" });
             return;
         }
-        botUsageStore.update((state) =>
-            state && state.botId === botId ? { ...state, range, status: "failed" } : { botId, range, status: "failed" }
-        );
+        // What is shown stays only when it is this range's: another range's numbers under this range's name would be wrong
+        botUsageStore.update((state) => ({
+            botId,
+            range,
+            status: "failed",
+            data: state && state.botId === botId && state.data?.range === range ? state.data : undefined,
+        }));
     }
 }

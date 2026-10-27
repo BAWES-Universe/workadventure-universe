@@ -138,6 +138,29 @@ describe("the bot page's Usage (Orbit #491)", () => {
         expect(mocks.api.getBotUsage).toHaveBeenLastCalledWith("b1", "30d", expect.any(String));
     });
 
+    it("keeps the picked range when it comes back from a screen", async () => {
+        await mountGroup();
+        byTestId("bot-usage-30d")[0].click();
+        await settle();
+        destroy();
+        await mountGroup();
+        expect(mocks.api.getBotUsage).toHaveBeenLastCalledWith("b1", "30d", expect.any(String));
+        expect(byTestId("bot-usage-30d")[0].getAttribute("aria-checked")).toBe("true");
+    });
+
+    it("never shows another range's numbers when the picked range can't be read, and can try again", async () => {
+        await mountGroup();
+        mocks.api.getBotUsage.mockRejectedValueOnce(new Error("offline"));
+        byTestId("bot-usage-30d")[0].click();
+        await settle();
+        expect(byTestId("bot-usage-chart")).toHaveLength(0);
+        expect(target.querySelector("[role=alert]")).not.toBeNull();
+        (target.querySelector(".us-retry") as HTMLButtonElement).click();
+        await settle();
+        expect(mocks.api.getBotUsage).toHaveBeenLastCalledWith("b1", "30d", expect.any(String));
+        expect(byTestId("bot-usage-chart")).toHaveLength(1);
+    });
+
     it("opens each screen from its row", async () => {
         const onOpenScreen = await mountGroup();
         byTestId("bot-usage-people")[0].click();
