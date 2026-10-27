@@ -407,7 +407,7 @@ const chat: BaseTranslation = {
     roomMenu: {
         leaveRoom: {
             label: "Leave group",
-            notification: "You have left the group",
+            notification: "Left {name:string}",
         },
         muteRoom: "Mute group",
         unmuteRoom: "Unmute group",
@@ -434,7 +434,7 @@ const chat: BaseTranslation = {
             confirm: "Delete this chat?",
             confirmButton: "Delete",
             cancel: "Cancel",
-            notification: "Chat deleted",
+            notification: "Deleted your chat with {name:string}",
         },
         profile: {
             title: "Profile",

@@ -1,10 +1,10 @@
 <script lang="ts">
     import { getContext, onDestroy, onMount } from "svelte";
-    import { readable } from "svelte/store";
+    import { get, readable } from "svelte/store";
     import { openModal } from "svelte-modals";
     import { EventType } from "matrix-js-sdk";
     import LL from "../../../../i18n/i18n-svelte";
-    import { notificationPlayingStore } from "../../../Stores/NotificationStore";
+    import { showChatDoneToast } from "../../../Stores/ChatDoneToastStore";
     import type { RoomFolder, ChatRoomModeration } from "../../Connection/ChatConnection";
     import type { OrderFreeze } from "../OneList/OneListStore";
     import { ONE_LIST_FREEZE_CONTEXT } from "../OneList/OneListStore";
@@ -65,11 +65,11 @@
     }
     function closeMenuAndLeaveFolder() {
         toggleSpaceOption();
+        if (!folder) return;
+        const notification = $LL.chat.roomMenu.leaveRoom.notification({ name: get(folder.name) });
         folder
-            ?.leaveRoom()
-            .then(() => {
-                notificationPlayingStore.playNotification($LL.chat.roomMenu.leaveRoom.notification());
-            })
+            .leaveRoom()
+            .then(() => showChatDoneToast(notification))
             .catch(() => console.error("Failed to leave room"));
     }
 
