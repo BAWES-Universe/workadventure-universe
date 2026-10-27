@@ -1,6 +1,6 @@
 <script lang="ts">
     import { onDestroy } from "svelte";
-    import { derived, get, readable } from "svelte/store";
+    import { derived, get, readable, type Readable } from "svelte/store";
     import LL from "../../../../../i18n/i18n-svelte";
     import { gameManager } from "../../../../Phaser/Game/GameManager";
     import type { ChatMessage } from "../../../Connection/ChatConnection";
@@ -181,10 +181,21 @@
         });
         return bots;
     })();
-    $: messageableBots = derived(
-        metBots.map((bot) => botDmAccessCache.store(bot.botId)),
-        (allowed) => metBots.filter((_, index) => allowed[index])
-    );
+    // Rebuilt only when the bots themselves change: the world's people change all the time, and a fresh store starts
+    // at no while it asks again, which would make Message blink.
+    let botsKey = "";
+    let messageableBots: Readable<{ botId: string; chatID: string; name: string }[]> = readable([]);
+    $: {
+        const key = JSON.stringify(metBots);
+        if (key !== botsKey) {
+            botsKey = key;
+            const bots = metBots;
+            messageableBots = derived(
+                bots.map((bot) => botDmAccessCache.store(bot.botId)),
+                (allowed) => bots.filter((_, index) => allowed[index])
+            );
+        }
+    }
     function messageBot(chatID: string) {
         analyticsClient.openedChat();
         openDirectChatRoom(chatID).catch((e) => console.error(e));

@@ -34,11 +34,19 @@ vi.mock("../../../UserList/FriendActions", () => ({ runFriendAction: friendsHold
 // Whether you may message a bot: the owner's rule, as Orbit answers it.
 const botsHolder = vi.hoisted(() => ({
     allowed: new Set<string>(),
+    asked: 0,
     openDirectChatRoom: vi.fn(() => Promise.resolve()),
 }));
 vi.mock("../../../../Bots/BotStatusStore", async () => {
     const { readable: store } = await import("svelte/store");
-    return { botDmAccessCache: { store: (botId: string) => store(botsHolder.allowed.has(botId)) } };
+    return {
+        botDmAccessCache: {
+            store: (botId: string) => {
+                botsHolder.asked++;
+                return store(botsHolder.allowed.has(botId));
+            },
+        },
+    };
 });
 vi.mock("../../../../Utils", () => ({ openDirectChatRoom: botsHolder.openDirectChatRoom }));
 vi.mock("../../../../../../i18n/i18n-svelte", () => {
@@ -77,6 +85,7 @@ describe("ProximityEndedFooter", () => {
         sceneHolder.scene = undefined;
         gameSceneIsLoadedStore.set(false);
         botsHolder.allowed.clear();
+        botsHolder.asked = 0;
         botsHolder.openDirectChatRoom.mockClear();
     });
 
@@ -218,6 +227,40 @@ describe("ProximityEndedFooter", () => {
         expect(message).not.toBeNull();
         message?.click();
         expect(botsHolder.openDirectChatRoom).toHaveBeenCalledWith("@bot_7:chat.example.test");
+    });
+
+    it("keeps the bot's Message as people around it change, without asking again", async () => {
+        botsHolder.allowed.add("7");
+        const bot = {
+            uuid: "bot-7",
+            name: "Bot",
+            chatID: "@bot_7:chat.example.test",
+            tags: ["bot"],
+            playUri: "https://play.example.test/room",
+        };
+        const users = writable(new Map<string, unknown>([["space-bot", bot]]));
+        sceneHolder.scene = {
+            allUsersInWorldStore: users,
+            roomUrl: "https://play.example.test/room",
+            room: { isChatOnlineListEnabled: true, isChatDisconnectedListEnabled: false },
+            userProviderMerger: Promise.resolve({ usersByRoomStore: readable(new Map()) }),
+        };
+        const target = document.createElement("div");
+        document.body.append(target);
+        component = new ProximityEndedFooter({ target, props: { session: endedWithBot } });
+        await tick();
+        expect(botsHolder.asked).toBe(1);
+
+        users.set(
+            new Map<string, unknown>([
+                ["space-bot", { ...bot }],
+                ["space-noura", { uuid: "uuid-noura", name: "Noura", playUri: "x" }],
+            ])
+        );
+        await tick();
+
+        expect(botsHolder.asked).toBe(1);
+        expect(target.querySelector('[data-testid="proximityMessageBot"]')).not.toBeNull();
     });
 
     it("lists no bot you may not message", async () => {
