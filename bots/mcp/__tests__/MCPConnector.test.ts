@@ -14,6 +14,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import axios from 'axios';
+import { lookup } from 'dns/promises';
 import { MCPConnector, REQUEST_TIMEOUT, toolTimeoutMs, type McpToolDefinition } from '../MCPConnector';
 
 // ---------------------------------------------------------------------------
@@ -22,6 +23,11 @@ import { MCPConnector, REQUEST_TIMEOUT, toolTimeoutMs, type McpToolDefinition } 
 
 vi.mock('../../ai/encryption', () => ({
     decryptApiKey: (val: string | null | undefined) => val || null,
+}));
+
+// Every server in these tests is a public one
+vi.mock('dns/promises', () => ({
+    lookup: vi.fn().mockResolvedValue([{ address: '93.184.216.34', family: 4 }]),
 }));
 
 vi.mock('axios', () => ({
@@ -463,6 +469,33 @@ describe('MCPConnector', () => {
             );
 
             expect(result).toEqual(MOCK_WEATHER_CALL_RESPONSE.result.content);
+        });
+
+        it('follows no redirect, on the initialize or the call', async () => {
+            mockedAxios.post.mockImplementation(async (_url: string, body: any) =>
+                body?.method === 'initialize' ? MOCK_INIT_RESPONSE : { data: MOCK_WEATHER_CALL_RESPONSE }
+            );
+            await MCPConnector.executeToolCall('server-1', 'https://weather.example.com/mcp', 'get_weather', { location: 'Paris' }, 'none');
+            expect(mockedAxios.post).toHaveBeenCalledTimes(2);
+            for (const call of mockedAxios.post.mock.calls) {
+                expect(call[2]).toMatchObject({ maxRedirects: 0 });
+            }
+        });
+
+        it('sends nothing when the server name resolves to a private address at call time (#435)', async () => {
+            const publicAddress = [{ address: '93.184.216.34', family: 4 }];
+            vi.mocked(lookup).mockResolvedValue([{ address: '10.0.0.5', family: 4 }] as never);
+            const result = await MCPConnector.executeToolCall('server-1', 'https://weather.example.com/mcp', 'get_weather', {}, 'none');
+            vi.mocked(lookup).mockResolvedValue(publicAddress as never);
+            expect(mockedAxios.post).not.toHaveBeenCalled();
+            expect(result).toEqual(expect.objectContaining({ error: expect.any(String) }));
+        });
+
+        it('sends nothing to an internal address the old check let through', async () => {
+            for (const url of ['https://127.0.0.2/', 'https://[::ffff:127.0.0.1]/', 'https://[fe80::1]/', 'https://foo.internal/']) {
+                await MCPConnector.executeToolCall('server-1', url, 'get_weather', {}, 'none');
+            }
+            expect(mockedAxios.post).not.toHaveBeenCalled();
         });
 
         it('returns error object on network failure', async () => {
