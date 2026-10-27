@@ -245,6 +245,12 @@ const chat: BaseTranslation = {
         notLogged: "You need to be logged in to upload a file.",
         clickToOpen: "Click to open",
     },
+    codeView: {
+        lines: "{count:number} {{line|lines}}",
+        copy: "Copy",
+        copied: "Copied",
+        copyFailed: "Press Ctrl+C",
+    },
     fileViewer: {
         from: "From {name}",
         fromYou: "From you",
@@ -280,6 +286,7 @@ const chat: BaseTranslation = {
         rows: "{count:number} {{row|rows}}",
         sheets: "{count:number} {{sheet|sheets}}",
         textCut: "Showing the first 1 MB.",
+        codeLinesCut: "Showing the first {shown:number} lines.",
         downloadRest: "Download to see the rest",
         rowsCut: "Showing the first {shown:number} of {total:number} rows.",
         rowsCutUnknown: "Showing the first {shown:number} rows.",
@@ -805,7 +812,6 @@ const chat: BaseTranslation = {
         backToLatest: "Back to latest",
         restoreThis: "Restore this one",
         restoreFailed: "Could not restore it. Try again.",
-        codeLines: "{count:number} {{line|lines}}",
         codeCut: "Showing the first part of the file.",
         loadingVersions: "Loading the versions…",
         frameTitle: "{title}, by {maker}",

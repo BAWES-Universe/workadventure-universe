@@ -221,6 +221,20 @@ function checkboxesToSigns(html: string): string {
     return template.innerHTML;
 }
 
+/**
+ * The language a code block names ("```js") is kept as a data attribute, so the viewer can color the block: the
+ * sanitizer drops every class, the "language-js" one marked writes included.
+ */
+function keepCodeLanguages(html: string): string {
+    const template = document.createElement("template");
+    template.innerHTML = html;
+    for (const code of Array.from(template.content.querySelectorAll("pre > code[class]"))) {
+        const language = /(?:^|\s)language-([a-z0-9+#-]{1,24})(?:\s|$)/i.exec(code.getAttribute("class") ?? "")?.[1];
+        if (language) code.setAttribute("data-code-language", language.toLowerCase());
+    }
+    return template.innerHTML;
+}
+
 const marked = new Marked({ gfm: true, async: false });
 
 /**
@@ -229,7 +243,7 @@ const marked = new Marked({ gfm: true, async: false });
  */
 export function renderMarkdown(text: string): string {
     const html = marked.parse(text) as string;
-    return purify.sanitize(checkboxesToSigns(picturesFromOtherSitesToLinks(html)), {
+    return purify.sanitize(keepCodeLanguages(checkboxesToSigns(picturesFromOtherSitesToLinks(html))), {
         USE_PROFILES: { html: true },
         FORBID_TAGS: [
             "style",

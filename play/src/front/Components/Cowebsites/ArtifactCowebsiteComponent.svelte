@@ -14,6 +14,7 @@
     import { artifactBadge } from "../../Artifacts/artifactBadge";
     import type { ArtifactKind } from "../../Artifacts/artifactCard";
     import { whenLabel } from "../../Artifacts/whenLabel";
+    import { codeKindOfArtifact, codeLinesOf, coloredCodeBlocks } from "../../FileViewer/codeHighlight";
     import { renderMarkdown } from "../../FileViewer/textFiles";
     import { versionMenuRoom, VERSION_MENU_MIN_ROOM } from "../../Artifacts/versionMenuRoom";
     import { chatOwnSheetHeightStore } from "../../Chat/ChatSheetStore";
@@ -21,6 +22,7 @@
     import { askOpenHereForRoom } from "../../Stores/OpenHereSheetStore";
     import OpenHereRow from "../EmbedScreens/OpenHereRow.svelte";
     import OpenHereItemIcon from "../EmbedScreens/OpenHereItemIcon.svelte";
+    import CodeView from "./FileViewer/CodeView.svelte";
     import { IconAlertTriangle, IconCode, IconEye, IconHistory, IconLoader, IconRefresh } from "@wa-icons";
 
     export let actualCowebsite: ArtifactCoWebsite;
@@ -262,9 +264,7 @@
         retryText();
     }
 
-    $: codeLines = text ? text.content.split("\n") : [];
-    $: codeShown =
-        codeLines.length > MAX_CODE_LINES ? codeLines.slice(0, MAX_CODE_LINES).join("\n") : text?.content ?? "";
+    $: codeLines = text ? codeLinesOf(text.content) : [];
     $: documentHtml = kind === "markdown" && text ? renderMarkdown(text.content) : "";
 </script>
 
@@ -363,8 +363,12 @@
             {#if codeOn}
                 <div class="code" data-testid="artifactCodeView">
                     {#if text}
-                        <div class="code-head">{$LL.chat.artifacts.codeLines({ count: codeLines.length })}</div>
-                        <pre><code>{codeShown}</code></pre>
+                        <CodeView
+                            lines={codeLines.slice(0, MAX_CODE_LINES)}
+                            copyText={text.content}
+                            codeKind={codeKindOfArtifact(kind)}
+                            totalLines={codeLines.length}
+                        />
                         {#if codeLines.length > MAX_CODE_LINES}<p class="cut">{$LL.chat.artifacts.codeCut()}</p>{/if}
                     {:else if textFailed}
                         <div class="state" role="alert">
@@ -378,7 +382,7 @@
                     {/if}
                 </div>
             {:else if kind === "markdown"}
-                <div class="document" data-testid="artifactDocument">
+                <div class="document code-colors" data-testid="artifactDocument" use:coloredCodeBlocks={documentHtml}>
                     {#if text}
                         <!-- eslint-disable-next-line svelte/no-at-html-tags -->
                         {@html documentHtml}
@@ -622,25 +626,6 @@
     .code {
         min-height: 100%;
         background: #0f0c19;
-    }
-    .code-head {
-        position: sticky;
-        top: 0;
-        padding: 8px 12px;
-        font-size: 12px;
-        color: rgba(255, 255, 255, 0.6);
-        background: #0f0c19;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    }
-    pre {
-        margin: 0;
-        padding: 12px;
-        font-family: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
-        font-size: 12px;
-        line-height: 1.55;
-        white-space: pre-wrap;
-        overflow-wrap: anywhere;
-        color: rgba(255, 255, 255, 0.9);
     }
     .cut {
         margin: 0;
