@@ -95,6 +95,13 @@ async function* followUpErrorStream() {
     yield { content: "", done: true, metadata: { tokensUsed: 0, latency: 300, error: true, errorStatus: 502, errorText: "OpenAI API error: 502 bad gateway" } };
 }
 
+// Words before the tool, then the tool.
+async function* prefaceThenToolCallStream() {
+    yield { content: "Let me check.", done: false };
+    yield { content: "", done: false, toolCalls: [{ id: "call_1", name: "get_bot_position", arguments: "{}" }] };
+    yield { content: "", done: true, metadata: { tokensUsed: 110, promptTokens: 100, completionTokens: 10, latency: 20, error: false, truncated: false, finishReason: "tool_calls" } };
+}
+
 // The first call asked for a tool, then broke off.
 async function* brokenToolCallStream() {
     yield { content: "", done: false, toolCalls: [{ id: "call_1", name: "get_bot_position", arguments: "{}" }] };
@@ -211,6 +218,15 @@ describe("AIService – a reply that leaves the person nothing (#1498)", () => {
         const generations = mockCaptureAiGeneration.mock.calls.map((call: any[]) => call[0]);
         expect(generations[0].error).toBeUndefined();
         expect(generations.at(-1).error).toBe("the provider failed (502): OpenAI API error: 502 bad gateway");
+    });
+
+    it("still says why when only words before the tool came back", async () => {
+        mockGenerateStream.mockImplementationOnce(prefaceThenToolCallStream).mockImplementation(followUpErrorStream);
+        await run();
+
+        expect(warnings()).toEqual([
+            "[AIService] Bot bot-1 gave no answer on llama3 (test-provider): the provider failed (502): OpenAI API error: 502 bad gateway",
+        ]);
     });
 
     it("leaves a reply alone when a later call made up for a failed one", async () => {

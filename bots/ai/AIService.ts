@@ -1902,8 +1902,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     // "Couldn't answer"): say why in the logs, on the span and on the trace (#1498)
                     const problem = streamCompleted && !abortSignal?.aborted
                         ? replyProblem({
-                              // A call after a tool ran (or a retry) can fail too; one that a later call made up for, with words, is no problem
-                              error: error || (followUpFailedForHealth && !accumulatedContent.trim()),
+                              // A call after a tool ran (or a retry) can fail too. It is no problem only when a later call made up
+                              // for it with words: text said before the tool ran ("Let me check") does not count
+                              error: error || (followUpFailedForHealth && !followUpContent.trim()),
                               errorStatus: errorStatus ?? followUpErrorStatus,
                               // A private bot's provider text can quote the conversation: only its status is kept
                               errorText: privateBot ? 'details left out for a private bot' : errorText,
