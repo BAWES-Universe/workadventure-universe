@@ -218,24 +218,35 @@ export const ARTIFACT_CUT_OFF_MESSAGE =
 /** What the chat says when a bot said it made or changed an artifact and nothing was saved (Orbit #666). */
 export const NOTHING_SAVED_LINE = 'No new version was saved.';
 
-/** Something a bot makes as an artifact, or a part of one. */
-const ARTIFACT_WORDS = /\b(artifacts?|apps?|pages?|cards?|versions?|v\d+|dashboards?|games?|calculators?|boards?|mocks?|mockups?|documents?|docs?|charts?|sites?|websites?|trackers?|tabs?|buttons?|layouts?|designs?|drawings?|files?|forms?|sections?|tables?|lists?|quiz(?:zes)?|timers?|maps?)\b/;
+/** Something a bot makes as an artifact. Not table, list, file or map: those come up in ordinary answers. */
+const ARTIFACT_NOUN =
+    '(?:artifacts?|apps?|pages?|dashboards?|games?|boards?|calculators?|sites?|websites?|trackers?|mocks?|mockups?|versions?)';
 /** "v2", "version 3": a version said to exist. */
-const VERSION_SAID = /\b(v\d+|version \d+)\b/;
-/** "I've rebuilt it", "here's the updated board", "it's ready". */
-const DONE_SAID =
-    /\b(i(?:'ve|’ve| have)?|i just|here(?:'s|’s| is)|it(?:'s|’s| is) (?:now )?|all set|done)\b[^.!?\n]{0,60}\b(made|built|created|updated|changed|rebuilt|redesigned|redid|reworked|added|fixed|saved|ready|live|finished|upgraded|improved)\b/;
+const VERSION_SAID = /\b(?:v\d+|version \d+)\b/;
+/** Saying it was made or changed. */
+const DONE_VERB =
+    '(?:made|built|created|updated|changed|rebuilt|redesigned|redid|reworked|added|fixed|saved|ready|live|finished|upgraded|improved)';
+/** "I've rebuilt the dashboard", "here's the updated quests board": someone saying they did it, then what, close together. */
+const DONE_SAID = new RegExp(
+    `\\b(?:i(?:'ve|’ve| have)?|i just|here(?:'s|’s| is)|it(?:'s|’s| is) (?:now )?|all set|done)\\b[^.!?\\n]{0,40}\\b${DONE_VERB}\\b[^.!?\\n]{0,30}\\b${ARTIFACT_NOUN}\\b`
+);
+/** "v2 is ready", "rebuilt it, v2 has the charts": a version named next to a word saying it was done. */
+const VERSION_DONE = new RegExp(`\\b${DONE_VERB}\\b`);
 /** "couldn't save", "nothing was saved": a bot that says it did not. */
 const NOT_DONE_SAID = /\b(couldn(?:'|’)?t|could not|can(?:'|’)?t|cannot|wasn(?:'|’)?t|was not|didn(?:'|’)?t|did not|failed|unable|not saved|nothing was saved|won(?:'|’)?t)\b/;
 
 /**
  * Whether a reply says an artifact was made or changed. Read only when no make or change was saved in the turn, so it
- * leans on the wording: a version named, or "I've built / here's the updated …", next to something an artifact is.
+ * leans on the wording, one sentence at a time: "I've built / here's the updated" followed closely by something an
+ * artifact is, or a version named ("v2", "version 3") next to a word saying it was done. Ordinary answers that mention a
+ * table, a list or a page without saying one was made don't count.
  */
 export function claimsArtifactSaved(reply: string): boolean {
     const text = reply.toLowerCase();
-    if (!text.trim() || NOT_DONE_SAID.test(text) || !ARTIFACT_WORDS.test(text)) return false;
-    return VERSION_SAID.test(text) || DONE_SAID.test(text);
+    if (!text.trim() || NOT_DONE_SAID.test(text)) return false;
+    return text
+        .split(/[.!?\n]+/)
+        .some((sentence) => DONE_SAID.test(sentence) || (VERSION_SAID.test(sentence) && VERSION_DONE.test(sentence)));
 }
 
 /** The second try after a reply said it saved an artifact and nothing was saved: do it with the tool, or say it plainly. */
@@ -244,7 +255,7 @@ export function nothingSavedRetryMessage(original: string, reply: string): strin
         `${original}\n\n[Your last answer to this was: "${reply.trim().slice(0, 1500)}". But no ${MAKE_ARTIFACT_TOOL} or ${CHANGE_ARTIFACT_TOOL} ` +
         `call was saved in that turn, so nothing was made or changed, and the chat now says "${NOTHING_SAVED_LINE}". Do it now with ` +
         `${MAKE_ARTIFACT_TOOL} or ${CHANGE_ARTIFACT_TOOL}. If it is large, build it in parts. If you cannot, say so in one short line. ` +
-        `Never say a version was saved unless the tool said so.]`
+        `If they did not ask for an artifact, answer again without saying one was made. Never say a version was saved unless the tool said so.]`
     );
 }
 

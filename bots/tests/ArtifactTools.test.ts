@@ -248,12 +248,21 @@ describe('a reply that says it saved an artifact (Orbit #666)', () => {
         expect(claimsArtifactSaved('')).toBe(false);
     });
 
+    it('does not hear it in ordinary answers that mention a table, a list, a page or a version (Sentry on #1486)', () => {
+        expect(claimsArtifactSaved("Here's the updated table:\n| Name | Score |\n| Sara | 12 |")).toBe(false);
+        expect(claimsArtifactSaved("I've added you to the list.")).toBe(false);
+        expect(claimsArtifactSaved("I've made a list of maps for you: Paris, Rome.")).toBe(false);
+        expect(claimsArtifactSaved('Python v3 came out in 2008.')).toBe(false);
+        expect(claimsArtifactSaved("I've added a note. The page you linked is about trains.")).toBe(false);
+    });
+
     it('asks the second try to use the tool or say plainly, with what the chat now says', () => {
         const retry = nothingSavedRetryMessage('make it dark', 'Rebuilt it, v2 is dark.');
         expect(retry.startsWith('make it dark')).toBe(true);
         expect(retry).toContain('Rebuilt it, v2 is dark.');
         expect(retry).toContain(NOTHING_SAVED_LINE);
         expect(retry).toContain('change_artifact');
+        expect(retry).toContain('If they did not ask for an artifact');
         expect(NOTHING_SAVED_LINE).toBe('No new version was saved.');
     });
 });
