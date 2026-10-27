@@ -489,6 +489,8 @@ export class AnthropicProvider implements AIProvider {
                     promptTokens,
                     completionTokens,
                     cacheReadTokens,
+                    // The name the price ledger and the traces read (Claude's cache reads are inside promptTokens, like OpenAI's cached ones)
+                    ...(cacheReadTokens > 0 ? { cachedPromptTokens: cacheReadTokens } : {}),
                     cacheWriteTokens,
                     latency: Date.now() - startTime,
                     error: !streamEnded || refused,

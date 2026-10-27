@@ -3,6 +3,7 @@
  * other provider's request changes because of any of it.
  */
 
+import { usageFromMetadata } from "../ai/pricing/ledger";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const span = { setStatus: vi.fn(), setAttribute: vi.fn() };
@@ -218,6 +219,15 @@ describe("Claude's cache figures", () => {
         expect((await doneOf()).metadata).toMatchObject({ promptTokens: 3025, completionTokens: 7, cacheReadTokens: 0, cacheWriteTokens: 3000 });
         reply({ input_tokens: 25, cache_creation_input_tokens: 0, cache_read_input_tokens: 3000 });
         expect((await doneOf()).metadata).toMatchObject({ promptTokens: 3025, cacheReadTokens: 3000, cacheWriteTokens: 0, tokensUsed: 3032 });
+    });
+
+    it("names cache reads the way the price ledger reads them, so they are priced as reads", async () => {
+        reply({ input_tokens: 25, cache_creation_input_tokens: 0, cache_read_input_tokens: 3000 });
+        const metadata = (await doneOf()).metadata;
+        expect(metadata).toMatchObject({ cachedPromptTokens: 3000 });
+        expect(usageFromMetadata(metadata)).toMatchObject({ inputTokens: 25, cachedTokens: 3000, cacheWriteTokens: 0 });
+        reply({ input_tokens: 25 });
+        expect((await doneOf()).metadata).not.toHaveProperty("cachedPromptTokens");
     });
 
     it("takes the figures from the closing event when Claude gives them there", async () => {
