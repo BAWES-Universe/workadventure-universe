@@ -7,6 +7,7 @@
         fetchArtifact,
         fetchArtifactCode,
         fetchArtifactVersions,
+        restoreArtifactVersion,
         type ArtifactVersionInfo,
         type OpenedArtifact,
     } from "../../Artifacts/ArtifactApi";
@@ -14,6 +15,10 @@
     import type { ArtifactKind } from "../../Artifacts/artifactCard";
     import { whenLabel } from "../../Artifacts/whenLabel";
     import { renderMarkdown } from "../../FileViewer/textFiles";
+    import { versionMenuRoom, VERSION_MENU_MIN_ROOM } from "../../Artifacts/versionMenuRoom";
+    import { chatOwnSheetHeightStore } from "../../Chat/ChatSheetStore";
+    import { windowSize } from "../../Stores/CoWebsiteStore";
+    import { askOpenHereForRoom } from "../../Stores/OpenHereSheetStore";
     import OpenHereRow from "../EmbedScreens/OpenHereRow.svelte";
     import OpenHereItemIcon from "../EmbedScreens/OpenHereItemIcon.svelte";
     import { IconAlertTriangle, IconCode, IconEye, IconHistory, IconLoader, IconRefresh } from "@wa-icons";
@@ -21,7 +26,7 @@
     export let actualCowebsite: ArtifactCoWebsite;
     export let visible: boolean;
 
-    /** Below this panel width (a phone) the row keeps to Versions and Code, and the versions open as a sheet. */
+    /** Below this panel width (a phone) the row keeps to Versions. */
     const COMPACT_WIDTH = 440;
     /** The most lines of code drawn at once; a mini app is one file, so this is only a guard. */
     const MAX_CODE_LINES = 4000;
@@ -31,6 +36,7 @@
     const summaryStore = actualCowebsite.summary;
 
     let panelWidth = 0;
+    let panelHeight = 0;
     let phase: "opening" | "ready" | "failed" = "opening";
     let failure: "gone" | "offline" = "offline";
     let opened: OpenedArtifact | undefined;
@@ -39,6 +45,15 @@
     /** Another version was asked for and could not be opened; the one that was showing stays. */
     let switchFailed = false;
     let menuOpen = false;
+    /** The owner asked to restore the version showing, and the answer is on its way. */
+    let restoring = false;
+    let restoreFailed = false;
+    let menu: HTMLElement | undefined;
+    let versionsButton: HTMLButtonElement | undefined;
+    /** How tall the list may be, so it ends above the chat where the chat covers the window. */
+    let menuRoom: number | undefined;
+    /** The window was asked for room once while the list is open; it is not asked again until the list opens again. */
+    let roomAsked = false;
     let codeOn = false;
     let text: { number: number; content: string } | undefined;
     let textFailed = false;
@@ -100,6 +115,8 @@
     async function load(version: number | undefined) {
         const mine = ++request;
         switchFailed = false;
+        // A failed restore was about the version that was showing
+        restoreFailed = false;
         phase = "opening";
         try {
             const answer = await fetchArtifact(id, actualCowebsite.chat, version);
@@ -149,9 +166,42 @@
         attempt++;
     }
 
-    async function toggleVersions() {
+    // The list drops down from the button. On a phone the window sits behind the chat, so the list ends above the chat,
+    // and is measured again as the window or the chat moves.
+    $: if (menuOpen && menu) measureMenu(panelHeight, $windowSize.height, $chatOwnSheetHeightStore);
+
+    function measureMenu(_panelHeight: number, viewportHeight: number, chatHeight: number) {
+        const panel = menu?.parentElement;
+        if (!menu || !panel) return;
+        menuRoom = versionMenuRoom({
+            menuTop: menu.getBoundingClientRect().top,
+            windowBottom: panel.getBoundingClientRect().bottom,
+            viewportHeight,
+            chatHeight,
+        });
+        if (menuRoom < VERSION_MENU_MIN_ROOM && !roomAsked) {
+            roomAsked = true;
+            askOpenHereForRoom();
+        }
+    }
+
+    // A tap anywhere else puts the list away. A tap inside the app does not reach the game, so it leaves the list open.
+    function onPointerDown(event: PointerEvent) {
+        if (!menuOpen) return;
+        const target = event.target;
+        if (target instanceof Node && (menu?.contains(target) || versionsButton?.contains(target))) return;
+        menuOpen = false;
+    }
+
+    function toggleVersions() {
         menuOpen = !menuOpen;
         if (!menuOpen) return;
+        roomAsked = false;
+        menuRoom = undefined;
+        void loadVersions();
+    }
+
+    async function loadVersions() {
         versionsFailed = false;
         try {
             versions = await fetchArtifactVersions(id, actualCowebsite.chat);
@@ -170,6 +220,38 @@
         versionStore.set(latest);
     }
 
+    // The version showing becomes the latest again, as a new version made from it: the window then shows that one.
+    function restoreShown() {
+        if (!opened || restoring) return;
+        const number = opened.version.number;
+        restoring = true;
+        restoreFailed = false;
+        void restoreArtifactVersion(id, number, actualCowebsite.chat).then(
+            (answer) => {
+                if (destroyed) return;
+                restoring = false;
+                if ($versionStore !== number) {
+                    // The person went on to another version meanwhile and stays there; the list shows the new one.
+                    if (menuOpen) void loadVersions();
+                    else versions = undefined;
+                    return;
+                }
+                // The list is read again the next time it opens, with the new version in it. One opened while the
+                // restore was on its way is put away, as picking a version does.
+                menuOpen = false;
+                versions = undefined;
+                versionStore.set(answer.version.number);
+            },
+            (error) => {
+                console.warn("Could not restore a version of an artifact", error);
+                if (destroyed) return;
+                restoring = false;
+                // Said only over the version it was about
+                if ($versionStore === number) restoreFailed = true;
+            }
+        );
+    }
+
     function retryText() {
         textFailed = false;
         textAttempt++;
@@ -186,7 +268,15 @@
     $: documentHtml = kind === "markdown" && text ? renderMarkdown(text.content) : "";
 </script>
 
-<div class="artifact" class:hidden={!visible} bind:clientWidth={panelWidth} data-testid="artifactPanel">
+<svelte:window on:pointerdown={onPointerDown} />
+
+<div
+    class="artifact"
+    class:hidden={!visible}
+    bind:clientWidth={panelWidth}
+    bind:clientHeight={panelHeight}
+    data-testid="artifactPanel"
+>
     <OpenHereRow name={title} {line}>
         <span slot="icon"><OpenHereItemIcon {badge} /></span>
         {#if phase === "ready" && opened}
@@ -198,6 +288,7 @@
                 aria-label={$LL.chat.artifacts.versions()}
                 aria-expanded={menuOpen}
                 data-testid="artifactVersions"
+                bind:this={versionsButton}
                 on:click={toggleVersions}><IconHistory font-size="22" /></button
             >
             {#if !compact}
@@ -222,7 +313,24 @@
             <span>{$LL.chat.artifacts.oldVersionNote({ version: opened.version.number, latest })}</span>
             <span class="old-actions">
                 <button type="button" class="quiet" on:click={backToLatest}>{$LL.chat.artifacts.backToLatest()}</button>
+                {#if opened.you.owner}
+                    <button
+                        type="button"
+                        class="quiet"
+                        disabled={restoring}
+                        data-testid="artifactRestore"
+                        on:click={restoreShown}
+                        >{#if restoring}<IconLoader font-size="16" class="spin" />{/if}
+                        {$LL.chat.artifacts.restoreThis()}</button
+                    >
+                {/if}
             </span>
+        </div>
+    {/if}
+
+    {#if restoreFailed}
+        <div class="old-note" role="alert" data-testid="artifactRestoreFailed">
+            <span>{$LL.chat.artifacts.restoreFailed()}</span>
         </div>
     {/if}
 
@@ -304,8 +412,12 @@
     </div>
 
     {#if menuOpen}
-        <div class="menu" class:in-sheet={compact} data-testid="artifactVersionMenu">
-            {#if compact}<span class="grab" />{/if}
+        <div
+            class="menu"
+            bind:this={menu}
+            style:max-height={menuRoom !== undefined ? `${menuRoom}px` : undefined}
+            data-testid="artifactVersionMenu"
+        >
             <b class="menu-title">{$LL.chat.artifacts.versions()}</b>
             {#if versionsFailed}
                 <p class="menu-note">{$LL.chat.artifacts.cantReach()}</p>
@@ -451,7 +563,8 @@
         max-width: 36ch;
         font-size: 14px;
     }
-    .state :global(.spin) {
+    .state :global(.spin),
+    .quiet :global(.spin) {
         animation: artifact-spin 1s linear infinite;
     }
     @keyframes artifact-spin {
@@ -460,7 +573,8 @@
         }
     }
     @media (prefers-reduced-motion: reduce) {
-        .state :global(.spin) {
+        .state :global(.spin),
+        .quiet :global(.spin) {
             animation: none;
         }
     }
@@ -495,6 +609,10 @@
         font: 600 13px inherit;
         font-family: inherit;
         cursor: pointer;
+    }
+    .quiet:disabled {
+        cursor: default;
+        opacity: 0.7;
     }
     .quiet:focus-visible,
     .menu-row:focus-visible {
@@ -547,22 +665,6 @@
         background: linear-gradient(160deg, rgb(31 28 47 / 0.98), rgb(20 18 30 / 0.99));
         box-shadow: 0 1px 0 rgba(255, 255, 255, 0.08) inset, 0 0 0 1px rgba(167, 139, 250, 0.18),
             0 18px 40px rgb(0 0 0 / 0.5);
-    }
-    .menu.in-sheet {
-        top: auto;
-        bottom: 0;
-        inset-inline: 0;
-        width: auto;
-        max-height: 70%;
-        padding: 8px 16px 24px;
-        border-radius: 24px 24px 0 0;
-    }
-    .grab {
-        width: 36px;
-        height: 4px;
-        border-radius: 999px;
-        background: rgba(255, 255, 255, 0.3);
-        margin: 4px auto 8px;
     }
     .menu-title {
         font-size: 12px;

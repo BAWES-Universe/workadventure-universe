@@ -29,6 +29,7 @@ const OpenBody = z.object({
     version: z.number().int().min(1).optional(),
 });
 const ViewerBody = z.object({ chat: Chat.optional() });
+const RestoreBody = z.object({ chat: Chat.optional(), number: z.number().int().min(1) });
 
 /** Who is looking and whether they are in the chat, as the pusher knows it (never as the browser claims it). */
 export function viewerOf(
@@ -86,6 +87,9 @@ export class ArtifactController extends BaseHttpController {
         this.app.options("/artifacts/:id/versions/:number", (req: Request, res: Response) => {
             res.status(200).send("");
         });
+        this.app.options("/artifacts/:id/restore", (req: Request, res: Response) => {
+            res.status(200).send("");
+        });
 
         this.app.post("/artifacts/:id/open", [authenticated], async (req: Request, res: ResponseWithUserIdentifier) => {
             await this.answer(req, res, "open", async (viewer, id) => {
@@ -116,6 +120,34 @@ export class ArtifactController extends BaseHttpController {
                     const body = ViewerBody.safeParse(req.body ?? {});
                     if (!number.success || !body.success) throw new ArtifactsError("invalid_request", 400);
                     return artifactsService.readCode(id, number.data, viewer(body.data.chat));
+                });
+            }
+        );
+
+        /**
+         * @openapi
+         * /artifacts/{id}/restore:
+         *   post:
+         *     description: The owner makes an older version the latest again. Orbit saves it as a new version, so no
+         *       version is lost. Answers like open, with the new latest version.
+         *     responses:
+         *       200:
+         *         description: The artifact with its new latest version
+         *       403:
+         *         description: The person may open it but is not its owner
+         *       404:
+         *         description: No such artifact, or the person may not open it
+         *       409:
+         *         description: That version is already the latest, or the artifact has as many versions as it may keep
+         */
+        this.app.post(
+            "/artifacts/:id/restore",
+            [authenticated],
+            async (req: Request, res: ResponseWithUserIdentifier) => {
+                await this.answer(req, res, "restore a version of", async (viewer, id) => {
+                    const body = RestoreBody.safeParse(req.body ?? {});
+                    if (!body.success) throw new ArtifactsError("invalid_request", 400);
+                    return artifactsService.restore(id, body.data.number, viewer(body.data.chat));
                 });
             }
         );
