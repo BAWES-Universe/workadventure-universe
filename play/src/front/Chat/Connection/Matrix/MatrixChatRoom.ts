@@ -444,6 +444,11 @@ export class MatrixChatRoom
             new MatrixChatMessage(event, this.matrixRoom, false, this.type === "direct");
         if (!eventId || !this.messages.has(eventId)) this.messages.push(message);
         const senderID = event.getSender();
+        // The message has arrived, so its sender is no longer typing it.
+        if (senderID)
+            get(this.members)
+                .find((member) => member.id === senderID)
+                ?.stoppedTyping();
         if (senderID) {
             if (get(botsChatIds).includes(senderID)) {
                 return;

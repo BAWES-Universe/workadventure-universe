@@ -7,6 +7,13 @@ import { noiseSuppressionAudioWorkletVitePlugin } from "@workadventure/noise-sup
 import Icons from "unplugin-icons/vite";
 import tsconfigPaths from "vite-tsconfig-paths";
 import { nodePolyfills } from "vite-plugin-node-polyfills";
+import { viteStaticCopy } from "vite-plugin-static-copy";
+import { createRequire } from "node:module";
+import { dirname } from "node:path";
+import { scopePdfViewerCss } from "./src/front/FileViewer/scopePdfViewerCss";
+
+// The folder of the PDF reader package, wherever npm put it (here or hoisted to the repository root).
+const pdfjsDir = dirname(createRequire(import.meta.url).resolve("pdfjs-dist/package.json"));
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
@@ -73,6 +80,31 @@ export default defineConfig(({ mode }) => {
                       }),
                   ]),
             tsconfigPaths(),
+            // The file viewer's PDF reader reads its worker, fonts, character maps and image decoders at run time.
+            // They are copied from node_modules (never committed, never fetched from a CDN) and served by the game
+            // itself. The reader's script sandbox is left out: PDF scripts never run.
+            viteStaticCopy({
+                targets: [
+                    {
+                        src: [
+                            `${pdfjsDir}/legacy/build/pdf.mjs`,
+                            `${pdfjsDir}/legacy/build/pdf.worker.min.mjs`,
+                            `${pdfjsDir}/legacy/web/pdf_viewer.mjs`,
+                        ],
+                        dest: "static/pdfjs",
+                    },
+                    // The reader's stylesheet styles plain class names for the whole page: it is kept inside the reader.
+                    {
+                        src: `${pdfjsDir}/web/pdf_viewer.css`,
+                        dest: "static/pdfjs",
+                        transform: (content) => scopePdfViewerCss(content),
+                    },
+                    { src: `${pdfjsDir}/cmaps/*`, dest: "static/pdfjs/cmaps" },
+                    { src: `${pdfjsDir}/standard_fonts/*`, dest: "static/pdfjs/standard_fonts" },
+                    { src: [`${pdfjsDir}/wasm/*`, `!${pdfjsDir}/wasm/quickjs-eval.*`], dest: "static/pdfjs/wasm" },
+                    { src: `${pdfjsDir}/iccs/*`, dest: "static/pdfjs/iccs" },
+                ],
+            }),
         ],
         resolve: {
             alias: {
@@ -100,7 +132,13 @@ export default defineConfig(({ mode }) => {
         },
     };
 
-    if (env.SENTRY_ORG && env.SENTRY_PROJECT && env.SENTRY_AUTH_TOKEN && (env.RELEASE_VERSION || env.SENTRY_RELEASE) && env.SENTRY_ENVIRONMENT) {
+    if (
+        env.SENTRY_ORG &&
+        env.SENTRY_PROJECT &&
+        env.SENTRY_AUTH_TOKEN &&
+        (env.RELEASE_VERSION || env.SENTRY_RELEASE) &&
+        env.SENTRY_ENVIRONMENT
+    ) {
         console.info("Sentry plugin enabled");
         config.plugins.push(
             sentryVitePlugin({

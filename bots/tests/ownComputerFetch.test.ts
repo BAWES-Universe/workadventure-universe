@@ -107,6 +107,7 @@ describe("ownComputerFetch", () => {
         expect(seen.hostname).toBe("lm.example.com");
         expect(seen.servername).toBe("lm.example.com");
         expect(seen.method).toBe("POST");
+        expect(seen.agent).toBe(false);
         expect(seen.path).toBe("/v1/chat/completions");
         expect(seen.headers.authorization).toBe("Bearer k");
         expect(written).toEqual(['{"a":1}']);
@@ -174,9 +175,12 @@ describe("ownComputerFetch", () => {
 
     it("stops an answer that grows past the cap", async () => {
         lookupMock.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
-        fakeServer(200, "x".repeat(100));
         const { MAX_RESPONSE_BYTES } = await import("../ai/ownComputerFetch");
-        expect(MAX_RESPONSE_BYTES).toBe(20_000_000);
+        fakeServer(200, "x".repeat(MAX_RESPONSE_BYTES + 1));
+        const response = await ownComputerFetch("https://lm.example.com/v1/models");
+        await expect(response.text()).rejects.toThrow();
+        fakeServer(200, "x".repeat(MAX_RESPONSE_BYTES));
+        expect((await (await ownComputerFetch("https://lm.example.com/v1/models")).text()).length).toBe(MAX_RESPONSE_BYTES);
     });
 
     it("closes the connection when the reader cancels, instead of leaving it open", async () => {

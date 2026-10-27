@@ -7,14 +7,21 @@
     import { LL } from "../../i18n/i18n-svelte";
     import { windowInFrontStore } from "../Stores/WindowInFrontStore";
     import { windowSize } from "../Stores/CoWebsiteStore";
-    import SheetDragHandle from "../Components/Sheet/SheetDragHandle.svelte";
-    import { clampHeight, getSnapHeights, nearestSnap, nextSnap } from "../Components/Sheet/BottomSheet";
+    import SheetHandle from "../Components/Sheet/SheetHandle.svelte";
+    import {
+        clampHeight,
+        getSnapHeights,
+        nearestSnap,
+        nextSnap,
+        sheetFrameStyle,
+    } from "../Components/Sheet/BottomSheet";
+    import { openHereSheetUpStore } from "../Stores/OpenHereSheetStore";
     import { chatFloatInsetStore, chatSidebarWidthStore, chatCarriesItsCloseStore } from "./ChatSidebarWidthStore";
     import Chat from "./Components/Chat.svelte";
     import { selectedRoomStore } from "./Stores/SelectRoomStore";
     import { chatInviteSheetHeightStore, chatSearchOpenStore } from "./Stores/ChatStore";
     import {
-        chatSheetHeightStore,
+        chatOwnSheetHeightStore,
         chatSheetLayoutStore,
         chatSheetSnapStore,
         keepChatSheetRest,
@@ -176,14 +183,22 @@
 
     // A message arriving in a bubble opens the chat by itself: it opens just tall enough to show that latest message
     // above the field to type in, over as little of the map and the videos as it can. Opened on purpose, it opens
-    // where it was left: 60% of the screen at first, then the height the person last dragged it to.
-    // Height while it shows the latest message of a bubble, until the person moves it; undefined otherwise.
+    // where it was left: 60% of the screen at first, then the height the person last dragged it to. Over a file or
+    // a page in the window it opens at its lowest height, so the window shows above it.
+    // Height while it shows the latest message of a bubble (or sits low over the window), until the person moves it;
+    // undefined otherwise.
     let bubbleHeight: number | undefined;
     // While the sheet keeps the bubble's height, it grows to show each latest message whole (messages load after it
     // opens, and a long one may follow), never shrinking under the reader. Declared before anything below can run
     // (the store subscription calls back at once).
     let latestMessageObserver: MutationObserver | undefined;
     let fitFrame: number | undefined;
+    // The chat sits at its lowest height only because the window's sheet is up: it goes back to its rest once that is gone.
+    let lowForSheet = false;
+    $: if (lowForSheet && !$openHereSheetUpStore) {
+        lowForSheet = false;
+        leaveBubbleHeight();
+    }
     // Before the height below, so a chat opened by a bubble starts low without a pass at its old height.
     let wasVisible = false;
     $: onVisibilityChange($chatVisibilityStore);
@@ -194,13 +209,19 @@
             if (getLastChatOpenSource() === "bubble") {
                 bubbleHeight = getSnapHeights($windowSize.height, CHAT_SHEET_SIZES).peek;
                 watchLatestMessage();
+            } else if ($openHereSheetUpStore) {
+                bubbleHeight = getSnapHeights($windowSize.height, CHAT_SHEET_SIZES).peek;
+                lowForSheet = true;
             } else {
                 bubbleHeight = undefined;
                 // "Show everyone" lowers it to make room for the videos; opened again on purpose, it is readable.
                 if ($chatSheetSnapStore === "peek") chatSheetSnapStore.set("half");
             }
         }
-        if (!visible) stopWatchingLatestMessage();
+        if (!visible) {
+            stopWatchingLatestMessage();
+            lowForSheet = false;
+        }
         wasVisible = visible;
     }
 
@@ -222,7 +243,7 @@
                   $windowSize.height
               ));
     // The videos above the sheet follow its height, drag included.
-    $: chatSheetHeightStore.set(sheet && $chatVisibilityStore ? sheetHeight : 0);
+    $: chatOwnSheetHeightStore.set(sheet && $chatVisibilityStore ? sheetHeight : 0);
 
     // Any other move of the sheet ("show everyone" lowering it) ends the bubble's own height.
     const unsubscribeRest = chatSheetSnapStore.subscribe(() => leaveBubbleHeight());
@@ -311,7 +332,8 @@
 <svelte:window on:resize={onresize} />
 {#if $chatVisibilityStore && sheet}
     <!-- The sheet keeps the chat's id and test id: everything that looks for the chat finds it. -->
-    <!-- A tap anywhere on the chat brings it in front of a window it overlaps. -->
+    <!-- A tap anywhere on the chat brings it in front of a window it overlaps. ph-mask and ph-sensitive keep what people
+         and bots write out of PostHog: session replays show it as asterisks and clicks carry no text (#1166). -->
     <!-- svelte-ignore a11y-no-static-element-interactions -->
     <section
         bind:this={container}
@@ -321,24 +343,18 @@
         transition:fly={{ duration: 200, y: sheetHeight }}
         on:introend={() => reposition()}
         on:outroend={() => reposition()}
-        style="height: {sheetHeight}px; padding-top: max(0px, calc(env(safe-area-inset-top, 0px) - {Math.max(
-            0,
-            $windowSize.height - sheetHeight
-        )}px));"
-        class="chatWindow chat-sheet u-surface-flat p-0 screen-blocker"
+        style={sheetFrameStyle(sheetHeight, $windowSize.height)}
+        class="chatWindow chat-sheet u-surface-flat p-0 screen-blocker ph-mask ph-sensitive"
         class:dragging={sheetDragHeight !== undefined}
     >
-        <SheetDragHandle
+        <SheetHandle
             {sheetHeight}
             onDrag={onSheetDrag}
             onRelease={onSheetRelease}
             onTap={onSheetTap}
             label={$LL.chat.sheetHandle()}
             testId="chatSheetHandle"
-            class="chat-sheet-handle"
-        >
-            <span class="chat-sheet-grabber" aria-hidden="true" />
-        </SheetDragHandle>
+        />
         <div class="relative flex-1 min-h-0">
             {#if $chatCarriesItsCloseStore && isInSpecificDiscussion}
                 <!-- Level with the close beside the Chats and People tabs (their row's top padding and the track's), so
@@ -359,7 +375,7 @@
         </div>
     </section>
 {:else if $chatVisibilityStore}
-    <!-- A click anywhere on the chat brings it in front of a window it overlaps. -->
+    <!-- A click anywhere on the chat brings it in front of a window it overlaps. ph-mask and ph-sensitive: as above. -->
     <!-- svelte-ignore a11y-no-static-element-interactions -->
     <section
         bind:this={container}
@@ -373,7 +389,7 @@
         on:introend={() => reposition()}
         on:outroend={() => reposition()}
         style="width: {sideBarWidth}px; max-width: {sideBarWidth}px;"
-        class=" chatWindow !min-w-[150px] max-sm:!min-w-[150px] u-surface-flat p-0 screen-blocker"
+        class=" chatWindow !min-w-[150px] max-sm:!min-w-[150px] u-surface-flat p-0 screen-blocker ph-mask ph-sensitive"
     >
         {#if $chatCarriesItsCloseStore && isInSpecificDiscussion}
             <!-- The same plain close as the one beside the Chats and People tabs, in the same place. -->
@@ -407,6 +423,7 @@
 
 <style lang="scss">
     @use "../style/breakpoints.scss" as *;
+    @use "../style/bottom-sheet.scss" as *;
 
     @include media-breakpoint-up(sm) {
         .chatWindow {
@@ -432,51 +449,7 @@
     }
     /* The sheet: edge to edge at the bottom of the screen, rounded at the top, resized from its handle. */
     .chat-sheet {
-        top: auto;
-        bottom: 0;
-        inset-inline: 0;
-        width: 100% !important;
-        min-width: 0;
-        max-width: none;
-        display: flex;
-        flex-direction: column;
-        border-radius: 24px 24px 0 0;
-        /* Its height is the sheet's whole height: the padding below goes inside it. */
-        box-sizing: border-box;
-        /* Dragged up under the installed app's see-through status bar (#969), the sheet keeps its colour to the top
-           edge and starts its handle and tabs below the inset (padding-top, set from the script). */
-        transition: height 200ms ease-out, padding-top 200ms ease-out;
-    }
-    .chat-sheet.dragging {
-        transition: none;
-    }
-    /* A 28px strip the whole width of the sheet takes the drag; the grabber shows where. */
-    .chat-sheet :global(.chat-sheet-handle) {
-        display: flex;
-        flex: none;
-        justify-content: center;
-        width: 100%;
-        height: 28px;
-        padding: 10px 0 0;
-        cursor: ns-resize;
-    }
-    .chat-sheet-grabber {
-        display: block;
-        width: 40px;
-        height: 5px;
-        border-radius: 9999px;
-        background: rgba(255, 255, 255, 0.28);
-    }
-    .chat-sheet :global(.chat-sheet-handle:focus-visible) {
-        outline: none;
-    }
-    .chat-sheet :global(.chat-sheet-handle:focus-visible .chat-sheet-grabber) {
-        background: #fff;
-    }
-    @media (prefers-reduced-motion: reduce) {
-        .chat-sheet {
-            transition: none;
-        }
+        @include bottom-sheet;
     }
     #resize-bar.resizing {
         width: 6px !important;

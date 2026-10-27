@@ -785,7 +785,7 @@ export class SocialBehavior extends BaseBehavior {
         // Get UUID (REQUIRED by Admin API) - should be available from InitSpaceUsersMessage or addSpaceUserMessage
         const userUuid = this.userIdToUuid.get(senderId);
         if (!userUuid) {
-            console.warn(`[SocialBehavior] UUID not found for user ${senderId} (${userName}). This should not happen if InitSpaceUsersMessage is working correctly.`);
+            console.warn(`[SocialBehavior] UUID not found for user ${senderId}. This should not happen if InitSpaceUsersMessage is working correctly.`);
             // Don't proceed without UUID - conversation cannot be stored correctly
             return;
         }
@@ -1007,6 +1007,8 @@ export class SocialBehavior extends BaseBehavior {
                     latency = chunk.metadata.latency;
                 }
                 
+                // A reply limit (#1159): no AI was called; only this person sees the fixed card
+                if (chunk.replyLimit) this.showReplyLimit(spaceName, playerId, chunk.replyLimit);
                 if (chunk.done) {
                     batchFlush(batchState, sendBatch);
                     // Stop typing indicator
@@ -1813,6 +1815,11 @@ export class SocialBehavior extends BaseBehavior {
         const botConfig = this.bot.getFullConfig();
         if (!this.aiService || !botConfig?.aiProviderRef) {
             // No AI provider configured: the bot stays silent
+            return;
+        }
+
+        // Greeting is a chat too: a person the owner refused is not greeted (and the AI is not asked)
+        if (!(await this.bot.mayGreet(spaceName, playerId))) {
             return;
         }
 

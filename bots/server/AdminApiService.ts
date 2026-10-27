@@ -5,6 +5,9 @@
  */
 
 import axios, { type AxiosResponse } from 'axios';
+import * as Sentry from '@sentry/node';
+import { parseForgetNotice, type MemoryForgetHandler } from '../memory/ForgetNotice';
+import type { WokaList } from '../matrix/wokaPicture';
 
 // Optional Sentry integration (uncomment if @sentry/node is installed)
 // import * as Sentry from '@sentry/node';
@@ -15,6 +18,14 @@ const captureException = (error: Error) => {
     // Sentry.captureException(error);
     console.error('AdminApiService error:', error);
 };
+
+/** Which reply limit stopped a reply (#1159): a person's Universe AI replies, a guest's, a bot's guests' pool, or the bot's own. */
+export const REPLY_LIMIT_KINDS = ['universe-ai', 'guest', 'guests', 'bot'] as const;
+export type ReplyLimitKind = (typeof REPLY_LIMIT_KINDS)[number];
+/** Who reached it, so the card shows the one button that fits them: Sign in, Ask the maker, or Use my AI key. */
+export const REPLY_ASKERS = ['guest', 'member', 'maker'] as const;
+export type ReplyAsker = (typeof REPLY_ASKERS)[number];
+export type ReplyAllowance = { allowed: true } | { allowed: false; limit: ReplyLimitKind; resetsAt: string; who: ReplyAsker };
 
 export function resolveAdminApiEndpoint(adminApiUrl: string | URL, endpoint: string): string {
     const baseUrl = new URL(adminApiUrl.toString());
@@ -48,6 +59,97 @@ export function canSendSessionTo(adminApiUrl: URL, nodeEnv: string | undefined =
     return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
 }
 
+// ---- Live artifacts (game #1422, Orbit #622) -----------------------------------------------------------------------
+
+export type ArtifactKind = 'app' | 'page' | 'markdown' | 'svg';
+
+/** A chat by the id the game uses for it: the bubble's space name, or the direct chat's Matrix room. */
+export interface ArtifactChat {
+    kind: 'nearby' | 'dm';
+    ref: string;
+}
+
+/** Who asks. A guest has no account (nothing is kept for them beyond a day). */
+export interface ArtifactPerson {
+    signedIn: boolean;
+    identifier?: string | null;
+    name?: string | null;
+}
+
+/** Every artifact call names the bot, the person and the chat. */
+export interface ArtifactCall {
+    botId: string;
+    person: ArtifactPerson;
+    chat: ArtifactChat;
+}
+
+export interface ArtifactEdit {
+    old: string;
+    new: string;
+    all?: boolean;
+}
+
+export interface ArtifactSummary {
+    id: string;
+    title: string;
+    kind: ArtifactKind;
+    makerName: string;
+    version: number;
+}
+
+export interface ArtifactVersionSummary {
+    number: number;
+    summary: string | null;
+}
+
+/** Orbit said no, or could not be asked. `code` is Orbit's (edit_not_found, change_not_allowed, ...) or orbit_unavailable. */
+export class ArtifactCallError extends Error {
+    constructor(
+        public readonly code: string,
+        public readonly status: number,
+        message: string
+    ) {
+        super(message);
+        this.name = 'ArtifactCallError';
+    }
+}
+
+/**
+ * A make or a change takes a little longer than the access check: Orbit saves the file first. How long it may take is a
+ * super admin's "Time to save" (Orbit #666), passed with the call; this is for a call without it (a read or a list).
+ */
+const ARTIFACT_TIMEOUT_MS = 30_000;
+
+/** What people do with a bot, as Orbit's check names it. */
+export type BotAccessAction = 'chat' | 'dm' | 'summon';
+
+/** Who is asking: a signed-in person is named by their uuid or email, a guest only by being a guest. */
+export interface BotAccessPerson {
+    signedIn: boolean;
+    identifier?: string | null;
+    /** For a direct message that reached the bot over chat: the sender's Matrix ID, which Orbit looks up instead. */
+    chatId?: string | null;
+}
+
+/** Orbit's answer to "can this person do this with this bot?" (POST /api/bots/:id/access). */
+export interface BotAccessAnswer {
+    allowed: boolean;
+    code: 'allowed' | 'sign_in_required' | 'not_allowed' | 'no_room_access' | 'unknown_person' | 'shared_chat_id' | 'banned';
+    /** A line to show as it is. Null when allowed. */
+    reason: string | null;
+    /** The owner's own line for people who may not chat with the bot, only when the owner wrote one. */
+    reply?: string;
+    /** Whose chat account it is, when the person was named by `chatId` and Orbit found exactly one account. */
+    person?: { uuid: string; name: string | null };
+}
+
+/** Orbit failing a direct message's access check is reported to Sentry at most this often, not once per message. */
+const DM_ACCESS_REPORT_EVERY_MS = 60_000;
+let lastDmAccessReportAt = 0;
+
+/** How long a bot waits for Orbit's access answer before it counts as "could not check". */
+const BOT_ACCESS_TIMEOUT_MS = 4_000;
+
 export interface BotConfiguration {
     botId: string;
     name: string;
@@ -67,6 +169,10 @@ export interface BotConfiguration {
     // How long the bot waits for a tool (MCP) call to answer, in seconds ("Patience").
     // Null or missing means the bot server's default (REQUEST_TIMEOUT, 90 s).
     toolTimeoutSeconds?: number | null;
+
+    // The bot's own longest reply (tokens) and steps in one reply, lower than its key's (Orbit #666). Null follows the key.
+    maxReplyTokens?: number | null;
+    maxSteps?: number | null;
     
     // Assigned space defines where the bot operates (center + radius)
     // Required: All bots must have an assigned space
@@ -112,6 +218,14 @@ export interface BotUsageQuery {
     endDate?: Date;
 }
 
+/** Orbit turned a bot save down and said why, in words meant for the person saving. */
+export class BotConfigRefused extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'BotConfigRefused';
+    }
+}
+
 /** The fields of one provider, as Orbit serves them. */
 export interface AIProviderCredentials {
     providerId: string;
@@ -128,6 +242,8 @@ export interface AIProviderCredentials {
     visionModel: string | null;
     defaultVision: boolean;
     settings?: Record<string, any>;
+    /** The bot's limits (Orbit #666); only on an answer for one bot, from an Orbit that has them. */
+    limits?: unknown;
 }
 
 /**
@@ -151,6 +267,14 @@ export class AdminApiService {
     private roomMetadataCache: Map<string, { data: { universeName: string; worldName: string; roomName: string }; cachedAt: number }> = new Map();
     private readonly ROOM_METADATA_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
     private adminApiToken: string;
+    // Hide bot conversations (#1166): the answer per bot, asked of Orbit at most every 30 seconds
+    private botPrivacyCache: Map<string, { hidden: boolean; cachedAt: number; notFoundInARow?: number }> = new Map();
+    private botPrivacyRequests: Map<string, Promise<boolean>> = new Map();
+    private readonly BOT_PRIVACY_CACHE_TTL = 30 * 1000;
+    // "Not found" answers in a row (30 seconds apart) before a bot is taken as deleted
+    private readonly BOT_GONE_AFTER = 3;
+    private forgetHandler: MemoryForgetHandler | null = null;
+    private privacySyncTimer: NodeJS.Timeout | null = null;
 
     constructor(adminApiUrl?: string, adminApiToken?: string) {
         this.adminApiUrl = adminApiUrl || process.env.ADMIN_API_URL || '';
@@ -167,7 +291,7 @@ export class AdminApiService {
     /**
      * Save bot configuration to admin API
      */
-    async saveBotConfiguration(config: BotConfiguration): Promise<void> {
+    async saveBotConfiguration(config: BotConfiguration, actingSession?: string): Promise<void> {
         if (!this.isConfigured()) {
             console.warn('[AdminApiService] Admin API not configured, skipping bot configuration save');
             return;
@@ -197,7 +321,8 @@ export class AdminApiService {
                 payload,
                 {
                     headers: {
-                        Authorization: `Bearer ${this.adminApiToken}`,
+                        // A change only a person may make (a bot on their own AI key) goes with their session, so Orbit can see whose it is
+                        Authorization: `Bearer ${actingSession ?? this.adminApiToken}`,
                         'Content-Type': 'application/json',
                     },
                 }
@@ -207,6 +332,10 @@ export class AdminApiService {
                 console.log(`[AdminApiService] Successfully saved bot config for ${config.botId}`);
             }
         } catch (error) {
+            // Orbit turned the save down and said why: that is an answer for the person, not a crash
+            if (axios.isAxiosError(error) && error.response?.status === 400 && typeof error.response.data?.error === 'string') {
+                throw new BotConfigRefused(error.response.data.error);
+            }
             console.error('[AdminApiService] Error saving bot configuration:', error);
             if ((process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') && axios.isAxiosError(error) && error.response) {
                 console.error('[AdminApiService] Response status:', error.response.status);
@@ -227,7 +356,7 @@ export class AdminApiService {
 
         try {
             const response: AxiosResponse<BotConfiguration> = await axios.get(
-                `${this.adminApiUrl}/api/bots/configuration/${botId}`,
+                `${this.adminApiUrl}/api/bots/configuration/${encodeURIComponent(botId)}`,
                 {
                     timeout: timeoutMs,
                     headers: {
@@ -261,6 +390,20 @@ export class AdminApiService {
             captureException(error);
             throw error;
         }
+    }
+
+    /**
+     * The woka list the game uses for a bot in its room (the bot picker's list), to draw the bot's Woka. Null when
+     * Orbit isn't set up; errors throw, so the caller tries again later.
+     */
+    async getBotWokaList(roomUrl: string, botId: string): Promise<WokaList | null> {
+        if (!this.isConfigured()) return null;
+        const response: AxiosResponse<WokaList> = await axios.get(`${this.adminApiUrl}/api/woka/list`, {
+            params: { roomUrl, context: 'bot', botId },
+            timeout: 10000,
+            headers: { Authorization: `Bearer ${this.adminApiToken}` },
+        });
+        return response.data && typeof response.data === 'object' ? response.data : null;
     }
 
     /**
@@ -308,7 +451,7 @@ export class AdminApiService {
         }
 
         try {
-            await axios.delete(`${this.adminApiUrl}/api/bots/configuration/${botId}`, {
+            await axios.delete(`${this.adminApiUrl}/api/bots/configuration/${encodeURIComponent(botId)}`, {
                 headers: {
                     Authorization: `Bearer ${this.adminApiToken}`,
                 },
@@ -502,6 +645,51 @@ export class AdminApiService {
     }
 
     /**
+     * Ask Orbit whether the person behind a Matrix ID may message this bot directly: the same check the game asks
+     * before it shows Message (roles, the bot's own rules, Private bot, room access, bans), with Orbit finding whose
+     * chat account it is. Fails closed: anything that stops Orbit answering is a no whose reason starts `admin_api_`.
+     *
+     * `user` (the verified person) comes back only when Orbit allows the chat. A refusal carries Orbit's code as
+     * `reason` and no identity.
+     */
+    async checkDmAccess(botId: string, chatId: string): Promise<{
+        allowed: boolean;
+        reason: string | null;
+        user: { uuid: string; name: string | null; isGuest: boolean } | null;
+    }> {
+        const denied = (reason: string) => ({ allowed: false, reason, user: null });
+        if (!this.isConfigured() || !process.env.BOT_SERVICE_TOKEN) {
+            return denied('admin_api_not_configured');
+        }
+        let answer: BotAccessAnswer;
+        try {
+            answer = await this.checkBotAccess(botId, 'dm', { signedIn: true, chatId });
+        } catch (error) {
+            console.error('[AdminApiService] Error checking DM access:', error instanceof Error ? error.message : error);
+            if (Date.now() - lastDmAccessReportAt >= DM_ACCESS_REPORT_EVERY_MS) {
+                lastDmAccessReportAt = Date.now();
+                Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
+                    tags: { area: 'bot-dm-access' },
+                });
+            }
+            return denied('admin_api_error');
+        }
+        if (!answer.allowed) {
+            return denied(answer.code);
+        }
+        const person = answer.person;
+        if (typeof person?.uuid !== 'string' || person.uuid === '') {
+            // A yes without a verified person is not something to act on.
+            return denied('admin_api_missing_user');
+        }
+        return {
+            allowed: true,
+            reason: null,
+            user: { uuid: person.uuid, name: typeof person.name === 'string' ? person.name : null, isGuest: false },
+        };
+    }
+
+    /**
      * How one bot talks to its AI, asked by bot id (#374). Needed for bots on Universe AI or on a person's own key:
      * Orbit decides, per bot, whether that key may run it now, and answers with the key, with Universe AI's provider,
      * or (when the owner chose "Stop replying" for a key that is down) with a resting line and no provider at all.
@@ -556,6 +744,38 @@ export class AdminApiService {
     }
 
     /**
+     * May this person get one more reply from this bot now (#1159)? Orbit counts their Universe AI replies (30 every 5
+     * hours signed in, 10 for a guest, 200 shared by a bot's guests) and the bot's own limit per person. `source` is
+     * what the reply would run on, from the bot's AI credentials. Never stops a reply because Orbit can't be asked:
+     * anything but a clear "no" (not configured, an Orbit from before, a timeout, an error) lets the reply through.
+     */
+    async checkReplyAllowance(
+        botId: string,
+        input: { userId: string; isGuest?: boolean; source: 'universe-ai' | 'provider' | 'own-key' }
+    ): Promise<ReplyAllowance> {
+        if (!this.isConfigured()) return { allowed: true };
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!botServiceToken) return { allowed: true };
+        try {
+            const response = await axios.post(
+                `${this.adminApiUrl}/api/bots/${encodeURIComponent(botId)}/reply-allowance`,
+                input,
+                { headers: { Authorization: `Bearer ${botServiceToken}` }, timeout: 5000 }
+            );
+            const body = response.data as Partial<{ allowed: boolean; limit: string; resetsAt: string; who: string }>;
+            if (body?.allowed !== false) return { allowed: true };
+            const limit = REPLY_LIMIT_KINDS.find((kind) => kind === body.limit);
+            const who = REPLY_ASKERS.find((asker) => asker === body.who);
+            if (!limit || !who || typeof body.resetsAt !== 'string' || Number.isNaN(Date.parse(body.resetsAt))) return { allowed: true };
+            return { allowed: false, limit, resetsAt: body.resetsAt, who };
+        } catch (error) {
+            const msg = (axios.isAxiosError(error) && error.response?.status) || (error as Error)?.message || 'Unknown error';
+            console.warn(`[AdminApiService] Reply limit check failed, letting the reply through: ${msg}`);
+            return { allowed: true };
+        }
+    }
+
+    /**
      * Get available AI providers
      * Uses BOT_SERVICE_TOKEN (separate from ADMIN_API_TOKEN)
      */
@@ -600,6 +820,115 @@ export class AdminApiService {
             console.error('[AdminApiService] Error getting available AI providers:', error);
             captureException(error as Error);
             return [];
+        }
+    }
+
+    /**
+     * Does this bot hide its conversations (Orbit "Hide bot conversations", #435)? The universe default and the
+     * bot's own choice are resolved by Orbit; this only asks. A private bot sends nothing to PostHog or Sentry
+     * spans; chats, memory, usage counts and everything else work as always.
+     *
+     * Orbit is asked at most every 30 seconds per bot. A bot Orbit does not know, or an Orbit without the setting
+     * yet, is "not private", as every bot was before this setting existed. If Orbit cannot answer (down, timeout,
+     * refused), the last answer is kept, and with none yet the bot counts as private until Orbit answers. Never throws. `fresh` skips the 30 second wait (the bot server's own check).
+     *
+     * Orbit's answer also carries the people a manager asked the bot to forget; those go to the forget handler.
+     */
+    async isBotPrivate(botId: string, options: { fresh?: boolean } = {}): Promise<boolean> {
+        const cached = this.botPrivacyCache.get(botId);
+        if (!options.fresh && cached && Date.now() - cached.cachedAt < this.BOT_PRIVACY_CACHE_TTL) {
+            return cached.hidden;
+        }
+        if (!this.isConfigured()) {
+            return cached?.hidden ?? false;
+        }
+        const inFlight = this.botPrivacyRequests.get(botId);
+        if (inFlight) return inFlight;
+
+        const request = this.fetchBotPrivacy(botId, cached?.hidden).finally(() => {
+            this.botPrivacyRequests.delete(botId);
+        });
+        this.botPrivacyRequests.set(botId, request);
+        return request;
+    }
+
+    /**
+     * Ask Orbit about each running bot every 30 seconds. The answer keeps the privacy setting fresh and carries the
+     * people a manager asked the bot to forget, so a Forget lands even while nobody is talking to the bot.
+     */
+    startPrivacySync(getBotIds: () => Iterable<string>, onGone?: (botId: string) => void): void {
+        if (this.privacySyncTimer || !this.isConfigured()) {
+            return;
+        }
+        this.privacySyncTimer = setInterval(() => {
+            for (const botId of getBotIds()) {
+                void this.isBotPrivate(botId, { fresh: true }).then(() => {
+                    // Orbit has said "not found" several times running (the bot was deleted, not a hiccup): stop asking,
+                    // and let the caller stop tracking it
+                    if ((this.botPrivacyCache.get(botId)?.notFoundInARow ?? 0) >= this.BOT_GONE_AFTER) {
+                        this.botPrivacyCache.delete(botId);
+                        onGone?.(botId);
+                    }
+                });
+            }
+        }, this.BOT_PRIVACY_CACHE_TTL);
+        // Never keep the process alive for this
+        this.privacySyncTimer.unref?.();
+    }
+
+    stopPrivacySync(): void {
+        if (this.privacySyncTimer) {
+            clearInterval(this.privacySyncTimer);
+            this.privacySyncTimer = null;
+        }
+    }
+
+    /** Called with the people Orbit asks the bot server to forget. */
+    setForgetHandler(handler: MemoryForgetHandler | null): void {
+        this.forgetHandler = handler;
+    }
+
+    private applyForgetNotice(botId: string, forget: unknown): void {
+        const notice = parseForgetNotice(forget);
+        if (!this.forgetHandler || !notice) return;
+        try {
+            this.forgetHandler(botId, notice);
+        } catch (error) {
+            console.error('[AdminApiService] Could not drop forgotten memories:', error);
+        }
+    }
+
+    private async fetchBotPrivacy(botId: string, lastKnown: boolean | undefined): Promise<boolean> {
+        // BOT_SERVICE_TOKEN is preferred, the admin token is the fallback. Memory itself takes only BOT_SERVICE_TOKEN (#444).
+        const token = process.env.BOT_SERVICE_TOKEN || this.adminApiToken;
+        try {
+            const response: AxiosResponse = await axios.get(
+                `${this.adminApiUrl}/api/bots/${encodeURIComponent(botId)}/privacy`,
+                {
+                    headers: { Authorization: `Bearer ${token}` },
+                    timeout: 5000,
+                }
+            );
+            const hidden = response.data?.hidden === true;
+            this.botPrivacyCache.set(botId, { hidden, cachedAt: Date.now() });
+            this.applyForgetNotice(botId, response.data?.forget);
+            return hidden;
+        } catch (error) {
+            // Not found (or an Orbit without the setting yet) is a plain "not private", except for a bot last known as
+            // private: its proxy can answer "not found" while Orbit restarts, so it stays private until Orbit has said
+            // it BOT_GONE_AFTER times running, the same rule that decides the bot is gone. Anything else keeps what we knew.
+            // With nothing known yet (a bot server that just started, while Orbit restarts too), the bot counts as
+            // private until Orbit answers: a hidden bot must never send its text out because Orbit was slow to say so.
+            // Only telemetry waits; replies, memory and saved chats are the same either way.
+            const notFound = axios.isAxiosError(error) && (error.response?.status === 404 || error.response?.status === 405);
+            const notFoundInARow = notFound ? (this.botPrivacyCache.get(botId)?.notFoundInARow ?? 0) + 1 : 0;
+            const hidden = notFound ? lastKnown === true && notFoundInARow < this.BOT_GONE_AFTER : lastKnown ?? true;
+            // Retry soon, not after the full 30 seconds, when Orbit could not answer
+            this.botPrivacyCache.set(botId, { hidden, cachedAt: notFound ? Date.now() : Date.now() - this.BOT_PRIVACY_CACHE_TTL + 5000, ...(notFoundInARow ? { notFoundInARow } : {}) });
+            if (!notFound) {
+                console.warn('[AdminApiService] Could not read the bot privacy setting, keeping the last answer:', axios.isAxiosError(error) ? error.message : 'unknown error');
+            }
+            return hidden;
         }
     }
 
@@ -702,6 +1031,111 @@ export class AdminApiService {
     }
 
     /**
+     * Ask Orbit whether a person may do something with a bot (Orbit #426/#427): chat in its bubble, message it, or
+     * summon it. A no is an answer ({ allowed: false }); anything that stops Orbit answering throws, so the caller
+     * can tell "no" from "could not check". Uses BOT_SERVICE_TOKEN.
+     */
+    async checkBotAccess(
+        botId: string,
+        action: BotAccessAction,
+        person: BotAccessPerson
+    ): Promise<BotAccessAnswer> {
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!botServiceToken) {
+            throw new Error('BOT_SERVICE_TOKEN environment variable is not set');
+        }
+
+        const response: AxiosResponse<BotAccessAnswer> = await axios.post(
+            resolveAdminApiEndpoint(this.adminApiUrl, `api/bots/${encodeURIComponent(botId)}/access`),
+            {
+                action,
+                person: {
+                    signedIn: person.signedIn,
+                    ...(person.identifier ? { identifier: person.identifier } : {}),
+                    ...(person.chatId ? { chatId: person.chatId } : {}),
+                },
+            },
+            {
+                headers: {
+                    Authorization: `Bearer ${botServiceToken}`,
+                    'Content-Type': 'application/json',
+                    'Cache-Control': 'no-store',
+                },
+                timeout: BOT_ACCESS_TIMEOUT_MS,
+            }
+        );
+        const answer = response.data;
+        if (!answer || typeof answer.allowed !== 'boolean') {
+            throw new Error('Orbit answered the bot access check with something unexpected');
+        }
+        return answer;
+    }
+
+    /**
+     * One call to Orbit's artifact routes with the bot service token. A refusal comes back as an ArtifactCallError with
+     * Orbit's own code and line (no content is ever logged); anything that stops Orbit answering is `orbit_unavailable`.
+     */
+    private async artifactCall<T>(path: string, body: object, timeoutMs = ARTIFACT_TIMEOUT_MS): Promise<T> {
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!this.isConfigured() || !botServiceToken) {
+            throw new ArtifactCallError('orbit_unavailable', 503, 'Orbit is not set up for artifacts.');
+        }
+        try {
+            const response: AxiosResponse<T> = await axios.post(resolveAdminApiEndpoint(this.adminApiUrl, path), body, {
+                headers: { Authorization: `Bearer ${botServiceToken}`, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+                timeout: timeoutMs,
+                maxBodyLength: Infinity,
+            });
+            return response.data;
+        } catch (error) {
+            const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+            const data = axios.isAxiosError(error) ? error.response?.data : undefined;
+            if (status && status < 500 && data && typeof data.error === 'string') {
+                throw new ArtifactCallError(data.error, status, typeof data.message === 'string' ? data.message : data.error);
+            }
+            if (status === 503 && data?.error === 'storage_not_configured') {
+                throw new ArtifactCallError('storage_not_configured', 503, 'Artifact storage is not set up.');
+            }
+            // Only where it broke: the request holds the person's file
+            Sentry.captureException(new Error(`Artifact call ${path} failed (${status ?? 'no answer'})`), { tags: { area: 'bot-artifacts' } });
+            throw new ArtifactCallError('orbit_unavailable', status ?? 503, 'Orbit could not be reached.');
+        }
+    }
+
+    /** Make an artifact for the person who asked, in the chat they asked in. */
+    makeArtifact(
+        call: ArtifactCall,
+        artifact: { title: string; kind: ArtifactKind; content: string; summary?: string | null },
+        timeoutMs?: number
+    ): Promise<{ artifact: ArtifactSummary; version: ArtifactVersionSummary; hidden: boolean }> {
+        return this.artifactCall('api/artifacts', { ...call, ...artifact }, timeoutMs);
+    }
+
+    /** Change one with small edits (or the whole new file). Every change is a new version. */
+    changeArtifact(
+        id: string,
+        call: ArtifactCall,
+        change: { edits?: ArtifactEdit[]; content?: string; summary?: string | null; title?: string | null; baseVersion?: number | null },
+        timeoutMs?: number
+    ): Promise<{ artifact: ArtifactSummary; version: ArtifactVersionSummary; hidden: boolean }> {
+        return this.artifactCall(`api/artifacts/${encodeURIComponent(id)}/change`, { ...call, ...change }, timeoutMs);
+    }
+
+    /** Read one version of an artifact, with its text. */
+    readArtifact(
+        id: string,
+        call: ArtifactCall,
+        version?: number | null
+    ): Promise<{ artifact: ArtifactSummary; version: ArtifactVersionSummary; content: string; hidden: boolean }> {
+        return this.artifactCall(`api/artifacts/${encodeURIComponent(id)}/read`, { ...call, ...(version ? { version } : {}) });
+    }
+
+    /** The artifacts made in this chat that the person may open, the most recently changed first. */
+    listArtifactsInChat(call: ArtifactCall): Promise<{ artifacts: ArtifactSummary[]; hidden: boolean }> {
+        return this.artifactCall('api/artifacts/in-chat', call);
+    }
+
+    /**
      * Track AI usage
      * Uses BOT_SERVICE_TOKEN (separate from ADMIN_API_TOKEN)
      * Fire-and-forget (doesn't throw errors)
@@ -714,10 +1148,29 @@ export class AdminApiService {
         completionTokens?: number;
         apiCalls?: number;
         durationSeconds?: number | null;
+        /** Dollars, the old estimate. Orbit keeps it as one only when no `price` comes with it. */
         cost?: number;
+        /** What the reply cost and how that was worked out (#1173). */
+        price?: {
+            inputTokens: number;
+            cachedTokens: number;
+            cacheWriteTokens: number;
+            outputTokens: number;
+            reasoningTokens: number;
+            /** Millionths of a dollar; null when the price is unknown. */
+            costMicros: number | null;
+            costBasis: string;
+            priceSource: string | null;
+            priceVersion: string | null;
+        };
         latency?: number;
         error?: boolean;
         timestamp?: string;
+        /** Where the reply was given: direct messages or nearby chat (Orbit #491). */
+        channel?: "dm" | "nearby";
+        /** Who it was for, as the bot knows them (WorkAdventure uuid or email); Orbit matches it to their account. */
+        userId?: string;
+        isGuest?: boolean;
     }): Promise<void> {
         if (!this.isConfigured()) {
             if (process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -739,10 +1192,14 @@ export class AdminApiService {
                 tokensUsed: usage.tokensUsed || 0,
                 apiCalls: usage.apiCalls || 1,
                 durationSeconds: usage.durationSeconds ?? null,
-                cost: usage.cost ?? null,
+                cost: usage.price ? null : usage.cost ?? null,
+                ...(usage.price ?? {}),
                 latency: usage.latency ?? null,
                 error: usage.error || false,
                 timestamp: usage.timestamp || new Date().toISOString(),
+                ...(usage.channel ? { channel: usage.channel } : {}),
+                ...(usage.userId ? { userId: usage.userId } : {}),
+                ...(typeof usage.isGuest === "boolean" ? { isGuest: usage.isGuest } : {}),
             };
 
             if (process.env.ENABLE_BOT_DEBUG === 'true') {

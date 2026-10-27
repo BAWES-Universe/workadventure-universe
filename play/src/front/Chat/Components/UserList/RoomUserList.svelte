@@ -22,6 +22,7 @@
         friendsStore,
         relationshipsStore,
     } from "../../Stores/FriendsStore";
+    import { countPeopleAndBots, countPeopleElsewhere } from "../../UserProvider/WorldUserProvider";
     import UserList from "./UserList.svelte";
     import PeopleAndBots from "./PeopleAndBots.svelte";
     import type { SelfIdentity } from "./PersonActions";
@@ -122,13 +123,18 @@
         }
     }
 
-    // Counts are of sessions (one per open tab or device), before the search filters them: "26 here" is unchanged.
+    // Counts are of sessions (one per open tab or device), before the search filters them: "6 people · 21 bots" is
+    // unchanged. People and bots are counted apart (#1389), and Elsewhere counts people only (#1396).
     $: hereEntry = $usersByRoom.get(currentRoomUrl);
-    $: hereCount = hereEntry?.users.length ?? 0;
+    $: hereCount = countPeopleAndBots(hereEntry?.users ?? []);
+    $: hereCountText =
+        hereCount.bots > 0
+            ? `${$LL.chat.peopleTab.countPeople({ count: hereCount.people })} · ${$LL.chat.peopleTab.countBots({
+                  count: hereCount.bots,
+              })}`
+            : $LL.chat.peopleTab.countPeople({ count: hereCount.people });
     $: hereName = hereEntry?.roomName?.trim() || mapRoomName || $LL.chat.peopleTab.thisRoom();
-    $: elsewhereCount = Array.from($usersByRoom.entries())
-        .filter(([playUri]) => playUri !== undefined && playUri !== currentRoomUrl)
-        .reduce((total, [, entry]) => total + entry.users.length, 0);
+    $: elsewhereCount = countPeopleElsewhere($usersByRoom, currentRoomUrl);
 
     // Rows are of people: all the sessions of one account make one row, shown with the room of its primary session
     // (this tab for you, one on this map when there is one).
@@ -298,9 +304,7 @@
                     >
                         <span class="u-live-dot shrink-0" aria-hidden="true" />
                         <span class="truncate">{hereName}</span>
-                        <span class="u-count shrink-0 font-normal"
-                            >{$LL.chat.peopleTab.countHere({ count: hereCount })}</span
-                        >
+                        <span class="u-count shrink-0 font-normal">{hereCountText}</span>
                     </h3>
                     <PeopleAndBots
                         all={hereAll}

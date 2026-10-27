@@ -8,8 +8,9 @@
  * - AI-driven emotion updates (unified in AI response, not separate EmotionAnalyzer)
  */
 
-import { ConversationMemory, type BotPlayerMemory, type EmotionalState } from './ConversationMemory';
+import { ConversationMemory, type BotPlayerMemory, type ConversationMessage, type EmotionalState } from './ConversationMemory';
 import { MemoryStorage } from './MemoryStorage';
+import type { MemoryForgetNotice } from './ForgetNotice';
 
 export type ConversationPurpose = 'navigation' | 'information' | 'social' | 'support' | 'entertainment' | 'unknown';
 
@@ -17,7 +18,6 @@ export interface PersistentMemoryConfig {
     maxHistorySize?: number;
     maxMemories?: number;
     adminApiUrl?: string;
-    adminApiToken?: string;
     debounceInterval?: number; // Debounce interval for conversation history saves (default: 30 seconds)
     immediateSaveEnabled?: boolean; // Whether to immediately save emotion changes (default: true)
 }
@@ -32,6 +32,18 @@ export class PersistentMemory extends ConversationMemory {
     private uuidTracking: Map<string, { userUuid: string; isLogged: boolean }> = new Map();
     // Temporary storage for loaded memories (keyed by userUuid) - restored when user joins
     private loadedMemoriesByUuid: Map<string, BotPlayerMemory> = new Map(); // key: "botId_userUuid"
+    /** Forgets already applied, by "botId|row:<id>" (or "botId|*" and "botId|uuid:<uuid>" from an older Orbit), with when each may be left out (see forget) */
+    private appliedForgets: Map<string, number> = new Map();
+    /** Forgets being reported to Orbit right now, by "botId|<id>" */
+    private reporting: Set<string> = new Set();
+    /** An older Orbit repeats a Forget for a minute: longer than that plus one 30-second privacy check */
+    private static readonly FORGET_REPEAT_WINDOW_MS = 2 * 60 * 1000;
+    /**
+     * A Forget with an id is repeated by Orbit until we report it (#493), so it is remembered as applied for as long as
+     * that takes. This is only the limit for one that is never reported; a reported one is kept for a short tail, for
+     * answers that were already on their way.
+     */
+    private static readonly FORGET_UNREPORTED_KEEP_MS = 24 * 60 * 60 * 1000;
 
     constructor(config: PersistentMemoryConfig = {}) {
         super(config.maxHistorySize || 50, config.maxMemories || 1000);
@@ -42,11 +54,96 @@ export class PersistentMemory extends ConversationMemory {
         // Initialize memory storage
         this.memoryStorage = new MemoryStorage({
             adminApiUrl: config.adminApiUrl,
-            adminApiToken: config.adminApiToken,
-            botServiceToken: process.env.BOT_SERVICE_TOKEN, // Use BOT_SERVICE_TOKEN for bot endpoints
+            botServiceToken: process.env.BOT_SERVICE_TOKEN, // the only token memory uses (#444)
             saveInterval: 5 * 60 * 1000, // 5 minutes (not used for debounced saves)
             maxRetries: 3,
         });
+        // Orbit answers a save with the people a manager asked the bot to forget (#435)
+        this.memoryStorage.setForgetHandler((botId, notice) => this.forget(botId, notice));
+    }
+
+    /**
+     * Drop forgotten people from everything held in memory: what is active, what was loaded for them to join later,
+     * and any save still waiting. Orbit has already deleted them and skipped them in the save it just answered, so
+     * after this the bot does not remember them and nothing saves them again. Someone who is still talking to the
+     * bot starts fresh from their next message.
+     */
+    forget(botId: string, notice: MemoryForgetNotice): void {
+        this.dropForgotten(botId, notice);
+        // Every Forget with an id in this notice gets reported, the new ones and the ones a lost report left behind
+        if (notice.rows && notice.rows.length > 0) this.reportForgotten(botId, notice.rows.map((row) => row.id));
+    }
+
+    private dropForgotten(botId: string, notice: MemoryForgetNotice): void {
+        // Orbit repeats a Forget in every answer until we report it dropped (#493; an older Orbit for a minute). Applied
+        // each time, it would wipe what the bot learned since from someone who kept talking, so each one is applied
+        // once: by its id when Orbit sends one (a second Forget of the same person is a new id), otherwise by who it names.
+        const now = Date.now();
+        for (const [key, keepUntil] of this.appliedForgets) {
+            if (now > keepUntil) this.appliedForgets.delete(key);
+        }
+
+        const isNew = (key: string) => !this.appliedForgets.has(`${botId}|${key}`);
+        let everyone: boolean;
+        let userUuids: string[];
+        if (notice.rows && notice.rows.length > 0) {
+            const rows = notice.rows.filter((row) => isNew(`row:${row.id}`));
+            everyone = rows.some((row) => row.userUuid === null);
+            userUuids = rows.flatMap((row) => (row.userUuid === null ? [] : [row.userUuid]));
+            for (const row of rows) this.appliedForgets.set(`${botId}|row:${row.id}`, now + PersistentMemory.FORGET_UNREPORTED_KEEP_MS);
+        } else {
+            everyone = notice.everyone && isNew('*');
+            userUuids = notice.userUuids.filter((uuid) => isNew(`uuid:${uuid}`));
+            if (everyone) this.appliedForgets.set(`${botId}|*`, now + PersistentMemory.FORGET_REPEAT_WINDOW_MS);
+            for (const uuid of userUuids) this.appliedForgets.set(`${botId}|uuid:${uuid}`, now + PersistentMemory.FORGET_REPEAT_WINDOW_MS);
+        }
+        if (!everyone && userUuids.length === 0) return;
+
+        const prefix = `${botId}_`;
+        const forgotten = new Set(userUuids);
+        const isForgotten = (userUuid: string | undefined) => everyone || (!!userUuid && forgotten.has(userUuid));
+
+        for (const [key, memory] of this.getAllMemories().entries()) {
+            if (!key.startsWith(prefix)) continue;
+            // A memory made before the person's uuid was known still says "temp-<playerId>": the tracked uuid counts too
+            if (!isForgotten(memory.userUuid) && !isForgotten(this.uuidTracking.get(key)?.userUuid)) continue;
+            this.clearMemory(botId, Number(key.slice(prefix.length)));
+            const timer = this.debounceTimers.get(key);
+            if (timer) clearTimeout(timer);
+            this.debounceTimers.delete(key);
+            this.pendingSaves.delete(key);
+        }
+
+        for (const key of Array.from(this.loadedMemoriesByUuid.keys())) {
+            if (key.startsWith(prefix) && isForgotten(key.slice(prefix.length))) {
+                this.loadedMemoriesByUuid.delete(key);
+            }
+        }
+    }
+
+    /**
+     * Tell Orbit these Forgets are dropped, so it stops skipping those people and removes the rows. Fire and forget: when
+     * the report does not get through, Orbit keeps sending the Forget and the next answer that carries it reports again.
+     * The dropped people are never wiped twice meanwhile, because the id stays in appliedForgets.
+     */
+    private reportForgotten(botId: string, ids: string[]): void {
+        const pending = ids.filter((id) => !this.reporting.has(`${botId}|${id}`));
+        if (pending.length === 0) return;
+        for (const id of pending) this.reporting.add(`${botId}|${id}`);
+        this.memoryStorage
+            .acknowledgeForgets(botId, pending)
+            .then((reported) => {
+                if (!reported) return;
+                // Answers Orbit already sent may still carry the Forget: keep the id for a little, so it is not applied again
+                const keepUntil = Date.now() + PersistentMemory.FORGET_REPEAT_WINDOW_MS;
+                for (const id of pending) {
+                    if (this.appliedForgets.has(`${botId}|row:${id}`)) this.appliedForgets.set(`${botId}|row:${id}`, keepUntil);
+                }
+            })
+            .catch(() => undefined)
+            .finally(() => {
+                for (const id of pending) this.reporting.delete(`${botId}|${id}`);
+            });
     }
 
     /**
@@ -61,18 +158,14 @@ export class PersistentMemory extends ConversationMemory {
         // Check if we have a loaded memory for this userUuid (lazy restoration)
         const loadedMemoryKey = `${botId}_${userUuid}`;
         let loadedMemory = this.loadedMemoriesByUuid.get(loadedMemoryKey);
-        
-        // If there's an active memory for this userUuid on a different playerId
-        // (e.g., another tab already chatting), use that instead — it's more current
-        // BUT only if that active memory is more recently updated than the cached snapshot
-        // to avoid replacing fresh in-session data with stale cross-tab data.
-        if (loadedMemory) {
-            const activeByUuid = this.getMemoryByUserUuid(botId, userUuid);
-            if (activeByUuid && activeByUuid !== this.getMemory(botId, playerId)) {
-                if (activeByUuid.lastUpdated > (loadedMemory.lastUpdated || 0)) {
-                    loadedMemory = this.cloneMemory(activeByUuid);
-                }
-            }
+
+        // If there's an active memory for this userUuid on a different playerId (another tab, or the person's
+        // direct messages while they chat on the map), use that instead when it is more recently updated than the
+        // cached snapshot. Also when there is no snapshot: someone who first met the bot in this process has none, and
+        // their chat on the map must still be there when they send it a direct message.
+        const activeByUuid = this.freshestOtherMemory(botId, playerId, userUuid);
+        if (activeByUuid && activeByUuid.lastUpdated > (loadedMemory?.lastUpdated || 0)) {
+            loadedMemory = this.cloneMemory(activeByUuid);
         }
         
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -161,7 +254,13 @@ export class PersistentMemory extends ConversationMemory {
                             ? existingOrNew.relationship.importantEvents
                             : loadedMemory.relationship.importantEvents,
                     };
-                    // Keep existing conversationHistory (current session)
+                    // Keep the current conversation and add what was said elsewhere since (on the map or in direct
+                    // messages), so memory follows the person, not the chat
+                    existingOrNew.conversationHistory = PersistentMemory.mergeHistories(
+                        existingOrNew.conversationHistory,
+                        loadedMemory.conversationHistory ?? [],
+                        existingOrNew.maxHistorySize || 50
+                    );
                 }
             } else {
                 // Create new memory with loaded data
@@ -626,6 +725,33 @@ export class PersistentMemory extends ConversationMemory {
     }
 
     /**
+     * The most recently updated active memory of this person on another playerId, e.g. their chat on the map while they
+     * send a direct message. A memory made before the person's uuid was known still says "temp-<playerId>": the
+     * tracked uuid counts for it.
+     */
+    private freshestOtherMemory(botId: string, playerId: number, userUuid: string): BotPlayerMemory | null {
+        let freshest: BotPlayerMemory | null = null;
+        for (const [key, memory] of this.getAllMemories().entries()) {
+            if (key !== `${botId}_${memory.playerId}` || memory.playerId === playerId) continue;
+            const owner = memory.userUuid?.startsWith('temp-') ? this.uuidTracking.get(key)?.userUuid : memory.userUuid;
+            if (owner !== userUuid) continue;
+            if (!freshest || memory.lastUpdated > freshest.lastUpdated) freshest = memory;
+        }
+        return freshest;
+    }
+
+    /**
+     * Both histories as one, in time order, each message once (the current copy wins: it may carry a vision note the
+     * other lacks), keeping the last `max`.
+     */
+    private static mergeHistories(current: ConversationMessage[], other: ConversationMessage[], max: number): ConversationMessage[] {
+        const seen = new Set(current.map((message) => `${message.timestamp}|${message.sender}`));
+        const added = other.filter((message) => !seen.has(`${message.timestamp}|${message.sender}`)).map((message) => ({ ...message }));
+        if (added.length === 0) return current;
+        return [...current, ...added].sort((a, b) => a.timestamp - b.timestamp).slice(-max);
+    }
+
+    /**
      * Get memory storage instance (for external access)
      */
     getMemoryStorage(): MemoryStorage {
@@ -657,6 +783,10 @@ export class PersistentMemory extends ConversationMemory {
                 importantEvents: memory.relationship.importantEvents.map(e => ({ ...e })),
             },
             pendingMedia: memory.pendingMedia ? memory.pendingMedia.map(item => ({ ...item })) : [],
+            // The turn being answered belongs to the chat it is in, never to a copy in another one
+            pendingArtifacts: undefined,
+            dmRoomId: undefined,
+            artifactCalls: undefined,
         };
     }
 

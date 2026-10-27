@@ -86,31 +86,52 @@ test.describe('Availability Status', () => {
 
             await page.context().close();
         })
-        test('should ask to change notification permission when you pass in Busy status and your browser notification permission is denied @nowebkit @nofirefox',
+        test('should offer notifications in our own card when a signed-in player goes Busy @oidc @nowebkit @nofirefox @nomobile',
+            async({ browser, browserName, page }) => {
+            test.skip(browserName === 'firefox' || browserName === 'webkit' || isMobile(page), 'Notification permission management issues, and sign-in on mobile');
+
+            const statusName = "Busy";
+            await using signedIn = await getPage(browser, 'Member1',
+                publicTestMapUrl("tests/E2E/empty.json", "availability-status")
+            );
+
+            await Map.walkTo(signedIn,'ArrowRight',500);
+
+            // The card asks only while the browser has not answered: the test context grants notifications,
+            // so take that grant away first.
+            await signedIn.context().clearPermissions();
+
+            await Menu.openMenu(signedIn);
+            await Menu.clickOnStatus(signedIn,statusName);
+
+            // Headless Chromium reports notifications as blocked whatever the context allows, so the card may open
+            // on the question or on the steps to unblock them: either way it is our own card, and it closes.
+            const card = signedIn.getByTestId('notification-card');
+            await expect(card).toBeVisible();
+            await card.getByRole('button', { name: 'Close' }).first().click();
+            await expect(card).toBeHidden();
+        })
+
+        test('should not offer notifications to a guest who goes Busy @nowebkit @nofirefox',
             async({ browser, browserName }) => {
             test.skip(browserName === 'firefox' || browserName === 'webkit', 'Notification permission management issues');
-            
+
             const statusName = "Busy";
             await using page = await getPage(browser, 'Alice',
                 publicTestMapUrl("tests/E2E/empty.json", "availability-status")
             );
 
             await Map.walkTo(page,'ArrowRight',500);
-
-            // The card asks only while the browser has not answered: the test context grants notifications,
-            // so take that grant away first.
             await page.context().clearPermissions();
 
             await Menu.openMenu(page);
             await Menu.clickOnStatus(page,statusName);
 
-            await expect(page.getByText('Turn on notifications?')).toBeVisible();
-
-            await page.getByRole('button', { name: 'Turn on' }).click();
-
-            await expect(page.getByText('Turn on notifications?')).toBeHidden();
-
-            await page.context().close();
+            // A guest's notifications only work while Universe is open; they turn them on in Settings > Notifications.
+            // Give the card the time it takes to load and open, so its absence means something.
+            //eslint-disable-next-line playwright/no-wait-for-timeout
+            await page.waitForTimeout(3000);
+            await expect(page.getByTestId('notification-card')).toHaveCount(0);
         })
         
         test.describe('busy interaction', () => {

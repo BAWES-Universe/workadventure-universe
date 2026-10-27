@@ -2,6 +2,7 @@ import { get, writable } from "svelte/store";
 import LL from "../../../../i18n/i18n-svelte";
 import type { FriendAction } from "../../Stores/FriendsStore";
 import { friendsStore } from "../../Stores/FriendsStore";
+import { askForNotifications } from "../../../Notification/Push/NotificationAsk";
 
 /** A short line at the top of the People list after a friend action that didn't go through. Clears itself. */
 export const friendNoticeStore = writable<string | undefined>(undefined);
@@ -38,6 +39,10 @@ export async function runFriendAction(uuid: string, userName: string, action: Fr
         if (answer.error) {
             showFriendNotice(friendErrorText(answer.error, userName));
             return false;
+        }
+        // A request now waiting for them is the moment a notification of their answer helps
+        if (action === "request" && answer.relationship === "request_sent") {
+            askForNotifications({ kind: "friendRequest", name: userName });
         }
         return true;
     } catch (e) {

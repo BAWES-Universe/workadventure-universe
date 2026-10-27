@@ -19,6 +19,11 @@ const requestedCameraStateKey = "requestedCameraStateKey";
 const requestedMicrophoneStateKey = "requestedMicrophoneStateKey";
 const characterTexturesKey = "characterTextures";
 const guestCharacterTexturesKey = "guestCharacterTextures";
+// Only names a guest typed are kept here. A new key, so no name an earlier build backed up can come back (#1271).
+const guestNameKey = "guestTypedPlayerNameBackup";
+// The name a guest typed last: the only name backupGuestName keeps aside (#1271).
+const guestTypedNameKey = "guestTypedPlayerName";
+const playerNameIsAccountsKey = "playerNameIsAccounts";
 const companionKey = "companion";
 const audioPlayerVolumeKey = "audioVolume";
 const audioPlayerMuteKey = "audioMute";
@@ -31,6 +36,9 @@ const decreaseAudioPlayerVolumeWhileTalking = "decreaseAudioPlayerVolumeWhileTal
 const disableAnimations = "disableAnimations";
 const lastRoomUrl = "lastRoomUrl";
 const authToken = "authToken";
+const guestTokenAsideKey = "guestTokenAside";
+/** How long a guest's token kept aside for sign-in stays good: long enough to sign in, not for the next person on a shared device. */
+const GUEST_TOKEN_ASIDE_MS = 30 * 60 * 1000;
 const notification = "notificationPermission";
 const allowPictureInPicture = "allowPictureInPicture";
 const chatSounds = "chatSounds";
@@ -108,9 +116,72 @@ class LocalUserStore {
         return data ? JSON.parse(data) : null;
     }
 
-    setName(name: string): void {
+    /**
+     * fromAccount: the account's name (from Orbit, or a rename while signed in), not one a guest typed. It is kept
+     * against the signed-in user, so another account on this device doesn't take it.
+     */
+    setName(name: string, fromAccount = false): void {
         this.name = name;
         localStorage.setItem(playerNameKey, name);
+        if (fromAccount) {
+            localStorage.setItem(playerNameIsAccountsKey, this.getLocalUser()?.uuid ?? "true");
+        } else {
+            localStorage.removeItem(playerNameIsAccountsKey);
+            localStorage.setItem(guestTypedNameKey, name);
+        }
+    }
+
+    /** The name this device last got as this account's own (see setName), if it holds one. */
+    getAccountName(userUuid: string): string | null {
+        return localStorage.getItem(playerNameIsAccountsKey) === userUuid ? this.getName() : null;
+    }
+
+    /**
+     * Keeps a guest's name aside before signing in. The device keeps the account's name while signed in (#1192), and
+     * signing out gives the guest's own back (restoreGuestName), as with the woka.
+     */
+    backupGuestName(): void {
+        // Only a guest's: never the account's name the device kept, also once its sign-in was refused and the device
+        // carried on as a guest.
+        if (this.isLogged() || localStorage.getItem(playerNameIsAccountsKey) !== null) return;
+        // And only one a guest typed: a name an older version stored may be an account's, and nothing tells them apart.
+        const name = this.getName();
+        if (name !== null && localStorage.getItem(guestTypedNameKey) === name) localStorage.setItem(guestNameKey, name);
+    }
+
+    /**
+     * On signing out: the device goes back to the guest's own name, or to none, never the account's.
+     * wasSignedIn: this device held an account's sign-in. Then a name nothing marks (stored by an older version, and not
+     * one a guest typed) may be the account's too, and goes. Without it such a name stays: it is most likely a guest's.
+     */
+    restoreGuestName(wasSignedIn = false): void {
+        // A guest's own name stays: it is only the account's name the device kept that goes (a guest can get here too,
+        // when their token is refused).
+        if (localStorage.getItem(playerNameIsAccountsKey) === null) {
+            const name = this.getName();
+            if (!wasSignedIn || name === null || localStorage.getItem(guestTypedNameKey) === name) return;
+        }
+        const backup = localStorage.getItem(guestNameKey);
+        if (backup && isUserNameValid(backup)) {
+            this.setName(backup);
+            return;
+        }
+        this.name = undefined;
+        localStorage.removeItem(playerNameKey);
+        localStorage.removeItem(playerNameIsAccountsKey);
+        localStorage.removeItem(guestTypedNameKey);
+    }
+
+    /**
+     * Another account's name on this device, when this account is the one signed in now: the device goes back to the
+     * guest's own name, or none. True when it did, so the game can be told.
+     */
+    dropOtherAccountsName(userUuid: string): boolean {
+        const owner = localStorage.getItem(playerNameIsAccountsKey);
+        // "true" is a name marked when no user was saved yet: nothing says whose it is.
+        if (owner === null || owner === "true" || owner === userUuid) return false;
+        this.restoreGuestName();
+        return true;
     }
 
     getName(): string | null {
@@ -407,8 +478,57 @@ class LocalUserStore {
         return localStorage.getItem(authToken);
     }
 
+    /**
+     * Before signing in, keeps the guest's own token aside (never an account's) so that, once signed in, the game can
+     * tell Orbit which guest id this device used and the guest's visits join the account. Gone after one use, after
+     * 30 minutes, on logout and when the device gets a new guest.
+     */
+    keepGuestTokenAside(now = Date.now()): void {
+        const token = localStorage.getItem(authToken);
+        if (!token || this.storedTokenIsAccounts()) return;
+        localStorage.setItem(guestTokenAsideKey, JSON.stringify({ token, at: now }));
+    }
+
+    /** The guest token kept aside, without removing it. Null when there is none or it is too old. */
+    peekGuestTokenAside(now = Date.now()): string | null {
+        const raw = localStorage.getItem(guestTokenAsideKey);
+        if (!raw) return null;
+        try {
+            const kept = z.object({ token: z.string().min(1), at: z.number().finite() }).parse(JSON.parse(raw));
+            return now - kept.at <= GUEST_TOKEN_ASIDE_MS ? kept.token : null;
+        } catch {
+            return null;
+        }
+    }
+
+    /** The guest token kept aside, once: asking removes it. */
+    takeGuestTokenAside(now = Date.now()): string | null {
+        const token = this.peekGuestTokenAside(now);
+        this.dropGuestTokenAside();
+        return token;
+    }
+
+    dropGuestTokenAside(): void {
+        localStorage.removeItem(guestTokenAsideKey);
+    }
+
     isLogged(): boolean {
         return this.jwt?.accessToken !== undefined && this.jwt?.accessToken !== null;
+    }
+
+    /**
+     * Whether the token kept on this device was an account's, not a guest's. The page has not taken a stored token in
+     * until the pusher accepts it, so this reads the device.
+     */
+    storedTokenIsAccounts(): boolean {
+        const token = localStorage.getItem(authToken);
+        if (!token) return false;
+        try {
+            const accessToken = JwtAuthToken.parse(LocalUserStore.parseJwt(token)).accessToken;
+            return accessToken !== undefined && accessToken !== null;
+        } catch {
+            return false;
+        }
     }
 
     private static parseJwt(token: string) {
@@ -433,6 +553,31 @@ class LocalUserStore {
 
     getNotification(): boolean {
         return localStorage.getItem(notification) === "true";
+    }
+
+    /** This browser's id in Your devices once Orbit saved it (#863), so it is known even while switched off. */
+    getPushDeviceId(): string | null {
+        try {
+            return localStorage.getItem("pushDeviceId");
+        } catch (e) {
+            console.warn("Could not read the saved device id", e);
+            return null;
+        }
+    }
+
+    setPushDeviceId(id: string | null): void {
+        try {
+            if (id === null) localStorage.removeItem("pushDeviceId");
+            else localStorage.setItem("pushDeviceId", id);
+        } catch (e) {
+            console.warn("Could not save the device id", e);
+        }
+    }
+
+    /** Whether notifications were switched on or off here; null when that was never set. */
+    getNotificationChoice(): boolean | null {
+        const value = localStorage.getItem(notification);
+        return value === null ? null : value === "true";
     }
 
     setAllowPictureInPicture(value: boolean): void {

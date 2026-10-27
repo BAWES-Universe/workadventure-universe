@@ -3,9 +3,10 @@ import {maps_domain, play_url, publicTestMapUrl} from "./utils/urls";
 import { getPage} from "./utils/auth";
 import {evaluateScript} from "./utils/scripting";
 import {getCoWebsiteIframe} from "./utils/iframe";
+import {openHereItem} from "./utils/openHere";
 
 test.describe('Scripting WA.nav.openCoWebsite function', () => {
-    test('one can open several tabs that stay loaded', async ({ browser}) => {
+    test('one can open several tabs that stay loaded', async ({ browser }, testInfo) => {
         await using page = await getPage(browser, 'Alice', publicTestMapUrl("tests/E2E/empty.json", "scripting_open_cowebsite"));
 
         const url = new URL(
@@ -36,12 +37,12 @@ test.describe('Scripting WA.nav.openCoWebsite function', () => {
         await expect(getCoWebsiteIframe(page).locator('[id="\\#text_input"]')).toHaveValue('');
         await getCoWebsiteIframe(page).locator('[id="\\#text_input"]').fill('tab2');
 
-        await page.getByTestId('tab1').click();
+        await openHereItem(page, testInfo, 1);
         await expect(getCoWebsiteIframe(page).locator('[id="\\#text_input"]')).toHaveValue('tab1');
         await expect(getCoWebsiteIframe(page).locator('[id="\\#text_input"]')).toBeVisible();
         await expect(page.locator('iframe[title="Cowebsite"]').nth(1)).toBeHidden();
 
-        await page.getByTestId('tab2').click();
+        await openHereItem(page, testInfo, 2);
         await expect(getCoWebsiteIframe(page).locator('[id="\\#text_input"]')).toHaveValue('tab2');
         await expect(getCoWebsiteIframe(page).locator('[id="\\#text_input"]')).toBeVisible();
 

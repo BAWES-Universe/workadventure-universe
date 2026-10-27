@@ -28,7 +28,8 @@ vi.mock("../../../../i18n/i18n-svelte", async () => {
 import { errorScreenStore } from "../../../Stores/ErrorScreenStore";
 import { showReconnectingScreen } from "../../../Connection/ReconnectScreen";
 import ErrorScreen from "../ErrorScreen.svelte";
-import { universeLogo } from "../../images/universeLogo";
+import { universeLogo, universeWordmark } from "../../images/universeLogo";
+import butterfly from "../../images/butterfly.webp";
 
 describe("ErrorScreen logos", () => {
     let component: ErrorScreen | undefined;
@@ -78,12 +79,29 @@ describe("ErrorScreen logos", () => {
         expect(images()).toEqual(["https://logos/login.png", "https://logos/custom.png"]);
     });
 
-    it("shows the room's logo alone on the Reconnecting screen", async () => {
-        showReconnectingScreen("https://logos/error.png");
+    it("shows the loading screen's wordmark alone on the Reconnecting screen, not the room's picture", async () => {
+        showReconnectingScreen();
         component = new ErrorScreen({ target });
         await tick();
 
-        expect(images().filter((src) => src?.startsWith("https://"))).toEqual(["https://logos/error.png"]);
+        expect(images().filter((src) => src !== butterfly)).toEqual([universeWordmark]);
+        const wordmark = target.querySelector("img.wordmark");
+        expect(wordmark?.getAttribute("width")).toBe("219");
+        expect(wordmark?.getAttribute("height")).toBe("36");
+    });
+
+    it("shows the same wordmark on the Connecting screen, even when the screen brings a picture", async () => {
+        errorScreenStore.setError({
+            type: "reconnecting",
+            code: "reconnecting",
+            title: "Connecting...",
+            subtitle: "Please wait while we connect you to the room.",
+            image: "https://logos/loading.png",
+        } as never);
+        component = new ErrorScreen({ target });
+        await tick();
+
+        expect(images().filter((src) => src !== butterfly)).toEqual([universeWordmark]);
     });
     it("shows Universe's own logo, not the word, when no room has loaded yet", async () => {
         gameManager.currentStartedRoom = undefined;

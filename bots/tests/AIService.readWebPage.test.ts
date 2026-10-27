@@ -31,9 +31,10 @@ describe('readWebPageForTool', () => {
             metadata: { title: 'BAWES' },
         });
 
-        const result = await readWebPageForTool('bawes.net');
+        const result = await readWebPageForTool('bawes.net', 80_000);
 
-        expect(FileParser.parseFile).toHaveBeenCalledWith('https://bawes.net/', 'text/html');
+        // The bot's "Reads from a page or file" limit (Orbit #666) goes to the parser
+        expect(FileParser.parseFile).toHaveBeenCalledWith('https://bawes.net/', 'text/html', 80_000);
         expect(result).toEqual({
             url: 'https://bawes.net/',
             title: 'BAWES',
@@ -52,7 +53,8 @@ describe('readWebPageForTool', () => {
 
         const result = await readWebPageForTool('https://example.com');
 
-        expect(FileParser.parseFile).toHaveBeenCalledWith('https://example.com/', 'text/html');
+        // No limit given: the parser's own (50,000 characters)
+        expect(FileParser.parseFile).toHaveBeenCalledWith('https://example.com/', 'text/html', undefined);
         expect(result).toEqual({ url: 'https://example.com/', summary: 'Failed to fetch web page' });
     });
 

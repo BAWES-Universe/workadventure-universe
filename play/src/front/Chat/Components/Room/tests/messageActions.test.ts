@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { ChatMessageContent } from "../../../Connection/ChatConnection";
-import { areAllPhotos, getCopyableText, getSaveableFiles, summarizeForReply } from "../MessageActions/messageActions";
+import {
+    areAllPhotos,
+    getCopyableText,
+    getMediaCaption,
+    getSaveableFiles,
+    summarizeForReply,
+} from "../MessageActions/messageActions";
 
 function content(partial: Partial<ChatMessageContent>): ChatMessageContent {
     return { body: "", url: undefined, urls: undefined, filename: undefined, fileNames: undefined, ...partial };
@@ -110,5 +116,23 @@ describe("message actions", () => {
 
     it("describes a text reply by its text", () => {
         expect(summarizeForReply("proximity", content({ body: "Hi" }))).toEqual({ kind: "text", text: "Hi" });
+    });
+
+    describe("the caption under a picture or video", () => {
+        it("is not the file name a Matrix picture carries as its body", () => {
+            expect(getMediaCaption(content({ body: "image.png", filename: "image.png" }))).toBeUndefined();
+            expect(getMediaCaption(content({ body: " image.png ", filename: "image.png" }))).toBeUndefined();
+        });
+
+        it("is the text a sender typed, with or without a file name beside it", () => {
+            expect(getMediaCaption(content({ body: "Our logo", filename: "logo.svg" }))).toBe("Our logo");
+            // Nearby chat and bots: the file name is separate, the body is the caption.
+            expect(getMediaCaption(content({ body: "Look at this" }))).toBe("Look at this");
+        });
+
+        it("is empty without text", () => {
+            expect(getMediaCaption(content({ body: "", filename: "photo.png" }))).toBeUndefined();
+            expect(getMediaCaption(content({ body: "   " }))).toBeUndefined();
+        });
     });
 });

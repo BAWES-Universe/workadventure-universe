@@ -93,3 +93,18 @@ eventProcessor.registerPrivateEventProcessor("moveToAudience", (event, sender) =
     }
     return event;
 });
+
+// A reply limit card (#1159) is the game speaking for a bot: only a bot may send one, and only about itself.
+eventProcessor.registerPrivateEventProcessor("botReplyLimit", (event, sender) => {
+    if (event.$case !== "botReplyLimit") {
+        throw new Error("Invalid event type");
+    }
+    const uuid = sender?.uuid ?? "";
+    if (!sender || !(sender.tags.includes("bot") || uuid.startsWith("bot-"))) {
+        throw new Error("Only a bot can send a reply limit card");
+    }
+    if (uuid.startsWith("bot-") && event.botReplyLimit.botId !== uuid.slice("bot-".length)) {
+        throw new Error("A bot can only send its own reply limit card");
+    }
+    return event;
+});

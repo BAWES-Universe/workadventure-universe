@@ -9,7 +9,7 @@
         ChatRoomNotificationControl,
     } from "../../../Connection/ChatConnection";
     import type { PictureStore } from "../../../../Stores/PictureStore";
-    import { notificationPlayingStore } from "../../../../Stores/NotificationStore";
+    import { showChatDoneToast } from "../../../../Stores/ChatDoneToastStore";
     import { warningMessageStore } from "../../../../Stores/ErrorStore";
     import { localUserStore } from "../../../../Connection/LocalUserStore";
     import {
@@ -26,6 +26,12 @@
     import { invitesEnabledStore } from "../../../Stores/RingStore";
     import TopRowAvatar from "../../TopRow/TopRowAvatar.svelte";
     import VisitCard from "../../../../Components/VisitCard/VisitCard.svelte";
+    import { gameSceneStore } from "../../../../Stores/GameSceneStore";
+    import { botApiService } from "../../../../external-modules/bots/services/BotApiService";
+    import { botHomeRoom } from "../../../Bots/BotHomeRoom";
+    import { visitBotRoom } from "../../../Bots/visitBotRoom";
+    import PartnerRoomBlock from "./PartnerRoomBlock.svelte";
+    import { partnerNowIn, sameRoom, visitPerson } from "./PartnerNowIn";
     import type { DirectPartner } from "./DirectPartnerStore";
     import { isInUniverse } from "./PartnerPlace";
     import { partnerStatus } from "./PartnerStatus";
@@ -78,6 +84,9 @@
         ? getContext(PERSON_COLOUR_CONTEXT)
         : readable(() => undefined);
 
+    // A bot shows where it lives, with Visit, so nobody has to ask it or scroll back for its room card.
+    const botRoom = botHomeRoom(partner.chatId, (botId) => botApiService.getDmRoom(botId), window.location.origin);
+
     let confirmingDelete = false;
     let blockInProgress = false;
 
@@ -90,7 +99,19 @@
     $: live = isInUniverse(partner.place);
     $: canViewProfile = canOpenPartnerProfile(partner);
     $: canInvite = canInvitePartner(partner, $invitesEnabledStore);
-    $: tiles = [canInvite, partner.actions.walkTo, partner.actions.locate, canViewProfile].filter(Boolean).length;
+    // A person shows where they are now, when they share their room with you and you can enter it (Orbit decides).
+    // It comes after their bio and the buttons, so it doesn't push who they are down.
+    $: partnerUuid = partner.isBot ? undefined : partner.uuid;
+    $: personRoom = partnerNowIn(partnerUuid, () => botApiService.getLiveView(), window.location.origin);
+    $: placeNow = $botRoom ?? $personRoom;
+    $: currentRoomUrl = $gameSceneStore?.roomUrl;
+    // Away from their room Visit already takes you to them, so Walk to would say the same thing twice.
+    $: walkTo = partner.actions.walkTo && !(placeNow && !sameRoom(currentRoomUrl, placeNow.url));
+    function visitRoom() {
+        if ($botRoom) visitBotRoom($botRoom, partner, currentRoomUrl);
+        else if ($personRoom) visitPerson(partner, $personRoom);
+    }
+    $: tiles = [canInvite, walkTo, partner.actions.locate, canViewProfile].filter(Boolean).length;
     // Add friend, or what comes next with them. Remove friend is red, so it sits with the other red rows.
     $: friendAction = partnerFriendAction(partner, name, $friendsEnabledStore, $relationshipsStore, $LL);
     $: friendRequestPossible = partner.uuid !== undefined && !$relationshipsStore.has(partner.uuid);
@@ -109,12 +130,14 @@
     }
 
     function deleteChat() {
+        // The name as it is now: once the chat is gone the panel no longer knows it.
+        const notification = $LL.chat.directChat.deleteChat.notification({ name });
         // Deleting a chat leaves it and forgets it, so it goes from the person's lists and not just from view.
         room.leaveRoom({ forget: true })
             .then(() => {
                 dispatch("close");
                 if ($selectedRoomStore?.id === room.id) selectedRoomStore.set(undefined);
-                notificationPlayingStore.playNotification($LL.chat.directChat.deleteChat.notification());
+                showChatDoneToast(notification);
             })
             .catch((error) => {
                 console.error("Failed to delete the chat", error);
@@ -176,6 +199,16 @@
             </div>
         </div>
 
+        {#if $botRoom}
+            <PartnerRoomBlock
+                label={$LL.chat.botStatus.livesIn()}
+                link={$botRoom}
+                {name}
+                {currentRoomUrl}
+                visit={visitRoom}
+            />
+        {/if}
+
         {#if partner.user?.visitCardUrl && !partner.isBot}
             <VisitCard visitCardUrl={partner.user.visitCardUrl} isEmbedded={true} showSendMessageButton={false} />
         {/if}
@@ -193,7 +226,7 @@
                         {$LL.chat.friends.ring.ring()}
                     </button>
                 {/if}
-                {#if partner.actions.walkTo}
+                {#if walkTo}
                     <button type="button" class="partner-tile" on:click={() => walkToPartner(partner)}>
                         <span class="partner-tile-icon"><IconWalk font-size="20" /></span>
                         {$LL.chat.userList.walkTo()}
@@ -217,6 +250,16 @@
                     </button>
                 {/if}
             </div>
+        {/if}
+
+        {#if !$botRoom && $personRoom}
+            <PartnerRoomBlock
+                label={$LL.chat.botStatus.nowIn()}
+                link={$personRoom}
+                {name}
+                {currentRoomUrl}
+                visit={visitRoom}
+            />
         {/if}
 
         {#if friendAction && !friendAction.danger}

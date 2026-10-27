@@ -2,6 +2,14 @@
     import { onMount } from "svelte";
     import { get } from "svelte/store";
     import { requestVisitCardsStore, selectedChatIDRemotePlayerStore } from "../../Stores/GameStore";
+    import { wokaMenuStore } from "../../Stores/WokaMenuStore";
+    import { actionsMenuStore } from "../../Stores/ActionsMenuStore";
+    import {
+        isFromCardOrigin,
+        isProfileLinkList,
+        openProfileLinkHere,
+        profileLinksOpeningHere,
+    } from "../../Chat/LinkPreview/ProfileLinks";
     import { LL } from "../../../i18n/i18n-svelte";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { openDirectChatRoom } from "../../Chat/Utils";
@@ -52,7 +60,35 @@
         if (message.data?.type === "cvIframeSize") {
             // w = message.data.data.w + "px";
             h = message.data.data.h;
+        } else if (!isFromCardOrigin(message.origin, safeVisitCardUrl, window.location.href)) {
+            // Asking about links and opening one are left to the card itself: the frame may have gone to another site.
+            return;
+        } else if (message.data?.type === "cvCheckLinks" && isProfileLinkList(message.data.urls)) {
+            answerLinks(message.data.urls);
+        } else if (message.data?.type === "cvOpenLink" && typeof message.data.url === "string") {
+            // The card covers the window, so it closes to show the page, as Send message closes it to show the chat.
+            if (openProfileLinkHere(message.data.url)) closeCards();
         }
+    }
+
+    /** Tells the profile which of its links open in the window: those lose their new-tab icon. */
+    function answerLinks(urls: string[]) {
+        const frame = cvIframe?.contentWindow;
+        if (!frame || !safeVisitCardUrl) return;
+        const origin = new URL(safeVisitCardUrl, window.location.href).origin;
+        profileLinksOpeningHere(urls)
+            .then((openHere) => {
+                // The card may have closed, or shown someone else, meanwhile.
+                if (cvIframe?.contentWindow === frame) frame.postMessage({ type: "cvLinks", openHere }, origin);
+            })
+            .catch((error) => console.error("Could not check profile links", error));
+    }
+
+    /** The card closes from wherever it shows: on its own, or under a player's name. */
+    function closeCards() {
+        closeCard();
+        wokaMenuStore.clear();
+        actionsMenuStore.clear();
     }
 
     onMount(() => {
