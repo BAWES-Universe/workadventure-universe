@@ -80,7 +80,7 @@ describe('fetching media', () => {
 describe('make_artifact with media', () => {
     it('downloads this turn\'s song and sends it to Orbit under the page\'s name', async () => {
         const ctx = context();
-        const run = await runArtifactTool('make_artifact', { title: 'My song', kind: 'page', content: '<audio src="song.mp3">', media: [{ from: 'm1', name: 'song' }] }, ctx);
+        const run = await runArtifactTool('make_artifact', { title: 'My song', kind: 'page', content: '<audio src="song.mp3">', media: [{ file: 'm1', name: 'song' }] }, ctx);
         const uploads = vi.mocked(ctx.admin.makeArtifact).mock.calls[0][3];
         expect(uploads).toEqual([{ name: 'song.mp3', contentType: 'audio/mpeg', body: new Uint8Array([1, 2, 3]) }]);
         expect(run.result).toMatchObject({ success: true, media: ['song.mp3'] });
@@ -90,16 +90,16 @@ describe('make_artifact with media', () => {
 
     it('refuses a name that is not from this turn, and saves nothing', async () => {
         const ctx = context();
-        const run = await runArtifactTool('make_artifact', { title: 'T', kind: 'page', content: 'x', media: [{ from: 'https://evil.example/a.mp3', name: 'a.mp3' }] }, ctx);
+        const run = await runArtifactTool('make_artifact', { title: 'T', kind: 'page', content: 'x', media: [{ file: 'https://evil.example/a.mp3', name: 'a.mp3' }] }, ctx);
         expect(run.result.error).toContain('is not a song, image or video from this turn; you can use m1');
         expect(ctx.admin.makeArtifact).not.toHaveBeenCalled();
     });
 
     it('says when media is off or too big, and saves nothing', async () => {
         const off = context(undefined, undefined, 0);
-        expect((await runArtifactTool('make_artifact', { title: 'T', kind: 'page', content: 'x', media: [{ from: 'm1', name: 's.mp3' }] }, off)).result.error).toContain('cannot carry songs');
+        expect((await runArtifactTool('make_artifact', { title: 'T', kind: 'page', content: 'x', media: [{ file: 'm1', name: 's.mp3' }] }, off)).result.error).toContain('cannot carry songs');
         const small = context(undefined, undefined, 2);
-        expect((await runArtifactTool('make_artifact', { title: 'T', kind: 'page', content: 'x', media: [{ from: 'm1', name: 's.mp3' }] }, small)).result.error).toContain('does not fit');
+        expect((await runArtifactTool('make_artifact', { title: 'T', kind: 'page', content: 'x', media: [{ file: 'm1', name: 's.mp3' }] }, small)).result.error).toContain('does not fit');
         expect(off.admin.makeArtifact).not.toHaveBeenCalled();
         expect(small.admin.makeArtifact).not.toHaveBeenCalled();
     });
@@ -114,7 +114,7 @@ describe('make_artifact with media', () => {
 describe('change_artifact with media', () => {
     it('can only drop or add media, with no edit to the page', async () => {
         const ctx = context();
-        const run = await runArtifactTool('change_artifact', { id: 'art-1', dropMedia: ['old.mp3'], media: [{ from: 'm1', name: 'song.mp3' }] }, ctx);
+        const run = await runArtifactTool('change_artifact', { id: 'art-1', dropMedia: ['old.mp3'], media: [{ file: 'm1', name: 'song.mp3' }] }, ctx);
         expect(run.result).toMatchObject({ success: true, version: 2 });
         const [, , change, , uploads] = vi.mocked(ctx.admin.changeArtifact).mock.calls[0];
         expect(change).toMatchObject({ dropMedia: ['old.mp3'] });

@@ -1247,7 +1247,7 @@ export class AIService {
                             // and will be delivered by flushPendingMedia on re-entry.
                             this.preQueueToolResults(toolResults, iterationSentUrls, botId, playerId);
                             // Before the auto-send below replaces results that carried media with a short note
-                            const newTurnMedia = this.noteTurnMedia(toolResults, botId, playerId);
+                            const turnMediaSoFar = this.noteTurnMedia(toolResults, botId, playerId);
 
                             // Cancellation during tool execution: persist the queued
                             // media (safety net above) but skip inline delivery and
@@ -1268,8 +1268,10 @@ export class AIService {
                             }
 
                             // Continue conversation with tool results
+                            // The whole turn's list every round: a later round sees only the last round's results, and a
+                            // song made two steps back must still be one it can put in a page
                             let toolResultsMessage = this.formatToolResults(toolResults);
-                            if (newTurnMedia.length > 0) toolResultsMessage += `\n\n${turnMediaNotice(newTurnMedia)}`;
+                            if (turnMediaSoFar.length > 0) toolResultsMessage += `\n\n${turnMediaNotice(turnMediaSoFar)}`;
                             if (allToolResults.length <= MAX_SYNTHESIS_CHARS) {
                                 allToolResults += `\n\n=== Research Step ${followUpIterations} ===\n${toolResultsMessage}`;
                                 // Guard: after appending, trim at EXACTLY the cap boundary.
@@ -3072,7 +3074,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     /**
      * The songs, images and videos this round's tools made or found, added to the turn's list (#1510) so the bot can put
      * them in an artifact by their short names. Only while artifacts are on; the media tools and artifact tools are left
-     * out as autoSendMedia leaves them, since they made nothing new.
+     * out as autoSendMedia leaves them, since they made nothing new. Answers the whole list so far.
      */
     private noteTurnMedia(toolResults: Array<{ id: string; name: string; result: any }>, botId?: string, playerId?: number): TurnMedia[] {
         if (!artifactsEnabled() || !botId || playerId === undefined) return [];
@@ -3083,7 +3085,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             if (['send_image', 'send_file', 'send_audio', 'send_video', READ_WEB_PAGE_TOOL].includes(tr.name) || isArtifactTool(tr.name)) continue;
             for (const url of this.extractUrlsFromResult(tr.result)) found.push({ url });
         }
-        return addTurnMedia((memory.turnMedia ??= []), found, 'tool');
+        const list = (memory.turnMedia ??= []);
+        addTurnMedia(list, found, 'tool');
+        return list;
     }
 
     /**

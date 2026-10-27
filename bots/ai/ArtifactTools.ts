@@ -85,10 +85,10 @@ const MEDIA_PARAM = {
     items: {
         type: 'object',
         properties: {
-            from: { type: 'string', description: 'Which one: its short name from this turn, like "m1".' },
+            file: { type: 'string', description: 'Which one: its short name from this turn, like "m1".' },
             name: { type: 'string', description: 'The name the page uses for it, like "song.mp3" or "cover.png".' },
         },
-        required: ['from', 'name'],
+        required: ['file', 'name'],
     },
 };
 
@@ -236,23 +236,23 @@ function argEdits(value: unknown): ArtifactEdit[] | null {
 class MediaArgError extends Error {}
 
 /**
- * The media the model named, downloaded: each `from` must be one of this turn's (m1, m2...), so nothing from another
+ * The media the model named, downloaded: each `file` must be one of this turn's (m1, m2...), so nothing from another
  * person, chat or turn can go in. Together they stay inside the super admin's "Media in one artifact" limit.
  */
 async function gatherMedia(value: unknown, context: ArtifactContext): Promise<ArtifactMediaUpload[]> {
     if (value === undefined || value === null || (Array.isArray(value) && value.length === 0)) return [];
-    if (!Array.isArray(value)) throw new MediaArgError('media must be a list of { from, name }.');
+    if (!Array.isArray(value)) throw new MediaArgError('media must be a list of { file, name }.');
     const turn = context.media?.turn ?? [];
     const maxBytes = context.media?.maxBytes ?? 0;
     if (maxBytes <= 0) throw new MediaArgError('Artifacts cannot carry songs, images or videos on this server. Make it without them.');
     let room = maxBytes;
     const uploads: ArtifactMediaUpload[] = [];
     for (const item of value) {
-        const { from, name } = (item ?? {}) as Record<string, unknown>;
-        const entry = typeof from === 'string' ? turn.find((media) => media.ref === from.trim()) : undefined;
+        const { file, name } = (item ?? {}) as Record<string, unknown>;
+        const entry = typeof file === 'string' ? turn.find((media) => media.ref === file.trim()) : undefined;
         if (!entry) {
             const known = turn.map((media) => media.ref).join(', ');
-            throw new MediaArgError(`"${String(from)}" is not a song, image or video from this turn${known ? `; you can use ${known}` : ''}.`);
+            throw new MediaArgError(`"${String(file)}" is not a song, image or video from this turn${known ? `; you can use ${known}` : ''}.`);
         }
         let fetched;
         try {
