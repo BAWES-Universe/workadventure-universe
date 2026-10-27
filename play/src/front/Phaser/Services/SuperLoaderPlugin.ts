@@ -144,8 +144,8 @@ export class SuperLoaderPlugin {
         }
 
         return new CancelablePromise<T>((res, rej, cancel) => {
-            if (this.scene.scene.settings.status === Phaser.Scenes.DESTROYED) {
-                rej(new Error("Trying to load a " + type + " in a Scene that is already destroyed."));
+            if (this.isSceneDestroyed()) {
+                return rej(new Error("Trying to load a " + type + " in a Scene that is already destroyed."));
             }
 
             const resource = fromCache();
@@ -212,6 +212,12 @@ export class SuperLoaderPlugin {
             });
 
             callback();
+
+            // A listener of the loader's "addfile" event can destroy the scene while the resource is being queued.
+            // Nothing would start the loader then, and the promise would stay pending.
+            if (this.isSceneDestroyed()) {
+                return rej(new Error("Trying to load a " + type + " in a Scene that is already destroyed."));
+            }
 
             this.scene.load.once("filecomplete-" + type + "-" + key, successCallback);
             this.scene.load.on("loaderror", errorCallback);

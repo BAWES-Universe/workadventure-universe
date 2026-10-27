@@ -14,6 +14,21 @@ const chat: DeepPartial<Translation["chat"]> = {
         viewProfile: "Ver perfil",
         follow: "Localizar",
     },
+    botStatus: {
+        online: "En línea",
+        resting: "Descansando",
+        unready: "Aún no está listo",
+        gone: "Se fue",
+        restingPlaceholder: "Respuestas en pausa",
+        unreadyPlaceholder: "Aún no puede responder",
+        closed: "Este chat está cerrado",
+        left: "{name} se fue",
+        visit: "Visitar",
+        visitAria: "Visitar a {name} en {room}",
+        livesIn: "Vive en",
+        nowIn: "Ahora en",
+        inThisRoom: "Estás en esta sala",
+    },
 };
 
 export default chat;

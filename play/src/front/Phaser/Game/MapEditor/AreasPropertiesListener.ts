@@ -59,6 +59,7 @@ import { notificationPlayingStore } from "../../../Stores/NotificationStore";
 import type { CoWebsite } from "../../../WebRtc/CoWebsite/CoWebsite";
 import { JitsiCoWebsite } from "../../../WebRtc/CoWebsite/JitsiCoWebsite";
 import { SimpleCoWebsite } from "../../../WebRtc/CoWebsite/SimpleCoWebsite";
+import { createMapFileViewer, mapFileOpensInViewer } from "../../../FileViewer/openFileViewer";
 import { coWebsites } from "../../../Stores/CoWebsiteStore";
 import {
     ON_ACTION_TRIGGER_BUTTON,
@@ -1342,14 +1343,23 @@ export class AreasPropertiesListener {
 
         // Create the co-website to be opened
         const url = new URL(urlStr, this.scene.mapUrlFile);
-        const coWebsite = new SimpleCoWebsite(
-            url,
-            allowAPI ?? false,
-            property.policy,
-            property.width,
-            property.closable,
-            property.hideUrl
-        );
+        // A PDF or a picture placed with "Open file" opens in the file viewer, with the zone's own options.
+        const coWebsite =
+            property.type === "openFile" && mapFileOpensInViewer(property.link ?? "")
+                ? createMapFileViewer({
+                      link: url.toString(),
+                      width: property.width,
+                      closable: property.closable,
+                      hideUrl: property.hideUrl,
+                  })
+                : new SimpleCoWebsite(
+                      url,
+                      allowAPI ?? false,
+                      property.policy,
+                      property.width,
+                      property.closable,
+                      property.hideUrl
+                  );
 
         coWebsiteOpen.coWebsite = coWebsite;
 
@@ -1614,14 +1624,22 @@ export class AreasPropertiesListener {
             } catch (e) {
                 console.error("Error on getWebsiteUrl: ", e);
             }
-            const coWebsite = new SimpleCoWebsite(
-                new URL(cowebsiteUrl, this.scene.mapUrlFile),
-                false,
-                property.policy,
-                property.width,
-                property.closable,
-                property.hideUrl
-            );
+            const fileUrl = new URL(cowebsiteUrl, this.scene.mapUrlFile);
+            const coWebsite = mapFileOpensInViewer(property.link ?? "")
+                ? createMapFileViewer({
+                      link: fileUrl.toString(),
+                      width: property.width,
+                      closable: property.closable,
+                      hideUrl: property.hideUrl,
+                  })
+                : new SimpleCoWebsite(
+                      fileUrl,
+                      false,
+                      property.policy,
+                      property.width,
+                      property.closable,
+                      property.hideUrl
+                  );
 
             coWebsiteOpen.coWebsite = coWebsite;
 

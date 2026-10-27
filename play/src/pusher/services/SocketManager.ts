@@ -57,8 +57,6 @@ import {
     SetPlayerDetailsMessage as SetPlayerDetailsMessageTsProto,
 } from "@workadventure/messages";
 import * as Sentry from "@sentry/node";
-import type { AxiosResponse } from "axios";
-import axios, { isAxiosError } from "axios";
 import type { WebSocket } from "uWebSockets.js";
 import { AbortError } from "@workadventure/shared-utils/src/Abort/AbortError";
 import { hasPermission, Permission } from "@workadventure/shared-utils/src/Permissions/permissions";
@@ -82,6 +80,7 @@ import { eventProcessor } from "../models/eventProcessorInit";
 import { forgetSpeakInvitation, setMegaphoneSettings } from "../models/MegaphoneRights";
 import { areaSpacesToLeave } from "./AreaSpaceEviction";
 import { emitInBatch } from "./IoSocketHelpers";
+import { probeEmbeddableWebsite } from "./EmbeddableWebsiteProbe";
 import { clientEventsEmitter } from "./ClientEventsEmitter";
 import { gaugeManager } from "./GaugeManager";
 import { apiClientRepository } from "./ApiClientRepository";
@@ -92,6 +91,8 @@ import type { ShortMapDescription } from "./ShortMapDescription";
 import { matrixProvider } from "./MatrixProvider";
 import { MatrixAreaMembership } from "./MatrixAreaMembership";
 import { checkSpaceJoin } from "./SpaceJoinPolicy";
+import { toGlobalSpaceName } from "./SpaceNames";
+import { SocketsByIdentifier } from "./SocketsByIdentifier";
 import { BubbleSpaceGrants } from "./BubbleSpaceGrants";
 import { FriendsPresence } from "./FriendsPresence";
 import type { UniverseRoomsData } from "./UniverseRooms";
@@ -130,6 +131,8 @@ export class SocketManager implements ZoneEventListener {
     });
     // The leaves in progress, per socket and space, so that two leaves of the same space do not both unregister
     private readonly leavingSpaces = new WeakMap<Socket, Map<string, Promise<void>>>();
+    private readonly socketsByIdentifier = new SocketsByIdentifier<Socket>();
+
     public readonly friendsPresence = new FriendsPresence<Socket>({
         send: (socket, friendsUpdateMessage) => this.sendFriendsUpdate(socket, friendsUpdateMessage),
         lookupPlaces: (playUris) => friendsService.getPlaces(playUris),
@@ -336,6 +339,10 @@ export class SocketManager implements ZoneEventListener {
                                 message.message.roomJoinedMessage.megaphoneSettings
                             );
                             setMegaphoneSettings(socketData, message.message.roomJoinedMessage.megaphoneSettings);
+                            // What each role is called, for the badge next to people (nothing when Orbit sent no list)
+                            message.message.roomJoinedMessage.roleCatalogue = socketData.roleCatalogue
+                                ? { roles: socketData.roleCatalogue }
+                                : undefined;
 
                             // If this is the first message sent, send back the viewport.
                             this.handleViewport(client, viewport);
@@ -414,6 +421,8 @@ export class SocketManager implements ZoneEventListener {
             const pusherRoom = await this.getOrCreateRoom(socketData.roomId);
             pusherRoom.join(client);
             this.friendsPresence.track(client);
+            // The socket may have left while the room was being made
+            if (!client.getUserData().disconnecting) this.socketsByIdentifier.add(socketData.userIdentifier, client);
             this.friendsRings.joined(client);
         } catch (e) {
             Sentry.captureException(e);
@@ -457,6 +466,17 @@ export class SocketManager implements ZoneEventListener {
             Sentry.captureException(error);
             console.error(`An error occurred on "update_space_metadata" event`, error);
         }
+    }
+
+    /**
+     * Whether an account (or guest) has a tab in the space with this name (the name the browser and the bots use,
+     * without the world). The pusher uses it to vouch that a person is in the chat an artifact was made in.
+     */
+    public isUserInSpace(userIdentifier: string, localSpaceName: string): boolean {
+        return this.socketsByIdentifier.of(userIdentifier).some((socket) => {
+            const socketData = socket.getUserData();
+            return !socketData.disconnecting && socketData.spaces.has(toGlobalSpaceName(socketData, localSpaceName));
+        });
     }
 
     public async handleJoinSpace(
@@ -585,6 +605,7 @@ export class SocketManager implements ZoneEventListener {
             console.error("Error while leaving room", e);
         }
         try {
+            this.socketsByIdentifier.remove(client.getUserData().userIdentifier, client);
             this.friendsPresence.untrack(client);
         } catch (e) {
             Sentry.captureException(e);
@@ -1763,51 +1784,13 @@ export class SocketManager implements ZoneEventListener {
             return emitAnswerMessage(true, true);
         }
 
-        const processError = (error: { response: { status: number } }) => {
-            // If the error is a 999 error, it means that this is LinkedIn that return this error code because the website is not embeddable and is not reachable by axios
-            if (isAxiosError(error) && error.response?.status === 999) {
-                emitAnswerMessage(true, false);
-            } else {
-                debug(`SocketManager => embeddableUrl : ${url} ${JSON.stringify(error)}`);
-                // If the URL is not reachable, we send a message to the client
-                // Catch is used to avoid crash if the client is disconnected
-                try {
-                    emitAnswerMessage(false, false, "URL is not reachable");
-                } catch (e) {
-                    console.error(e);
-                }
-            }
-        };
-
-        const isAllowed = (response: AxiosResponse) => {
-            const headers = response.headers;
-            if (!headers) {
-                return true;
-            }
-            let xFrameOption = headers["x-frame-options"];
-            if (!xFrameOption) {
-                return true;
-            }
-            xFrameOption = xFrameOption.toLowerCase();
-
-            return xFrameOption !== "deny" && xFrameOption !== "sameorigin";
-        };
-
-        await axios
-            .head(url, { timeout: 5_000 })
-            // Klaxoon
-            .then((response) => emitAnswerMessage(true, isAllowed(response)))
-            .catch(async (error) => {
-                // If response from server is "Method not allowed", we try to do a GET request
-                if (isAxiosError(error) && error.response?.status === 405) {
-                    await axios
-                        .get(url, { timeout: 5_000 })
-                        .then((response) => emitAnswerMessage(true, isAllowed(response)))
-                        .catch((error) => processError(error));
-                } else {
-                    processError(error);
-                }
-            });
+        const answer = await probeEmbeddableWebsite(url);
+        // Catch is used to avoid crash if the client is disconnected
+        try {
+            emitAnswerMessage(answer.state, answer.embeddable, answer.message);
+        } catch (e) {
+            console.error(e);
+        }
     }
 
     async handleSearchMemberQuery(client: Socket, searchMemberQuery: SearchMemberQuery): Promise<SearchMemberAnswer> {

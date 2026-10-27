@@ -1,4 +1,4 @@
-import type { DiscordEmbed, RoomStats, DiscordActionRow } from "../types";
+import type { DiscordEmbed, DiscordActionRow } from "../types";
 
 /**
  * Parse room URL to extract universe/world/room structure
@@ -35,7 +35,7 @@ export function parseRoomUrl(roomUrl: string): string {
 /**
  * Get the full clickable room URL
  */
-function getRoomClickableUrl(roomUrl: string, baseUrl?: string): string {
+export function getRoomClickableUrl(roomUrl: string, baseUrl?: string): string {
     // If it's already a full URL, return it
     if (roomUrl.startsWith("http://") || roomUrl.startsWith("https://")) {
         return roomUrl;
@@ -57,129 +57,6 @@ function getRoomClickableUrl(roomUrl: string, baseUrl?: string): string {
         }
     }
     return roomUrl;
-}
-
-/**
- * Create summary stats embed (first message)
- */
-export function createSummaryStatsEmbed(roomStats: RoomStats): DiscordEmbed {
-    // Filter out rooms with 0 users
-    const activeRooms = Object.entries(roomStats).filter(([, count]) => count > 0);
-    const totalUsers = activeRooms.reduce((sum, [, count]) => sum + count, 0);
-    const totalRooms = activeRooms.length;
-
-    return {
-        title: "🌌 Universe Activity Report",
-        description: `**Live statistics from across the Universe**`,
-        color: totalUsers > 0 ? 0x5865f2 : 0xffaa00, // Discord blurple if active, orange if empty
-        fields: [
-            {
-                name: "👥 Total Users Online",
-                value: `**${totalUsers}** ${totalUsers === 1 ? "person" : "people"}`,
-                inline: true,
-            },
-            {
-                name: "🏠 Active Rooms",
-                value: `**${totalRooms}** ${totalRooms === 1 ? "room" : "rooms"}`,
-                inline: true,
-            },
-            {
-                name: "⏰ Last Updated",
-                value: `<t:${Math.floor(Date.now() / 1000)}:R>`,
-                inline: true,
-            },
-        ],
-    };
-}
-
-/**
- * Create individual room embed messages with metadata
- * Returns an array of embeds, one per room with clickable links
- */
-export function createRoomEmbeds(
-    roomStats: RoomStats, 
-    baseUrl?: string,
-    roomMetadataMap?: Map<string, { universeName: string; worldName: string; roomName: string }>
-): DiscordEmbed[] {
-    // Filter out rooms with 0 users and sort by user count (descending)
-    const activeRooms = Object.entries(roomStats)
-        .filter(([, count]) => count > 0)
-        .sort(([, a], [, b]) => b - a);
-
-    if (activeRooms.length === 0) {
-        return [{
-            title: "🌙 All Quiet",
-            description: "No active rooms at the moment. Be the first to explore!",
-            color: 0x99aab5,
-        }];
-    }
-
-    const embeds: DiscordEmbed[] = [];
-
-    // Group rooms by universe/world for better organization
-    const roomGroups = new Map<string, Array<{ 
-        roomUrl: string; 
-        roomPath: string;
-        metadata: { universeName: string; worldName: string; roomName: string } | null;
-        count: number;
-    }>>();
-
-    for (const [roomUrl, count] of activeRooms) {
-        const roomPath = parseRoomUrl(roomUrl);
-        const metadata = roomMetadataMap?.get(roomPath) || null;
-        
-        // Use metadata if available, otherwise parse from path
-        const universeName = metadata?.universeName || roomPath.split("/")[0] || "Unknown";
-        const worldName = metadata?.worldName || (roomPath.split("/")[1] || "Unknown");
-        
-        const groupKey = `${universeName}/${worldName}`;
-        
-        if (!roomGroups.has(groupKey)) {
-            roomGroups.set(groupKey, []);
-        }
-        roomGroups.get(groupKey)!.push({ 
-            roomUrl, 
-            roomPath,
-            metadata,
-            count 
-        });
-    }
-
-    // Create one embed per room with improved design
-    for (const [group, rooms] of roomGroups.entries()) {
-        // Sort rooms within group by user count
-        rooms.sort((a, b) => b.count - a.count);
-
-        for (const { roomUrl, metadata, count } of rooms) {
-            const clickableUrl = getRoomClickableUrl(roomUrl, baseUrl);
-            const emoji = count >= 10 ? "🔥" : count >= 5 ? "⭐" : "💫";
-            
-            // Use metadata names if available
-            const displayRoomName = metadata?.roomName || parseRoomUrl(roomUrl).split("/").pop() || "Unknown Room";
-            const displayWorldName = metadata?.worldName || group.split("/")[1] || "Unknown World";
-            const displayUniverseName = metadata?.universeName || group.split("/")[0] || "Unknown Universe";
-            
-            embeds.push({
-                title: `${emoji} ${displayRoomName}`,
-                description: `**${count}** ${count === 1 ? "person" : "people"} exploring`,
-                color: count >= 10 ? 0xff6b6b : count >= 5 ? 0x4ecdc4 : 0x95e1d3,
-                fields: [
-                    {
-                        name: "🌍 Location",
-                        value: `**${displayWorldName}** • ${displayUniverseName}`,
-                        inline: false,
-                    },
-                    {
-                        name: "🔗 Join Room",
-                        value: `[Click to Join →](${clickableUrl})`,
-                        inline: false,
-                    },
-                ],
-            });
-        }
-    }
-
-    return embeds;
 }
 
 /**

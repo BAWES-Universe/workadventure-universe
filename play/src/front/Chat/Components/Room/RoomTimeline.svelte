@@ -9,7 +9,7 @@
     import { derived, get, readable, writable } from "svelte/store";
     import type { Readable } from "svelte/store";
     import { gameManager } from "../../../Phaser/Game/GameManager";
-    import type { ChatMessage, ChatRoom } from "../../Connection/ChatConnection";
+    import type { ChatMessage, ChatRoom, ChatRoomMembershipManagement } from "../../Connection/ChatConnection";
     import getCloseImg from "../../images/get-close.png";
     import { selectedChatMessageToReply, shouldRestoreChatStateStore } from "../../Stores/ChatStore";
     import { selectedRoomStore } from "../../Stores/SelectRoomStore";
@@ -29,6 +29,11 @@
     import { selectedProximitySessionStore } from "../../Stores/ProximitySessionStore";
     import LL, { locale } from "../../../../i18n/i18n-svelte";
     import { formatPeopleNames } from "../TopRow/TopRowSummary";
+    import { availabilityFromNote, botChatClosed, botHeaderState, botIdFromChatId } from "../../Bots/BotChatStatus";
+    import { botStatusCache } from "../../Bots/BotStatusStore";
+    import { nextReplyLimitExpiry, shownReplyLimitIds } from "../../Bots/BotReplyLimit";
+    import BotStatusNoteCard from "../Bots/BotStatusNoteCard.svelte";
+    import BotReplyLimitCard from "../Bots/BotReplyLimitCard.svelte";
     import {
         PERSON_COLOUR_CONTEXT,
         NAME_BY_CHAT_ID_CONTEXT,
@@ -47,11 +52,17 @@
     import { installStrayFileDropGuard, isFileDrag } from "../../../Utils/strayFileDropGuard";
     import { mapEditorToolbarInUseStore } from "../../../Stores/MapEditorStore";
     import { isTouchScreen, SETTLE_CHECKS_MS } from "../../../Utils/ViewportGuard";
+    import { ARTIFACT_CHAT_CONTEXT, type ArtifactChatOf } from "../../../Artifacts/artifactChatContext";
     import Message from "./Message.svelte";
-    import { keyboardClosed, listGrewTaller, stillPinnedToBottom } from "./TimelinePin";
+    import {
+        firstShowingIndex,
+        keyboardClosed,
+        listGrewTaller,
+        placeAfterMove,
+        stillPinnedToBottom,
+    } from "./TimelinePin";
     import MessageInputBar from "./MessageInputBar.svelte";
     import MessageSystem from "./MessageSystem.svelte";
-    import TypingUsers from "./TypingUsers.svelte";
     import CopiedPill from "./MessageActions/CopiedPill.svelte";
     import SessionDivider from "./Thread/SessionDivider.svelte";
     import ProximityThreadTitle from "./Thread/ProximityThreadTitle.svelte";
@@ -59,7 +70,7 @@
     import RoomMenu from "./RoomMenu/RoomMenu.svelte";
     import DirectChatTitle from "./DirectChat/DirectChatTitle.svelte";
     import PartnerProfilePanel from "./DirectChat/PartnerProfilePanel.svelte";
-    import { directPartnerStore } from "./DirectChat/DirectPartnerStore";
+    import { DIRECT_PARTNER_CONTEXT, directPartnerStore, type DirectPartner } from "./DirectChat/DirectPartnerStore";
     import { dayLabel, messageRuns, runSenderKey } from "./MessageRuns";
     import { IconChevronLeft, IconChevronRight, IconLoader, IconLock, IconMailBox } from "@wa-icons";
 
@@ -79,6 +90,20 @@
             createNameByChatIdStore(gameManager.getCurrentGameScene().userProviderMerger, currentChatPeople()?.store)
         );
     }
+
+    // Cards inside messages (a bot's room) act on the other person of a direct chat.
+    const partnerForCards = writable<DirectPartner | undefined>(undefined);
+    setContext<Readable<DirectPartner | undefined>>(DIRECT_PARTNER_CONTEXT, partnerForCards);
+
+    // An artifact card opens its artifact from the chat it is in, which the game's server checks: the bubble's space,
+    // or the Matrix room of a direct chat. Asked when the card is tapped, since a bubble's space changes over time.
+    setContext<ArtifactChatOf>(ARTIFACT_CHAT_CONTEXT, () => {
+        if (room instanceof ProximityChatRoom) {
+            const ref = room.currentSpaceName;
+            return ref ? { kind: "nearby", ref } : undefined;
+        }
+        return room instanceof MatrixChatRoom && room.type === "direct" ? { kind: "dm", ref: room.id } : undefined;
+    });
 
     // In a direct chat, each person's woka sits on their colour from People (header, profile, messages).
     const isDirectChat = writable(false);
@@ -111,7 +136,6 @@
     let smoothScrollUntil = 0;
     let newestMessageId: string | undefined;
     let childListObserver: MutationObserver | undefined;
-    let onScrollTop = false;
     // The list's own height at its last size change and the window's at its last resize, to see them grow (see
     // redrawList).
     let lastListHeight = 0;
@@ -125,7 +149,18 @@
     // After the keyboard closes, once the page is back in place (ViewportGuard's last check), with a little margin.
     const REDRAW_AFTER_SETTLE_MS = SETTLE_CHECKS_MS[SETTLE_CHECKS_MS.length - 1] + 100;
 
-    let oldScrollHeight = 0;
+    // Whether the browser keeps the reader's place by itself when something above changes height (scroll anchoring:
+    // Chrome, Firefox, Edge, Safari 27). It does that inside its own scrolling, so a flick on a phone keeps gliding.
+    // Older Safari doesn't: there the timeline keeps the place itself (readingPlace).
+    const browserKeepsPlace = typeof CSS !== "undefined" && CSS.supports?.("overflow-anchor", "auto") === true;
+
+    // Older Safari: the message the reader is looking at while scrolled up, and where it sits in the list's content.
+    // When something above it changes height (a picture loading), the list moves by as much, so the reader stays on it.
+    let readingPlace: { id: string; contentTop: number; scrollTop: number } | undefined;
+
+    // The message showing at the top of the list just before the list is drawn again, and how far its bottom is from
+    // the list's top (see holdPlaceAfterUpdate).
+    let placeBeforeUpdate: { id: string; bottom: number } | undefined;
 
     let loadingMessagePromise: Promise<void> | undefined = undefined;
 
@@ -143,7 +178,6 @@
 
     $: messages = room?.messages;
     $: roomName = room?.name;
-    $: typingMembers = room.typingMembers;
     $: isEncrypted = room.isEncrypted;
     $: proximityRoom = room instanceof ProximityChatRoom ? room : undefined;
     $: matrixRoom = room instanceof MatrixChatRoom ? room : undefined;
@@ -151,6 +185,7 @@
     $: directPartner = matrixRoom?.type === "direct" ? directPartnerStore(matrixRoom) : undefined;
     $: profileOpen = directPartner !== undefined && $openProfileRoomIdStore === room.id;
     $: isDirectChat.set(directPartner !== undefined);
+    $: partnerForCards.set(directPartner ? $directPartner : undefined);
     $: roomMembers = matrixRoom ? matrixRoom.members : readable([]);
     $: memberCount = $roomMembers.length;
     // The proximity chat is one timeline across every stay. The thread shows one stay at a time: the live one,
@@ -237,16 +272,74 @@
     $: firstFillPending = !proximityRoom && !initialLoadDone;
     $: showLoading = !proximityRoom && (!initialLoadDone || ($isLoadingMessages && $messages.length === 0));
 
+    // A direct chat with a bot shows the bot's state under its name and in the message box. The state comes from the bot
+    // server. The bot's account being out of the room does not mean it was deleted: it also leaves when it declines an
+    // invite (resting, not ready, no access). So the chat closes only when the state, or the bot's own goodbye note, says
+    // it is gone.
+    $: members = "members" in room ? (room as ChatRoom & ChatRoomMembershipManagement).members : readable([]);
+    $: partner = room.type === "direct" ? $members.find((member) => member.id !== myChatID) : undefined;
+    $: partnerBotId = botIdFromChatId(partner?.id);
+    $: partnerMembership = partner?.membership ?? readable(undefined);
+    $: botLeft = partnerBotId !== undefined && $partnerMembership === "leave";
+    $: botAvailability = partnerBotId ? botStatusCache.store(partnerBotId) : readable(undefined);
+    $: botState = partnerBotId ? $botAvailability : undefined;
+    $: botClosed = botChatClosed(botState);
+    $: lastBotMessage = partnerBotId ? [...$messages].reverse().find((message) => !message.isMyMessage) : undefined;
+    $: lastBotNote = lastBotMessage?.botStatus;
+    // One reply limit card per bot (#1159): the newest, and only until its time is up. The clock moves on when the next
+    // card runs out, so it goes away then even when nothing new is said.
+    let replyLimitNow = Date.now();
+    let replyLimitTimer: ReturnType<typeof setTimeout> | undefined;
+    $: shownReplyLimits = shownReplyLimitIds($messages, replyLimitNow);
+    $: wakeAtReplyLimitExpiry(nextReplyLimitExpiry($messages, replyLimitNow));
+    function wakeAtReplyLimitExpiry(expiry: number | undefined) {
+        clearTimeout(replyLimitTimer);
+        replyLimitTimer = undefined;
+        if (expiry === undefined) return;
+        replyLimitTimer = setTimeout(tickReplyLimitClock, Math.min(expiry - Date.now() + 50, 2 ** 31 - 1));
+    }
+    function tickReplyLimitClock() {
+        replyLimitNow = Date.now();
+    }
+    // A note saying the bot is resting, not ready or gone updates the header at once, unless a lookup that started after
+    // the note was written knows better.
+    $: lastNoteAvailability = lastBotNote ? availabilityFromNote(lastBotNote.state) : undefined;
+    $: noteWrittenAt = lastBotMessage?.botStatusAt ?? lastBotMessage?.date?.getTime();
+    $: if (partnerBotId && lastNoteAvailability && noteWrittenAt !== undefined) {
+        botStatusCache.learn(partnerBotId, lastNoteAvailability, noteWrittenAt);
+    }
+    $: shownBotState = botHeaderState(botState, lastBotNote?.state);
+    $: botPlaceholder =
+        botState === "resting"
+            ? $LL.chat.botStatus.restingPlaceholder()
+            : botState === "unready"
+            ? $LL.chat.botStatus.unreadyPlaceholder()
+            : undefined;
+    // The bot's account is out of the room and the bot is gone: say so once, as for a person leaving.
+    $: botLeftLine =
+        botLeft && botClosed
+            ? {
+                  date: null,
+                  content: readable({
+                      body: $LL.chat.botStatus.left({ name: $roomName }),
+                      url: undefined,
+                      urls: undefined,
+                      filename: undefined,
+                      fileNames: undefined,
+                  }),
+              }
+            : undefined;
+
     onMount(() => {
         installStrayFileDropGuard();
         watchSizes();
         initMessages()
             .catch((error) => console.error(error))
             .finally(() => {
-                // The first time, jump to the bottom while the list is still hidden, then show it.
-                scrollToMessageListBottom(proximityRoom !== undefined);
-                // The proximity chat has no first fill, and a state change here would run afterUpdate right after
-                // the smooth scroll above starts: its "keep the reader's place" write to scrollTop cancels that scroll.
+                // The first time, jump to the bottom while the list is still hidden, then show it. Every chat opens
+                // on its newest message at once, with no slide, as chat apps do.
+                scrollToMessageListBottom();
+                // The proximity chat has no first fill.
                 if (!proximityRoom) initialLoadDone = true;
             });
     });
@@ -292,8 +385,7 @@
 
         try {
             await loadMessages();
-            scrollToMessageListBottom(proximityRoom !== undefined);
-            setFirstListItem();
+            scrollToMessageListBottom();
         } catch (error) {
             console.error(`Failed to load messages: ${error}`);
         }
@@ -301,10 +393,9 @@
 
     beforeUpdate(() => {
         if (messageListRef) {
-            oldScrollHeight = messageListRef.scrollHeight;
             const scrollableDistance = messageListRef.scrollHeight - messageListRef.offsetHeight;
             autoScroll = pinnedToBottom || messageListRef.scrollTop > scrollableDistance - 20;
-            onScrollTop = messageListRef.scrollTop === 0;
+            placeBeforeUpdate = autoScroll || firstFillPending ? undefined : topMessagePlace();
         }
     });
 
@@ -317,34 +408,117 @@
         const isNewMessage = newest !== undefined && newestMessageId !== undefined && newest.id !== newestMessageId;
         newestMessageId = newest?.id;
         if (autoScroll || (isNewMessage && newest?.isMyMessage === true)) {
-            scrollToMessageListBottom();
-        } else if (onScrollTop) {
-            const oldFirstListItem = messageListRef.querySelector<HTMLLIElement>('li[data-first-li="true"]');
-
-            if (oldFirstListItem !== null) {
-                const newScrollHeight = messageListRef.scrollHeight;
-                messageListRef.scrollTop = newScrollHeight - oldScrollHeight;
-            }
-            setFirstListItem();
+            // Only a new message slides in. Anything else (older messages coming in above, the list drawn again)
+            // keeps the newest message in place before the screen is drawn, so nothing is seen moving.
+            scrollToMessageListBottom(isNewMessage);
+        } else {
+            holdPlaceAfterUpdate();
         }
     });
 
-    function scrollToMessageListBottom(smooth = true) {
+    function isSliding(): boolean {
+        return performance.now() < smoothScrollUntil;
+    }
+
+    function scrollToMessageListBottom(smooth = false) {
         // Safety check for undefined reference
         // After disposing the component, the reference can be undefined
         if (messageListRef == undefined) return;
         // Going to the newest message (your own message sent, the chat opened): stay there while it grows, too.
         pinnedToBottom = true;
-        if (smooth) smoothScrollUntil = performance.now() + SMOOTH_SCROLL_MS;
-        messageListRef.scroll({ top: messageListRef.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+        // A new message is still sliding in: aim that slide at the new bottom instead of cutting it short.
+        const slide = smooth || isSliding();
+        if (slide) smoothScrollUntil = performance.now() + SMOOTH_SCROLL_MS;
+        messageListRef.scroll({ top: messageListRef.scrollHeight, behavior: slide ? "smooth" : "auto" });
+    }
+
+    // The message showing at the top of the list.
+    function topMessage(listTop: number): Element | undefined {
+        const items = messageListContentRef.children;
+        const index = firstShowingIndex(items.length, (i) => items[i].getBoundingClientRect().bottom, listTop);
+        return index === undefined ? undefined : items[index];
+    }
+
+    function topMessagePlace(): { id: string; bottom: number } | undefined {
+        if (!messageListRef || !messageListContentRef) return undefined;
+        const listTop = messageListRef.getBoundingClientRect().top;
+        const item = topMessage(listTop);
+        const id = item instanceof HTMLElement ? item.dataset.eventId : undefined;
+        return item && id ? { id, bottom: item.getBoundingClientRect().bottom - listTop } : undefined;
+    }
+
+    // The list was drawn again while the reader is scrolled up (older messages added above, a message gone): the
+    // message they were looking at goes back to where it was on screen. Measured just before and just after, so only
+    // what the browser has not already put right is moved, and a scroll of the reader's is never undone. By its bottom:
+    // with older messages from the same day and person above it now, it loses its day label and name line at its top.
+    // This also covers the very top of the list, where browsers don't keep the place.
+    function holdPlaceAfterUpdate() {
+        const before = placeBeforeUpdate;
+        placeBeforeUpdate = undefined;
+        if (before && messageListRef && messageListContentRef) {
+            const item = messageListContentRef.querySelector<HTMLElement>(
+                `:scope > li[data-event-id="${CSS.escape(before.id)}"]`
+            );
+            if (item) {
+                const moved =
+                    item.getBoundingClientRect().bottom - messageListRef.getBoundingClientRect().top - before.bottom;
+                if (Math.abs(moved) >= 1) messageListRef.scrollTop += moved;
+            }
+        }
+        if (!browserKeepsPlace) rememberReadingPlace();
+    }
+
+    // Remembers the message showing at the top of the list, and where it is in the list's content.
+    function rememberReadingPlace() {
+        if (!messageListRef || !messageListContentRef) return;
+        const listTop = messageListRef.getBoundingClientRect().top;
+        const item = topMessage(listTop);
+        const id = item instanceof HTMLElement ? item.dataset.eventId : undefined;
+        readingPlace =
+            item && id
+                ? {
+                      id,
+                      contentTop: item.getBoundingClientRect().top - listTop + messageListRef.scrollTop,
+                      scrollTop: messageListRef.scrollTop,
+                  }
+                : undefined;
+    }
+
+    // Older Safari: while the reader is scrolled up, keeps the message they were looking at where it was when something
+    // above it changed height.
+    function keepReadingPlace() {
+        if (!messageListRef || !messageListContentRef) return;
+        const item =
+            !pinnedToBottom && readingPlace
+                ? messageListContentRef.querySelector<HTMLElement>(
+                      `:scope > li[data-event-id="${CSS.escape(readingPlace.id)}"]`
+                  )
+                : null;
+        if (item && readingPlace) {
+            const listTop = messageListRef.getBoundingClientRect().top;
+            const contentTop = item.getBoundingClientRect().top - listTop + messageListRef.scrollTop;
+            const moved = contentTop - readingPlace.contentTop;
+            if (Math.abs(moved) >= 1) {
+                const list = messageListRef;
+                list.scrollTop = placeAfterMove(
+                    list.scrollTop,
+                    readingPlace.scrollTop,
+                    list.scrollHeight - list.clientHeight,
+                    moved
+                );
+            }
+        }
+        rememberReadingPlace();
     }
 
     function watchSizes() {
         if (typeof ResizeObserver === "undefined" || !messageListRef || !messageListContentRef) return;
         resizeObserver = new ResizeObserver(() => {
-            const sliding = performance.now() < smoothScrollUntil;
-            // A new message slides in: aim that slide at the new bottom instead of cutting it short.
-            if (pinnedToBottom) scrollToMessageListBottom(sliding);
+            const sliding = isSliding();
+            // At the newest message: stay on it, before the screen is drawn. Scrolled up: stay on what is read (the
+            // browser does that itself where it can).
+            if (pinnedToBottom) scrollToMessageListBottom();
+            else if (!browserKeepsPlace) keepReadingPlace();
             const height = messageListRef?.clientHeight ?? 0;
             if (touchScreen && !sliding && listGrewTaller(lastListHeight, height)) redrawAfterGrowing();
             lastListHeight = height;
@@ -447,6 +621,8 @@
 
     function handleScroll() {
         updatePinnedToBottom();
+        // Something above may have changed height in this same frame: put that right before taking the new place.
+        if (!browserKeepsPlace) keepReadingPlace();
         clearTimeout(scrollTimer);
         scrollTimer = setTimeout(() => {
             loadMorePreviousMessages();
@@ -501,14 +677,6 @@
         );
     }
 
-    function setFirstListItem() {
-        const oldFirstListItem = messageListRef.querySelector<HTMLLIElement>('li[data-first-li="true"]');
-        oldFirstListItem?.removeAttribute("data-first-li");
-
-        const firstListItem = messageListRef.getElementsByTagName("li").item(0);
-        firstListItem?.setAttribute("data-first-li", "true");
-    }
-
     function isViewportNotFilled() {
         return messageListRef.scrollHeight <= messageListRef.clientHeight;
     }
@@ -522,7 +690,8 @@
                 event.detail.id === $messages[$messages.length - 1].id &&
                 $messages[$messages.length - 1].sender?.chatId === myChatID)
         ) {
-            scrollToMessageListBottom();
+            // At the newest message, its text showing stays put; from higher up, your own message slides in.
+            scrollToMessageListBottom(!pinnedToBottom);
         }
     }
 
@@ -621,6 +790,7 @@
         clearTimeout(redrawTimer);
         if (redrawFrame !== undefined) cancelAnimationFrame(redrawFrame);
         clearTimeout(fileDragTimer);
+        clearTimeout(replyLimitTimer);
         document.removeEventListener("dragenter", onMapFileDragCapture, true);
         document.removeEventListener("dragover", onMapFileDragCapture, true);
         document.removeEventListener("drop", onMapFileDragCapture, true);
@@ -689,6 +859,8 @@
                         <DirectChatTitle
                             room={matrixRoom}
                             partner={$directPartner}
+                            bot={partnerBotId !== undefined}
+                            botState={shownBotState}
                             on:openProfile={() => openProfileRoomIdStore.set(room.id)}
                         />
                     {:else}
@@ -729,12 +901,15 @@
                         <div class="h-12 w-12 shrink-0" aria-hidden="true" />
                     {/if}
                 {/if}
+                {#if shouldDisplayLoader}
+                    <!-- Over the empty space at the top of the list, so the messages don't move when it shows. -->
+                    <div
+                        class="absolute left-0 right-0 top-full z-10 flex justify-center items-center pt-1 pointer-events-none"
+                    >
+                        <IconLoader class="animate-[spin_2s_linear_infinite]" font-size={25} />
+                    </div>
+                {/if}
             </div>
-            {#if shouldDisplayLoader}
-                <div class="flex justify-center items-center w-full pb-1 bg-transparent">
-                    <IconLoader class="animate-[spin_2s_linear_infinite]" font-size={25} />
-                </div>
-            {/if}
             {#if liveElsewhere && proximityRoom}
                 <div
                     class="mx-2 flex items-center gap-2 rounded-xl bg-success/15 px-3 py-2 text-xs text-white"
@@ -852,6 +1027,12 @@
                             />
                         {:else if entry.message.type === "outcoming" || entry.message.type === "incoming"}
                             <MessageSystem message={entry.message} />
+                        {:else if entry.message.replyLimit}
+                            {#if shownReplyLimits.has(entry.message.id)}
+                                <BotReplyLimitCard replyLimit={entry.message.replyLimit} />
+                            {/if}
+                        {:else if entry.message.botStatus}
+                            <BotStatusNoteCard note={entry.message.botStatus} />
                         {:else}
                             <Message
                                 on:updateMessageBody={onUpdateMessageBody}
@@ -866,12 +1047,11 @@
                         {/if}
                     </li>
                 {/each}
+                {#if botLeftLine}
+                    <li class="last:pb-3" data-testid="botLeftLine"><MessageSystem message={botLeftLine} /></li>
+                {/if}
             </ul>
         </div>
-
-        {#if $typingMembers.length > 0 && !isEnded}
-            <TypingUsers typingMembers={$typingMembers} />
-        {/if}
 
         <CopiedPill />
 
@@ -881,9 +1061,25 @@
         {:else}
             <!-- One composer per conversation: its draft, files and pending sends belong to this room only.
                  Keyed by id: re-selecting the same room must not remount it (files, focus and uploads are kept). -->
-            {#key room.id}
-                <MessageInputBar disabled={$shouldRetrySendingEvents} {room} bind:this={messageInputBarRef} />
-            {/key}
+            {#if botClosed}
+                <!-- The bot was deleted: nothing can reach it, so the message box gives way to a plain closed bar. -->
+                <div
+                    class="mx-2.5 mb-2.5 mt-1.5 flex min-h-12 items-center justify-center rounded-full border border-dashed border-white/12 bg-white/[0.03] px-3.5 text-sm text-white/50"
+                    data-testid="botChatClosed"
+                >
+                    {$LL.chat.botStatus.closed()}
+                </div>
+            {:else}
+                {#key room.id}
+                    <MessageInputBar
+                        disabled={$shouldRetrySendingEvents}
+                        {room}
+                        partner={$directPartner}
+                        inputHint={botPlaceholder}
+                        bind:this={messageInputBarRef}
+                    />
+                {/key}
+            {/if}
         {/if}
     {/if}
 </div>

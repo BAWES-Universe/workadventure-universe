@@ -2,6 +2,9 @@ import { get } from "svelte/store";
 import type { ExtensionModule, ExtensionModuleOptions } from "../../ExternalModule/ExtensionModule";
 import { localUserStore } from "../../Connection/LocalUserStore";
 import { userIsConnected, adminDashboardActivatedStore, adminDashboardPendingStore } from "../../Stores/MenuStore";
+import { gameSceneIsLoadedStore } from "../../Stores/GameSceneStore";
+import { canvasSize } from "../../Stores/CoWebsiteStore";
+import { DESKTOP_LAYOUT_MIN_WIDTH } from "../../Stores/BarInViewStore";
 import {
     modalFullScreenStore,
     modalIframeStore,
@@ -9,13 +12,13 @@ import {
     modalVisibilityStore,
 } from "../../Stores/ModalStore";
 import { gameManager } from "../../Phaser/Game/GameManager";
-import { hasCapability } from "../../Connection/Capabilities";
 import { isUserNameValid, maxUserNameLength } from "../../Connection/LocalUserUtils";
 import type { ModalEvent } from "../../Api/Events/ModalEvent";
 import { analyticsClient } from "../../Administration/AnalyticsClient";
 import { blackListManager } from "../../WebRtc/BlackListManager";
 import { ringStore } from "../../Chat/Stores/RingStore";
 import { openDirectChatRoom } from "../../Chat/Utils";
+import { openProfileLinkHere, profileLinksOpeningHere } from "../../Chat/LinkPreview/ProfileLinks";
 import {
     ORBIT_AUTH_VERSION,
     buildAdminLoginUrl,
@@ -29,12 +32,19 @@ import {
     isOrbitBridgeReadyMessage,
     isOrbitInvitePersonMessage,
     isOrbitMessagePersonMessage,
+    isOrbitCheckLinksMessage,
+    isOrbitOpenLinkMessage,
     isOrbitProfileChangedMessage,
     newRoomRevision,
     type OrbitEventTopic,
     type OrbitNavigateIntent,
 } from "./orbitBridge";
-import { forgetOrbitAccessTokenRenewal, freshOrbitAccessToken, getAccessTokenFromJwt } from "./orbitAccessToken";
+import {
+    forgetOrbitAccessTokenRenewal,
+    freshOrbitAccessToken,
+    getAccessTokenFromJwt,
+    orbitAccessTokenHasExpired,
+} from "./orbitAccessToken";
 let adminModalOpen = false;
 /** The bridge for this visit (a new one on every room join or reconnect). */
 let bridge: OrbitBridge | null = null;
@@ -48,6 +58,25 @@ let adminOrigin: string | null = null;
 /** A name you saved in your Orbit profile, shown in the game once Orbit closes. */
 let pendingPlayerName: string | null = null;
 const pendingTimers = new Set<ReturnType<typeof setTimeout>>();
+
+/**
+ * Orbit was open when the connection dropped (a phone back from another app): once the game is back in, it opens
+ * again on the page it was on (see openAdminModal's "resume"). Kept across the module's destroy and init, which the
+ * rebuild runs, and forgotten as soon as a room is joined any other way or Orbit is opened by hand.
+ */
+interface OrbitResumeRequest {
+    roomId: string;
+    fullScreen: boolean;
+}
+let resumeRequest: OrbitResumeRequest | null = null;
+/** The options a reopening was started for: both of the module's init timers reach it, only one may go on. */
+let resumeStartedFor: ExtensionModuleOptions | null = null;
+let stopWaitingToResume: (() => void) | null = null;
+let resumeReadyWait: ReturnType<typeof setTimeout> | null = null;
+/** A moment after the game is back in, so Orbit does not open in the middle of the room settling. */
+const RESUME_OPEN_DELAY_MS = 400;
+/** A reopened Orbit that has not signed in after this long closes again: nobody asked for an error window. */
+const RESUME_READY_WAIT_MS = 20_000;
 
 /**
  * Orbit's button in the bar goes away with the room (a reconnect rebuilds it) and comes back about a second after the
@@ -158,6 +187,7 @@ function handleAdminAuthMessage(event: MessageEvent<unknown>) {
         return;
     // After signing in, Orbit's bridge says it is ready and answers requests (see orbitBridge.ts).
     if (isOrbitBridgeReadyMessage(event.data)) {
+        clearResumeReadyWait();
         bridge?.onReady();
         return;
     }
@@ -180,6 +210,23 @@ function handleAdminAuthMessage(event: MessageEvent<unknown>) {
     }
     if (isOrbitMessagePersonMessage(event.data)) {
         if (bridge && event.data.roomRevision === bridge.roomRevision) messagePersonFromOrbit(event.data.chatId);
+        return;
+    }
+    if (isOrbitCheckLinksMessage(event.data)) {
+        // Which of someone's profile links the game can show, checked as chat links are, for this visit's Orbit only.
+        const { requestId, roomRevision, urls } = event.data;
+        const asking = bridge;
+        if (asking && roomRevision === asking.roomRevision)
+            profileLinksOpeningHere(urls)
+                .then((openHere) => {
+                    if (bridge === asking) asking.answerLinks(requestId, openHere);
+                })
+                .catch((error) => console.error("Could not check profile links for Orbit", error));
+        return;
+    }
+    if (isOrbitOpenLinkMessage(event.data)) {
+        // The window comes in front, and Orbit stays as it is behind it: its button brings it back.
+        if (bridge && event.data.roomRevision === bridge.roomRevision) openProfileLinkHere(event.data.url);
         return;
     }
     if (!isOrbitAuthReadyMessage(event.data)) return;
@@ -236,12 +283,14 @@ function messagePersonFromOrbit(chatId: string) {
 /**
  * What opened Orbit: the action-bar button, a quest's "Show me", the game asking Orbit for a page, or Orbit opening
  * on its own. Only the button opens it today; Orbit never opens on its own any more, and "auto" stays so the numbers
- * show it at zero.
+ * show it at zero. "resume" is Orbit opening again after a reconnect, because it was open when the connection dropped.
  */
-export type OrbitOpenSource = "button" | "quest" | "link" | "auto";
+export type OrbitOpenSource = "button" | "quest" | "link" | "auto" | "resume";
 
 // Function to open the admin modal, optionally on a given Orbit page
 function openAdminModal(options: ExtensionModuleOptions, source: OrbitOpenSource, redirect?: string) {
+    // Opened by hand (or by the game for a page): whatever was waiting to reopen Orbit is no longer wanted.
+    if (source !== "resume") forgetResume();
     if (adminModalOpen && redirect === undefined) return;
 
     const accessToken = getAccessTokenFromJwt(options.userAccessToken);
@@ -258,7 +307,13 @@ function openAdminModal(options: ExtensionModuleOptions, source: OrbitOpenSource
 
     let adminDashboardUrl: string;
     try {
-        adminDashboardUrl = buildAdminLoginUrl(adminUrl, options.roomId, window.location.href, redirect);
+        adminDashboardUrl = buildAdminLoginUrl(
+            adminUrl,
+            options.roomId,
+            window.location.href,
+            redirect,
+            source === "resume"
+        );
     } catch (error) {
         console.error("Refusing insecure Admin URL:", error);
         return;
@@ -282,7 +337,8 @@ function openAdminModal(options: ExtensionModuleOptions, source: OrbitOpenSource
         return;
     }
 
-    launcher = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    // Reopened by the game, not by a tap: there is no control to give the focus back to.
+    launcher = source !== "resume" && document.activeElement instanceof HTMLElement ? document.activeElement : null;
     clearHeldMovement();
     modalFullScreenStore.set(false);
     modalIframeStore.set(modalEvent);
@@ -334,6 +390,11 @@ export function openOrbitProfile(userUuid: string): boolean {
     return requestOrbitPage("user-profile", { userUuid });
 }
 
+/** Their profile in Orbit with the membership sheet already open, for the universe the player is in. */
+export function openOrbitMembership(userUuid: string): boolean {
+    return requestOrbitPage("user-profile", { userUuid, sheet: "membership" });
+}
+
 /**
  * The same page for someone the game only knows from a chat (a direct chat with a person who is away), by their exact
  * Matrix id. Orbit looks the account up itself and sends a Matrix id it has no account for to its home.
@@ -363,6 +424,7 @@ function closeAdminModal() {
  * focus returns to what opened it.
  */
 function onOrbitClosed() {
+    clearResumeReadyWait();
     bridge?.onClosed();
     dropHistoryEntry();
     const target = launcher;
@@ -380,9 +442,99 @@ function applyPendingPlayerName() {
     pendingPlayerName = null;
     if (!name || name === gameManager.getPlayerName()) return;
     gameManager.setPlayerName(name);
-    // Signed-in players get their name from the server, which Orbit already updated; others keep it locally.
-    if (!hasCapability("api/save-name") || !localUserStore.isLogged()) localUserStore.setName(name);
+    // Orbit already has it; this device keeps a copy too, so it never comes back with an older name (#1192).
+    localUserStore.setName(name, localUserStore.isLogged());
     gameManager.rejoinCurrentRoom();
+}
+
+function forgetResume() {
+    resumeRequest = null;
+    stopWaitingToResume?.();
+    stopWaitingToResume = null;
+}
+
+function clearResumeReadyWait() {
+    if (resumeReadyWait !== null) clearTimeout(resumeReadyWait);
+    resumeReadyWait = null;
+}
+
+/** Resolves once the room is back in and the page is on screen; never, if the module is torn down first. */
+function whenRoomIsShown(): Promise<void> {
+    stopWaitingToResume?.();
+    return new Promise((resolve) => {
+        let finished = false;
+        let unsubscribe: (() => void) | null = null;
+        const finish = () => {
+            finished = true;
+            document.removeEventListener("visibilitychange", check);
+            unsubscribe?.();
+            if (stopWaitingToResume === finish) stopWaitingToResume = null;
+        };
+        const check = () => {
+            if (finished) return;
+            if (get(gameSceneIsLoadedStore) && document.visibilityState !== "hidden") {
+                finish();
+                resolve();
+            }
+        };
+        document.addEventListener("visibilitychange", check);
+        stopWaitingToResume = finish;
+        unsubscribe = gameSceneIsLoadedStore.subscribe(check);
+        if (finished) unsubscribe();
+    });
+}
+
+/**
+ * Orbit was open when the connection dropped: open it again, on the page it was on, once the game is back in. It stays
+ * closed when signing in again isn't possible (the sign-in token can't be renewed), and a request that the module's
+ * teardown interrupted (the connection dropped again) is kept for the next room.
+ */
+async function resumeOrbit(options: ExtensionModuleOptions): Promise<void> {
+    const request = resumeRequest;
+    if (!request || resumeStartedFor === options) return;
+    if (request.roomId !== options.roomId) {
+        resumeRequest = null;
+        return;
+    }
+    resumeStartedFor = options;
+    const current = () => extensionOptions === options && resumeRequest === request;
+
+    await whenRoomIsShown();
+    await new Promise<void>((resolve) => {
+        schedulePending(resolve, RESUME_OPEN_DELAY_MS);
+    });
+    if (!current()) return;
+
+    let accessToken: string | null = null;
+    try {
+        accessToken = await freshOrbitAccessToken(options, false, current);
+    } catch (error) {
+        console.warn("Orbit stays closed: could not check the sign-in before reopening it", error);
+    }
+    if (!current()) return;
+    if (!accessToken || orbitAccessTokenHasExpired(accessToken)) {
+        forgetResume();
+        console.info("Orbit stays closed after the reconnect: the sign-in could not be renewed");
+        return;
+    }
+    // The renewal can take a while: the person may have left the app again meanwhile.
+    if (document.visibilityState === "hidden") {
+        await whenRoomIsShown();
+        if (!current()) return;
+    }
+    forgetResume();
+    if (adminModalOpen) return;
+
+    openAdminModal(options, "resume");
+    // The full-screen view is only offered on a wide game: a window that got narrower meanwhile opens compact.
+    if (request.fullScreen && get(canvasSize).width >= DESKTOP_LAYOUT_MIN_WIDTH) modalFullScreenStore.set(true);
+    clearResumeReadyWait();
+    resumeReadyWait = setTimeout(() => {
+        resumeReadyWait = null;
+        if (!adminModalOpen) return;
+        console.warn("Orbit closed again: it did not sign in after the reconnect");
+        closeAdminModal();
+    }, RESUME_READY_WAIT_MS);
 }
 
 // Function to initialize the admin integration
@@ -438,6 +590,9 @@ function initializeAdminIntegration(options: ExtensionModuleOptions) {
     // room join and reconnect, so opening here would bring Orbit back each time.
     adminDashboardActivatedStore.set(true);
     releaseOrbitButton();
+    if (options.reconnecting) {
+        resumeOrbit(options).catch((error) => console.error("Could not reopen Orbit after the reconnect", error));
+    }
 }
 
 const adminExtensionModule: ExtensionModule = {
@@ -447,6 +602,9 @@ const adminExtensionModule: ExtensionModule = {
 
     init(roomMetadata: unknown, options: ExtensionModuleOptions) {
         console.log("Admin API Extension Module initialized");
+
+        // Only a room joined again after the connection dropped brings Orbit back; any other join starts closed.
+        if (!options.reconnecting) forgetResume();
 
         // The button holds its place until Orbit is ready, so the bar never shows something else there for a moment.
         if (localUserStore.isLogged()) holdOrbitButton();
@@ -481,6 +639,13 @@ const adminExtensionModule: ExtensionModule = {
     },
 
     destroy() {
+        // Orbit open as the room is rebuilt: if this is a reconnect, the next room opens it again (see resumeOrbit).
+        if (adminModalOpen && extensionOptions) {
+            resumeRequest = { roomId: extensionOptions.roomId, fullScreen: get(modalFullScreenStore) };
+        }
+        stopWaitingToResume?.();
+        stopWaitingToResume = null;
+        clearResumeReadyWait();
         cancelPendingTimers();
         if (unsubscribeUserConnected) {
             unsubscribeUserConnected();

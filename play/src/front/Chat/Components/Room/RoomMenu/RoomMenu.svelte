@@ -9,7 +9,7 @@
         ChatRoomModeration,
         ChatRoom,
     } from "../../../Connection/ChatConnection";
-    import { notificationPlayingStore } from "../../../../Stores/NotificationStore";
+    import { showChatDoneToast } from "../../../../Stores/ChatDoneToastStore";
     import { warningMessageStore } from "../../../../Stores/ErrorStore";
     import { localUserStore } from "../../../../Connection/LocalUserStore";
     import LL from "../../../../../i18n/i18n-svelte";
@@ -123,14 +123,15 @@
 
     function closeMenuAndLeaveRoom() {
         toggleRoomOptions();
+        // Says which chat went: "Deleted your chat with Mishari", "Left Design team".
         const notification = isDirect
-            ? $LL.chat.directChat.deleteChat.notification()
-            : $LL.chat.roomMenu.leaveRoom.notification();
+            ? $LL.chat.directChat.deleteChat.notification({ name })
+            : $LL.chat.roomMenu.leaveRoom.notification({ name });
         // Deleting a chat leaves it and forgets it, so it goes from the person's lists and not just from view.
         room.leaveRoom(isDirect ? { forget: true } : undefined)
             .then(() => {
                 if ($selectedRoomStore?.id === room.id) selectedRoomStore.set(undefined);
-                notificationPlayingStore.playNotification(notification);
+                showChatDoneToast(notification);
             })
             .catch((error) => {
                 console.error("Failed to leave room", error);
@@ -301,6 +302,7 @@
         {/if}
     {:else}
         <RoomOption
+            dataTestId="leaveGroupOption"
             IconComponent={IconLogout}
             title={$LL.chat.roomMenu.leaveRoom.label()}
             bg="bg-danger-900 hover:bg-danger"

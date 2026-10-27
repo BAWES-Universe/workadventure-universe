@@ -13,12 +13,20 @@
     import { jitsiParticipantsCountStore, userIsJitsiDominantSpeakerStore } from "../../Stores/GameStore";
     import { inExternalServiceStore } from "../../Stores/MyMediaStore";
     import { gameManager } from "../../Phaser/Game/GameManager";
+    import jitsiIcon from "../images/jitsi.png";
     import { coWebsites } from "../../Stores/CoWebsiteStore";
+    import LL from "../../../i18n/i18n-svelte";
+    import OpenHereRow from "../EmbedScreens/OpenHereRow.svelte";
+    import OpenHereItemIcon from "../EmbedScreens/OpenHereItemIcon.svelte";
+    import { openCoWebsiteInBrowserTab } from "../EmbedScreens/coWebsiteRow";
+    import { IconExternalLink } from "@wa-icons";
 
     const debug = Debug("jitsiCowebsite");
 
     export let actualCowebsite: JitsiCoWebsite;
     export let visible: boolean;
+    // The meeting's own icon, as its tab always showed it.
+    const jitsiIconSrc = jitsiIcon;
     let domain = actualCowebsite.getJitsiDomain();
     let jitsiContainer: HTMLDivElement;
     let playerName = gameManager.getPlayerName();
@@ -192,6 +200,29 @@
     });
 </script>
 
-<div class="relative w-full h-full" class:hidden={!visible}>
-    <div bind:this={jitsiContainer} class="absolute w-full h-full z-0" />
+<div class="flex flex-col w-full h-full" class:hidden={!visible}>
+    <OpenHereRow
+        name={$LL.cowebsite.jitsi()}
+        line={actualCowebsite.getHideUrl() ? undefined : actualCowebsite.getUrl().toString()}
+    >
+        <OpenHereItemIcon slot="icon" src={jitsiIconSrc} background="#000" />
+        {#if !actualCowebsite.getHideUrl()}
+            <button
+                type="button"
+                class="open-here-action"
+                title={$LL.cowebsite.openInBrowserTab()}
+                aria-label={$LL.cowebsite.openInBrowserTab()}
+                on:click={() => {
+                    openCoWebsiteInBrowserTab(actualCowebsite);
+                    // A meeting opened in its own tab is left here, as it always was.
+                    coWebsites.remove(actualCowebsite);
+                }}
+            >
+                <IconExternalLink font-size="20" />
+            </button>
+        {/if}
+    </OpenHereRow>
+    <div class="relative flex-1 min-h-0">
+        <div bind:this={jitsiContainer} class="absolute w-full h-full z-0" />
+    </div>
 </div>

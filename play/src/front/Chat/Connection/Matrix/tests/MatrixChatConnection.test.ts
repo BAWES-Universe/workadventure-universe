@@ -1118,4 +1118,45 @@ describe("MatrixChatConnection", () => {
             expect(created).not.toHaveBeenCalled();
         });
     });
+
+    describe("setPusher", () => {
+        const pusher = {
+            kind: "http",
+            app_id: "net.bawes.universe.web",
+            pushkey: "d1",
+            app_display_name: "Universe",
+            device_display_name: "Chrome on Windows",
+            lang: "en",
+            data: { url: "https://orbit.example/_matrix/push/v1/notify", secret: "s" },
+        } as const;
+
+        async function connectionWith(accessToken: string | null) {
+            const setPusher = vi.fn(() => Promise.resolve({}));
+            const mockMatrixClient = {
+                isGuest: vi.fn(() => false),
+                getAccessToken: vi.fn(() => accessToken),
+                setPusher,
+                on: vi.fn(),
+                store: { startup: vi.fn() },
+                initRustCrypto: vi.fn(),
+                startClient: vi.fn(),
+            } as unknown as MatrixClient;
+            const clientPromise = Promise.resolve(mockMatrixClient);
+            const matrixChatConnection = await getMatrixConnection(clientPromise);
+            await clientPromise;
+            return { matrixChatConnection, setPusher };
+        }
+
+        it("sets it on Synapse for a signed-in chat", async () => {
+            const { matrixChatConnection, setPusher } = await connectionWith("token");
+            await expect(matrixChatConnection.setPusher(pusher)).resolves.toBe(true);
+            expect(setPusher).toHaveBeenCalledWith(pusher);
+        });
+
+        it("sets nothing on a chat signed out for a room without chat, so it is tried again later", async () => {
+            const { matrixChatConnection, setPusher } = await connectionWith(null);
+            await expect(matrixChatConnection.setPusher(pusher)).resolves.toBe(false);
+            expect(setPusher).not.toHaveBeenCalled();
+        });
+    });
 });

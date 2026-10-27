@@ -14,10 +14,22 @@
     export let bare = false;
     /** The row opens a screen of its own (a picker) rather than settings underneath. */
     export let link = false;
+    /** Only a line to read: nothing opens (a brand-new bot's Usage). */
+    export let quiet = false;
 </script>
 
 {#if bare}
     <slot />
+{:else if quiet}
+    <section class="bp-group" data-testid="bot-page-group-{id}">
+        <div class="bp-head">
+            <span class="bp-ico"><svelte:component this={icon} font-size="20" /></span>
+            <span class="bp-tx">
+                <span class="bp-t">{title}</span>
+                <span class="bp-m">{brief}</span>
+            </span>
+        </div>
+    </section>
 {:else}
     <section class="bp-group" class:open data-testid="bot-page-group-{id}">
         <button
@@ -66,9 +78,12 @@
         cursor: pointer;
     }
     @media (hover: hover) {
-        .bp-group:not(.open) .bp-head:hover {
+        .bp-group:not(.open) button.bp-head:hover {
             background: rgba(255, 255, 255, 0.05);
         }
+    }
+    div.bp-head {
+        cursor: default;
     }
     .bp-head:focus-visible {
         outline: 2px solid #a78bfa;

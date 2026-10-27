@@ -306,7 +306,7 @@ const chat: DeepPartial<Translation["chat"]> = {
     roomMenu: {
         leaveRoom: {
             label: "Sair da sala",
-            notification: "Você saiu da sala",
+            notification: "Você saiu de {name}",
         },
         muteRoom: "Silenciar Sala",
         unmuteRoom: "Reativar Som da Sala",
@@ -360,12 +360,6 @@ const chat: DeepPartial<Translation["chat"]> = {
         },
     },
     connectionError: "Chat não disponível",
-    requiresLoginForChatModal: {
-        title: "Faça login para desbloquear o chat!",
-        content_1: "Para aproveitar totalmente este recurso de chat, você precisa estar logado em sua conta.",
-        content_2: "Fazer login dá acesso a todas as opções e permite continuar sem interrupção.",
-        content_3: " Por favor, faça login para prosseguir com a experiência.",
-    },
     verificationEmojiDialog: {
         confirmation: "Eles coincidem",
         mismatch: "Eles não coincidem",
@@ -483,6 +477,21 @@ const chat: DeepPartial<Translation["chat"]> = {
         },
     },
     remoteUserNotConnected: "Usuário não autenticado. Não é possível enviar mensagem.",
+    botStatus: {
+        online: "Online",
+        resting: "Descansando",
+        unready: "Ainda não está pronto",
+        gone: "Saiu",
+        restingPlaceholder: "Respostas em pausa",
+        unreadyPlaceholder: "Ainda não pode responder",
+        closed: "Esta conversa está fechada",
+        left: "{name} saiu",
+        visit: "Visitar",
+        visitAria: "Visitar {name} em {room}",
+        livesIn: "Mora em",
+        nowIn: "Agora em",
+        inThisRoom: "Você está nesta sala",
+    },
 };
 
 export default chat;

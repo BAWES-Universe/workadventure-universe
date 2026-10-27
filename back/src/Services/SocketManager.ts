@@ -78,6 +78,7 @@ import { eventProcessor } from "../Model/EventProcessorInit";
 import { gaugeManager } from "./GaugeManager";
 import { clientEventsEmitter } from "./ClientEventsEmitter";
 import { getMapStorageClient } from "./MapStorageClient";
+import { describeRoom } from "./RoomDescription";
 import { emitError } from "./MessageHelpers";
 import { cpuTracker } from "./CpuTracker";
 import { isValidEmote } from "./EmoteValidator";
@@ -1284,12 +1285,7 @@ export class SocketManager {
         const roomsList: RoomDescription[] = [];
 
         for (const room of this.resolvedRooms.values()) {
-            const roomDescription = {
-                roomId: room.roomUrl,
-                nbUsers: room.getUsers().size,
-            };
-
-            roomsList.push(roomDescription);
+            roomsList.push(describeRoom(room.roomUrl, room.getUsers().values()));
         }
 
         return {
@@ -1321,6 +1317,7 @@ export class SocketManager {
                     locatePositionMessage: {
                         position: ProtobufUtils.toPositionMessage(position),
                         userId: userToJoin.id,
+                        userUuid: userToJoin.uuid,
                     },
                 });
             }
