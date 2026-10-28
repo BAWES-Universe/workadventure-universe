@@ -27,4 +27,12 @@ describe('BotClient links to files already in storage', () => {
         expect(fetchMediaBuffer).not.toHaveBeenCalled();
         await expect(upload('https://elsewhere.example.com/song.mp3')).rejects.toThrow('fetched');
     });
+
+    it('goes out as what it is when its link has no extension to tell', async () => {
+        const client = bot();
+        const sent = vi.spyOn(client as never, 'sendMediaMessage').mockReturnValue(true as never);
+        client.markStored('https://cdn.example.com/files/7f3a?sig=x');
+        await client.sendAudio('bubble-1', 'https://cdn.example.com/files/7f3a?sig=x', undefined, 'audio/mpeg');
+        expect(sent).toHaveBeenCalledWith('bubble-1', 'https://cdn.example.com/files/7f3a?sig=x', 'audio', 'audio/mpeg', undefined, undefined, undefined);
+    });
 });

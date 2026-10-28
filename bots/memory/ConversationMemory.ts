@@ -138,9 +138,10 @@ export interface BotPlayerMemory {
     /** What make and change did in the turn being answered, by their arguments, so asking the model again for the same
      * turn (a repeated reply is regenerated) does not make a second copy. Cleared when the next turn starts. Runtime only. */
     artifactCalls?: Map<string, Record<string, unknown>>;
-    /** The files send_again put in the chat in the turn being answered, by their id, so the same turn asked again (or the
-     * model calling it twice) sends each one once. Cleared when the next turn starts. Runtime only. */
-    sentAgain?: Set<string>;
+    /** The files send_again is putting or put in the chat in the turn being answered, by their id, with how it went, so
+     * the same turn asked again (or the model calling it twice) sends each one once. Cleared when the next turn starts.
+     * Runtime only. */
+    sentAgain?: Map<string, Promise<string | null>>;
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];

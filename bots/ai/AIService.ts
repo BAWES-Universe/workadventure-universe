@@ -103,7 +103,7 @@ import {
     runArtifactTool,
     type ArtifactCard,
 } from './ArtifactTools';
-import { MAX_OUTGOING_MEDIA_BYTES, type PendingMedia } from '../memory/ConversationMemory';
+import { MAX_OUTGOING_MEDIA_BYTES, type BotPlayerMemory, type PendingMedia } from '../memory/ConversationMemory';
 import { FIND_FILES_TOOL, OPEN_FILE_TOOL, SEND_AGAIN_TOOL, fileToolDefinitions, formatFileResult, isFileTool, runFileTool } from './FileTools';
 import { linkOfStore } from '../services/ChatFiles';
 import { charsToFree, StepRoom, stepOf, stepsAsText, withStepsAsText, type ReplySteps } from './replySteps';
@@ -2713,23 +2713,39 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         url: string,
         where: { botClient?: BotClient; spaceName?: string; botId: string; playerId: number }
     ): Promise<string | null> {
-        const { botClient, spaceName, botId, playerId } = where;
-        const mediaType: PendingMedia['mediaType'] = file.kind === 'image' || file.kind === 'audio' || file.kind === 'video' ? file.kind : 'file';
-        // Sent once a turn: the model calling it twice, or the turn asked again, finds it already in the chat
-        const memory = this.conversationMemory?.getMemory(botId, playerId);
+        // Sent once a turn: the model calling it twice, at once or one after the other, or the turn asked again, gets
+        // what the first send did. A send that was refused can be tried again
+        const memory = this.conversationMemory?.getMemory(where.botId, where.playerId);
         const once = file.ref || url;
-        if (memory?.sentAgain?.has(once)) return null;
+        const earlier = memory?.sentAgain?.get(once);
+        if (earlier) return earlier;
+        const sending = this.putFileInChat(file, url, where, memory);
+        if (memory) (memory.sentAgain ??= new Map()).set(once, sending);
+        const refused = await sending;
+        if (refused && memory?.sentAgain?.get(once) === sending) memory.sentAgain.delete(once);
+        return refused;
+    }
+
+    private async putFileInChat(
+        file: { kind: string; name: string; mimeType: string | null; line: string | null; sizeBytes?: number | null; store?: FileStore },
+        url: string,
+        where: { botClient?: BotClient; spaceName?: string },
+        memory: BotPlayerMemory | undefined
+    ): Promise<string | null> {
+        const { botClient, spaceName } = where;
+        const mediaType: PendingMedia['mediaType'] = file.kind === 'image' || file.kind === 'audio' || file.kind === 'video' ? file.kind : 'file';
+        // What Orbit says it is, for a link whose name has no extension to tell
+        const mimeType = file.mimeType || undefined;
         if (botClient) {
             if (!spaceName || !botClient.isInSpace(spaceName)) return 'The conversation ended before it could be sent. Say so; do not claim it was sent.';
             // Already in storage (a file Orbit keeps by bucket and id): sent as it is, never downloaded and uploaded again.
             // A link kept as typed goes the usual way, with its checks
             if (file.store && 'bucket' in file.store) botClient.markStored?.(url);
             try {
-                if (mediaType === 'image') await botClient.sendImage(spaceName, url, file.line ?? undefined);
-                else if (mediaType === 'audio') await botClient.sendAudio(spaceName, url);
-                else if (mediaType === 'video') await botClient.sendVideo(spaceName, url);
-                else await botClient.sendFile(spaceName, url, file.name);
-                if (memory) (memory.sentAgain ??= new Set()).add(once);
+                if (mediaType === 'image') await botClient.sendImage(spaceName, url, file.line ?? undefined, undefined, mimeType);
+                else if (mediaType === 'audio') await botClient.sendAudio(spaceName, url, undefined, mimeType);
+                else if (mediaType === 'video') await botClient.sendVideo(spaceName, url, undefined, mimeType);
+                else await botClient.sendFile(spaceName, url, file.name, undefined, mimeType);
                 return null;
             } catch {
                 return "It couldn't be sent right now. Say so simply and offer to try again.";
@@ -2761,7 +2777,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             again: true,
             name: file.name,
         });
-        (memory.sentAgain ??= new Set()).add(once);
         return null;
     }
 
