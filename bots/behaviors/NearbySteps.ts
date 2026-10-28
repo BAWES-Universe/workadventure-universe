@@ -46,7 +46,8 @@ export async function* withNearbySteps(stream: AsyncIterable<AIStreamChunk>, lin
                 // Only the line needs it: the reply goes on without it
                 continue;
             }
-            if (chunk.done) answered = true;
+            // A provider that failed part-way ends with an error on its last chunk: that is no answer
+            if (chunk.done && !chunk.metadata?.error) answered = true;
             yield chunk;
         }
         answered = true;

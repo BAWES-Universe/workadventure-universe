@@ -107,6 +107,13 @@ describe('withNearbySteps', () => {
         expect(sent.at(-1)?.field.state).toBe('stopped');
     });
 
+    it('marks the line stopped when the provider failed part-way', async () => {
+        const { sent, line } = lineFor();
+        const failed = [...toolRound.slice(0, 3), { content: '', done: true, metadata: { error: true } } as AIStreamChunk];
+        await read(withNearbySteps(reply(failed), line));
+        expect(sent.at(-1)?.field.state).toBe('stopped');
+    });
+
     it('shows nothing when the reply was cut off before its first step', async () => {
         const { sent, line, state } = lineFor();
         state.aborted = true;
