@@ -148,6 +148,8 @@ export { default as IconMapPinOff } from "~icons/tabler/map-pin-off";
 export { default as IconSettingsFilled } from "~icons/tabler/settings-filled";
 export { default as IconSettings } from "~icons/tabler/settings";
 export { default as IconLink } from "~icons/tabler/link";
+export { default as IconPin } from "~icons/tabler/pin";
+export { default as IconPinnedOff } from "~icons/tabler/pinned-off";
 export { default as IconMapEditor } from "~icons/tabler/augmented-reality";
 export { default as IconSPlayertop } from "~icons/tabler/player-stop";
 export { default as IconRoute } from "~icons/tabler/route";

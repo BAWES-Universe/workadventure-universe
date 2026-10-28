@@ -3,6 +3,8 @@ import { VOICE_NOTE_BARS, waveformOf } from "./VoiceNote";
 /** A file bigger than this is not read for its shape: it is a long recording or a song, not a message. */
 const MAX_SHAPE_BYTES = 10 * 1024 * 1024;
 const CACHE_LIMIT = 100;
+/** A stalled download gives up after this long, so it cannot hold up the notes queued behind it. */
+const FETCH_TIMEOUT_MS = 20_000;
 
 export interface AudioShape {
     /** Seconds. */
@@ -18,12 +20,18 @@ const cache = new Map<string, Promise<AudioShape | undefined>>();
 
 /**
  * The length and shape of an audio file that carries neither (a note from the nearby chat, or an audio file).
- * Resolves undefined when the file is too big or the browser cannot decode it: the bubble then shows a flat shape.
+ * Resolves undefined when the file is too big, the browser cannot decode it, or it could not be fetched: the bubble
+ * then shows a flat shape. Only the last is not remembered, so the next time the note is shown it is tried again.
  */
 export function readAudioShape(url: string): Promise<AudioShape | undefined> {
     const known = cache.get(url);
     if (known) return known;
-    const shape = queue.then(() => decode(url)).catch(() => undefined);
+    const shape: Promise<AudioShape | undefined> = queue
+        .then(() => decode(url))
+        .catch(() => {
+            if (cache.get(url) === shape) cache.delete(url);
+            return undefined;
+        });
     queue = shape;
     cache.set(url, shape);
     if (cache.size > CACHE_LIMIT) {
@@ -72,13 +80,29 @@ async function readCapped(response: Response): Promise<ArrayBuffer | undefined> 
     return all.buffer;
 }
 
+/** Throws when the file could not be fetched in time: that may pass, unlike a file the browser cannot decode. */
+async function fetchCapped(url: string): Promise<ArrayBuffer | undefined> {
+    const abort = new AbortController();
+    const timeout = setTimeout(() => abort.abort(), FETCH_TIMEOUT_MS);
+    try {
+        const response = await fetch(url, { signal: abort.signal });
+        if (!response.ok) throw new Error(`Audio answered ${response.status}`);
+        return await readCapped(response);
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
 async function decode(url: string): Promise<AudioShape | undefined> {
-    const response = await fetch(url);
-    if (!response.ok) return undefined;
-    const bytes = await readCapped(response);
+    const bytes = await fetchCapped(url);
     if (!bytes) return undefined;
     decoder ??= new OfflineAudioContext(1, 1, 44100);
-    const decoded = await decoder.decodeAudioData(bytes);
+    let decoded: AudioBuffer;
+    try {
+        decoded = await decoder.decodeAudioData(bytes);
+    } catch {
+        return undefined;
+    }
     // Peaks per bar over the first channel: enough for a shape, and far lighter than mixing every channel.
     const samples = decoded.getChannelData(0);
     const slice = Math.max(1, Math.floor(samples.length / VOICE_NOTE_BARS));

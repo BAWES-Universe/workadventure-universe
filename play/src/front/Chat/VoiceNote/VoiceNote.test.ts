@@ -141,4 +141,24 @@ describe("which received notes are new on this device", () => {
             setItem.mockRestore();
         }
     });
+
+    it("keeps one baseline for the session when the browser blocks its storage", () => {
+        vi.useFakeTimers();
+        const blocked = () => {
+            throw new Error("blocked");
+        };
+        const getItem = vi.spyOn(Storage.prototype, "getItem").mockImplementation(blocked);
+        const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(blocked);
+        try {
+            const sentAt = new Date();
+            vi.advanceTimersByTime(5000);
+            // Sent after the code loaded, shown 5 seconds later: still new, and an old one is still not.
+            expect(isVoiceNoteUnplayed("$a", sentAt)).toBe(true);
+            expect(isVoiceNoteUnplayed("$old", new Date(Date.now() - 24 * 3600 * 1000))).toBe(false);
+        } finally {
+            getItem.mockRestore();
+            setItem.mockRestore();
+            vi.useRealTimers();
+        }
+    });
 });

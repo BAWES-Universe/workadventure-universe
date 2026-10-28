@@ -154,6 +154,8 @@ export function markVoiceNotePlayed(messageId: string): void {
 }
 
 const PLAYED_SINCE_STORAGE_KEY = "universe-voice-notes-since";
+// Used when storage is blocked: one moment for the whole session, so notes that arrive after it still show their dot.
+const sessionStartedAt = Date.now();
 
 /**
  * When this device first looked at voice notes. A note sent before that is not marked as new: a chat with years of
@@ -167,7 +169,7 @@ function playedSince(): number {
         window.localStorage.setItem(PLAYED_SINCE_STORAGE_KEY, String(now));
         return now;
     } catch {
-        return Date.now();
+        return sessionStartedAt;
     }
 }
 

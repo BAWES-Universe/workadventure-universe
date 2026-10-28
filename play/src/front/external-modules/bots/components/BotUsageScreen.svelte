@@ -173,7 +173,8 @@
             </div>
         {/if}
         <div class="us-rows">
-            {#each usage.ranOn as line (line.kind + (line.name ?? ""))}
+            <!-- Keyed by place: two lines can share a kind and name (two deleted keys, or Universe AI before and after a key) -->
+            {#each usage.ranOn as line, index (index)}
                 <div class="us-row">
                     <span class="us-rowtx"><b>{ranOnTitle(line)}</b><span>{ranOnLine(line, usage)}</span></span>
                     {#if line.kind === "universe-ai"}

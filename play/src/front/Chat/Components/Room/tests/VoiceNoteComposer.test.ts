@@ -120,4 +120,21 @@ describe("a voice note that is still being stopped", () => {
         await vi.waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
         expect(onSend).toHaveBeenCalledWith(file, details);
     });
+
+    it("sends the note once when Send is pressed twice while the stop is still finishing", async () => {
+        const onSend = vi.fn(() => Promise.resolve(true));
+        shown = new VoiceNoteComposer({ target, props: { canRecord: true, onSend, onError: vi.fn() } });
+        await tick();
+        await click("voiceRecordButton");
+
+        await click("voiceStopButton");
+        await click("voiceSendButton");
+        await click("voiceSendButton");
+
+        finish({ file: new File([new Uint8Array(10)], "Voice message.m4a"), details });
+
+        await vi.waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+        await tick();
+        expect(onSend).toHaveBeenCalledTimes(1);
+    });
 });

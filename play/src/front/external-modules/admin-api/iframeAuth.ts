@@ -15,6 +15,20 @@ export interface OrbitAuthTokenMessage {
     accessToken: string;
 }
 
+/** The game is still getting a token (renewing it, or waiting for the connection): Orbit keeps waiting. */
+export interface OrbitAuthWaitMessage {
+    type: "orbit-auth-wait-v2";
+    version: typeof ORBIT_AUTH_VERSION;
+    nonce: string;
+}
+
+/** The game can't get a token: the sign-in was refused, or the play server didn't answer for a long while. */
+export interface OrbitAuthFailedMessage {
+    type: "orbit-auth-failed-v2";
+    version: typeof ORBIT_AUTH_VERSION;
+    nonce: string;
+}
+
 export function isOrbitAuthReadyMessage(value: unknown): value is OrbitAuthReadyMessage {
     if (!value || typeof value !== "object") return false;
     const message = value as Partial<OrbitAuthReadyMessage>;

@@ -5,6 +5,7 @@
  * nearbyPlayers > 0 (player moved into proximity).
  */
 
+import type { ChatUpload } from '../services/ChatFiles';
 import { BaseBehavior, type BehaviorConfig } from './BaseBehavior';
 import type { PositionInterface } from '../../play/src/front/Connection/ConnexionModels';
 import { PositionMessage_Direction, type SpaceUser } from '@workadventure/messages';
@@ -1015,7 +1016,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingPrefix = '';
-            for await (const chunk of this.aiService.generateBotResponseStream(
+            for await (const chunk of this.withToolSteps(this.aiService.generateBotResponseStream(
                 botId,
                 followerPlayer.userId,
                 arrivalPrompt,
@@ -1025,9 +1026,8 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 context,
                 this.bot,
                 this.adminApiService
-            )) {
+            ), spaceName, botId, followerPlayer.userId, undefined)) {
                 if (chunk.reset) {
-                    const showToolCalls = chunk.toolNames?.length ? await this.shouldShowToolCalls(botId) : false;
                     if (fullMessage) {
                         const finalContent = pendingPrefix ? fullMessage.slice(0, -pendingPrefix.length) : fullMessage;
                         this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, finalContent);
@@ -1036,19 +1036,6 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                     fullMessage = '';
                     emotionBlockStarted = false;
                     pendingPrefix = '';
-                    if (chunk.toolNames?.length) {
-                        if (showToolCalls) {
-                            for (let ti = 0; ti < chunk.toolNames.length; ti++) {
-                                const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
-                                arrivalResponseId = `bot-${botId}-player-${followerPlayer.userId}-${crypto.randomUUID()}`;
-                                fullMessage = toolStatus;
-                                this.bot?.sendStreamMessage(spaceName, arrivalResponseId, toolStatus, false);
-                                this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, toolStatus);
-                            }
-                        }
-                        arrivalResponseId = `bot-${botId}-player-${followerPlayer.userId}-${crypto.randomUUID()}`;
-                        fullMessage = '';
-                    }
                     continue;
                 }
                 if (chunk.content) {
@@ -1207,7 +1194,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingPrefix = '';
-            for await (const chunk of this.aiService.generateBotResponseStream(
+            for await (const chunk of this.withToolSteps(this.aiService.generateBotResponseStream(
                 botId,
                 followerPlayer.userId,
                 arrivalPrompt,
@@ -1217,9 +1204,8 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 context,
                 this.bot,
                 this.adminApiService
-            )) {
+            ), spaceName, botId, followerPlayer.userId, undefined)) {
                 if (chunk.reset) {
-                    const showToolCalls = chunk.toolNames?.length ? await this.shouldShowToolCalls(botId) : false;
                     if (fullMessage) {
                         const finalContent = pendingPrefix ? fullMessage.slice(0, -pendingPrefix.length) : fullMessage;
                         this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, finalContent);
@@ -1228,19 +1214,6 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                     fullMessage = '';
                     emotionBlockStarted = false;
                     pendingPrefix = '';
-                    if (chunk.toolNames?.length) {
-                        if (showToolCalls) {
-                            for (let ti = 0; ti < chunk.toolNames.length; ti++) {
-                                const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
-                                arrivalResponseId = `bot-${botId}-player-${followerPlayer.userId}-${crypto.randomUUID()}`;
-                                fullMessage = toolStatus;
-                                this.bot?.sendStreamMessage(spaceName, arrivalResponseId, toolStatus, false);
-                                this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, toolStatus);
-                            }
-                        }
-                        arrivalResponseId = `bot-${botId}-player-${followerPlayer.userId}-${crypto.randomUUID()}`;
-                        fullMessage = '';
-                    }
                     continue;
                 }
                 if (chunk.content) {
@@ -1379,7 +1352,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingPrefix = '';
-            for await (const chunk of this.aiService.generateBotResponseStream(
+            for await (const chunk of this.withToolSteps(this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
                 playerMessage,
@@ -1389,7 +1362,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 context,
                 this.bot,
                 this.adminApiService
-            )) {
+            ), spaceName, botId, playerId, undefined)) {
                 if (chunk.content) {
                     fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                     
@@ -1549,7 +1522,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingPrefix = '';
-            for await (const chunk of this.aiService.generateBotResponseStream(
+            for await (const chunk of this.withToolSteps(this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
                 playerMessage,
@@ -1559,9 +1532,8 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 context,
                 this.bot,
                 this.adminApiService
-            )) {
+            ), spaceName, botId, playerId, undefined)) {
                 if (chunk.reset) {
-                    const showToolCalls = chunk.toolNames?.length ? await this.shouldShowToolCalls(botId) : false;
                     if (fullMessage) {
                         // Strip any deferred '[' that was not streamed to the frontend
                         const finalContent = pendingPrefix ? fullMessage.slice(0, -pendingPrefix.length) : fullMessage;
@@ -1571,19 +1543,6 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                     fullMessage = "";
                     emotionBlockStarted = false;
                     pendingPrefix = '';
-                    if (chunk.toolNames?.length) {
-                        if (showToolCalls) {
-                            for (let ti = 0; ti < chunk.toolNames.length; ti++) {
-                                const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
-                                greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
-                                fullMessage = toolStatus;
-                                this.bot?.sendStreamMessage(spaceName, greetingResponseId, toolStatus, false);
-                                this.bot?.sendStreamMessage(spaceName, greetingResponseId, "", true, toolStatus);
-                            }
-                        }
-                        greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
-                        fullMessage = "";
-                    }
                     continue;
                 }
                 if (chunk.content) {
@@ -1684,7 +1643,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
     /**
      * Handle chat messages from players
      */
-    async onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string, galleryUrls?: string[]): Promise<void> {
+    async onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string, galleryUrls?: string[], uploads?: ChatUpload[]): Promise<void> {
         if (!this.bot) return;
 
         const botId = this.bot.getBotId();
@@ -1694,6 +1653,9 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         // Save the original message for persistence — augmented version
         // is for the AI request only.
         const originalUserMessage = message;
+        // With a note for each file it came with (#1508), for the bot's memory only: the saved chat keeps what they wrote
+        let historyMessage = message;
+        let keepFiles: () => void = () => undefined;
 
         // Only respond if respondToPlayers is enabled (default true)
         if (config.respondToPlayers === false) {
@@ -1704,7 +1666,10 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         // (after the early-return guard so we don't waste fetch work
         // when the bot won't respond anyway)
         if (url) {
-            message = await this.formatParsedAttachment(message, url, mimeType || 'application/octet-stream', mediaType, galleryUrls);
+            const files = await this.readBubbleFiles(spaceName, senderId, message, url, mimeType || 'application/octet-stream', mediaType, galleryUrls, uploads);
+            message = files.augmented;
+            historyMessage = files.line;
+            keepFiles = files.keep;
         }
 
         // Start conversation in memory if needed
@@ -1735,7 +1700,8 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         }
         
         // Store player's message in memory (original, without augmented file content)
-        this.conversationMemory?.addMessage(botId, senderId, originalUserMessage, 'person', spaceName);
+        this.conversationMemory?.addMessage(botId, senderId, historyMessage, 'person', spaceName);
+        keepFiles();
         
         // Store player's message in conversation storage (original, without augmented file content)
         if (this.conversationStorage) {
@@ -1811,7 +1777,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         };
 
         try {
-            for await (const chunk of this.aiService.generateBotResponseStream(
+            for await (const chunk of this.withToolSteps(this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
                 playerMessage,
@@ -1823,9 +1789,8 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 this.adminApiService,
                 abortSignal,
                 images
-            )) {
+            ), spaceName, botId, playerId, abortSignal)) {
                 if (chunk.reset) {
-                    const showToolCalls = chunk.toolNames?.length ? await this.shouldShowToolCalls(botId) : false;
                     if (abortSignal?.aborted) break;
                         batchFlush(batchState, sendBatch);
                         // Only finalize the pre-tool bubble if there was actual text
@@ -1839,24 +1804,6 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                         fullMessage = '';
                         emotionBlockStarted = false;
                         pendingPrefix = '';
-                        if (chunk.toolNames?.length) {
-                            if (showToolCalls) {
-                                for (let ti = 0; ti < chunk.toolNames.length; ti++) {
-                                    const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
-                                    responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
-                                    this.trackActiveResponseId(playerId, responseId);
-                                    fullMessage = toolStatus;
-                                    this.bot?.sendStreamMessage(spaceName, responseId, toolStatus, false);
-                                    // Finalize the tool-name bubble so it doesn't linger in
-                                    // the frontend's streamMessages map.
-                                    this.bot?.sendStreamMessage(spaceName, responseId, '', true, toolStatus);
-                                }
-                            }
-                            // New responseId for follow-up — separate from the tool-name bubble
-                            responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
-                            this.trackActiveResponseId(playerId, responseId);
-                            fullMessage = ''; // Clear so follow-up content starts fresh
-                        }
                         continue;
                     }
 
@@ -2061,7 +2008,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingPrefix = '';
-            for await (const chunk of this.aiService.generateBotResponseStream(
+            for await (const chunk of this.withToolSteps(this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
                 goodbyePrompt,
@@ -2071,9 +2018,8 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 context,
                 this.bot,
                 this.adminApiService
-            )) {
+            ), spaceName, botId, playerId, undefined)) {
                 if (chunk.reset) {
-                    const showToolCalls = chunk.toolNames?.length ? await this.shouldShowToolCalls(botId) : false;
                     if (fullMessage) {
                         const finalContent = pendingPrefix ? fullMessage.slice(0, -pendingPrefix.length) : fullMessage;
                         this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, '', true, finalContent);
@@ -2082,19 +2028,6 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                     fullMessage = '';
                     emotionBlockStarted = false;
                     pendingPrefix = '';
-                    if (chunk.toolNames?.length) {
-                        if (showToolCalls) {
-                            for (let ti = 0; ti < chunk.toolNames.length; ti++) {
-                                const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
-                                goodbyeResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
-                                fullMessage = toolStatus;
-                                this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, toolStatus, false);
-                                this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, '', true, toolStatus);
-                            }
-                        }
-                        goodbyeResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
-                        fullMessage = '';
-                    }
                     continue;
                 }
                 if (chunk.content) {

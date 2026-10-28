@@ -8,7 +8,8 @@ import { readBotStatusNote, type BotStatusNote } from "../../Bots/BotChatStatus"
 import { readBotRoomLink, type BotRoomLink } from "../../Bots/BotRoomLink";
 import { readBotReplyLimit, type BotReplyLimit } from "../../Bots/BotReplyLimit";
 import { readArtifactField, type ArtifactCard } from "../../../Artifacts/artifactCard";
-import type { ChatMessage, ChatMessageContent, ChatMessageType, ChatUser } from "../ChatConnection";
+import { readBotSteps, type BotSteps } from "../../Bots/BotSteps";
+import type { ChatMessage, ChatMessageContent, ChatMessageType, ChatUser, SharedFileInfo } from "../ChatConnection";
 import { canRenderAttachmentInline } from "../../../Utils/InlineMimeType";
 import { fromMatrixWaveform, secondsFromMatrixDuration } from "../../VoiceNote/VoiceNote";
 import { chatUserFactory } from "./MatrixChatUser";
@@ -61,6 +62,8 @@ export class MatrixChatMessage implements ChatMessage {
     readonly roomLink: BotRoomLink | undefined;
     readonly replyLimit: BotReplyLimit | undefined;
     readonly artifact: ArtifactCard | undefined;
+    /** A bot's steps line (#1545): the bot server updates this one message while the bot works. */
+    readonly steps: Writable<BotSteps | undefined>;
     readonly canReact = writable(true);
     readonly canReply = writable(true);
     private isShown = false;
@@ -81,6 +84,7 @@ export class MatrixChatMessage implements ChatMessage {
             room.getMember(event.getSender() ?? "")?.name ?? ""
         );
         this.artifact = readArtifactField(event.getSender(), event.getOriginalContent());
+        this.steps = writable(readBotSteps(event.getSender(), this.stepsContent()));
         this.date = event.getDate();
         this.sender = this.getSender();
         this.isMyMessage = this.room.client.getUserId() === event.getSender();
@@ -354,6 +358,19 @@ export class MatrixChatMessage implements ChatMessage {
         return content.formatted_body;
     }
 
+    get sharedFile(): SharedFileInfo | undefined {
+        if (this.type === "text" || this.event.isDecryptionFailure() || this.event.isRedacted()) return undefined;
+        const content = this.event.getOriginalContent();
+        const info: unknown = content.info;
+        const size = typeof info === "object" && info !== null ? (info as Record<string, unknown>).size : undefined;
+        return {
+            name: this.getMediaFileName(content) ?? "",
+            size: typeof size === "number" && Number.isFinite(size) ? size : undefined,
+            // A voice message is flagged on its audio event (MSC3245), as for its chat list line.
+            voice: this.isVoiceMessage(content),
+        };
+    }
+
     public mxcUrlToHttp(url: string) {
         return this.room.client.mxcUrlToHttp(url);
     }
@@ -398,6 +415,27 @@ export class MatrixChatMessage implements ChatMessage {
             console.error(error);
             throw error;
         }
+    }
+
+    /** A notice as last edited, so a steps line read from history shows where the bot server left it. */
+    private stepsContent(): Record<string, unknown> | undefined {
+        const original = this.event.getOriginalContent();
+        // Only a notice can carry a steps line, so other messages skip the look at their edits
+        if (original.msgtype !== "m.notice") return undefined;
+        const bundled: unknown = this.event.getUnsigned()["m.relations"]?.["m.replace"]?.content?.["m.new_content"];
+        if (bundled && typeof bundled === "object") return bundled as Record<string, unknown>;
+        if (this.event.replacingEventId()) {
+            const replaced: unknown = this.event.replacingEvent()?.getOriginalContent()["m.new_content"];
+            if (replaced && typeof replaced === "object") return replaced as Record<string, unknown>;
+        }
+        return original;
+    }
+
+    /** An update of a bot's steps line: only its own sender can change it. */
+    public modifySteps(sender: string | undefined, newContent: Record<string, unknown> | undefined) {
+        if (!sender || sender !== this.event.getSender()) return;
+        const steps = readBotSteps(sender, newContent);
+        if (steps) this.steps.set(steps);
     }
 
     public modifyContent(newContent: string) {
