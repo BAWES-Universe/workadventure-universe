@@ -527,8 +527,9 @@ export class AIService {
         let usageProviderId = providerId;
         // A reply through a person's own key tells Orbit how it went, so a key that keeps failing is marked Down
         let reportHealth = false;
-        // A private bot's failure is logged without the error's words, which could quote what was said (#1166)
-        let privateTurn = false;
+        // A private bot's failure is logged without the error's words, which could quote what was said (#1166). Until the
+        // bot is known not to be private, a failure counts as private.
+        let privateTurn = true;
 
         try {
             // Get provider credentials. A bot on Universe AI or a person's own key is resolved by Orbit for this bot (#374).
