@@ -22,6 +22,21 @@ export interface ChatUpload {
     lengthSeconds?: number | null;
 }
 
+/** A file the bot sent in a chat (#1508). */
+export interface SentMedia {
+    url: string;
+    mediaType: string;
+    mimeType?: string | null;
+    caption?: string | null;
+    fileName?: string | null;
+}
+
+/** How a file the bot sent was made: the tool, and what the bot asked it for. */
+export interface MadeWith {
+    with: string;
+    prompt: string | null;
+}
+
 // As the uploader names a file it keeps: a UUID, with the file's extension (up to 16 characters)
 const UPLOADER_FILE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\.[a-z0-9]{1,16})?$/i;
 const BUCKET = /^[a-z0-9][a-z0-9.\-_]{1,62}$/i;

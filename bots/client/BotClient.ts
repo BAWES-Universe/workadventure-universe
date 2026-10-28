@@ -32,7 +32,7 @@ import { movementLogger } from '../utils/MovementLogger';
 import type { BotConfiguration } from '../server/AdminApiService';
 import { CANNOT_CHECK_CHAT_LINE, type BotAccessGate, type BotAccessVerdict } from '../server/BotAccessGate';
 import { FileParser } from '../services/FileParser';
-import type { ChatUpload } from '../services/ChatFiles';
+import type { ChatUpload, SentMedia } from '../services/ChatFiles';
 import { extractChatLinks } from '../utils/chatLinks';
 import { resolve4, resolve6 } from 'dns/promises';
 import * as Sentry from '@sentry/node';
@@ -58,6 +58,9 @@ export interface BotConfig {
     uploaderUrl?: string;
 }
 
+/** Uploads remembered for matching a sent file with the tool that made it. */
+const MAX_UPLOADED_FROM = 500;
+
 export class BotClient {
     // Static set of all bot user IDs - shared across all bot instances
     private static botUserIds: Set<number> = new Set();
@@ -67,6 +70,8 @@ export class BotClient {
     private ws: WebSocket | null = null;
     private state: BotState;
     private behavior: BaseBehavior | null = null;
+    /** Where each uploaded file came from, so a sent file is matched with the tool that made it. */
+    private uploadedFrom = new Map<string, string>();
     /** Asks Orbit whether someone may chat with this bot, before their words reach the AI. Null: nobody is asked. */
     private accessGate: BotAccessGate | null = null;
     /** When each person was told that the bot's owner limits who can chat with it: once per visit (see mayChat). */
@@ -1668,6 +1673,9 @@ export class BotClient {
         const uploadedFile = result[0];
         const location = uploadedFile.location || uploadedFile.url;
         const mediaType = this.inferMediaTypeFromUrl(location, contentType);
+        this.uploadedFrom.delete(location);
+        this.uploadedFrom.set(location, url);
+        if (this.uploadedFrom.size > MAX_UPLOADED_FROM) this.uploadedFrom.delete(this.uploadedFrom.keys().next().value!);
 
         return { location, mediaType, mimeType: contentType };
     }
@@ -1700,11 +1708,11 @@ export class BotClient {
      * Send an image to a space.
      * Uploads the image from the provided URL to the CDN (if needed) and sends it to the chat.
      */
-    async sendImage(spaceName: string, url: string, alt?: string): Promise<string> {
+    async sendImage(spaceName: string, url: string, alt?: string, asker?: number): Promise<string> {
         const mimeHint = this.inferMimeFromExt(url);
         try {
             const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
-            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, alt || '')) {
+            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, alt || '', undefined, asker)) {
                 const err = new Error(`Bot is not in space ${spaceName} — cannot send image`);
                 (err as any)._cdnUrl = location;
                 (err as any)._mediaType = mediaType;
@@ -1726,11 +1734,11 @@ export class BotClient {
     /**
      * Send a file to a space.
      */
-    async sendFile(spaceName: string, url: string, filename?: string): Promise<string> {
+    async sendFile(spaceName: string, url: string, filename?: string, asker?: number): Promise<string> {
         const mimeHint = this.inferMimeFromExt(url);
         try {
             const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
-            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, '', filename)) {
+            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, '', filename, asker)) {
                 const err = new Error(`Bot is not in space ${spaceName} — cannot send file`);
                 (err as any)._cdnUrl = location;
                 (err as any)._mediaType = mediaType;
@@ -1752,11 +1760,11 @@ export class BotClient {
     /**
      * Send audio to a space.
      */
-    async sendAudio(spaceName: string, url: string): Promise<string> {
+    async sendAudio(spaceName: string, url: string, asker?: number): Promise<string> {
         const mimeHint = this.inferMimeFromExt(url);
         try {
             const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
-            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType)) {
+            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, undefined, undefined, asker)) {
                 const err = new Error(`Bot is not in space ${spaceName} — cannot send audio`);
                 (err as any)._cdnUrl = location;
                 (err as any)._mediaType = mediaType;
@@ -1778,11 +1786,11 @@ export class BotClient {
     /**
      * Send video to a space.
      */
-    async sendVideo(spaceName: string, url: string): Promise<string> {
+    async sendVideo(spaceName: string, url: string, asker?: number): Promise<string> {
         const mimeHint = this.inferMimeFromExt(url);
         try {
             const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
-            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType)) {
+            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, undefined, undefined, asker)) {
                 const err = new Error(`Bot is not in space ${spaceName} — cannot send video`);
                 (err as any)._cdnUrl = location;
                 (err as any)._mediaType = mediaType;
@@ -1870,7 +1878,7 @@ export class BotClient {
     /**
      * Send a media message to a space via publicEvent spaceMessage.
      */
-    public sendMediaMessage(spaceName: string, url: string, mediaType: string, mimeType: string, caption?: string, fileName?: string): boolean {
+    public sendMediaMessage(spaceName: string, url: string, mediaType: string, mimeType: string, caption?: string, fileName?: string, asker?: number): boolean {
         const spaceUserId = this.spaces.get(spaceName);
         if (!spaceUserId) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -1903,6 +1911,7 @@ export class BotClient {
                 },
             },
         });
+        this.mediaSent(spaceName, asker, [{ url, mediaType, mimeType, caption, fileName }]);
         return true;
     }
 
@@ -1911,7 +1920,7 @@ export class BotClient {
      * The first image goes in the `url` field (backwards compatible), and
      * additional images go in `galleryUrls`. The caption appears below the grid.
      */
-    public sendMediaGallery(spaceName: string, urls: string[], caption?: string, fileNames?: string[]): boolean {
+    public sendMediaGallery(spaceName: string, urls: string[], caption?: string, fileNames?: string[], asker?: number): boolean {
         if (urls.length === 0) return false;
 
         const spaceUserId = this.spaces.get(spaceName);
@@ -1949,7 +1958,27 @@ export class BotClient {
                 },
             },
         });
+        this.mediaSent(spaceName, asker, urls.map((one, i) => ({ url: one, mediaType: 'image', mimeType: this.inferMimeFromExt(one), caption: i === 0 ? caption : undefined, fileName: fileNames?.[i] })));
         return true;
+    }
+
+    /** The link a file was uploaded from, for a link the uploader gave back. */
+    uploadedFromOf(location: string): string | undefined {
+        return this.uploadedFrom.get(location);
+    }
+
+    /**
+     * Files the bot sent, for the list of files (#1508): theirs, for `asker`, the person whose reply sent them. Every
+     * reply passes its own, so two replies at once never swap files; a send with no asker (not from a reply) isn't kept.
+     */
+    private mediaSent(spaceName: string, asker: number | undefined, items: SentMedia[]): void {
+        if (asker === undefined || !this.behavior) return;
+        try {
+            this.behavior.onBotMediaSent(spaceName, asker, items);
+        } catch (error) {
+            // Keeping the file never stops it being sent
+            console.warn(`[Bot ${this.config.botId}] Could not keep a sent file:`, (error as Error)?.message ?? error);
+        }
     }
 
     /**

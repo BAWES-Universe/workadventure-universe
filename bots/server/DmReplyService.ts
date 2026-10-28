@@ -19,6 +19,7 @@ import { ReplySteps, type StepsField } from '../ai/ToolSteps';
 import type { ReplyLimitReached } from '../ai/types';
 import type { ParsedFile } from '../services/FileParser';
 import { withoutNoteIds, type ChatUpload } from '../services/ChatFiles';
+import { chatFileKeeper, sentMediaJob } from '../services/ChatFileKeeper';
 import type { BotConfiguration } from './AdminApiService';
 import type { BotManager } from './BotManager';
 
@@ -80,6 +81,8 @@ export interface DmReply {
     failed?: boolean;
     /** Remembers the text as said. Call it once the text reached the person, so an answer that never arrived isn't. */
     keep?: () => void;
+    /** Puts a file in `media` on the person's list of files (#1508). Call it once it reached them. */
+    mediaSent?: (item: PendingMedia) => void;
     /** The bot's room, when the text names it: the game shows a card under the message to go there. */
     roomLink?: DmRoomLink;
     /** Live artifacts the bot made or changed in this turn: a card for each, sent after the text. */
@@ -517,7 +520,19 @@ export class DmReplyService extends BaseBehavior {
         const roomLink = this.isInBotRoom(botId, person.uuid)
             ? undefined
             : await this.roomLinkFor(config.roomUrl, replyText, askedForRoom, `${botId}:${person.matrixUserId}`);
-        return { text: replyText, media, keep, ...(roomLink ? { roomLink } : {}), ...(artifacts.length ? { artifacts } : {}) };
+        // Each file the tools made goes on this person's list once it reached them, with the tool that made it
+        const mediaSent = (item: PendingMedia) => {
+            const admin = this.adminApiService;
+            if (!admin || !hooks.roomId) return;
+            const where = {
+                call: { botId, person: { signedIn: true, identifier: person.uuid, name: person.name }, chat: { kind: 'dm' as const, ref: hooks.roomId } },
+                personRef: person.uuid,
+                maxTextChars: this.aiService?.botLimitsFor(botId).fileTextChars ?? 0,
+            };
+            const made = this.aiService?.madeFor(item.originalUrl, item.url) ?? null;
+            void chatFileKeeper.keepAll(admin, [sentMediaJob({ ...item, mimeType: item.mimeType || null, caption: item.caption || null }, where, made)]);
+        };
+        return { text: replyText, media, keep, mediaSent, ...(roomLink ? { roomLink } : {}), ...(artifacts.length ? { artifacts } : {}) };
     }
 
     /**
