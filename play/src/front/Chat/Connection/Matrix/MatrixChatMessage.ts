@@ -330,7 +330,7 @@ export class MatrixChatMessage implements ChatMessage {
     }
 
     get sharedFile(): SharedFileInfo | undefined {
-        if (this.type === "text" || this.event.isDecryptionFailure()) return undefined;
+        if (this.type === "text" || this.event.isDecryptionFailure() || this.event.isRedacted()) return undefined;
         const content = this.event.getOriginalContent();
         const info: unknown = content.info;
         const size = typeof info === "object" && info !== null ? (info as Record<string, unknown>).size : undefined;
