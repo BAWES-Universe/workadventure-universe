@@ -20,6 +20,13 @@ describe('replyProblem (#1498)', () => {
         expect(replyProblem(quiet)).toContain('no reason given');
     });
 
+    it('does not copy a finish reason it does not know', () => {
+        expect(replyProblem({ ...quiet, finishReason: 'Bearer abc123 please call 555-0100' })).toBe(
+            'no words and no tool call: it stopped (an unrecognised reason), 0 tokens used, 0 on thinking'
+        );
+        expect(replyProblem({ ...quiet, finishReason: 'STOP' })).toBe('no words and no tool call: it stopped (stop), 0 tokens used, 0 on thinking');
+    });
+
     it('puts the provider error first, with its status', () => {
         expect(replyProblem({ ...quiet, error: true, errorStatus: 400, errorText: 'OpenAI API error: 400 max_tokens too large' })).toBe(
             'the provider failed (400): OpenAI API error: 400 max_tokens too large'

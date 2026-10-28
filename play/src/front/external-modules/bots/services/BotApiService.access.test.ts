@@ -191,6 +191,13 @@ describe("an Orbit that does not answer about who may use a bot", () => {
         await failed;
     });
 
+    it("gives up on the page of kept nearby items and says none came back", async () => {
+        vi.spyOn(globalThis, "fetch").mockImplementation((_url, init) => untilCancelled(init?.signal));
+        const asked = service().getNearbyShared();
+        await vi.advanceTimersByTimeAsync(20000);
+        await expect(asked).resolves.toBeNull();
+    });
+
     const requests: Array<[string, (api: BotApiService) => Promise<unknown>]> = [
         ["a read", (api) => api.getBotPermissions("b1")],
         ["a change", (api) => api.saveBotPermissions("b1", { privateBot: true })],

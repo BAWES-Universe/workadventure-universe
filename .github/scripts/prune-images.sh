@@ -2,7 +2,7 @@
 # Delete old dev builds from one GHCR package (#741).
 #
 # Only a version whose tags are ALL `universe-develop` or `universe-develop-<sha>` can be deleted,
-# and only when it is not one of the newest $KEEP. A version that carries any other tag
+# and only when it is not one of the newest $KEEP (the one tagged `universe-develop` itself is always kept). A version that carries any other tag
 # (`universe`, `universe-<sha>`, `latest`) is a release and is never touched. Untagged versions
 # are listed but never deleted: they can be the child manifests of a tagged image.
 #
@@ -14,15 +14,23 @@ PACKAGE="$2"
 KEEP="$3"
 LIVE="$4"
 
+# A negative or non-numeric count would turn the slice below into "everything"
+if ! [[ "$KEEP" =~ ^[0-9]+$ ]]; then
+  echo "keep must be a whole number of dev builds, got: ${KEEP}" >&2
+  exit 1
+fi
+
 VERSIONS=$(gh api --paginate "/orgs/${OWNER}/packages/container/${PACKAGE}/versions?per_page=100" | jq -s 'add // []')
 
 TOTAL=$(jq 'length' <<<"$VERSIONS")
 UNTAGGED=$(jq '[.[] | select((.metadata.container.tags // []) | length == 0)] | length' <<<"$VERSIONS")
 
-# Newest first, so everything after the first $KEEP dev builds is old.
+# Newest first, so everything after the first $KEEP dev builds is old. The build that carries the `universe-develop`
+# tag is the current one and is never deleted, whatever $KEEP is.
 DELETE=$(jq -c --argjson keep "$KEEP" '
   [ .[]
     | select((.metadata.container.tags // []) | length > 0)
+    | select((.metadata.container.tags // []) | index("universe-develop") | not)
     | select((.metadata.container.tags // []) | all(test("^universe-develop(-[0-9a-f]+)?$")))
   ]
   | sort_by(.created_at) | reverse
