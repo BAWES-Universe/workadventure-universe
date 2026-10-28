@@ -2,9 +2,10 @@
  * A reply keeps its own steps (#1508): each round of tool calls goes back to the model as the chat messages providers
  * already know (what it said and called, then what came back), after the person's message, so step five still sees
  * what step one found. Steps are only ever added at the end, so the provider keeps matching what it read before; when
- * their results pass "Room for tool results in one reply", the older ones are set aside to a line, once, and adding
- * goes on.
+ * they pass "Room for tool results in one reply" (what came back, and what the calls were made with, such as an
+ * artifact's whole page), the older ones are set aside to a line, once, and adding goes on.
  */
+import { jsonrepair } from 'jsonrepair';
 import type { ToolCall } from './types';
 
 /** One round of a reply: what the model said and called, and what each call gave back. */
@@ -34,10 +35,32 @@ export function stepOf(round: number, content: string, calls: ToolCall[], result
         const result = (call.id ? results.find((given) => given.id === call.id) : undefined) ?? results[i];
         if (!result) return;
         const id = call.id || `call_${round}_${i}`;
-        paired.calls.push({ id, name: call.name, arguments: call.arguments || '{}' });
+        paired.calls.push({ id, name: call.name, arguments: argumentsToSendBack(call.arguments) });
         paired.results.push({ id, name: result.name, content: result.text });
     });
     return paired;
+}
+
+const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/**
+ * A call's arguments as they go back to the model: valid JSON of an object, as providers want, repaired when the stream
+ * cut or broke them (they were repaired the same way to run the call), or `{}` when nothing can be read.
+ */
+function argumentsToSendBack(args: string | undefined): string {
+    if (!args || args.trim() === '') return '{}';
+    try {
+        if (isObject(JSON.parse(args))) return args;
+    } catch {
+        // repaired below
+    }
+    try {
+        const repaired = jsonrepair(args);
+        if (isObject(JSON.parse(repaired))) return repaired;
+    } catch {
+        // nothing to read
+    }
+    return '{}';
 }
 
 /** The steps as chat messages after the person's message, in the OpenAI shape both providers take. */
@@ -123,8 +146,43 @@ export function charsToFree(context: ContextNumbers | undefined, promptChars: nu
     return Math.ceil((context.asked - context.limit) * (promptChars / context.asked) * 1.2);
 }
 
-function sizeOf(step: ReplyStep): number {
+function resultsSizeOf(step: ReplyStep): number {
     return step.results.reduce((total, result) => total + result.content.length, 0);
+}
+
+/** All a step sends back each time: what the model said, its reasoning, what it called with, and what came back. */
+function sizeOf(step: ReplyStep): number {
+    const calls = step.calls.reduce((total, call) => total + call.name.length + call.arguments.length, 0);
+    return step.content.length + (step.reasoning?.length ?? 0) + calls + resultsSizeOf(step);
+}
+
+const asideValue = (whole: number) => `[${whole.toLocaleString('en-US')} characters, set aside to make room]`;
+
+/**
+ * A call's arguments with each long text in them set aside to a line (an artifact's whole page, a long prompt), so the
+ * call still says what it did and stays valid JSON. As they were when there is nothing long in them.
+ */
+function argumentsAside(args: string): string {
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(args);
+    } catch {
+        return args;
+    }
+    let changed = false;
+    const walk = (value: unknown): unknown => {
+        if (typeof value === 'string') {
+            const line = asideValue(value.length);
+            if (line.length >= value.length) return value;
+            changed = true;
+            return line;
+        }
+        if (Array.isArray(value)) return value.map(walk);
+        if (isObject(value)) return Object.fromEntries(Object.entries(value).map(([key, inner]) => [key, walk(inner)]));
+        return value;
+    };
+    const aside = walk(parsed);
+    return changed ? JSON.stringify(aside) : args;
 }
 
 /** Text up to `max` characters, never ending in half an emoji. */
@@ -143,14 +201,15 @@ const cutNote = (kept: number, whole: number) =>
 
 /**
  * The steps of one reply within "Room for tool results in one reply". Adding a step that would pass it sets the older
- * results aside to one line each, once, and adding goes on; a single step larger than the room keeps as much of each
- * result as fits, saying so.
+ * results, and the long texts their calls were made with, aside to one line each, once, and adding goes on; a single
+ * step larger than the room keeps as much of each result as fits, saying so.
  */
 export class StepRoom {
     readonly steps: ReplyStep[] = [];
     /** Each cut result's whole text and how much of it is kept, so cutting again cuts the text and not its note. */
     private readonly cut = new WeakMap<StepResult, { whole: string; kept: number }>();
     private readonly setAsideResults = new WeakSet<StepResult>();
+    private readonly setAsideCalls = new WeakSet<ToolCall>();
 
     constructor(private readonly room: number) {}
 
@@ -172,12 +231,14 @@ export class StepRoom {
     makeRoom(free?: number): boolean {
         const before = this.size();
         const goal = free !== undefined ? before - free : undefined;
-        const setAside = this.setAside(this.steps.slice(0, -1));
-        if (setAside && (goal === undefined || this.size() <= goal)) return this.size() < before;
+        const enough = (changed: boolean) => changed && (goal === undefined || this.size() <= goal);
+        if (enough(this.setAside(this.steps.slice(0, -1)))) return this.size() < before;
         const newest = this.steps.at(-1);
+        // The newest step's own long arguments next: what it asked for is in its results, which it still needs
+        if (newest && enough(this.setAsideArguments(newest))) return this.size() < before;
         if (newest) {
             const kept = newest.results.reduce((total, result) => total + (this.cut.get(result)?.kept ?? result.content.length), 0);
-            const others = this.size() - sizeOf(newest);
+            const others = this.size() - resultsSizeOf(newest);
             const notes = this.notesOf(newest);
             const want = Math.max(0, goal === undefined ? Math.floor(kept / 2) : Math.min(kept - 1, goal - others - notes));
             // Only when it makes the steps smaller: a short result cut to half would only gain a note
@@ -194,9 +255,24 @@ export class StepRoom {
         }, 0);
     }
 
+    /** Sets the long texts in a step's call arguments aside, once. */
+    private setAsideArguments(step: ReplyStep): boolean {
+        let changed = false;
+        for (const call of step.calls) {
+            if (this.setAsideCalls.has(call)) continue;
+            const aside = argumentsAside(call.arguments);
+            if (aside.length >= call.arguments.length) continue;
+            call.arguments = aside;
+            this.setAsideCalls.add(call);
+            changed = true;
+        }
+        return changed;
+    }
+
     private setAside(steps: ReplyStep[]): boolean {
         let changed = false;
         for (const step of steps) {
+            if (this.setAsideArguments(step)) changed = true;
             for (const result of step.results) {
                 if (this.setAsideResults.has(result)) continue;
                 const whole = this.cut.get(result)?.whole.length ?? result.content.length;

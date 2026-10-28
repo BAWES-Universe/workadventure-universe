@@ -45,6 +45,15 @@ describe('a step', () => {
         expect(stepMessages(undefined)).toEqual([]);
     });
 
+    it('sends back only arguments a provider takes: repaired when the stream cut them, else an empty object', () => {
+        const callWith = (args: string) => stepOf(1, '', [{ id: 'c', name: 'make_artifact', arguments: args }], [{ id: 'c', name: 'make_artifact', text: 'saved' }]).calls[0]!.arguments;
+        expect(callWith('{"title":"Plan","html":"<p>hi')).toBe(JSON.stringify({ title: 'Plan', html: '<p>hi' }));
+        expect(callWith('{"title":"Plan"}')).toBe('{"title":"Plan"}');
+        expect(callWith('not json at all')).toBe('{}');
+        expect(callWith('[1, 2]')).toBe('{}');
+        expect(callWith('')).toBe('{}');
+    });
+
     it('can be read as text by a call that takes one message', () => {
         const steps = [step(1, 'page one'), step(2, 'page two')];
         expect(stepsAsText(steps)).toBe('=== Step 1 ===\npage one\n\n=== Step 2 ===\npage two');
@@ -158,5 +167,33 @@ describe("a reply's room for tool results", () => {
         const room = new StepRoom(3);
         room.add(step(1, 'ab😀cd'));
         expect(room.steps[0]!.results[0]!.content.startsWith('ab\n[Only the first 2 of 6')).toBe(true);
+    });
+});
+
+describe('what a call was made with', () => {
+    const made = (round: number, html: string, result = 'Saved the artifact "Plan".'): ReplyStep =>
+        stepOf(round, '', [{ id: `c${round}`, name: 'make_artifact', arguments: JSON.stringify({ title: 'Plan', html }) }], [{ id: `c${round}`, name: 'make_artifact', text: result }]);
+
+    it('counts in the room, and an older page is set aside to a line while the call still says what it did', () => {
+        const room = new StepRoom(5000);
+        room.add(made(1, 'x'.repeat(4000)));
+        expect(room.size()).toBeGreaterThan(4000);
+        room.add(made(2, 'y'.repeat(2000)));
+        const older = JSON.parse(room.steps[0]!.calls[0]!.arguments);
+        expect(older).toEqual({ title: 'Plan', html: '[4,000 characters, set aside to make room]' });
+        // What it gave back is short, so it stays
+        expect(room.steps[0]!.results[0]!.content).toBe('Saved the artifact "Plan".');
+        expect(room.size()).toBeLessThan(5000);
+    });
+
+    it('sets the newest page aside before its results when the model turns the steps down for length', () => {
+        const room = new StepRoom(100_000);
+        room.add(made(1, 'z'.repeat(20_000), 'r'.repeat(3000)));
+        const before = room.size();
+        expect(room.makeRoom(5000)).toBe(true);
+        expect(room.size()).toBeLessThanOrEqual(before - 5000);
+        expect(JSON.parse(room.steps[0]!.calls[0]!.arguments).html).toBe('[20,000 characters, set aside to make room]');
+        // Its results, which it still needs, are whole
+        expect(room.steps[0]!.results[0]!.content).toBe('r'.repeat(3000));
     });
 });
