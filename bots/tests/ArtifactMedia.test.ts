@@ -106,6 +106,18 @@ describe('make_artifact with media', () => {
         expect(formatArtifactResult('make_artifact', run.result)).toContain('It carries "song.mp3", beside the page.');
     });
 
+    it('still downloads when the time to save is 0, as the save itself does', async () => {
+        // A slow server: the download is cut off if its timer was started at 0
+        const slow = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            if (init?.signal?.aborted) throw new Error('aborted');
+            return response(new Uint8Array([1, 2, 3]), { 'content-type': 'audio/mpeg' });
+        }) as unknown as typeof fetch;
+        const ctx = { ...context(undefined, slow), saveTimeoutMs: 0 };
+        const run = await runArtifactTool('make_artifact', { title: 'My song', kind: 'page', content: '<audio src="song.mp3">', media: [{ file: 'm1', name: 'song' }] }, ctx);
+        expect(run.result).toMatchObject({ success: true, media: ['song.mp3'] });
+    });
+
     it('points the page at the name a file went in under when its type needed another ending', async () => {
         const ctx = context(undefined, fakeFetch({ [SONG]: () => response(new Uint8Array([1, 2, 3]), { 'content-type': 'audio/mp4' }) }));
         const content = '<audio src="song.mp3"></audio><a href=\'./song.mp3\'>Download</a><p>Play song.mp3</p>';
