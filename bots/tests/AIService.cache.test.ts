@@ -43,7 +43,7 @@ vi.mock("../mcp/MCPConnector", () => ({
 }));
 
 /** A call that, like the registry, tells the config what it read from and wrote to the cache before its closing chunk */
-function call(options: { read?: number; write?: number; prompt: number; completion: number; text?: string; tool?: boolean }) {
+function call(options: { read?: number; write?: number; prompt: number; completion: number; text?: string; tool?: boolean; cached?: number }) {
     return async function* (_providerId: string, _system: string, _message: string, config: any) {
         if (options.tool) yield { content: "", done: false, toolCalls: [{ id: "call_1", name: "get_bot_position", arguments: "{}" }] };
         else yield { content: options.text ?? "Hello there.", done: false };
@@ -55,6 +55,7 @@ function call(options: { read?: number; write?: number; prompt: number; completi
                 tokensUsed: options.prompt + options.completion,
                 promptTokens: options.prompt,
                 completionTokens: options.completion,
+                cachedPromptTokens: options.cached,
                 cacheReadTokens: options.read,
                 cacheWriteTokens: options.write,
                 latency: 10,
@@ -211,6 +212,16 @@ describe("AIService and the provider's prompt cache", () => {
 
             // The turn still adds every round up
             expect(admin.trackAIUsage.mock.calls[0][0]).toMatchObject({ cacheReadTokens: 6000, cacheWriteTokens: 3000 });
+        });
+
+        it("keeps the ledger's cache reads on the Sentry span when the provider's own cached figure is smaller", async () => {
+            const { admin, memory } = buildMocks();
+            mockGenerateStream.mockImplementationOnce(call({ prompt: 3025, completion: 7, read: 3000, cached: 1000 }));
+            await run(new AIService(memory, admin, "http://admin.local"), admin);
+
+            const reads = mockParentSpan.setAttribute.mock.calls.filter(([key]) => key === "gen_ai.usage.cache_read.input_tokens");
+            expect(reads.length).toBeGreaterThan(0);
+            expect(reads[reads.length - 1][1]).toBe(3000);
         });
 
         it("puts the cache figures on the turn's Sentry span, the cached tokens inside input_tokens", async () => {

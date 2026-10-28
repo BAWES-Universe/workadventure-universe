@@ -2077,11 +2077,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         parentSpan?.setAttribute('gen_ai.usage.output_tokens', completionTokens);
                         parentSpan?.setAttribute('gen_ai.usage.cache_read.input_tokens', cacheLedger.read);
                         parentSpan?.setAttribute('gen_ai.usage.cache_creation.input_tokens', cacheLedger.write);
-                    }
-                    // Always close Sentry span and restore scope, even if PostHog fails
-                    if (cachedPromptTokens !== undefined) {
+                    } else if (cachedPromptTokens !== undefined) {
+                        // No ledger (DeepSeek, LM Studio): the span takes the provider's cached figure
                         parentSpan?.setAttribute("gen_ai.usage.cache_read.input_tokens", cachedPromptTokens);
                     }
+                    // Always close Sentry span and restore scope, even if PostHog fails
                     parentSpan?.end();
                     sentrySetSpan?.(sentryScope, previousSpan);
                 }
