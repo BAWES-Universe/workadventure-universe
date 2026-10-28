@@ -1295,21 +1295,29 @@ describe("Signing Orbit in when the OIDC access token has run out", () => {
     it("waits for the connection while offline, without giving up, and renews as soon as it is back", async () => {
         const expired = makeOidcToken(nowSeconds() - 10);
         const renewed = makeOidcToken(nowSeconds() + 3600);
-        mocks.pusherGet.mockResolvedValue(meAnswer(makeAccessTokenJwt(renewed)));
+        mocks.pusherGet.mockRejectedValue(noAnswer());
         online = false;
         await openedWith(makeAccessTokenJwt(expired));
         orbitSends();
-        // Five minutes offline: nothing asked, nothing given up, Orbit told every so often that the game is waiting.
+        // Five minutes offline: nothing given up, Orbit told every so often that the game is waiting.
         await vi.advanceTimersByTimeAsync(5 * 60_000);
-        expect(mocks.pusherGet).not.toHaveBeenCalled();
         expect(answers()).toEqual([]);
         expect(frame.postMessage.mock.calls.length).toBeGreaterThan(10);
 
+        mocks.pusherGet.mockResolvedValue(meAnswer(makeAccessTokenJwt(renewed)));
         online = true;
         for (const listener of [...onlineListeners]) listener();
         await vi.advanceTimersByTimeAsync(0);
-        expect(mocks.pusherGet).toHaveBeenCalledTimes(1);
         expect(answers()).toEqual([expect.objectContaining({ type: "orbit-auth-token-v2", accessToken: renewed })]);
+    });
+
+    it("hands over a token that is still good even when the browser wrongly says it is offline", async () => {
+        const good = makeOidcToken(nowSeconds() + 3600);
+        online = false;
+        await openedWith(makeAccessTokenJwt(good));
+        await orbitAsks();
+        expect(mocks.pusherGet).not.toHaveBeenCalled();
+        expect(answers()).toEqual([expect.objectContaining({ type: "orbit-auth-token-v2", accessToken: good })]);
     });
 
     it("stops trying for a request Orbit replaced with a new one", async () => {

@@ -250,16 +250,16 @@ export async function orbitAccessTokenWithRetries(
     const started = Date.now();
     let offlineFor = 0;
     for (let attempt = 0; isCurrent(); attempt++) {
-        if (!isOffline()) {
-            // One try at a time, each after the last one's answer.
-            // eslint-disable-next-line no-await-in-loop
-            const { accessToken, failure } = await orbitAccessTokenAttempt(holder, force, isCurrent);
-            if (!isCurrent()) return null;
-            // Renewed, or the newest token there is (another caller or tab may have renewed it meanwhile).
-            if (accessToken && failure === null && (force || !isStale(accessToken))) return accessToken;
-            if (failure === "refused" || (failure === null && !accessToken)) return null;
-            if (Date.now() - started - offlineFor >= options.giveUpAfterMs) return null;
-        }
+        // Tried even when the browser says it is offline: a token that is still good needs no connection, and the
+        // browser's word can be wrong. Offline, a renewal just fails at once and waits for the connection.
+        // One try at a time, each after the last one's answer.
+        // eslint-disable-next-line no-await-in-loop
+        const { accessToken, failure } = await orbitAccessTokenAttempt(holder, force, isCurrent);
+        if (!isCurrent()) return null;
+        // Renewed, or the newest token there is (another caller or tab may have renewed it meanwhile).
+        if (accessToken && failure === null && (force || !isStale(accessToken))) return accessToken;
+        if (failure === "refused" || (failure === null && !accessToken)) return null;
+        if (!isOffline() && Date.now() - started - offlineFor >= options.giveUpAfterMs) return null;
         options.onWait?.();
         const offline = isOffline();
         const waitStarted = Date.now();
