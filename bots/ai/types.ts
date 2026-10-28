@@ -50,7 +50,7 @@ export interface BotLimits {
     /** 0 keeps every version. */
     artifactVersions: number;
     artifactSaveSeconds: number;
-    /** Songs, images and videos one version may carry, in bytes (#1510); 0 lets none in. */
+    /** Songs, images and videos one save may add to an artifact, in bytes (#1510); 0 lets none in. */
     artifactMediaBytes: number;
     /** "Say when nothing was saved". */
     guard: boolean;
