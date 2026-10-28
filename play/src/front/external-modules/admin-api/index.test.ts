@@ -1159,6 +1159,22 @@ describe("Orbit and the Back button (1C)", () => {
         expect(await holds()).toBe(false);
     });
 
+    it("after Back inside Orbit, goes back only over the steps below the page it is on", async () => {
+        hearMoves();
+        fakeHistory.pushState({ somewhereElse: true });
+        await openedIndex();
+        orbitPageLoaded();
+        orbitPageLoaded();
+        orbitPageLoaded();
+        orbitSays(3);
+        fakeHistory.back();
+        // Orbit hears its own popstate and says the step it is on now, not the most it reached.
+        orbitSays(2);
+        modalClosedByGame();
+        expect(fakeHistory.go).toHaveBeenCalledWith(-3);
+        expect(fakeHistory.index).toBe(1);
+    });
+
     it("never walks back more steps than the history holds", async () => {
         hearMoves();
         fakeHistory.pushState({ somewhereElse: true });
