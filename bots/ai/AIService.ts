@@ -1082,8 +1082,9 @@ export class AIService {
                         // propagate (it would abort the stream and yield an error
                         // done chunk, killing the turn).
                         try {
+                            const callCache = takeCache();
                             captureGeneration({
-                                ...takeCache(),
+                                ...callCache,
                                 distinctId: `bot-${botId}`,
                                 traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
                                 sessionId: `conversation-${botId}-player-${playerId}`,
@@ -1096,6 +1097,7 @@ export class AIService {
                                 outputTokens: completionTokens,
                                 latency: (Date.now() - firstCallStartTime) / 1000,
                                 cost: this.calculateCost(providerId, {
+                                    cacheWriteTokens: callCache.cacheWriteTokens,
                                     cachedPromptTokens: cachedPromptTokens,
                                     tokensUsed,
                                     promptTokens,
@@ -1498,6 +1500,7 @@ export class AIService {
                                             outputTokens: followUpCompletionTokens,
                                             latency: (Date.now() - followUpStartTime) / 1000,
                                             cost: this.calculateCost(providerId, {
+                                                cacheWriteTokens: followUpCache.cacheWriteTokens,
                                                 cachedPromptTokens: followUpCachedPromptTokens,
                                                 tokensUsed: followUpTokens,
                                                 promptTokens: followUpPromptTokens,
@@ -1845,8 +1848,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             // Telemetry is fire-and-forget: a capture failure must never
                             // propagate (it would abort the turn after the answer).
                             try {
+                                const callCache = takeCache();
                                 captureGeneration({
-                                    ...takeCache(),
+                                    ...callCache,
                                     distinctId: `bot-${botId}`,
                                     traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
                                     sessionId: `conversation-${botId}-player-${playerId}`,
@@ -1859,6 +1863,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     outputTokens: followUpCompletionTokens,
                                     latency: (Date.now() - followUpStartTime) / 1000,
                                     cost: this.calculateCost(providerId, {
+                                        cacheWriteTokens: callCache.cacheWriteTokens,
                                         cachedPromptTokens: followUpCachedPromptTokens,
                                         tokensUsed: followUpTokens,
                                         promptTokens: followUpPromptTokens,
@@ -2008,8 +2013,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
                     // Non-tool-call path: capture $ai_generation for the first (only) LLM call
                     if (!privateBot && !initialGenCaptured && streamCompleted && (firstCallContent || problem) && !hadToolCalls) {
+                        const callCache = takeCache();
                         captureAiGeneration({
-                            ...takeCache(),
+                            ...callCache,
                             distinctId: `bot-${botId}`,
                             traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
                             sessionId: `conversation-${botId}-player-${playerId}`,
@@ -2022,6 +2028,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             outputTokens: followUpCompletionTokens > 0 ? (completionTokens - followUpCompletionTokens) : completionTokens,
                             latency: (Date.now() - firstCallStartTime) / 1000,
                             cost: this.calculateCost(providerId, {
+                                cacheWriteTokens: callCache.cacheWriteTokens,
                                 cachedPromptTokens: followUpCachedPromptTokens !== undefined && cachedPromptTokens !== undefined ? cachedPromptTokens - followUpCachedPromptTokens : cachedPromptTokens,
                                 tokensUsed,
                                 promptTokens: followUpPromptTokens > 0 ? (promptTokens - followUpPromptTokens) : promptTokens,
@@ -2038,8 +2045,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     
                     // Tool follow-up path: capture $ai_generation for the follow-up LLM call
                     if (!privateBot && !followUpGenCaptured && hadToolCalls && (followUpContent || followUpError)) {
+                        const callCache = takeCache();
                         captureAiGeneration({
-                            ...takeCache(),
+                            ...callCache,
                             distinctId: `bot-${botId}`,
                             traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
                             sessionId: `conversation-${botId}-player-${playerId}`,
@@ -2052,6 +2060,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             outputTokens: followUpCompletionTokens,
                             latency: (Date.now() - followUpStartTime) / 1000,
                             cost: this.calculateCost(providerId, {
+                                cacheWriteTokens: callCache.cacheWriteTokens,
                                 cachedPromptTokens: followUpCachedPromptTokens,
                                 tokensUsed: followUpTokens,
                                 promptTokens: followUpPromptTokens,
@@ -2083,6 +2092,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             outputTokens: completionTokens,
                             latency: generationLatency,
                             cost: this.calculateCost(providerId, {
+                                cacheWriteTokens: cacheLedger.write,
                                 cachedPromptTokens: cachedPromptTokens,
                                 tokensUsed,
                                 promptTokens,
