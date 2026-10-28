@@ -147,6 +147,15 @@ describe('make_artifact with media', () => {
 });
 
 describe('change_artifact with media', () => {
+    it('refuses edits or names it can\'t read rather than saving only the media', async () => {
+        const ctx = context();
+        const badEdits = await runArtifactTool('change_artifact', { id: 'art-1', edits: [{ old: '<p>' }], media: [{ file: 'm1', name: 'song.mp3' }] }, ctx);
+        expect(badEdits.result.error).toBe('Each edit needs old and new text. Nothing was saved.');
+        const badDrop = await runArtifactTool('change_artifact', { id: 'art-1', dropMedia: 'old.mp3', media: [{ file: 'm1', name: 'song.mp3' }] }, ctx);
+        expect(badDrop.result.error).toBe('dropMedia must be a list of media names. Nothing was saved.');
+        expect(ctx.admin.changeArtifact).not.toHaveBeenCalled();
+    });
+
     it('can only drop or add media, with no edit to the page', async () => {
         const ctx = context();
         const run = await runArtifactTool('change_artifact', { id: 'art-1', dropMedia: ['old.mp3'], media: [{ file: 'm1', name: 'song.mp3' }] }, ctx);

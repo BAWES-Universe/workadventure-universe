@@ -303,6 +303,11 @@ function renamedLine(renames: MediaRename[]): { renamed?: string[] } {
     return renames.length > 0 ? { renamed: renames.map(({ from, to }) => `"${from}" is "${to}"`) } : {};
 }
 
+/** Sent with something in it: not left out, null or an empty list. */
+function given(value: unknown): boolean {
+    return value !== undefined && value !== null && !(Array.isArray(value) && value.length === 0);
+}
+
 function argNames(value: unknown): string[] | undefined {
     if (!Array.isArray(value)) return undefined;
     const names = value.filter((name): name is string => typeof name === 'string' && name.trim() !== '').map((name) => name.trim());
@@ -450,6 +455,9 @@ export async function runArtifactTool(name: string, args: Record<string, unknown
                 const edits = argEdits(args.edits);
                 const hasContent = typeof args.content === 'string';
                 const dropMedia = argNames(args.dropMedia);
+                // Edits or names that were sent but can't be read are an error, never left out of a change that still saves the media
+                if (!edits && given(args.edits)) return { result: { error: 'Each edit needs old and new text. Nothing was saved.' } };
+                if (!dropMedia && given(args.dropMedia)) return { result: { error: 'dropMedia must be a list of media names. Nothing was saved.' } };
                 const media = await gatherMedia(args.media, context);
                 if (!edits && !hasContent && !dropMedia && media.uploads.length === 0) {
                     return { result: { error: 'Send edits (each with old and new), the whole new file in content, or media to add or drop.' } };
