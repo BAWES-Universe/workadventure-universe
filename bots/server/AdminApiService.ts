@@ -152,10 +152,33 @@ export interface BotFileSummary {
     createdAt: string;
 }
 
+/** One file as Orbit's get and read answer it: where it is kept, and the whole prompt that made it. */
+export interface BotFileView extends BotFileSummary {
+    sizeBytes: number | null;
+    made: { with: string; prompt: string | null } | null;
+    store: { bucket: string; fileId: string } | { url: string };
+}
+
+/** A piece of a file's kept text (POST /api/bot-files/read), from `at` to `end`; `next` is null at the end. */
+export interface BotFileRead {
+    file: BotFileView;
+    text: string;
+    at: number;
+    end: number;
+    next: number | null;
+    hidden: boolean;
+}
+
 /** One page of Orbit's search (POST /api/bot-files/find): files, and artifacts as their own kind of item. */
 export interface BotFilesFound {
     items: (
-        | ({ type: 'file'; made: { with: string; prompt: string | null; promptChars: number } | null } & BotFileSummary)
+        | ({
+              type: 'file';
+              made: { with: string; prompt: string | null; promptChars: number } | null;
+              sizeBytes?: number | null;
+              /** Where the words are in its text: a place to open from, and the text around it. */
+              hit?: { at: number; snippet: string };
+          } & BotFileSummary)
         | { type: 'artifact'; id: string; title: string; kind: string; makerName: string; version: number; mine: boolean; inThisChat: boolean; updatedAt: string }
     )[];
     total: number;
@@ -1226,10 +1249,28 @@ export class AdminApiService {
         return this.botFileCall('api/bot-files/text', { ...call, ref, ...piece }, timeoutMs);
     }
 
+    /** One file by its short id, if this person may use it here. */
+    getBotFile(call: ArtifactCall, ref: string, timeoutMs = BOT_FILE_TIMEOUT_MS): Promise<{ file: BotFileView; hidden: boolean }> {
+        return this.botFileCall('api/bot-files/get', { ...call, ref }, timeoutMs);
+    }
+
+    /** A piece of a file's kept text, `chars` long from `at` (a search hit's place, or the last read's `next`). */
+    readBotFile(call: ArtifactCall, read: { ref: string; at?: number | null; chars: number }, timeoutMs = BOT_FILE_TIMEOUT_MS): Promise<BotFileRead> {
+        return this.botFileCall('api/bot-files/read', { ...call, ...read }, timeoutMs);
+    }
+
     /** Files and artifacts this person may use with the bot, newest first (or those that match `words`). */
     findBotFiles(
         call: ArtifactCall,
-        find: { limit: number; words?: string | null; kinds?: string[] | null; source?: 'person' | 'bot' | null; page?: number | null },
+        find: {
+            limit: number;
+            words?: string | null;
+            kinds?: string[] | null;
+            source?: 'person' | 'bot' | null;
+            since?: string | null;
+            until?: string | null;
+            page?: number | null;
+        },
         timeoutMs = BOT_FILE_TIMEOUT_MS,
         report = true
     ): Promise<BotFilesFound> {

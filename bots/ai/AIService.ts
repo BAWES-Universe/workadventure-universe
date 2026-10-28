@@ -97,6 +97,9 @@ import {
     runArtifactTool,
     type ArtifactCard,
 } from './ArtifactTools';
+import type { PendingMedia } from '../memory/ConversationMemory';
+import { FIND_FILES_TOOL, OPEN_FILE_TOOL, SEND_AGAIN_TOOL, fileToolDefinitions, formatFileResult, isFileTool, runFileTool } from './FileTools';
+import { linkOfStore } from '../services/ChatFiles';
 
 /** What one turn did, for the "Say when nothing was saved" check (Orbit #666). */
 interface TurnFacts {
@@ -157,6 +160,8 @@ export class AIService {
     private botLimits: Map<string, BotLimits> = new Map();
     /** Which tool made each file the bot was given back, by link (#1508). */
     private madeMedia = new Map<string, MadeWith>();
+    /** What each bot answered on last: a person's own key never has an image looked at by Universe AI (#1508). */
+    private lastSource = new Map<string, string>();
     private providerRegistry: AIProviderRegistry;
     private mapDataService?: MapDataService;
 
@@ -590,6 +595,7 @@ export class AIService {
             }
 
             let config = resolved.config;
+            if (botId) this.lastSource.set(botId, (resolved as { source?: string }).source ?? '');
             if (turn) turn.guard = (config.limits ?? BOT_LIMIT_DEFAULTS).guard;
             // Usage is recorded against the provider that really answered (Universe AI is its Default, a key is the key)
             usageProviderId = config.providerId;
@@ -1299,7 +1305,7 @@ export class AIService {
                             }
 
                             // Continue conversation with tool results
-                            const toolResultsMessage = this.formatToolResults(toolResults);
+                            const toolResultsMessage = this.formatToolResults(toolResults, botId);
                             if (allToolResults.length <= MAX_SYNTHESIS_CHARS) {
                                 allToolResults += `\n\n=== Research Step ${followUpIterations} ===\n${toolResultsMessage}`;
                                 // Guard: after appending, trim at EXACTLY the cap boundary.
@@ -2568,9 +2574,13 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
         // Tools: make, change, read and find live artifacts (game #1422). They need Orbit, which keeps them, and a chat to
         // put the card in: a bubble on the map or a direct message. Off unless BOT_ARTIFACTS_ENABLED=true.
+        // Tools: find, open and send again files from earlier chats (#1508), with an Orbit that keeps them. They find
+        // artifacts too, so list_artifacts is left out then.
+        const files = (botClient || channel === 'dm') && this.filesOn(botId, adminApiService);
         if (artifactsEnabled() && (botClient || channel === 'dm') && adminApiService?.isConfigured?.()) {
-            tools.push(...artifactToolDefinitions());
+            tools.push(...artifactToolDefinitions(files ? { findWith: FIND_FILES_TOOL } : {}));
         }
+        if (files) tools.push(...fileToolDefinitions({ artifacts: artifactsEnabled() }));
 
         // Add MCP tools
         if (botId && adminApiService) {
@@ -2611,6 +2621,79 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         }
 
         return { tools, toolServerMap };
+    }
+
+    /** Orbit keeps files in this bot's chats (it served their limits), so the file tools can be offered and run. */
+    private filesOn(botId?: string, adminApiService?: AdminApiService): boolean {
+        const admin = adminApiService ?? this.adminApiService;
+        return !!botId && !!admin?.isConfigured?.() && this.limitsFor(botId).files === true;
+    }
+
+    /**
+     * Run one file tool (#1508) for the person talking to the bot, in their chat. A file sent again goes out as it was:
+     * in a bubble as a line of nearby chat, in a direct message with the reply. Never throws.
+     */
+    private async runFileToolCall(
+        name: string,
+        args: Record<string, unknown>,
+        where: { botClient?: BotClient; adminApiService?: AdminApiService; spaceName?: string; botId?: string; playerId?: number; abortSignal?: AbortSignal }
+    ): Promise<Record<string, unknown>> {
+        const { botClient, spaceName, botId, playerId, abortSignal } = where;
+        const admin = where.adminApiService ?? this.adminApiService;
+        if (!admin || !botId || playerId === undefined) return { error: "Earlier files can't be looked up right now." };
+        const who = this.chatCallFor(botId, playerId, botClient, spaceName);
+        if (!who) return { error: "Earlier files can't be looked up in this chat." };
+        const limits = this.limitsFor(botId);
+        return runFileTool(name, args, {
+            admin,
+            call: { botId, ...who },
+            limits,
+            artifacts: artifactsEnabled(),
+            linkOf: (store) => linkOfStore(store),
+            // One look through Universe AI's vision, never for a bot on a person's own key (as for images people send)
+            ...(this.lastSource.get(botId) === 'own-key' ? {} : { look: (url: string) => this.describeImagesViaDefaultVision([url], abortSignal) }),
+            send: (file, url) => this.sendFileAgain(file, url, { botClient, spaceName, botId, playerId }),
+        });
+    }
+
+    /**
+     * A file from an earlier chat, put in this one as it was. It is already on the person's list, so it isn't kept again:
+     * a bubble send names no asker, and a direct message's is marked as sent again.
+     */
+    private async sendFileAgain(
+        file: { kind: string; name: string; mimeType: string | null; line: string | null },
+        url: string,
+        where: { botClient?: BotClient; spaceName?: string; botId: string; playerId: number }
+    ): Promise<string | null> {
+        const { botClient, spaceName, botId, playerId } = where;
+        const mediaType: PendingMedia['mediaType'] = file.kind === 'image' || file.kind === 'audio' || file.kind === 'video' ? file.kind : 'file';
+        if (botClient) {
+            if (!spaceName || !botClient.isInSpace(spaceName)) return 'The conversation ended before it could be sent. Say so; do not claim it was sent.';
+            try {
+                if (mediaType === 'image') await botClient.sendImage(spaceName, url, file.line ?? undefined);
+                else if (mediaType === 'audio') await botClient.sendAudio(spaceName, url);
+                else if (mediaType === 'video') await botClient.sendVideo(spaceName, url);
+                else await botClient.sendFile(spaceName, url, file.name);
+                return null;
+            } catch {
+                return "It couldn't be sent right now. Say so simply and offer to try again.";
+            }
+        }
+        const memory = this.conversationMemory?.getMemory(botId, playerId);
+        if (!memory) return "It couldn't be sent right now. Say so simply and offer to try again.";
+        const pending = (memory.pendingMedia ??= []);
+        if (pending.length >= (memory.maxPendingMedia || 5)) return 'There are already as many files waiting to go with this reply as it can carry. Send it in the next one.';
+        pending.push({
+            url,
+            originalUrl: url,
+            mediaType,
+            mimeType: file.mimeType ?? '',
+            caption: mediaType === 'file' ? file.name : '',
+            createdAt: Date.now(),
+            retryCount: 0,
+            again: true,
+        });
+        return null;
     }
 
     /**
@@ -2740,7 +2823,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 let result: any;
 
                 // With artifacts off, a tool of the same name belongs to an MCP server: send it down the default branch
-                switch (isArtifactTool(toolCall.name) && !artifactsEnabled() ? '' : toolCall.name) {
+                // So does a file tool's name when Orbit doesn't keep files here (#1508)
+                switch ((isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) ? '' : toolCall.name) {
                     case 'get_people_on_map':
                         if (botClient) {
                             const people = botClient.getAllPeople();
@@ -3038,6 +3122,16 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         );
                         break;
 
+                    case FIND_FILES_TOOL:
+                    case OPEN_FILE_TOOL:
+                    case SEND_AGAIN_TOOL:
+                        result = await this.runFileToolCall(
+                            toolCall.name,
+                            typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
+                            { botClient, adminApiService, spaceName, botId, playerId, abortSignal }
+                        );
+                        break;
+
                     case READ_WEB_PAGE_TOOL: {
                         const parsedArgs = typeof toolCall.arguments === 'string'
                             ? this.safeParseToolArgs(toolCall.arguments)
@@ -3153,7 +3247,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         for (const tr of toolResults) {
             // Skip results from media tools and built-in tools — they don't produce URLs to extract
             if (['send_image', 'send_file', 'send_audio', 'send_video', 'get_people_on_map',
-                 'get_bot_position', 'get_areas_on_map', 'navigate_to', READ_WEB_PAGE_TOOL].includes(tr.name) || (isArtifactTool(tr.name) && artifactsEnabled())) {
+                 'get_bot_position', 'get_areas_on_map', 'navigate_to', READ_WEB_PAGE_TOOL].includes(tr.name) || (isArtifactTool(tr.name) && artifactsEnabled()) || isFileTool(tr.name)) {
                 continue;
             }
 
@@ -3227,7 +3321,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         for (const tr of toolResults) {
             // Skip results from our own media tools (they already handled sending)
             if (['send_image', 'send_file', 'send_audio', 'send_video', 'get_people_on_map',
-                 'get_bot_position', 'get_areas_on_map', 'navigate_to', READ_WEB_PAGE_TOOL].includes(tr.name) || (isArtifactTool(tr.name) && artifactsEnabled())) {
+                 'get_bot_position', 'get_areas_on_map', 'navigate_to', READ_WEB_PAGE_TOOL].includes(tr.name) || (isArtifactTool(tr.name) && artifactsEnabled()) || isFileTool(tr.name)) {
                 continue;
             }
 
@@ -3574,7 +3668,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      */
     private noteMadeMedia(toolCalls: ToolCall[], toolResults: Array<{ id: string; name: string; result: any }>): void {
         for (const tr of toolResults) {
-            if (MADE_NOTHING_TOOLS.has(tr.name) || isArtifactTool(tr.name) || LOOKS_UP.test(tr.name)) continue;
+            if (MADE_NOTHING_TOOLS.has(tr.name) || isArtifactTool(tr.name) || isFileTool(tr.name) || LOOKS_UP.test(tr.name)) continue;
             let urls: string[];
             try {
                 urls = this.extractUrlsFromResult(tr.result);
@@ -3662,7 +3756,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     }    /**
      * Format tool results for AI
      */
-    private formatToolResults(results: Array<{ id: string; name: string; result: any }>): string {
+    private formatToolResults(results: Array<{ id: string; name: string; result: any }>, botId?: string): string {
         return results.map(r => {
             // Format results in a more readable way for the AI
             if (r.name === 'get_people_on_map' && Array.isArray(r.result)) {
@@ -3696,6 +3790,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             }
             if (isArtifactTool(r.name) && artifactsEnabled() && r.result) {
                 return formatArtifactResult(r.name, r.result);
+            }
+            // The file tools ran (Orbit keeps files here), not an MCP tool of the same name
+            if (isFileTool(r.name) && r.result && this.limitsFor(botId).files === true) {
+                return formatFileResult(r.name, r.result);
             }
             if (r.name === READ_WEB_PAGE_TOOL && r.result) {
                 if (r.result.error || !r.result.content) {

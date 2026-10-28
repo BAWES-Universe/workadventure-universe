@@ -62,6 +62,8 @@ export interface BotLimits {
     roomChars: number;
     /** Characters of a file's text Orbit keeps ("Text kept from a file"). */
     fileTextChars: number;
+    /** Orbit keeps files in bot chats: it served their limits, so it has the routes the file tools use. */
+    files?: boolean;
 }
 
 /** The recommended limits, the same as Orbit's (lib/bot-limit-values.ts there). */
@@ -96,6 +98,8 @@ export function readBotLimits(raw: unknown): BotLimits {
             (out as unknown as Record<string, number>)[key] = value;
         }
     }
+    // An Orbit that keeps files in bot chats serves their limits; an older one doesn't, and the file tools stay out
+    if (typeof given.findResults === 'number') out.files = true;
     return out;
 }
 
