@@ -47,6 +47,8 @@ export function createChatHistory(
     const history = win.history;
     // Our steps, oldest first: one per open level.
     const steps: string[] = [];
+    // Our steps that Back walked past, lowest first: Forward can land on them again.
+    let ahead: string[] = [];
     // Where our steps start being above a step Orbit left behind (added once Orbit had let go), if they do.
     let firstAboveOrbit: number | undefined;
     let waitingForOwnTraversal = false;
@@ -73,6 +75,8 @@ export function createChatHistory(
                     const id = newId();
                     history.pushState({ universeChat: true, chatStep: id } satisfies ChatStepState, "");
                     steps.push(id);
+                    // A new step drops everything Forward could reach.
+                    ahead = [];
                 }
             } catch (error) {
                 console.warn("Could not add the chat to the history", error);
@@ -80,10 +84,11 @@ export function createChatHistory(
         } else if (depth < steps.length) {
             const top = steps[steps.length - 1];
             const extra = steps.length - depth;
-            steps.length = depth;
+            const passed = steps.splice(depth);
             if (firstAboveOrbit !== undefined && firstAboveOrbit >= depth) firstAboveOrbit = undefined;
             // Something else is on top (Orbit): leave the steps, they are stepped over later.
             if (!isChatStepState(history.state) || history.state.chatStep !== top) return;
+            ahead = [...passed, ...ahead];
             waitingForOwnTraversal = true;
             traversalTimer = setTimeout(endOwnTraversal, OWN_TRAVERSAL_TIMEOUT_MS);
             history.go(-extra);
@@ -110,15 +115,28 @@ export function createChatHistory(
             index = firstAboveOrbit - 1;
         }
         if (isChatStepState(state) && index === -1) {
-            // A step from before: walk past it to what is under it.
-            if (steps.length === 0) history.back();
+            const forward = ahead.indexOf(state.chatStep);
+            if (forward !== -1) {
+                // Forward onto a level already closed: it stays closed, and the history goes back to where the chat is.
+                waitingForOwnTraversal = true;
+                traversalTimer = setTimeout(endOwnTraversal, OWN_TRAVERSAL_TIMEOUT_MS);
+                history.go(-(forward + 1));
+                return;
+            }
+            // A step from before (the page reloaded), under ours: those levels close, and it is walked past.
+            const toClose = steps.length;
+            ahead = [];
+            steps.length = 0;
+            firstAboveOrbit = undefined;
+            for (let i = 0; i < toClose; i++) closeLevel();
+            history.back();
             return;
         }
         // Back onto one of our steps keeps the levels up to it; onto anything else, all chats.
         const keep = index + 1;
         if (keep >= steps.length) return;
         const toClose = steps.length - keep;
-        steps.length = keep;
+        ahead = [...steps.splice(keep), ...ahead];
         if (firstAboveOrbit !== undefined && firstAboveOrbit >= keep) firstAboveOrbit = undefined;
         for (let i = 0; i < toClose; i++) closeLevel();
     }
