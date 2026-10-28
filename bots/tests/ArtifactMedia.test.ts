@@ -144,6 +144,14 @@ describe('make_artifact with media', () => {
         expect(change.edits).toEqual([{ old: '</main>', new: '<audio src="song.m4a"></audio></main>' }]);
     });
 
+    it('says the page still needs pointing at a new name when the save did not point it there', async () => {
+        const ctx = context(undefined, fakeFetch({ [SONG]: () => response(new Uint8Array([1, 2, 3]), { 'content-type': 'audio/mp4' }) }));
+        const run = await runArtifactTool('change_artifact', { id: 'art-1', media: [{ file: 'm1', name: 'song.mp3' }] }, ctx);
+        const line = formatArtifactResult('change_artifact', run.result);
+        expect(line).toContain('"song.mp3" is "song.m4a" now. If the page already points at the old name, change it to the new one with change_artifact.');
+        expect(line).not.toContain('the page uses that');
+    });
+
     it('refuses a name that is not from this turn, and saves nothing', async () => {
         const ctx = context();
         const run = await runArtifactTool('make_artifact', { title: 'T', kind: 'page', content: 'x', media: [{ file: 'https://evil.example/a.mp3', name: 'a.mp3' }] }, ctx);

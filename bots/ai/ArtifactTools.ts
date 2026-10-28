@@ -296,18 +296,28 @@ function escapeRegExp(text: string): string {
  * ("cover") could also be a class or an id, so it changes only where a file is pointed at: src, href, poster or
  * data="cover", and url("cover").
  */
-function useSavedNames(text: string, renames: MediaRename[]): string {
+function useSavedNames(text: string, renames: MediaRename[], pointed?: Set<string>): string {
     return renames.reduce((page, { from, to }) => {
         const name = `(["'](?:\\./)?)${escapeRegExp(from)}(["'])`;
         const where = from.includes('.')
             ? new RegExp(`()${name}`, 'g')
             : new RegExp(`(\\b(?:src|href|poster|data)\\s*=\\s*|url\\(\\s*)${name}`, 'gi');
-        return page.replace(where, (_match, before: string, open: string, close: string) => `${before}${open}${to}${close}`);
+        return page.replace(where, (_match, before: string, open: string, close: string) => {
+            pointed?.add(from);
+            return `${before}${open}${to}${close}`;
+        });
     }, text);
 }
 
-function renamedLine(renames: MediaRename[]): { renamed?: string[] } {
-    return renames.length > 0 ? { renamed: renames.map(({ from, to }) => `"${from}" is "${to}"`) } : {};
+/**
+ * The renames for the model: the ones the text it sent was pointed at, and the ones it wasn't (a change that only adds
+ * the file, or edits elsewhere), which the page still names the old way until the model changes it.
+ */
+function renamedLine(renames: MediaRename[], pointed: Set<string>): { renamed?: string[]; renamedNotInPage?: string[] } {
+    const line = ({ from, to }: MediaRename) => `"${from}" is "${to}"`;
+    const done = renames.filter(({ from }) => pointed.has(from)).map(line);
+    const left = renames.filter(({ from }) => !pointed.has(from)).map(line);
+    return { ...(done.length > 0 ? { renamed: done } : {}), ...(left.length > 0 ? { renamedNotInPage: left } : {}) };
 }
 
 /** Sent with something in it: not left out, null or an empty list. */
@@ -467,19 +477,20 @@ export async function runArtifactTool(name: string, args: Record<string, unknown
                 const kind = argString(args.kind) as ArtifactKind;
                 if (!KINDS.includes(kind)) return { result: { error: 'kind must be app, page, markdown or svg.' } };
                 const media = await gatherMedia(args.media, context);
+                const pointed = new Set<string>();
                 const made = await context.admin.makeArtifact(
                     call,
                     {
                         title: argString(args.title),
                         kind,
-                        content: useSavedNames(argString(args.content), media.renames),
+                        content: useSavedNames(argString(args.content), media.renames, pointed),
                         summary: argString(args.summary) || null,
                     },
                     context.saveTimeoutMs,
                     media.uploads
                 );
                 return {
-                    result: { success: true, id: made.artifact.id, title: made.artifact.title, kind, version: made.version.number, ...mediaNames(made.version), ...renamedLine(media.renames) },
+                    result: { success: true, id: made.artifact.id, title: made.artifact.title, kind, version: made.version.number, ...mediaNames(made.version), ...renamedLine(media.renames, pointed) },
                     card: cardOf(made.artifact, made.version.number),
                 };
             }
@@ -496,16 +507,17 @@ export async function runArtifactTool(name: string, args: Record<string, unknown
                 if (!edits && !hasContent && !dropMedia && media.uploads.length === 0) {
                     return { result: { error: 'Send edits (each with old and new), the whole new file in content, or media to add or drop.' } };
                 }
+                const pointed = new Set<string>();
                 const changed = await context.admin.changeArtifact(id, call, {
-                    ...(edits ? { edits: edits.map((edit) => ({ ...edit, new: useSavedNames(edit.new, media.renames) })) } : {}),
-                    ...(!edits && hasContent ? { content: useSavedNames(args.content as string, media.renames) } : {}),
+                    ...(edits ? { edits: edits.map((edit) => ({ ...edit, new: useSavedNames(edit.new, media.renames, pointed) })) } : {}),
+                    ...(!edits && hasContent ? { content: useSavedNames(args.content as string, media.renames, pointed) } : {}),
                     summary: argString(args.summary) || null,
                     title: argString(args.title) || null,
                     baseVersion: argVersion(args.baseVersion),
                     ...(dropMedia ? { dropMedia } : {}),
                 }, context.saveTimeoutMs, media.uploads);
                 return {
-                    result: { success: true, id: changed.artifact.id, title: changed.artifact.title, version: changed.version.number, ...mediaNames(changed.version), ...renamedLine(media.renames) },
+                    result: { success: true, id: changed.artifact.id, title: changed.artifact.title, version: changed.version.number, ...mediaNames(changed.version), ...renamedLine(media.renames, pointed) },
                     card: cardOf(changed.artifact, changed.version.number),
                 };
             }
@@ -549,9 +561,14 @@ function mediaNames(version: { media?: Array<{ name: string }> }): { media?: str
 function mediaLine(result: Record<string, unknown>): string {
     const names = Array.isArray(result.media) ? (result.media as string[]) : [];
     const renamed = Array.isArray(result.renamed) ? (result.renamed as string[]) : [];
+    const notInPage = Array.isArray(result.renamedNotInPage) ? (result.renamedNotInPage as string[]) : [];
     const carries = names.length > 0 ? ` It carries ${names.map((name) => `"${name}"`).join(', ')}, beside the page.` : '';
-    // The page was already pointed at the new names; later edits should use them too
-    return renamed.length > 0 ? `${carries} Their type needed another name: ${renamed.join(', ')} now, and the page uses that.` : carries;
+    // What this save pointed at the new names is done; anything else in the page still names the old one
+    const done = renamed.length > 0 ? ` Their type needed another name: ${renamed.join(', ')} now, and the page uses that.` : '';
+    const left = notInPage.length > 0
+        ? ` Their type needed another name: ${notInPage.join(', ')} now. If the page already points at the old name, change it to the new one with change_artifact.`
+        : '';
+    return `${carries}${done}${left}`;
 }
 
 /** The line a tool result becomes in the model's next round. */
