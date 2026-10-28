@@ -1270,7 +1270,7 @@ export class AIService {
                             // If the generator is cancelled before autoSendMedia runs
                             // (user leaves mid-turn), the URLs are already persisted
                             // and will be delivered by flushPendingMedia on re-entry.
-                            this.preQueueToolResults(toolResults, iterationSentUrls, botId, playerId);
+                            this.preQueueToolResults(toolResults, iterationSentUrls, botId, playerId, channel === 'dm');
 
                             // Cancellation during tool execution: persist the queued
                             // media (safety net above) but skip inline delivery and
@@ -3173,18 +3173,23 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      * URLs from pendingMedia, so in the normal flow this is a no-op pass-through.
      *
      * Tool-agnostic — reuses extractUrlsFromResult which works with any MCP tool.
+     *
+     * A direct message sends its reply's files from this list (`deliversReply`), so none is left out: the list's
+     * limit is for files waiting for someone who left nearby chat (#1544).
      */
     private preQueueToolResults(
         toolResults: Array<{ id: string; name: string; result: any }>,
         alreadySentUrls: Set<string>,
         botId?: string,
-        playerId?: number
+        playerId?: number,
+        deliversReply = false
     ): void {
         if (!botId || playerId === undefined) return;
         const memory = this.conversationMemory?.getMemory(botId, playerId);
         if (!memory) return;
         if (!memory.pendingMedia) memory.pendingMedia = [];
-        if (memory.pendingMedia.length >= (memory.maxPendingMedia || 5)) return;
+        const full = () => !deliversReply && memory.pendingMedia.length >= (memory.maxPendingMedia || 5);
+        if (full()) return;
 
         const IMAGE_EXT_SET = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']);
         const VIDEO_EXT_SET = new Set(['mp4', 'webm']);
@@ -3213,7 +3218,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 // read-only tools (e.g., list_imagines) returning past results
                 if (memory.pendingMedia.some(p => p.url === url || p.originalUrl === url)) continue;
 
-                if (memory.pendingMedia.length >= (memory.maxPendingMedia || 5)) return;
+                if (full()) return;
 
                 const ext = this.getExtension(url);
                 const mediaType: 'image' | 'file' | 'audio' | 'video' =
