@@ -2,6 +2,8 @@
  * Type definitions for AI infrastructure
  */
 
+import type { ToolStep, ToolStepResult } from './ToolSteps';
+
 /**
  * Provider configuration from Admin API
  */
@@ -52,6 +54,16 @@ export interface BotLimits {
     artifactSaveSeconds: number;
     /** "Say when nothing was saved". */
     guard: boolean;
+    /** Files in chats (#1508): this person's newest files the bot sees before each reply. */
+    recentFiles: number;
+    /** Files found in one search. */
+    findResults: number;
+    /** Characters it reads from an earlier file at a time. */
+    partChars: number;
+    /** Characters of step results one reply keeps. */
+    roomChars: number;
+    /** Characters of a file's text Orbit keeps ("Text kept from a file"). */
+    fileTextChars: number;
 }
 
 /** The recommended limits, the same as Orbit's (lib/bot-limit-values.ts there). */
@@ -66,10 +78,16 @@ export const BOT_LIMIT_DEFAULTS: BotLimits = {
     artifactVersions: 0,
     artifactSaveSeconds: 30,
     guard: true,
+    recentFiles: 5,
+    findResults: 10,
+    partChars: 8000,
+    roomChars: 80000,
+    fileTextChars: 2_000_000,
 };
 
-/** Limits where 0 means something: keep every version, never carry on by itself. A 0 anywhere else (a save with no time limit) is broken. */
-const ZERO_ALLOWED = new Set<keyof BotLimits>(['artifactVersions', 'continuations']);
+/** Limits where 0 means something: keep every version, never carry on by itself, no newest files in the prompt. A 0
+ * anywhere else (a save with no time limit) is broken. */
+const ZERO_ALLOWED = new Set<keyof BotLimits>(['artifactVersions', 'continuations', 'recentFiles']);
 
 /** The limits Orbit sent, each checked, with the recommended value for any that is missing or broken. */
 export function readBotLimits(raw: unknown): BotLimits {
@@ -128,6 +146,10 @@ export interface AIStreamChunk {
     replyLimit?: ReplyLimitReached;
     reset?: boolean; // If true, frontend should clear current stream content before processing this chunk
     toolNames?: string[]; // Names of tools being called (for status display in the new bubble)
+    /** The calls this reset starts, in plain words, for the steps line of a direct message (#1545). */
+    toolSteps?: ToolStep[];
+    /** How the calls of the last round ended: sent once they ran, before the bot carries on. */
+    toolStepResults?: ToolStepResult[];
     toolCalls?: ToolCall[]; // Tool calls requested by AI
     metadata?: {
         tokensUsed?: number;

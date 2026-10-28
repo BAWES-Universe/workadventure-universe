@@ -7,7 +7,15 @@
     import { botApiService } from "../../services/BotApiService";
     import { resolveVisionSupport } from "../../visionModels";
     import { canOpenOrbit, openOrbitPage } from "../../../admin-api/index";
-    import { canPick, cardIcon, mindBriefName, runsOnCards, unlentKeyNames, type RunsOnCard } from "../../mindModel";
+    import {
+        canPick,
+        cardIcon,
+        mindBriefName,
+        runsOnCards,
+        unlentKeyNames,
+        UNIVERSE_AI_REF,
+        type RunsOnCard,
+    } from "../../mindModel";
     import { allowedModelsOf, botModelOf, keyChoice, keyOfRef, modelRow, shortName } from "../../modelPickerModel";
     import PageGroup from "./PageGroup.svelte";
     import PageButton from "./PageButton.svelte";
@@ -178,6 +186,9 @@
             : page.mind.none()
         : !ref
         ? page.mind.none()
+        : // Before Orbit answers (or when it can't), a bot on Universe AI still shows its name, never its stored ref
+        ref.toLowerCase() === UNIVERSE_AI_REF
+        ? page.mind.universeAi()
         : current
         ? [
               current.enabled ? current.name : `${current.name} ${$LL.actionbar.botEditorModule.providerDisabled()}`,
@@ -236,14 +247,6 @@
     function downNoteOf(card: RunsOnCard): string | null {
         if ((card.kind !== "mine" && card.kind !== "theirs") || card.status !== "down") return null;
         return card.ifDown === "stop" ? page.mind.downStops() : page.mind.downUseUniverseAi();
-    }
-
-    function pinProvider(event: Event) {
-        const select = event.currentTarget as HTMLSelectElement;
-        const value = select.value;
-        // Back to the prompt, so the same provider can be pinned again after the bot moves off it
-        select.value = "";
-        if (value) onChange({ ...bot, aiProviderRef: value, aiModel: null });
     }
 
     function pick(event: Event) {
@@ -369,22 +372,6 @@
                     <IconExternalLink font-size="14" />
                 </PageButton>
             </div>
-        {/if}
-        {#if options.providers && options.providers.length > 0}
-            <label class="bp-select">
-                <span class="sr-only">{page.mind.pinTo()}</span>
-                <select value="" on:change={pinProvider} data-testid="bot-mind-provider">
-                    <option value="">{page.mind.pinTo()}</option>
-                    {#each options.providers as provider (provider.id)}
-                        <option value={provider.id}>
-                            {provider.name}{provider.enabled
-                                ? ""
-                                : ` ${$LL.actionbar.botEditorModule.providerDisabled()}`}
-                        </option>
-                    {/each}
-                </select>
-                <IconChevronDown font-size="16" />
-            </label>
         {/if}
         {#if !options.viewerIsMaker || unlent.length === 0}
             <p class="bp-m">

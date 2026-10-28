@@ -21,6 +21,7 @@ import type { MapDataService } from '../server/MapDataService';
 import * as Sentry from '@sentry/node';
 import { MCPConnector, toolTimeoutMs } from '../mcp/MCPConnector';
 import { appendStreamedChunk } from './EmotionParser';
+import { describeStep, resultOf, showsAsStep, type ToolStep } from './ToolSteps';
 import { jsonrepair } from 'jsonrepair';
 import { resolveVisionSupport } from './providers/visionModels';
 import { normalizeWebUrl } from '../utils/chatLinks';
@@ -38,6 +39,8 @@ export type InterruptionAction = 'update' | 'cancel' | 'answer' | 'queue';
  * upstream call rather than leaving it dangling (see the call sites).
  */
 const QUICK_LLM_TIMEOUT_MS = 3000;
+/** How long a reply waits for the newest-files line (#1508) before it goes on without it. */
+const RECENT_FILES_WAIT_MS = 2000;
 
 // Internal API for setting active span on scope — scope.setSpan() removed in v10
 // Note: startSpanManual already calls _setSpanForScope internally (verified in SDK source).
@@ -51,7 +54,7 @@ const sentrySetSpan: ((scope: any, span: any) => void) | undefined =
 import { captureAiGeneration, captureAiTrace, flushPostHog } from './PostHogClient';
 import { priceCall } from './pricing/costing';
 import { UsageLedger, priceMetadata, type TurnCost } from './pricing/ledger';
-import { buildSystemPrompt } from './systemPrompt';
+import { buildRecentFilesLine, buildSystemPrompt } from './systemPrompt';
 import { replyProblem } from './replyProblem';
 import { providerErrorText } from './providers/ownKeyHttp';
 /** Ends a direct-message reply that answers where the bot is or invites the person over because they asked. */
@@ -255,6 +258,11 @@ export class AIService {
     /** A bot's limits as Orbit last served them, the recommended ones until it has (Orbit #666). */
     private limitsFor(botId?: string): BotLimits {
         return (botId && this.botLimits.get(botId)) || BOT_LIMIT_DEFAULTS;
+    }
+
+    /** A bot's limits as Orbit last served them (the recommended ones until it has). */
+    botLimitsFor(botId?: string): BotLimits {
+        return this.limitsFor(botId);
     }
 
     /** How much of a file or web page this bot reads ("Reads from a page or file", Orbit #666). */
@@ -613,6 +621,9 @@ export class AIService {
                 // visionCapable: brain can see — images pass through as multipart.
             }
 
+            // The newest files line is asked for now, so it comes in while the map context is read
+            const recentFiles = this.recentFilesFor(botId, playerId, botClient, spaceName, adminApiService);
+
             // Fetch map context (location + areas) upfront so bot always knows where it is
             let mapContextInfo = '';
             let botUniverse = '';
@@ -743,6 +754,7 @@ export class AIService {
                 // pending items at turn start.
                 pendingMediaNotice: this.conversationMemory.getPendingMediaNotice(botId, playerId),
                 channel,
+                recentFiles: await recentFiles,
             });
 
             // Check if Qwen model (for /no_think directive)
@@ -1168,7 +1180,7 @@ export class AIService {
                         // Yield reset to clear any streamed pre-tool content from frontend
                         // before executing tools — the bubble will be finalized by the
                         // behavior with the accumulated pre-tool text.
-                        yield {content: '', done: false, reset: true, toolNames: displayToolNames};
+                        yield {content: '', done: false, reset: true, toolNames: displayToolNames, toolSteps: this.stepsOf(Array.from(toolCallAccumulator.values()), toolServerMap)};
 
                         // Convert accumulated tool calls to array (arguments should now be complete)
                         pendingToolCalls = Array.from(toolCallAccumulator.values()).map(tc => ({
@@ -1219,6 +1231,11 @@ export class AIService {
                             // pass it): the first round reads the cap from this chunk, later rounds from the previous round's last chunk
                             const replyCutOff = !!(followUpIterations === 1 ? chunk.metadata?.truncated : lastFollowUpDoneChunk?.metadata?.truncated);
                             const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff);
+                            // The steps line marks each shown call done or failed before the bot carries on (#1545)
+                            const toolStepResults = toolResults
+                                .filter((tr) => showsAsStep(tr.name, toolServerMap.has(tr.name)))
+                                .map((tr) => resultOf(tr.id, tr.result));
+                            if (toolStepResults.length) yield {content: '', done: false, toolStepResults};
                             if (turn && toolResults.some((tr) => writesArtifact(tr.name) && tr.result?.success === true)) turn.artifactSaved = true;
 
                             // Collect URLs that were already sent by explicit send_* tool calls
@@ -1253,7 +1270,7 @@ export class AIService {
                             // If the generator is cancelled before autoSendMedia runs
                             // (user leaves mid-turn), the URLs are already persisted
                             // and will be delivered by flushPendingMedia on re-entry.
-                            this.preQueueToolResults(toolResults, iterationSentUrls, botId, playerId);
+                            this.preQueueToolResults(toolResults, iterationSentUrls, botId, playerId, channel === 'dm');
 
                             // Cancellation during tool execution: persist the queued
                             // media (safety net above) but skip inline delivery and
@@ -1472,7 +1489,7 @@ export class AIService {
                                 // Yield reset so the behavior creates a new bubble
                                 // for the next follow-up round's content, instead of
                                 // concatenating all rounds into the current bubble.
-                                yield {content: '', done: false, reset: true, toolNames: displayFollowUpToolNames};
+                                yield {content: '', done: false, reset: true, toolNames: displayFollowUpToolNames, toolSteps: this.stepsOf(pendingToolCalls, toolServerMap)};
                                 continue; // Back to while loop to execute new tool calls
                             }
                         }
@@ -1500,6 +1517,11 @@ export class AIService {
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                                 console.warn(`[AIService] ⚠️ Reached max follow-up iterations (${MAX_FOLLOW_UP_ITERATIONS}). Dropping ${toolCallAccumulator.size} pending tool calls.`);
                             }
+                            // The steps line already shows these calls: they never ran, so they end as not done (#1545)
+                            const notRun = pendingToolCalls
+                                .filter((tc) => showsAsStep(tc.name, toolServerMap.has(tc.name)))
+                                .map((tc) => ({ id: tc.id, ok: false, note: 'Not run: the bot reached its step limit' }));
+                            if (notRun.length) yield {content: '', done: false, toolStepResults: notRun};
                             toolCallAccumulator.clear();
                             pendingToolCalls = [];
                         }
@@ -2405,9 +2427,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     /**
      * Build tool definitions for function calling
      */
-    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService, channel: 'world' | 'dm' = 'world'): Promise<{ tools: any[]; toolServerMap: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string> }> }> {
+    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService, channel: 'world' | 'dm' = 'world'): Promise<{ tools: any[]; toolServerMap: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string>; title?: string }> }> {
         const tools: any[] = [];
-        const toolServerMap = new Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string> }>();
+        const toolServerMap = new Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string>; title?: string }>();
 
         if (botClient) {
             // Tool: Get people on the map
@@ -2632,6 +2654,46 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     }
 
     /**
+     * Who is talking to the bot and in which chat, as Orbit's artifact and file routes take them: in a bubble the person
+     * Orbit's access check sees and the bubble; in a direct message the signed-in person and the Matrix room it came
+     * from. Null when there is no chat to name.
+     */
+    private chatCallFor(
+        botId: string,
+        playerId: number,
+        botClient?: BotClient,
+        spaceName?: string
+    ): { person: { signedIn: boolean; identifier: string | null; name: string | null }; chat: { kind: 'nearby' | 'dm'; ref: string } } | null {
+        if (botClient) {
+            if (!spaceName) return null;
+            return { person: botClient.getPersonForArtifacts(playerId), chat: { kind: 'nearby', ref: spaceName } };
+        }
+        const memory = this.conversationMemory?.getMemory(botId, playerId);
+        if (!memory?.dmRoomId) return null;
+        return { person: { signedIn: true, identifier: memory.userUuid, name: memory.playerName ?? null }, chat: { kind: 'dm', ref: memory.dmRoomId } };
+    }
+
+    /**
+     * The newest files and artifacts in this person's chats with the bot (#1508), "Newest files it sees" of them, for the
+     * end of the prompt. Empty when there are none, the setting is 0, or Orbit doesn't answer in time: the reply goes on
+     * without it.
+     */
+    private async recentFilesFor(botId: string, playerId: number, botClient?: BotClient, spaceName?: string, adminApiService?: AdminApiService): Promise<string> {
+        const limit = this.limitsFor(botId).recentFiles;
+        const admin = adminApiService ?? this.adminApiService;
+        if (limit <= 0 || !admin) return '';
+        try {
+            const who = this.chatCallFor(botId, playerId, botClient, spaceName);
+            if (!who) return '';
+            const found = await admin.findBotFiles({ botId, ...who }, { limit }, RECENT_FILES_WAIT_MS, false);
+            return buildRecentFilesLine(found.items ?? []);
+        } catch {
+            // Never in the way of the reply: an Orbit without the list, a slow one, or a chat it can't name
+            return '';
+        }
+    }
+
+    /**
      * Run one artifact tool for the person who is talking to the bot, and put its card in their chat: in a bubble that is
      * a line of nearby chat; in a direct message it waits in memory and goes out with the reply. Never throws.
      */
@@ -2645,18 +2707,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         if (!admin || !botId || playerId === undefined) return { error: 'Artifacts are not available right now.' };
 
         const memory = this.conversationMemory?.getMemory(botId, playerId);
-        let person: { signedIn: boolean; identifier: string | null; name: string | null };
-        let chat: { kind: 'nearby' | 'dm'; ref: string };
-        if (botClient) {
-            if (!spaceName) return { error: 'Cannot make an artifact: not currently in a conversation space' };
-            person = botClient.getPersonForArtifacts(playerId);
-            chat = { kind: 'nearby', ref: spaceName };
-        } else {
-            // A direct message is always a signed-in person, in the Matrix room the message came from
-            if (!memory?.dmRoomId) return { error: 'Artifacts are not available in this chat.' };
-            person = { signedIn: true, identifier: memory.userUuid, name: memory.playerName ?? null };
-            chat = { kind: 'dm', ref: memory.dmRoomId };
-        }
+        if (botClient && !spaceName) return { error: 'Cannot make an artifact: not currently in a conversation space' };
+        const who = this.chatCallFor(botId, playerId, botClient, spaceName);
+        if (!who) return { error: 'Artifacts are not available in this chat.' };
+        const { person, chat } = who;
 
         // The same make or change asked again in the same turn is that turn being regenerated: answer with what it did
         const repeatKey = writesArtifact(name) ? `${name}:${JSON.stringify(args)}` : undefined;
@@ -2697,7 +2751,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         toolCalls: ToolCall[],
         botClient?: BotClient,
         adminApiService?: AdminApiService,
-        toolServerMap?: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string> }>,
+        toolServerMap?: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string>; title?: string }>,
         playerUuid?: string,
         spaceName?: string,
         botId?: string,
@@ -3119,18 +3173,23 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      * URLs from pendingMedia, so in the normal flow this is a no-op pass-through.
      *
      * Tool-agnostic — reuses extractUrlsFromResult which works with any MCP tool.
+     *
+     * A direct message sends its reply's files from this list (`deliversReply`), so none is left out: the list's
+     * limit is for files waiting for someone who left nearby chat (#1544).
      */
     private preQueueToolResults(
         toolResults: Array<{ id: string; name: string; result: any }>,
         alreadySentUrls: Set<string>,
         botId?: string,
-        playerId?: number
+        playerId?: number,
+        deliversReply = false
     ): void {
         if (!botId || playerId === undefined) return;
         const memory = this.conversationMemory?.getMemory(botId, playerId);
         if (!memory) return;
         if (!memory.pendingMedia) memory.pendingMedia = [];
-        if (memory.pendingMedia.length >= (memory.maxPendingMedia || 5)) return;
+        const full = () => !deliversReply && memory.pendingMedia.length >= (memory.maxPendingMedia || 5);
+        if (full()) return;
 
         const IMAGE_EXT_SET = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']);
         const VIDEO_EXT_SET = new Set(['mp4', 'webm']);
@@ -3159,7 +3218,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 // read-only tools (e.g., list_imagines) returning past results
                 if (memory.pendingMedia.some(p => p.url === url || p.originalUrl === url)) continue;
 
-                if (memory.pendingMedia.length >= (memory.maxPendingMedia || 5)) return;
+                if (full()) return;
 
                 const ext = this.getExtension(url);
                 const mediaType: 'image' | 'file' | 'audio' | 'video' =
@@ -3614,7 +3673,19 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         } catch {
             return '';
         }
-    }    /**
+    }
+
+    /** The calls a reset starts, as the steps line shows them: tool servers' tools and our own work tools (#1545). */
+    private stepsOf(
+        calls: Array<{ id: string; name: string; arguments?: unknown }>,
+        toolServerMap: Map<string, { title?: string }>
+    ): ToolStep[] {
+        return calls
+            .filter((call) => call.name && showsAsStep(call.name, toolServerMap.has(call.name)))
+            .map((call) => describeStep(call, toolServerMap.get(call.name)?.title));
+    }
+
+    /**
      * Format tool results for AI
      */
     private formatToolResults(results: Array<{ id: string; name: string; result: any }>): string {

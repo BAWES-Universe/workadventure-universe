@@ -1,7 +1,8 @@
 <script lang="ts">
     // Usage (Orbit #491, mock v4 approved 20 Oct 2026): first on the bot page, for the people who manage the bot. The
     // range's numbers, replies a day split into direct messages and nearby chat, and three rows that each open a screen:
-    // who uses it, what it ran on, and its limits. Names, never words. A bot nobody has chatted with yet is one line.
+    // who uses it, what it ran on, and its limits. Names, never words. A bot nobody has chatted with yet opens the same
+    // page at zero, with a line on what fills in once people chat (#1563).
     import { get } from "svelte/store";
     import LL, { locale } from "../../../../../i18n/i18n-svelte";
     import type { BotData } from "../../types";
@@ -45,6 +46,8 @@
     $: range = state?.range ?? "7d";
     // The words and day names follow the numbers on screen, so a range still loading never names numbers from another
     $: shownRange = usage?.range ?? range;
+    // Nobody has ever chatted with the bot: every range is zero, so the page says what fills in instead of a range switch
+    $: fresh = !!usage && !usage.hasUsage;
     // Opening the group after a failed read asks Orbit again
     let wasOpen = false;
     $: {
@@ -128,20 +131,20 @@
 
 {#if state?.status === "hidden"}
     <!-- Only the people who manage the bot see its usage -->
-{:else if usage && !usage.hasUsage}
-    <PageGroup id="usage" icon={IconChartBar} title={text.title()} {brief} quiet {onToggle} />
 {:else}
     <PageGroup id="usage" icon={IconChartBar} title={text.title()} {brief} {open} {onToggle}>
-        <PageSegment
-            label={text.range()}
-            value={range}
-            options={[
-                { value: "today", label: text.today(), testId: "bot-usage-today" },
-                { value: "7d", label: text.week(), testId: "bot-usage-7d" },
-                { value: "30d", label: text.month(), testId: "bot-usage-30d" },
-            ]}
-            onPick={pick}
-        />
+        {#if !fresh}
+            <PageSegment
+                label={text.range()}
+                value={range}
+                options={[
+                    { value: "today", label: text.today(), testId: "bot-usage-today" },
+                    { value: "7d", label: text.week(), testId: "bot-usage-7d" },
+                    { value: "30d", label: text.month(), testId: "bot-usage-30d" },
+                ]}
+                onPick={pick}
+            />
+        {/if}
         {#if !usage}
             {#if state?.status === "failed"}
                 <p class="us-fail" role="alert">
@@ -152,6 +155,12 @@
                 </p>
             {/if}
         {:else}
+            {#if fresh}
+                <div class="us-fresh" data-testid="bot-usage-fresh">
+                    <b>{text.freshTitle({ name })}</b>
+                    <span>{text.freshLine()}</span>
+                </div>
+            {/if}
             {#if usage.keyProblem}
                 <div class="us-alert" role="status">
                     <IconAlertTriangle font-size="16" />
@@ -258,7 +267,9 @@
                     on:click={() => onOpenScreen("people")}
                 >
                     <span class="us-dico"><IconUsers font-size="20" /></span>
-                    <span class="us-dtx"><b>{text.whoTitle({ name })}</b><span>{whoBrief(usage)}</span></span>
+                    <span class="us-dtx"
+                        ><b>{text.whoTitle({ name })}</b><span>{fresh ? text.whoFresh() : whoBrief(usage)}</span></span
+                    >
                     <span class="us-chev"><IconChevronDown font-size="18" /></span>
                 </button>
                 <button
@@ -268,7 +279,10 @@
                     on:click={() => onOpenScreen("ranOn")}
                 >
                     <span class="us-dico"><IconKey font-size="20" /></span>
-                    <span class="us-dtx"><b>{text.ranOnTitle()}</b><span>{ranOnBrief(usage)}</span></span>
+                    <span class="us-dtx"
+                        ><b>{text.ranOnTitle()}</b><span>{fresh ? text.ranOnFresh({ name }) : ranOnBrief(usage)}</span
+                        ></span
+                    >
                     <span class="us-chev"><IconChevronDown font-size="18" /></span>
                 </button>
                 <button
@@ -287,6 +301,25 @@
 {/if}
 
 <style>
+    .us-fresh {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 12px;
+        border-radius: 14px;
+        background: #0a0814;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+    }
+    .us-fresh b {
+        font-size: 14px;
+        font-weight: 600;
+        color: #fff;
+    }
+    .us-fresh span {
+        font-size: 12.5px;
+        line-height: 1.4;
+        color: rgba(244, 242, 250, 0.66);
+    }
     .us-alert {
         display: flex;
         align-items: flex-start;
@@ -308,10 +341,12 @@
         color: #fff;
         font-weight: 600;
     }
+    /* Inset like the cards above them (the key alert, the first-chat line), so their text starts in one place */
     .us-figs {
         display: flex;
         flex-wrap: wrap;
         gap: 8px 24px;
+        padding: 0 12px;
         transition: opacity 0.15s;
     }
     .us-figs.dim {
@@ -335,6 +370,7 @@
         display: flex;
         flex-wrap: wrap;
         gap: 4px 14px;
+        padding: 0 12px;
         font-size: 12.5px;
         color: rgba(244, 242, 250, 0.66);
         font-variant-numeric: tabular-nums;

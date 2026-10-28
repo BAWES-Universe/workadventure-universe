@@ -8,6 +8,8 @@
  * - Relationship context (how they met, important events)
  */
 
+import { withoutFileNotes } from '../services/ChatFiles';
+
 /** Recent messages a reply reads until Orbit serves the bot's own number: the recommended "Messages it remembers". */
 const DEFAULT_HISTORY_WINDOW = 20;
 export interface ConversationMessage {
@@ -190,6 +192,18 @@ export class ConversationMemory {
     }
 
     /**
+     * The newest line from the person, so a file's note in it can take the short id Orbit gives the file later (#1508).
+     * The line itself, not a copy: a reply added meanwhile doesn't move it.
+     */
+    lastPersonLine(botId: string, playerId: number): ConversationMessage | undefined {
+        const history = this.getMemory(botId, playerId)?.conversationHistory;
+        for (let i = (history?.length ?? 0) - 1; i >= 0; i--) {
+            if (history![i].sender === 'person') return history![i];
+        }
+        return undefined;
+    }
+
+    /**
      * Add a message to conversation history
      */
     addMessage(
@@ -234,7 +248,7 @@ export class ConversationMemory {
         
         // Extract personal information (birthday, name, preferences, facts)
         if (sender === 'person') {
-            this.extractPersonalInfo(botId, playerId, message);
+            this.extractPersonalInfo(botId, playerId, withoutFileNotes(message));
         }
     }
 
