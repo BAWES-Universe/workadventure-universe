@@ -48,6 +48,7 @@
     import Avatar from "../Avatar.svelte";
     import { MatrixChatRoom } from "../../Connection/Matrix/MatrixChatRoom";
     import { openProfileRoomIdStore } from "../../Stores/PartnerProfileStore";
+    import { openRoomDetailsIdStore, openSharedItemsStore } from "../../Stores/ChatDetailsStore";
     import { chatCarriesItsCloseStore } from "../../ChatSidebarWidthStore";
     import { installStrayFileDropGuard, isFileDrag } from "../../../Utils/strayFileDropGuard";
     import { mapEditorToolbarInUseStore } from "../../../Stores/MapEditorStore";
@@ -70,6 +71,8 @@
     import RoomMenu from "./RoomMenu/RoomMenu.svelte";
     import DirectChatTitle from "./DirectChat/DirectChatTitle.svelte";
     import PartnerProfilePanel from "./DirectChat/PartnerProfilePanel.svelte";
+    import RoomDetailsPanel from "./Details/RoomDetailsPanel.svelte";
+    import SharedPanel from "./Details/SharedPanel.svelte";
     import { DIRECT_PARTNER_CONTEXT, directPartnerStore, type DirectPartner } from "./DirectChat/DirectPartnerStore";
     import { dayLabel, messageRuns, runSenderKey } from "./MessageRuns";
     import { IconChevronLeft, IconChevronRight, IconLoader, IconLock, IconMailBox } from "@wa-icons";
@@ -181,9 +184,22 @@
     $: isEncrypted = room.isEncrypted;
     $: proximityRoom = room instanceof ProximityChatRoom ? room : undefined;
     $: matrixRoom = room instanceof MatrixChatRoom ? room : undefined;
+
+    // Counts the chat objects shown here: a chat can be made again under the same id (its type found out later, or a new
+    // map), and what is keyed on this is made again with it. A number, so the same chat set again changes nothing.
+    let roomInstance = 0;
+    let lastRoom: ChatRoom | undefined = room;
+    $: if (room !== lastRoom) {
+        lastRoom = room;
+        roomInstance++;
+    }
     // A direct chat knows who the other person is and where they are right now (header, menu, profile).
     $: directPartner = matrixRoom?.type === "direct" ? directPartnerStore(matrixRoom) : undefined;
     $: profileOpen = directPartner !== undefined && $openProfileRoomIdStore === room.id;
+    // A group's details, and the page of what a chat shared over either, sit over the conversation like the profile.
+    $: roomDetailsOpen = matrixRoom !== undefined && directPartner === undefined && $openRoomDetailsIdStore === room.id;
+    $: sharedOpen =
+        matrixRoom !== undefined && $openSharedItemsStore?.roomId === room.id ? $openSharedItemsStore : undefined;
     $: isDirectChat.set(directPartner !== undefined);
     $: partnerForCards.set(directPartner ? $directPartner : undefined);
     $: roomMembers = matrixRoom ? matrixRoom.members : readable([]);
@@ -614,6 +630,8 @@
 
     function goBackAndClearSelectedChatMessage() {
         openProfileRoomIdStore.set(undefined);
+        openRoomDetailsIdStore.set(undefined);
+        openSharedItemsStore.set(undefined);
         selectedChatMessageToReply.set(null);
         selectedRoomStore.set(undefined);
         shouldRestoreChatStateStore.set(false);
@@ -794,6 +812,10 @@
         document.removeEventListener("dragenter", onMapFileDragCapture, true);
         document.removeEventListener("dragover", onMapFileDragCapture, true);
         document.removeEventListener("drop", onMapFileDragCapture, true);
+        // However the chat is left (another chat picked, a message opening one), its details close with it: coming
+        // back opens on the conversation.
+        if (get(openRoomDetailsIdStore) === room.id) openRoomDetailsIdStore.set(undefined);
+        if (get(openSharedItemsStore)?.roomId === room.id) openSharedItemsStore.set(undefined);
     });
 </script>
 
@@ -804,7 +826,7 @@
 <div
     bind:this={timelineRef}
     class="relative isolate flex flex-col flex-auto h-full w-full max-w-full"
-    class:profile-open={profileOpen && matrixRoom && $directPartner}
+    class:profile-open={(profileOpen && matrixRoom && $directPartner) || roomDetailsOpen || sharedOpen}
     on:dragover|preventDefault
     on:drop|preventDefault|stopPropagation={onDropFiles}
 >
@@ -815,15 +837,22 @@
                 : $LL.chat.fileAttachment.dropToAddHere()}
         </div>
     {/if}
-    {#if profileOpen && matrixRoom && $directPartner}
-        <!-- Over the conversation, which stays as it was (draft, files, scroll) for when you come back. Above the
-             message options (z-50) and menus that live in it; "isolate" keeps all of that inside this panel. -->
-        <PartnerProfilePanel
-            room={matrixRoom}
-            partner={$directPartner}
-            on:close={() => openProfileRoomIdStore.set(undefined)}
-        />
-    {/if}
+    <!-- Made again when the chat is, so a panel never shows the old one. -->
+    {#key roomInstance}
+        {#if sharedOpen && matrixRoom}
+            <SharedPanel room={matrixRoom} tab={sharedOpen.tab} partnerChatId={$directPartner?.chatId} />
+        {:else if profileOpen && matrixRoom && $directPartner}
+            <!-- Over the conversation, which stays as it was (draft, files, scroll) for when you come back. Above the
+                 message options (z-50) and menus that live in it; "isolate" keeps all of that inside this panel. -->
+            <PartnerProfilePanel
+                room={matrixRoom}
+                partner={$directPartner}
+                on:close={() => openProfileRoomIdStore.set(undefined)}
+            />
+        {:else if roomDetailsOpen && matrixRoom}
+            <RoomDetailsPanel room={matrixRoom} />
+        {/if}
+    {/key}
     {#if room !== undefined}
         <div class="flex flex-col gap-2">
             <div
@@ -864,7 +893,17 @@
                             on:openProfile={() => openProfileRoomIdStore.set(room.id)}
                         />
                     {:else}
-                        <div class="flex min-w-0 items-center gap-2.5 px-2">
+                        <!-- A group's name opens its details, as a direct chat's name opens the profile. -->
+                        <svelte:element
+                            this={matrixRoom ? "button" : "div"}
+                            type={matrixRoom ? "button" : undefined}
+                            class="room-title flex min-w-0 items-center gap-2.5 px-2"
+                            aria-label={matrixRoom ? $LL.chat.details.open({ name: $roomName }) : undefined}
+                            data-testid="roomTitleButton"
+                            on:click={() => {
+                                if (matrixRoom) openRoomDetailsIdStore.set(room.id);
+                            }}
+                        >
                             <Avatar pictureStore={room.pictureStore} fallbackName={$roomName} size="sm" />
                             <div class="flex min-w-0 flex-col">
                                 <div class="flex min-w-0 items-center gap-1.5">
@@ -888,7 +927,7 @@
                                     </div>
                                 {/if}
                             </div>
-                        </div>
+                        </svelte:element>
                     {/if}
                 </div>
                 {#if matrixRoom}
@@ -1116,7 +1155,28 @@
     }
     /* The profile has no background of its own: it sits on the chat panel's surface, like the conversation. What it
        covers is hidden instead, and keeps its draft, files and scroll for when you come back. */
-    .profile-open > :global(:not([data-testid="partnerProfilePanel"])) {
+    .profile-open
+        > :global(
+            :not([data-testid="partnerProfilePanel"]):not([data-testid="roomDetailsPanel"]):not(
+                    [data-testid="sharedPanel"]
+                )
+        ) {
         visibility: hidden;
+    }
+    .room-title {
+        margin: 0;
+        padding-block: 0.25rem;
+        border-radius: 0.75rem;
+        color: inherit;
+        font: inherit;
+        text-align: start;
+        background: transparent;
+    }
+    button.room-title:hover {
+        background: rgba(255, 255, 255, 0.08);
+    }
+    button.room-title:focus-visible {
+        outline: 2px solid rgba(196, 181, 253, 0.9);
+        outline-offset: -2px;
     }
 </style>

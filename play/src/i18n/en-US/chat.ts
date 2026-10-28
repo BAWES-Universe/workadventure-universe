@@ -454,6 +454,34 @@ const chat: BaseTranslation = {
             reportHint: "Tell the Universe team what happened.",
         },
     },
+    details: {
+        title: "Details",
+        open: "Open the details of {name:string}",
+        shared: "Media, links and files",
+        tabs: {
+            media: "Media",
+            links: "Links",
+            files: "Files",
+        },
+        empty: {
+            media: "No images or videos yet",
+            links: "No links yet",
+            files: "No files yet",
+        },
+        sections: {
+            thisWeek: "This week",
+            lastWeek: "Last week",
+            thisMonth: "Earlier this month",
+            undated: "Earlier",
+        },
+        you: "You",
+        sentBy: "{name:string} · {when:string}",
+        image: "Image from {name:string}",
+        video: "Video from {name:string}",
+        lookFurther: "Look further back",
+        lookingFurther: "Looking further back…",
+        people: "People",
+    },
     folderMenu: {
         leaveFolder: {
             label: "Leave Folder",
