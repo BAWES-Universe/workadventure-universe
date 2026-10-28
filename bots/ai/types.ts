@@ -145,6 +145,8 @@ export interface AIStreamChunk {
     reset?: boolean; // If true, frontend should clear current stream content before processing this chunk
     toolNames?: string[]; // Names of tools being called (for status display in the new bubble)
     toolCalls?: ToolCall[]; // Tool calls requested by AI
+    /** On the done chunk: the model's reasoning for this call, when its provider streams it (DeepSeek thinking). It goes back with the reply's steps. */
+    reasoning?: string;
     metadata?: {
         tokensUsed?: number;
         promptTokens?: number;
@@ -164,6 +166,8 @@ export interface AIStreamChunk {
         cancelled?: boolean;
         errorStatus?: number; // HTTP status the provider answered with when the call failed (401/403 = the key was rejected)
         truncated?: boolean; // true when the provider hit finish_reason='length' (max_tokens cap)
+        /** The provider turned the call down as longer than the model takes (its context window). */
+        tooLong?: boolean;
         // MultiPromptAIService analysis metadata
         analysis?: {
             tokensUsed: number;

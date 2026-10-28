@@ -12,6 +12,7 @@ import { resolveVisionSupport } from './visionModels';
 import { decryptApiKey } from '../encryption';
 import { fetchFor, statusFromError } from './ownKeyHttp';
 import * as Sentry from '@sentry/node';
+import { saysTooLong, stepMessages, type ReplySteps } from '../replySteps';
 
 export class LMStudioProvider implements AIProvider {
     private readonly DEFAULT_TIMEOUT = 30000; // 30 seconds
@@ -80,7 +81,8 @@ export class LMStudioProvider implements AIProvider {
         config: AIProviderConfig,
         tools?: any[],
         externalSignal?: AbortSignal,
-        images?: string[]
+        images?: string[],
+        steps?: ReplySteps
     ): AsyncGenerator<AIStreamChunk> {
         const startTime = Date.now();
         let tokensUsed = 0;
@@ -109,6 +111,8 @@ export class LMStudioProvider implements AIProvider {
                     messages: [
                         { role: 'system', content: systemPrompt },
                         { role: 'user', content: this.buildUserContent(userMessage, config, images) },
+                        // The reply's steps so far
+                        ...stepMessages(steps),
                     ],
                     stream: true,
                     stream_options: {
@@ -249,6 +253,7 @@ export class LMStudioProvider implements AIProvider {
                     latency,
                     error: !externallyCancelled,
                     errorStatus: statusFromError(error),
+                    ...(!externallyCancelled && saysTooLong(String(error?.message ?? '')) ? { tooLong: true } : {}),
                 },
             };
         } finally {
