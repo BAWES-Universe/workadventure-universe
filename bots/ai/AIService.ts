@@ -519,11 +519,11 @@ export class AIService {
         let usageRecorded = false;
         // A new turn starts clean: an artifact call is only the same as an earlier one while that turn is asked again
         if (!isRetry && playerId !== undefined) this.conversationMemory?.getMemory(botId, playerId)?.artifactCalls?.clear();
-        // This turn's media (#1510): what the person sent with this message; its tools add theirs as they run
-        if (!isRetry && playerId !== undefined) {
-            const turnMemory = this.conversationMemory?.getMemory(botId, playerId);
-            if (turnMemory) turnMemory.turnMedia = startTurnMedia(message, images);
-        }
+        // This turn's media (#1510): what the person sent with this message; its tools add theirs as they run. The turn
+        // holds its own list, so a turn that a newer message replaced can't add to the newer one's
+        const turnMemory = playerId !== undefined ? this.conversationMemory?.getMemory(botId, playerId) : undefined;
+        const turnMedia: TurnMedia[] = isRetry ? turnMemory?.turnMedia ?? [] : startTurnMedia(message, images);
+        if (turnMemory) turnMemory.turnMedia = turnMedia;
         // Buffer for content received before tool calls are detected
         // Discarded if tool calls arrive (was filler/thinking text);
         // flushed as final response if no tool calls.
@@ -744,7 +744,7 @@ export class AIService {
                 // pending items at turn start.
                 pendingMediaNotice: [
                     this.conversationMemory.getPendingMediaNotice(botId, playerId),
-                    artifactsEnabled() ? turnMediaNotice(this.conversationMemory.getMemory(botId, playerId)?.turnMedia ?? []) : '',
+                    artifactsEnabled() ? turnMediaNotice(turnMedia) : '',
                 ].filter(Boolean).join('\n\n') || undefined,
                 channel,
             });
@@ -1210,7 +1210,7 @@ export class AIService {
                             // Tool calls from a reply that hit its length cap may hold half a file (the repair of broken JSON would still
                             // pass it): the first round reads the cap from this chunk, later rounds from the previous round's last chunk
                             const replyCutOff = !!(followUpIterations === 1 ? chunk.metadata?.truncated : lastFollowUpDoneChunk?.metadata?.truncated);
-                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff);
+                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, turnMedia);
                             if (turn && toolResults.some((tr) => writesArtifact(tr.name) && tr.result?.success === true)) turn.artifactSaved = true;
 
                             // Collect URLs that were already sent by explicit send_* tool calls
@@ -1247,7 +1247,7 @@ export class AIService {
                             // and will be delivered by flushPendingMedia on re-entry.
                             this.preQueueToolResults(toolResults, iterationSentUrls, botId, playerId);
                             // Before the auto-send below replaces results that carried media with a short note
-                            const turnMediaSoFar = this.noteTurnMedia(toolResults, botId, playerId);
+                            const turnMediaSoFar = this.noteTurnMedia(toolResults, turnMedia);
 
                             // Cancellation during tool execution: persist the queued
                             // media (safety net above) but skip inline delivery and
@@ -2592,7 +2592,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     private async runArtifactToolCall(
         name: string,
         args: Record<string, unknown>,
-        where: { botClient?: BotClient; adminApiService?: AdminApiService; spaceName?: string; botId?: string; playerId?: number }
+        where: { botClient?: BotClient; adminApiService?: AdminApiService; spaceName?: string; botId?: string; playerId?: number; turnMedia?: TurnMedia[] }
     ): Promise<Record<string, unknown>> {
         const { botClient, spaceName, botId, playerId } = where;
         const admin = where.adminApiService ?? this.adminApiService;
@@ -2624,7 +2624,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             person,
             chat,
             saveTimeoutMs: limits.artifactSaveSeconds * 1000,
-            media: { turn: memory?.turnMedia ?? [], maxBytes: limits.artifactMediaBytes },
+            media: { turn: where.turnMedia ?? memory?.turnMedia ?? [], maxBytes: limits.artifactMediaBytes },
         });
         if (!run.card) return run.result;
         if (!this.deliverArtifactCard(run.card, botClient, spaceName, memory)) {
@@ -2667,7 +2667,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         abortSignal?: AbortSignal,
         toolTimeoutSeconds?: number | null,
         /** The reply these calls came from was cut off by its length cap. */
-        replyCutOff = false
+        replyCutOff = false,
+        /** This turn's media list (#1510), for an artifact to carry. */
+        turnMedia?: TurnMedia[]
     ): Promise<Array<{ id: string; name: string; result: any }>> {
         // Filter out invalid tool calls (empty name, undefined, etc.)
         const validToolCalls = toolCalls.filter(tc => tc && tc.name && tc.name.trim() !== '');
@@ -2982,7 +2984,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         result = await this.runArtifactToolCall(
                             toolCall.name,
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
-                            { botClient, adminApiService, spaceName, botId, playerId }
+                            { botClient, adminApiService, spaceName, botId, playerId, turnMedia }
                         );
                         break;
 
@@ -3076,16 +3078,13 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      * them in an artifact by their short names. Only while artifacts are on; the media tools and artifact tools are left
      * out as autoSendMedia leaves them, since they made nothing new. Answers the whole list so far.
      */
-    private noteTurnMedia(toolResults: Array<{ id: string; name: string; result: any }>, botId?: string, playerId?: number): TurnMedia[] {
-        if (!artifactsEnabled() || !botId || playerId === undefined) return [];
-        const memory = this.conversationMemory?.getMemory(botId, playerId);
-        if (!memory) return [];
+    private noteTurnMedia(toolResults: Array<{ id: string; name: string; result: any }>, list: TurnMedia[]): TurnMedia[] {
+        if (!artifactsEnabled()) return [];
         const found: Array<{ url: string }> = [];
         for (const tr of toolResults) {
             if (['send_image', 'send_file', 'send_audio', 'send_video', READ_WEB_PAGE_TOOL].includes(tr.name) || isArtifactTool(tr.name)) continue;
             for (const url of this.extractUrlsFromResult(tr.result)) found.push({ url });
         }
-        const list = (memory.turnMedia ??= []);
         addTurnMedia(list, found, 'tool');
         return list;
     }
