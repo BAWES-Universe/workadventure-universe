@@ -854,7 +854,6 @@ const mapEditor: BaseTranslation = {
                         "In AI keys, tap Lend to a universe on the one you want. It shows here as soon as it’s lent.",
                     managerHint:
                         "You manage bots here, so you can switch {bot:string} to Universe AI. Your own keys never show on someone else’s bot.",
-                    pinTo: "Pin to a provider",
                     model: {
                         title: "Model",
                         change: "Change",
