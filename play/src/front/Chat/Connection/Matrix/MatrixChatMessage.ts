@@ -337,8 +337,8 @@ export class MatrixChatMessage implements ChatMessage {
         return {
             name: this.getMediaFileName(content) ?? "",
             size: typeof size === "number" && Number.isFinite(size) ? size : undefined,
-            // Matrix marks a voice message on its audio event (MSC3245).
-            voice: content["org.matrix.msc3245.voice"] !== undefined,
+            // A voice message is flagged on its audio event (MSC3245), as for its chat list line.
+            voice: this.isVoiceMessage(content),
         };
     }
 

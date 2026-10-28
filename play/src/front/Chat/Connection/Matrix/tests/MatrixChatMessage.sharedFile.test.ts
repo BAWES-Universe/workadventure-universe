@@ -59,6 +59,20 @@ describe("what a Matrix file message shares", () => {
         expect(voice.sharedFile?.voice).toBe(true);
     });
 
+    it("tells a voice message flagged with the stable m.voice apart from an audio file", () => {
+        const voice = new MatrixChatMessage(
+            fakeEvent({
+                msgtype: "m.audio",
+                body: "Voice message.ogg",
+                url: "mxc://matrix.test/v",
+                info: { mimetype: "audio/ogg" },
+                "m.voice": {},
+            }),
+            room
+        );
+        expect(voice.sharedFile?.voice).toBe(true);
+    });
+
     it("has nothing for a text message", () => {
         const text = new MatrixChatMessage(fakeEvent({ msgtype: "m.text", body: "hello" }), room);
         expect(text.sharedFile).toBeUndefined();
