@@ -164,10 +164,12 @@
         :where(.message-bubble) pre {
             margin: 0;
         }
-        /* A ``` block: its own full-width box. */
+        /* A ``` block: its own full-width box, its type a step smaller than the sentence like the chip, since
+           monospace reads larger than the text face at the same size. */
         :where(.message-bubble pre) code {
             display: block;
             width: 100%;
+            font-size: 0.9em;
             background-color: rgba(255, 255, 255, 0.1);
             border-radius: 8px;
             overflow-x: auto;
