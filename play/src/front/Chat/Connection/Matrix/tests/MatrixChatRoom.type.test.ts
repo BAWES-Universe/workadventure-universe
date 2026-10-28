@@ -89,6 +89,7 @@ describe("destroying a Matrix chat", () => {
             matrixRoom: { off },
             members: writable([]),
             messages: [],
+            detachedMessages: new Map(),
             handleRoomTimeline: "timeline",
             handleRoomName: "name",
             handleRoomRedaction: "redaction",
