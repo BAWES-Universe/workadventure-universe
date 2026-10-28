@@ -4,7 +4,7 @@ import type { MatrixEvent, MatrixEventHandler } from './MatrixAppServiceRouter';
 import { BOT_LOCALPART_PREFIX, botIdFromMatrixId, type MatrixAppServiceConfig } from './MatrixConfig';
 import type { BotConfiguration } from '../server/AdminApiService';
 import type { DmAttachment, DmPerson, DmReply, DmReplyHooks } from '../server/DmReplyService';
-import type { PendingMedia } from '../memory/ConversationMemory';
+import { MAX_OUTGOING_MEDIA_BYTES, type PendingMedia } from '../memory/ConversationMemory';
 import {
     availabilityOf,
     detectLanguage,
@@ -105,7 +105,6 @@ function attemptsOf(event: MatrixEvent): number {
 const TYPING_DELAY_MS = 800;
 /** Matrix drops "typing" after its timeout (30 s), so a long answer renews it. */
 const TYPING_REFRESH_MS = 20 * 1000;
-const MAX_OUTGOING_MEDIA_BYTES = 50 * 1024 * 1024;
 const ONLY_DIRECT = 'I only take direct messages.';
 
 /**
@@ -925,7 +924,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         });
         const data = Buffer.from(response.data);
         const mimeType = item.mimeType || String(response.headers['content-type'] || 'application/octet-stream');
-        const filename = new URL(item.url).pathname.split('/').pop() || `${item.mediaType}`;
+        const filename = item.name || new URL(item.url).pathname.split('/').pop() || `${item.mediaType}`;
         const mxc = await this.client.uploadMedia(botUserId, data, mimeType, filename);
         const msgtype = { image: 'm.image', audio: 'm.audio', video: 'm.video', file: 'm.file' }[item.mediaType] ?? 'm.file';
         await this.client.sendMessage(botUserId, roomId, {
