@@ -24,7 +24,11 @@
             ? summary.caption ??
               (summary.count > 1 ? $LL.chat.messageActions.files({ count: summary.count }) : summary.name)
             : summary.caption ??
-              (summary.kind === "video" ? $LL.chat.messageActions.video() : $LL.chat.messageActions.audio());
+              (summary.kind === "video"
+                  ? $LL.chat.messageActions.video()
+                  : summary.voice
+                  ? $LL.chat.messageActions.voice()
+                  : $LL.chat.messageActions.audio());
 </script>
 
 <div class="reply-preview" data-testid="replyPreview">

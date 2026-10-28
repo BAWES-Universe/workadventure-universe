@@ -42,7 +42,7 @@ function orbitError(status: number, data: unknown): AxiosError {
 
 describe("ArtifactsService", () => {
     it("is unavailable without an admin", async () => {
-        const http = { post: vi.fn() };
+        const http = { put: vi.fn(), post: vi.fn() };
         const service = new ArtifactsService(undefined, undefined, http);
         expect(service.isEnabled()).toBe(false);
         await expect(service.open(ID, viewer)).rejects.toEqual(new ArtifactsError("artifacts_unavailable", 503));
@@ -50,7 +50,7 @@ describe("ArtifactsService", () => {
     });
 
     it("opens an artifact as the viewer, with the admin token, and keeps only what the game uses", async () => {
-        const http = { post: vi.fn(() => Promise.resolve({ data: opened })) };
+        const http = { put: vi.fn(), post: vi.fn(() => Promise.resolve({ data: opened })) };
         const service = new ArtifactsService("https://orbit.test", "secret", http);
         const answer = await service.open(ID, viewer, 2);
         expect(http.post).toHaveBeenCalledWith(
@@ -65,6 +65,7 @@ describe("ArtifactsService", () => {
 
     it("lists the versions and reads the code of one", async () => {
         const http = {
+            put: vi.fn(),
             post: vi.fn((url: string) =>
                 Promise.resolve({
                     data: url.endsWith("/versions") ? { versions: [version] } : { version, content: "<h1>x</h1>" },
@@ -83,6 +84,7 @@ describe("ArtifactsService", () => {
 
     it("restores a version as the viewer and passes on a refusal for anyone but the owner", async () => {
         const http = {
+            put: vi.fn(),
             post: vi.fn(() => Promise.resolve({ data: { ...opened, version: { ...version, number: 3 } } })),
         };
         const service = new ArtifactsService("https://orbit.test", "secret", http);
@@ -95,13 +97,31 @@ describe("ArtifactsService", () => {
         expect(answer.version.number).toBe(3);
 
         const refused = new ArtifactsService("https://orbit.test", "secret", {
+            put: vi.fn(),
             post: vi.fn(() => Promise.reject(orbitError(403, { error: "not_owner", message: "Only its owner." }))),
         });
         await expect(refused.restore(ID, 1, viewer)).rejects.toEqual(new ArtifactsError("not_owner", 403));
     });
 
+    it("shares as the viewer with a PUT, sending only what changes", async () => {
+        const http = {
+            post: vi.fn(),
+            put: vi.fn(() => Promise.resolve({ data: { artifact: { ...opened.artifact, openScope: "link" } } })),
+        };
+        const service = new ArtifactsService("https://orbit.test", "secret", http);
+        const answer = await service.share(ID, { openScope: "link" }, viewer);
+        expect(http.put).toHaveBeenCalledWith(
+            `https://orbit.test/api/artifacts/${ID}/share`,
+            { viewer, openScope: "link" },
+            { headers: { Authorization: "secret" } }
+        );
+        expect(http.post).not.toHaveBeenCalled();
+        expect(answer.artifact.openScope).toBe("link");
+    });
+
     it("passes Orbit's refusal on with its status and code", async () => {
         const http = {
+            put: vi.fn(),
             post: vi.fn(() => Promise.reject(orbitError(404, { error: "not_found", message: "No such artifact." }))),
         };
         const service = new ArtifactsService("https://orbit.test", "secret", http);
@@ -110,10 +130,12 @@ describe("ArtifactsService", () => {
 
     it("does not pass on a server failure or an answer it cannot read as a refusal", async () => {
         const down = new ArtifactsService("https://orbit.test", "secret", {
+            put: vi.fn(),
             post: vi.fn(() => Promise.reject(orbitError(500, "boom"))),
         });
         await expect(down.open(ID, viewer)).rejects.not.toBeInstanceOf(ArtifactsError);
         const odd = new ArtifactsService("https://orbit.test", "secret", {
+            put: vi.fn(),
             post: vi.fn(() => Promise.resolve({ data: { nope: true } })),
         });
         await expect(odd.open(ID, viewer)).rejects.toThrow();

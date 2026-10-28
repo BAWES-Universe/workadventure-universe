@@ -2,6 +2,7 @@
  * IdleBehavior - Bot stands in place and responds to interactions
  */
 
+import type { ChatUpload } from '../services/ChatFiles';
 import { BaseBehavior, type BehaviorConfig } from './BaseBehavior';
 import { PositionMessage_Direction, type SpaceUser } from '@workadventure/messages';
 import { ConversationMemory } from '../memory/ConversationMemory';
@@ -353,7 +354,7 @@ export class IdleBehavior extends BaseBehavior {
         super.onSpaceLeft(spaceName);
     }
 
-    async onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string, galleryUrls?: string[]): Promise<void> {
+    async onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string, galleryUrls?: string[], uploads?: ChatUpload[]): Promise<void> {
         if (!this.bot) {
             return;
         }
@@ -366,8 +367,14 @@ export class IdleBehavior extends BaseBehavior {
         // Save the original message for persistence — augmented version
         // is for the AI request only.
         const originalUserMessage = message;
+        // With a note for each file it came with (#1508), for the bot's memory only: the saved chat keeps what they wrote
+        let historyMessage = message;
+        let keepFiles: () => void = () => undefined;
         if (url) {
-            message = await this.formatParsedAttachment(message, url, mimeType || 'application/octet-stream', mediaType, galleryUrls);
+            const files = await this.readBubbleFiles(spaceName, senderId, message, url, mimeType || 'application/octet-stream', mediaType, galleryUrls, uploads);
+            message = files.augmented;
+            historyMessage = files.line;
+            keepFiles = files.keep;
         }
 
         // Get user info from bot's player map
@@ -395,7 +402,8 @@ export class IdleBehavior extends BaseBehavior {
         // Start conversation in memory if needed
         if (this.conversationMemory) {
             this.conversationMemory.startConversation(botId, senderId);
-            this.conversationMemory.addMessage(botId, senderId, originalUserMessage, 'person', spaceName);
+            this.conversationMemory.addMessage(botId, senderId, historyMessage, 'person', spaceName);
+            keepFiles();
             this.conversationMemory.extractPersonalInfo(botId, senderId, originalUserMessage);
         }
         
@@ -499,7 +507,7 @@ export class IdleBehavior extends BaseBehavior {
         };
 
         try {
-            for await (const chunk of this.aiService.generateBotResponseStream(
+            for await (const chunk of this.withToolSteps(this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
                 playerMessage,
@@ -511,9 +519,8 @@ export class IdleBehavior extends BaseBehavior {
                 this.adminApiService,
                 abortSignal,
                 images
-            )) {
+            ), spaceName, botId, playerId, abortSignal)) {
                 if (chunk.reset) {
-                    const showToolCalls = chunk.toolNames?.length ? await this.shouldShowToolCalls(botId) : false;
                     if (abortSignal?.aborted) break;
                     batchFlush(batchState, sendBatch);
                     // Tool calls overrode streamed pre-tool content — finalize current bubble
@@ -529,26 +536,6 @@ export class IdleBehavior extends BaseBehavior {
                     fullMessage = '';
                     emotionBlockStarted = false;
                     pendingPrefix = '';
-                    // Show tool names as separate bubbles — one per tool call invocation
-                    if (chunk.toolNames?.length) {
-                        if (showToolCalls) {
-                            for (let ti = 0; ti < chunk.toolNames.length; ti++) {
-                                const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
-                                responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
-                                this.trackActiveResponseId(playerId, responseId);
-                                fullMessage = toolStatus;
-                                this.bot?.sendStreamMessage(spaceName, responseId, toolStatus, false);
-                                // Finalize the tool-name bubble so it doesn't linger in
-                                // the frontend's streamMessages map.
-                                this.bot?.sendStreamMessage(spaceName, responseId, '', true, toolStatus);
-                            }
-                        }
-                        // Create a new responseId for follow-up content so it appears
-                        // in its own bubble instead of merging into the last tool-name bubble.
-                        responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
-                        this.trackActiveResponseId(playerId, responseId);
-                        fullMessage = ''; // Clear so follow-up content starts fresh
-                    }
                     continue;
                 }
 
@@ -766,7 +753,7 @@ export class IdleBehavior extends BaseBehavior {
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingPrefix = '';
-            for await (const chunk of this.aiService.generateBotResponseStream(
+            for await (const chunk of this.withToolSteps(this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
                 goodbyePrompt,
@@ -776,9 +763,8 @@ export class IdleBehavior extends BaseBehavior {
                 context,
                 this.bot,
                 this.adminApiService
-            )) {
+            ), spaceName, botId, playerId, undefined)) {
                 if (chunk.reset) {
-                    const showToolCalls = chunk.toolNames?.length ? await this.shouldShowToolCalls(botId) : false;
                     if (fullMessage) {
                         const finalContent = pendingPrefix ? fullMessage.slice(0, -pendingPrefix.length) : fullMessage;
                         this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, '', true, finalContent);
@@ -787,19 +773,6 @@ export class IdleBehavior extends BaseBehavior {
                     fullMessage = '';
                     emotionBlockStarted = false;
                     pendingPrefix = '';
-                    if (chunk.toolNames?.length) {
-                        if (showToolCalls) {
-                            for (let ti = 0; ti < chunk.toolNames.length; ti++) {
-                                const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
-                                goodbyeResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
-                                fullMessage = toolStatus;
-                                this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, toolStatus, false);
-                                this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, '', true, toolStatus);
-                            }
-                        }
-                        goodbyeResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
-                        fullMessage = '';
-                    }
                     continue;
                 }
                 if (chunk.content) {
@@ -954,7 +927,7 @@ export class IdleBehavior extends BaseBehavior {
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingPrefix = '';
-            for await (const chunk of this.aiService.generateBotResponseStream(
+            for await (const chunk of this.withToolSteps(this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
                 playerMessage,
@@ -964,7 +937,7 @@ export class IdleBehavior extends BaseBehavior {
                 context,
                 this.bot,
                 this.adminApiService
-            )) {
+            ), spaceName, botId, playerId, undefined)) {
                 if (chunk.content) {
                     fullMessage = appendStreamedChunk(fullMessage, chunk.content);
 
@@ -1134,7 +1107,7 @@ export class IdleBehavior extends BaseBehavior {
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingPrefix = '';
-            for await (const chunk of this.aiService.generateBotResponseStream(
+            for await (const chunk of this.withToolSteps(this.aiService.generateBotResponseStream(
                     botId,
                     followerUserId,
                     arrivalPrompt,
@@ -1144,9 +1117,8 @@ export class IdleBehavior extends BaseBehavior {
                     context,
                     this.bot,
                     this.adminApiService
-                )) {
+                ), spaceName, botId, followerUserId, undefined)) {
                     if (chunk.reset) {
-                        const showToolCalls = chunk.toolNames?.length ? await this.shouldShowToolCalls(botId) : false;
                         if (fullMessage) {
                             const finalContent = pendingPrefix ? fullMessage.slice(0, -pendingPrefix.length) : fullMessage;
                             this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, finalContent);
@@ -1155,19 +1127,6 @@ export class IdleBehavior extends BaseBehavior {
                         fullMessage = '';
                         emotionBlockStarted = false;
                         pendingPrefix = '';
-                        if (chunk.toolNames?.length) {
-                            if (showToolCalls) {
-                                for (let ti = 0; ti < chunk.toolNames.length; ti++) {
-                                    const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
-                                    arrivalResponseId = `bot-${botId}-player-${followerUserId}-${crypto.randomUUID()}`;
-                                    fullMessage = toolStatus;
-                                    this.bot?.sendStreamMessage(spaceName, arrivalResponseId, toolStatus, false);
-                                    this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, toolStatus);
-                                }
-                            }
-                            arrivalResponseId = `bot-${botId}-player-${followerUserId}-${crypto.randomUUID()}`;
-                            fullMessage = '';
-                        }
                         continue;
                     }
                     if (chunk.content) {
@@ -1350,7 +1309,7 @@ export class IdleBehavior extends BaseBehavior {
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingPrefix = '';
-            for await (const chunk of this.aiService.generateBotResponseStream(
+            for await (const chunk of this.withToolSteps(this.aiService.generateBotResponseStream(
                     botId,
                     followerUserId,
                     arrivalPrompt,
@@ -1360,9 +1319,8 @@ export class IdleBehavior extends BaseBehavior {
                     context,
                     this.bot,
                     this.adminApiService
-                )) {
+                ), spaceName, botId, followerUserId, undefined)) {
                     if (chunk.reset) {
-                        const showToolCalls = chunk.toolNames?.length ? await this.shouldShowToolCalls(botId) : false;
                         if (fullMessage) {
                             const finalContent = pendingPrefix ? fullMessage.slice(0, -pendingPrefix.length) : fullMessage;
                             this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, finalContent);
@@ -1371,19 +1329,6 @@ export class IdleBehavior extends BaseBehavior {
                         fullMessage = '';
                         emotionBlockStarted = false;
                         pendingPrefix = '';
-                        if (chunk.toolNames?.length) {
-                            if (showToolCalls) {
-                                for (let ti = 0; ti < chunk.toolNames.length; ti++) {
-                                    const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
-                                    arrivalResponseId = `bot-${botId}-player-${followerUserId}-${crypto.randomUUID()}`;
-                                    fullMessage = toolStatus;
-                                    this.bot?.sendStreamMessage(spaceName, arrivalResponseId, toolStatus, false);
-                                    this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, toolStatus);
-                                }
-                            }
-                            arrivalResponseId = `bot-${botId}-player-${followerUserId}-${crypto.randomUUID()}`;
-                            fullMessage = '';
-                        }
                         continue;
                     }
                     if (chunk.content) {
@@ -1562,7 +1507,7 @@ export class IdleBehavior extends BaseBehavior {
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingPrefix = '';
-            for await (const chunk of this.aiService.generateBotResponseStream(
+            for await (const chunk of this.withToolSteps(this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
                 playerMessage,
@@ -1572,9 +1517,8 @@ export class IdleBehavior extends BaseBehavior {
                 context,
                 this.bot,
                 this.adminApiService
-            )) {
+            ), spaceName, botId, playerId, undefined)) {
                 if (chunk.reset) {
-                    const showToolCalls = chunk.toolNames?.length ? await this.shouldShowToolCalls(botId) : false;
                     // Only finalize the pre-tool bubble if there was actual text
                     if (fullMessage) {
                         // Strip any deferred '[' that was not streamed to the frontend
@@ -1585,20 +1529,6 @@ export class IdleBehavior extends BaseBehavior {
                     fullMessage = '';
                     emotionBlockStarted = false;
                     pendingPrefix = '';
-                    if (chunk.toolNames?.length) {
-                        if (showToolCalls) {
-                            for (let ti = 0; ti < chunk.toolNames.length; ti++) {
-                                const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
-                                greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
-                                fullMessage = toolStatus;
-                                this.bot?.sendStreamMessage(spaceName, greetingResponseId, toolStatus, false);
-                                // Finalize the tool-name bubble so it does not linger
-                                this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, toolStatus);
-                            }
-                        }
-                        greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
-                        fullMessage = '';
-                    }
                     continue;
                 }
                 if (chunk.content) {

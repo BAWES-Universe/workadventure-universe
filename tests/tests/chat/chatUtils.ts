@@ -102,6 +102,15 @@ class ChatUtils {
     await this.restoreEncryption(page);
   }
 
+  /**
+   * Shows a chat that may already be open. On a phone an open chat covers the list, and tapping its name in the
+   * header opens the chat's details instead, so the list is only used when the chat isn't showing.
+   */
+  public async showRoom(page: Page, roomName: string) {
+    if (await page.getByTestId("roomTitleButton").filter({ hasText: roomName }).isVisible()) return;
+    await page.getByTestId(roomName).click();
+  }
+
   public async closeChat(page: Page) {
     await page.getByTestId("closeChatButton").click();
   }

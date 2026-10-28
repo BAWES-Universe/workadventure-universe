@@ -34,6 +34,7 @@
     import ComposerLinkPreview from "../../LinkPreview/ComposerLinkPreview.svelte";
     import GifPicker from "../../Gif/GifPicker.svelte";
     import { withoutPreview } from "../../LinkPreview/ChatLinks";
+    import { isVoiceNoteFileName, type VoiceNoteDetails } from "../../VoiceNote/VoiceNote";
     import { askForNotifications, replyMoment } from "../../../Notification/Push/NotificationAsk";
     import { appendEmoji } from "./AppendEmoji";
     import { withoutBlankEdges } from "./BlankEdges";
@@ -41,9 +42,11 @@
     import MessageInput from "./MessageInput.svelte";
     import ReplyPreview from "./MessageActions/ReplyPreview.svelte";
     import { captureSendDestination, isSendDestinationOpen, spaceGenerationOf } from "./SendDestination";
-    import { mainUploadFailure, UploadFailure, uploadFailureReason } from "./UploadFailure";
+    import { mainUploadFailure, UploadFailure } from "./UploadFailure";
+    import { uploadToUploader } from "./UploadToUploader";
     import { TypingSignal } from "./TypingSignal";
     import TypingUsers from "./TypingUsers.svelte";
+    import VoiceNoteComposer from "./VoiceNote/VoiceNoteComposer.svelte";
     import type { DirectPartner } from "./DirectChat/DirectPartnerStore";
     import { IconGif, IconMoodSmile, IconPaperclip, IconSend, IconX } from "@wa-icons";
 
@@ -76,6 +79,8 @@
     export let partner: DirectPartner | undefined = undefined;
     /** Replaces "Enter your message..." when the other side can't answer now (a resting bot). */
     export let inputHint: string | undefined = undefined;
+    /** Whether the mic shows. A bot's direct messages hide it until bots can hear notes. */
+    export let allowVoiceNotes = true;
 
     let message = "";
     // Links whose preview was closed above the message box: they are sent without one.
@@ -126,7 +131,9 @@
     function uploadFailureLine(failedFiles: File[], failures: UploadFailure[]): string {
         const main = mainUploadFailure(failures) ?? new UploadFailure("other");
         const count = failedFiles.length;
-        const head = failedFiles.every((file) => file.type.startsWith("image/"))
+        const head = failedFiles.every((file) => isVoiceNoteFileName(file.name))
+            ? $LL.chat.voiceNote.notSent()
+            : failedFiles.every((file) => file.type.startsWith("image/"))
             ? $LL.chat.fileAttachment.photosNotSent({ count })
             : $LL.chat.fileAttachment.filesNotSent({ count });
         switch (main.reason) {
@@ -149,18 +156,6 @@
         if (main.reason === "other") {
             Sentry.captureMessage(`Chat upload failed: ${main.message}`, "warning");
         }
-    }
-
-    function numberField(data: unknown, key: string): number | undefined {
-        if (typeof data !== "object" || data === null || !(key in data)) return undefined;
-        const value: unknown = (data as Record<string, unknown>)[key];
-        return typeof value === "number" ? value : undefined;
-    }
-
-    function stringField(data: unknown, key: string): string | undefined {
-        if (typeof data !== "object" || data === null || !(key in data)) return undefined;
-        const value: unknown = (data as Record<string, unknown>)[key];
-        return typeof value === "string" ? value : undefined;
     }
 
     let replyMessageId: string | null = null;
@@ -255,39 +250,7 @@
                     isUploading = true;
                     // Upload all files, tracking success/failure per file
                     const uploadResults = await Promise.allSettled(
-                        pendingFiles.map(async ({ file }) => {
-                            const formData = new FormData();
-                            formData.append("file", file);
-                            if (userToken) {
-                                formData.append("userRoomToken", userToken);
-                            }
-                            let response: Response;
-                            try {
-                                response = await fetch(`${UPLOADER_URL}/upload-file`, {
-                                    method: "POST",
-                                    // The game session, so the uploader knows the file comes from somebody in the game.
-                                    headers: { Authorization: localUserStore.getAuthToken() ?? "" },
-                                    body: formData,
-                                });
-                            } catch {
-                                throw new UploadFailure("other", undefined, "network-error");
-                            }
-                            if (!response.ok) {
-                                const errData: unknown = await response.json().catch(() => ({}));
-                                const serverMessage = stringField(errData, "message");
-                                throw new UploadFailure(
-                                    uploadFailureReason(response.status, serverMessage),
-                                    response.status,
-                                    serverMessage,
-                                    numberField(errData, "maxFileSize")
-                                );
-                            }
-                            const data = await response.json();
-                            if (!data || data.length === 0) {
-                                throw new UploadFailure("other", response.status, "no-data");
-                            }
-                            return { location: data[0].location, name: data[0].name, type: file.type };
-                        })
+                        pendingFiles.map(({ file }) => uploadToUploader(file, userToken))
                     );
                     if (!isSendDestinationOpen(destination)) {
                         // The conversation ended while uploading: nothing goes to the next bubble.
@@ -797,6 +760,93 @@
         }
     }
 
+    // True from the first tap on the mic until the note is sent or deleted: the message box gives way to the recorder.
+    let voiceActive = false;
+    $: canRecordVoice =
+        allowVoiceNotes &&
+        fileAttachementEnabled &&
+        !isUploading &&
+        !(room instanceof ProximityChatRoom ? false : disabled) &&
+        isEmptyMessage(message) &&
+        files.length === 0;
+
+    // The nearby chat keeps one room while the people in it change. A note is for the people nearby when it was
+    // started: once they are gone it is dropped, never sent on to whoever is nearby next.
+    let voiceComposer: VoiceNoteComposer | undefined;
+    let voiceSpaceGeneration = spaceGenerationOf(room);
+    // False for a note started while alone: the people who arrive later are not people it was left behind by.
+    let voiceForStay = false;
+    $: if ($proximitySessions) dropVoiceNoteOfEndedStay();
+
+    function startVoiceNote() {
+        voiceSpaceGeneration = spaceGenerationOf(room);
+        voiceForStay = room instanceof ProximityChatRoom && room.currentSessionId !== undefined;
+    }
+
+    function dropVoiceNoteOfEndedStay(): boolean {
+        if (voiceSpaceGeneration === spaceGenerationOf(room)) return false;
+        voiceSpaceGeneration = spaceGenerationOf(room);
+        if (!voiceForStay) {
+            // Someone came into range of a note recorded alone: it is now for them, and ends with their stay.
+            voiceForStay = true;
+            return false;
+        }
+        if (!voiceActive) return false;
+        voiceComposer?.discard();
+        showUploadError($LL.chat.voiceNote.stayEnded());
+        return true;
+    }
+
+    /**
+     * Sends a recorded note: to the uploader for the nearby chat, into the room for the others, like a file but with the
+     * voice flag. Says whether it went; when it did not, the recorder keeps the note and the error line says how to retry.
+     */
+    async function sendVoiceNote(file: File, details: VoiceNoteDetails): Promise<boolean> {
+        stopTypingNow();
+        if (dropVoiceNoteOfEndedStay()) return false;
+        const destination = captureSendDestination(room);
+        clearUploadError();
+        isUploading = true;
+        try {
+            if (destination.room instanceof ProximityChatRoom) {
+                const userToken = gameManager.getCurrentGameScene().connection?.userRoomToken;
+                const uploaded = await uploadToUploader(file, userToken);
+                if (!isSendDestinationOpen(destination)) {
+                    // The conversation ended while uploading: shown, marked as not sent, where it was written.
+                    destination.room.addNotSentMessage("", [file.name], new Date());
+                } else {
+                    destination.room.sendMessage(
+                        "",
+                        "proximity",
+                        true,
+                        uploaded.location,
+                        "file",
+                        uploaded.type,
+                        undefined,
+                        uploaded.name
+                    );
+                }
+            } else if (destination.room instanceof MatrixChatRoom) {
+                await destination.room.sendVoiceNote(file, details);
+            } else {
+                return false;
+            }
+            analyticsClient.chatMessageSent(destination.room instanceof ProximityChatRoom ? "proximity" : "matrix");
+            // The note went as a reply when one was chosen: the next message does not reply again.
+            unselectChatMessageToReply();
+            return true;
+        } catch (error: unknown) {
+            console.error("Error sending a voice note:", error);
+            const failure =
+                error instanceof UploadFailure ? error : new UploadFailure("other", undefined, "unexpected-error");
+            showUploadError(uploadFailureLine([file], [failure]), new Map());
+            reportUploadFailure([failure], 1);
+            return false;
+        } finally {
+            isUploading = false;
+        }
+    }
+
     function formatBytes(bytes: number) {
         if (bytes === 0) return "0 Bytes";
         const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
@@ -921,86 +971,99 @@
         {/if}
         <ComposerLinkPreview {message} bind:closedLinks={closedLinkPreviews} />
     </div>
-    <MessageInput
-        onKeyDown={sendMessageOrEscapeLine}
-        onInput={onInputHandler}
-        on:pasteFiles={handleFiles}
-        {focusin}
-        {focusout}
-        bind:message
-        bind:messageInput
-        disabled={room instanceof ProximityChatRoom ? false : disabled}
-        inputClass="message-input flex-grow !m-0 px-5 py-2.5 max-h-36 overflow-auto  h-full rounded-xl wa-searchbar block text-white placeholder:text-base border-light-purple border !bg-transparent resize-none border-none outline-none shadow-none focus:ring-0"
-        dataText={inputHint ?? $LL.chat.enter()}
-        dataTestid="messageInput"
-    />
-    {#if room instanceof ProximityChatRoom}
-        <input
-            type="file"
-            bind:this={fileInputElement}
-            hidden
-            multiple
-            accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ods,.ppt,.pptx,.txt,.md,.csv,.json,.zip"
-            on:change={(e) => {
-                if (fileInputElement?.files) {
-                    handleFiles(new CustomEvent("files", { detail: fileInputElement.files }));
-                    fileInputElement.value = "";
-                }
-            }}
+    <!-- The field and its buttons give way to the recorder while a voice note is being made. -->
+    <div class="contents" class:voice-hidden={voiceActive}>
+        <MessageInput
+            onKeyDown={sendMessageOrEscapeLine}
+            onInput={onInputHandler}
+            on:pasteFiles={handleFiles}
+            {focusin}
+            {focusout}
+            bind:message
+            bind:messageInput
+            disabled={room instanceof ProximityChatRoom ? false : disabled}
+            inputClass="message-input flex-grow !m-0 px-5 py-2.5 max-h-36 overflow-auto  h-full rounded-xl wa-searchbar block text-white placeholder:text-base border-light-purple border !bg-transparent resize-none border-none outline-none shadow-none focus:ring-0"
+            dataText={inputHint ?? $LL.chat.enter()}
+            dataTestid="messageInput"
         />
-    {:else}
-        <input
-            type="file"
-            bind:this={fileInputElement}
-            hidden
-            multiple
-            on:change={(e) => {
-                if (fileInputElement?.files) {
-                    handleFiles(new CustomEvent("files", { detail: fileInputElement.files }));
-                    fileInputElement.value = "";
-                }
-            }}
-        />
-    {/if}
-    <button
-        data-testid="quickFileAttachmentButton"
-        class="p-0 m-0 h-11 w-11 flex items-center justify-center text-white hover:bg-white/10 rounded-none"
-        class:disabled:opacity-30={room instanceof ProximityChatRoom}
-        disabled={room instanceof ProximityChatRoom ? !fileAttachementEnabled || isUploading : !fileAttachementEnabled}
-        on:click={() => fileInputElement?.click()}
-        title={$LL.chat.fileAttachment.title()}
-    >
-        <IconPaperclip font-size={18} />
-    </button>
-    {#if gifPickerAvailable}
+        {#if room instanceof ProximityChatRoom}
+            <input
+                type="file"
+                bind:this={fileInputElement}
+                hidden
+                multiple
+                accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ods,.ppt,.pptx,.txt,.md,.csv,.json,.zip"
+                on:change={(e) => {
+                    if (fileInputElement?.files) {
+                        handleFiles(new CustomEvent("files", { detail: fileInputElement.files }));
+                        fileInputElement.value = "";
+                    }
+                }}
+            />
+        {:else}
+            <input
+                type="file"
+                bind:this={fileInputElement}
+                hidden
+                multiple
+                on:change={(e) => {
+                    if (fileInputElement?.files) {
+                        handleFiles(new CustomEvent("files", { detail: fileInputElement.files }));
+                        fileInputElement.value = "";
+                    }
+                }}
+            />
+        {/if}
         <button
-            data-testid="gifPickerButton"
-            class="p-0 m-0 h-11 w-11 flex items-center justify-center text-white hover:bg-white/10 rounded-none {gifPickerOpen
+            data-testid="quickFileAttachmentButton"
+            class="p-0 m-0 h-11 w-11 flex items-center justify-center text-white hover:bg-white/10 rounded-none"
+            class:disabled:opacity-30={room instanceof ProximityChatRoom}
+            disabled={room instanceof ProximityChatRoom
+                ? !fileAttachementEnabled || isUploading
+                : !fileAttachementEnabled}
+            on:click={() => fileInputElement?.click()}
+            title={$LL.chat.fileAttachment.title()}
+        >
+            <IconPaperclip font-size={18} />
+        </button>
+        {#if gifPickerAvailable}
+            <button
+                data-testid="gifPickerButton"
+                class="p-0 m-0 h-11 w-11 flex items-center justify-center text-white hover:bg-white/10 rounded-none {gifPickerOpen
+                    ? 'bg-white/10'
+                    : ''}"
+                bind:this={gifButton}
+                on:click={openCloseGifPicker}
+                aria-pressed={gifPickerOpen}
+                aria-haspopup="dialog"
+                disabled={room instanceof ProximityChatRoom ? false : disabled}
+                title={$LL.chat.gifPicker.title()}
+                aria-label={$LL.chat.gifPicker.title()}
+            >
+                <IconGif font-size={20} />
+            </button>
+        {/if}
+        <button
+            data-testid="emojiPickerButton"
+            class="p-0 m-0 h-11 w-11 flex items-center justify-center text-white hover:bg-white/10 rounded-none {emojiPickerOpen
                 ? 'bg-white/10'
                 : ''}"
-            bind:this={gifButton}
-            on:click={openCloseGifPicker}
-            aria-pressed={gifPickerOpen}
-            aria-haspopup="dialog"
-            disabled={room instanceof ProximityChatRoom ? false : disabled}
-            title={$LL.chat.gifPicker.title()}
-            aria-label={$LL.chat.gifPicker.title()}
+            bind:this={emojiButton}
+            on:click={openCloseEmojiPicker}
+            aria-pressed={emojiPickerOpen}
         >
-            <IconGif font-size={20} />
+            <IconMoodSmile font-size={18} />
         </button>
-    {/if}
-    <button
-        data-testid="emojiPickerButton"
-        class="p-0 m-0 h-11 w-11 flex items-center justify-center text-white hover:bg-white/10 rounded-none {emojiPickerOpen
-            ? 'bg-white/10'
-            : ''}"
-        bind:this={emojiButton}
-        on:click={openCloseEmojiPicker}
-        aria-pressed={emojiPickerOpen}
-    >
-        <IconMoodSmile font-size={18} />
-    </button>
-    {#if !isEmptyMessage(message) || files.length !== 0}
+    </div>
+    <VoiceNoteComposer
+        bind:this={voiceComposer}
+        bind:active={voiceActive}
+        onStart={startVoiceNote}
+        canRecord={canRecordVoice}
+        onSend={sendVoiceNote}
+        onError={(text) => showUploadError(text)}
+    />
+    {#if !voiceActive && (!isEmptyMessage(message) || files.length !== 0)}
         <button
             data-testid="sendMessageButton"
             class="send-button disabled:opacity-30 disabled:!cursor-none text-white py-0 px-3 m-0 h-full rounded-none"
@@ -1032,6 +1095,19 @@
         }
     }
     .message-bar > button {
+        width: 40px;
+        height: 40px;
+        padding: 0;
+        border-radius: 9999px;
+        display: grid;
+        place-items: center;
+        flex: none;
+    }
+    /* The field and its buttons, wrapped so the recorder can take their place. */
+    .voice-hidden {
+        display: none;
+    }
+    .message-bar > .contents > button {
         width: 40px;
         height: 40px;
         padding: 0;

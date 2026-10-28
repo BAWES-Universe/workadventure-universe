@@ -5,6 +5,8 @@
     import { formatPeopleNames, resolveTopRowState } from "../../TopRow/TopRowSummary";
     import RaisedHandsPill from "../../../../Components/Video/RaisedHandsPill.svelte";
     import { chatSheetLayoutStore } from "../../../ChatSheetStore";
+    import { openRoomDetailsIdStore } from "../../../Stores/ChatDetailsStore";
+    import { nearbyTitleLines } from "./nearbyTitle";
     import { IconMessageCircle2 } from "@wa-icons";
 
     /**
@@ -32,44 +34,47 @@
         people.map((person) => person.name),
         { two: $LL.chat.topRow.twoNames, more: $LL.chat.topRow.moreNames }
     );
-    $: isLive = state.kind === "withPeople";
     // The title always says what this chat is; who is in it right now goes on the line underneath.
-    $: title = ("areaName" in state && state.areaName) || $LL.chat.nearby.title();
-    $: subtitle = isLive
-        ? $LL.chat.nearby.talkingNow() + $LL.chat.topRow.separator() + $LL.chat.thread.withPeople({ names })
-        : state.kind === "meetingAlone"
-        ? $LL.chat.topRow.onlyYouHere()
-        : state.kind === "alone"
-        ? $LL.chat.nearby.idle()
-        : $LL.chat.nearby.title();
+    $: ({ title, subtitle, isLive } = nearbyTitleLines(state, names, $LL));
 </script>
 
 <div class="flex min-w-0 max-w-full items-center justify-start gap-2.5" data-testid="threadNow" data-state={state.kind}>
-    <div class="relative flex shrink-0 items-center" aria-hidden="true">
-        {#if stackedPeople.length > 0}
-            {#each stackedPeople as person, index (person.id)}
-                <span class={index === 0 ? "" : "-ms-3"} style:z-index={MAX_STACKED_AVATARS - index}>
-                    <TopRowAvatar pictureStore={person.pictureStore} name={person.name} />
+    <!-- The name opens the chat's details: who is here and what was shared. -->
+    <button
+        type="button"
+        class="thread-title flex min-w-0 items-center gap-2.5 px-2"
+        aria-label={$LL.chat.details.open({ name: title })}
+        data-testid="nearbyTitleButton"
+        on:click={() => openRoomDetailsIdStore.set(room.id)}
+    >
+        <div class="relative flex shrink-0 items-center" aria-hidden="true">
+            {#if stackedPeople.length > 0}
+                {#each stackedPeople as person, index (person.id)}
+                    <span class={index === 0 ? "" : "-ms-3"} style:z-index={MAX_STACKED_AVATARS - index}>
+                        <TopRowAvatar pictureStore={person.pictureStore} name={person.name} />
+                    </span>
+                {/each}
+                {#if isLive}
+                    <span
+                        class="thread-live-ring absolute -inset-1 rounded-full border-2 border-solid border-success"
+                    />
+                {/if}
+            {:else}
+                <span class="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white/70">
+                    <IconMessageCircle2 font-size="16" />
                 </span>
-            {/each}
-            {#if isLive}
-                <span class="thread-live-ring absolute -inset-1 rounded-full border-2 border-solid border-success" />
             {/if}
-        {:else}
-            <span class="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white/70">
-                <IconMessageCircle2 font-size="16" />
-            </span>
-        {/if}
-    </div>
-    <div class="flex min-w-0 flex-col items-start">
-        <div class="max-w-full truncate text-md font-bold leading-5" data-testid="roomName">{title}</div>
-        <div class="flex max-w-full items-center gap-1.5 text-xs text-white/60" data-testid="threadNowLabel">
-            {#if isLive}
-                <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-success" aria-hidden="true" />
-            {/if}
-            <span class="truncate">{subtitle}</span>
         </div>
-    </div>
+        <div class="flex min-w-0 flex-col items-start">
+            <div class="max-w-full truncate text-md font-bold leading-5" data-testid="roomName">{title}</div>
+            <div class="flex max-w-full items-center gap-1.5 text-xs text-white/60" data-testid="threadNowLabel">
+                {#if isLive}
+                    <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-success" aria-hidden="true" />
+                {/if}
+                <span class="truncate">{subtitle}</span>
+            </div>
+        </div>
+    </button>
     {#if $chatSheetLayoutStore && isLive}
         <!-- With the phone's chat sheet open, the "N raised" pill under the videos moves up here. -->
         <RaisedHandsPill compact />
@@ -77,6 +82,22 @@
 </div>
 
 <style>
+    .thread-title {
+        margin: 0;
+        padding-block: 0.25rem;
+        border-radius: 0.75rem;
+        color: inherit;
+        font: inherit;
+        text-align: start;
+        background: transparent;
+    }
+    .thread-title:hover {
+        background: rgba(255, 255, 255, 0.08);
+    }
+    .thread-title:focus-visible {
+        outline: 2px solid rgba(196, 181, 253, 0.9);
+        outline-offset: -2px;
+    }
     .thread-live-ring {
         opacity: 0.5;
     }
