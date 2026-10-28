@@ -647,9 +647,21 @@ export class MatrixDmBridge implements MatrixEventHandler {
                     .catch((error) => console.warn(`[MatrixDmBridge] Could not send an artifact card from bot ${botId}:`, error?.message ?? error));
             }
             for (const item of reply.media ?? []) {
-                await this.sendMedia(botUserId, event.room_id, item).catch((error) =>
-                    console.warn(`[MatrixDmBridge] Could not send media from bot ${botId}:`, error?.message ?? error)
+                const sent = await this.sendMedia(botUserId, event.room_id, item).then(
+                    () => true,
+                    (error) => {
+                        console.warn(`[MatrixDmBridge] Could not send media from bot ${botId}:`, error?.message ?? error);
+                        return false;
+                    }
                 );
+                // On the person's list of files once it reached them (#1508); keeping it never stops the reply
+                if (sent) {
+                    try {
+                        reply.mediaSent?.(item);
+                    } catch {
+                        // nothing to undo: the file was sent
+                    }
+                }
             }
             answered = true;
         } catch (error: any) {

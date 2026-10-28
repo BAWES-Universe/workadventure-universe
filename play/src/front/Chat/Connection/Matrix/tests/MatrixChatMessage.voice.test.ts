@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { get } from "svelte/store";
 import type { MatrixEvent, Room } from "matrix-js-sdk";
+import type { ChatMessageContent } from "../../ChatConnection";
 
 vi.mock("../MatrixMedia", () => ({
     holdMatrixMedia: vi.fn(() => ({ url: Promise.resolve("blob:https://play.test/voice"), release: vi.fn() })),
@@ -10,6 +11,7 @@ vi.mock("../MatrixChatUser", () => ({
 }));
 
 import { MatrixChatMessage } from "../MatrixChatMessage";
+import { holdMatrixMedia } from "../MatrixMedia";
 import { getMediaCaption } from "../../../Components/Room/MessageActions/messageActions";
 
 function fakeEvent(content: Record<string, unknown>): MatrixEvent {
@@ -89,5 +91,27 @@ describe("a Matrix voice message", () => {
         expect(shown.isVoice).toBe(false);
         expect(shown.voiceDuration).toBeUndefined();
         expect(shown.filename).toBe("Interview.mp3");
+    });
+});
+
+describe("a Matrix audio file that could not be fetched", () => {
+    it("says so instead of loading for ever, and tries again when shown again", async () => {
+        const message = new MatrixChatMessage(
+            fakeEvent({ msgtype: "m.audio", body: "Interview.mp3", url: "mxc://matrix.test/gone" }),
+            room
+        );
+        vi.mocked(holdMatrixMedia).mockReturnValueOnce({ url: Promise.resolve(undefined), release: vi.fn() });
+
+        let shown: ChatMessageContent | undefined;
+        const unsubscribe = message.content.subscribe((content) => (shown = content));
+        await vi.waitFor(() => expect(shown?.mediaFailed).toBe(true));
+        expect(shown?.url).toBeUndefined();
+        unsubscribe();
+
+        const again = message.content.subscribe((content) => (shown = content));
+        expect(shown?.mediaFailed).toBeUndefined();
+        await vi.waitFor(() => expect(shown?.url).toBe("blob:https://play.test/voice"));
+        expect(shown?.mediaFailed).toBeUndefined();
+        again();
     });
 });
