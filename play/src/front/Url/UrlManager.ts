@@ -11,6 +11,14 @@ export enum GameConnexionTypes {
     login,
 }
 
+/** The current room's address, without its hash. */
+let roomAddress: string | undefined;
+
+function keepRoomAddress(): void {
+    if (roomAddress === undefined || window.location.pathname === roomAddress.split("?")[0]) return;
+    history.replaceState(history.state, "", roomAddress + window.location.hash);
+}
+
 //this class is responsible with analysing and editing the game's url
 class UrlManager {
     public getGameConnexionType(): GameConnexionTypes {
@@ -42,14 +50,22 @@ class UrlManager {
         return match ? match[1] : null;
     }
 
+    /**
+     * The room's address replaces the one the page opened on instead of adding to the history: the game never goes
+     * back from room to room, and the address it opened on ("/" in the installed app) was the loading screen. On an
+     * iPhone, a page with nothing to go back to also leaves the screen's left edge to the chat's own swipe (#1553).
+     */
     public pushRoomIdToUrl(room: Room): void {
+        const search = room.search.toString();
+        roomAddress = room.id + (search ? "?" + search : "");
+        // Back or Forward onto an entry made in an earlier room (a chat step, Orbit) keeps this room's address.
+        window.removeEventListener("popstate", keepRoomAddress);
+        window.addEventListener("popstate", keepRoomAddress);
         if (window.location.pathname === room.id) return;
         //Set last room visited! (connected or nor, must to be saved in local storage and cache API)
         //use href to keep # value
         localUserStore.setLastRoomUrl(room.href).catch((e) => console.error(e));
-        const hash = window.location.hash;
-        const search = room.search.toString();
-        history.pushState({}, "WorkAdventure", room.id + (search ? "?" + search : "") + hash);
+        history.replaceState(history.state, "WorkAdventure", roomAddress + window.location.hash);
         // The app installed from here must start in this room.
         pointManifestAtRoom(room.id);
     }
@@ -69,8 +85,7 @@ class UrlManager {
     }
 
     public clearHashParameter(): void {
-        window.location.hash = "";
-        history.pushState("", document.title, window.location.pathname + window.location.search);
+        history.replaceState(history.state, document.title, window.location.pathname + window.location.search);
     }
 
     public getHashParameters(): Record<string, string> {
@@ -85,12 +100,9 @@ class UrlManager {
     }
 
     pushStartLayerNameToUrl(startLayerName: string): void {
-        if (startLayerName) {
-            window.location.hash = startLayerName;
-        } else {
-            // Remove the hash
-            history.pushState("", document.title, window.location.pathname + window.location.search);
-        }
+        // Replaced, not added, like the room's address.
+        const hash = startLayerName ? "#" + startLayerName.replace(/^#/, "") : "";
+        history.replaceState(history.state, document.title, window.location.pathname + window.location.search + hash);
     }
 }
 
