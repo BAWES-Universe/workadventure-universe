@@ -136,6 +136,11 @@ function clipped(text: string, max: number): string {
 
 type StepResult = ReplyStep['results'][number];
 
+const asideLine = (name: string, whole: number) =>
+    `[${name}: ${whole.toLocaleString('en-US')} characters, set aside to make room. Call it again if you need it.]`;
+const cutNote = (kept: number, whole: number) =>
+    `\n[Only the first ${kept.toLocaleString('en-US')} of ${whole.toLocaleString('en-US')} characters fit in this reply's room for tool results ("Room for tool results in one reply").]`;
+
 /**
  * The steps of one reply within "Room for tool results in one reply". Adding a step that would pass it sets the older
  * results aside to one line each, once, and adding goes on; a single step larger than the room keeps as much of each
@@ -161,19 +166,32 @@ export class StepRoom {
 
     /**
      * The model turned the steps down for length: set the older results aside, then cut the newest step, by `free`
-     * characters when the error said how far over it went, else to half of what it still has. False when nothing more
-     * can be made smaller.
+     * characters when the error said how far over it went (its notes counted), else to half of what it still has.
+     * False when the steps could not be made any smaller, so asking again always ends.
      */
     makeRoom(free?: number): boolean {
-        const goal = free !== undefined ? this.size() - free : undefined;
+        const before = this.size();
+        const goal = free !== undefined ? before - free : undefined;
         const setAside = this.setAside(this.steps.slice(0, -1));
-        if (setAside && (goal === undefined || this.size() <= goal)) return true;
+        if (setAside && (goal === undefined || this.size() <= goal)) return this.size() < before;
         const newest = this.steps.at(-1);
-        if (!newest) return setAside;
-        const kept = newest.results.reduce((total, result) => total + (this.cut.get(result)?.kept ?? result.content.length), 0);
-        const others = this.size() - sizeOf(newest);
-        const want = goal === undefined ? Math.floor(kept / 2) : Math.min(kept - 1, goal - others);
-        return this.fit(newest, Math.max(0, want)) || setAside;
+        if (newest) {
+            const kept = newest.results.reduce((total, result) => total + (this.cut.get(result)?.kept ?? result.content.length), 0);
+            const others = this.size() - sizeOf(newest);
+            const notes = this.notesOf(newest);
+            const want = Math.max(0, goal === undefined ? Math.floor(kept / 2) : Math.min(kept - 1, goal - others - notes));
+            // Only when it makes the steps smaller: a short result cut to half would only gain a note
+            if (others + want + notes < this.size()) this.fit(newest, want);
+        }
+        return this.size() < before;
+    }
+
+    /** The most characters the notes of this step's results take once they are cut. */
+    private notesOf(step: ReplyStep): number {
+        return step.results.reduce((total, result) => {
+            const whole = this.cut.get(result)?.whole.length ?? result.content.length;
+            return total + cutNote(whole, whole).length;
+        }, 0);
     }
 
     private setAside(steps: ReplyStep[]): boolean {
@@ -182,7 +200,10 @@ export class StepRoom {
             for (const result of step.results) {
                 if (this.setAsideResults.has(result)) continue;
                 const whole = this.cut.get(result)?.whole.length ?? result.content.length;
-                result.content = `[${result.name}: ${whole.toLocaleString('en-US')} characters, set aside to make room. Call it again if you need it.]`;
+                const line = asideLine(result.name, whole);
+                // A result shorter than its line stays as it is: setting it aside would take more room
+                if (line.length >= result.content.length) continue;
+                result.content = line;
                 this.setAsideResults.add(result);
                 changed = true;
             }
@@ -197,7 +218,7 @@ export class StepRoom {
             const cut = this.cut.get(result) ?? { whole: result.content, kept: result.content.length };
             if (cut.kept <= each) continue;
             const kept = clipped(cut.whole, each);
-            result.content = `${kept}\n[Only the first ${kept.length.toLocaleString('en-US')} of ${cut.whole.length.toLocaleString('en-US')} characters fit in this reply's room for tool results ("Room for tool results in one reply").]`;
+            result.content = `${kept}${cutNote(kept.length, cut.whole.length)}`;
             this.cut.set(result, { whole: cut.whole, kept: kept.length });
             changed = true;
         }

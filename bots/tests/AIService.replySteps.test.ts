@@ -134,6 +134,12 @@ describe('AIService – a reply keeps its own steps', () => {
         }
     }
 
+    /** A service whose tool results are long, as a web page is: room can be made by cutting them. */
+    const withLongResults = (service: any) => {
+        vi.spyOn(service, 'formatToolResult').mockImplementation((r: any) => `${r.name}: ${'x'.repeat(4000)}`);
+        return service;
+    };
+
     const reply = (service: any, message = 'where are you?') =>
         drain(service.generateBotResponseStream('bot-1', 42, message, 'You are a bot.', 'universe-ai', '!dm:matrix.test', '', undefined, undefined, undefined, undefined, 'dm'));
     const said = (chunks: any[]) => chunks.map((chunk) => chunk.content).join('');
@@ -170,10 +176,10 @@ describe('AIService – a reply keeps its own steps', () => {
         // On a person's own key, where the bot server tells Orbit how each reply went
         const { admin, memory } = buildMocks(LIMITS, 'own-key');
         answersWith(calls('call_a'), tooLong, says('I am by the door.'));
-        const chunks = await reply(new AIService(memory, admin, 'http://admin.local'));
+        const chunks = await reply(withLongResults(new AIService(memory, admin, 'http://admin.local')));
         expect(mockGenerateStream).toHaveBeenCalledTimes(3);
         expect(seen[1].steps[0].results[0].content).not.toContain('Only the first');
-        expect(seen[2].steps[0].results[0].content).toMatch(/\n\[Only the first \d+ of \d+ characters fit/);
+        expect(seen[2].steps[0].results[0].content).toMatch(/\n\[Only the first [\d,]+ of [\d,]+ characters fit/);
         expect(said(chunks)).toContain('I am by the door.');
         await vi.waitFor(() => expect(admin.reportAiHealth).toHaveBeenCalled());
         expect(admin.reportAiHealth).toHaveBeenLastCalledWith('bot-1', { ok: true });
@@ -185,13 +191,13 @@ describe('AIService – a reply keeps its own steps', () => {
             yield { content: '', done: true, metadata: { tokensUsed: 0, latency: 10, error: true, errorStatus: 400, tooLong: true, context: { limit: 9000, asked: 10000 } } };
         };
         answersWith(calls('call_a'), over, says('I am by the door.'));
-        await reply(new AIService(memory, admin, 'http://admin.local'));
+        await reply(withLongResults(new AIService(memory, admin, 'http://admin.local')));
         expect(mockGenerateStream).toHaveBeenCalledTimes(3);
         const before = seen[1].steps[0].results[0].content.length;
         const after = seen[2].steps[0].results[0].content;
         expect(after).toMatch(/\n\[Only the first \d[\d,]* of [\d,]+ characters fit/);
-        // Not halved blind: cut by what it went over, which for this short result is all but its start
-        expect(after.length).toBeLessThan(before + 200);
+        // Not halved blind: cut by what it went over
+        expect(after.length).toBeLessThan(before);
     });
 
     it("never marks a person's key failing for a rate limit its own asking again caused", async () => {
@@ -201,7 +207,7 @@ describe('AIService – a reply keeps its own steps', () => {
         };
         answersWith(calls('call_a'), tooLong);
         mockGenerateStream.mockImplementation(limited);
-        const chunks = await reply(new AIService(memory, admin, 'http://admin.local'));
+        const chunks = await reply(withLongResults(new AIService(memory, admin, 'http://admin.local')));
         expect(chunks.at(-1).done).toBe(true);
         await new Promise((resolve) => setTimeout(resolve, 20));
         expect(admin.reportAiHealth).not.toHaveBeenCalled();

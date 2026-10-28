@@ -85,16 +85,34 @@ describe("a reply's room for tool results", () => {
     });
 
     it('sets the older results aside, once, when a step would pass it, and keeps adding', () => {
-        const room = new StepRoom(100);
-        room.add(step(1, 'a'.repeat(60)));
-        room.add(step(2, 'b'.repeat(60)));
-        expect(room.steps[0]!.results[0]!.content).toBe('[read_web_page: 60 characters, set aside to make room. Call it again if you need it.]');
-        expect(room.steps[1]!.results[0]!.content).toBe('b'.repeat(60));
-        room.add(step(3, 'c'.repeat(60)));
+        const room = new StepRoom(300);
+        room.add(step(1, 'a'.repeat(200)));
+        room.add(step(2, 'b'.repeat(200)));
+        expect(room.steps[0]!.results[0]!.content).toBe('[read_web_page: 200 characters, set aside to make room. Call it again if you need it.]');
+        expect(room.steps[1]!.results[0]!.content).toBe('b'.repeat(200));
+        room.add(step(3, 'c'.repeat(200)));
         // Set aside once: the first line stays as it was
-        expect(room.steps[0]!.results[0]!.content).toBe('[read_web_page: 60 characters, set aside to make room. Call it again if you need it.]');
-        expect(room.steps[1]!.results[0]!.content).toContain('60 characters, set aside');
+        expect(room.steps[0]!.results[0]!.content).toBe('[read_web_page: 200 characters, set aside to make room. Call it again if you need it.]');
+        expect(room.steps[1]!.results[0]!.content).toContain('200 characters, set aside');
         expect(room.steps).toHaveLength(3);
+    });
+
+    it('leaves a result shorter than its set-aside line as it is, and stops when nothing gets smaller', () => {
+        const room = new StepRoom(100_000);
+        room.add(step(1, 'short'));
+        room.add(step(2, 'tiny'));
+        // Cutting these would only add a note: nothing gets smaller, so the model is not asked again
+        expect(room.makeRoom()).toBe(false);
+        expect(room.makeRoom(50)).toBe(false);
+        expect(room.steps.map((s) => s.results[0]!.content)).toEqual(['short', 'tiny']);
+    });
+
+    it('counts the note a cut adds, so a small overage still frees what was asked in one go', () => {
+        const room = new StepRoom(100_000);
+        room.add(step(1, 'b'.repeat(4000)));
+        const before = room.size();
+        expect(room.makeRoom(50)).toBe(true);
+        expect(room.size()).toBeLessThanOrEqual(before - 50);
     });
 
     it('keeps as much of one step larger than the room as fits, and says so', () => {
@@ -118,7 +136,7 @@ describe("a reply's room for tool results", () => {
         let rounds = 0;
         while (room.makeRoom()) rounds++;
         expect(rounds).toBeLessThan(10);
-        expect(room.steps[1]!.results[0]!.content).toMatch(/^b\n\[Only the first 1 of 400 characters fit/);
+        expect(room.steps[1]!.results[0]!.content).toMatch(/^b{1,9}\n\[Only the first \d of 400 characters fit/);
     });
 
     it('cuts by how far over it went when the error said, settling in one go', () => {
