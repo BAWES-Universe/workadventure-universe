@@ -155,6 +155,8 @@ export interface AIStreamChunk {
     /** How the calls of the last round ended: sent once they ran, before the bot carries on. */
     toolStepResults?: ToolStepResult[];
     toolCalls?: ToolCall[]; // Tool calls requested by AI
+    /** On the done chunk: the model's reasoning for this call, when its provider streams it (DeepSeek thinking). It goes back with the reply's steps. */
+    reasoning?: string;
     metadata?: {
         tokensUsed?: number;
         promptTokens?: number;
@@ -174,6 +176,10 @@ export interface AIStreamChunk {
         cancelled?: boolean;
         errorStatus?: number; // HTTP status the provider answered with when the call failed (401/403 = the key was rejected)
         truncated?: boolean; // true when the provider hit finish_reason='length' (max_tokens cap)
+        /** The provider turned the call down as longer than the model takes (its context window). */
+        tooLong?: boolean;
+        /** The tokens the model takes and was asked, when the "too long" error says both. */
+        context?: { limit: number; asked: number };
         /** Why the provider ended the call ('stop', 'length', 'tool_calls', ...), when it said. */
         finishReason?: string;
         /** What the provider said when the call failed, short and without logins (see providerErrorText). */
