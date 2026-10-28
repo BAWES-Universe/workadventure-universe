@@ -281,6 +281,7 @@ describe('the file tools in AIService', () => {
         isInSpace: vi.fn(() => true),
         getPersonForArtifacts: vi.fn(() => ({ signedIn: true, identifier: 'uuid-alice', name: 'Alice' })),
         sendAudio: vi.fn(async () => 'https://cdn.example.com/new.mp3'),
+        markStored: vi.fn(),
         sendImage: vi.fn(),
     });
     const withFiles = (memory?: Record<string, unknown>) => {
@@ -343,6 +344,8 @@ describe('the file tools in AIService', () => {
         expect(found.result.items).toHaveLength(1);
         // No asker: it is already on the person's list
         expect(bot.sendAudio).toHaveBeenCalledWith('bubble-1', 'https://cdn.example.com/song.mp3');
+        // Already in storage: sent as it is, not downloaded and uploaded again
+        expect(bot.markStored).toHaveBeenCalledWith('https://cdn.example.com/song.mp3');
         expect(sent.result).toMatchObject({ sent: true });
     });
 
