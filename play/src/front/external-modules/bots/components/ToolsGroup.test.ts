@@ -14,7 +14,7 @@ import { loadLocale } from "../../../../i18n/i18n-util.sync";
 import { setLocale } from "../../../../i18n/i18n-svelte";
 import type { BotAiOptions, BotData } from "../types";
 import ToolsGroup from "./page/ToolsGroup.svelte";
-import { ceilingFor, limitChips, tokensLabel } from "./page/replyLimits";
+import { ceilingFor, choicesUnder, limitChips, modelCapFor, tokensLabel } from "./page/replyLimits";
 
 const options = (over: Partial<BotAiOptions> = {}): BotAiOptions => ({
     current: "universe-ai",
@@ -173,5 +173,118 @@ describe("the bot page's Tools group: longest reply and steps (Orbit #666)", () 
         await tick();
         expect(chips("Longest reply").map((chip) => chip.textContent?.trim())).toEqual(["Key's limit · 8k", "4k"]);
         expect(chips("Steps in one reply").map((chip) => chip.textContent?.trim())).toEqual(["Key's limit · 12", "10"]);
+    });
+
+    it("follows the key Orbit says the bot is on when the bot has none saved (CodeRabbit on #1524)", async () => {
+        const bot = { id: "b1", name: "Micho" } as BotData;
+        await mount(bot, options({ current: "key-1", keys: [myKey] }));
+        expect(chips("Longest reply").map((chip) => chip.textContent?.trim())).toEqual(["Key's limit · 8k", "4k"]);
+        expect(chips("Steps in one reply").map((chip) => chip.textContent?.trim())).toEqual(["Key's limit · 12", "10"]);
+    });
+});
+
+describe("a model that writes less than the key allows (Orbit #673)", () => {
+    let target: HTMLElement;
+    let destroy: () => void = () => undefined;
+
+    beforeAll(() => {
+        loadLocale("en-US");
+        setLocale("en-US");
+    });
+
+    beforeEach(() => {
+        target = document.createElement("div");
+        document.body.append(target);
+    });
+
+    afterEach(() => {
+        destroy();
+        destroy = () => undefined;
+        document.body.innerHTML = "";
+    });
+
+    const openRouter: BotAiOptions["keys"][number] = {
+        ...myKey,
+        limits: { reply: 32000, steps: 30 },
+        model: "deepseek/deepseek-v4-flash",
+        models: [
+            { id: "deepseek/deepseek-v4-flash", tools: true },
+            { id: "openai/gpt-4o-mini", tools: true, output: 16384 },
+            { id: "x/huge", output: 128000 },
+        ],
+    };
+    const labels = () =>
+        [
+            ...(target.querySelector('[role=radiogroup][aria-label="Longest reply"]')?.querySelectorAll("button") ??
+                []),
+        ].map((chip) => chip.textContent?.trim());
+    const note = () => target.querySelector('[data-testid="bot-model-stops"]')?.textContent?.trim();
+
+    async function mount(bot: BotData, aiOptions: BotAiOptions) {
+        const component = new ToolsGroup({
+            target,
+            props: { bot, open: true, onToggle: vi.fn(), onChange: vi.fn(), aiOptions },
+        });
+        destroy = () => component.$destroy();
+        await tick();
+        return component;
+    }
+
+    it("makes the model's limit the first chip, drops the chips that are not clearly lower, and says why", async () => {
+        const bot = { id: "b1", name: "Scout", aiProviderRef: "key-1", aiModel: "openai/gpt-4o-mini" } as BotData;
+        const component = await mount(bot, options({ keys: [openRouter] }));
+        expect(labels()).toEqual(["Model's limit · 16.4k", "8k", "4k"]);
+        expect(note()).toBe("gpt-4o-mini writes up to 16.4k tokens, so this bot stops there. The key allows 32k.");
+
+        // Another model on the key: one with no known limit, then one that writes more than the key allows
+        component.$set({ bot: { ...bot, aiModel: "deepseek/deepseek-v4-flash" } });
+        await tick();
+        expect(labels()).toEqual(["Key's limit · 32k", "16k", "8k", "4k"]);
+        expect(note()).toBeUndefined();
+        component.$set({ bot: { ...bot, aiModel: "x/huge" } });
+        await tick();
+        expect(labels()[0]).toBe("Key's limit · 32k");
+        expect(note()).toBeUndefined();
+    });
+
+    it("follows the model of someone else's key the bot is on, and says nothing on Universe AI", async () => {
+        const theirs = {
+            id: "key-9",
+            name: "Khalid's",
+            ownerName: "Khalid",
+            mine: false,
+            status: "working" as const,
+            ifDown: "universe-ai" as const,
+            limits: { reply: 32000, steps: 30 },
+            model: "openai/gpt-4o-mini",
+            output: 16384,
+        };
+        const component = await mount(
+            { id: "b1", name: "Scout", aiProviderRef: "key-9" } as BotData,
+            options({ current: "key-9", currentKey: theirs })
+        );
+        expect(labels()[0]).toBe("Model's limit · 16.4k");
+        component.$set({ bot: { id: "b1", name: "Scout", aiProviderRef: "universe-ai" } as BotData });
+        await tick();
+        expect(labels()[0]).toBe("Key's limit · 32k");
+        expect(note()).toBeUndefined();
+    });
+
+    it("finds the model's limit from the key's models, its check model, or not at all", () => {
+        expect(
+            modelCapFor(options({ keys: [openRouter] }), { aiProviderRef: "key-1", aiModel: "openai/gpt-4o-mini" })
+        ).toEqual({
+            model: "openai/gpt-4o-mini",
+            tokens: 16384,
+        });
+        const unlisted = { ...myKey, model: "gpt-4o-mini", output: 16384, models: null };
+        expect(modelCapFor(options({ keys: [unlisted] }), { aiProviderRef: "key-1", aiModel: null })).toEqual({
+            model: "gpt-4o-mini",
+            tokens: 16384,
+        });
+        expect(modelCapFor(options(), { aiProviderRef: "universe-ai" })).toBeNull();
+        expect(modelCapFor(null, { aiProviderRef: "key-1" })).toBeNull();
+        expect(choicesUnder(16384)).toEqual([8000, 4000]);
+        expect(choicesUnder(20000)).toEqual([16000, 8000, 4000]);
     });
 });

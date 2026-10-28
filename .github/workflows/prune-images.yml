@@ -1,0 +1,50 @@
+name: Prune old images
+
+# Keeps the GitHub package list clean (#741): every week the dev builds older than the newest
+# KEEP are deleted from each Universe image. Release images are never touched.
+# It only lists what it would delete until the repository variable PRUNE_IMAGES_LIVE is `true`.
+
+on:
+  schedule:
+    - cron: '17 3 * * 0'
+  workflow_dispatch:
+    inputs:
+      keep:
+        description: 'Dev builds to keep per image'
+        default: '10'
+      live:
+        description: 'Delete for real (true) or only list (false)'
+        default: 'false'
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - play-universe
+          - back-universe
+          - map-storage-universe
+          - uploader-universe
+          - discord-bot-universe
+          - bot-server-universe
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Prune ${{ matrix.package }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          PACKAGE: ${{ matrix.package }}
+          KEEP: ${{ github.event.inputs.keep || '10' }}
+          LIVE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.live || vars.PRUNE_IMAGES_LIVE || 'false' }}
+        run: bash .github/scripts/prune-images.sh "$OWNER" "$PACKAGE" "$KEEP" "$LIVE"

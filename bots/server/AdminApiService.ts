@@ -119,6 +119,51 @@ export class ArtifactCallError extends Error {
  * super admin's "Time to save" (Orbit #666), passed with the call; this is for a call without it (a read or a list).
  */
 const ARTIFACT_TIMEOUT_MS = 30_000;
+const BOT_FILE_TIMEOUT_MS = 15_000;
+
+/** A file to add to the bot's list (Orbit's POST /api/bot-files, #1508). */
+export interface BotFileAdd {
+    source: 'person' | 'bot';
+    kind: 'image' | 'audio' | 'video' | 'document' | 'other';
+    name: string;
+    mimeType?: string | null;
+    sizeBytes?: number | null;
+    store: { bucket: string; fileId: string } | { url: string };
+    line?: string | null;
+    madeWith?: string | null;
+    madePrompt?: string | null;
+    lengthSeconds?: number | null;
+    pages?: number | null;
+}
+
+/** A file in the bot's list as Orbit answers it. */
+export interface BotFileSummary {
+    ref: string;
+    name: string;
+    kind: string;
+    source: string;
+    mimeType: string | null;
+    line: string | null;
+    lengthSeconds: number | null;
+    pages: number | null;
+    mine: boolean;
+    inThisChat: boolean;
+    text: { state: string; chars: number };
+    createdAt: string;
+}
+
+/** One page of Orbit's search (POST /api/bot-files/find): files, and artifacts as their own kind of item. */
+export interface BotFilesFound {
+    items: (
+        | ({ type: 'file'; made: { with: string; prompt: string | null; promptChars: number } | null } & BotFileSummary)
+        | { type: 'artifact'; id: string; title: string; kind: string; makerName: string; version: number; mine: boolean; inThisChat: boolean; updatedAt: string }
+    )[];
+    total: number;
+    page: number;
+    pages: number;
+    matched: 'all' | 'any' | null;
+    hidden: boolean;
+}
 
 /** What people do with a bot, as Orbit's check names it. */
 export type BotAccessAction = 'chat' | 'dm' | 'summon';
@@ -1083,7 +1128,8 @@ export class AdminApiService {
         try {
             const response: AxiosResponse<T> = await axios.post(resolveAdminApiEndpoint(this.adminApiUrl, path), body, {
                 headers: { Authorization: `Bearer ${botServiceToken}`, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-                timeout: timeoutMs,
+                // 0 would mean no time limit at all to axios
+                timeout: timeoutMs > 0 ? timeoutMs : ARTIFACT_TIMEOUT_MS,
                 maxBodyLength: Infinity,
             });
             return response.data;
@@ -1130,9 +1176,65 @@ export class AdminApiService {
         return this.artifactCall(`api/artifacts/${encodeURIComponent(id)}/read`, { ...call, ...(version ? { version } : {}) });
     }
 
-    /** The artifacts made in this chat that the person may open, the most recently changed first. */
+    /** The artifacts made in this chat that the person may open, plus their own from other chats, the most recently changed first. */
     listArtifactsInChat(call: ArtifactCall): Promise<{ artifacts: ArtifactSummary[]; hidden: boolean }> {
         return this.artifactCall('api/artifacts/in-chat', call);
+    }
+
+    /**
+     * One call to Orbit's routes for files in bot chats (#1508), with the bot service token. A refusal comes back as an
+     * ArtifactCallError with Orbit's own code and line; anything that stops Orbit answering is `orbit_unavailable`. No
+     * file name or text is ever logged. `report` false keeps a call made before every reply out of Sentry, so a slow
+     * Orbit doesn't send one event per reply.
+     */
+    private async botFileCall<T>(path: string, body: object, timeoutMs: number, report = true): Promise<T> {
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!this.isConfigured() || !botServiceToken) {
+            throw new ArtifactCallError('orbit_unavailable', 503, 'Orbit is not set up for files.');
+        }
+        try {
+            const response: AxiosResponse<T> = await axios.post(resolveAdminApiEndpoint(this.adminApiUrl, path), body, {
+                headers: { Authorization: `Bearer ${botServiceToken}`, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+                timeout: timeoutMs,
+                maxBodyLength: Infinity,
+            });
+            return response.data;
+        } catch (error) {
+            const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+            const data = axios.isAxiosError(error) ? error.response?.data : undefined;
+            if (status && status < 500 && data && typeof data.error === 'string') {
+                throw new ArtifactCallError(data.error, status, typeof data.message === 'string' ? data.message : data.error);
+            }
+            // An Orbit without the routes yet (it ships first, but a bot server can talk to an older one)
+            if (status === 404) throw new ArtifactCallError('not_available', 404, 'Orbit does not keep chat files yet.');
+            if (report) Sentry.captureException(new Error(`Bot file call ${path} failed (${status ?? 'no answer'})`), { tags: { area: 'bot-files' } });
+            throw new ArtifactCallError('orbit_unavailable', status ?? 503, 'Orbit could not be reached.');
+        }
+    }
+
+    /** Add a file someone sent the bot, or the bot sent them. Orbit gives it its short id. */
+    addBotFile(call: ArtifactCall, file: BotFileAdd, timeoutMs = BOT_FILE_TIMEOUT_MS): Promise<{ file: BotFileSummary; hidden: boolean }> {
+        return this.botFileCall('api/bot-files', { ...call, ...file }, timeoutMs);
+    }
+
+    /** Keep one piece of a file's text (or that it could not be read). Pieces go in order, each from where the last ended. */
+    keepBotFileText(
+        call: ArtifactCall,
+        ref: string,
+        piece: { text: string; from: number; last: boolean } | { failed: true },
+        timeoutMs = BOT_FILE_TIMEOUT_MS
+    ): Promise<{ file: BotFileSummary; hidden: boolean }> {
+        return this.botFileCall('api/bot-files/text', { ...call, ref, ...piece }, timeoutMs);
+    }
+
+    /** Files and artifacts this person may use with the bot, newest first (or those that match `words`). */
+    findBotFiles(
+        call: ArtifactCall,
+        find: { limit: number; words?: string | null; kinds?: string[] | null; source?: 'person' | 'bot' | null; page?: number | null },
+        timeoutMs = BOT_FILE_TIMEOUT_MS,
+        report = true
+    ): Promise<BotFilesFound> {
+        return this.botFileCall('api/bot-files/find', { ...call, ...find }, timeoutMs, report);
     }
 
     /**

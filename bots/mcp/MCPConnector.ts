@@ -41,6 +41,8 @@ export interface McpToolDefinition {
 
 interface CachedTools {
     tools: McpToolDefinition[];
+    /** Each tool's readable title from tools/list (MCP `title`, or `annotations.title`), by tool name. */
+    titles: Record<string, string>;
     cachedAt: number;
     serverId: string;
 }
@@ -467,6 +469,8 @@ export class MCPConnector {
                 authType: string;
                 authConfig?: string;
                 headers?: Record<string, string>;
+                /** The tool server's own readable name for the tool, when it gave one (shown in the steps line). */
+                title?: string;
             }
         >;
     }> {
@@ -478,6 +482,8 @@ export class MCPConnector {
                 authType: string;
                 authConfig?: string;
                 headers?: Record<string, string>;
+                /** The tool server's own readable name for the tool, when it gave one (shown in the steps line). */
+                title?: string;
             }
         >();
 
@@ -540,7 +546,7 @@ export class MCPConnector {
         const seenToolNames = new Set<string>();
 
         // Helper to push a tool def only if its name is unique
-        function addUniqueTool(tool: McpToolDefinition, server: McpServerConfig) {
+        function addUniqueTool(tool: McpToolDefinition, server: McpServerConfig, title?: string) {
             if (!seenToolNames.has(tool.function.name)) {
                 seenToolNames.add(tool.function.name);
                 allTools.push(tool);
@@ -550,6 +556,7 @@ export class MCPConnector {
                     authType: server.authType,
                     authConfig: server.authConfig,
                     headers: server.headers,
+                    ...(title ? { title } : {}),
                 });
             }
         }
@@ -563,7 +570,7 @@ export class MCPConnector {
 
             if (cached && Date.now() < cached.cachedAt + CACHE_TTL) {
                 for (const tool of cached.tools) {
-                    addUniqueTool(tool, server);
+                    addUniqueTool(tool, server, cached.titles[tool.function.name]);
                 }
                 return;
             }
@@ -589,15 +596,24 @@ export class MCPConnector {
                     })
                 );
 
+                const titles: Record<string, string> = {};
+                for (const tool of response.result.tools) {
+                    const title = tool?.title ?? tool?.annotations?.title;
+                    if (typeof tool?.name === 'string' && typeof title === 'string' && title.trim()) {
+                        titles[tool.name] = title.trim();
+                    }
+                }
+
                 // Cache the result
                 toolListCache.set(cacheKey, {
                     tools: toolDefs,
+                    titles,
                     cachedAt: Date.now(),
                     serverId: server.id,
                 });
 
                 for (const toolDef of toolDefs) {
-                    addUniqueTool(toolDef, server);
+                    addUniqueTool(toolDef, server, titles[toolDef.function.name]);
                 }
             } else {
                 console.warn(
@@ -702,6 +718,18 @@ export class MCPConnector {
             const errMsg = response.error.message || JSON.stringify(response.error);
             console.warn(`[MCPConnector] Tool ${toolName} returned error: ${errMsg}`);
             return { error: `Tool error: ${errMsg}` };
+        }
+
+        // A tool that ran but failed answers with isError and its reason as content: an error like the ones above
+        if (response.result?.isError === true) {
+            const content: any[] = Array.isArray(response.result.content) ? response.result.content : [];
+            const why = content
+                .filter((item) => item?.type === 'text' && typeof item.text === 'string')
+                .map((item) => item.text)
+                .join(' ')
+                .trim();
+            console.warn(`[MCPConnector] Tool ${toolName} failed: ${why || 'no reason given'}`);
+            return { error: `Tool error: ${why || `${toolName} failed`}` };
         }
 
         if (response.result && Array.isArray(response.result.content)) {

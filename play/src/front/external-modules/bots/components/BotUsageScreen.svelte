@@ -111,16 +111,19 @@
 </script>
 
 <div class="us-screen" data-testid="bot-usage-screen-{screen}">
-    <PageSegment
-        label={text.range()}
-        value={range}
-        options={[
-            { value: "today", label: text.today() },
-            { value: "7d", label: text.week() },
-            { value: "30d", label: text.month() },
-        ]}
-        onPick={pick}
-    />
+    <!-- Nobody has ever chatted with the bot: every range is zero, so there is nothing to switch -->
+    {#if !usage || usage.hasUsage}
+        <PageSegment
+            label={text.range()}
+            value={range}
+            options={[
+                { value: "today", label: text.today() },
+                { value: "7d", label: text.week() },
+                { value: "30d", label: text.month() },
+            ]}
+            onPick={pick}
+        />
+    {/if}
     {#if !usage}
         {#if state?.status === "failed"}
             <p class="us-fail" role="alert">
@@ -130,6 +133,9 @@
                 >
             </p>
         {/if}
+    {:else if screen === "people" && !usage.hasUsage}
+        <p class="us-none" data-testid="bot-usage-people-fresh">{text.peopleFresh({ name })}</p>
+        <PageNote>{text.namesOnly()}</PageNote>
     {:else if screen === "people"}
         <label class="us-search">
             <IconSearch font-size="16" />
@@ -173,7 +179,8 @@
             </div>
         {/if}
         <div class="us-rows">
-            {#each usage.ranOn as line (line.kind + (line.name ?? ""))}
+            <!-- Keyed by place: two lines can share a kind and name (two deleted keys, or Universe AI before and after a key) -->
+            {#each usage.ranOn as line, index (index)}
                 <div class="us-row">
                     <span class="us-rowtx"><b>{ranOnTitle(line)}</b><span>{ranOnLine(line, usage)}</span></span>
                     {#if line.kind === "universe-ai"}
@@ -185,7 +192,7 @@
                     {/if}
                 </div>
             {:else}
-                <p class="us-none">{text.ranOnNone()}</p>
+                <p class="us-none">{usage.hasUsage ? text.ranOnNone() : text.ranOnFreshLine({ name })}</p>
             {/each}
         </div>
         <PageNote>{text.costNote()}</PageNote>

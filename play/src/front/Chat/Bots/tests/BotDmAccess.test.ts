@@ -1,6 +1,6 @@
 import { get } from "svelte/store";
 import { describe, expect, it, vi } from "vitest";
-import { BotDmAccessCache, DM_ACCESS_TTL_MS } from "../BotDmAccess";
+import { BotDmAccessCache, DM_ACCESS_RETRIES, DM_ACCESS_RETRY_MS, DM_ACCESS_TTL_MS } from "../BotDmAccess";
 
 const settle = () =>
     new Promise<void>((resolve) => {
@@ -71,5 +71,62 @@ describe("BotDmAccessCache", () => {
         const cache = new BotDmAccessCache(yes);
         await cache.get("b1");
         expect(get(cache.store("b1"))).toBe(true);
+    });
+
+    describe("an open store whose answer could not be found out", () => {
+        const flush = async () => {
+            await vi.advanceTimersByTimeAsync(0);
+        };
+
+        it("asks again a few seconds later and then shows the answer", async () => {
+            vi.useFakeTimers();
+            try {
+                const ask = vi
+                    .fn<(botId: string) => Promise<boolean | null>>()
+                    .mockResolvedValueOnce(null)
+                    .mockResolvedValueOnce(true);
+                const cache = new BotDmAccessCache(ask, () => 0);
+                const seen: boolean[] = [];
+                const stop = cache.store("b1").subscribe((value) => seen.push(value));
+                await flush();
+                expect(ask).toHaveBeenCalledTimes(1);
+                expect(seen).toEqual([false]);
+                await vi.advanceTimersByTimeAsync(DM_ACCESS_RETRY_MS);
+                expect(ask).toHaveBeenCalledTimes(2);
+                expect(seen).toEqual([false, true]);
+                stop();
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it("gives up after a few tries, so a bot that never answers is not asked all day", async () => {
+            vi.useFakeTimers();
+            try {
+                const ask = vi.fn<(botId: string) => Promise<boolean | null>>().mockResolvedValue(null);
+                const cache = new BotDmAccessCache(ask, () => 0);
+                const stop = cache.store("b1").subscribe(() => undefined);
+                await vi.advanceTimersByTimeAsync(DM_ACCESS_RETRY_MS * (DM_ACCESS_RETRIES + 5));
+                expect(ask).toHaveBeenCalledTimes(1 + DM_ACCESS_RETRIES);
+                stop();
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it("stops asking when the screen is closed", async () => {
+            vi.useFakeTimers();
+            try {
+                const ask = vi.fn<(botId: string) => Promise<boolean | null>>().mockResolvedValue(null);
+                const cache = new BotDmAccessCache(ask, () => 0);
+                const stop = cache.store("b1").subscribe(() => undefined);
+                await flush();
+                stop();
+                await vi.advanceTimersByTimeAsync(DM_ACCESS_RETRY_MS * 5);
+                expect(ask).toHaveBeenCalledTimes(1);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
     });
 });
