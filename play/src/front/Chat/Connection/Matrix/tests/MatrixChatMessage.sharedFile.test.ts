@@ -73,6 +73,20 @@ describe("what a Matrix file message shares", () => {
         expect(voice.sharedFile?.voice).toBe(true);
     });
 
+    it("still tells a voice message whose file type can't play inline", () => {
+        const voice = new MatrixChatMessage(
+            fakeEvent({
+                msgtype: "m.audio",
+                body: "Voice message.ogg",
+                url: "mxc://matrix.test/v",
+                info: { mimetype: "application/ogg" },
+                "org.matrix.msc3245.voice": {},
+            }),
+            room
+        );
+        expect(voice.sharedFile?.voice).toBe(true);
+    });
+
     it("has nothing for a file message that was deleted", () => {
         const deleted = new MatrixChatMessage(
             fakeEvent({ msgtype: "m.file", body: "Q4 budget.xlsx", url: "mxc://matrix.test/f" }, true),
