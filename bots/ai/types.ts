@@ -68,6 +68,9 @@ export const BOT_LIMIT_DEFAULTS: BotLimits = {
     guard: true,
 };
 
+/** Limits where 0 means something: keep every version, never carry on by itself. A 0 anywhere else (a save with no time limit) is broken. */
+const ZERO_ALLOWED = new Set<keyof BotLimits>(['artifactVersions', 'continuations']);
+
 /** The limits Orbit sent, each checked, with the recommended value for any that is missing or broken. */
 export function readBotLimits(raw: unknown): BotLimits {
     const out: BotLimits = { ...BOT_LIMIT_DEFAULTS };
@@ -77,7 +80,7 @@ export function readBotLimits(raw: unknown): BotLimits {
         const value = given[key];
         if (key === 'guard') {
             if (typeof value === 'boolean') out.guard = value;
-        } else if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+        } else if (typeof value === 'number' && Number.isFinite(value) && (value > 0 || (value === 0 && ZERO_ALLOWED.has(key)))) {
             (out as unknown as Record<string, number>)[key] = value;
         }
     }
