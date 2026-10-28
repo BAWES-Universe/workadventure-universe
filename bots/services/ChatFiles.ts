@@ -69,13 +69,21 @@ export function storeOf(location: string): FileStore {
 
 const DOCUMENT_MIME = /^(text\/|application\/(pdf|msword|rtf|json|xml|csv|vnd\.openxmlformats-officedocument|vnd\.ms-|vnd\.oasis\.opendocument))/i;
 const DOCUMENT_EXTENSION = /\.(pdf|docx?|xlsx?|pptx?|odt|ods|odp|rtf|txt|md|csv|json|xml|html?)$/i;
+const IMAGE_EXTENSION = /\.(png|jpe?g|gif|webp|bmp|svg|avif|heic|heif|tiff?)$/i;
+const AUDIO_EXTENSION = /\.(mp3|wav|ogg|oga|opus|m4a|aac|flac|weba)$/i;
+const VIDEO_EXTENSION = /\.(mp4|m4v|webm|mov|mkv|avi|ogv)$/i;
 
 export function kindOf(file: Pick<ChatUpload, 'name' | 'mimeType' | 'mediaType'>): FileKind {
     const mime = (file.mimeType ?? '').toLowerCase();
     if (file.mediaType === 'image' || mime.startsWith('image/')) return 'image';
     if (file.mediaType === 'audio' || mime.startsWith('audio/')) return 'audio';
     if (file.mediaType === 'video' || mime.startsWith('video/')) return 'video';
-    if (DOCUMENT_MIME.test(mime) || DOCUMENT_EXTENSION.test(file.name)) return 'document';
+    if (DOCUMENT_MIME.test(mime)) return 'document';
+    // The rest of a gallery comes with no type, only its name
+    if (IMAGE_EXTENSION.test(file.name)) return 'image';
+    if (AUDIO_EXTENSION.test(file.name)) return 'audio';
+    if (VIDEO_EXTENSION.test(file.name)) return 'video';
+    if (DOCUMENT_EXTENSION.test(file.name)) return 'document';
     return 'other';
 }
 

@@ -116,6 +116,8 @@ export class DmReplyService extends BaseBehavior {
     private missingCache = new Map<string, number>();
     /** When each chat (bot and person) last got a room card. */
     private roomCards = new Map<string, number>();
+    /** Per chat, the files in the person's last message by name and size: a message tried again sends the same ones. */
+    private lastFiles?: Map<string, string>;
 
     constructor(private botManager: BotManager) {
         super({ type: 'dm' });
@@ -316,9 +318,18 @@ export class DmReplyService extends BaseBehavior {
         // A message tried again after a failed answer (or sent again by the person) is already the last thing they
         // said, with no reply after it: keep it once in the history.
         const lastSaid = memory.getMemory(botId, playerId)?.conversationHistory?.at(-1);
-        // A note has its file's id once Orbit gave one, so the ids don't count; the files were kept the first time
+        // A note has its file's id once Orbit gave one, so the ids don't count; the files were kept the first time.
+        // A note doesn't say a file's size, so another file with the same name is told apart by it.
+        const chat = `${botId}:${playerId}`;
+        const files = uploads.map((upload) => `${upload.name}:${upload.sizeBytes ?? ''}`).join('\n');
+        const lastFiles = (this.lastFiles ??= new Map());
+        const sameFiles = (lastFiles.get(chat) ?? files) === files;
+        lastFiles.set(chat, files);
         const alreadyKept =
-            lastSaid?.sender === 'person' && withoutNoteIds(lastSaid.message) === withoutNoteIds(original) && lastSaid.spaceName === DM_SPACE_NAME;
+            lastSaid?.sender === 'person' &&
+            withoutNoteIds(lastSaid.message) === withoutNoteIds(original) &&
+            lastSaid.spaceName === DM_SPACE_NAME &&
+            sameFiles;
         if (!alreadyKept) {
             memory.addMessage(botId, playerId, original, 'person', DM_SPACE_NAME);
             memory.extractPersonalInfo(botId, playerId, text);
