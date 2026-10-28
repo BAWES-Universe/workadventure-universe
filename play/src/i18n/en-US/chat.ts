@@ -668,6 +668,7 @@ const chat: BaseTranslation = {
         download: "Download",
         loading: "Loading…",
         cantPlay: "Can't play this file here. Download it instead.",
+        cantLoad: "Couldn't load this file.",
     },
     loginTokenError: "An error occurred. Please try to reconnect",
     reconnect: "Reconnect",

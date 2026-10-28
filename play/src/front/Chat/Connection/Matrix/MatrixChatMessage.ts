@@ -140,7 +140,11 @@ export class MatrixChatMessage implements ChatMessage {
                 this.isShown = false;
                 this.releaseMedia();
                 // Its URL may be released from now on: shown again, the message waits for a fresh one.
-                update((content) => (content.url === undefined ? content : { ...content, url: undefined }));
+                update((content) =>
+                    content.url === undefined && !content.mediaFailed
+                        ? content
+                        : { ...content, url: undefined, mediaFailed: undefined }
+                );
             };
         });
     }
@@ -183,12 +187,17 @@ export class MatrixChatMessage implements ChatMessage {
             typeof mimetype === "string" ? mimetype : undefined
         );
         this.mediaHold = hold;
+        const failed = () => this.content.update((content) => ({ ...content, mediaFailed: true }));
         hold.url
             .then((url) => {
-                if (url === undefined || this.mediaHold !== hold) return;
-                this.content.update((content) => ({ ...content, url }));
+                if (this.mediaHold !== hold) return;
+                if (url === undefined) failed();
+                else this.content.update((content) => ({ ...content, url, mediaFailed: undefined }));
             })
-            .catch((error) => console.error(error));
+            .catch((error) => {
+                console.error(error);
+                if (this.mediaHold === hold) failed();
+            });
     }
 
     private releaseMedia() {

@@ -41,7 +41,7 @@
     let speed = 0;
     let shapeFor: string | undefined;
     // An audio file the browser has said it cannot play.
-    let failed = false;
+    let playerFailed = false;
 
     $: isVoice = $content.isVoice === true;
     $: levels = resampleWaveform($content.voiceWaveform ?? readLevels ?? [], VOICE_NOTE_BARS);
@@ -53,6 +53,9 @@
         audioFileTitle(fileName) ??
         (sender?.name ? $LL.chat.audioFile.from({ name: sender.name }) : $LL.chat.audioFile.untitled());
     $: kind = audioFileKind(fileName);
+    // A file that could not be fetched has nothing to play or download; one the browser cannot play can still be saved.
+    $: unreachable = !isVoice && $content.mediaFailed === true && !$content.url;
+    $: failed = !isVoice && (playerFailed || unreachable);
     // Only until the file is here: some phone browsers read nothing of a file before the first tap on play.
     $: loading = !isVoice && !failed && !$content.url;
     $: caption = getMediaCaption($content);
@@ -151,7 +154,7 @@
         </button>
     {/if}
     {#if failed}
-        <div class="audio-error">{$LL.chat.audioFile.cantPlay()}</div>
+        <div class="audio-error">{unreachable ? $LL.chat.audioFile.cantLoad() : $LL.chat.audioFile.cantPlay()}</div>
     {:else}
         <!-- svelte-ignore a11y-click-events-have-key-events -->
         <div
@@ -212,7 +215,7 @@
             }}
             on:error={() => {
                 // The browser cannot play this format (or the file is gone): Download is what is left.
-                if (!isVoice) failed = true;
+                if (!isVoice) playerFailed = true;
             }}
             on:durationchange={() => {
                 // A browser-made file can have no length in its header (the player says Infinity): it is not used then.

@@ -13,6 +13,7 @@ vi.mock("../../../../../i18n/i18n-svelte", async () => {
         download: () => "Download",
         loading: () => "Loading…",
         cantPlay: () => "Can't play this file here. Download it instead.",
+        cantLoad: () => "Couldn't load this file.",
     };
     return { default: readable({ chat: { voiceNote, audioFile } }) };
 });
@@ -104,13 +105,17 @@ describe("an audio file in chat", () => {
 
     const visibleText = () => (target.textContent ?? "").replace(/\s+/g, " ").trim();
 
-    async function show(filename: string, url = "blob:https://play.test/" + filename) {
+    async function show(filename: string, extra: Partial<ChatMessageContent> = {}) {
         const holder = document.createElement("div");
         target.appendChild(holder);
         shown.push(
             new MessageAudioFile({
                 target: holder,
-                props: { content: readable(content({ url, filename, body: filename })) },
+                props: {
+                    content: readable(
+                        content({ url: "blob:https://play.test/" + filename, filename, body: filename, ...extra })
+                    ),
+                },
                 context: new Map([[MESSAGE_SENDER_CONTEXT, { name: "Imagine [Music]", isMine: false }]]),
             })
         );
@@ -158,6 +163,15 @@ describe("an audio file in chat", () => {
         expect(visibleText()).toContain("Can't play this file here");
         expect(holder.querySelector("audio")).toBeNull();
         expect(holder.querySelector("button[aria-label=Download]")).not.toBeNull();
+    });
+
+    it("says when the file could not be fetched instead of loading for ever", async () => {
+        const holder = await show("Desert Drive.mp3", { url: undefined, mediaFailed: true });
+
+        expect(visibleText()).toContain("Couldn't load this file.");
+        expect(visibleText()).not.toContain("Loading");
+        expect((holder.querySelector(".voice-play") as HTMLButtonElement).disabled).toBe(true);
+        expect(holder.querySelector("audio")).toBeNull();
     });
 
     it("plays one audio at a time: starting a second pauses the first", async () => {
