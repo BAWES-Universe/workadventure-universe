@@ -1710,8 +1710,8 @@ export class BotClient {
      * Send an image to a space.
      * Uploads the image from the provided URL to the CDN (if needed) and sends it to the chat.
      */
-    async sendImage(spaceName: string, url: string, alt?: string, asker?: number): Promise<string> {
-        const mimeHint = this.inferMimeFromExt(url);
+    async sendImage(spaceName: string, url: string, alt?: string, asker?: number, mimeType?: string): Promise<string> {
+        const mimeHint = mimeType || this.inferMimeFromExt(url);
         try {
             const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
             if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, alt || '', undefined, asker)) {
@@ -1736,8 +1736,8 @@ export class BotClient {
     /**
      * Send a file to a space.
      */
-    async sendFile(spaceName: string, url: string, filename?: string, asker?: number): Promise<string> {
-        const mimeHint = this.inferMimeFromExt(url);
+    async sendFile(spaceName: string, url: string, filename?: string, asker?: number, mimeType?: string): Promise<string> {
+        const mimeHint = mimeType || this.inferMimeFromExt(url);
         try {
             const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
             if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, '', filename, asker)) {
@@ -1762,8 +1762,8 @@ export class BotClient {
     /**
      * Send audio to a space.
      */
-    async sendAudio(spaceName: string, url: string, asker?: number): Promise<string> {
-        const mimeHint = this.inferMimeFromExt(url);
+    async sendAudio(spaceName: string, url: string, asker?: number, mimeType?: string): Promise<string> {
+        const mimeHint = mimeType || this.inferMimeFromExt(url);
         try {
             const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
             if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, undefined, undefined, asker)) {
@@ -1788,8 +1788,8 @@ export class BotClient {
     /**
      * Send video to a space.
      */
-    async sendVideo(spaceName: string, url: string, asker?: number): Promise<string> {
-        const mimeHint = this.inferMimeFromExt(url);
+    async sendVideo(spaceName: string, url: string, asker?: number, mimeType?: string): Promise<string> {
+        const mimeHint = mimeType || this.inferMimeFromExt(url);
         try {
             const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
             if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, undefined, undefined, asker)) {

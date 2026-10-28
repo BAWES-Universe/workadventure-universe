@@ -344,7 +344,7 @@ describe('the file tools in AIService', () => {
         );
         expect(found.result.items).toHaveLength(1);
         // No asker: it is already on the person's list
-        expect(bot.sendAudio).toHaveBeenCalledWith('bubble-1', 'https://cdn.example.com/song.mp3');
+        expect(bot.sendAudio).toHaveBeenCalledWith('bubble-1', 'https://cdn.example.com/song.mp3', undefined, 'audio/mpeg');
         // A link kept as it was typed goes the usual way, with its checks
         expect(bot.markStored).not.toHaveBeenCalled();
         expect(sent.result).toMatchObject({ sent: true });
@@ -356,7 +356,8 @@ describe('the file tools in AIService', () => {
         const refused = await withFiles()['sendFileAgain'](kept, 'https://cdn.example.com/signed/song.mp3', { botClient: bot as never, spaceName: 'bubble-1', botId: 'bot1', playerId: 7 });
         expect(refused).toBeNull();
         expect(bot.markStored).toHaveBeenCalledWith('https://cdn.example.com/signed/song.mp3');
-        expect(bot.sendAudio).toHaveBeenCalledWith('bubble-1', 'https://cdn.example.com/signed/song.mp3');
+        // With what Orbit says it is: a stored file's link may have no extension to tell
+        expect(bot.sendAudio).toHaveBeenCalledWith('bubble-1', 'https://cdn.example.com/signed/song.mp3', undefined, 'audio/mpeg');
     });
 
     it("takes no look at an image for a reply on a person's own key", async () => {
@@ -415,9 +416,29 @@ describe('the file tools in AIService', () => {
         expect(await inDm['sendFileAgain'](view({ ...SONG, ref: 'f9' }), 'https://cdn.example.com/signed/c.mp3', where)).toBeNull();
         expect(dm.pendingMedia).toHaveLength(2);
         // The next turn starts clean
-        (dm.sentAgain as Set<string>).clear();
+        (dm.sentAgain as Map<string, unknown>).clear();
         expect(await inDm['sendFileAgain'](view(SONG), 'https://cdn.example.com/signed/d.mp3', where)).toBeNull();
         expect(dm.pendingMedia).toHaveLength(3);
+    });
+
+    it('sends a file once when the model asks for it twice at once, and tries again after a send that failed', async () => {
+        const bot = client();
+        let finish: () => void = () => {};
+        bot.sendAudio.mockImplementationOnce(() => new Promise<string>((resolve) => (finish = () => resolve('https://cdn.example.com/new.mp3'))));
+        const ai = withFiles({});
+        const there = { botClient: bot as never, spaceName: 'bubble-1', botId: 'bot1', playerId: 7 };
+        const both = Promise.all([ai['sendFileAgain'](view(SONG), 'https://cdn.example.com/a.mp3', there), ai['sendFileAgain'](view(SONG), 'https://cdn.example.com/b.mp3', there)]);
+        finish();
+        expect(await both).toEqual([null, null]);
+        expect(bot.sendAudio).toHaveBeenCalledTimes(1);
+
+        const failing = client();
+        failing.sendAudio.mockRejectedValueOnce(new Error('upload failed'));
+        const again = withFiles({});
+        const where = { botClient: failing as never, spaceName: 'bubble-1', botId: 'bot1', playerId: 7 };
+        expect(await again['sendFileAgain'](view(SONG), 'https://cdn.example.com/a.mp3', where)).toMatch(/couldn't be sent right now/);
+        expect(await again['sendFileAgain'](view(SONG), 'https://cdn.example.com/a.mp3', where)).toBeNull();
+        expect(failing.sendAudio).toHaveBeenCalledTimes(2);
     });
 
     it("leaves a file tool's result alone when sending media, and reads it as the tool's own lines", async () => {
