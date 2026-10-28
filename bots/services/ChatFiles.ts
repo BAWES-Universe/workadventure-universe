@@ -111,6 +111,14 @@ export function withoutNoteIds(text: string): string {
     return text.replace(NOTE_ID, '[file · ');
 }
 
+// A whole line that is a file's note: a name never holds a bracket or a line break (noteName)
+const NOTE_LINE = /^\[file(?: f\d+)? · [^\]\n]*\]$\n?/gm;
+
+/** What the person wrote, without the notes for their files: a file's name is not something they said. */
+export function withoutFileNotes(text: string): string {
+    return text.replace(NOTE_LINE, '').trim();
+}
+
 /** The message as the history keeps it: what they wrote, then a note for each file. */
 export function withFileNotes(text: string, notes: string[]): string {
     return [text.trim(), ...notes].filter(Boolean).join('\n');

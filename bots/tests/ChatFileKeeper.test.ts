@@ -70,6 +70,15 @@ describe('keeping the files people send (#1508)', () => {
         expect(admin.keepBotFileText).toHaveBeenCalledWith(call, 'f1', { from: 0, text: 'the w', last: true });
     });
 
+    it('says when a document the reply could not read has no text, and sends none when "Text kept from a file" is 0', async () => {
+        await keeper.keepAll(admin as never, [job({ text: null })]);
+        expect(admin.keepBotFileText).toHaveBeenCalledWith(call, 'f1', { failed: true });
+        admin.keepBotFileText.mockClear();
+        await keeper.keepAll(admin as never, [job({ text: 'all of it', maxTextChars: 0 }), job({ text: null, maxTextChars: 0 })]);
+        expect(admin.addBotFile).toHaveBeenCalledTimes(3);
+        expect(admin.keepBotFileText).not.toHaveBeenCalled();
+    });
+
     it('says when the text could not be read, and keeps nothing for an image or a song', async () => {
         parse.mockResolvedValueOnce({ type: 'document', text: '[Failed to extract PDF content: bad]', summary: 'Failed', mimeType: 'application/pdf' });
         await keeper.keepAll(admin as never, [job({ readAgain: { mimeType: 'application/pdf' } })]);
