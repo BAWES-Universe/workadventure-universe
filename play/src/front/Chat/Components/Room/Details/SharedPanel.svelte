@@ -12,6 +12,7 @@
     import LinkRow from "./LinkRow.svelte";
     import FileRow from "./FileRow.svelte";
     import { sharedItemsStore } from "./SharedItemsStore";
+    import { nearbySavedFor } from "./NearbySavedStore";
     import { sharedSections, type SharedSection } from "./SharedItems";
     import { sharedSender } from "./sharedSender";
     import { IconChevronLeft, IconChevronRight, IconLoader } from "@wa-icons";
@@ -30,6 +31,9 @@
     const direction = document.documentElement.getAttribute("dir") || "ltr";
     const shared = sharedItemsStore(room);
     const hasPreviousMessage = room.hasPreviousMessage;
+    // The nearby chat: what was kept on the player's account from before, read a page at a time.
+    const saved = nearbySavedFor(room);
+    const savedHasMore = saved?.hasMore ?? readable(false);
     const now = new Date();
     const roomName = room.name;
     const nameByChatId: Readable<Map<string, string>> = hasContext(NAME_BY_CHAT_ID_CONTEXT)
@@ -92,6 +96,12 @@
         } finally {
             loading = false;
         }
+    }
+
+    // Past the chat's own messages, the next page of what was kept on the player's account (nearby chat).
+    function lookFurtherOnRequest() {
+        const next = !$hasPreviousMessage && $savedHasMore && saved ? saved.loadMore() : lookFurther();
+        next.catch((error) => console.error("Failed to look further back", error));
     }
 
     onMount(() => {
@@ -213,12 +223,12 @@
                     <IconLoader class="animate-[spin_2s_linear_infinite]" font-size={16} />
                     {$LL.chat.details.lookingFurther()}
                 </div>
-            {:else if $hasPreviousMessage}
+            {:else if $hasPreviousMessage || $savedHasMore}
                 <button
                     type="button"
                     class="u-menu-row !m-0 justify-center"
                     data-testid="sharedLookFurther"
-                    on:click={() => lookFurther()}
+                    on:click={lookFurtherOnRequest}
                 >
                     {$LL.chat.details.lookFurther()}
                 </button>

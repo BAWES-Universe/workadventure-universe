@@ -182,6 +182,7 @@ import { warningMessageStore } from "../../Stores/ErrorStore";
 import { closeCoWebsite, getCoWebSite, openCoWebSite, openCoWebSiteWithoutSource } from "../../Chat/Utils";
 import { inviteCardRequestStore, navChat } from "../../Chat/Stores/ChatStore";
 import { ProximityChatRoom } from "../../Chat/Connection/Proximity/ProximityChatRoom";
+import { keepNearbyShared } from "../../Chat/Components/Room/Details/NearbySavedStore";
 import { ProximitySpaceManager } from "../../WebRtc/ProximitySpaceManager";
 import type { SpaceRegistryInterface } from "../../Space/SpaceRegistry/SpaceRegistryInterface";
 import { WorldUserProvider } from "../../Chat/UserProvider/WorldUserProvider";
@@ -424,6 +425,7 @@ export class GameScene extends DirtyScene {
     private allUserSpace: SpaceInterface | undefined;
     private isLiveStreamingUnsubscriber: Unsubscriber | undefined;
     private _proximityChatRoom: ProximityChatRoom | undefined;
+    private stopKeepingNearbyShared: (() => void) | undefined;
     private _userProviderMergerDeferred: Deferred<UserProviderMerger> = new Deferred();
     private unsubscribeChatBlockSync: (() => void) | undefined;
     private _worldUserCounter: ForwardableStore<number> = new ForwardableStore(0);
@@ -1438,6 +1440,7 @@ export class GameScene extends DirtyScene {
         this.proximitySpaceManager?.destroy();
         // The chats you had come along to the next map.
         this._proximityChatRoom?.stashHistoryForNextScene();
+        this.stopKeepingNearbyShared?.();
         this._proximityChatRoom?.destroy();
         // Area chat rooms are per scene: a new map starts with none. Area-leave handlers don't run when the scene
         // closes, so the rooms of the areas still active are left here, and stay hidden until that leave completes.
@@ -2419,6 +2422,8 @@ export class GameScene extends DirtyScene {
                 );
 
                 this._proximityChatRoomDeferred.resolve(this._proximityChatRoom);
+                // What the nearby chat shows is kept on the player's account, so it is still there after a reload.
+                this.stopKeepingNearbyShared = keepNearbyShared(this._proximityChatRoom);
                 this.proximitySpaceManager = new ProximitySpaceManager(this.connection, this._proximityChatRoom);
 
                 this.scriptingVideoManager = new ScriptingVideoManager();

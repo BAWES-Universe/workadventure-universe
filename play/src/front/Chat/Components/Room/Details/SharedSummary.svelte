@@ -13,6 +13,8 @@
      * and videos. A tap opens the page with all of them.
      */
     export let room: ChatRoom;
+    /** A line under the title, or nothing. */
+    export let note: string | undefined = undefined;
 
     const THUMBS = 4;
     const shared = sharedItemsStore(room);
@@ -29,7 +31,12 @@
 
 <div class="shared-summary flex flex-col gap-1 rounded-[14px] p-1" data-testid="sharedSummary">
     <button type="button" class="u-menu-row !m-0" data-testid="sharedSummaryOpen" on:click={open}>
-        <span class="u-menu-label flex-1 truncate">{$LL.chat.details.shared()}</span>
+        <span class="flex min-w-0 flex-1 flex-col">
+            <span class="u-menu-label truncate">{$LL.chat.details.shared()}</span>
+            {#if note}
+                <span class="truncate text-xs text-white/60" data-testid="sharedSummaryNote">{note}</span>
+            {/if}
+        </span>
         <span class="text-xs tabular-nums text-white/60" data-testid="sharedSummaryCount">{total}</span>
         <span class="u-menu-tile !w-6">
             {#if direction === "rtl"}
