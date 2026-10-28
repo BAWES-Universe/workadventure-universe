@@ -24,7 +24,9 @@ import {
     buildAdminLoginUrl,
     isOrbitAuthReadyMessage,
     resolveCredentialUrl,
+    type OrbitAuthFailedMessage,
     type OrbitAuthTokenMessage,
+    type OrbitAuthWaitMessage,
 } from "./iframeAuth";
 import {
     OrbitBridge,
@@ -41,9 +43,9 @@ import {
 } from "./orbitBridge";
 import {
     forgetOrbitAccessTokenRenewal,
-    freshOrbitAccessToken,
     getAccessTokenFromJwt,
     orbitAccessTokenHasExpired,
+    orbitAccessTokenWithRetries,
 } from "./orbitAccessToken";
 let adminModalOpen = false;
 /** The bridge for this visit (a new one on every room join or reconnect). */
@@ -169,12 +171,16 @@ function clearHeldMovement() {
     gameManager.tryGetCurrentGameScene()?.userInputManager?.clearHeldMovement();
 }
 
-/** The OIDC access token to sign Orbit in with, renewed first when it has run out or Orbit says it was refused. */
-async function freshAccessToken(force: boolean): Promise<string | null> {
-    const options = extensionOptions;
-    if (!options) return null;
-    return freshOrbitAccessToken(options, force, () => extensionOptions === options);
-}
+/**
+ * How long Orbit's sign-in keeps trying while online with no answer from the play server, before Orbit offers Try
+ * again. Time offline doesn't count: Orbit waits for the connection.
+ */
+const ORBIT_SIGN_IN_GIVE_UP_MS = 60_000;
+/** A reopening after a reconnect tries for less: nobody is looking at a sign-in screen yet. */
+const RESUME_SIGN_IN_GIVE_UP_MS = 15_000;
+
+/** The sign-in Orbit's frame asked for last; an older one stops when Orbit asks again. */
+let signInRequest: object | null = null;
 
 function handleAdminAuthMessage(event: MessageEvent<unknown>) {
     if (
@@ -233,10 +239,30 @@ function handleAdminAuthMessage(event: MessageEvent<unknown>) {
     const { nonce, refresh } = event.data;
     const source = event.source;
     const origin = adminOrigin;
-    if (!source) return;
-    void freshAccessToken(refresh === true).then((accessToken) => {
-        // Orbit may have closed, or the room changed, while the token was being renewed.
-        if (!accessToken || source !== get(modalIframeWindowStore)) return;
+    const options = extensionOptions;
+    if (!source || !options) return;
+    const request = {};
+    signInRequest = request;
+    // Orbit may have closed, the room may have changed, or Orbit asked again, while the token was being renewed.
+    const current = () =>
+        extensionOptions === options && signInRequest === request && source === get(modalIframeWindowStore);
+    const wait: OrbitAuthWaitMessage = { type: "orbit-auth-wait-v2", version: ORBIT_AUTH_VERSION, nonce };
+    // Orbit learns at once that the game is there and working on it, so a slow renewal doesn't look like no game.
+    source.postMessage(wait, origin);
+    void orbitAccessTokenWithRetries(options, refresh === true, current, {
+        giveUpAfterMs: ORBIT_SIGN_IN_GIVE_UP_MS,
+        onWait: () => {
+            if (current()) source.postMessage(wait, origin);
+        },
+    }).then((accessToken) => {
+        if (!current()) return;
+        signInRequest = null;
+        if (!accessToken) {
+            console.warn("Orbit sign-in: gave up getting a token for Orbit");
+            const failed: OrbitAuthFailedMessage = { type: "orbit-auth-failed-v2", version: ORBIT_AUTH_VERSION, nonce };
+            source.postMessage(failed, origin);
+            return;
+        }
         const response: OrbitAuthTokenMessage = {
             type: "orbit-auth-token-v2",
             version: ORBIT_AUTH_VERSION,
@@ -522,7 +548,9 @@ async function resumeOrbit(options: ExtensionModuleOptions): Promise<void> {
 
     let accessToken: string | null = null;
     try {
-        accessToken = await freshOrbitAccessToken(options, false, current);
+        accessToken = await orbitAccessTokenWithRetries(options, false, current, {
+            giveUpAfterMs: RESUME_SIGN_IN_GIVE_UP_MS,
+        });
     } catch (error) {
         console.warn("Orbit stays closed: could not check the sign-in before reopening it", error);
     }

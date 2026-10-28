@@ -1090,25 +1090,46 @@ describe("Signing Orbit in when the OIDC access token has run out", () => {
     const ADMIN = "https://admin.example.com";
     let frame: { postMessage: ReturnType<typeof vi.fn> };
     let listeners: ((event: MessageEvent<unknown>) => void)[];
+    let onlineListeners: (() => void)[];
+    let online: boolean;
 
     beforeEach(() => {
         vi.useFakeTimers();
         vi.clearAllMocks();
+        mocks.pusherGet.mockReset();
         mocks.isLogged.mockReturnValue(true);
         mocks.getAuthToken.mockReturnValue("game-token");
         frame = { postMessage: vi.fn() };
         mocks.frame = frame;
         listeners = [];
+        onlineListeners = [];
+        online = true;
+        vi.stubGlobal("navigator", {
+            get onLine() {
+                return online;
+            },
+        });
         vi.stubGlobal("window", {
             addEventListener: vi.fn((type: string, listener: (event: Event) => void) => {
                 if (type === "message") listeners.push(listener as (event: MessageEvent<unknown>) => void);
+                if (type === "online") onlineListeners.push(listener as () => void);
             }),
             removeEventListener: vi.fn((type: string, listener: (event: Event) => void) => {
                 listeners = listeners.filter((candidate) => candidate !== listener);
+                onlineListeners = onlineListeners.filter((candidate) => candidate !== listener);
             }),
             location: { href: "https://play.example.com/@/room" },
         });
     });
+
+    /** What the game told Orbit, without the "still getting it" words. */
+    const answers = () =>
+        frame.postMessage.mock.calls
+            .map(([message]) => message as { type: string })
+            .filter((message) => message.type !== "orbit-auth-wait-v2");
+
+    /** A /me request that never got an answer, as axios reports it (no connection, a timeout). */
+    const noAnswer = () => Object.assign(new Error("Network Error"), { isAxiosError: true });
 
     afterEach(() => {
         vi.useRealTimers();
@@ -1218,13 +1239,153 @@ describe("Signing Orbit in when the OIDC access token has run out", () => {
         expect(frame.postMessage).toHaveBeenCalledWith(expect.objectContaining({ accessToken: renewed }), ADMIN);
     });
 
-    it("still answers with what it has when /me can't renew", async () => {
+    it("tells Orbit at once that it is working on it, and again each time it waits to try again", async () => {
         const expired = makeOidcToken(nowSeconds() - 10);
-        mocks.pusherGet.mockRejectedValue(new Error("pusher down"));
+        mocks.pusherGet.mockRejectedValueOnce(noAnswer());
+        const release = pendingMe();
+        await openedWith(makeAccessTokenJwt(expired));
+        orbitSends();
+        expect(frame.postMessage).toHaveBeenCalledWith(
+            { type: "orbit-auth-wait-v2", version: 2, nonce: "n".repeat(16) },
+            ADMIN
+        );
+        await vi.advanceTimersByTimeAsync(0);
+        expect(frame.postMessage).toHaveBeenCalledTimes(2);
+        // The second try, a second later.
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(mocks.pusherGet).toHaveBeenCalledTimes(2);
+        release(makeAccessTokenJwt(makeOidcToken(nowSeconds() + 3600)));
+        await vi.runAllTimersAsync();
+        expect(answers()).toEqual([expect.objectContaining({ type: "orbit-auth-token-v2" })]);
+    });
+
+    it("never hands Orbit a token that ran out: it tries again while /me gets no answer, then says it can't", async () => {
+        const expired = makeOidcToken(nowSeconds() - 10);
+        mocks.pusherGet.mockRejectedValue(noAnswer());
         await openedWith(makeAccessTokenJwt(expired));
         await orbitAsks();
         expect(mocks.setAuthToken).not.toHaveBeenCalled();
-        expect(frame.postMessage).toHaveBeenCalledWith(expect.objectContaining({ accessToken: expired }), ADMIN);
+        // 1, 2, 4 and 8 seconds, then every 15, for a minute.
+        expect(mocks.pusherGet.mock.calls.length).toBeGreaterThanOrEqual(7);
+        expect(answers()).toEqual([{ type: "orbit-auth-failed-v2", version: 2, nonce: "n".repeat(16) }]);
+    });
+
+    it("signs Orbit in by itself once /me answers again", async () => {
+        const expired = makeOidcToken(nowSeconds() - 10);
+        const renewed = makeOidcToken(nowSeconds() + 3600);
+        mocks.pusherGet
+            .mockRejectedValueOnce(noAnswer())
+            .mockRejectedValueOnce(Object.assign(noAnswer(), { response: { status: 502 } }))
+            .mockResolvedValueOnce(meAnswer(makeAccessTokenJwt(renewed)));
+        await openedWith(makeAccessTokenJwt(expired));
+        await orbitAsks();
+        expect(mocks.pusherGet).toHaveBeenCalledTimes(3);
+        expect(answers()).toEqual([expect.objectContaining({ type: "orbit-auth-token-v2", accessToken: renewed })]);
+    });
+
+    it("says it can't at once when the play server refuses the renewal", async () => {
+        const expired = makeOidcToken(nowSeconds() - 10);
+        mocks.pusherGet.mockRejectedValue(Object.assign(noAnswer(), { response: { status: 401 } }));
+        await openedWith(makeAccessTokenJwt(expired));
+        await orbitAsks();
+        expect(mocks.pusherGet).toHaveBeenCalledTimes(1);
+        expect(answers()).toEqual([expect.objectContaining({ type: "orbit-auth-failed-v2" })]);
+    });
+
+    it("waits for the connection while offline, without giving up, and renews as soon as it is back", async () => {
+        const expired = makeOidcToken(nowSeconds() - 10);
+        const renewed = makeOidcToken(nowSeconds() + 3600);
+        mocks.pusherGet.mockRejectedValue(noAnswer());
+        online = false;
+        await openedWith(makeAccessTokenJwt(expired));
+        orbitSends();
+        // Five minutes offline: nothing given up, Orbit told every so often that the game is waiting.
+        await vi.advanceTimersByTimeAsync(5 * 60_000);
+        expect(answers()).toEqual([]);
+        expect(frame.postMessage.mock.calls.length).toBeGreaterThan(10);
+
+        mocks.pusherGet.mockResolvedValue(meAnswer(makeAccessTokenJwt(renewed)));
+        online = true;
+        for (const listener of [...onlineListeners]) listener();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(answers()).toEqual([expect.objectContaining({ type: "orbit-auth-token-v2", accessToken: renewed })]);
+    });
+
+    it("hands over a token about to run out when /me answers with it unchanged", async () => {
+        const nearlyOut = makeOidcToken(nowSeconds() + 30);
+        const gameToken = makeAccessTokenJwt(nearlyOut);
+        mocks.pusherGet.mockResolvedValue(meAnswer(gameToken));
+        await openedWith(gameToken);
+        await orbitAsks();
+        expect(mocks.pusherGet).toHaveBeenCalledTimes(1);
+        expect(answers()).toEqual([expect.objectContaining({ type: "orbit-auth-token-v2", accessToken: nearlyOut })]);
+    });
+
+    /** A /me answer about the room with no token in it, as when the play server couldn't reach Orbit. */
+    function roomError(code: string, type: "error" | "retry" = "error") {
+        return {
+            data: {
+                status: "error",
+                type,
+                code,
+                title: "Connection error",
+                subtitle: "Something wrong happened while connecting!",
+                details: "timeout",
+                image: "",
+                ...(type === "retry" ? { buttonTitle: "Retry", timeToRetry: 10_000, canRetryManual: true } : {}),
+            },
+        };
+    }
+
+    it("tries again when the play server couldn't reach Orbit, instead of saying it can't", async () => {
+        const expired = makeOidcToken(nowSeconds() - 10);
+        const renewed = makeOidcToken(nowSeconds() + 3600);
+        mocks.pusherGet
+            .mockResolvedValueOnce(roomError("ROOM_ACCESS_ERROR"))
+            .mockResolvedValueOnce(meAnswer(makeAccessTokenJwt(renewed)));
+        await openedWith(makeAccessTokenJwt(expired));
+        await orbitAsks();
+        expect(mocks.pusherGet).toHaveBeenCalledTimes(2);
+        expect(answers()).toEqual([expect.objectContaining({ type: "orbit-auth-token-v2", accessToken: renewed })]);
+    });
+
+    it("hands over a token about to run out when /me answers about the room without renewing it", async () => {
+        const nearlyOut = makeOidcToken(nowSeconds() + 30);
+        mocks.pusherGet.mockResolvedValue(roomError("ROOM_ACCESS_DENIED"));
+        await openedWith(makeAccessTokenJwt(nearlyOut));
+        await orbitAsks();
+        expect(mocks.pusherGet).toHaveBeenCalledTimes(1);
+        expect(answers()).toEqual([expect.objectContaining({ type: "orbit-auth-token-v2", accessToken: nearlyOut })]);
+    });
+
+    it("says it can't when /me answers about the room and the token already ran out", async () => {
+        const expired = makeOidcToken(nowSeconds() - 10);
+        mocks.pusherGet.mockResolvedValue(roomError("ROOM_ACCESS_DENIED"));
+        await openedWith(makeAccessTokenJwt(expired));
+        await orbitAsks();
+        expect(mocks.pusherGet).toHaveBeenCalledTimes(1);
+        expect(answers()).toEqual([expect.objectContaining({ type: "orbit-auth-failed-v2" })]);
+    });
+
+    it("hands over a token that is still good even when the browser wrongly says it is offline", async () => {
+        const good = makeOidcToken(nowSeconds() + 3600);
+        online = false;
+        await openedWith(makeAccessTokenJwt(good));
+        await orbitAsks();
+        expect(mocks.pusherGet).not.toHaveBeenCalled();
+        expect(answers()).toEqual([expect.objectContaining({ type: "orbit-auth-token-v2", accessToken: good })]);
+    });
+
+    it("stops trying for a request Orbit replaced with a new one", async () => {
+        const expired = makeOidcToken(nowSeconds() - 10);
+        const renewed = makeOidcToken(nowSeconds() + 3600);
+        mocks.pusherGet.mockRejectedValueOnce(noAnswer()).mockResolvedValue(meAnswer(makeAccessTokenJwt(renewed)));
+        await openedWith(makeAccessTokenJwt(expired));
+        orbitSends();
+        await vi.advanceTimersByTimeAsync(0);
+        orbitSends();
+        await vi.runAllTimersAsync();
+        expect(answers()).toHaveLength(1);
     });
 
     it("keeps the renewed token a room that refuses the player sends along with its refusal", async () => {
@@ -1346,7 +1507,7 @@ describe("Signing Orbit in when the OIDC access token has run out", () => {
         });
     });
 
-    it("keeps nothing from a /me answer that doesn't match the pusher's schema", async () => {
+    it("keeps nothing from a /me answer that doesn't match the pusher's schema, and says it can't", async () => {
         const expired = makeOidcToken(nowSeconds() - 10);
         mocks.pusherGet.mockResolvedValue({
             data: { status: "ok", authToken: makeAccessTokenJwt(makeOidcToken(nowSeconds() + 3600)) },
@@ -1354,7 +1515,8 @@ describe("Signing Orbit in when the OIDC access token has run out", () => {
         await openedWith(makeAccessTokenJwt(expired));
         await orbitAsks();
         expect(mocks.setAuthToken).not.toHaveBeenCalled();
-        expect(frame.postMessage).toHaveBeenCalledWith(expect.objectContaining({ accessToken: expired }), ADMIN);
+        expect(mocks.pusherGet).toHaveBeenCalledTimes(1);
+        expect(answers()).toEqual([expect.objectContaining({ type: "orbit-auth-failed-v2" })]);
     });
 
     it("shares one /me renewal between Orbit requests that overlap", async () => {
@@ -1370,14 +1532,14 @@ describe("Signing Orbit in when the OIDC access token has run out", () => {
         release(makeAccessTokenJwt(renewed));
         await vi.runAllTimersAsync();
         expect(mocks.setAuthToken).toHaveBeenCalledTimes(1);
-        expect(frame.postMessage).toHaveBeenCalledTimes(2);
-        for (const [message] of frame.postMessage.mock.calls)
-            expect(message).toEqual(expect.objectContaining({ accessToken: renewed }));
+        // Only the newest request is answered: Orbit has stopped listening for the one it replaced.
+        expect(answers()).toEqual([expect.objectContaining({ accessToken: renewed })]);
     });
 
     it("starts a forced renewal rather than joining an unforced one already running", async () => {
         const expired = makeOidcToken(nowSeconds() - 10);
         const release = pendingMe();
+        pendingMe();
         await openedWith(makeAccessTokenJwt(expired));
         orbitSends();
         orbitSends(true);
@@ -1400,7 +1562,7 @@ describe("Signing Orbit in when the OIDC access token has run out", () => {
         release(makeAccessTokenJwt(makeOidcToken(nowSeconds() + 3600)));
         await vi.runAllTimersAsync();
         expect(mocks.setAuthToken).not.toHaveBeenCalled();
-        expect(frame.postMessage).not.toHaveBeenCalled();
+        expect(answers()).toEqual([]);
     });
 
     it("doesn't bring a token back when /me comes back after the player signed out", async () => {
@@ -1414,7 +1576,7 @@ describe("Signing Orbit in when the OIDC access token has run out", () => {
         release(makeAccessTokenJwt(makeOidcToken(nowSeconds() + 3600)));
         await vi.runAllTimersAsync();
         expect(mocks.setAuthToken).not.toHaveBeenCalled();
-        expect(frame.postMessage).not.toHaveBeenCalled();
+        expect(answers()).not.toContainEqual(expect.objectContaining({ type: "orbit-auth-token-v2" }));
     });
 
     it("keeps the newer token another tab saved while this tab's renewal was on its way", async () => {
@@ -1701,6 +1863,30 @@ describe("Orbit opens again after a reconnect", () => {
 
         expect(resumeOpenings()).toHaveLength(0);
         expect(mocks.orbitOpened).not.toHaveBeenCalled();
+    });
+
+    it("tries the renewal again when it got no answer, and opens once it works", async () => {
+        const exports = await dropWithOrbitOpen();
+        const nowSeconds = Math.floor(Date.now() / 1000);
+        const expired = makeAccessTokenJwt(makeOidcToken(nowSeconds - 10));
+        const renewed = makeAccessTokenJwt(makeOidcToken(nowSeconds + 3600));
+        mocks.getAuthToken.mockReturnValue(expired);
+        mocks.pusherGet.mockReset();
+        mocks.pusherGet.mockRejectedValueOnce(Object.assign(new Error("Network Error"), { isAxiosError: true }));
+        mocks.pusherGet.mockResolvedValue({
+            data: {
+                status: "ok",
+                authToken: renewed,
+                userUuid: "user-1",
+                isCharacterTexturesValid: true,
+                isCompanionTextureValid: true,
+            },
+        });
+        exports.default.init({}, reconnected(expired));
+        await vi.advanceTimersByTimeAsync(10_000);
+
+        expect(mocks.pusherGet).toHaveBeenCalledTimes(2);
+        expect(resumeOpenings()).toHaveLength(1);
     });
 
     it("opens with a renewed sign-in when the old one had run out", async () => {
