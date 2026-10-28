@@ -523,7 +523,8 @@ export class DmReplyService extends BaseBehavior {
         // Each file the tools made goes on this person's list once it reached them, with the tool that made it
         const mediaSent = (item: PendingMedia) => {
             const admin = this.adminApiService;
-            if (!admin || !hooks.roomId) return;
+            // A file sent again is on the list already
+            if (!admin || !hooks.roomId || item.again) return;
             const where = {
                 call: { botId, person: { signedIn: true, identifier: person.uuid, name: person.name }, chat: { kind: 'dm' as const, ref: hooks.roomId } },
                 personRef: person.uuid,

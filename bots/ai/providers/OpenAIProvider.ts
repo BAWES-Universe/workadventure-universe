@@ -123,6 +123,9 @@ export class OpenAIProvider implements AIProvider {
     /** The output cap each model stated once it refused more (endpoint and model). It is asked within it from then on, so it costs one failed request, not one per reply. */
     private static readonly outputCeilings = new Map<string, number>();
 
+    /** Endpoints and models that refused the temperature we sent (Kimi's fixed-temperature models). It is left out from then on, so it costs one failed request, not one per reply. */
+    private static readonly refusedTemperature = new Set<string>();
+
     private static outputCeilingKey(config: AIProviderConfig, endpoint: string): string {
         return `${endpoint} ${config.model}`;
     }
@@ -215,6 +218,22 @@ export class OpenAIProvider implements AIProvider {
     }
 
     /**
+     * Whether the provider refused the request because of the temperature we sent, so it is worth asking again without
+     * one. OpenAI names it by code; other OpenAI-format providers (Kimi's fixed-temperature models) just answer 400 with
+     * a message about the temperature. A request that sent no temperature is not asked again for it.
+     */
+    private rejectsTemperature(status: number, errorData: any, errorText: string, requestBody: Record<string, any>): boolean {
+        if (
+            errorData?.error?.code === 'unsupported_value' &&
+            errorData?.error?.param === 'temperature' &&
+            errorData?.error?.message?.includes('Only the default')
+        ) {
+            return true;
+        }
+        return status === 400 && requestBody.temperature !== undefined && /temperature/i.test(errorText);
+    }
+
+    /**
      * Build request body with correct token limit parameter
      */
     private buildRequestBody(
@@ -276,7 +295,7 @@ export class OpenAIProvider implements AIProvider {
                     console.log(`[OpenAIProvider] Model ${config.model} only supports temperature=1, omitting temperature parameter`);
                 }
             }
-        } else {
+        } else if (!OpenAIProvider.refusedTemperature.has(OpenAIProvider.outputCeilingKey(config, this.getEndpoint(config)))) {
             // Include temperature for models that support custom values
             body.temperature = config.temperature;
         }
@@ -361,9 +380,8 @@ export class OpenAIProvider implements AIProvider {
                 const outputCeiling = statedOutputCeiling(response.status, errorText, requestBody.max_completion_tokens ?? requestBody.max_tokens);
 
                 // Retry without temperature if model rejects it
-                if (errorData?.error?.code === 'unsupported_value' && 
-                    errorData?.error?.param === 'temperature' &&
-                    errorData?.error?.message?.includes('Only the default')) {
+                if (this.rejectsTemperature(response.status, errorData, errorText, requestBody)) {
+                    OpenAIProvider.refusedTemperature.add(OpenAIProvider.outputCeilingKey(config, endpoint));
                     const retryBody = { ...requestBody };
                     delete retryBody.temperature;
 
@@ -703,9 +721,8 @@ export class OpenAIProvider implements AIProvider {
                     const outputCeiling = statedOutputCeiling(response.status, errorText, requestBody.max_completion_tokens ?? requestBody.max_tokens);
 
                     // If error is about temperature, retry without temperature (use default)
-                    if (errorData?.error?.code === 'unsupported_value' && 
-                        errorData?.error?.param === 'temperature' &&
-                        errorData?.error?.message?.includes('Only the default')) {
+                    if (this.rejectsTemperature(response.status, errorData, errorText, requestBody)) {
+                        OpenAIProvider.refusedTemperature.add(OpenAIProvider.outputCeilingKey(config, endpoint));
                         if (process.env.ENABLE_BOT_DEBUG === 'true') {
                             console.log(`[OpenAIProvider] Retrying without temperature parameter for model: ${config.model}`);
                         }

@@ -79,6 +79,9 @@ export interface RelationshipContext {
  * Pending media item — an uploaded file that couldn't be delivered
  * because the user left the space. Retried on reconnect.
  */
+/** The most a file sent in a direct message may be: it is downloaded and uploaded to Matrix whole. */
+export const MAX_OUTGOING_MEDIA_BYTES = 50 * 1024 * 1024;
+
 export interface PendingMedia {
     url: string;
     /** The original URL from the tool result, before CDN upload. Used for dedup —
@@ -91,6 +94,10 @@ export interface PendingMedia {
     retryCount: number;
     /** Timestamp of the last send attempt, used to enforce MIN_RETRY_INTERVAL */
     lastRetryAt?: number;
+    /** A file from an earlier chat sent again (#1508): it is already on the person's list of files. */
+    again?: boolean;
+    /** What the file is called, when it has a name of its own (a file sent again); otherwise the link's last part. */
+    name?: string;
 }
 
 export interface BotPlayerMemory {
@@ -134,6 +141,10 @@ export interface BotPlayerMemory {
     /** The songs, images and videos of the turn being answered, by their short names ("m1"), that an artifact may carry
      * (#1510). Started fresh with each turn from its message, added to by its tools. Runtime only: nothing here is saved. */
     turnMedia?: Array<{ ref: string; url: string; kind: 'audio' | 'image' | 'video' | 'file'; by: 'person' | 'tool' }>;
+    /** The files send_again is putting or put in the chat in the turn being answered, by their id, with how it went, so
+     * the same turn asked again (or the model calling it twice) sends each one once. Cleared when the next turn starts.
+     * Runtime only. */
+    sentAgain?: Map<string, Promise<string | null>>;
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];

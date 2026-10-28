@@ -3,6 +3,7 @@
  * stands for it in the chat's history. Orbit keeps the list (its /api/bot-files routes); the bot finds files again by
  * their short id (f1, f2…), which is the bot's own count, so two people in one bubble never share one.
  */
+import axios from 'axios';
 import type { ParsedFile } from './FileParser';
 
 export type FileKind = 'image' | 'audio' | 'video' | 'document' | 'other';
@@ -173,4 +174,27 @@ export function piecesOf(text: string, size = TEXT_PIECE_CHARS): { from: number;
         from = end;
     }
     return pieces;
+}
+
+/** How long the uploader may take to say where a kept file is now. */
+const LINK_TIMEOUT_MS = 10_000;
+
+/**
+ * A link a kept file opens at now: a lasting link as it is, or for one kept as its bucket and id, where the uploader's
+ * /chat-file route sends it (its public link, or a freshly signed one). Null when there is no uploader or it says no.
+ */
+export async function linkOfStore(store: FileStore, uploaderUrl: string | undefined = process.env.UPLOADER_URL): Promise<string | null> {
+    if ('url' in store) return store.url || null;
+    if (!uploaderUrl) return null;
+    try {
+        const response = await axios.get(`${uploaderUrl.replace(/\/+$/, '')}/chat-file/${encodeURIComponent(store.bucket)}/${encodeURIComponent(store.fileId)}`, {
+            maxRedirects: 0,
+            timeout: LINK_TIMEOUT_MS,
+            validateStatus: (status) => status >= 300 && status < 400,
+        });
+        const location = response.headers?.location;
+        return typeof location === 'string' && /^https?:\/\//i.test(location) ? location : null;
+    } catch {
+        return null;
+    }
 }
