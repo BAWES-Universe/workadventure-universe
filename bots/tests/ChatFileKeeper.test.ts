@@ -127,6 +127,27 @@ describe('keeping the files people send (#1508)', () => {
         expect(admin.keepBotFileText).toHaveBeenCalledTimes(1);
     });
 
+    it('counts each Forget once, so one Orbit repeats does not drop a file sent after it', async () => {
+        const forget = { everyone: false, userUuids: ['uuid-alice'], rows: [{ id: 'fg1', userUuid: 'uuid-alice' }] };
+        keeper.forget('bot1', forget);
+        admin.addBotFile.mockImplementation(async () => {
+            // The same Forget again, in an answer that came while this file was being kept
+            keeper.forget('bot1', forget);
+            return { file: { ref: 'f1' }, hidden: false } as never;
+        });
+        const onRef = vi.fn();
+        await keeper.keepAll(admin as never, [job({ text: 'words', onRef })]);
+        expect(onRef).toHaveBeenCalledWith('f1');
+        expect(admin.keepBotFileText).toHaveBeenCalledTimes(1);
+        // A new Forget of the same person (a new id) still drops what is waiting
+        admin.addBotFile.mockImplementation(async () => {
+            keeper.forget('bot1', { everyone: false, userUuids: ['uuid-alice'], rows: [{ id: 'fg2', userUuid: 'uuid-alice' }] });
+            return { file: { ref: 'f2' }, hidden: false } as never;
+        });
+        await keeper.keepAll(admin as never, [job({ text: 'words' })]);
+        expect(admin.keepBotFileText).toHaveBeenCalledTimes(1);
+    });
+
     it('drops it when Orbit says to forget everyone the bot talked to', async () => {
         admin.addBotFile.mockImplementation(async () => {
             keeper.forget('bot1', { everyone: true, userUuids: [] });
