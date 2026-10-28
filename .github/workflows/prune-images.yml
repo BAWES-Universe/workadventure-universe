@@ -43,9 +43,8 @@ jobs:
       - name: Prune ${{ matrix.package }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          bash .github/scripts/prune-images.sh \
-            "${{ github.repository_owner }}" \
-            "${{ matrix.package }}" \
-            "${{ github.event.inputs.keep || '10' }}" \
-            "${{ github.event_name == 'workflow_dispatch' && github.event.inputs.live || vars.PRUNE_IMAGES_LIVE || 'false' }}"
+          OWNER: ${{ github.repository_owner }}
+          PACKAGE: ${{ matrix.package }}
+          KEEP: ${{ github.event.inputs.keep || '10' }}
+          LIVE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.live || vars.PRUNE_IMAGES_LIVE || 'false' }}
+        run: bash .github/scripts/prune-images.sh "$OWNER" "$PACKAGE" "$KEEP" "$LIVE"

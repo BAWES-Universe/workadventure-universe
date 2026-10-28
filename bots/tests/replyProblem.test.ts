@@ -20,6 +20,13 @@ describe('replyProblem (#1498)', () => {
         expect(replyProblem(quiet)).toContain('no reason given');
     });
 
+    it('does not copy a finish reason it does not know', () => {
+        expect(replyProblem({ ...quiet, finishReason: 'Bearer abc123 please call 555-0100' })).toBe(
+            'no words and no tool call: it stopped (an unrecognised reason), 0 tokens used, 0 on thinking'
+        );
+        expect(replyProblem({ ...quiet, finishReason: 'STOP' })).toBe('no words and no tool call: it stopped (stop), 0 tokens used, 0 on thinking');
+    });
+
     it('puts the provider error first, with its status', () => {
         expect(replyProblem({ ...quiet, error: true, errorStatus: 400, errorText: 'OpenAI API error: 400 max_tokens too large' })).toBe(
             'the provider failed (400): OpenAI API error: 400 max_tokens too large'
@@ -30,7 +37,7 @@ describe('replyProblem (#1498)', () => {
 
 describe('providerErrorText', () => {
     it('keeps one short line', () => {
-        const text = providerErrorText(new Error(`OpenAI API error: 400 {\n  "error": "${'x'.repeat(400)}"\n}`));
+        const text = providerErrorText(new Error(`OpenAI API error: 400 {\n  "error": "${'context too long '.repeat(40)}"\n}`));
         expect(text).not.toContain('\n');
         expect(text.length).toBe(200);
         expect(text.endsWith('…')).toBe(true);
@@ -39,6 +46,21 @@ describe('providerErrorText', () => {
     it('drops a login written into an address', () => {
         expect(providerErrorText(new TypeError('Request cannot be constructed from a URL that includes credentials: https://me:hunter2@llm.example.com/v1'))).toBe(
             'Request cannot be constructed from a URL that includes credentials: https://[redacted]@llm.example.com/v1'
+        );
+    });
+
+    it('drops a key or token the provider repeated', () => {
+        expect(providerErrorText(new Error('OpenAI API error: 401 Incorrect API key provided: sk-proj-abcDEF1234567890xyz.'))).toBe(
+            'OpenAI API error: 401 Incorrect API key provided: [redacted].'
+        );
+        expect(providerErrorText('Authorization failed for Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig on retry')).toBe('Authorization failed for [redacted] on retry');
+        expect(providerErrorText(`key ${'A1b2'.repeat(10)} was rejected`)).toBe('key [redacted] was rejected');
+        expect(providerErrorText('AIzaSyD-1234567890abcdefghijklmnop is not valid')).toBe('[redacted] is not valid');
+    });
+
+    it('keeps the words of an ordinary error', () => {
+        expect(providerErrorText(new Error("This model's maximum context length is 8192 tokens"))).toBe(
+            "This model's maximum context length is 8192 tokens"
         );
     });
 
