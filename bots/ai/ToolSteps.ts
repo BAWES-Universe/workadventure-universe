@@ -260,6 +260,6 @@ function pageName(url: unknown): string | undefined {
 /** A failure in a few words: the tool's own message, without links (they can carry tokens) or our prefix. */
 function noteOf(why: string | undefined): string | undefined {
     if (!why) return undefined;
-    const words = why.replace(/^MCP tool error:\s*/i, '').replace(/\bhttps?:\/\/\S+/gi, '').replace(/\s+/g, ' ').trim();
+    const words = why.replace(/^(?:MCP )?tool error:\s*/i, '').replace(/\bhttps?:\/\/\S+/gi, '').replace(/\s+/g, ' ').trim();
     return oneLine(words, NOTE_MAX);
 }

@@ -720,6 +720,18 @@ export class MCPConnector {
             return { error: `Tool error: ${errMsg}` };
         }
 
+        // A tool that ran but failed answers with isError and its reason as content: an error like the ones above
+        if (response.result?.isError === true) {
+            const content: any[] = Array.isArray(response.result.content) ? response.result.content : [];
+            const why = content
+                .filter((item) => item?.type === 'text' && typeof item.text === 'string')
+                .map((item) => item.text)
+                .join(' ')
+                .trim();
+            console.warn(`[MCPConnector] Tool ${toolName} failed: ${why || 'no reason given'}`);
+            return { error: `Tool error: ${why || `${toolName} failed`}` };
+        }
+
         if (response.result && Array.isArray(response.result.content)) {
             return response.result.content;
         }

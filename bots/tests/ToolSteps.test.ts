@@ -59,6 +59,7 @@ describe('ToolSteps', () => {
             ok: false,
             note: 'quota at reached',
         });
+        expect(resultOf('a', { error: 'Tool error: daily limit reached' })).toEqual({ id: 'a', ok: false, note: 'daily limit reached' });
     });
 
     it('sums up what worked, grouped, in the order it first ran', () => {
