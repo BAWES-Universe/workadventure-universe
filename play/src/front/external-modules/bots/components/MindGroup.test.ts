@@ -210,4 +210,32 @@ describe("the bot page's Mind group (#1375)", () => {
         expect(mocks.api.getBotAiOptions).toHaveBeenCalledTimes(2);
         expect(text()).toContain("OpenAI · gpt-5");
     });
+
+    it("names Universe AI on the closed row while Orbit hasn't answered, never its stored ref", async () => {
+        mocks.api.getBotAiOptions.mockReturnValue(
+            new Promise<null>(() => {
+                // never answers
+            })
+        );
+        const component = new MindGroup({
+            target,
+            props: { bot, open: false, onToggle: vi.fn(), onChange: vi.fn() },
+        });
+        destroy = () => component.$destroy();
+        await settle();
+        expect(text()).toContain("Universe AI");
+        expect(text()).not.toContain("universe-ai");
+    });
+
+    it("names Universe AI on the closed row when Orbit can't say what the bot runs on", async () => {
+        mocks.api.getBotAiOptions.mockResolvedValue(null);
+        const component = new MindGroup({
+            target,
+            props: { bot, open: false, onToggle: vi.fn(), onChange: vi.fn() },
+        });
+        destroy = () => component.$destroy();
+        await settle();
+        expect(text()).toContain("Universe AI");
+        expect(text()).not.toContain("universe-ai");
+    });
 });
