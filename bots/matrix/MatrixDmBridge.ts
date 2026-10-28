@@ -596,6 +596,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
             // No reply at all means the bot couldn't be set up to answer (no AI service here), and an empty one leaves the
             // person with nothing: say so, as for a failure.
             if (!reply || reply.failed || (!reply.text && !reply.media?.length && !reply.artifacts?.length)) {
+                // A failed call is logged where it failed; these two were not logged anywhere (#1498)
+                if (!reply) console.warn(`[MatrixDmBridge] Bot ${botId} could not answer in ${event.room_id}: no AI service here`);
+                else if (!reply.failed) console.warn(`[MatrixDmBridge] Bot ${botId} could not answer in ${event.room_id}: the answer was empty`);
                 await couldNotAnswer(config);
                 return;
             }

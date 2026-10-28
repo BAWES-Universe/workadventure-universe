@@ -3,6 +3,7 @@
     import { fade, scale } from "svelte/transition";
     import type { ChatMessage } from "../../../Connection/ChatConnection";
     import LL from "../../../../../i18n/i18n-svelte";
+    import { runPinAction } from "../Details/Pins";
     import { QUICK_REACTIONS, areAllPhotos } from "./messageActions";
     import {
         availableActions,
@@ -15,7 +16,16 @@
         saveMessageFiles,
     } from "./availableActions";
     import { prepareFiles } from "./saveFiles";
-    import { IconArrowBackUp, IconCopy, IconDownload, IconMoodPlus, IconPencil, IconTrash } from "@wa-icons";
+    import {
+        IconArrowBackUp,
+        IconCopy,
+        IconDownload,
+        IconMoodPlus,
+        IconPencil,
+        IconPin,
+        IconPinnedOff,
+        IconTrash,
+    } from "@wa-icons";
 
     /**
      * The press-and-hold (and right-click) menu of a chat message: the message stays in place above a dimmed chat,
@@ -224,6 +234,13 @@
         {#if files.length > 0}
             <button role="menuitem" on:click={() => run(() => saveMessageFiles(files))} data-testid="menuSaveButton">
                 <span>{saveLabel}</span><IconDownload font-size={18} />
+            </button>
+        {/if}
+        {#if $actions.pin}
+            {@const pin = $actions.pin}
+            <button role="menuitem" on:click={() => run(() => runPinAction(message, pin))} data-testid="menuPinButton">
+                <span>{pin === "pin" ? $LL.chat.messageActions.pin() : $LL.chat.messageActions.unpin()}</span>
+                {#if pin === "pin"}<IconPin font-size={18} />{:else}<IconPinnedOff font-size={18} />{/if}
             </button>
         {/if}
         {#if $actions.edit}

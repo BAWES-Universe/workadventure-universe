@@ -79,3 +79,59 @@ describe("MatrixChatRoomMember typing (#1379)", () => {
         expect(vi.getTimerCount()).toBe(0);
     });
 });
+
+describe("MatrixChatRoomMember typing of a bot answering in steps", () => {
+    let roomMember: FakeRoomMember;
+    let member: MatrixChatRoomMember;
+    const typing = () => get(member.isTypingInformation) !== null;
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        roomMember = new FakeRoomMember();
+        roomMember.userId = "@bot_0b7c1d2e-1111-4222-8333-944455556666:chat.test";
+        roomMember.name = "Guide";
+        member = new MatrixChatRoomMember(roomMember as unknown as RoomMember, {} as MatrixClient);
+    });
+
+    afterEach(() => {
+        member.destroy();
+        vi.useRealTimers();
+    });
+
+    it("keeps the dots through a line before a tool, a long tool round and the artifact card", () => {
+        roomMember.setTyping(true);
+        // "Let me make that for you." arrives while the bot goes on to make the artifact
+        member.stoppedTyping();
+        expect(typing()).toBe(true);
+        vi.advanceTimersByTime(90_000);
+        expect(typing()).toBe(true);
+        // The answer, then the artifact card: the bot has not said it stopped yet
+        member.stoppedTyping();
+        member.stoppedTyping();
+        expect(typing()).toBe(true);
+    });
+
+    it("hides the dots at once when the bot says it is done, after its last message", () => {
+        roomMember.setTyping(true);
+        member.stoppedTyping();
+        roomMember.setTyping(false);
+        expect(typing()).toBe(false);
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("hides the dots at once when the last message arrives after the bot stopped", () => {
+        roomMember.setTyping(true);
+        roomMember.setTyping(false);
+        member.stoppedTyping();
+        expect(typing()).toBe(false);
+    });
+
+    it("still hides a person's dots when their message arrives, even before their stop", () => {
+        const person = new FakeRoomMember();
+        const personMember = new MatrixChatRoomMember(person as unknown as RoomMember, {} as MatrixClient);
+        person.setTyping(true);
+        personMember.stoppedTyping();
+        expect(get(personMember.isTypingInformation)).toBeNull();
+        personMember.destroy();
+    });
+});

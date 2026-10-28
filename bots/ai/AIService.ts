@@ -54,6 +54,8 @@ import { captureAiGeneration, captureAiTrace, flushPostHog } from './PostHogClie
 import { priceCall } from './pricing/costing';
 import { UsageLedger, priceMetadata, type TurnCost } from './pricing/ledger';
 import { buildRecentFilesLine, buildSystemPrompt } from './systemPrompt';
+import { replyProblem } from './replyProblem';
+import { providerErrorText } from './providers/ownKeyHttp';
 /** Ends a direct-message reply that answers where the bot is or invites the person over because they asked. */
 export { ROOM_CARD_MARK } from './systemPrompt';
 import {
@@ -532,6 +534,8 @@ export class AIService {
         let usageProviderId = providerId;
         // A reply through a person's own key tells Orbit how it went, so a key that keeps failing is marked Down
         let reportHealth = false;
+        // A private bot's failure is logged without the error's words, which could quote what was said (#1166)
+        let privateTurn = false;
 
         try {
             // Get provider credentials. A bot on Universe AI or a person's own key is resolved by Orbit for this bot (#374).
@@ -767,6 +771,10 @@ export class AIService {
             let completionTokens = 0;
             let error = false;
             let errorStatus: number | undefined;
+            // What the provider said when a call failed, and why the reply's call ended, for the line logged when a
+            // reply comes back with nothing (#1498)
+            let errorText: string | undefined;
+            let finishReason: string | undefined;
             let streamCompleted = false;
             let accumulatedContent = '';
             let firstCallContent = '';
@@ -786,6 +794,9 @@ export class AIService {
             // health report needs the reply as a whole, and the provider's status when it gave one.
             let followUpFailedForHealth = false;
             let followUpErrorStatus: number | undefined;
+            // The error a failed call's $ai_generation carries, like the turn's trace does (#1498)
+            const failedCall = (failed: boolean, status?: number) =>
+                failed ? { error: replyProblem({ error: true, errorStatus: status, errorText, answered: false, outputTokens: 0, reasoningTokens: 0 }) } : {};
             // skipping code after the loop but still reaching the finally block.
             let followUpInput = '';
             let overallFollowUpStartTime = 0;
@@ -825,6 +836,7 @@ export class AIService {
             // Hide bot conversations (#1166): a private bot sends no conversation or player ids to Sentry and no
             // text to PostHog. Anything else (usage counts, memory, errors) is unchanged.
             const privateBot = await this.isPrivateBot(botId);
+            privateTurn = privateBot;
             // Every PostHog capture of this turn goes through here, so a private bot cannot miss one
             const captureGeneration: typeof captureAiGeneration = (params) => {
                 if (!privateBot) captureAiGeneration(params);
@@ -1004,6 +1016,7 @@ export class AIService {
                         if (chunk.metadata?.error) {
                             followUpFailedForHealth = true;
                             if (chunk.metadata.errorStatus) followUpErrorStatus = chunk.metadata.errorStatus;
+                            errorText ??= chunk.metadata.errorText;
                         }
 
                         // Capture $ai_generation for the initial LLM call NOW —
@@ -1036,6 +1049,7 @@ export class AIService {
                                 botId,
                                 playerId: String(playerId),
                                 space: spaceName,
+                                ...failedCall(!!chunk.metadata?.error, chunk.metadata?.errorStatus),
                             });
                         } catch (captureError) {
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -1111,6 +1125,7 @@ export class AIService {
                                     if (retryChunk.done && retryChunk.metadata?.error) {
                                         followUpFailedForHealth = true;
                                         if (retryChunk.metadata.errorStatus) followUpErrorStatus = retryChunk.metadata.errorStatus;
+                                        errorText ??= retryChunk.metadata.errorText;
                                     }
                                 }
                             } catch (retryError) {
@@ -1150,6 +1165,7 @@ export class AIService {
                             // see the retry's real token counts and truncation status.
                             yield {content: '', done: true, metadata: retryMeta || chunk.metadata};
                             streamCompleted = true;
+                            finishReason = (retryMeta || chunk.metadata)?.finishReason;
                             break;
                         }
                         
@@ -1326,6 +1342,7 @@ export class AIService {
                                     followUpError = true;
                                     followUpFailedForHealth = true;
                                     if (resultChunk.metadata.errorStatus) followUpErrorStatus = resultChunk.metadata.errorStatus;
+                                    errorText ??= resultChunk.metadata.errorText;
                                 }
                                 // Accumulate content from follow-up response (same as main stream)
                                 if (resultChunk.content) {
@@ -1423,6 +1440,7 @@ export class AIService {
                                             botId,
                                             playerId: String(playerId),
                                             space: spaceName,
+                                            ...failedCall(followUpError, followUpErrorStatus),
                                         });
                                     } catch (captureError) {
                                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -1655,6 +1673,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                         if (retryChunk.done && retryChunk.metadata?.error) {
                                             followUpFailedForHealth = true;
                                             if (retryChunk.metadata.errorStatus) followUpErrorStatus = retryChunk.metadata.errorStatus;
+                                            errorText ??= retryChunk.metadata.errorText;
                                         }
                                     }
                                 } catch (retryError) {
@@ -1776,6 +1795,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     botId,
                                     playerId: String(playerId),
                                     space: spaceName,
+                                    ...failedCall(followUpError, followUpErrorStatus),
                                 });
                             } catch (captureError) {
                                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -1828,9 +1848,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     if (chunk.metadata?.error) {
                         error = true;
                         if (chunk.metadata.errorStatus) errorStatus = chunk.metadata.errorStatus;
+                        errorText ??= chunk.metadata.errorText;
                     }
                     if (chunk.done) {
                         streamCompleted = true;
+                        finishReason = chunk.metadata?.finishReason;
                         if (process.env.ENABLE_BOT_DEBUG === 'true') {
                             console.log(`[AIService] Received done chunk, stream completing`);
                         }
@@ -1887,8 +1909,31 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 // run regardless — wrap them in a try-finally so parentSpan?.end() and
                 // the scope restore always execute, preventing orphaned child spans.
                 try {
+                    // A reply that failed, or came back with no words and no tool call, leaves the person nothing (a DM shows
+                    // "Couldn't answer"): say why in the logs, on the span and on the trace (#1498)
+                    const lastCall = ledger.lastOutcome();
+                    const problem = streamCompleted && !abortSignal?.aborted
+                        ? replyProblem({
+                              // The reply ends on its last call: a failure that a later call (a retry, the next round) made up for
+                              // is no problem, and any call that ended the reply failing is, whatever was said before it
+                              error: !!lastCall?.failed,
+                              errorStatus: lastCall?.status,
+                              // A private bot's provider text can quote the conversation: only its status is kept
+                              errorText: privateBot ? 'details left out for a private bot' : lastCall?.errorText,
+                              finishReason,
+                              answered: !!accumulatedContent.trim() || hadToolCalls,
+                              outputTokens: completionTokens,
+                              reasoningTokens: ledger.summary()?.usage.reasoningTokens ?? 0,
+                              maxTokens: config.maxTokens,
+                          })
+                        : undefined;
+                    if (problem) {
+                        console.warn(`[AIService] Bot ${botId} did not answer in full on ${config.model} (${usageProviderId}): ${problem}`);
+                        parentSpan?.setStatus({ code: 2, message: problem });
+                    }
+
                     // Non-tool-call path: capture $ai_generation for the first (only) LLM call
-                    if (!privateBot && !initialGenCaptured && streamCompleted && firstCallContent && !hadToolCalls) {
+                    if (!privateBot && !initialGenCaptured && streamCompleted && (firstCallContent || problem) && !hadToolCalls) {
                         captureAiGeneration({
                             distinctId: `bot-${botId}`,
                             traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
@@ -1912,6 +1957,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             botId,
                             playerId: String(playerId),
                             space: spaceName,
+                            ...(problem ? { error: problem } : {}),
                         });
                     }
                     
@@ -1940,11 +1986,12 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             botId,
                             playerId: String(playerId),
                             space: spaceName,
+                            ...(problem ? { error: problem } : {}),
                         });
                     }
                     
                     // Capture $ai_trace (turn-level)
-                    if (!privateBot && streamCompleted && (accumulatedContent || error)) {
+                    if (!privateBot && streamCompleted && (accumulatedContent || error || problem)) {
                         const generationLatency = (Date.now() - startTime) / 1000;
                         captureAiTrace({
                             distinctId: `bot-${botId}`,
@@ -1969,6 +2016,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             botId,
                             playerId: String(playerId),
                             space: spaceName,
+                            ...(problem ? { error: problem } : {}),
                         });
                     }
                 } catch (telemetryError) {
@@ -2048,6 +2096,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             if (process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.error('[AIService] Error generating response:', error);
             }
+            // Before this, a reply that broke here left no trace outside debug mode (#1498)
+            console.error(`[AIService] Bot ${botId} could not answer: ${privateTurn ? (error?.name ?? 'Error') : providerErrorText(error)}`);
 
             // Track error
             this.trackUsage(botId, usageProviderId, {
@@ -2173,10 +2223,19 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         images?: string[]
     ): AsyncGenerator<AIStreamChunk> {
         const sentAt = new Date();
-        for await (const chunk of this.providerRegistry.generateStream(providerId, systemPrompt, userMessage, config, tools, signal, images)) {
-            // A call that was stopped before it said what it used has no figure to add; the calls that finished keep theirs
-            if (chunk.done && !chunk.metadata?.cancelled) ledger.add(priceMetadata(config, chunk.metadata, sentAt));
-            yield chunk;
+        try {
+            for await (const chunk of this.providerRegistry.generateStream(providerId, systemPrompt, userMessage, config, tools, signal, images)) {
+                // A call that was stopped before it said what it used has no figure to add; the calls that finished keep theirs
+                if (chunk.done && !chunk.metadata?.cancelled) {
+                    ledger.add(priceMetadata(config, chunk.metadata, sentAt));
+                    const meta = chunk.metadata;
+                    ledger.noteOutcome(meta?.error ? { failed: true, status: meta.errorStatus, errorText: meta.errorText } : { failed: false });
+                }
+                yield chunk;
+            }
+        } catch (error) {
+            if (!signal?.aborted) ledger.noteOutcome({ failed: true, errorText: providerErrorText(error) });
+            throw error;
         }
     }
 

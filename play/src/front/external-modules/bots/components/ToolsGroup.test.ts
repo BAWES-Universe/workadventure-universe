@@ -174,6 +174,13 @@ describe("the bot page's Tools group: longest reply and steps (Orbit #666)", () 
         expect(chips("Longest reply").map((chip) => chip.textContent?.trim())).toEqual(["Key's limit · 8k", "4k"]);
         expect(chips("Steps in one reply").map((chip) => chip.textContent?.trim())).toEqual(["Key's limit · 12", "10"]);
     });
+
+    it("follows the key Orbit says the bot is on when the bot has none saved (CodeRabbit on #1524)", async () => {
+        const bot = { id: "b1", name: "Micho" } as BotData;
+        await mount(bot, options({ current: "key-1", keys: [myKey] }));
+        expect(chips("Longest reply").map((chip) => chip.textContent?.trim())).toEqual(["Key's limit · 8k", "4k"]);
+        expect(chips("Steps in one reply").map((chip) => chip.textContent?.trim())).toEqual(["Key's limit · 12", "10"]);
+    });
 });
 
 describe("a model that writes less than the key allows (Orbit #673)", () => {
