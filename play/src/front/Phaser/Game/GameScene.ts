@@ -3868,6 +3868,10 @@ export class GameScene extends DirtyScene {
                 return { x: this.CurrentPlayer.x, y: this.CurrentPlayer.y, cancelled: true };
             }
             if (path.length === 0) throw new Error("No path found");
+            // The path starts where the Woka was when it was asked for, but a Woka already walking kept going
+            // while it was computed. setPathToFollow starts from where the Woka is now: drop the old start, or
+            // it steps back to it and faces backwards for a frame (rapid clicks flash the Woka the wrong way).
+            if (path.length > 1) path.shift();
             return this.CurrentPlayer.setPathToFollow(path, speed ?? this.CurrentPlayer.walkingSpeed);
         } finally {
             if (this.pendingMoveTo === request) {
