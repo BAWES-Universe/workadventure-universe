@@ -17,7 +17,9 @@
 
     /** What Orbit says about this bot's AI (the same answer the Mind group uses). Null when it can't say: the row stays out. */
     let loaded: BotAiOptions | null = null;
-    $: options = aiOptions ?? loaded;
+    // Which bot `loaded` answers for: read directly in `options`, so a bot switch never shows the previous bot's answer
+    let loadedBotId: string | undefined | null = null;
+    $: options = aiOptions ?? (loadedBotId === bot.id ? loaded : null);
     let loadedFor: string | undefined | null = null;
     let loadCount = 0;
 
@@ -27,7 +29,10 @@
         if (!botApiService.isInitialized()) return;
         try {
             const answer = await botApiService.getBotAiOptions(botId ? { botId } : {});
-            if (mine === loadCount) loaded = answer;
+            if (mine === loadCount) {
+                loaded = answer;
+                loadedBotId = botId;
+            }
         } catch (e) {
             console.error("[VisionGroup] Failed to load AI options:", e);
         }
