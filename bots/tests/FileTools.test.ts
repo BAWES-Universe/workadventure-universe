@@ -344,9 +344,18 @@ describe('the file tools in AIService', () => {
         expect(found.result.items).toHaveLength(1);
         // No asker: it is already on the person's list
         expect(bot.sendAudio).toHaveBeenCalledWith('bubble-1', 'https://cdn.example.com/song.mp3');
-        // Already in storage: sent as it is, not downloaded and uploaded again
-        expect(bot.markStored).toHaveBeenCalledWith('https://cdn.example.com/song.mp3');
+        // A link kept as it was typed goes the usual way, with its checks
+        expect(bot.markStored).not.toHaveBeenCalled();
         expect(sent.result).toMatchObject({ sent: true });
+    });
+
+    it('sends a file Orbit keeps in storage as it is, never downloaded and uploaded again', async () => {
+        const bot = client();
+        const kept = view(SONG);
+        const refused = await withFiles()['sendFileAgain'](kept, 'https://cdn.example.com/signed/song.mp3', { botClient: bot as never, spaceName: 'bubble-1', botId: 'bot1', playerId: 7 });
+        expect(refused).toBeNull();
+        expect(bot.markStored).toHaveBeenCalledWith('https://cdn.example.com/signed/song.mp3');
+        expect(bot.sendAudio).toHaveBeenCalledWith('bubble-1', 'https://cdn.example.com/signed/song.mp3');
     });
 
     it("takes no look at an image for a reply on a person's own key", async () => {
