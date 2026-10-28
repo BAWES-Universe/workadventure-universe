@@ -5,6 +5,7 @@ import {
     getCopyableText,
     getMediaCaption,
     getSaveableFiles,
+    previewLine,
     summarizeForReply,
 } from "../MessageActions/messageActions";
 
@@ -134,5 +135,75 @@ describe("message actions", () => {
             expect(getMediaCaption(content({ body: "", filename: "photo.png" }))).toBeUndefined();
             expect(getMediaCaption(content({ body: "   " }))).toBeUndefined();
         });
+    });
+});
+
+describe("the line a chat list row and a notification show", () => {
+    const labels = {
+        photo: "Photo",
+        photos: (count: number) => `${count} photos`,
+        files: (count: number) => `${count} files`,
+        video: "Video",
+        voice: "Voice",
+        audio: "Audio",
+    };
+
+    it("says Photo for an image whose body is its file name", () => {
+        const image = content({ body: "IMG_4821.jpg", filename: "IMG_4821.jpg" });
+        expect(previewLine("image", image, labels)).toBe("Photo");
+    });
+
+    it("shows the caption of an image sent with one", () => {
+        const image = content({ body: "Look at the new map!", filename: "IMG_5530.jpg" });
+        expect(previewLine("image", image, labels)).toBe("Look at the new map!");
+    });
+
+    it("says Video for a video and keeps its caption", () => {
+        const video = content({ body: "VID_1930.mp4", filename: "VID_1930.mp4" });
+        expect(previewLine("video", video, labels)).toBe("Video");
+        expect(previewLine("video", { ...video, body: "Mariam at the HQ" }, labels)).toBe("Mariam at the HQ");
+    });
+
+    it("tells a voice message from an audio file", () => {
+        const voice = content({
+            body: "voice-message.ogg",
+            filename: "voice-message.ogg",
+            isVoice: true,
+        });
+        const song = content({ body: "Interview-final.mp3", filename: "Interview-final.mp3" });
+        expect(previewLine("audio", voice, labels)).toBe("Voice");
+        expect(previewLine("audio", song, labels)).toBe("Audio");
+    });
+
+    it("counts several documents as files, not photos", () => {
+        const documents = content({ body: "a.pdf", fileNames: ["a.pdf", "b.docx"] });
+        expect(previewLine("gallery", documents, labels)).toBe("2 files");
+    });
+
+    it("does not need the file to be loaded: a message that has just arrived has no URL yet", () => {
+        const arriving = content({ body: "IMG_4821.jpg", filename: "IMG_4821.jpg", url: undefined });
+        expect(previewLine("image", arriving, labels)).toBe("Photo");
+    });
+
+    it("keeps the file name of a document", () => {
+        const pdf = content({ body: "Budget-Q4.pdf", filename: "Budget-Q4.pdf" });
+        expect(previewLine("file", pdf, labels)).toBe("Budget-Q4.pdf");
+    });
+
+    it("keeps the text of a text message as it was sent", () => {
+        expect(previewLine("text", content({ body: "See you at the HQ in five" }), labels)).toBe(
+            "See you at the HQ in five"
+        );
+        expect(previewLine("text", content({ body: "<b>bold</b> news" }), labels)).toBe("<b>bold</b> news");
+    });
+
+    it("counts the photos of a gallery", () => {
+        const gallery = content({
+            body: "a.jpg",
+            url: "blob:chat/e1.jpg",
+            urls: ["blob:chat/e2.jpg"],
+            fileNames: ["a.jpg", "b.jpg"],
+        });
+        expect(previewLine("gallery", gallery, labels)).toBe("2 photos");
     });
 });

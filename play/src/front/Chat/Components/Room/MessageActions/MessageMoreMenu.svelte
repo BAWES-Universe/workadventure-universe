@@ -2,8 +2,9 @@
     import { onMount } from "svelte";
     import type { ChatMessage } from "../../../Connection/ChatConnection";
     import LL from "../../../../../i18n/i18n-svelte";
+    import { runPinAction } from "../Details/Pins";
     import { availableActions, copyText, deleteMessage, editMessage } from "./availableActions";
-    import { IconCopy, IconPencil, IconTrash } from "@wa-icons";
+    import { IconCopy, IconPencil, IconPin, IconPinnedOff, IconTrash } from "@wa-icons";
 
     /** The hover bar's "More" menu: the actions that are used less often than reacting, replying and saving. */
     export let message: ChatMessage;
@@ -45,6 +46,13 @@
         {@const text = $actions.copyText}
         <button role="menuitem" on:click={() => run(() => copyText(text))} data-testid="copyMessageTextButton">
             <span>{$LL.chat.messageActions.copyText()}</span><IconCopy font-size={16} />
+        </button>
+    {/if}
+    {#if $actions.pin}
+        {@const pin = $actions.pin}
+        <button role="menuitem" on:click={() => run(() => runPinAction(message, pin))} data-testid="pinMessageButton">
+            <span>{pin === "pin" ? $LL.chat.messageActions.pin() : $LL.chat.messageActions.unpin()}</span>
+            {#if pin === "pin"}<IconPin font-size={16} />{:else}<IconPinnedOff font-size={16} />{/if}
         </button>
     {/if}
     {#if $actions.edit}
