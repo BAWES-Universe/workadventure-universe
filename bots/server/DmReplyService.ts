@@ -16,6 +16,8 @@ import { ROOM_CARD_MARK } from '../ai/AIService';
 import type { PendingMedia } from '../memory/ConversationMemory';
 import type { ArtifactCard } from '../ai/ArtifactTools';
 import type { ReplyLimitReached } from '../ai/types';
+import type { ParsedFile } from '../services/FileParser';
+import { withoutNoteIds, type ChatUpload } from '../services/ChatFiles';
 import type { BotConfiguration } from './AdminApiService';
 import type { BotManager } from './BotManager';
 
@@ -51,6 +53,10 @@ export interface DmAttachment {
     url: string;
     mimeType: string;
     mediaType?: 'image' | 'file' | 'audio' | 'video';
+    /** The name it was sent with, its size, and how long it plays: kept with it on the bot's list of files (#1508). */
+    name?: string;
+    sizeBytes?: number | null;
+    lengthSeconds?: number | null;
 }
 
 export interface DmReplyHooks {
@@ -95,6 +101,9 @@ const RESTING_PROMPT =
     "in character and in the same language they wrote in, saying you can't talk right now and they can come back later. " +
     "Don't answer their question, and don't mention AI, settings or anyone who runs you.";
 
+/** Chats whose last files are remembered for telling a message tried again from a new one. */
+const MAX_LAST_FILES = 500;
+
 export class DmReplyService extends BaseBehavior {
     private queues = new Map<string, Promise<unknown>>();
     /** Per chat, the words that wait behind the answer in progress, to be answered together once it is done. */
@@ -107,6 +116,8 @@ export class DmReplyService extends BaseBehavior {
     private missingCache = new Map<string, number>();
     /** When each chat (bot and person) last got a room card. */
     private roomCards = new Map<string, number>();
+    /** Per chat, the files in the person's last message by name and size: a message tried again sends the same ones. */
+    private lastFiles?: Map<string, string>;
 
     constructor(private botManager: BotManager) {
         super({ type: 'dm' });
@@ -268,13 +279,37 @@ export class DmReplyService extends BaseBehavior {
         // Same attachment handling as a bubble: parsed text for the model, image URLs for vision.
         let augmented = text;
         let images: string[] = [];
+        const read = new Map<string, ParsedFile | null>();
         const [primary, ...gallery] = attachments;
         if (primary) {
             const galleryUrls = gallery.map((a) => a.url);
-            augmented = await this.formatParsedAttachment(text, primary.url, primary.mimeType, primary.mediaType, galleryUrls, botId);
+            augmented = await this.formatParsedAttachment(text, primary.url, primary.mimeType, primary.mediaType, galleryUrls, botId, read);
             images = await this.collectImageUrls(primary.url, primary.mediaType, primary.mimeType, galleryUrls);
         }
-        const original = text || (primary ? `[sent a ${primary.mediaType || 'file'}]` : '');
+        // The files go on the bot's list (#1508), and the history keeps a note for each in place of "[sent a file]"
+        const uploads: ChatUpload[] = attachments.map((a) => ({
+            url: a.url,
+            name: a.name || a.url.split('?')[0].split('/').pop() || a.mediaType || 'file',
+            mimeType: a.mimeType,
+            mediaType: a.mediaType,
+            sizeBytes: a.sizeBytes,
+            lengthSeconds: a.lengthSeconds,
+        }));
+        const noted = uploads.length
+            ? this.noteSentFiles({
+                  botId,
+                  playerId,
+                  text,
+                  uploads,
+                  read,
+                  // A direct message is always a signed-in person, in the Matrix room the message came from
+                  call: hooks.roomId
+                      ? { botId, person: { signedIn: true, identifier: person.uuid, name: person.name }, chat: { kind: 'dm', ref: hooks.roomId } }
+                      : null,
+                  personRef: person.uuid,
+              })
+            : null;
+        const original = noted?.line ?? text;
 
         const lastMet = memory.getMemory(botId, playerId)?.relationship?.lastMet ?? 0;
         if (Date.now() - lastMet > NEW_CONVERSATION_AFTER_MS) {
@@ -283,10 +318,25 @@ export class DmReplyService extends BaseBehavior {
         // A message tried again after a failed answer (or sent again by the person) is already the last thing they
         // said, with no reply after it: keep it once in the history.
         const lastSaid = memory.getMemory(botId, playerId)?.conversationHistory?.at(-1);
-        const alreadyKept = lastSaid?.sender === 'person' && lastSaid.message === original && lastSaid.spaceName === DM_SPACE_NAME;
+        // A note has its file's id once Orbit gave one, so the ids don't count; the files were kept the first time.
+        // A note doesn't say a file's size, so another file with the same name is told apart by it.
+        const chat = `${botId}:${playerId}`;
+        const files = uploads.map((upload) => `${upload.name}:${upload.sizeBytes ?? ''}`).join('\n');
+        const lastFiles = (this.lastFiles ??= new Map());
+        const sameFiles = (lastFiles.get(chat) ?? files) === files;
+        // Newest last; the oldest chat goes first, which only takes it back to comparing the text alone
+        lastFiles.delete(chat);
+        lastFiles.set(chat, files);
+        if (lastFiles.size > MAX_LAST_FILES) lastFiles.delete(lastFiles.keys().next().value!);
+        const alreadyKept =
+            lastSaid?.sender === 'person' &&
+            withoutNoteIds(lastSaid.message) === withoutNoteIds(original) &&
+            lastSaid.spaceName === DM_SPACE_NAME &&
+            sameFiles;
         if (!alreadyKept) {
             memory.addMessage(botId, playerId, original, 'person', DM_SPACE_NAME);
-            memory.extractPersonalInfo(botId, playerId, original);
+            memory.extractPersonalInfo(botId, playerId, text);
+            noted?.keep();
         }
         // A first message creates the memory after the uuid was set, so it starts as "temp-<id>": name it now, before
         // tools see it.

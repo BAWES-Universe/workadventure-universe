@@ -2,6 +2,7 @@
  * SocialBehavior - Bot actively seeks conversations with players
  */
 
+import type { ChatUpload } from '../services/ChatFiles';
 import { BaseBehavior, createConversationState, type BehaviorConfig } from './BaseBehavior';
 import type { PositionInterface } from '../../play/src/front/Connection/ConnexionModels';
 import { PositionMessage_Direction } from '@workadventure/messages';
@@ -730,7 +731,7 @@ export class SocialBehavior extends BaseBehavior {
         this.botInitiatedPlayers.clear();
     }
 
-    async onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string, galleryUrls?: string[]): Promise<void> {
+    async onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string, galleryUrls?: string[], uploads?: ChatUpload[]): Promise<void> {
         if (!this.bot) {
             console.warn(`[SocialBehavior] onChatMessage: bot is null`);
             return;
@@ -746,8 +747,14 @@ export class SocialBehavior extends BaseBehavior {
         // Save the original message for persistence — augmented version
         // is for the AI request only.
         const originalUserMessage = message;
+        // With a note for each file it came with (#1508), for the bot's memory only: the saved chat keeps what they wrote
+        let historyMessage = message;
+        let keepFiles: () => void = () => undefined;
         if (url) {
-            message = await this.formatParsedAttachment(message, url, mimeType || 'application/octet-stream', mediaType, galleryUrls);
+            const files = await this.readBubbleFiles(spaceName, senderId, message, url, mimeType || 'application/octet-stream', mediaType, galleryUrls, uploads);
+            message = files.augmented;
+            historyMessage = files.line;
+            keepFiles = files.keep;
         }
 
         let conversation = this.activeConversations.get(senderId);
@@ -803,7 +810,8 @@ export class SocialBehavior extends BaseBehavior {
         }
         
         // Store player's message in memory (original, without augmented file content)
-        this.conversationMemory?.addMessage(botId, senderId, originalUserMessage, 'person', spaceName);
+        this.conversationMemory?.addMessage(botId, senderId, historyMessage, 'person', spaceName);
+        keepFiles();
 
         // Store player's message in conversation storage (original, without augmented file content)
         if (this.conversationStorage) {
