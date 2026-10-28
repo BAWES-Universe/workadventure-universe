@@ -42,9 +42,15 @@ function clipped(text: string, max: number): string {
     return text.slice(0, Math.max(0, end));
 }
 
+/** As PersistentMemory: an older Orbit repeats a Forget for a minute; one with an id until it is reported. */
+const FORGET_REPEAT_WINDOW_MS = 2 * 60 * 1000;
+const FORGET_ROW_KEEP_MS = 24 * 60 * 60 * 1000;
+
 export class ChatFileKeeper {
     /** Counts up on each Forget, per bot ("*" for everyone) and per person, so work started before it stops. */
     private forgets = new Map<string, number>();
+    /** Forgets already counted, by "botId|row:<id>" (or "botId|*" and "botId|uuid:<uuid>"), until when each is left out. */
+    private applied = new Map<string, number>();
     private reads: (() => Promise<void>)[] = [];
     private reading = 0;
 
@@ -65,11 +71,28 @@ export class ChatFileKeeper {
         })();
     }
 
-    /** Drop what is still waiting for people Orbit asked the bot to forget. */
+    /**
+     * Drop what is still waiting for people Orbit asked the bot to forget. Orbit repeats a Forget in its answers until it
+     * is reported (#493), so each one counts once, by its id (or, from an older Orbit, by who it names for a while), and
+     * a file sent after it is kept.
+     */
     forget(botId: string, notice: MemoryForgetNotice): void {
+        const now = Date.now();
+        for (const [key, keepUntil] of this.applied) if (now > keepUntil) this.applied.delete(key);
+        const once = (key: string, keepMs: number) => {
+            if (this.applied.has(`${botId}|${key}`)) return false;
+            this.applied.set(`${botId}|${key}`, now + keepMs);
+            return true;
+        };
         const bump = (key: string) => this.forgets.set(key, (this.forgets.get(key) ?? 0) + 1);
-        if (notice.everyone) bump(`${botId}|*`);
-        for (const uuid of notice.userUuids) bump(`${botId}|${uuid}`);
+        if (notice.rows && notice.rows.length > 0) {
+            for (const row of notice.rows) {
+                if (once(`row:${row.id}`, FORGET_ROW_KEEP_MS)) bump(`${botId}|${row.userUuid ?? '*'}`);
+            }
+            return;
+        }
+        if (notice.everyone && once('*', FORGET_REPEAT_WINDOW_MS)) bump(`${botId}|*`);
+        for (const uuid of notice.userUuids) if (once(`uuid:${uuid}`, FORGET_REPEAT_WINDOW_MS)) bump(`${botId}|${uuid}`);
     }
 
     private epochOf(botId: string, personRef: string | null): string {
