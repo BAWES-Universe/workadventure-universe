@@ -208,6 +208,15 @@ describe('what a call was made with', () => {
         expect(room.size()).toBeLessThan(5000);
     });
 
+    it('keeps what a call was made on, a link or a search, so the model can call it again', () => {
+        const room = new StepRoom(5000);
+        const url = `https://example.com/reports/2026/q3/summary?ref=${'x'.repeat(80)}`;
+        room.add(stepOf(1, '', [{ id: 'r', name: 'read_web_page', arguments: JSON.stringify({ url }) }], [{ id: 'r', name: 'read_web_page', text: 'p'.repeat(3000) }]));
+        room.add(made(2, 'y'.repeat(2000)));
+        expect(room.steps[0]!.results[0]!.content).toContain('set aside to make room. Call it again');
+        expect(JSON.parse(room.steps[0]!.calls[0]!.arguments)).toEqual({ url });
+    });
+
     it('sets the newest page aside before its results when the model turns the steps down for length', () => {
         const room = new StepRoom(100_000);
         room.add(made(1, 'z'.repeat(20_000), 'r'.repeat(3000)));

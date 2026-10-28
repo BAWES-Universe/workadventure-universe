@@ -159,10 +159,11 @@ function sizeOf(step: ReplyStep): number {
 const asideValue = (whole: number) => `[${whole.toLocaleString('en-US')} characters, set aside to make room]`;
 
 /**
- * A call's arguments with each long text in them set aside to a line (an artifact's whole page, a long prompt), so the
- * call still says what it did and stays valid JSON. As they were when there is nothing long in them.
+ * A call's arguments with each text longer than `longer` set aside to a line (an artifact's whole page, a long prompt),
+ * so the call still says what it did and stays valid JSON. What it was called on (a link, a name, a search) is short,
+ * so it stays, and the model can call it again. As they were when there is nothing long in them.
  */
-function argumentsAside(args: string): string {
+function argumentsAside(args: string, longer: number): string {
     let parsed: unknown;
     try {
         parsed = JSON.parse(args);
@@ -173,7 +174,7 @@ function argumentsAside(args: string): string {
     const walk = (value: unknown): unknown => {
         if (typeof value === 'string') {
             const line = asideValue(value.length);
-            if (line.length >= value.length) return value;
+            if (value.length <= longer || line.length >= value.length) return value;
             changed = true;
             return line;
         }
@@ -212,6 +213,11 @@ export class StepRoom {
     private readonly setAsideCalls = new WeakSet<ToolCall>();
 
     constructor(private readonly room: number) {}
+
+    /** A text in a call's arguments is long, and can be set aside, past a twentieth of the room. */
+    private get longText(): number {
+        return Math.floor(this.room / 20);
+    }
 
     size(): number {
         return this.steps.reduce((total, step) => total + sizeOf(step), 0);
@@ -260,7 +266,7 @@ export class StepRoom {
         let changed = false;
         for (const call of step.calls) {
             if (this.setAsideCalls.has(call)) continue;
-            const aside = argumentsAside(call.arguments);
+            const aside = argumentsAside(call.arguments, this.longText);
             if (aside.length >= call.arguments.length) continue;
             call.arguments = aside;
             this.setAsideCalls.add(call);
