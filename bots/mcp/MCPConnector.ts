@@ -131,8 +131,11 @@ function buildAuthHeaders(
 
 /**
  * Parse an MCP response, handling both standard JSON and SSE (Streamable HTTP).
+ *
+ * A stream may carry other messages before the answer (log or progress notices), so the answer is the message that
+ * replies to `requestId`; failing that, the first message with a result or an error; failing that, the first one.
  */
-function parseMcpResponse(response: any): any {
+function parseMcpResponse(response: any, requestId?: string): any {
     const contentType = response.headers?.['content-type'] || '';
     const data = response.data;
 
@@ -140,9 +143,10 @@ function parseMcpResponse(response: any): any {
         contentType.includes('text/event-stream') ||
         (typeof data === 'string' && (data.trimStart().startsWith('event:') || data.trimStart().startsWith('data:')))
     ) {
-        const text = typeof data === 'string' ? data : String(data);
-        const messages = text.split('\n\n');
-        for (const msg of messages) {
+        // Streams may end their lines with \r\n; a blank line separates messages either way
+        const text = (typeof data === 'string' ? data : String(data)).replace(/\r\n?/g, '\n');
+        const parsedMessages: any[] = [];
+        for (const msg of text.split('\n\n')) {
             const dataLines: string[] = [];
             for (const line of msg.trim().split('\n')) {
                 if (line.startsWith('data:')) {
@@ -151,12 +155,19 @@ function parseMcpResponse(response: any): any {
             }
             if (dataLines.length > 0) {
                 try {
-                    const parsed = JSON.parse(dataLines.join('\n'));
-                    return { data: parsed, headers: response.headers, status: response.status };
+                    parsedMessages.push(JSON.parse(dataLines.join('\n')));
                 } catch {
                     continue;
                 }
             }
+        }
+        const isAnswer = (m: any) => m && typeof m === 'object' && ('result' in m || 'error' in m);
+        const answer =
+            (requestId !== undefined ? parsedMessages.find((m) => isAnswer(m) && String(m.id) === requestId) : undefined) ??
+            parsedMessages.find(isAnswer) ??
+            parsedMessages[0];
+        if (answer !== undefined) {
+            return { data: answer, headers: response.headers, status: response.status };
         }
         return response; // fallback to raw
     }
@@ -252,7 +263,7 @@ async function jsonRpcRequest(
                             lookup: guardedLookup,
                         }
                     );
-                    const parsed = parseMcpResponse(initResponse);
+                    const parsed = parseMcpResponse(initResponse, 'init');
                     // Per MCP Streamable HTTP spec, session ID is transmitted in the
                     // Mcp-Session-Id HTTP response header, not in the JSON body.
                     // Check header first, then fall back to body for non-spec servers.
@@ -354,9 +365,10 @@ async function jsonRpcRequest(
     const unlinkExternalAbort = linkExternalAbort(signal, controller);
 
     try {
+        const requestId = method === 'tools/list' ? '1' : '2';
         const body: Record<string, any> = {
             jsonrpc: '2.0',
-            id: method === 'tools/list' ? '1' : '2',
+            id: requestId,
             method,
         };
         if (params !== undefined) {
@@ -370,7 +382,7 @@ async function jsonRpcRequest(
             lookup: guardedLookup,
         });
 
-        const parsed = parseMcpResponse(response);
+        const parsed = parseMcpResponse(response, requestId);
         return parsed.data;
     } catch (error: any) {
         if (axios.isCancel(error)) {
@@ -733,7 +745,15 @@ export class MCPConnector {
         }
 
         if (response.result && Array.isArray(response.result.content)) {
-            return response.result.content;
+            const content: any[] = response.result.content;
+            // A tool may answer with data only in structuredContent (a server SHOULD also put it in a text item): give
+            // the bot that data as text when no text item carries it (#1566)
+            const structured = response.result.structuredContent;
+            const hasText = content.some((item) => item?.type === 'text' && typeof item.text === 'string' && item.text.trim());
+            if (structured !== undefined && structured !== null && !hasText) {
+                return [...content, { type: 'text', text: typeof structured === 'string' ? structured : JSON.stringify(structured) }];
+            }
+            return content;
         }
 
         if (response.result !== undefined) {
