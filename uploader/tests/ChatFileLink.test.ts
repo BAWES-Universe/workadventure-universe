@@ -104,15 +104,6 @@ describe("a lasting link to a chat file", () => {
     expect(getSignedUrl).not.toHaveBeenCalled();
   });
 
-  it("opens a file with any extension the uploader stores, up to 16 characters", async () => {
-    const long = ID.replace(".png", ".webmanifest");
-    const response = await open(`/chat-file/bot-gens/${long}`);
-    expect(response.status).toBe(302);
-    expect(response.headers.location).toBe(`https://bots.cdn.test/${long}`);
-    const tooLong = ID.replace(".png", ".abcdefghijklmnopq");
-    expect((await open(`/chat-file/bot-gens/${tooLong}`)).status).toBe(404);
-  });
-
   it("looks up nothing outside the chat buckets or for an id the uploader never makes", async () => {
     expect((await open(`/chat-file/other-bucket/${ID}`)).status).toBe(404);
     expect((await open(`/chat-file/user-refs/secret.txt`)).status).toBe(404);

@@ -123,12 +123,32 @@ export class Player extends Character {
         // take collider offset into consideration
         this.pathToFollow = this.adjustPathToFollowToColliderBounds(path);
         this.pathToFollow.unshift({ x: this.x, y: this.y });
+        this.skipWaypointAlreadyPassed();
         this.pathWalkingSpeed = speed;
         this.currentPathSegmentDistanceFromStart = 0;
         return new Promise((resolve) => {
             this.followingPathPromiseResolve?.call(this, { x: this.x, y: this.y, cancelled: isPreviousPathInProgress });
             this.followingPathPromiseResolve = resolve;
         });
+    }
+
+    /**
+     * A Woka already walking keeps going while its new path is computed, so it can just have passed the
+     * path's first waypoint. Walking back to it would flash the Woka facing backwards: go straight on instead.
+     */
+    private skipWaypointAlreadyPassed(): void {
+        const path = this.pathToFollow;
+        if (!path || path.length < 3) {
+            return;
+        }
+        const [here, first, next] = path;
+        const backX = first.x - here.x;
+        const backY = first.y - here.y;
+        const turnsBack = backX * (next.x - first.x) + backY * (next.y - first.y) < 0;
+        // Only a few pixels behind: a real detour (around a wall) is at least a tile long.
+        if (turnsBack && Math.hypot(backX, backY) < this.getBody().height) {
+            path.splice(1, 1);
+        }
     }
 
     public getCurrentPathDestinationPoint(

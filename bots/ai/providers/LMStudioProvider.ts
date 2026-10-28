@@ -10,7 +10,7 @@ import type { AIProviderConfig, AIStreamChunk, AIResponse } from '../types';
 import { linkExternalAbort } from './abortUtils';
 import { resolveVisionSupport } from './visionModels';
 import { decryptApiKey } from '../encryption';
-import { fetchFor, statusFromError } from './ownKeyHttp';
+import { fetchFor, providerErrorText, statusFromError } from './ownKeyHttp';
 import * as Sentry from '@sentry/node';
 
 export class LMStudioProvider implements AIProvider {
@@ -233,6 +233,7 @@ export class LMStudioProvider implements AIProvider {
                     latency,
                     error: !streamEnded && !finishReason,
                     truncated: finishReason === 'length',
+                    ...(finishReason ? { finishReason } : {}),
                 },
             };
 
@@ -249,6 +250,7 @@ export class LMStudioProvider implements AIProvider {
                     latency,
                     error: !externallyCancelled,
                     errorStatus: statusFromError(error),
+                    ...(externallyCancelled ? {} : { errorText: providerErrorText(error) }),
                 },
             };
         } finally {

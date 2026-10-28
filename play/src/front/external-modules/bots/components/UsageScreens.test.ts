@@ -218,6 +218,29 @@ describe("the bot page's Usage (Orbit #491)", () => {
         expect(text()).toContain("Free to you");
     });
 
+    it("shows every line it ran on, even two that look the same", async () => {
+        const line = (over: Record<string, unknown>) => ({
+            replies: 2,
+            tokens: 500,
+            costMicros: 10_000,
+            unpricedReplies: 0,
+            firstAt: at(30),
+            lastAt: at(10),
+            ...over,
+        });
+        // Two deleted keys have no name, and a bot that went from Universe AI to a key and back has two Universe AI lines
+        const ranOn = [
+            line({ kind: "own-key", name: null }),
+            line({ kind: "own-key", name: null }),
+            line({ kind: "universe-ai", name: null, costMicros: null, unpricedReplies: 2 }),
+            line({ kind: "own-key", name: "My DeepSeek" }),
+            line({ kind: "universe-ai", name: null, costMicros: null, unpricedReplies: 2 }),
+        ];
+        mocks.api.getBotUsage.mockResolvedValue(readBotUsage(answer({ ranOn })));
+        await mountScreen("ranOn");
+        expect(target.querySelectorAll(".us-row")).toHaveLength(5);
+    });
+
     it("shows the limits and how many people ran out, never who", async () => {
         await mountScreen("limits");
         expect(text()).toContain("Each signed-in person gets 30 every 5 hours");

@@ -107,6 +107,12 @@ export function extractChatLinks(text: string, max: number): string[] {
     return urls.filter((url, index) => urls.indexOf(url) === index).slice(0, max);
 }
 
+/** Every link in the text, those sent without a preview too, in order and without duplicates (a chat's shared links). */
+export function chatLinksIn(text: string | undefined): string[] {
+    const urls = findLinks(text).map(({ url }) => url.replace(/&amp;/g, "&"));
+    return urls.filter((url, index) => urls.indexOf(url) === index);
+}
+
 /**
  * The text to send when the sender closed a link's preview in the message box: the link goes as <link>, the way
  * Discord marks a link without a preview. It stays a link (Markdown shows <https://…> as one) and bots still read it.
