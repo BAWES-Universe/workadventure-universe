@@ -73,7 +73,7 @@ describe("what a Matrix file message shares", () => {
         expect(voice.sharedFile?.voice).toBe(true);
     });
 
-    it("still tells a voice message whose file type can't play inline", () => {
+    it("shows a voice message whose file type can't play inline as the file it is", () => {
         const voice = new MatrixChatMessage(
             fakeEvent({
                 msgtype: "m.audio",
@@ -84,7 +84,8 @@ describe("what a Matrix file message shares", () => {
             }),
             room
         );
-        expect(voice.sharedFile?.voice).toBe(true);
+        // It has no player, so it is listed with the files and can be downloaded
+        expect(voice.sharedFile?.voice).toBe(false);
     });
 
     it("has nothing for a file message that was deleted", () => {

@@ -256,13 +256,10 @@ export class MatrixChatMessage implements ChatMessage {
         return { body: content.body, url: undefined, urls: undefined, filename: undefined, fileNames: undefined };
     }
 
-    /**
-     * A recorded voice message, flagged by Element (MSC3245) as `org.matrix.msc3245.voice`, or `m.voice` once stable.
-     * Read from the event's own type: one whose file type can't play inline is shown as a file, and still a voice message.
-     */
+    /** A recorded voice message, flagged by Element (MSC3245) as `org.matrix.msc3245.voice`, or `m.voice` once stable. */
     private isVoiceMessage(content: IContent): boolean {
         return (
-            content.msgtype === "m.audio" &&
+            this.type === "audio" &&
             (content["org.matrix.msc3245.voice"] !== undefined || content["m.voice"] !== undefined)
         );
     }
