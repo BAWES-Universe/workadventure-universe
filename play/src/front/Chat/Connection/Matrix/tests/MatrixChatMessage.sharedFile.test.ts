@@ -11,7 +11,7 @@ vi.mock("../MatrixChatUser", () => ({
 
 import { MatrixChatMessage } from "../MatrixChatMessage";
 
-function fakeEvent(content: Record<string, unknown>): MatrixEvent {
+function fakeEvent(content: Record<string, unknown>, redacted = false): MatrixEvent {
     return {
         getId: () => "$event",
         getDate: () => new Date(0),
@@ -19,7 +19,7 @@ function fakeEvent(content: Record<string, unknown>): MatrixEvent {
         getOriginalContent: () => content,
         getUnsigned: () => ({}),
         isDecryptionFailure: () => false,
-        isRedacted: () => false,
+        isRedacted: () => redacted,
         replacingEventId: () => undefined,
         on: () => {},
         off: () => {},
@@ -57,6 +57,28 @@ describe("what a Matrix file message shares", () => {
             room
         );
         expect(voice.sharedFile?.voice).toBe(true);
+    });
+
+    it("tells a voice message flagged with the stable m.voice apart from an audio file", () => {
+        const voice = new MatrixChatMessage(
+            fakeEvent({
+                msgtype: "m.audio",
+                body: "Voice message.ogg",
+                url: "mxc://matrix.test/v",
+                info: { mimetype: "audio/ogg" },
+                "m.voice": {},
+            }),
+            room
+        );
+        expect(voice.sharedFile?.voice).toBe(true);
+    });
+
+    it("has nothing for a file message that was deleted", () => {
+        const deleted = new MatrixChatMessage(
+            fakeEvent({ msgtype: "m.file", body: "Q4 budget.xlsx", url: "mxc://matrix.test/f" }, true),
+            room
+        );
+        expect(deleted.sharedFile).toBeUndefined();
     });
 
     it("has nothing for a text message", () => {

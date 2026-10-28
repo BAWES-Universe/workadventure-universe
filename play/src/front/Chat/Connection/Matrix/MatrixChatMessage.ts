@@ -330,15 +330,15 @@ export class MatrixChatMessage implements ChatMessage {
     }
 
     get sharedFile(): SharedFileInfo | undefined {
-        if (this.type === "text" || this.event.isDecryptionFailure()) return undefined;
+        if (this.type === "text" || this.event.isDecryptionFailure() || this.event.isRedacted()) return undefined;
         const content = this.event.getOriginalContent();
         const info: unknown = content.info;
         const size = typeof info === "object" && info !== null ? (info as Record<string, unknown>).size : undefined;
         return {
             name: this.getMediaFileName(content) ?? "",
             size: typeof size === "number" && Number.isFinite(size) ? size : undefined,
-            // Matrix marks a voice message on its audio event (MSC3245).
-            voice: content["org.matrix.msc3245.voice"] !== undefined,
+            // A voice message is flagged on its audio event (MSC3245), as for its chat list line.
+            voice: this.isVoiceMessage(content),
         };
     }
 
