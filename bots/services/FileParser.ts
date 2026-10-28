@@ -25,7 +25,8 @@
 import { resolve4, resolve6 } from 'dns/promises';
 import { extractWebContent } from './WebPageExtractor';
 
-const MAX_FILE_CHARS = 10_000;
+/** How much of a file or page is read when the caller does not say: the recommended "Reads from a page or file" (Orbit #666). */
+const MAX_FILE_CHARS = 50_000;
 const FILE_PARSER_TIMEOUT_MS = 10_000;
 
 // Presentation (.pptx) bounds. A .pptx is a zip, so the 25MB download cap
@@ -69,9 +70,10 @@ export class FileParser {
     static readonly MAX_FILE_CHARS = MAX_FILE_CHARS;
 
     /**
-     * Parse a file from a URL by its mime type.
+     * Parse a file from a URL by its mime type. `maxChars` is how much of its text is kept: the bot's "Reads from a page
+     * or file" (Orbit #666).
      */
-    static async parseFile(url: string, mimeType: string): Promise<ParsedFile> {
+    static async parseFile(url: string, mimeType: string, maxChars: number = MAX_FILE_CHARS): Promise<ParsedFile> {
         const base = { url, mimeType };
         const mt = mimeType.toLowerCase();
 
@@ -104,7 +106,7 @@ export class FileParser {
 
         // PDF documents
         if (mt === 'application/pdf') {
-            return FileParser.parsePdf(url, base);
+            return FileParser.parsePdf(url, base, maxChars);
         }
 
         // Word documents (.docx and .doc)
@@ -112,7 +114,7 @@ export class FileParser {
             mt === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
             mt === 'application/msword'
         ) {
-            return FileParser.parseWordDocument(url, base);
+            return FileParser.parseWordDocument(url, base, maxChars);
         }
 
         // Spreadsheets (.xlsx and .xls)
@@ -120,17 +122,17 @@ export class FileParser {
             mt === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
             mt === 'application/vnd.ms-excel'
         ) {
-            return FileParser.parseSpreadsheet(url, base);
+            return FileParser.parseSpreadsheet(url, base, maxChars);
         }
 
         // Presentations (.pptx/.ppsx, and legacy .ppt which is declined)
         if (mt === PPTX_MIME || mt === PPSX_MIME || mt === PPT_MIME) {
-            return FileParser.parsePresentation(url, base);
+            return FileParser.parsePresentation(url, base, maxChars);
         }
 
         // Web pages (HTML) — extract with Readability + Turndown
         if (mt === 'text/html' || mt === 'application/xhtml+xml') {
-            return FileParser.parseWebPage(url, base);
+            return FileParser.parseWebPage(url, base, maxChars);
         }
 
         // Text-like files — fetch and return inline content
@@ -142,7 +144,7 @@ export class FileParser {
             mt.endsWith('+xml') ||
             mt.endsWith('+json')
         ) {
-            return FileParser.fetchTextFile(url, mimeType, base);
+            return FileParser.fetchTextFile(url, mimeType, base, maxChars);
         }
 
         // Everything else — not supported
@@ -158,7 +160,8 @@ export class FileParser {
      */
     private static async parsePdf(
         url: string,
-        base: { url: string; mimeType: string }
+        base: { url: string; mimeType: string },
+        maxChars: number
     ): Promise<ParsedFile> {
         try {
             await FileParser.validateUrl(url);
@@ -189,11 +192,11 @@ export class FileParser {
                     };
                 }
 
-                const truncated = text.length > MAX_FILE_CHARS;
+                const truncated = text.length > maxChars;
                 return {
                     ...base,
                     type: 'document',
-                    text: truncated ? text.slice(0, MAX_FILE_CHARS) : text,
+                    text: truncated ? text.slice(0, maxChars) : text,
                     summary: `PDF document (${pageCount} pages, ${text.length} chars${truncated ? ', truncated' : ''})`,
                     truncated,
                     metadata: { pageCount },
@@ -217,7 +220,8 @@ export class FileParser {
      */
     private static async parseWordDocument(
         url: string,
-        base: { url: string; mimeType: string }
+        base: { url: string; mimeType: string },
+        maxChars: number
     ): Promise<ParsedFile> {
         try {
             await FileParser.validateUrl(url);
@@ -239,11 +243,11 @@ export class FileParser {
                 };
             }
 
-            const truncated = text.length > MAX_FILE_CHARS;
+            const truncated = text.length > maxChars;
             return {
                 ...base,
                 type: 'document',
-                text: truncated ? text.slice(0, MAX_FILE_CHARS) : text,
+                text: truncated ? text.slice(0, maxChars) : text,
                 summary: `Word document (${text.length} chars${truncated ? ', truncated' : ''})`,
                 truncated,
             };
@@ -262,7 +266,8 @@ export class FileParser {
      */
     private static async parseSpreadsheet(
         url: string,
-        base: { url: string; mimeType: string }
+        base: { url: string; mimeType: string },
+        maxChars: number
     ): Promise<ParsedFile> {
         try {
             await FileParser.validateUrl(url);
@@ -324,11 +329,11 @@ export class FileParser {
                 return sum + range.e.r - range.s.r + 1;
             }, 0);
 
-            const truncated = text.length > MAX_FILE_CHARS;
+            const truncated = text.length > maxChars;
             return {
                 ...base,
                 type: 'document',
-                text: truncated ? text.slice(0, MAX_FILE_CHARS) : text,
+                text: truncated ? text.slice(0, maxChars) : text,
                 summary: `Spreadsheet (${sheetCount} sheets, ~${totalRows} rows, ${text.length} chars${truncated ? ', truncated' : ''})`,
                 truncated,
                 metadata: { sheetCount, rowCount: totalRows },
@@ -359,7 +364,8 @@ export class FileParser {
      */
     private static async parsePresentation(
         url: string,
-        base: { url: string; mimeType: string }
+        base: { url: string; mimeType: string },
+        maxChars: number
     ): Promise<ParsedFile> {
         const failed = (reason: string, summary = 'Failed to parse PowerPoint presentation'): ParsedFile => ({
             ...base,
@@ -441,7 +447,7 @@ export class FileParser {
             let stoppedEarly = false;
             for (let i = 0; i < slideCount; i++) {
                 // Stop once there's enough text, or the time budget is spent
-                if (i >= PPTX_MAX_SLIDES || length > MAX_FILE_CHARS || Date.now() > deadline) {
+                if (i >= PPTX_MAX_SLIDES || length > maxChars || Date.now() > deadline) {
                     stoppedEarly = true;
                     break;
                 }
@@ -479,11 +485,11 @@ export class FileParser {
                 };
             }
 
-            const truncated = stoppedEarly || text.length > MAX_FILE_CHARS;
+            const truncated = stoppedEarly || text.length > maxChars;
             return {
                 ...base,
                 type: 'document',
-                text: text.length > MAX_FILE_CHARS ? text.slice(0, MAX_FILE_CHARS) : text,
+                text: text.length > maxChars ? text.slice(0, maxChars) : text,
                 summary: `PowerPoint presentation (${slideCount} slides, ${text.length} chars${truncated ? ', truncated' : ''})`,
                 truncated,
                 metadata: { slideCount },
@@ -682,7 +688,8 @@ export class FileParser {
      */
     private static async parseWebPage(
         url: string,
-        base: { url: string; mimeType: string }
+        base: { url: string; mimeType: string },
+        maxChars: number
     ): Promise<ParsedFile> {
         try {
             await FileParser.validateUrl(url);
@@ -720,12 +727,12 @@ export class FileParser {
             if (headerParts.length > 0) headerParts.push('');
 
             const fullContent = headerParts.join('\n') + extracted.content;
-            const truncated = fullContent.length > MAX_FILE_CHARS;
+            const truncated = fullContent.length > maxChars;
 
             return {
                 ...base,
                 type: 'webpage',
-                text: truncated ? fullContent.slice(0, MAX_FILE_CHARS) : fullContent,
+                text: truncated ? fullContent.slice(0, maxChars) : fullContent,
                 summary: `Web page: ${extracted.title || 'Untitled'} (${fullContent.length} chars${truncated ? ', truncated' : ''})`,
                 truncated,
                 metadata: {
@@ -1016,19 +1023,20 @@ export class FileParser {
     private static async fetchTextFile(
         url: string,
         mimeType: string,
-        base: { url: string; mimeType: string }
+        base: { url: string; mimeType: string },
+        maxChars: number
     ): Promise<ParsedFile> {
         try {
             await FileParser.validateUrl(url);
 
             const buffer = await FileParser.fetchBuffer(url);
             const text = new TextDecoder().decode(buffer);
-            if (text.length > MAX_FILE_CHARS) {
+            if (text.length > maxChars) {
                 return {
                     ...base,
                     type: 'text',
-                    text: text.slice(0, MAX_FILE_CHARS),
-                    summary: `Text file (${text.length} chars, truncated to ${MAX_FILE_CHARS})`,
+                    text: text.slice(0, maxChars),
+                    summary: `Text file (${text.length} chars, truncated to ${maxChars})`,
                     truncated: true,
                 };
             }

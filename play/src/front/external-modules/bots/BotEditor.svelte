@@ -16,11 +16,14 @@
     import BotDetailView from "./components/BotDetailView.svelte";
     import NewBotView from "./components/NewBotView.svelte";
     import type { BotData } from "./types";
+    import type { UsageScreen } from "./usageModel";
+    import { botUsageStore, type BotUsageState } from "./stores/BotUsageStore";
     import {
         botEditorModeStore,
         selectedBotStore,
         botPreviewsStore,
         botsLoadedForRoomIdStore,
+        botsLoadingStore,
         placingBotStore,
         roomChangeTriggerStore,
         upsertBot,
@@ -40,6 +43,7 @@
     import { routeStops } from "./behaviorModel";
     import { newBotRef } from "./mindModel";
     import { aiModelPlan } from "./modelPickerModel";
+    import { botDataFromSave } from "./savedBotModel";
     import { botPermissionsStore } from "./stores/BotPermissionsStore";
     import { botTelemetryNoticeStore, botTelemetryStore } from "./stores/BotTelemetryStore";
     import { ruleName } from "./accessModel";
@@ -81,13 +85,15 @@
     /** The key and the model on it the bot is saved with, to send a model only when it changed */
     let lastSavedAi: { ref?: string | null; model?: string | null } = {};
 
-    /** What the "ai" save sends besides the behavior: the bot's mind, chat instructions, Patience and description */
+    /** What the "ai" save sends besides the behavior: the bot's mind, chat instructions, Patience, reply limits and description */
     function aiConfigOf(bot: BotData): string {
         return JSON.stringify({
             aiProviderRef: bot.aiProviderRef,
             aiModel: bot.aiModel ?? null,
             chatInstructions: bot.chatInstructions,
             toolTimeoutSeconds: bot.toolTimeoutSeconds ?? null,
+            maxReplyTokens: bot.maxReplyTokens ?? null,
+            maxSteps: bot.maxSteps ?? null,
             description: bot.description ?? "",
         });
     }
@@ -277,6 +283,8 @@
                                     ...(providerChanged ? { aiProviderRef: bot.aiProviderRef } : {}),
                                     chatInstructions: bot.chatInstructions,
                                     toolTimeoutSeconds: bot.toolTimeoutSeconds ?? null,
+                                    maxReplyTokens: bot.maxReplyTokens ?? null,
+                                    maxSteps: bot.maxSteps ?? null,
                                     description: bot.description ?? "",
                                 });
                             });
@@ -472,6 +480,7 @@
 
         isLoading = true;
         error = null;
+        botsLoadingStore.update((count) => count + 1);
 
         if (!keepCurrent) {
             // Clear bot store immediately to prevent showing old bots from previous room
@@ -495,6 +504,7 @@
             botsLoadedForRoomIdStore.set(null);
         } finally {
             isLoading = false;
+            botsLoadingStore.update((count) => Math.max(0, count - 1));
         }
     }
 
@@ -705,38 +715,10 @@
             };
 
             const botId = selectedBot.id;
+            // The page's record as sent: what the save answers is read against it
+            const sent = selectedBot;
             const updatedBot = await queueBotSave(botId, () => botApiService.updateBot(botId, updateData));
-
-            // Convert API response back to BotData format
-            const textureId = typeof updatedBot.characterTextureId === "string" ? updatedBot.characterTextureId : "";
-            // Ensure behaviorType is never undefined
-            const behaviorConfig = updatedBot.behaviorConfig as BotData["behaviorConfig"] | undefined;
-            const responseBehaviorType =
-                (updatedBot.behaviorType as "idle" | "patrol" | "social") || behaviorConfig?.behaviorType || "idle";
-
-            const botData: BotData = {
-                id: updatedBot.id,
-                botId: updatedBot.id,
-                name: updatedBot.name,
-                description: typeof updatedBot.description === "string" ? updatedBot.description : undefined,
-                characterTexture: textureId,
-                characterTextureIds: textureId ? [textureId] : [],
-                companionTextureId:
-                    typeof updatedBot.companionTextureId === "string" ? updatedBot.companionTextureId : null,
-                behaviorType: responseBehaviorType, // Guaranteed to be set
-                enabled: updatedBot.enabled ?? true,
-                behaviorConfig: updatedBot.behaviorConfig || {
-                    behaviorType: responseBehaviorType,
-                    assignedSpace: { center: { x: 0, y: 0 }, radius: 0 },
-                },
-                aiProviderRef: updatedBot.aiProviderRef,
-                aiModel: selectedBot.aiModel,
-                chatInstructions: updatedBot.chatInstructions || "",
-                createdAt: updatedBot.createdAt || new Date().toISOString(),
-                updatedAt: updatedBot.updatedAt || new Date().toISOString(),
-                createdBy: updatedBot.createdBy || null,
-                updatedBy: updatedBot.updatedBy || null,
-            };
+            const botData = botDataFromSave(updatedBot, sent);
 
             // Update store
             updateBotInStore(botData);
@@ -822,6 +804,33 @@
     let addingRule = false;
     // Advanced settings the same way
     let editingAdvanced = false;
+    // And Usage's screens: who uses it, what it ran on, its limits
+    let usageScreen: UsageScreen | null = null;
+    function usageScreenTitle(screen: UsageScreen, name: string): string {
+        const usage = $LL.mapEditor.edit.bots.page.usage;
+        return screen === "people"
+            ? usage.whoTitle({ name })
+            : screen === "ranOn"
+            ? usage.ranOnTitle()
+            : usage.limitsTitle();
+    }
+    // Under the title: how many people in the range on Who uses, the range itself on the other two
+    function usageScreenSubtitle(screen: UsageScreen, state: BotUsageState | undefined, botId: string): string {
+        const usage = $LL.mapEditor.edit.bots.page.usage;
+        const data = state?.botId === botId ? state.data : undefined;
+        // The range of the numbers on screen, which is the one picked once it has loaded
+        const range = data?.range ?? (state?.botId === botId ? state.range : "7d");
+        if (screen === "people" && data) {
+            const words =
+                range === "today" ? usage.rangeToday() : range === "30d" ? usage.rangeMonth() : usage.rangeWeek();
+            return usage.peopleCount({ count: data.totals.people, range: words });
+        }
+        return range === "today"
+            ? usage.subtitleToday()
+            : range === "30d"
+            ? usage.subtitleMonth()
+            : usage.subtitleWeek();
+    }
     function editedRuleName(ruleId: string | null, botId: string | undefined, someone: string): string | undefined {
         const held = get(botPermissionsStore);
         const rule = ruleId && held && held.botId === botId ? held.data?.rules.find((r) => r.id === ruleId) : undefined;
@@ -847,6 +856,13 @@
                   label: $LL.mapEditor.edit.bots.page.companion.back({ name: selectedBot.name ?? "" }),
                   title: selectedBot.name || undefined,
                   subtitle: $LL.mapEditor.edit.bots.page.body.title(),
+              }
+            : currentMode === "detail" && selectedBot && usageScreen
+            ? {
+                  onBack: () => (usageScreen = null),
+                  label: $LL.mapEditor.edit.bots.page.companion.back({ name: selectedBot.name ?? "" }),
+                  title: usageScreenTitle(usageScreen, selectedBot.name || "Bot"),
+                  subtitle: usageScreenSubtitle(usageScreen, $botUsageStore, selectedBot.id),
               }
             : currentMode === "detail" && selectedBot && editingAdvanced
             ? {
@@ -1004,6 +1020,7 @@
                 bind:editingRuleId
                 bind:addingRule
                 bind:editingAdvanced
+                bind:usageScreen
                 bot={selectedBot}
                 onSave={handleSave}
                 onDelete={handleDelete}

@@ -34,10 +34,15 @@ on:
         required: true
         type: boolean
 
+# Read-only unless a job below says otherwise (#432)
+permissions:
+  contents: read
+
 jobs:
   build-image:
     runs-on: ${{ inputs.os }}
     permissions:
+      contents: read
       packages: write
     steps:
       - name: Checkout
