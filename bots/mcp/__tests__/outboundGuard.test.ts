@@ -61,6 +61,22 @@ describe('checkOutboundUrl', () => {
         }
     );
 
+    it.each(['0.1.2.3', '100.64.0.1', '100.100.100.200', '100.127.255.254', '192.0.0.8', '198.18.0.1', '198.19.255.255'])(
+        'refuses the shared and reserved address %s, as a literal and as a lookup result',
+        async (address) => {
+            expect(isAllowedServerUrl(`https://${address}/`)).toBe(false);
+            lookup.mockResolvedValue([{ address, family: 4 }]);
+            expect((await checkOutboundUrl('https://mcp.example.com/mcp')).allowed).toBe(false);
+        }
+    );
+
+    it.each(['100.63.255.255', '100.128.0.1', '198.17.255.255', '198.20.0.1', '198.51.100.7', '203.0.113.9'])(
+        'still allows the public address %s next to those ranges',
+        (address) => {
+            expect(isAllowedServerUrl(`https://${address}/`)).toBe(true);
+        }
+    );
+
     it('refuses a hostname that does not resolve', async () => {
         lookup.mockRejectedValue(new Error('ENOTFOUND'));
         expect((await checkOutboundUrl('https://nowhere.example.com/')).allowed).toBe(false);
