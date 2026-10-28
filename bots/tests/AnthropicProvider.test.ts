@@ -407,6 +407,33 @@ describe("AnthropicProvider", () => {
             });
             const chunks = await drain(new AnthropicProvider().generateStream("s", "x", config(), undefined, controller.signal));
             expect(chunks[chunks.length - 1].metadata?.error).toBe(false);
+            // AIService prices only a chunk that is not cancelled, so a stop must say so
+            expect(chunks[chunks.length - 1].metadata?.cancelled).toBe(true);
+        });
+
+        it("carries what went wrong in the final chunk when a call fails outright", async () => {
+            fetchMock.mockImplementationOnce(async () => {
+                throw new Error("socket hang up");
+            });
+            const chunks = await drain(new AnthropicProvider().generateStream("s", "x", config()));
+            const metadata = chunks[chunks.length - 1].metadata;
+            expect(metadata).toMatchObject({ error: true });
+            expect(metadata).not.toHaveProperty("cancelled");
+            expect(metadata.errorText).toContain("socket hang up");
+        });
+
+        it("asks again within the output cap a model states, and remembers it for the next reply", async () => {
+            const model = "claude-old-haiku-ceiling";
+            fetchMock.mockImplementationOnce(async () => failure(400, "max_tokens: 32000 > 4096, which is the maximum allowed number of output tokens for claude-old-haiku-ceiling"));
+            const first = await drain(new AnthropicProvider().generateStream("s", "x", config({ model, maxTokens: 32000 })));
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+            expect(sentBody(fetchMock, 0).max_tokens).toBe(32000);
+            expect(sentBody(fetchMock, 1).max_tokens).toBe(4096);
+            expect(first[first.length - 1].metadata?.error).toBe(false);
+
+            await drain(new AnthropicProvider().generateStream("s", "again", config({ model, maxTokens: 32000 })));
+            expect(fetchMock).toHaveBeenCalledTimes(3);
+            expect(sentBody(fetchMock, 2).max_tokens).toBe(4096);
         });
     });
 

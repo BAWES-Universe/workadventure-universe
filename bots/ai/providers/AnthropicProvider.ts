@@ -16,7 +16,8 @@
 import type { AIProvider } from '../AIProvider';
 import type { AIProviderConfig, AIStreamChunk, AIResponse, ToolCall } from '../types';
 import { decryptApiKey } from '../encryption';
-import { fetchFor, statusFromError } from './ownKeyHttp';
+import { fetchFor, providerErrorText, statusFromError } from './ownKeyHttp';
+import { statedOutputCeiling } from './OpenAIProvider';
 import { linkExternalAbort } from './abortUtils';
 import { resolveVisionSupport } from './visionModels';
 import * as Sentry from '@sentry/node';
@@ -111,6 +112,9 @@ function cacheTokensOf(usage: ClaudeUsage | undefined): { read?: number; write?:
 }
 
 export class AnthropicProvider implements AIProvider {
+    /** The output cap each model stated once it refused more (endpoint and model), so it is asked within it from then on: one failed request, not one per reply. */
+    private static readonly outputCeilings = new Map<string, number>();
+
     private readonly DEFAULT_ENDPOINT = 'https://api.anthropic.com/v1';
     private readonly DEFAULT_TIMEOUT = 30000; // 30 seconds
 
@@ -313,7 +317,9 @@ export class AnthropicProvider implements AIProvider {
         externalSignal: AbortSignal | undefined,
         cleanups: Array<() => void>
     ): Promise<{ response: Response; controller: AbortController }> {
-        let body = requestBody;
+        const ceilingKey = `${endpoint} ${config.model}`;
+        const known = AnthropicProvider.outputCeilings.get(ceilingKey);
+        let body = known !== undefined && requestBody.max_tokens > known ? { ...requestBody, max_tokens: known } : requestBody;
         for (let attempt = 0; ; attempt++) {
             const controller = new AbortController();
             cleanups.push(linkExternalAbort(externalSignal, controller));
@@ -332,9 +338,16 @@ export class AnthropicProvider implements AIProvider {
             if (response.ok) return { response, controller };
 
             const errorText = await response.text();
-            if (response.status === 400 && attempt < 2) {
+            if (response.status === 400 && attempt < 3) {
                 const retry = { ...body };
                 let changed = false;
+                // Asked for more output than the model gives (Orbit's recommended 32,000 is above older models): ask again within its cap
+                const ceiling = statedOutputCeiling(400, errorText, retry.max_tokens);
+                if (ceiling) {
+                    if (ceiling.lasting) AnthropicProvider.outputCeilings.set(ceilingKey, ceiling.tokens);
+                    retry.max_tokens = ceiling.tokens;
+                    changed = true;
+                }
                 if ('temperature' in retry && /temperature/i.test(errorText)) {
                     delete retry.temperature;
                     changed = true;
@@ -510,7 +523,9 @@ export class AnthropicProvider implements AIProvider {
                     tokensUsed: 0,
                     latency: Date.now() - startTime,
                     error: !externallyCancelled,
+                    ...(externallyCancelled ? { cancelled: true } : {}),
                     errorStatus: statusFromError(error),
+                    ...(externallyCancelled ? {} : { errorText: providerErrorText(error) }),
                 },
             };
         } finally {
