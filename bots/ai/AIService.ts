@@ -11,7 +11,8 @@
 import type { ConversationMemory } from '../memory/ConversationMemory';
 import type { AdminApiService, AIProviderCredentials, BotAiCredentialsAnswer } from '../server/AdminApiService';
 import { BotClient } from '../client/BotClient';
-import type { AIProviderConfig, AIStreamChunk, AIUsageMetadata, ToolCall } from './types';
+import type { AIProviderConfig, AIStreamChunk, AIUsageMetadata, BotLimits, ToolCall } from './types';
+import { BOT_LIMIT_DEFAULTS, readBotLimits } from './types';
 import type { AIProvider } from './AIProvider';
 import { decryptApiKey } from './encryption';
 import { AIProviderRegistry } from './AIProviderRegistry';
@@ -61,11 +62,27 @@ import {
     isArtifactTool,
     writesArtifact,
     ARTIFACT_CUT_OFF_MESSAGE,
+    NOTHING_SAVED_LINE,
+    claimsArtifactSaved,
+    nothingSavedRetryMessage,
     runArtifactTool,
     type ArtifactCard,
 } from './ArtifactTools';
 
+/** What one turn did, for the "Say when nothing was saved" check (Orbit #666). */
+interface TurnFacts {
+    /** The bot could make or change artifacts in this turn. */
+    artifactTools: boolean;
+    /** A make or a change was saved in this turn. */
+    artifactSaved: boolean;
+    /** The switch is on for this bot. */
+    guard: boolean;
+}
+
 /** A bot's provider, resolved by bot id (#374): the settings to call, where they came from, or "resting". */
+/** Where a reply was given and who it was for, sent with its usage (Orbit #491). */
+type UsageTalker = { channel: 'dm' | 'nearby'; userId?: string; isGuest?: boolean };
+
 type ResolvedProvider =
     | { resting: false; config: AIProviderConfig; source: 'provider' | 'universe-ai' | 'own-key' }
     | { resting: true; line: string };
@@ -107,6 +124,8 @@ export class AIService {
     private readonly BOT_CREDENTIAL_RETRY = 15 * 1000;
     /** The latest config Orbit gave for each provider id on the bot route, so usage can still be priced. */
     private botRoutePricing: Map<string, AIProviderConfig> = new Map();
+    /** Each bot's limits as Orbit last served them (Orbit #666), for the parts of a reply that have no provider config at hand. */
+    private botLimits: Map<string, BotLimits> = new Map();
     private providerRegistry: AIProviderRegistry;
     private mapDataService?: MapDataService;
 
@@ -216,6 +235,10 @@ export class AIService {
                     expiresAt: Date.now() + this.BOT_CREDENTIAL_TTL,
                     staleUntil: Date.now() + this.BOT_CREDENTIAL_TTL + this.BOT_CREDENTIAL_STALE_GRACE,
                 });
+                if (!resolved.resting && resolved.config.limits) {
+                    this.botLimits.set(botId, resolved.config.limits);
+                    this.conversationMemory?.setHistoryWindow?.(botId, resolved.config.limits.messages);
+                }
                 if (!resolved.resting) {
                     // Usage is priced by the provider that answered, and by the ref the bot is on ("universe-ai", "key-…")
                     this.botRoutePricing.set(resolved.config.providerId, resolved.config);
@@ -225,6 +248,16 @@ export class AIService {
             }
         }
         return { resting: false, config: await this.getProviderConfigById(providerId), source: 'provider' };
+    }
+
+    /** A bot's limits as Orbit last served them, the recommended ones until it has (Orbit #666). */
+    private limitsFor(botId?: string): BotLimits {
+        return (botId && this.botLimits.get(botId)) || BOT_LIMIT_DEFAULTS;
+    }
+
+    /** How much of a file or web page this bot reads ("Reads from a page or file", Orbit #666). */
+    readCharsFor(botId?: string): number {
+        return this.limitsFor(botId).readChars;
     }
 
     private resolvedFromAnswer(answer: BotAiCredentialsAnswer): ResolvedProvider {
@@ -242,6 +275,9 @@ export class AIService {
     private buildProviderConfig(credentialsData: AIProviderCredentials): AIProviderConfig {
         // Decrypt API key (fails early on a bad key or a missing ENCRYPTION_KEY, as it always did)
         decryptApiKey(credentialsData.apiKeyEncrypted);
+        // A bot's limits (Orbit #666) come with its credentials: "Wait for the AI" is how long the provider may go quiet
+        const limits = credentialsData.limits !== undefined ? readBotLimits(credentialsData.limits) : undefined;
+        const settings = limits ? { ...(credentialsData.settings ?? {}), timeout: limits.waitSeconds * 1000 } : credentialsData.settings;
         return {
             providerId: credentialsData.providerId,
             name: credentialsData.name,
@@ -256,7 +292,8 @@ export class AIService {
             supportsVision: credentialsData.supportsVision ?? null,
             visionModel: credentialsData.visionModel ?? null,
             defaultVision: credentialsData.defaultVision ?? false,
-            settings: credentialsData.settings,
+            settings,
+            ...(limits ? { limits } : {}),
         };
     }
 
@@ -395,9 +432,61 @@ export class AIService {
     }
 
     /**
-     * Generate streaming bot response with function calling support
+     * A bot's reply, streamed. With "Say when nothing was saved" on (Orbit #666), a reply that says it made or changed an
+     * artifact when no make or change was saved in that turn gets the line "No new version was saved", and the bot
+     * tries once more: the first reply and the line go out as their own message (a `reset`), then the second try.
+     * A retry (a reply written again, say after a repetition) is not checked: what it talks about may have been saved
+     * by the first one.
      */
     async *generateBotResponseStream(
+        botId: string,
+        playerId: number,
+        message: string,
+        chatInstructions: string,
+        providerId: string,
+        spaceName: string | undefined,
+        conversationContext: string,
+        botClient?: BotClient,
+        adminApiService?: AdminApiService,
+        abortSignal?: AbortSignal,
+        images?: string[],
+        channel: 'world' | 'dm' = 'world',
+        toolTimeoutSeconds?: number | null,
+        homeRoomUrl?: string,
+        peopleInRoom?: string[] | null,
+        isRetry = false
+    ): AsyncGenerator<AIStreamChunk> {
+        const turn: TurnFacts = { artifactTools: false, artifactSaved: false, guard: false };
+        const attempt = (text: string, retry: boolean, facts: TurnFacts) =>
+            this.generateTurn(botId, playerId, text, chatInstructions, providerId, spaceName, conversationContext, botClient, adminApiService, abortSignal, images, channel, toolTimeoutSeconds, homeRoomUrl, peopleInRoom, retry, facts);
+        let said = '';
+        let done: AIStreamChunk | null = null;
+        for await (const chunk of attempt(message, isRetry, turn)) {
+            // Callers stop at the first done: it is held until the reply is known to be honest
+            if (chunk.done) {
+                done = chunk;
+                continue;
+            }
+            if (chunk.reset) said = '';
+            else if (chunk.content) said += chunk.content;
+            yield chunk;
+        }
+        if (!done) return;
+        if (isRetry || abortSignal?.aborted || done.metadata?.error || !turn.guard || !turn.artifactTools || turn.artifactSaved || !claimsArtifactSaved(said)) {
+            yield done;
+            return;
+        }
+        console.warn(`[AIService] Bot ${botId} said it saved an artifact but nothing was saved; saying so and trying once more`);
+        yield { content: `\n\n${NOTHING_SAVED_LINE}`, done: false };
+        yield { content: '', done: false, reset: true, toolNames: [] };
+        const second: TurnFacts = { artifactTools: false, artifactSaved: false, guard: false };
+        for await (const chunk of attempt(nothingSavedRetryMessage(message, said), true, second)) {
+            yield chunk;
+            if (chunk.done) return;
+        }
+    }
+
+    private async *generateTurn(
         botId: string,
         playerId: number,
         message: string,
@@ -418,7 +507,9 @@ export class AIService {
         /** Who is in that room right now, for a direct message; null while the bot isn't there to see. */
         peopleInRoom?: string[] | null,
         /** True when a repeated reply is being asked for again: the same turn, so what it made already still counts. */
-        isRetry = false
+        isRetry = false,
+        /** Filled in as the turn goes, for the "nothing was saved" check. */
+        turn?: TurnFacts
     ): AsyncGenerator<AIStreamChunk> {
         const startTime = Date.now();
         // What each call to the provider cost, priced as it finishes; the reply's cost is their sum (#1173)
@@ -445,7 +536,25 @@ export class AIService {
                 yield { content: '', done: true, metadata: { tokensUsed: 0, latency: Date.now() - startTime } };
                 return;
             }
+            // Reply limits (#1159): asked before any AI call, once the bot knows who is talking and what the reply
+            // would run on. At a limit nothing is called and nothing is tracked; the caller shows the fixed card. A retry
+            // makes the same reply again, already allowed, so it is never asked twice.
+            const talker = this.whoTalked(botId, playerId, channel);
+            if (talker.userId && !isRetry) {
+                const allowance = await (adminApiService || this.adminApiService).checkReplyAllowance?.(botId, {
+                    userId: talker.userId,
+                    ...(talker.isGuest !== undefined ? { isGuest: talker.isGuest } : {}),
+                    source: resolved.source,
+                });
+                if (allowance && 'limit' in allowance) {
+                    const { limit, resetsAt, who } = allowance;
+                    yield { content: '', done: true, replyLimit: { limit, resetsAt, who }, metadata: { tokensUsed: 0, latency: Date.now() - startTime } };
+                    return;
+                }
+            }
+
             let config = resolved.config;
+            if (turn) turn.guard = (config.limits ?? BOT_LIMIT_DEFAULTS).guard;
             // Usage is recorded against the provider that really answered (Universe AI is its Default, a key is the key)
             usageProviderId = config.providerId;
             reportHealth = resolved.source === 'own-key';
@@ -636,6 +745,7 @@ export class AIService {
 
             // Define tools for function calling
             const { tools, toolServerMap } = await this.buildTools(botId, botClient, adminApiService || this.adminApiService, channel);
+            if (turn) turn.artifactTools = tools.some((tool) => writesArtifact(tool?.function?.name ?? ''));
 
             // Generate stream with tools
             let tokensUsed = 0;
@@ -1056,7 +1166,8 @@ export class AIService {
                         // Track URLs sent by autoSendMedia across tool call iterations.
                         // Local variable prevents cross-conversation contamination (AIService is shared).
                         let iterationSentUrls = new Set<string>();
-                        const MAX_FOLLOW_UP_ITERATIONS = 30;
+                        // "Steps in one reply" (Orbit #666): the bot's own, its key's or Universe AI's
+                        const MAX_FOLLOW_UP_ITERATIONS = Math.max(1, (config.limits ?? BOT_LIMIT_DEFAULTS).steps);
                         // Accumulate all tool results across rounds for synthesis on max iterations
                         let allToolResults = '';
                         // Cap accumulated tool results to prevent context overflow in synthesis
@@ -1091,6 +1202,7 @@ export class AIService {
                             // pass it): the first round reads the cap from this chunk, later rounds from the previous round's last chunk
                             const replyCutOff = !!(followUpIterations === 1 ? chunk.metadata?.truncated : lastFollowUpDoneChunk?.metadata?.truncated);
                             const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff);
+                            if (turn && toolResults.some((tr) => writesArtifact(tr.name) && tr.result?.success === true)) turn.artifactSaved = true;
 
                             // Collect URLs that were already sent by explicit send_* tool calls
                             // so autoSendMedia doesn't re-send them via parent tool results.
@@ -1894,7 +2006,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     completionTokens,
                     latency,
                     error,
-                }, ledger.summary()).catch(err => {
+                }, ledger.summary(), this.whoTalked(botId, playerId, channel)).catch(err => {
                     // Always log errors, even without debug mode
                     console.error('[AIService] Failed to track usage:', err);
                     if (err instanceof Error) {
@@ -1931,7 +2043,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 tokensUsed: 0,
                 latency,
                 error: true,
-            }, usageRecorded ? null : ledger.summary()).catch(() => {});
+            }, usageRecorded ? null : ledger.summary(), this.whoTalked(botId, playerId, channel)).catch(() => {});
 
             // Yield error chunk — content was already streamed word-by-word
             // so don't replay preToolBuffer (would duplicate on frontend).
@@ -1960,6 +2072,20 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     }
 
     /**
+     * Where a reply was given and who it was for, as usage rows keep them (Orbit #491, #1159 step 6). The person is their
+     * WorkAdventure uuid once the bot knows it; a temporary one means it doesn't yet, and is never sent.
+     */
+    private whoTalked(botId: string, playerId: number, channel: 'world' | 'dm'): UsageTalker {
+        const memory = playerId !== undefined ? this.conversationMemory?.getMemory(botId, playerId) : null;
+        const uuid = memory?.userUuid && !memory.userUuid.startsWith('temp-') ? memory.userUuid : undefined;
+        return {
+            channel: channel === 'dm' ? 'dm' : 'nearby',
+            ...(uuid ? { userId: uuid } : {}),
+            ...(uuid && typeof memory?.isGuest === 'boolean' ? { isGuest: memory.isGuest } : {}),
+        };
+    }
+
+    /**
      * Track AI usage (fire-and-forget)
      *
      * `turn` is what the reply cost, worked out call by call as each finished (#1173). A reply that never got as far as a
@@ -1969,7 +2095,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         botId: string,
         providerId: string,
         metadata: AIUsageMetadata,
-        turn: TurnCost | null
+        turn: TurnCost | null,
+        talker?: UsageTalker
     ): Promise<void> {
         try {
             const cost: TurnCost = turn ?? {
@@ -2003,6 +2130,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 latency: metadata.latency,
                 error: metadata.error || false,
                 timestamp: new Date().toISOString(),
+                ...(talker ?? {}),
             });
 
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -2062,7 +2190,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         ledger: UsageLedger,
         visionImages?: string[] | undefined
     ): AsyncGenerator<AIStreamChunk> {
-        const MAX_TRUNCATION_CONTINUATIONS = 2;
+        // "Keep going when cut off" (Orbit #666): the key's or Universe AI's, twice until Orbit says
+        const MAX_TRUNCATION_CONTINUATIONS = (config.limits ?? BOT_LIMIT_DEFAULTS).continuations;
         let content = partialContent;
         for (let i = 0; i < MAX_TRUNCATION_CONTINUATIONS; i++) {
             // Abort (stop/correction/leave) wins over continuation.
@@ -2474,7 +2603,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const earlier = repeatKey ? memory?.artifactCalls?.get(repeatKey) : undefined;
         if (earlier) return earlier;
 
-        const run = await runArtifactTool(name, args, { admin, botId, person, chat });
+        const run = await runArtifactTool(name, args, { admin, botId, person, chat, saveTimeoutMs: this.limitsFor(botId).artifactSaveSeconds * 1000 });
         if (!run.card) return run.result;
         if (!this.deliverArtifactCard(run.card, botClient, spaceName, memory)) {
             // The bubble closed while the file was being made: the file is saved, but nobody was shown it, so a retry may place it
@@ -2839,7 +2968,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         const parsedArgs = typeof toolCall.arguments === 'string'
                             ? this.safeParseToolArgs(toolCall.arguments)
                             : toolCall.arguments || {};
-                        result = await readWebPageForTool(this.toolArgString(parsedArgs.url));
+                        result = await readWebPageForTool(this.toolArgString(parsedArgs.url), this.limitsFor(botId).readChars);
                         break;
                     }
 
@@ -3949,14 +4078,14 @@ export const READ_WEB_PAGE_TOOL = 'read_web_page';
  * Fetches a page for the read_web_page tool through FileParser, which blocks private and
  * internal addresses (SSRF) on every redirect and caps size and time.
  */
-export async function readWebPageForTool(rawUrl: string | undefined): Promise<Record<string, unknown>> {
+export async function readWebPageForTool(rawUrl: string | undefined, maxChars?: number): Promise<Record<string, unknown>> {
     const url = rawUrl ? normalizeWebUrl(rawUrl) : null;
     if (!url) {
         return { error: 'Missing or invalid url: pass a web address such as "https://example.com"' };
     }
     const { FileParser } = await import('../services/FileParser');
     const mimeType = (await FileParser.sniffContentType(url)) || 'text/html';
-    const parsed = await FileParser.parseFile(url, mimeType);
+    const parsed = await FileParser.parseFile(url, mimeType, maxChars);
     if (!parsed.text) {
         return { url, summary: parsed.summary };
     }

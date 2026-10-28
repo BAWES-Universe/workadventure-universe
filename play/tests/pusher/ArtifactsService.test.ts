@@ -81,6 +81,25 @@ describe("ArtifactsService", () => {
         );
     });
 
+    it("restores a version as the viewer and passes on a refusal for anyone but the owner", async () => {
+        const http = {
+            post: vi.fn(() => Promise.resolve({ data: { ...opened, version: { ...version, number: 3 } } })),
+        };
+        const service = new ArtifactsService("https://orbit.test", "secret", http);
+        const answer = await service.restore(ID, 1, viewer);
+        expect(http.post).toHaveBeenCalledWith(
+            `https://orbit.test/api/artifacts/${ID}/restore`,
+            { viewer, number: 1 },
+            { headers: { Authorization: "secret" } }
+        );
+        expect(answer.version.number).toBe(3);
+
+        const refused = new ArtifactsService("https://orbit.test", "secret", {
+            post: vi.fn(() => Promise.reject(orbitError(403, { error: "not_owner", message: "Only its owner." }))),
+        });
+        await expect(refused.restore(ID, 1, viewer)).rejects.toEqual(new ArtifactsError("not_owner", 403));
+    });
+
     it("passes Orbit's refusal on with its status and code", async () => {
         const http = {
             post: vi.fn(() => Promise.reject(orbitError(404, { error: "not_found", message: "No such artifact." }))),

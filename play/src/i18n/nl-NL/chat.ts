@@ -210,7 +210,7 @@ const chat: DeepPartial<Translation["chat"]> = {
     roomMenu: {
         leaveRoom: {
             label: "Kamer verlaten",
-            notification: "Je hebt de kamer verlaten",
+            notification: "Je hebt {name} verlaten",
         },
     },
     e2ee: {

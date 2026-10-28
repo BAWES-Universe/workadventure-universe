@@ -5,7 +5,7 @@ vi.hoisted(() => {
     (window as unknown as { env: Record<string, unknown> }).env = {};
 });
 import { tick } from "svelte";
-import { writable } from "svelte/store";
+import { get, writable } from "svelte/store";
 
 vi.mock("../../Administration/AnalyticsClient", () => ({ analyticsClient: new Proxy({}, { get: () => () => {} }) }));
 vi.mock("../../Stores/CardOverWindowStore", () => ({ cardOverWindowStore: writable(false) }));
@@ -21,6 +21,9 @@ vi.mock("../../Stores/ClosedItemsStore", async (importOriginal) => ({
 import { emoteMenuStore } from "../../Stores/EmoteStore";
 import { expressTrayStore } from "../../Stores/ExpressStore";
 import { lightboxOpenStore } from "../../Stores/UserInputStore";
+import { askOpenHereForRoom } from "../../Stores/OpenHereSheetStore";
+import { openHereTuckedStore } from "../../Stores/SideWindowInFrontStore";
+import { gameManager } from "../../Phaser/Game/GameManager";
 import OpenHereWindow from "./OpenHereWindow.svelte";
 
 describe("OpenHereWindow Esc", () => {
@@ -66,5 +69,33 @@ describe("OpenHereWindow Esc", () => {
             window.removeEventListener("keydown", close);
             expect(closeFrontItem).not.toHaveBeenCalled();
         }
+    });
+});
+
+describe("OpenHereWindow asked for room", () => {
+    it("comes up from tucked when a list in it asks, and leaves an ask made before it opened alone", async () => {
+        // The sheet centres the map as it settles: there is no map here.
+        const scene = vi.spyOn(gameManager, "tryGetCurrentGameScene").mockReturnValue(undefined);
+        const target = document.createElement("div");
+        document.body.append(target);
+        openHereTuckedStore.set(true);
+        askOpenHereForRoom();
+        const component = new OpenHereWindow({ target, props: { floating: false } });
+        await tick();
+        expect(get(openHereTuckedStore)).toBe(true);
+
+        askOpenHereForRoom();
+        await tick();
+        expect(get(openHereTuckedStore)).toBe(false);
+
+        // Tucked again by hand, it stays tucked: only a new ask brings it up.
+        openHereTuckedStore.set(true);
+        await tick();
+        expect(get(openHereTuckedStore)).toBe(true);
+
+        component.$destroy();
+        target.remove();
+        openHereTuckedStore.set(false);
+        scene.mockRestore();
     });
 });

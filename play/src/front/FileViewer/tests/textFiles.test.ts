@@ -24,8 +24,12 @@ describe("picking the reader for a text file", () => {
         }
     });
 
-    it("leaves every other file as a download", () => {
-        for (const name of ["a.zip", "a.pptx", "a.html", "a.js", "a.xml"]) {
+    it("opens code files as code, and leaves every other file as a download", () => {
+        for (const name of ["a.html", "a.js", "a.xml", "a.ts", "a.py"]) {
+            expect(fileKindOf(name)).toBe("code");
+            expect(chatFileOpensInViewer(name)).toBe(true);
+        }
+        for (const name of ["a.zip", "a.pptx", "a.rb", "a.exe"]) {
             expect(chatFileOpensInViewer(name)).toBe(false);
         }
     });
@@ -33,6 +37,7 @@ describe("picking the reader for a text file", () => {
     it("gives each type its badge", () => {
         expect(badgeOfKind("markdown")).toMatchObject({ label: "MD", kindName: "Markdown" });
         expect(badgeOfKind("csv").label).toBe("CSV");
+        expect(badgeOfKind("code", "welcome.ts")).toMatchObject({ label: "TS", kindName: "Code" });
     });
 
     it("takes text, with or without a byte order mark, and refuses binary files named as text", () => {
@@ -198,6 +203,15 @@ describe("Markdown", () => {
         expect(host.querySelector("[id]")).toBeNull();
         expect(host.textContent).toContain("hello");
         expect(host.querySelector("pre code")?.textContent).toContain("let a = 1;");
+    });
+
+    it("keeps the language a code block names, so the block can be colored", () => {
+        const host = render("```TypeScript\nlet a = 1;\n```\n\n```\nplain\n```\n\n```js onclick=x\nb\n```\n");
+        const blocks = host.querySelectorAll("pre code");
+        expect(blocks[0].getAttribute("data-code-language")).toBe("typescript");
+        expect(blocks[1].hasAttribute("data-code-language")).toBe(false);
+        expect(blocks[2].getAttribute("data-code-language")).toBe("js");
+        expect(host.querySelector("[onclick]")).toBeNull();
     });
 
     it("has no picture maps, whose areas would be links that skip the link rules", () => {

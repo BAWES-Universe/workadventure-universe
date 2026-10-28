@@ -513,6 +513,7 @@ jobs:
           COOLIFY_BOT_SERVER_UUID: ${{ secrets.COOLIFY_BOT_SERVER_UUID }}
           COOLIFY_DISCORD_BOT_UUID: ${{ secrets.COOLIFY_DISCORD_BOT_UUID }}
           COOLIFY_UPLOADER_UUID: ${{ secrets.COOLIFY_UPLOADER_UUID }}
+          NEW_VERSION: ${{ needs.release.outputs.new_version }}
         run: |
           # Coolify answering "queued" only means it took the job. A service counts as deployed once its
           # deployment reads "finished"; the services go one at a time because six big image pulls at once
@@ -563,7 +564,7 @@ jobs:
           }
 
           # The services play talks to go first, so a new play never starts against an old back or map-storage.
-          echo "Deploying v${{ needs.release.outputs.new_version }}..."
+          echo "Deploying v${NEW_VERSION}..."
           failed=""
           for service in \
             "back ${COOLIFY_BACK_UUID}" \
@@ -593,12 +594,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NEW_VERSION: ${{ needs.release.outputs.new_version }}
         run: |
-          DEPLOY_ID=$(printf '{"ref":"%s","environment":"production","description":"v%s","required_contexts":[]}' "${{ github.ref_name }}" "$NEW_VERSION" | \
-            gh api repos/${{ github.repository }}/deployments --input - --jq '.id')
-          gh api repos/${{ github.repository }}/deployments/${DEPLOY_ID}/statuses \
+          DEPLOY_ID=$(printf '{"ref":"%s","environment":"production","description":"v%s","required_contexts":[]}' "$GITHUB_REF_NAME" "$NEW_VERSION" | \
+            gh api "repos/$GITHUB_REPOSITORY/deployments" --input - --jq '.id')
+          gh api "repos/$GITHUB_REPOSITORY/deployments/${DEPLOY_ID}/statuses" \
             -f state=success \
             -f environment_url=https://universe.bawes.net \
-            -f log_url=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            -f "log_url=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 
       - name: Mark Sentry deployment
         if: needs.release.outputs.created == 'true'

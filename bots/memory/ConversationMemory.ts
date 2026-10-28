@@ -8,6 +8,8 @@
  * - Relationship context (how they met, important events)
  */
 
+/** Recent messages a reply reads until Orbit serves the bot's own number: the recommended "Messages it remembers". */
+const DEFAULT_HISTORY_WINDOW = 20;
 export interface ConversationMessage {
     message: string;
     sender: 'bot' | 'person';
@@ -142,6 +144,8 @@ export function formatHistoryTime(timestamp: number): string {
 export class ConversationMemory {
     private memories: Map<string, BotPlayerMemory> = new Map(); // key: "botId_playerId"
     private maxHistorySize: number = 50; // Keep last 50 messages per player
+    /** "Messages it remembers" for each bot (Orbit #666): how many recent messages a reply reads. */
+    private historyWindow: Map<string, number> = new Map();
     private maxMemories: number = 1000; // Max memories per bot (prevent memory bloat)
 
     constructor(maxHistorySize: number = 50, maxMemories: number = 1000) {
@@ -171,6 +175,20 @@ export class ConversationMemory {
         return cleaned;
     }
 
+    /** How many recent messages this bot's replies read ("Messages it remembers", Orbit #666); 20 until Orbit says. */
+    setHistoryWindow(botId: string, messages: number): void {
+        if (Number.isInteger(messages) && messages > 0) this.historyWindow.set(botId, messages);
+    }
+
+    private windowFor(botId: string): number {
+        return this.historyWindow.get(botId) ?? DEFAULT_HISTORY_WINDOW;
+    }
+
+    /** How many messages a person's history keeps for this bot: never below what its replies read. */
+    protected historyLimit(botId: string): number {
+        return Math.max(this.maxHistorySize, this.windowFor(botId));
+    }
+
     /**
      * Add a message to conversation history
      */
@@ -198,8 +216,9 @@ export class ConversationMemory {
             spaceName,
         });
 
-        // Trim history if too long
-        if (memory.conversationHistory.length > this.maxHistorySize) {
+        // Trim history if too long: never below what this bot's replies read
+        const keep = this.historyLimit(botId);
+        while (memory.conversationHistory.length > keep) {
             memory.conversationHistory.shift();
         }
 
@@ -897,7 +916,7 @@ export class ConversationMemory {
         }
 
         // Recent conversation (natural flow with timestamps for context)
-        const recentHistory = memory.conversationHistory.slice(-8); // Last 8 messages for more natural context
+        const recentHistory = memory.conversationHistory.slice(-this.windowFor(botId)); // "Messages it remembers" (Orbit #666)
         if (recentHistory.length > 0) {
             context.push(`\nRecent conversation:`);
             recentHistory.forEach((msg, index) => {

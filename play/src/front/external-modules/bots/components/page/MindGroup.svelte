@@ -27,6 +27,8 @@
     export let open: boolean;
     export let onToggle: (id: string) => void;
     export let onChange: (bot: BotData) => void;
+    /** What Orbit offers under "Runs on", each time it loads: the Tools group reads each choice's reply limits from it. */
+    export let onOptions: ((options: BotAiOptions | null) => void) | undefined = undefined;
 
     type Provider = Awaited<ReturnType<typeof botApiService.getAvailableAIProviders>>[number];
 
@@ -38,6 +40,7 @@
      * say (an older Orbit, offline): the page then keeps the provider list it always had.
      */
     let options: BotAiOptions | null = null;
+    $: onOptions?.(options);
     /** The viewer's own keys, lent or not (#1375): the ones not lent here are named, with how to lend them. */
     let myKeys: Array<{ id: string; name: string }> | null = null;
     /**

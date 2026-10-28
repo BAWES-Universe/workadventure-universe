@@ -5,7 +5,11 @@ import {
     artifactMarker,
     artifactToolDefinitions,
     artifactsEnabled,
+    ARTIFACT_CUT_OFF_MESSAGE,
+    claimsArtifactSaved,
     describeArtifactError,
+    NOTHING_SAVED_LINE,
+    nothingSavedRetryMessage,
     formatArtifactResult,
     isArtifactTool,
     runArtifactTool,
@@ -82,7 +86,8 @@ describe('make_artifact', () => {
         const run = await runArtifactTool('make_artifact', { title: 'Quests board', kind: 'app', content: '<h1>x</h1>', summary: 'First' }, ctx);
         expect(ctx.admin.makeArtifact).toHaveBeenCalledWith(
             { botId: 'bot1', person: { signedIn: true, identifier: 'uuid-1', name: 'Khalid' }, chat: { kind: 'nearby', ref: 'bubble-1' } },
-            { title: 'Quests board', kind: 'app', content: '<h1>x</h1>', summary: 'First' }
+            { title: 'Quests board', kind: 'app', content: '<h1>x</h1>', summary: 'First' },
+            undefined
         );
         expect(run.card).toEqual({ id: 'art-1', version: 1, title: 'Quests board', kind: 'app', maker: 'Scout' });
         expect(run.result).toEqual({ success: true, id: 'art-1', title: 'Quests board', kind: 'app', version: 1 });
@@ -111,7 +116,7 @@ describe('change_artifact', () => {
             summary: 'Bigger',
             title: null,
             baseVersion: 1,
-        });
+        }, undefined);
         expect(run.card).toMatchObject({ id: 'art-1', version: 2 });
         expect(run.result).toMatchObject({ success: true, version: 2 });
     });
@@ -119,7 +124,7 @@ describe('change_artifact', () => {
     it('sends the whole file when there are no edits', async () => {
         const ctx = context();
         await runArtifactTool('change_artifact', { id: 'art-1', content: '<p>new</p>' }, ctx);
-        expect(ctx.admin.changeArtifact).toHaveBeenCalledWith('art-1', expect.anything(), expect.objectContaining({ content: '<p>new</p>' }));
+        expect(ctx.admin.changeArtifact).toHaveBeenCalledWith('art-1', expect.anything(), expect.objectContaining({ content: '<p>new</p>' }), undefined);
         expect(vi.mocked(ctx.admin.changeArtifact).mock.calls[0][2]).not.toHaveProperty('edits');
     });
 
@@ -202,5 +207,98 @@ describe('what the model hears next', () => {
 
     it('passes an error through as it is', () => {
         expect(formatArtifactResult('change_artifact', { error: 'Nope.' })).toBe('change_artifact: Nope.');
+    });
+});
+
+describe('limits a super admin sets (Orbit #666)', () => {
+    it('passes the "Time to save" with a make and a change', async () => {
+        const ctx = { ...context(), saveTimeoutMs: 60_000 };
+        await runArtifactTool('make_artifact', { title: 'T', kind: 'app', content: '<p>x</p>' }, ctx);
+        expect(vi.mocked(ctx.admin.makeArtifact).mock.calls[0][2]).toBe(60_000);
+        await runArtifactTool('change_artifact', { id: 'art-1', content: '<p>y</p>' }, ctx);
+        expect(vi.mocked(ctx.admin.changeArtifact).mock.calls[0][3]).toBe(60_000);
+    });
+
+    it('tells the model the size and version limits Orbit named, never a fixed number', () => {
+        expect(describeArtifactError(new ArtifactCallError('too_large', 413, 'An artifact can hold up to 2 MB.'))).toContain('up to 2 MB');
+        expect(describeArtifactError(new ArtifactCallError('too_large', 413, 'An artifact can hold up to 2 MB.'))).not.toContain('500 KB');
+        expect(describeArtifactError(new ArtifactCallError('too_many_versions', 409, 'An artifact keeps up to 1,000 versions.'))).toContain('1,000 versions');
+    });
+
+    it('asks a cut-off file to be built in parts, never made smaller', () => {
+        expect(ARTIFACT_CUT_OFF_MESSAGE).toContain('Build it in parts');
+        expect(ARTIFACT_CUT_OFF_MESSAGE).toContain('change_artifact');
+        expect(ARTIFACT_CUT_OFF_MESSAGE).toContain('Do not make it smaller');
+    });
+});
+
+describe('a reply that says it saved an artifact (Orbit #666)', () => {
+    it('hears a version named, or "I built / here is the updated" next to something an artifact is', () => {
+        expect(claimsArtifactSaved('Rebuilt it, v2 has the charts you wanted.')).toBe(true);
+        expect(claimsArtifactSaved("I've rebuilt the dashboard with dark mode.")).toBe(true);
+        expect(claimsArtifactSaved('Here’s the updated quests board: tap the card to open it.')).toBe(true);
+        expect(claimsArtifactSaved('Done! The game now has a score counter. Version 3 is ready.')).toBe(true);
+    });
+
+    it('does not hear it in a reply that says nothing was made, or is about something else', () => {
+        expect(claimsArtifactSaved("I couldn't save the new version, it was too large.")).toBe(false);
+        expect(claimsArtifactSaved('Nothing was saved yet. Want me to try again?')).toBe(false);
+        expect(claimsArtifactSaved("I've made a cup of tea.")).toBe(false);
+        expect(claimsArtifactSaved('Sure, what should the app do?')).toBe(false);
+        expect(claimsArtifactSaved('')).toBe(false);
+    });
+
+    it('does not hear it in a sentence about one saved in an earlier turn (Sentry on #1486)', () => {
+        expect(claimsArtifactSaved("Here's the dashboard I built earlier: tap the card to open it.")).toBe(false);
+        expect(claimsArtifactSaved('I already made the quests board, it has 3 sections.')).toBe(false);
+        expect(claimsArtifactSaved('Version 2 from yesterday is ready whenever you want it.')).toBe(false);
+        expect(claimsArtifactSaved("I've updated the tracker you asked for last week.")).toBe(false);
+        // A new claim in the same reply still counts
+        expect(claimsArtifactSaved('You saw the board before. I just rebuilt the dashboard with dark mode.')).toBe(true);
+    });
+
+    it('does not hear it in ordinary answers that mention a table, a list, a page or a version (Sentry on #1486)', () => {
+        expect(claimsArtifactSaved("Here's the updated table:\n| Name | Score |\n| Sara | 12 |")).toBe(false);
+        expect(claimsArtifactSaved("I've added you to the list.")).toBe(false);
+        expect(claimsArtifactSaved("I've made a list of maps for you: Paris, Rome.")).toBe(false);
+        expect(claimsArtifactSaved('Python v3 came out in 2008.')).toBe(false);
+        expect(claimsArtifactSaved("I've added a note. The page you linked is about trains.")).toBe(false);
+        // Words that are artifacts only sometimes (Sentry on the R6 release)
+        expect(claimsArtifactSaved("Here's the updated version of your email draft:\n\nHi Sam, ...")).toBe(false);
+        expect(claimsArtifactSaved("I've updated the page title and the site menu in your notes.")).toBe(false);
+        expect(claimsArtifactSaved("Here's the updated board of directors list.")).toBe(false);
+        expect(claimsArtifactSaved("I've made a mock interview plan for Monday.")).toBe(false);
+        // An app, game, board or tracker only with a cue that it is an artifact (CodeRabbit on the R6 release)
+        expect(claimsArtifactSaved("I've fixed the bug in your app. The loop now stops at 10.")).toBe(false);
+        expect(claimsArtifactSaved("I've updated the tracker you keep in Notion with this week's numbers.")).toBe(false);
+        expect(claimsArtifactSaved("I've added dark mode to the game. Tap the card to open it.")).toBe(true);
+        expect(claimsArtifactSaved("I've rebuilt the app, v2 has the charts.")).toBe(true);
+        expect(claimsArtifactSaved("Here's version 3 with the new colors, all fixed.")).toBe(true);
+        expect(claimsArtifactSaved('Saved as v2, the charts are updated.')).toBe(true);
+        expect(claimsArtifactSaved('v2 is ready.')).toBe(true);
+        expect(claimsArtifactSaved('Saved version 3.')).toBe(true);
+        expect(claimsArtifactSaved('Saved as v2.1, the charts are updated.')).toBe(true);
+        // The cue has to be next to the claim, not anywhere in the reply (Sentry on #1499)
+        expect(claimsArtifactSaved("I've fixed the bug in your app. Node v18 or later is needed. The card reader works now too.")).toBe(false);
+        expect(claimsArtifactSaved("I've fixed the bug in your app. Upgrade to Node v18.")).toBe(false);
+        expect(claimsArtifactSaved("I've upgraded your project to Node v18.")).toBe(false);
+        expect(claimsArtifactSaved('Done, Python version 3 is installed and your script is fixed.')).toBe(false);
+        expect(claimsArtifactSaved("I've updated the code to call the v2 API.")).toBe(false);
+        expect(claimsArtifactSaved("I've updated the code to call the v2.0 API.")).toBe(false);
+        expect(claimsArtifactSaved("I've updated your script to use version 2 of the library.")).toBe(false);
+        // Sentry on #1499: an ordinary "Tap Save" is no cue, and "of" only matters for the words that are sometimes artifacts
+        expect(claimsArtifactSaved("I've fixed the bug in your app. Tap Save and it works.")).toBe(false);
+        expect(claimsArtifactSaved("Here's the updated mockup of your landing page.")).toBe(true);
+        expect(claimsArtifactSaved("I've built a dashboard of your sales this month.")).toBe(true);
+    });
+
+    it('asks the second try to use the tool or say plainly, with what the chat now says', () => {
+        const retry = nothingSavedRetryMessage('make it dark', 'Rebuilt it, v2 is dark.');
+        expect(retry.startsWith('make it dark')).toBe(true);
+        expect(retry).toContain('Rebuilt it, v2 is dark.');
+        expect(retry).toContain(NOTHING_SAVED_LINE);
+        expect(retry).toContain('change_artifact');
+        expect(retry).toContain('If they did not ask for an artifact');
+        expect(NOTHING_SAVED_LINE).toBe('No new version was saved.');
     });
 });
