@@ -11,8 +11,7 @@
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import type { ChatMessage, ChatRoom, ChatRoomMembershipManagement } from "../../Connection/ChatConnection";
     import getCloseImg from "../../images/get-close.png";
-    import { selectedChatMessageToReply, shouldRestoreChatStateStore } from "../../Stores/ChatStore";
-    import { selectedRoomStore } from "../../Stores/SelectRoomStore";
+    import { chatBackPeekStore, leaveChat } from "../../ChatBack";
     import { matrixSecurity } from "../../Connection/Matrix/MatrixSecurity";
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import { ProximityChatRoom } from "../../Connection/Proximity/ProximityChatRoom";
@@ -656,12 +655,7 @@
     }
 
     function goBackAndClearSelectedChatMessage() {
-        openProfileRoomIdStore.set(undefined);
-        openRoomDetailsIdStore.set(undefined);
-        openSharedItemsStore.set(undefined);
-        selectedChatMessageToReply.set(null);
-        selectedRoomStore.set(undefined);
-        shouldRestoreChatStateStore.set(false);
+        leaveChat();
     }
 
     function handleScroll() {
@@ -857,6 +851,9 @@
         roomDetailsOpen ||
         nearbyDetailsOpen ||
         sharedOpen}
+    class:shared-open={sharedOpen !== undefined}
+    class:peek-conversation={$chatBackPeekStore === "conversation"}
+    class:peek-panel={$chatBackPeekStore === "panel"}
     on:dragover|preventDefault
     on:drop|preventDefault|stopPropagation={onDropFiles}
 >
@@ -869,9 +866,9 @@
     {/if}
     <!-- Made again when the chat is, so a panel never shows the old one. -->
     {#key roomInstance}
-        {#if sharedOpen}
-            <SharedPanel {room} tab={sharedOpen.tab} partnerChatId={$directPartner?.chatId} chatTitle={nearbyName} />
-        {:else if profileOpen && matrixRoom && $directPartner}
+        <!-- "Media, links and files" sits over the details or profile it was opened from, which stay as they were for
+             when you come back (and show under it while you swipe back). -->
+        {#if profileOpen && matrixRoom && $directPartner}
             <!-- Over the conversation, which stays as it was (draft, files, scroll) for when you come back. Above the
                  message options (z-50) and menus that live in it; "isolate" keeps all of that inside this panel. -->
             <PartnerProfilePanel
@@ -883,6 +880,9 @@
             <RoomDetailsPanel room={matrixRoom} />
         {:else if nearbyDetailsOpen && proximityRoom}
             <NearbyDetailsPanel room={proximityRoom} />
+        {/if}
+        {#if sharedOpen}
+            <SharedPanel {room} tab={sharedOpen.tab} partnerChatId={$directPartner?.chatId} chatTitle={nearbyName} />
         {/if}
     {/key}
     {#if room !== undefined}
@@ -1205,13 +1205,12 @@
         pointer-events: none;
     }
     /* The profile has no background of its own: it sits on the chat panel's surface, like the conversation. What it
-       covers is hidden instead, and keeps its draft, files and scroll for when you come back. */
-    .profile-open
-        > :global(
-            :not([data-testid="partnerProfilePanel"]):not([data-testid="roomDetailsPanel"]):not(
-                    [data-testid="sharedPanel"]
-                ):not([data-testid="nearbyDetailsPanel"])
-        ) {
+       covers is hidden instead, and keeps its draft, files and scroll for when you come back. A swipe back shows it
+       again under the level sliding away (#1553). */
+    .profile-open:not(.peek-conversation) > :global(:not([data-chat-layer])) {
+        visibility: hidden;
+    }
+    .shared-open:not(.peek-panel) > :global([data-chat-layer="panel"]) {
         visibility: hidden;
     }
     .room-title {

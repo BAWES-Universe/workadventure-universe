@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { get } from "svelte/store";
 
 const mocks = vi.hoisted(() => ({
     isLogged: vi.fn(() => true),
@@ -1040,6 +1041,42 @@ describe("Orbit and the Back button (1C)", () => {
         expect(fakeHistory.back).toHaveBeenCalledTimes(1);
         // Stepping over it neither opens nor closes Orbit.
         expect(mocks.modalVisibilitySet).not.toHaveBeenCalled();
+    });
+
+    async function holds(): Promise<boolean> {
+        const { orbitHoldsHistoryStore } = await import("../../Stores/OrbitHistoryStore");
+        return get(orbitHoldsHistoryStore);
+    }
+
+    it("holds the top of the history while open, and after closing until the step back lands", async () => {
+        await openedIndex();
+        expect(await holds()).toBe(true);
+        modalClosedByGame();
+        // The chat waits: a step it added now would be walked back with Orbit's.
+        expect(await holds()).toBe(true);
+        for (const listener of popStateListeners) listener({ state: fakeHistory.state } as PopStateEvent);
+        expect(await holds()).toBe(false);
+    });
+
+    it("lets go after a second when the step back never lands where it can be seen", async () => {
+        await openedIndex();
+        modalClosedByGame();
+        vi.advanceTimersByTime(999);
+        expect(await holds()).toBe(true);
+        vi.advanceTimersByTime(1);
+        expect(await holds()).toBe(false);
+    });
+
+    it("lets go at once when Back closed Orbit", async () => {
+        await openedIndex();
+        backPressed();
+        expect(await holds()).toBe(false);
+    });
+
+    it("lets go when the room changes with Orbit open", async () => {
+        const index = await openedIndex();
+        index.default.destroy();
+        expect(await holds()).toBe(false);
     });
 
     it("tells Orbit which view it is in when the game's maximise button changes it", async () => {

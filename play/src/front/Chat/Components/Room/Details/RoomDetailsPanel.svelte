@@ -61,7 +61,7 @@
     }
 </script>
 
-<div class="room-details absolute inset-0 z-[100] flex flex-col" data-testid="roomDetailsPanel">
+<div class="room-details absolute inset-0 z-[100] flex flex-col" data-testid="roomDetailsPanel" data-chat-layer="panel">
     <div class="p-2 flex items-center gap-1 border border-solid border-x-0 border-b border-t-0 border-white/10">
         <button
             type="button"

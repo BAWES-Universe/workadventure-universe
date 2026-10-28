@@ -5,6 +5,7 @@
     import LL from "../../../i18n/i18n-svelte";
     import { findGroupOpenStore, navChat } from "../Stores/ChatStore";
     import { selectedRoomStore } from "../Stores/SelectRoomStore";
+    import { chatBackPeekStore } from "../ChatBack";
     import { INITIAL_SIDEBAR_WIDTH, loginTokenErrorStore } from "../../Stores/ChatStore";
     import { userIsConnected } from "../../Stores/MenuStore";
     import getCloseImg from "../images/get-close.png";
@@ -125,21 +126,29 @@
 
     // One rule for both the columns and the list: at 670px and wider, list and thread sit side by side.
     // Below that, an open thread takes the whole panel, and the list (with the Chats / People tabs) hides.
-    $: layout = resolveChatLayout(sideBarWidth, CHAT_LAYOUT_LIMIT, $selectedRoomStore !== undefined);
+    // A swipe back from a conversation draws all chats under it, in the same place (#1553). The conversation stays on
+    // top, above the Chats and People tabs (z-40) that come back with the list.
+    $: peekList = $chatBackPeekStore === "list" && sideBarWidth < CHAT_LAYOUT_LIMIT && $selectedRoomStore !== undefined;
+    $: layout = resolveChatLayout(sideBarWidth, CHAT_LAYOUT_LIMIT, $selectedRoomStore !== undefined && !peekList);
     $: displayTwoColumnLayout = layout.twoColumns;
 
     const isMatrixChatEnabled = gameScene.room.isMatrixChatEnabled;
 </script>
 
 <div
-    class="overflow-auto h-full grid grid-rows-[1fr_auto] {displayTwoColumnLayout && $navChat.key === 'chat'
+    class="overflow-y-auto overflow-x-hidden h-full grid grid-rows-[1fr_auto] {displayTwoColumnLayout &&
+    $navChat.key === 'chat'
         ? 'grid-cols-[auto_1fr]'
         : 'grid-cols-[1fr]'}"
 >
     {#if layout.showList}
         <div
             class="w-full flex flex-col border border-solid border-y-0 border-l-0 border-white/10 relative overflow-y-auto overflow-x-none"
-            style={displayTwoColumnLayout ? `width:335px ;flex : 0 0 auto; margin-top: ${listTopInset}px` : ``}
+            style={displayTwoColumnLayout
+                ? `width:335px ;flex : 0 0 auto; margin-top: ${listTopInset}px`
+                : peekList
+                ? `grid-area: 1 / 1; margin-top: ${listTopInset}px`
+                : ``}
         >
             {#if $findGroupOpenStore && $chatConnectionStatus === "ONLINE"}
                 <FindGroup />
@@ -269,7 +278,11 @@
         </div>
     {/if}
     {#if $selectedRoomStore !== undefined}
-        <div class="overflow-y-auto">
+        <div
+            class="overflow-y-auto"
+            data-chat-layer="thread"
+            style={peekList ? "grid-area: 1 / 1; position: relative; z-index: 41;" : undefined}
+        >
             {#key $selectedRoomStore.id}
                 <RoomTimeline room={$selectedRoomStore} />
             {/key}
