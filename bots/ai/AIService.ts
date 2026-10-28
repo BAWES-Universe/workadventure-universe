@@ -1439,13 +1439,16 @@ export class AIService {
                                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                                     console.log(`[AIService] 🔄 Follow-up round ${followUpIterations} produced ${pendingToolCalls.length} new tool calls, repeating...`);
                                 }
+                                // This round's cache share is taken even when nothing is captured below (a tool-only round),
+                                // so the next round's event never carries it
+                                const followUpCache = takeCache();
                                 // Capture $ai_generation for this round's follow-up call (not the final one)
                                 if (followUpContent || followUpError) {
                                     // Telemetry is fire-and-forget: a capture failure must never
                                     // propagate (it would abort the follow-up loop mid-turn).
                                     try {
                                         captureGeneration({
-                                            ...takeCache(),
+                                            ...followUpCache,
                                             distinctId: `bot-${botId}`,
                                             traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
                                             sessionId: `conversation-${botId}-player-${playerId}`,

@@ -196,6 +196,23 @@ describe("AIService and the provider's prompt cache", () => {
             expect(mockCaptureAiTrace.mock.calls[0][0]).toMatchObject({ inputTokens: 6300, cacheReadTokens: 3000, cacheWriteTokens: 3000 });
         });
 
+        it("does not hand a tool-only round's cache figures to the next round's event", async () => {
+            const { admin, memory } = buildMocks();
+            mockGenerateStream
+                .mockImplementationOnce(call({ prompt: 3100, completion: 10, write: 3000, tool: true }))
+                .mockImplementationOnce(call({ prompt: 3150, completion: 10, read: 3000, tool: true }))
+                .mockImplementationOnce(call({ prompt: 3200, completion: 20, read: 3000, text: "By the fountain." }));
+            await run(new AIService(memory, admin, "http://admin.local"), admin);
+
+            const events = mockCaptureAiGeneration.mock.calls.map((args) => args[0]);
+            const last = events[events.length - 1];
+            expect(last).toMatchObject({ inputTokens: 3200, cacheReadTokens: 3000 });
+            expect(last.cacheReadTokens).toBeLessThanOrEqual(last.inputTokens);
+
+            // The turn still adds every round up
+            expect(admin.trackAIUsage.mock.calls[0][0]).toMatchObject({ cacheReadTokens: 6000, cacheWriteTokens: 3000 });
+        });
+
         it("puts the cache figures on the turn's Sentry span, the cached tokens inside input_tokens", async () => {
             const { admin, memory } = buildMocks();
             mockGenerateStream.mockImplementationOnce(call({ prompt: 3025, completion: 7, read: 3000, write: 20 }));
