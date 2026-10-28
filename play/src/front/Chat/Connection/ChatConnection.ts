@@ -130,6 +130,21 @@ export class InvitationNoLongerAvailableError extends Error {
     }
 }
 
+/** A chat whose messages can be pinned for everyone in it (Matrix keeps the list in the room's state). */
+export interface ChatRoomPins {
+    /** The pinned messages' ids, the most recently pinned last. */
+    readonly pinnedMessageIds: Readable<string[]>;
+    /** Whether this person may pin and unpin in this chat (both people in a direct chat; Admins and Moderators in a group). */
+    readonly canPinMessages: Readable<boolean>;
+    readonly setMessagePinned: (messageId: string, pinned: boolean) => Promise<void>;
+    /** A pinned message that is not loaded yet is fetched on its own. */
+    readonly getMessageById: (messageId: string) => Promise<ChatMessage | undefined>;
+}
+
+export function hasPins(room: ChatRoom | undefined): room is ChatRoom & ChatRoomPins {
+    return room !== undefined && "pinnedMessageIds" in room && "setMessagePinned" in room;
+}
+
 export interface ChatRoomMembershipManagement {
     readonly name: Readable<string>;
     readonly myMembership: Readable<ChatRoomMembership>;
@@ -192,6 +207,19 @@ export interface ChatMessage {
     canReact: Readable<boolean>;
     /** Whether a reply to this message is sent as a reply (with its quote) to the other people in the chat. */
     canReply: Readable<boolean>;
+    /**
+     * For a file, picture or video: its name and size as the message gives them, read without fetching the file, so
+     * the chat's details can list everything shared without downloading it all.
+     */
+    readonly sharedFile?: SharedFileInfo;
+}
+
+export interface SharedFileInfo {
+    name: string;
+    /** In bytes, when the message says. */
+    size: number | undefined;
+    /** A voice message: it stays in the conversation, it is not listed with what the chat shared. */
+    voice: boolean;
 }
 
 export interface ChatMessageReaction {

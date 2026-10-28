@@ -18,6 +18,7 @@ import type {
     ChatMessageReaction,
     ChatMessageType,
     ChatRoom,
+    SharedFileInfo,
 } from "../ChatConnection";
 import { TYPING_STOP_GRACE_MS } from "../ChatConnection";
 import LL, { locale } from "../../../../i18n/i18n-svelte";
@@ -124,6 +125,15 @@ export interface ProximityChatMessageOptions {
     replyLimit?: BotReplyLimit;
 }
 
+function fileNameOfUrl(url: string): string {
+    const lastSegment = url.split("?")[0].split("#")[0].split("/").pop() ?? "";
+    try {
+        return decodeURIComponent(lastSegment) || "file";
+    } catch {
+        return lastSegment || "file";
+    }
+}
+
 export class ProximityChatMessage implements ChatMessage {
     isQuotedMessage: boolean | undefined;
     quotedMessage: ChatMessage | undefined;
@@ -168,6 +178,17 @@ export class ProximityChatMessage implements ChatMessage {
         const hasContent = type !== "incoming" && type !== "outcoming";
         this.canReact.set(isConversation && hasContent && options.react !== undefined);
         this.canReply.set(isConversation && hasContent);
+    }
+
+    /**
+     * The file a picture, video or file message carries, for the chat's "Media, links and files". Its link is in the
+     * message itself, so reading it fetches nothing. A gallery lists its files in its content instead.
+     */
+    get sharedFile(): SharedFileInfo | undefined {
+        if (!["image", "video", "file", "audio"].includes(this.type)) return undefined;
+        const content = get(this.content);
+        if (!content.url) return undefined;
+        return { name: content.filename || fileNameOfUrl(content.url), size: undefined, voice: false };
     }
 
     remove(): void {
@@ -865,6 +886,8 @@ export class ProximityChatRoom implements ChatRoom {
         this.removeTypingUserbyID(senderSpaceUserId);
         this.messages.push(card);
         this.lastMessageTimestamp = card.date.getTime();
+        // Unread like any message that arrives, so another open room still shows it came
+        this.markUnread();
         openChat("bubble");
         this.showIfNothingOpen();
     }
@@ -1365,6 +1388,8 @@ export class ProximityChatRoom implements ChatRoom {
         this.spaceReplyLimitSubscription?.unsubscribe();
         this.spaceReplyLimitSubscription = this._space.observePrivateEvent("botReplyLimit").subscribe((event) => {
             if (!isBotUser(event.sender) || event.sender.uuid !== `bot-${event.botReplyLimit.botId}`) return;
+            // A bot this person blocked opens nothing, as with its messages
+            if (blackListManager.isBlackListed(event.sender.uuid)) return;
             const replyLimit = parseBotReplyLimit(
                 event.botReplyLimit,
                 event.botReplyLimit.botId,

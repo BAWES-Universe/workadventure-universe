@@ -12,8 +12,31 @@ const CHROME =
 
 type Showing = { tag: string; close: ReturnType<typeof vi.fn> };
 
+/** What an open Universe window answers when the worker asks whether it rang for the chat; "frozen" never answers. */
+type WindowAnswer = boolean | "frozen";
+
+/** A MessageChannel whose second port answers the first, as a page's reply reaches the worker. */
+class FakeMessageChannel {
+    port1: { onmessage: ((event: { data: unknown }) => void) | null } = { onmessage: null };
+    port2 = {
+        postMessage: (data: unknown) => {
+            queueMicrotask(() => this.port1.onmessage?.({ data }));
+        },
+    };
+}
+
 /** Runs the worker file with fake browser parts and delivers one push carrying `body`. */
-async function push(body: string | undefined, { userAgent = CHROME, showing = [] as Showing[] } = {}) {
+async function push(
+    body: string | undefined,
+    { userAgent = CHROME, showing = [] as Showing[], windows = [] as WindowAnswer[] } = {}
+) {
+    const asked: unknown[] = [];
+    const windowClients = windows.map((answer) => ({
+        postMessage: (message: unknown, [port]: FakeMessageChannel["port2"][]) => {
+            asked.push(message);
+            if (answer !== "frozen") port.postMessage(answer);
+        },
+    }));
     const listeners = new Map<string, (event: unknown) => void>();
     const registration = {
         scope: `${ORIGIN}/`,
@@ -31,7 +54,12 @@ async function push(body: string | undefined, { userAgent = CHROME, showing = []
     };
     // The real worker file, run with the fake browser parts in place of its globals.
     // eslint-disable-next-line @typescript-eslint/no-implied-eval
-    new Function("self", "clients", "BroadcastChannel", workerSource)(fakeSelf, { claim: vi.fn() }, class {});
+    new Function("self", "clients", "BroadcastChannel", "MessageChannel", workerSource)(
+        fakeSelf,
+        { claim: vi.fn(), matchAll: vi.fn().mockResolvedValue(windowClients) },
+        class {},
+        FakeMessageChannel
+    );
 
     let done: Promise<unknown> = Promise.resolve();
     listeners.get("push")?.({
@@ -41,7 +69,7 @@ async function push(body: string | undefined, { userAgent = CHROME, showing = []
         },
     });
     await done;
-    return registration;
+    return Object.assign(registration, { asked });
 }
 
 function shown(registration: Awaited<ReturnType<typeof push>>): { title: string } & Record<string, unknown> {
@@ -106,5 +134,56 @@ describe("service worker: a notification Orbit sends", () => {
         expect(older.close).toHaveBeenCalled();
         expect(otherChat.close).not.toHaveBeenCalled();
         expect(registration.showNotification).toHaveBeenCalledTimes(1);
+    });
+
+    describe("the sound of a chat's notification (#1493)", () => {
+        const chatPush = JSON.stringify({ title: "Bot", body: "Here you go", chatRoomId: "!dm:chat" });
+
+        it("rings when Universe is not open here", async () => {
+            const registration = await push(chatPush);
+
+            expect(shown(registration)).toMatchObject({ silent: false, renotify: true });
+        });
+
+        it("stays quiet when an open Universe window played its own chat sound for it", async () => {
+            const registration = await push(chatPush, { windows: [true] });
+
+            expect(registration.asked).toEqual([{ type: "chatSoundCheck", chatRoomId: "!dm:chat" }]);
+            expect(shown(registration)).toMatchObject({ silent: true, renotify: false, tag: "chat:!dm:chat" });
+        });
+
+        it("stays quiet when any one of several windows played it", async () => {
+            const registration = await push(chatPush, { windows: [false, true] });
+
+            expect(shown(registration)).toMatchObject({ silent: true });
+        });
+
+        it("rings when the open windows played no sound for it (chat sounds off, busy)", async () => {
+            const registration = await push(chatPush, { windows: [false, false] });
+
+            expect(shown(registration)).toMatchObject({ silent: false, renotify: true });
+        });
+
+        it("rings, a moment later, when the open window is frozen in the background and never answers", async () => {
+            vi.useFakeTimers();
+            try {
+                const pending = push(chatPush, { windows: ["frozen"] });
+                await vi.advanceTimersByTimeAsync(2000);
+                const registration = await pending;
+
+                expect(shown(registration)).toMatchObject({ silent: false, renotify: true });
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it("never asks for a notification that is not about a chat: it keeps its sound", async () => {
+            const registration = await push(JSON.stringify({ title: "Friend request", tag: "friend-request:abc" }), {
+                windows: [true],
+            });
+
+            expect(registration.asked).toEqual([]);
+            expect(shown(registration)).toMatchObject({ silent: false, renotify: true });
+        });
     });
 });

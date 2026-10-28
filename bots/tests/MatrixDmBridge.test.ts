@@ -224,6 +224,37 @@ describe('MatrixDmBridge', () => {
         }
     });
 
+    it('keeps typing on through a line before a tool, a long artifact round and the card, and stops only after the last message', async () => {
+        vi.useFakeTimers();
+        try {
+            const steps: string[] = [];
+            client.sendText.mockImplementation(async (_b: string, _r: string, text: string) => void steps.push(`text:${text}`));
+            client.sendMessage.mockImplementation(async (_b: string, _r: string, content: any) => void steps.push(`card:${content.body}`));
+            client.setTyping.mockImplementation(async (_b: string, _r: string, on: boolean) => void steps.push(on ? 'typing' : 'stopped'));
+            const card = { id: 'art-1', version: 1, title: 'Quests board', kind: 'app', maker: 'Guide' };
+            let finish: (v: unknown) => void = () => undefined;
+            deps.reply.mockImplementationOnce(async (_b: string, _p: unknown, _t: string, _a: unknown, hooks: any) => {
+                await hooks.onInterimMessage('Let me make that for you.');
+                return new Promise((r) => (finish = r));
+            });
+            await bridge.onEvent(invite());
+            const pending = bridge.onEvent(message('make me a quests board'));
+            // Making the artifact takes a while: typing is renewed the whole time, never stopped
+            await vi.advanceTimersByTimeAsync(90000);
+            finish({ text: 'Here you go.', media: [], artifacts: [card] });
+            await pending;
+            const lastMessage = steps.indexOf('card:Quests board · Mini app · Version 1');
+            expect(steps.filter((step) => step === 'stopped')).toEqual(['stopped']);
+            expect(steps.indexOf('stopped')).toBe(steps.length - 1);
+            expect(lastMessage).toBe(steps.length - 2);
+            expect(steps.indexOf('text:Here you go.')).toBeLessThan(lastMessage);
+            const typingDuringTool = steps.slice(steps.indexOf('text:Let me make that for you.'), steps.indexOf('text:Here you go.'));
+            expect(typingDuringTool.filter((step) => step === 'typing').length).toBeGreaterThanOrEqual(4);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('checks room members once and then follows membership events', async () => {
         await bridge.onEvent(invite());
         await bridge.onEvent(message('one'));
@@ -1166,6 +1197,19 @@ describe('MatrixDmBridge', () => {
         expect(noteStates()).toEqual(['trouble', 'trouble', 'trouble']);
         expect(client.sendMessage.mock.calls[0][2].body).toBe("Guide couldn't answer that just now. Send it again in a minute.");
         expect(client.sendText).not.toHaveBeenCalled();
+    });
+
+    it('logs why when an empty answer turns into "couldn\'t answer" (#1498)', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        await bridge.onEvent(invite());
+        deps.reply.mockResolvedValueOnce({ text: '', media: [] });
+        await bridge.onEvent(message('Build me something impressive'));
+        expect(noteStates()).toEqual(['trouble']);
+        const lines = warn.mock.calls.map((call) => String(call[0]));
+        expect(lines.some((line) => line.includes(`Bot ${BOT} could not answer`) && line.includes('the answer was empty'))).toBe(true);
+        // The person's words never reach the log
+        expect(lines.some((line) => line.includes('impressive'))).toBe(false);
+        warn.mockRestore();
     });
 
     /** Moves the clock past the spacing between two "no such bot" answers that count. */

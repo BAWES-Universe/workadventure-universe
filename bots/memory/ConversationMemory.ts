@@ -184,6 +184,11 @@ export class ConversationMemory {
         return this.historyWindow.get(botId) ?? DEFAULT_HISTORY_WINDOW;
     }
 
+    /** How many messages a person's history keeps for this bot: never below what its replies read. */
+    protected historyLimit(botId: string): number {
+        return Math.max(this.maxHistorySize, this.windowFor(botId));
+    }
+
     /**
      * Add a message to conversation history
      */
@@ -212,7 +217,7 @@ export class ConversationMemory {
         });
 
         // Trim history if too long: never below what this bot's replies read
-        const keep = Math.max(this.maxHistorySize, this.windowFor(botId));
+        const keep = this.historyLimit(botId);
         while (memory.conversationHistory.length > keep) {
             memory.conversationHistory.shift();
         }

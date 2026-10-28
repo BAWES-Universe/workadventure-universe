@@ -8,7 +8,7 @@ import { readBotStatusNote, type BotStatusNote } from "../../Bots/BotChatStatus"
 import { readBotRoomLink, type BotRoomLink } from "../../Bots/BotRoomLink";
 import { readBotReplyLimit, type BotReplyLimit } from "../../Bots/BotReplyLimit";
 import { readArtifactField, type ArtifactCard } from "../../../Artifacts/artifactCard";
-import type { ChatMessage, ChatMessageContent, ChatMessageType, ChatUser } from "../ChatConnection";
+import type { ChatMessage, ChatMessageContent, ChatMessageType, ChatUser, SharedFileInfo } from "../ChatConnection";
 import { canRenderAttachmentInline } from "../../../Utils/InlineMimeType";
 import { fromMatrixWaveform, secondsFromMatrixDuration } from "../../VoiceNote/VoiceNote";
 import { chatUserFactory } from "./MatrixChatUser";
@@ -343,6 +343,19 @@ export class MatrixChatMessage implements ChatMessage {
     public getFormattedBody(): string {
         const content = this.event.getOriginalContent();
         return content.formatted_body;
+    }
+
+    get sharedFile(): SharedFileInfo | undefined {
+        if (this.type === "text" || this.event.isDecryptionFailure()) return undefined;
+        const content = this.event.getOriginalContent();
+        const info: unknown = content.info;
+        const size = typeof info === "object" && info !== null ? (info as Record<string, unknown>).size : undefined;
+        return {
+            name: this.getMediaFileName(content) ?? "",
+            size: typeof size === "number" && Number.isFinite(size) ? size : undefined,
+            // Matrix marks a voice message on its audio event (MSC3245).
+            voice: content["org.matrix.msc3245.voice"] !== undefined,
+        };
     }
 
     public mxcUrlToHttp(url: string) {
