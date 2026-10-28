@@ -149,11 +149,129 @@ describe("the bot page's Mind group (#1375)", () => {
         expect(cards).toBe(2);
     });
 
-    it("never shows it on someone else's bot", async () => {
+    it("shows it on someone else's bot too, with AI keys (#1579)", async () => {
         mocks.api.getBotAiOptions.mockResolvedValue(options({ viewerIsMaker: false }));
         mocks.api.getMyAiKeys.mockResolvedValue([{ id: "key-1", name: "Opus 5.5" }]);
         await mount();
-        expect(byTestId("bot-runs-on-unlent")).toHaveLength(0);
+        expect(byTestId("bot-runs-on-unlent")).toHaveLength(1);
+        expect(byTestId("bot-runs-on-ai-keys")).toHaveLength(1);
+    });
+
+    it("says how to run the bot on your key when you have none", async () => {
+        mocks.api.getBotAiOptions.mockResolvedValue(options({ viewerIsMaker: false }));
+        mocks.api.getMyAiKeys.mockResolvedValue([]);
+        await mount();
+        expect(text()).toContain("Lend one of your AI keys to this universe to run Micho on it.");
+        expect(text()).not.toContain("You manage bots here");
+    });
+
+    describe("moving a bot off someone else's key (#1579)", () => {
+        const saraKey = {
+            id: "key-sara",
+            name: "Sara’s DeepSeek",
+            ownerName: "Sara",
+            mine: false,
+            status: "working" as const,
+            ifDown: "universe-ai" as const,
+        };
+        const onSaras = (over: Partial<BotAiOptions> = {}) =>
+            options({
+                current: "key-sara",
+                viewerIsMaker: false,
+                maker: { id: "sara", name: "Sara" },
+                keys: [{ ...lentKey, name: "My Claude" }],
+                currentKey: saraKey,
+                ...over,
+            });
+
+        async function mountOnSaras(over: Partial<BotAiOptions> = {}) {
+            mocks.api.getBotAiOptions.mockResolvedValue(onSaras(over));
+            mocks.api.getMyAiKeys.mockResolvedValue([{ id: "key-1", name: "My Claude" }]);
+            const onChange = vi.fn();
+            const component = new MindGroup({
+                target,
+                props: { bot: { ...bot, aiProviderRef: "key-sara" }, open: true, onToggle: vi.fn(), onChange },
+            });
+            destroy = () => component.$destroy();
+            await settle();
+            return onChange;
+        }
+
+        const card = (kind: string) => byTestId(`bot-runs-on-${kind}`)[0];
+
+        it("names whose key it is and who pays, never that only they can put it there", async () => {
+            await mountOnSaras();
+            expect(card("theirs").textContent).toContain("Sara’s DeepSeek");
+            expect(text()).toContain("Sara’s key. Sara pays.");
+            expect(text()).not.toContain("Only Sara can put");
+        });
+
+        it("asks right under your key once tapped, and shows it picked, before moving", async () => {
+            const onChange = await mountOnSaras();
+            card("mine").click();
+            await tick();
+            expect(onChange).not.toHaveBeenCalled();
+            expect(card("mine").getAttribute("aria-checked")).toBe("true");
+            expect(card("theirs").getAttribute("aria-checked")).toBe("false");
+            const ask = byTestId("bot-runs-on-move-ask")[0];
+            expect(card("mine").nextElementSibling).toBe(ask);
+            expect(ask.textContent?.replace(/\s+/g, " ")).toContain(
+                "Move to My Claude? You pay for its replies from now on. Sara is told. Only Sara can move it back to their key."
+            );
+            byTestId("bot-runs-on-move-confirm")[0].click();
+            expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ aiProviderRef: "key-1" }));
+        });
+
+        it("asks without the pay line for Universe AI", async () => {
+            const onChange = await mountOnSaras();
+            card("universe-ai").click();
+            await tick();
+            const ask = byTestId("bot-runs-on-move-ask")[0].textContent ?? "";
+            expect(ask).toContain("Move to Universe AI?");
+            expect(ask).not.toContain("You pay");
+            byTestId("bot-runs-on-move-confirm")[0].click();
+            expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ aiProviderRef: "universe-ai" }));
+        });
+
+        it("keeps it where it is on Keep, or on tapping their key again", async () => {
+            const onChange = await mountOnSaras();
+            card("mine").click();
+            await tick();
+            [...target.querySelectorAll<HTMLButtonElement>(".bp-ask button")]
+                .find((button) => button.textContent?.trim() === "Keep")
+                ?.click();
+            await tick();
+            expect(byTestId("bot-runs-on-move-ask")).toHaveLength(0);
+            expect(card("theirs").getAttribute("aria-checked")).toBe("true");
+            card("mine").click();
+            await tick();
+            card("theirs").click();
+            await tick();
+            expect(byTestId("bot-runs-on-move-ask")).toHaveLength(0);
+            expect(onChange).not.toHaveBeenCalled();
+        });
+
+        it("says its owner is told when Orbit can't name them", async () => {
+            await mountOnSaras({ currentKey: { ...saraKey, ownerName: null } });
+            expect(text()).toContain("Someone else’s key. Its owner pays.");
+            card("mine").click();
+            await tick();
+            expect(byTestId("bot-runs-on-move-ask")[0].textContent).toContain(
+                "Its owner is told. Only its owner can move it back to their key."
+            );
+        });
+
+        it("asks nothing when the bot is on your own key or Universe AI", async () => {
+            mocks.api.getBotAiOptions.mockResolvedValue(options({ keys: [lentKey] }));
+            const onChange = vi.fn();
+            const component = new MindGroup({ target, props: { bot, open: true, onToggle: vi.fn(), onChange } });
+            destroy = () => component.$destroy();
+            await settle();
+            card("mine").click();
+            await tick();
+            expect(byTestId("bot-runs-on-move-ask")).toHaveLength(0);
+            expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ aiProviderRef: "key-1" }));
+        });
     });
 
     it("shows a key lent in AI keys as soon as Orbit closes, without reopening the bot", async () => {

@@ -197,10 +197,10 @@ describe("canPick", () => {
         expect(canPick(o, uai)).toBe(true);
     });
 
-    it("never lets a manager pick a key that was somehow in the list but isn't theirs to put on", () => {
+    it("lets anyone who manages someone else's bot pick their own key for it (#1579)", () => {
         const o = options({ viewerIsMaker: false, keys: [key("key-1")] });
         const [, mine] = runsOnCards(o, "universe-ai");
-        expect(canPick(o, mine)).toBe(false);
+        expect(canPick(o, mine)).toBe(true);
     });
 
     it("does not offer Universe AI when it isn't set up", () => {
@@ -333,8 +333,11 @@ describe("unlentKeyNames", () => {
         expect(unlentKeyNames(options(), [])).toEqual([]);
     });
 
-    it("says nothing to someone who didn't make the bot, or when the keys couldn't be loaded", () => {
-        expect(unlentKeyNames(options({ viewerIsMaker: false }), mine)).toEqual([]);
+    it("names them on someone else's bot too, as the viewer may put it on their key (#1579)", () => {
+        expect(unlentKeyNames(options({ viewerIsMaker: false }), mine)).toEqual(["Opus 5.5", "My DeepSeek"]);
+    });
+
+    it("says nothing when the keys couldn't be loaded", () => {
         expect(unlentKeyNames(options(), null)).toEqual([]);
     });
 });
