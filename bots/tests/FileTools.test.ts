@@ -394,6 +394,32 @@ describe('the file tools in AIService', () => {
         expect(memory.pendingMedia).toEqual([]);
     });
 
+    it('sends each file once a turn, in a bubble and in a direct message, and again in the next turn', async () => {
+        vi.spyOn(FileParser, 'validateUrl').mockResolvedValue();
+        const bot = client();
+        const bubble: Record<string, unknown> = {};
+        const inBubble = withFiles(bubble);
+        const there = { botClient: bot as never, spaceName: 'bubble-1', botId: 'bot1', playerId: 7 };
+        expect(await inBubble['sendFileAgain'](view(SONG), 'https://cdn.example.com/signed/a.mp3', there)).toBeNull();
+        // Asked again with a new signed link: the same file, already in the chat
+        expect(await inBubble['sendFileAgain'](view(SONG), 'https://cdn.example.com/signed/b.mp3', there)).toBeNull();
+        expect(bot.sendAudio).toHaveBeenCalledTimes(1);
+
+        const dm: Record<string, unknown> = { userUuid: 'uuid-alice', playerName: 'Alice', dmRoomId: '!room', pendingMedia: [] };
+        const inDm = withFiles(dm);
+        const where = { botId: 'bot1', playerId: -3 };
+        expect(await inDm['sendFileAgain'](view(SONG), 'https://cdn.example.com/signed/a.mp3', where)).toBeNull();
+        expect(await inDm['sendFileAgain'](view(SONG), 'https://cdn.example.com/signed/b.mp3', where)).toBeNull();
+        expect(dm.pendingMedia).toHaveLength(1);
+        // Another file still goes
+        expect(await inDm['sendFileAgain'](view({ ...SONG, ref: 'f9' }), 'https://cdn.example.com/signed/c.mp3', where)).toBeNull();
+        expect(dm.pendingMedia).toHaveLength(2);
+        // The next turn starts clean
+        (dm.sentAgain as Set<string>).clear();
+        expect(await inDm['sendFileAgain'](view(SONG), 'https://cdn.example.com/signed/d.mp3', where)).toBeNull();
+        expect(dm.pendingMedia).toHaveLength(3);
+    });
+
     it("leaves a file tool's result alone when sending media, and reads it as the tool's own lines", async () => {
         const bot = client();
         const results = [{ id: 't1', name: 'open_file', result: { file: { ...SONG, textState: 'kept' }, made: null, text: 'see https://example.com/a.png', at: 0, end: 30, next: null, total: 30, part: 1, parts: 1, cut: false } }];

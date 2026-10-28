@@ -568,7 +568,11 @@ export class AIService {
         // Whether the reply's usage has been recorded, so a failure after that is not recorded with the same cost again
         let usageRecorded = false;
         // A new turn starts clean: an artifact call is only the same as an earlier one while that turn is asked again
-        if (!isRetry && playerId !== undefined) this.conversationMemory?.getMemory(botId, playerId)?.artifactCalls?.clear();
+        if (!isRetry && playerId !== undefined) {
+            const memory = this.conversationMemory?.getMemory(botId, playerId);
+            memory?.artifactCalls?.clear();
+            memory?.sentAgain?.clear();
+        }
         // Buffer for content received before tool calls are detected
         // Discarded if tool calls arrive (was filler/thinking text);
         // flushed as final response if no tool calls.
@@ -2675,12 +2679,16 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      * a bubble send names no asker, and a direct message's is marked as sent again.
      */
     private async sendFileAgain(
-        file: { kind: string; name: string; mimeType: string | null; line: string | null; sizeBytes?: number | null; store?: FileStore },
+        file: { ref?: string; kind: string; name: string; mimeType: string | null; line: string | null; sizeBytes?: number | null; store?: FileStore },
         url: string,
         where: { botClient?: BotClient; spaceName?: string; botId: string; playerId: number }
     ): Promise<string | null> {
         const { botClient, spaceName, botId, playerId } = where;
         const mediaType: PendingMedia['mediaType'] = file.kind === 'image' || file.kind === 'audio' || file.kind === 'video' ? file.kind : 'file';
+        // Sent once a turn: the model calling it twice, or the turn asked again, finds it already in the chat
+        const memory = this.conversationMemory?.getMemory(botId, playerId);
+        const once = file.ref || url;
+        if (memory?.sentAgain?.has(once)) return null;
         if (botClient) {
             if (!spaceName || !botClient.isInSpace(spaceName)) return 'The conversation ended before it could be sent. Say so; do not claim it was sent.';
             // Already in storage (a file Orbit keeps by bucket and id): sent as it is, never downloaded and uploaded again.
@@ -2691,12 +2699,12 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 else if (mediaType === 'audio') await botClient.sendAudio(spaceName, url);
                 else if (mediaType === 'video') await botClient.sendVideo(spaceName, url);
                 else await botClient.sendFile(spaceName, url, file.name);
+                if (memory) (memory.sentAgain ??= new Set()).add(once);
                 return null;
             } catch {
                 return "It couldn't be sent right now. Say so simply and offer to try again.";
             }
         }
-        const memory = this.conversationMemory?.getMemory(botId, playerId);
         if (!memory) return "It couldn't be sent right now. Say so simply and offer to try again.";
         // A direct message sends it after the reply, so what would stop it there is checked now, before saying it was sent
         if (file.sizeBytes != null && file.sizeBytes > MAX_OUTGOING_MEDIA_BYTES) {
@@ -2723,6 +2731,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             again: true,
             name: file.name,
         });
+        (memory.sentAgain ??= new Set()).add(once);
         return null;
     }
 
