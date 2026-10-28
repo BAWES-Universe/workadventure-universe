@@ -86,7 +86,7 @@ import { captureAiGeneration, captureAiTrace, flushPostHog } from './PostHogClie
 import { priceCall } from './pricing/costing';
 import { UsageLedger, priceMetadata, type TurnCost } from './pricing/ledger';
 import { buildRecentFilesLine, buildSystemPrompt } from './systemPrompt';
-import type { MadeWith } from '../services/ChatFiles';
+import type { FileStore, MadeWith } from '../services/ChatFiles';
 /** Ends a direct-message reply that answers where the bot is or invites the person over because they asked. */
 export { ROOM_CARD_MARK } from './systemPrompt';
 import {
@@ -2705,7 +2705,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      * a bubble send names no asker, and a direct message's is marked as sent again.
      */
     private async sendFileAgain(
-        file: { kind: string; name: string; mimeType: string | null; line: string | null },
+        file: { kind: string; name: string; mimeType: string | null; line: string | null; store?: FileStore },
         url: string,
         where: { botClient?: BotClient; spaceName?: string; botId: string; playerId: number }
     ): Promise<string | null> {
@@ -2713,8 +2713,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const mediaType: PendingMedia['mediaType'] = file.kind === 'image' || file.kind === 'audio' || file.kind === 'video' ? file.kind : 'file';
         if (botClient) {
             if (!spaceName || !botClient.isInSpace(spaceName)) return 'The conversation ended before it could be sent. Say so; do not claim it was sent.';
-            // Already in storage: sent as it is, never downloaded and uploaded again
-            botClient.markStored?.(url);
+            // Already in storage (a file Orbit keeps by bucket and id): sent as it is, never downloaded and uploaded again.
+            // A link kept as typed goes the usual way, with its checks
+            if (file.store && 'bucket' in file.store) botClient.markStored?.(url);
             try {
                 if (mediaType === 'image') await botClient.sendImage(spaceName, url, file.line ?? undefined);
                 else if (mediaType === 'audio') await botClient.sendAudio(spaceName, url);
