@@ -8,8 +8,10 @@ import { readBotStatusNote, type BotStatusNote } from "../../Bots/BotChatStatus"
 import { readBotRoomLink, type BotRoomLink } from "../../Bots/BotRoomLink";
 import { readBotReplyLimit, type BotReplyLimit } from "../../Bots/BotReplyLimit";
 import { readArtifactField, type ArtifactCard } from "../../../Artifacts/artifactCard";
+import { readBotSteps, type BotSteps } from "../../Bots/BotSteps";
 import type { ChatMessage, ChatMessageContent, ChatMessageType, ChatUser, SharedFileInfo } from "../ChatConnection";
 import { canRenderAttachmentInline } from "../../../Utils/InlineMimeType";
+import { fromMatrixWaveform, secondsFromMatrixDuration } from "../../VoiceNote/VoiceNote";
 import { chatUserFactory } from "./MatrixChatUser";
 import { MatrixChatMessageReaction } from "./MatrixChatMessageReaction";
 import { MatrixChatRelation } from "./MatrixChatRelation";
@@ -60,6 +62,8 @@ export class MatrixChatMessage implements ChatMessage {
     readonly roomLink: BotRoomLink | undefined;
     readonly replyLimit: BotReplyLimit | undefined;
     readonly artifact: ArtifactCard | undefined;
+    /** A bot's steps line (#1545): the bot server updates this one message while the bot works. */
+    readonly steps: Writable<BotSteps | undefined>;
     readonly canReact = writable(true);
     readonly canReply = writable(true);
     private isShown = false;
@@ -80,6 +84,7 @@ export class MatrixChatMessage implements ChatMessage {
             room.getMember(event.getSender() ?? "")?.name ?? ""
         );
         this.artifact = readArtifactField(event.getSender(), event.getOriginalContent());
+        this.steps = writable(readBotSteps(event.getSender(), this.stepsContent()));
         this.date = event.getDate();
         this.sender = this.getSender();
         this.isMyMessage = this.room.client.getUserId() === event.getSender();
@@ -235,7 +240,7 @@ export class MatrixChatMessage implements ChatMessage {
                 // A picture sent as a reply still tells its body from its name.
                 filename: this.type === "text" ? undefined : this.getMediaFileName(content),
                 fileNames: undefined,
-                isVoice: this.isVoiceMessage(content),
+                ...this.voiceDetails(content),
             };
         }
 
@@ -249,11 +254,26 @@ export class MatrixChatMessage implements ChatMessage {
                 // The body of a Matrix file is its name: the blob: URL it loads from has none.
                 filename: this.getMediaFileName(content),
                 fileNames: undefined,
-                isVoice: this.isVoiceMessage(content),
+                ...this.voiceDetails(content),
             };
         }
 
         return { body: content.body, url: undefined, urls: undefined, filename: undefined, fileNames: undefined };
+    }
+
+    /** Whether the message is a voice message, and the length and shape its sender wrote with it (MSC1767). */
+    private voiceDetails(content: IContent): Pick<ChatMessageContent, "isVoice" | "voiceDuration" | "voiceWaveform"> {
+        const isVoice = this.isVoiceMessage(content);
+        if (!isVoice) return { isVoice };
+        const audio: unknown = content["org.matrix.msc1767.audio"];
+        const details = typeof audio === "object" && audio !== null ? (audio as Record<string, unknown>) : {};
+        const info: unknown = content.info;
+        const infoDuration = typeof info === "object" && info !== null ? (info as Record<string, unknown>).duration : 0;
+        return {
+            isVoice,
+            voiceDuration: secondsFromMatrixDuration(details.duration) ?? secondsFromMatrixDuration(infoDuration),
+            voiceWaveform: fromMatrixWaveform(details.waveform),
+        };
     }
 
     /** A recorded voice message, flagged by Element (MSC3245) as `org.matrix.msc3245.voice`, or `m.voice` once stable. */
@@ -330,15 +350,15 @@ export class MatrixChatMessage implements ChatMessage {
     }
 
     get sharedFile(): SharedFileInfo | undefined {
-        if (this.type === "text" || this.event.isDecryptionFailure()) return undefined;
+        if (this.type === "text" || this.event.isDecryptionFailure() || this.event.isRedacted()) return undefined;
         const content = this.event.getOriginalContent();
         const info: unknown = content.info;
         const size = typeof info === "object" && info !== null ? (info as Record<string, unknown>).size : undefined;
         return {
             name: this.getMediaFileName(content) ?? "",
             size: typeof size === "number" && Number.isFinite(size) ? size : undefined,
-            // Matrix marks a voice message on its audio event (MSC3245).
-            voice: content["org.matrix.msc3245.voice"] !== undefined,
+            // A voice message is flagged on its audio event (MSC3245), as for its chat list line.
+            voice: this.isVoiceMessage(content),
         };
     }
 
@@ -386,6 +406,27 @@ export class MatrixChatMessage implements ChatMessage {
             console.error(error);
             throw error;
         }
+    }
+
+    /** A notice as last edited, so a steps line read from history shows where the bot server left it. */
+    private stepsContent(): Record<string, unknown> | undefined {
+        const original = this.event.getOriginalContent();
+        // Only a notice can carry a steps line, so other messages skip the look at their edits
+        if (original.msgtype !== "m.notice") return undefined;
+        const bundled: unknown = this.event.getUnsigned()["m.relations"]?.["m.replace"]?.content?.["m.new_content"];
+        if (bundled && typeof bundled === "object") return bundled as Record<string, unknown>;
+        if (this.event.replacingEventId()) {
+            const replaced: unknown = this.event.replacingEvent()?.getOriginalContent()["m.new_content"];
+            if (replaced && typeof replaced === "object") return replaced as Record<string, unknown>;
+        }
+        return original;
+    }
+
+    /** An update of a bot's steps line: only its own sender can change it. */
+    public modifySteps(sender: string | undefined, newContent: Record<string, unknown> | undefined) {
+        if (!sender || sender !== this.event.getSender()) return;
+        const steps = readBotSteps(sender, newContent);
+        if (steps) this.steps.set(steps);
     }
 
     public modifyContent(newContent: string) {

@@ -41,3 +41,16 @@ describe("uploaded filename policy", () => {
         }
     );
 });
+
+describe("voice notes recorded in the chat", () => {
+    // The chat names them Voice message.m4a, .weba or .oga: each is served inline as audio, never as a download or video.
+    it.each([
+        ["m4a", "audio/mp4"],
+        ["weba", "audio/webm"],
+        ["oga", "audio/ogg"],
+    ])("serves .%s as %s, inline", (extension, type) => {
+        const name = `Voice message.${extension}`;
+        expect(mimeTypeManager.getSafeMimeTypeByFileName(name)).toBe(type);
+        expect(mimeTypeManager.getContentDispositionByFileName(name)).toBe("inline");
+    });
+});

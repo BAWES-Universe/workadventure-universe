@@ -11,6 +11,7 @@ import {
     modalIframeWindowStore,
     modalVisibilityStore,
 } from "../../Stores/ModalStore";
+import { orbitHoldsHistoryStore } from "../../Stores/OrbitHistoryStore";
 import { gameManager } from "../../Phaser/Game/GameManager";
 import { isUserNameValid, maxUserNameLength } from "../../Connection/LocalUserUtils";
 import type { ModalEvent } from "../../Api/Events/ModalEvent";
@@ -24,7 +25,9 @@ import {
     buildAdminLoginUrl,
     isOrbitAuthReadyMessage,
     resolveCredentialUrl,
+    type OrbitAuthFailedMessage,
     type OrbitAuthTokenMessage,
+    type OrbitAuthWaitMessage,
 } from "./iframeAuth";
 import {
     OrbitBridge,
@@ -41,9 +44,9 @@ import {
 } from "./orbitBridge";
 import {
     forgetOrbitAccessTokenRenewal,
-    freshOrbitAccessToken,
     getAccessTokenFromJwt,
     orbitAccessTokenHasExpired,
+    orbitAccessTokenWithRetries,
 } from "./orbitAccessToken";
 let adminModalOpen = false;
 /** The bridge for this visit (a new one on every room join or reconnect). */
@@ -135,12 +138,30 @@ function isCurrentOrbitHistoryState(state: unknown): boolean {
     );
 }
 
+/** How long the chat waits for a step back over Orbit's history to land before it adds its own steps anyway. */
+const RELEASE_HISTORY_TIMEOUT_MS = 1000;
+let releaseTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** Orbit holds the top of the history (see OrbitHistoryStore): the chat adds no steps for now. */
+function holdHistory(until: "released" | "landed") {
+    if (releaseTimer !== undefined) clearTimeout(releaseTimer);
+    releaseTimer = until === "landed" ? setTimeout(releaseHistory, RELEASE_HISTORY_TIMEOUT_MS) : undefined;
+    orbitHoldsHistoryStore.set(true);
+}
+
+function releaseHistory() {
+    if (releaseTimer !== undefined) clearTimeout(releaseTimer);
+    releaseTimer = undefined;
+    orbitHoldsHistoryStore.set(false);
+}
+
 function pushHistoryEntry() {
     if (historyEntryId !== null) return;
     try {
         const nextId = crypto.randomUUID();
         history.pushState({ orbit: true, orbitVisit: nextId }, "");
         historyEntryId = nextId;
+        holdHistory("released");
     } catch (error) {
         console.warn("Could not add Orbit to the history", error);
     }
@@ -149,19 +170,30 @@ function pushHistoryEntry() {
 function dropHistoryEntry() {
     const wasCurrent = isCurrentOrbitHistoryState(history.state);
     historyEntryId = null;
-    if (wasCurrent) history.back();
+    if (!wasCurrent) {
+        releaseHistory();
+        return;
+    }
+    // Held until the step back lands, so a chat opened from Orbit (Message) adds its step after it, not under it.
+    holdHistory("landed");
+    history.back();
 }
 
 function handlePopState(event: PopStateEvent) {
     if (adminModalOpen && !isCurrentOrbitHistoryState(event.state)) {
-        // Back, on Orbit's entry: Orbit closes, and the room stays.
+        // Back, on Orbit's entry: Orbit closes, and the room stays. Back took its step, so the history is free.
         historyEntryId = null;
         closeAdminModal();
+        releaseHistory();
     }
     if (!adminModalOpen && isOrbitHistoryState(event.state)) {
         // An entry left behind by an earlier visit (Orbit was open during a room change): step over it.
+        holdHistory("landed");
         history.back();
+        return;
     }
+    // A step back over Orbit's history has landed.
+    if (historyEntryId === null && releaseTimer !== undefined) releaseHistory();
 }
 
 /** A key or a joystick held when Orbit opens would keep walking: its release never reaches the game. */
@@ -169,12 +201,16 @@ function clearHeldMovement() {
     gameManager.tryGetCurrentGameScene()?.userInputManager?.clearHeldMovement();
 }
 
-/** The OIDC access token to sign Orbit in with, renewed first when it has run out or Orbit says it was refused. */
-async function freshAccessToken(force: boolean): Promise<string | null> {
-    const options = extensionOptions;
-    if (!options) return null;
-    return freshOrbitAccessToken(options, force, () => extensionOptions === options);
-}
+/**
+ * How long Orbit's sign-in keeps trying while online with no answer from the play server, before Orbit offers Try
+ * again. Time offline doesn't count: Orbit waits for the connection.
+ */
+const ORBIT_SIGN_IN_GIVE_UP_MS = 60_000;
+/** A reopening after a reconnect tries for less: nobody is looking at a sign-in screen yet. */
+const RESUME_SIGN_IN_GIVE_UP_MS = 15_000;
+
+/** The sign-in Orbit's frame asked for last; an older one stops when Orbit asks again. */
+let signInRequest: object | null = null;
 
 function handleAdminAuthMessage(event: MessageEvent<unknown>) {
     if (
@@ -233,10 +269,30 @@ function handleAdminAuthMessage(event: MessageEvent<unknown>) {
     const { nonce, refresh } = event.data;
     const source = event.source;
     const origin = adminOrigin;
-    if (!source) return;
-    void freshAccessToken(refresh === true).then((accessToken) => {
-        // Orbit may have closed, or the room changed, while the token was being renewed.
-        if (!accessToken || source !== get(modalIframeWindowStore)) return;
+    const options = extensionOptions;
+    if (!source || !options) return;
+    const request = {};
+    signInRequest = request;
+    // Orbit may have closed, the room may have changed, or Orbit asked again, while the token was being renewed.
+    const current = () =>
+        extensionOptions === options && signInRequest === request && source === get(modalIframeWindowStore);
+    const wait: OrbitAuthWaitMessage = { type: "orbit-auth-wait-v2", version: ORBIT_AUTH_VERSION, nonce };
+    // Orbit learns at once that the game is there and working on it, so a slow renewal doesn't look like no game.
+    source.postMessage(wait, origin);
+    void orbitAccessTokenWithRetries(options, refresh === true, current, {
+        giveUpAfterMs: ORBIT_SIGN_IN_GIVE_UP_MS,
+        onWait: () => {
+            if (current()) source.postMessage(wait, origin);
+        },
+    }).then((accessToken) => {
+        if (!current()) return;
+        signInRequest = null;
+        if (!accessToken) {
+            console.warn("Orbit sign-in: gave up getting a token for Orbit");
+            const failed: OrbitAuthFailedMessage = { type: "orbit-auth-failed-v2", version: ORBIT_AUTH_VERSION, nonce };
+            source.postMessage(failed, origin);
+            return;
+        }
         const response: OrbitAuthTokenMessage = {
             type: "orbit-auth-token-v2",
             version: ORBIT_AUTH_VERSION,
@@ -522,7 +578,9 @@ async function resumeOrbit(options: ExtensionModuleOptions): Promise<void> {
 
     let accessToken: string | null = null;
     try {
-        accessToken = await freshOrbitAccessToken(options, false, current);
+        accessToken = await orbitAccessTokenWithRetries(options, false, current, {
+            giveUpAfterMs: RESUME_SIGN_IN_GIVE_UP_MS,
+        });
     } catch (error) {
         console.warn("Orbit stays closed: could not check the sign-in before reopening it", error);
     }
@@ -681,6 +739,7 @@ const adminExtensionModule: ExtensionModule = {
         closeAdminModal();
         // The room is changing: its history entry stays behind and is stepped over later (see handlePopState).
         historyEntryId = null;
+        releaseHistory();
         pendingPlayerName = null;
         bridge = null;
         launcher = null;
