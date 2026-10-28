@@ -386,7 +386,9 @@ describe('the file tools in AIService', () => {
         const ai = withFiles(memory);
         const where = { botId: 'bot1', playerId: -3 };
         vi.spyOn(FileParser, 'validateUrl').mockResolvedValue();
-        expect(await ai['sendFileAgain'](view(SONG, { sizeBytes: 60 * 1024 * 1024 }), 'https://cdn.example.com/big.mp4', where)).toMatch(/too big to send in a direct message \(over 50 MB\)/);
+        expect(await ai['sendFileAgain'](view(SONG, { sizeBytes: 60 * 1024 * 1024 }), 'https://cdn.example.com/big.mp4', where)).toMatch(/too big to send in a direct message \(over 50 MB\)\. Say so simply; it can be sent in a nearby chat\./);
+        // A link kept as typed could not go in a nearby chat either, so that is not offered
+        expect(await ai['sendFileAgain'](view(SONG, { sizeBytes: 60 * 1024 * 1024, store: { url: 'https://cdn.example.com/big.mp4' } }), 'https://cdn.example.com/big.mp4', where)).toMatch(/\(over 50 MB\)\. Say so simply\.$/);
         vi.spyOn(FileParser, 'validateUrl').mockRejectedValue(new Error('private'));
         expect(await ai['sendFileAgain'](view(SONG), 'http://10.0.0.1/song.mp3', where)).toMatch(/couldn't be sent right now/);
         expect(memory.pendingMedia).toEqual([]);
