@@ -7,7 +7,15 @@
     import { botApiService } from "../../services/BotApiService";
     import { resolveVisionSupport } from "../../visionModels";
     import { canOpenOrbit, openOrbitPage } from "../../../admin-api/index";
-    import { canPick, cardIcon, mindBriefName, runsOnCards, unlentKeyNames, type RunsOnCard } from "../../mindModel";
+    import {
+        canPick,
+        cardIcon,
+        mindBriefName,
+        runsOnCards,
+        unlentKeyNames,
+        UNIVERSE_AI_REF,
+        type RunsOnCard,
+    } from "../../mindModel";
     import { allowedModelsOf, botModelOf, keyChoice, keyOfRef, modelRow, shortName } from "../../modelPickerModel";
     import PageGroup from "./PageGroup.svelte";
     import PageButton from "./PageButton.svelte";
@@ -178,6 +186,9 @@
             : page.mind.none()
         : !ref
         ? page.mind.none()
+        : // Before Orbit answers (or when it can't), a bot on Universe AI still shows its name, never its stored ref
+        ref.toLowerCase() === UNIVERSE_AI_REF
+        ? page.mind.universeAi()
         : current
         ? [
               current.enabled ? current.name : `${current.name} ${$LL.actionbar.botEditorModule.providerDisabled()}`,
