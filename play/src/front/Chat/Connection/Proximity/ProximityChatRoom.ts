@@ -850,6 +850,8 @@ export class ProximityChatRoom implements ChatRoom {
         this.removeTypingUserbyID(senderSpaceUserId);
         this.messages.push(card);
         this.lastMessageTimestamp = card.date.getTime();
+        // Unread like any message that arrives, so another open room still shows it came
+        this.markUnread();
         openChat("bubble");
         this.showIfNothingOpen();
     }
@@ -1350,6 +1352,8 @@ export class ProximityChatRoom implements ChatRoom {
         this.spaceReplyLimitSubscription?.unsubscribe();
         this.spaceReplyLimitSubscription = this._space.observePrivateEvent("botReplyLimit").subscribe((event) => {
             if (!isBotUser(event.sender) || event.sender.uuid !== `bot-${event.botReplyLimit.botId}`) return;
+            // A bot this person blocked opens nothing, as with its messages
+            if (blackListManager.isBlackListed(event.sender.uuid)) return;
             const replyLimit = parseBotReplyLimit(
                 event.botReplyLimit,
                 event.botReplyLimit.botId,
