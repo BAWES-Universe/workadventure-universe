@@ -160,8 +160,6 @@ export class AIService {
     private botLimits: Map<string, BotLimits> = new Map();
     /** Which tool made each file the bot was given back, by link (#1508). */
     private madeMedia = new Map<string, MadeWith>();
-    /** What each bot answered on last: a person's own key never has an image looked at by Universe AI (#1508). */
-    private lastSource = new Map<string, string>();
     private providerRegistry: AIProviderRegistry;
     private mapDataService?: MapDataService;
 
@@ -595,7 +593,6 @@ export class AIService {
             }
 
             let config = resolved.config;
-            if (botId) this.lastSource.set(botId, (resolved as { source?: string }).source ?? '');
             if (turn) turn.guard = (config.limits ?? BOT_LIMIT_DEFAULTS).guard;
             // Usage is recorded against the provider that really answered (Universe AI is its Default, a key is the key)
             usageProviderId = config.providerId;
@@ -1247,7 +1244,7 @@ export class AIService {
                             // Tool calls from a reply that hit its length cap may hold half a file (the repair of broken JSON would still
                             // pass it): the first round reads the cap from this chunk, later rounds from the previous round's last chunk
                             const replyCutOff = !!(followUpIterations === 1 ? chunk.metadata?.truncated : lastFollowUpDoneChunk?.metadata?.truncated);
-                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff);
+                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source);
                             // Which tool made each file, and what it was asked for, for the bot's list of files (#1508)
                             this.noteMadeMedia(pendingToolCalls, toolResults);
                             if (turn && toolResults.some((tr) => writesArtifact(tr.name) && tr.result?.success === true)) turn.artifactSaved = true;
@@ -2636,9 +2633,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     private async runFileToolCall(
         name: string,
         args: Record<string, unknown>,
-        where: { botClient?: BotClient; adminApiService?: AdminApiService; spaceName?: string; botId?: string; playerId?: number; abortSignal?: AbortSignal }
+        where: { botClient?: BotClient; adminApiService?: AdminApiService; spaceName?: string; botId?: string; playerId?: number; abortSignal?: AbortSignal; source?: string }
     ): Promise<Record<string, unknown>> {
-        const { botClient, spaceName, botId, playerId, abortSignal } = where;
+        const { botClient, spaceName, botId, playerId, abortSignal, source } = where;
         const admin = where.adminApiService ?? this.adminApiService;
         if (!admin || !botId || playerId === undefined) return { error: "Earlier files can't be looked up right now." };
         const who = this.chatCallFor(botId, playerId, botClient, spaceName);
@@ -2651,7 +2648,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             artifacts: artifactsEnabled(),
             linkOf: (store) => linkOfStore(store),
             // One look through Universe AI's vision, never for a bot on a person's own key (as for images people send)
-            ...(this.lastSource.get(botId) === 'own-key' ? {} : { look: (url: string) => this.describeImagesViaDefaultVision([url], abortSignal) }),
+            ...(source === 'own-key' ? {} : { look: (url: string) => this.describeImagesViaDefaultVision([url], abortSignal) }),
             send: (file, url) => this.sendFileAgain(file, url, { botClient, spaceName, botId, playerId }),
         });
     }
@@ -2802,7 +2799,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         abortSignal?: AbortSignal,
         toolTimeoutSeconds?: number | null,
         /** The reply these calls came from was cut off by its length cap. */
-        replyCutOff = false
+        replyCutOff = false,
+        /** What this reply runs on ("own-key", "universe-ai"…): a person's own key never has an image looked at by Universe AI. */
+        source?: string
     ): Promise<Array<{ id: string; name: string; result: any }>> {
         // Filter out invalid tool calls (empty name, undefined, etc.)
         const validToolCalls = toolCalls.filter(tc => tc && tc.name && tc.name.trim() !== '');
@@ -3128,7 +3127,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         result = await this.runFileToolCall(
                             toolCall.name,
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
-                            { botClient, adminApiService, spaceName, botId, playerId, abortSignal }
+                            { botClient, adminApiService, spaceName, botId, playerId, abortSignal, source }
                         );
                         break;
 

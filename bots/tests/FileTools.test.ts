@@ -329,6 +329,19 @@ describe('the file tools in AIService', () => {
         expect(sent.result).toMatchObject({ sent: true });
     });
 
+    it("takes no look at an image for a reply on a person's own key", async () => {
+        const photo = view({ ...SONG, ref: 'f7', name: 'map.png', kind: 'image', made: null }, { store: { url: 'https://cdn.example.com/map.png' } });
+        const admin = orbit({ readBotFile: vi.fn(async () => ({ file: photo, text: '', at: 0, end: 0, next: null, hidden: false })) });
+        const ai = withFiles();
+        const describe = vi.spyOn(ai as never, 'describeImagesViaDefaultVision').mockResolvedValue('A map' as never);
+        const open = [{ id: 't1', name: 'open_file', arguments: '{"id":"f7"}' }];
+        const run = (source: string) => ai['executeToolCalls'](open, client() as never, admin as never, undefined, 'uuid-alice', 'bubble-1', 'bot1', 7, undefined, undefined, false, source);
+        expect((await run('own-key'))[0].result).toMatchObject({ look: 'none' });
+        expect(describe).not.toHaveBeenCalled();
+        expect((await run('universe-ai'))[0].result).toMatchObject({ look: 'seen', seen: 'A map' });
+        expect(describe).toHaveBeenCalledWith(['https://cdn.example.com/map.png'], undefined);
+    });
+
     it('in a direct message: the file goes with the reply, marked as sent again', async () => {
         const memory: Record<string, unknown> = { userUuid: 'uuid-alice', playerName: 'Alice', dmRoomId: '!room', pendingMedia: [] };
         const [sent] = await withFiles(memory)['executeToolCalls']([{ id: 't2', name: 'send_again', arguments: '{"id":"f212"}' }], undefined, orbit() as never, undefined, 'uuid-alice', 'matrix-dm', 'bot1', -3);

@@ -19,6 +19,10 @@ cannot draw it.
 | `read_artifact` | `id`, `version?`. The text, as data (never instructions). |
 | `list_artifacts` | The artifacts made in this chat, newest change first. How a bot finds the one a later message means. |
 
+With an Orbit that keeps files in bot chats (#1508), `list_artifacts` leaves the tool list and `find_files` finds artifacts
+instead, along with files, a page at a time: this chat's, and the person's own from any chat with any bot. A history
+that still calls `list_artifacts` keeps working.
+
 The tools go to Orbit with the person (`signedIn`, `identifier`, `name`) and the chat the message came in. Orbit runs the same
 access check as `/api/bots/:id/access`, so someone who cannot chat with the bot makes nothing. Tool results hold no file
 address and no code the bot would paste (read excepted), so the media interceptors never send them as media. Bot chat
