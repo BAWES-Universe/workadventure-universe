@@ -39,6 +39,22 @@ function clip(value: string, max: number): string {
 }
 
 /**
+ * An item's key as Orbit keeps it. A key over Orbit's length ends in a short hash of the whole key, so two long links
+ * in one message that start the same still get keys of their own.
+ */
+export function keptKey(key: string): string {
+    if (key.length <= MAX_KEY) return key;
+    // FNV-1a: short and the same every time, which is all a key needs.
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < key.length; i++) {
+        hash ^= key.charCodeAt(i);
+        hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+    const suffix = ` #${hash.toString(16).padStart(8, "0")}`;
+    return clip(key, MAX_KEY - suffix.length) + suffix;
+}
+
+/**
  * The bucket and id of an uploader file behind a signed CDN link ("bucket/id"), which stops working after a while.
  * Nothing for any other link: a public link lasts and is kept as it is.
  */
@@ -80,7 +96,7 @@ export function savedRowsOf(
     const base = (item: SharedItem) => {
         const sender = item.message.isMyMessage ? item.message.sender?.username || you : item.message.sender?.username;
         return {
-            itemKey: clip(item.key, MAX_KEY),
+            itemKey: keptKey(item.key),
             name: clip(item.name, MAX_NAME),
             mimeType: null,
             size: item.size ?? null,
@@ -213,7 +229,7 @@ export function mergeShared(live: SharedItems, saved: SharedItems): SharedItems 
     const merge = (liveItems: SharedItem[], savedItems: SharedItem[]) => {
         if (savedItems.length === 0) return liveItems;
         // A kept key was cut to what Orbit takes: the open chat's keys are cut the same way to match.
-        const keys = new Set(liveItems.map((item) => clip(item.key, MAX_KEY)));
+        const keys = new Set(liveItems.map((item) => keptKey(item.key)));
         return [...liveItems, ...savedItems.filter((item) => !keys.has(item.key))].sort(
             (a, b) => (b.message.date?.getTime() ?? 0) - (a.message.date?.getTime() ?? 0)
         );

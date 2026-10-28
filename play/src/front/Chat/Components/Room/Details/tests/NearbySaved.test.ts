@@ -3,6 +3,7 @@ import { get, readable } from "svelte/store";
 import type { ChatMessage, ChatMessageType } from "../../../../Connection/ChatConnection";
 import {
     chatFileRef,
+    keptKey,
     mergeShared,
     savedItemsOf,
     savedNearbyPage,
@@ -105,8 +106,28 @@ describe("the rows kept for a nearby chat", () => {
             () => undefined,
             "You"
         );
-        expect(rows[0].itemKey).toBe("x".repeat(299));
+        expect(rows[0].itemKey).toMatch(/^x{290} #[0-9a-f]{8}$/);
         expect(rows[0].name).toBe("x".repeat(299));
+    });
+
+    it("gives two long links in one message that start the same keys of their own", () => {
+        const start = `t1 https://bawes.net/${"x".repeat(300)}`;
+        const message1 = message("t1", "proximity");
+        const rows = savedRowsOf(
+            {
+                media: [],
+                files: [],
+                links: [
+                    item(`${start}/a`, message1, { url: `${start.slice(3)}/a` }),
+                    item(`${start}/b`, message1, { url: `${start.slice(3)}/b` }),
+                ],
+            },
+            () => undefined,
+            "You"
+        );
+        expect(rows[0].itemKey).not.toBe(rows[1].itemKey);
+        expect(rows.map((row) => row.itemKey.length)).toEqual([300, 300]);
+        expect(keptKey("short key")).toBe("short key");
     });
 });
 
@@ -170,7 +191,7 @@ describe("Orbit's page of kept items", () => {
             links: [item(long, message("t1", "proximity"), { url: long.slice(3) })],
         };
         const saved = savedItemsOf(
-            [{ ...row, itemKey: long.slice(0, 300), kind: "link", fileId: null, link: "https://bawes.net/x" }],
+            [{ ...row, itemKey: keptKey(long), kind: "link", fileId: null, link: "https://bawes.net/x" }],
             "https://uploader.example.com"
         );
         expect(mergeShared(live, saved).links).toEqual(live.links);
