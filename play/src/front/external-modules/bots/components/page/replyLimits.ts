@@ -4,6 +4,7 @@
  * A saved value that is none of the chips gets a chip of its own, so the page never hides what the bot is set to.
  */
 import type { BotAiOptions, BotLimitCeiling } from "../../types";
+import { botModelOf, keyOfRef, modelRow } from "../../modelPickerModel";
 
 /** Lower longest replies a bot can pick, in tokens. */
 export const REPLY_CHOICES = [16000, 8000, 4000];
@@ -48,4 +49,38 @@ export function limitChips(
             ...values.map((choice) => ({ value: choice, label: label(choice) })),
         ],
     };
+}
+
+/** A chip this close under the model's own limit says nothing new ("16k" next to "16.4k"), so it is left out. */
+const CLEARLY_LOWER = 0.9;
+
+/**
+ * The model the bot replies with and the longest reply it can write (Orbit #673), when its provider says: on one of the
+ * person's own keys, the model picked on this page; on someone else's key, the one Orbit says it is on. Null on Universe
+ * AI, and for a model whose provider does not say.
+ */
+export function modelCapFor(
+    options: BotAiOptions | null,
+    bot: { aiProviderRef?: string | null; aiModel?: string | null }
+): { model: string; tokens: number } | null {
+    if (!options) return null;
+    const ref = bot.aiProviderRef ?? options.current;
+    const key = keyOfRef(options, ref);
+    if (key) {
+        const row = modelRow(options, ref, botModelOf(options, bot));
+        if (!row) return null;
+        if (row.kind === "unlisted") {
+            return row.model && row.model === key.model && key.output ? { model: row.model, tokens: key.output } : null;
+        }
+        return row.model?.output ? { model: row.model.id, tokens: row.model.output } : null;
+    }
+    const current = options.currentKey;
+    return current && current.id === ref && current.model && current.output
+        ? { model: current.model, tokens: current.output }
+        : null;
+}
+
+/** The lower longest replies to offer under a model that stops at `tokens`: only the clearly lower ones. */
+export function choicesUnder(tokens: number): number[] {
+    return REPLY_CHOICES.filter((choice) => choice <= tokens * CLEARLY_LOWER);
 }

@@ -69,6 +69,8 @@ export interface KeyModelOption {
     id: string;
     tools?: boolean;
     vision?: boolean;
+    /** The longest reply it can write, in tokens (Orbit #673). */
+    output?: number;
 }
 
 /** A key's (or Universe AI's) longest reply in tokens and steps in one reply (Orbit #666): a bot on it can lower them only. */
@@ -107,6 +109,8 @@ export interface BotAiOptions {
         /** For the Vision row (missing from an older Orbit): whether the key's model sees, and the models with Vision it could look at images with. */
         supportsVision?: boolean | null;
         visionModels?: string[];
+        /** The longest reply the check model can write, when its provider says (Orbit #673). */
+        output?: number | null;
         /** The models the lend here allows (null when the provider's list could not be loaded). Missing on an older Orbit. */
         models?: KeyModelOption[] | null;
         /** The lend here allows only some of the key's models. */
@@ -128,6 +132,9 @@ export interface BotAiOptions {
         logo?: string | null;
         plainIcon?: "plug" | "chip" | null;
         limits?: BotLimitCeiling;
+        /** The model the bot replies with, and the longest reply it can write when its provider says (Orbit #673). */
+        model?: string | null;
+        output?: number | null;
     } | null;
     /** What is saved for the bot's images, and for "Another model" the key picked and why it can't be used now (null = it can). Missing from an older Orbit. */
     vision?: {
