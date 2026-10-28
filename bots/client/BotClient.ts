@@ -72,6 +72,8 @@ export class BotClient {
     private behavior: BaseBehavior | null = null;
     /** Where each uploaded file came from, so a sent file is matched with the tool that made it. */
     private uploadedFrom = new Map<string, string>();
+    /** Links to files already kept in storage (a file sent again, #1508): sent as they are, never uploaded again. */
+    private storedLinks = new Set<string>();
     /** Asks Orbit whether someone may chat with this bot, before their words reach the AI. Null: nobody is asked. */
     private accessGate: BotAccessGate | null = null;
     /** When each person was told that the bot's owner limits who can chat with it: once per visit (see mayChat). */
@@ -1626,7 +1628,7 @@ export class BotClient {
         }
 
         // If the URL is already on our uploader/CDN, no need to re-upload
-        if (url.startsWith(uploaderUrl) || url.includes('/upload-file/')) {
+        if (url.startsWith(uploaderUrl) || url.includes('/upload-file/') || this.storedLinks.has(url)) {
             // Infer media type from URL or mimeType
             const mediaType = this.inferMediaTypeFromUrl(url, mimeType);
             return { location: url, mediaType, mimeType: mimeType || 'application/octet-stream' };
@@ -1960,6 +1962,13 @@ export class BotClient {
         });
         this.mediaSent(spaceName, asker, urls.map((one, i) => ({ url: one, mediaType: 'image', mimeType: this.inferMimeFromExt(one), caption: i === 0 ? caption : undefined, fileName: fileNames?.[i] })));
         return true;
+    }
+
+    /** This link is to a file already in storage (a file sent again): it is sent as it is, not uploaded again. */
+    markStored(url: string): void {
+        this.storedLinks.delete(url);
+        this.storedLinks.add(url);
+        if (this.storedLinks.size > MAX_UPLOADED_FROM) this.storedLinks.delete(this.storedLinks.values().next().value!);
     }
 
     /** The link a file was uploaded from, for a link the uploader gave back. */

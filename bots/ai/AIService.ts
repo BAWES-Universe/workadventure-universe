@@ -2713,6 +2713,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const mediaType: PendingMedia['mediaType'] = file.kind === 'image' || file.kind === 'audio' || file.kind === 'video' ? file.kind : 'file';
         if (botClient) {
             if (!spaceName || !botClient.isInSpace(spaceName)) return 'The conversation ended before it could be sent. Say so; do not claim it was sent.';
+            // Already in storage: sent as it is, never downloaded and uploaded again
+            botClient.markStored?.(url);
             try {
                 if (mediaType === 'image') await botClient.sendImage(spaceName, url, file.line ?? undefined);
                 else if (mediaType === 'audio') await botClient.sendAudio(spaceName, url);
