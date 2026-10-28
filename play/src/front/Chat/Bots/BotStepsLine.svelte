@@ -3,7 +3,7 @@
     import type { Readable } from "svelte/store";
     import { LL } from "../../../i18n/i18n-svelte";
     import { currentStep, stepsClock, type BotSteps } from "./BotSteps";
-    import { IconCheck, IconChevronDown, IconChevronUp, IconX } from "@wa-icons";
+    import { IconCheck, IconChevronDown, IconChevronUp, IconMinus, IconX } from "@wa-icons";
 
     /**
      * A bot's steps line (#1545): no bubble, so it never reads as something the bot said. While the bot works it names
@@ -95,11 +95,14 @@
                     <li class:bad={step.state === "failed"}>
                         {#if step.state === "failed"}
                             <IconX class="bot-steps-icon bad" font-size={15} />
+                        {:else if step.state === "running"}
+                            <!-- Never finished in view: the line stopped (e.g. you walked away) before it said how it went -->
+                            <IconMinus class="bot-steps-icon" font-size={15} />
                         {:else}
                             <IconCheck class="bot-steps-icon" font-size={15} />
                         {/if}
                         <span class="bot-steps-words">
-                            <span>{step.state === "running" ? step.doing : step.done}</span>
+                            <span>{step.done}</span>
                             {#if step.state === "failed" && step.note}
                                 <small>{step.note}</small>
                             {:else if step.detail}
