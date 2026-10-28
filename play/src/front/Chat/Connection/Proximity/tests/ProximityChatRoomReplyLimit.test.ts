@@ -5,6 +5,7 @@ import { ProximityChatRoom, type ProximityChatMessage } from "../ProximityChatRo
 import type { SpaceInterface, SpaceUserExtended } from "../../../../Space/SpaceInterface";
 import type { SpaceRegistryInterface } from "../../../../Space/SpaceRegistry/SpaceRegistryInterface";
 import type { RemotePlayersRepository } from "../../../../Phaser/Game/RemotePlayersRepository";
+import { blackListManager } from "../../../../WebRtc/BlackListManager";
 
 // The front reads its configuration from window.env at import time.
 vi.hoisted(() => {
@@ -141,6 +142,24 @@ describe("ProximityChatRoom reply limit card (#1159)", () => {
         emit(card(nora));
         emit(card(nora, BOT_ID, "2026-10-27T21:00:00.000Z"));
         expect(cards().map((message) => message.replyLimit?.resetsAt)).toEqual(["2026-10-27T21:00:00.000Z"]);
+    });
+
+    it("counts the card as unread, as any message that arrives (CodeRabbit on #1524)", () => {
+        expect(get(room.unreadNotificationCount)).toBe(0);
+        emit(card(nora));
+        expect(get(room.unreadNotificationCount)).toBe(1);
+        expect(get(room.hasUnreadMessages)).toBe(true);
+    });
+
+    it("shows nothing from a bot this person blocked (CodeRabbit on #1524)", () => {
+        blackListManager.blackList(nora.uuid);
+        try {
+            emit(card(nora));
+            expect(cards()).toEqual([]);
+            expect(get(room.unreadNotificationCount)).toBe(0);
+        } finally {
+            blackListManager.cancelBlackList(nora.uuid);
+        }
     });
 
     it("ignores a card from a person, or from a bot about another bot", () => {

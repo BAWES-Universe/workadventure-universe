@@ -94,19 +94,63 @@ export type ReplySummary =
     | { kind: "text"; text: string }
     | { kind: "photos"; count: number; thumbnail: string; caption: string | undefined }
     | { kind: "files"; count: number; name: string; caption: string | undefined }
-    | { kind: "video" | "audio"; caption: string | undefined };
+    | { kind: "video"; caption: string | undefined }
+    | { kind: "audio"; caption: string | undefined; voice: boolean };
 
 /** What a reply quotes, in a form the reply box and the quote can show: text, photos (with a thumbnail) or files. */
 export function summarizeForReply(type: ChatMessageType, content: ChatMessageContent): ReplySummary {
     const caption = getCopyableText(type, content);
     if (!MEDIA_TYPES.has(type)) return { kind: "text", text: caption ?? "" };
     const files = getSaveableFiles(type, content);
-    if (type === "video" || type === "audio") return { kind: type, caption };
+    if (type === "video") return { kind: type, caption };
+    if (type === "audio") return { kind: type, caption, voice: content.isVoice === true };
     const images = files.filter((file) => isImageUrl(file.url));
     if (type === "image" || (images.length > 0 && images.length === files.length)) {
         return { kind: "photos", count: Math.max(files.length, 1), thumbnail: files[0]?.url ?? "", caption };
     }
     return { kind: "files", count: Math.max(files.length, 1), name: files[0]?.name ?? "", caption };
+}
+
+/**
+ * The one line a chat list row or a desktop notification shows for a message. Text stays as it is; a picture, video
+ * or voice message says what it is (or shows its caption) instead of its file name. A document keeps its name.
+ * The text comes back as it was sent: the row turns it into one plain line, the notification shows it as it is.
+ * It works from the message alone: a file's URL is loaded later, so it is not there yet when a message arrives.
+ */
+export function previewLine(
+    type: ChatMessageType,
+    content: ChatMessageContent,
+    labels: {
+        photo: string;
+        photos: (count: number) => string;
+        files: (count: number) => string;
+        video: string;
+        voice: string;
+        audio: string;
+    }
+): string {
+    if (!MEDIA_TYPES.has(type)) return content.body ?? "";
+    const body = (getMediaCaption(content) ?? "").trim();
+    // A gallery's body can be the name of any of its files.
+    const caption = content.fileNames?.some((name) => name.trim() === body) ? "" : body;
+    if (caption !== "") return caption;
+    switch (type) {
+        case "image":
+            return labels.photo;
+        case "gallery": {
+            const names = content.fileNames ?? [content.url, ...(content.urls ?? [])].filter((url) => !!url);
+            const count = Math.max(names.length, 1 + (content.urls?.length ?? 0));
+            // Several files are not all pictures: say so when we know it from their names.
+            if (!names.every((name) => name && isImageUrl(name))) return labels.files(count);
+            return count > 1 ? labels.photos(count) : labels.photo;
+        }
+        case "video":
+            return labels.video;
+        case "audio":
+            return content.isVoice === true ? labels.voice : labels.audio;
+        default:
+            return content.filename?.trim() || content.fileNames?.[0] || (content.body ?? "");
+    }
 }
 
 /** True when every saveable file is an image, so the menu can say "Save photo" instead of "Save file". */

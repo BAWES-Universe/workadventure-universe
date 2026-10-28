@@ -18,9 +18,11 @@ import type {
     ChatMessageReaction,
     ChatMessageType,
     ChatRoom,
+    SharedFileInfo,
 } from "../ChatConnection";
 import { TYPING_STOP_GRACE_MS } from "../ChatConnection";
 import LL, { locale } from "../../../../i18n/i18n-svelte";
+import { previewLine } from "../../Components/Room/MessageActions/messageActions";
 import { iframeListener } from "../../../Api/IframeListener";
 import type { SpaceInterface, SpaceUserExtended } from "../../../Space/SpaceInterface";
 import type { SpaceRegistryInterface } from "../../../Space/SpaceRegistry/SpaceRegistryInterface";
@@ -35,6 +37,7 @@ import {
 import { selectedRoomStore } from "../../Stores/SelectRoomStore";
 import { isBotUser, mapExtendedSpaceUserToChatUser } from "../../UserProvider/ChatUserMapper";
 import { parseBotReplyLimit, type BotReplyLimit } from "../../Bots/BotReplyLimit";
+import { parseBotSteps, type BotSteps } from "../../Bots/BotSteps";
 import { gameManager } from "../../../Phaser/Game/GameManager";
 import { availabilityStatusStore, requestedCameraState, requestedMicrophoneState } from "../../../Stores/MediaStore";
 import { localUserStore } from "../../../Connection/LocalUserStore";
@@ -56,6 +59,7 @@ import { CharacterLayerManager } from "../../../Phaser/Entity/CharacterLayerMana
 import { BubbleNotification as BasicNotification } from "../../../Notification/BubbleNotification";
 import { formatPeopleNames } from "../../Components/TopRow/TopRowSummary";
 import { composerDraftStore } from "../../Stores/ComposerDraftStore";
+import { isVoiceNoteFileName } from "../../VoiceNote/VoiceNote";
 import { areaChatRooms } from "../../Stores/AreaPresenceStore";
 import { rememberProximityChat } from "../../Stores/SayHiCardStore";
 import {
@@ -120,6 +124,22 @@ export interface ProximityChatMessageOptions {
     react?: (message: ProximityChatMessage, key: string) => void;
     /** A reply limit the person reached on a bot (#1159): the message is the fixed card. */
     replyLimit?: BotReplyLimit;
+    /** A bot's steps line (#1545): the message is that line. */
+    steps?: BotSteps;
+}
+
+/** A steps line still working when this tab leaves stops where it was, so it doesn't spin on (#1545). */
+function stopSteps(message: ProximityChatMessage): void {
+    message.steps?.update((steps) => (steps?.state === "working" ? { ...steps, state: "stopped" } : steps));
+}
+
+function fileNameOfUrl(url: string): string {
+    const lastSegment = url.split("?")[0].split("#")[0].split("/").pop() ?? "";
+    try {
+        return decodeURIComponent(lastSegment) || "file";
+    } catch {
+        return lastSegment || "file";
+    }
 }
 
 export class ProximityChatMessage implements ChatMessage {
@@ -146,6 +166,8 @@ export class ProximityChatMessage implements ChatMessage {
      * Local and in memory only.
      */
     stoppedOnLeave?: boolean;
+    /** Set on a bot's steps line (#1545): drawn as that line, and replaced as the bot's tools run. */
+    steps?: Writable<BotSteps | undefined>;
     /** Set on the fixed card a bot sends one person who reached a reply limit (#1159). Local and in memory only. */
     replyLimit?: BotReplyLimit;
     constructor(
@@ -160,12 +182,25 @@ export class ProximityChatMessage implements ChatMessage {
         this.session = options.session;
         this.notSent = options.notSent;
         this.replyLimit = options.replyLimit;
+        if (options.steps) this.steps = writable(options.steps);
         this.quotedMessage = options.quotedMessage;
         this.isQuotedMessage = options.isQuotedMessage;
-        const isConversation = !options.session && !options.notSent && !options.isQuotedMessage && !options.replyLimit;
+        const isConversation =
+            !options.session && !options.notSent && !options.isQuotedMessage && !options.replyLimit && !options.steps;
         const hasContent = type !== "incoming" && type !== "outcoming";
         this.canReact.set(isConversation && hasContent && options.react !== undefined);
         this.canReply.set(isConversation && hasContent);
+    }
+
+    /**
+     * The file a picture, video or file message carries, for the chat's "Media, links and files". Its link is in the
+     * message itself, so reading it fetches nothing. A gallery lists its files in its content instead.
+     */
+    get sharedFile(): SharedFileInfo | undefined {
+        if (!["image", "video", "file", "audio"].includes(this.type)) return undefined;
+        const content = get(this.content);
+        if (!content.url) return undefined;
+        return { name: content.filename || fileNameOfUrl(content.url), size: undefined, voice: false };
     }
 
     remove(): void {
@@ -318,7 +353,14 @@ export class ProximityChatRoom implements ChatRoom {
             notificationManager.createNotification(
                 new MessageNotification(
                     message.sender.username ?? "unknown",
-                    get(message.content).body,
+                    previewLine(message.type, get(message.content), {
+                        photo: get(LL).chat.messageActions.photo(),
+                        photos: (count) => get(LL).chat.messageActions.photos({ count }),
+                        files: (count) => get(LL).chat.messageActions.files({ count }),
+                        video: get(LL).chat.messageActions.video(),
+                        voice: get(LL).chat.messageActions.voice(),
+                        audio: get(LL).chat.messageActions.audio(),
+                    }),
                     this.id,
                     get(this.name)
                 )
@@ -426,8 +468,11 @@ export class ProximityChatRoom implements ChatRoom {
             case "avi":
             case "mkv":
                 return "video";
+            // Voice notes recorded in WebM and Ogg are stored as .weba and .oga, so they are not read as video.
             case "mp3":
             case "wav":
+            case "weba":
+            case "oga":
             case "aac":
             case "flac":
             case "m4a":
@@ -479,6 +524,8 @@ export class ProximityChatRoom implements ChatRoom {
             urls: galleryUrls,
             filename: fileName,
             fileNames: fileNames,
+            // The nearby chat carries no flag with a file: a note is told from an audio file by its name.
+            isVoice: messageType === "audio" && isVoiceNoteFileName(fileName),
         };
 
         const spaceUser = this.users?.get(this._spaceUserId);
@@ -720,6 +767,7 @@ export class ProximityChatRoom implements ChatRoom {
             urls: galleryUrls ?? undefined,
             filename: fileName ?? undefined,
             fileNames: fileNames ?? undefined,
+            isVoice: messageType === "audio" && isVoiceNoteFileName(fileName ?? undefined),
         };
 
         const spaceUser = this.users?.get(senderUserId);
@@ -831,6 +879,56 @@ export class ProximityChatRoom implements ChatRoom {
         });
     };
 
+    /**
+     * A bot's steps line (#1545): one line the bot replaces while its tools run, then folds into a summary. Only a
+     * bot draws one. It counts nothing as unread and opens nothing: the answer that follows does.
+     */
+    private showBotSteps(
+        senderId: string,
+        responseId: string,
+        json: string,
+        text: string | undefined,
+        isFinal: boolean
+    ) {
+        const spaceUser = this.users?.get(senderId);
+        if (!spaceUser || !isBotUser(spaceUser)) return;
+        let field: unknown;
+        try {
+            field = JSON.parse(json);
+        } catch {
+            return;
+        }
+        const steps = parseBotSteps(field);
+        if (!steps) return;
+        // The plain text, for wherever the chat names a message in words
+        const body = {
+            body: text ?? steps.line,
+            url: undefined,
+            urls: undefined,
+            filename: undefined,
+            fileNames: undefined,
+        };
+        const shown = this.streamMessages.get(responseId);
+        if (shown?.steps) {
+            shown.steps.set(steps);
+            (shown.content as Writable<ChatMessageContent>).set(body);
+        } else if (!shown) {
+            const line = new ProximityChatMessage(
+                uuidv4(),
+                mapExtendedSpaceUserToChatUser(spaceUser),
+                writable(body),
+                new Date(),
+                false,
+                "proximity",
+                { steps }
+            );
+            this.streamMessages.set(responseId, line);
+            this.messages.push(line);
+            this.lastMessageTimestamp = line.date.getTime();
+        }
+        if (isFinal) this.streamMessages.delete(responseId);
+    }
+
     /** The fixed reply limit card, in place of the bot's last one, opening the chat if it is closed. */
     private showReplyLimit(replyLimit: BotReplyLimit, senderSpaceUserId: string): void {
         const shown = this.replyLimitCards.get(replyLimit.botId);
@@ -850,6 +948,8 @@ export class ProximityChatRoom implements ChatRoom {
         this.removeTypingUserbyID(senderSpaceUserId);
         this.messages.push(card);
         this.lastMessageTimestamp = card.date.getTime();
+        // Unread like any message that arrives, so another open room still shows it came
+        this.markUnread();
         openChat("bubble");
         this.showIfNothingOpen();
     }
@@ -1013,6 +1113,7 @@ export class ProximityChatRoom implements ChatRoom {
             }
             for (const streaming of this.streamMessages.values()) {
                 streaming.stoppedOnLeave = true;
+                stopSteps(streaming);
             }
             const others = this.users
                 ? Array.from(this.users.values()).filter((user) => user.spaceUserId !== this._spaceUserId)
@@ -1350,6 +1451,8 @@ export class ProximityChatRoom implements ChatRoom {
         this.spaceReplyLimitSubscription?.unsubscribe();
         this.spaceReplyLimitSubscription = this._space.observePrivateEvent("botReplyLimit").subscribe((event) => {
             if (!isBotUser(event.sender) || event.sender.uuid !== `bot-${event.botReplyLimit.botId}`) return;
+            // A bot this person blocked opens nothing, as with its messages
+            if (blackListManager.isBlackListed(event.sender.uuid)) return;
             const replyLimit = parseBotReplyLimit(
                 event.botReplyLimit,
                 event.botReplyLimit.botId,
@@ -1368,6 +1471,16 @@ export class ProximityChatRoom implements ChatRoom {
                 }
 
                 const stream = event.spaceStreamMessage;
+                if (stream.steps !== undefined) {
+                    this.showBotSteps(
+                        event.sender,
+                        stream.responseId,
+                        stream.steps,
+                        stream.finalContent,
+                        stream.isFinal
+                    );
+                    return;
+                }
                 const existing = this.streamMessages.get(stream.responseId);
 
                 if (stream.reset && existing) {
@@ -1704,6 +1817,7 @@ export class ProximityChatRoom implements ChatRoom {
         // A bot reply still streaming stops where it is: nothing can reach this stay any more.
         for (const streaming of this.streamMessages.values()) {
             streaming.stoppedOnLeave = true;
+            stopSteps(streaming);
         }
 
         // Always one end marker, even when you were alone in a meeting: it closes the stay.

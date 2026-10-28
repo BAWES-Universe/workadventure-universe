@@ -36,6 +36,7 @@ import type {
     ChatRoomMembershipManagement,
     ChatRoomModeration,
     ChatRoomNotificationControl,
+    ChatRoomPins,
     memberTypingInformation,
 } from "../ChatConnection";
 import { ChatPermissionLevel, InvitationNoLongerAvailableError } from "../ChatConnection";
@@ -44,8 +45,12 @@ import { selectedRoomStore } from "../../Stores/SelectRoomStore";
 import { gameManager } from "../../../Phaser/Game/GameManager";
 import { localUserStore } from "../../../Connection/LocalUserStore";
 import { MessageNotification } from "../../../Notification/MessageNotification";
+import { chatSoundPlayed } from "../../../Notification/ChatSound";
 import { notificationManager } from "../../../Notification/NotificationManager";
 import type { PictureStore } from "../../../Stores/PictureStore";
+import LL from "../../../../i18n/i18n-svelte";
+import { previewLine } from "../../Components/Room/MessageActions/messageActions";
+import { toMatrixWaveform, VOICE_NOTE_NAME, type VoiceNoteDetails } from "../../VoiceNote/VoiceNote";
 import { MatrixChatMessage } from "./MatrixChatMessage";
 import { MatrixChatMessageReaction } from "./MatrixChatMessageReaction";
 import { matrixSecurity } from "./MatrixSecurity";
@@ -73,12 +78,19 @@ const FRESH_EVENT_MAX_AGE_MS = 2000;
 /** After the list is built again, earlier messages are paged back in until it is as long as it was, up to this many. */
 const MAX_RESTORED_MESSAGES = 100;
 
+/** How long a pinned list this person sent may take to show in the room's state before the state is trusted again. */
+const PINS_ECHO_WAIT_MS = 10000;
+
+function samePins(a: readonly string[], b: readonly string[]): boolean {
+    return a.length === b.length && a.every((id, index) => id === b[index]);
+}
+
 type EventId = string;
 
 type ModerationAction = "ban" | "kick" | "invite" | "redact";
 
 export class MatrixChatRoom
-    implements ChatRoom, ChatRoomMembershipManagement, ChatRoomModeration, ChatRoomNotificationControl
+    implements ChatRoom, ChatRoomMembershipManagement, ChatRoomModeration, ChatRoomNotificationControl, ChatRoomPins
 {
     readonly id: string;
     readonly name: Writable<string>;
@@ -100,6 +112,13 @@ export class MatrixChatRoom
     isRoomFolder = false;
     areNotificationsMuted = writable(false);
     currentRoomMember: Readable<MatrixChatRoomMember>;
+    readonly pinnedMessageIds: Writable<string[]>;
+    // Messages read on their own, outside the loaded conversation (an older pin): kept to be told when deleted.
+    private readonly detachedMessages = new Map<string, MatrixChatMessage>();
+    // The pinned list this person sent last, until the room's state shows it.
+    private pinsAwaitingEcho: string[] | undefined;
+    private pinsEchoTimeout: ReturnType<typeof setTimeout> | undefined;
+    readonly canPinMessages: Writable<boolean>;
     private notSentEvents: MapStore<string, MatrixEvent> = new MapStore<string, MatrixEvent>();
     shouldRetrySendingEvents = derived(this.notSentEvents, (notSentEvents) => notSentEvents.size > 0);
 
@@ -125,11 +144,18 @@ export class MatrixChatRoom
         private matrixRoom: Room,
         private notifyNewMessage = (message: MatrixChatMessage) => {
             if (!localUserStore.getChatSounds() || get(this.areNotificationsMuted)) return;
-            gameManager.getCurrentGameScene().playSound("new-message");
+            if (gameManager.getCurrentGameScene().playSound("new-message")) chatSoundPlayed(this.id);
             notificationManager.createNotification(
                 new MessageNotification(
                     message.sender?.username ?? "unknown",
-                    get(message.content).body,
+                    previewLine(message.type, get(message.content), {
+                        photo: get(LL).chat.messageActions.photo(),
+                        photos: (count) => get(LL).chat.messageActions.photos({ count }),
+                        files: (count) => get(LL).chat.messageActions.files({ count }),
+                        video: get(LL).chat.messageActions.video(),
+                        voice: get(LL).chat.messageActions.voice(),
+                        audio: get(LL).chat.messageActions.audio(),
+                    }),
                     this.id,
                     get(this.name)
                 )
@@ -154,6 +180,8 @@ export class MatrixChatRoom
         ]);
 
         this.hasPreviousMessage = writable(false);
+        this.pinnedMessageIds = writable(this.readPinnedMessageIds());
+        this.canPinMessages = writable(this.mayPinMessages());
 
         this.currentRoomMember = derived(
             this.members,
@@ -295,6 +323,18 @@ export class MatrixChatRoom
 
     private onRoomStateEvent(event: MatrixEvent, state: RoomState, lastStateEvent: MatrixEvent | null) {
         const eventType = event.getType();
+        if (eventType === EventType.RoomPinnedEvents) {
+            const pinned = this.readPinnedMessageIds();
+            if (this.pinsAwaitingEcho) {
+                // An older pin of ours coming back: the list we sent last is still on its way.
+                if (!samePins(pinned, this.pinsAwaitingEcho)) return;
+                this.stopAwaitingPinsEcho();
+            }
+            this.pinnedMessageIds.set(pinned);
+        }
+        if (eventType === EventType.RoomPowerLevels || eventType === EventType.RoomMember) {
+            this.canPinMessages.set(this.mayPinMessages());
+        }
         if (eventType === EventType.RoomAvatar || eventType === EventType.RoomMember) {
             const mxc = this.currentPictureMxc();
             if (mxc !== get(this.pictureMxc)) this.pictureMxc.set(mxc);
@@ -499,10 +539,13 @@ export class MatrixChatRoom
         if (eventRelation) {
             const event_id = eventRelation.event_id;
             if (event_id) {
-                const messageToUpdate = this.messages.get(event_id);
-                if (messageToUpdate !== undefined) {
-                    messageToUpdate.modifyContent(event.getOriginalContent()["m.new_content"].body);
-                }
+                const newContent = event.getOriginalContent()["m.new_content"];
+                const newBody = newContent.body;
+                this.messages.get(event_id)?.modifyContent(newBody);
+                // A bot's steps line (#1545) is one notice the bot server keeps updating
+                this.messages.get(event_id)?.modifySteps(event.getSender(), newContent);
+                // A pinned message loaded on its own, outside the loaded conversation, gets the edit too.
+                this.detachedMessages.get(event_id)?.modifyContent(newBody);
             }
         }
     }
@@ -510,6 +553,7 @@ export class MatrixChatRoom
     private handleDeletion(redactionEvent: MatrixEvent) {
         const sourceEventId = redactionEvent.getAssociatedId();
         if (sourceEventId !== undefined) {
+            this.detachedMessages.get(sourceEventId)?.markAsRemoved();
             const sourceEvent = this.matrixRoom.findEventById(sourceEventId);
             if (sourceEvent !== undefined) {
                 const sourceEventType = sourceEvent.getType();
@@ -824,30 +868,59 @@ export class MatrixChatRoom
 
     private async sendFile(file: File) {
         try {
-            const uploadResponse = await this.matrixRoom.client.uploadContent(file);
-            const content: Omit<MediaEventContent, "info"> & {
-                info: Partial<MediaEventInfo>;
-                formatted_body?: string;
-                "m.new_content"?: never;
-                "m.relates_to"?: never;
-            } = {
-                body: file.name,
-                formatted_body: file.name,
-                info: {
-                    size: file.size,
-                },
-                msgtype: this.getMessageTypeFromFile(file),
-                url: uploadResponse.content_uri,
-
-                // set more specifically later
-            };
-            this.applyReplyContentIfReplyTo(content);
-
-            return this.matrixRoom.client.sendMessage(this.matrixRoom.roomId, content);
+            return await this.postFile(file);
         } catch (error) {
             console.error(error);
             return;
         }
+    }
+
+    /**
+     * Sends a recorded voice note as an audio message with Element's voice flag, so Element shows it as a voice message
+     * (and draws its shape) as it does ours. Unlike `sendFiles` it fails loudly: the composer keeps the note to retry.
+     */
+    async sendVoiceNote(file: File, details: VoiceNoteDetails): Promise<void> {
+        await this.postFile(file, details);
+    }
+
+    private async postFile(file: File, voice?: VoiceNoteDetails) {
+        const uploadResponse = await this.matrixRoom.client.uploadContent(file);
+        const content: Omit<MediaEventContent, "info"> & {
+            info: Partial<MediaEventInfo>;
+            formatted_body?: string;
+            "m.new_content"?: never;
+            "m.relates_to"?: never;
+        } = {
+            body: file.name,
+            formatted_body: file.name,
+            info: {
+                size: file.size,
+            },
+            msgtype: this.getMessageTypeFromFile(file),
+            url: uploadResponse.content_uri,
+
+            // set more specifically later
+        };
+        if (voice) {
+            // What Element X and Element Web write for a voice message (MSC3245 flag, MSC1767 length and shape).
+            content.body = VOICE_NOTE_NAME;
+            delete content.formatted_body;
+            Object.assign(content, {
+                info: {
+                    size: file.size,
+                    mimetype: file.type,
+                    duration: Math.round(voice.duration * 1000),
+                },
+                "org.matrix.msc1767.audio": {
+                    duration: Math.round(voice.duration * 1000),
+                    waveform: toMatrixWaveform(voice.waveform),
+                },
+                "org.matrix.msc3245.voice": {},
+            });
+        }
+        this.applyReplyContentIfReplyTo(content);
+
+        return this.matrixRoom.client.sendMessage(this.matrixRoom.roomId, content);
     }
 
     private getMessageTypeFromFile(file: File) {
@@ -919,12 +992,15 @@ export class MatrixChatRoom
         this.matrixRoom.off(RoomStateEvent.Events, this.handleStateEvent);
         this.matrixRoom.off(RoomEvent.MyMembership, this.handleMyMembership);
         this.matrixRoom.off(RoomStateEvent.NewMember, this.handleNewMember);
+        clearTimeout(this.pinsEchoTimeout);
         get(this.members).forEach((member) => {
             member.destroy();
         });
         this.messages.forEach((message) => {
             message.destroy();
         });
+        this.detachedMessages.forEach((message) => message.destroy());
+        this.detachedMessages.clear();
     }
 
     startTyping(): Promise<object> {
@@ -989,6 +1065,54 @@ export class MatrixChatRoom
                 return hasSufficientPowerLevel && currentRoomMemberPowerLevel > otherUserPowerLevel;
             }
         );
+    }
+
+    /** The ids in the room's pinned messages state, in its order (the most recently pinned last). */
+    private readPinnedMessageIds(): string[] {
+        const pinned: unknown = this.matrixRoom.currentState
+            ?.getStateEvents(EventType.RoomPinnedEvents, "")
+            ?.getContent()?.pinned;
+        return Array.isArray(pinned) ? pinned.filter((id): id is string => typeof id === "string") : [];
+    }
+
+    private mayPinMessages(): boolean {
+        return (
+            this.matrixRoom.currentState?.maySendStateEvent(
+                EventType.RoomPinnedEvents,
+                this.matrixRoom.client.getSafeUserId()
+            ) ?? false
+        );
+    }
+
+    /** Pins or unpins a message for everyone in the chat. A message pinned again moves to the end (the newest pin). */
+    public async setMessagePinned(messageId: string, pinned: boolean): Promise<void> {
+        // A pin made right after another builds on it, even before the room's state has caught up.
+        const current = this.pinsAwaitingEcho ?? this.readPinnedMessageIds();
+        const others = current.filter((id) => id !== messageId);
+        const next = pinned ? [...others, messageId] : others;
+        if (samePins(next, current)) return;
+        this.pinsAwaitingEcho = next;
+        clearTimeout(this.pinsEchoTimeout);
+        this.pinsEchoTimeout = setTimeout(() => {
+            this.stopAwaitingPinsEcho();
+            this.pinnedMessageIds.set(this.readPinnedMessageIds());
+        }, PINS_ECHO_WAIT_MS);
+        this.pinnedMessageIds.set(next);
+        try {
+            await this.matrixRoom.client.sendStateEvent(this.id, EventType.RoomPinnedEvents, { pinned: next }, "");
+        } catch (error) {
+            if (this.pinsAwaitingEcho === next) {
+                this.stopAwaitingPinsEcho();
+                this.pinnedMessageIds.set(this.readPinnedMessageIds());
+            }
+            throw error;
+        }
+    }
+
+    private stopAwaitingPinsEcho(): void {
+        this.pinsAwaitingEcho = undefined;
+        clearTimeout(this.pinsEchoTimeout);
+        this.pinsEchoTimeout = undefined;
     }
 
     public hasPermissionForRoomStateEvent(eventType: keyof StateEvents): Readable<boolean> {
@@ -1079,9 +1203,17 @@ export class MatrixChatRoom
             messageId
         );
         const event = timeline?.getEvents().find((ev) => ev.getId() === messageId);
-        if (event) {
-            return new MatrixChatMessage(event, this.matrixRoom, false, this.type === "direct");
+        if (!event) return;
+        // Read once decrypted, so it is known as an image or a file from the start.
+        if (event.isEncrypted()) {
+            await this.matrixRoom.client.decryptEventIfNeeded(event).catch(() => {
+                console.error("Failed to decrypt");
+            });
         }
-        return;
+        const loaded = this.messages.get(messageId) ?? this.detachedMessages.get(messageId);
+        if (loaded) return loaded;
+        const detached = new MatrixChatMessage(event, this.matrixRoom, false, this.type === "direct");
+        this.detachedMessages.set(messageId, detached);
+        return detached;
     }
 }

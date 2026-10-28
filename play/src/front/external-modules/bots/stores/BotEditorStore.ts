@@ -40,6 +40,12 @@ export const botPreviewsStore = writable<Map<string, BotData>>(new Map());
 export const botsLoadedForRoomIdStore = writable<string | null>(null);
 
 /**
+ * How many loads of this room's bots the editor is running. Each one starts by going back to the list, so a bot
+ * picked while one runs is dropped when it lands.
+ */
+export const botsLoadingStore = writable(0);
+
+/**
  * Bot being placed (temporary state during placement)
  */
 export const placingBotStore = writable<BotData | undefined>(undefined);
@@ -173,6 +179,30 @@ export function selectBot(bot: BotData | undefined): void {
 
     selectedBotStore.set(botToSelect);
     botEditorModeStore.set("detail");
+}
+
+/**
+ * Opens one bot's page ("Use my AI key" on the reply limit card, #1159) once the editor is open and no load of the
+ * room's bots is running, or gives up at `until` and leaves the editor on its list. A bot kept from an earlier visit
+ * to the room is in the store before the editor's own load, which would send the page back to the list (CodeRabbit on
+ * #1524). `alive` turns false when the editor this was asked for is gone (another room).
+ */
+export function selectBotWhenLoaded(
+    botId: string,
+    editorOpen: () => boolean,
+    alive: () => boolean,
+    until: number
+): void {
+    const trySelect = () => {
+        if (!alive()) return;
+        const bot = get(botPreviewsStore).get(botId);
+        if (bot && editorOpen() && get(botsLoadingStore) === 0) {
+            selectBot(bot);
+        } else if (Date.now() < until) {
+            setTimeout(trySelect, 300);
+        }
+    };
+    trySelect();
 }
 
 /**

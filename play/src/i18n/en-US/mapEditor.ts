@@ -691,6 +691,15 @@ const mapEditor: BaseTranslation = {
                     briefNone: "No one has chatted with {name:string} yet",
                     briefLoading: "Loading…",
                     briefFailed: "Couldn't load usage. Open to try again.",
+                    freshTitle: "Usage fills in once people chat with {name:string}",
+                    freshLine:
+                        "You'll see how many replies it gives each day, who chats with it, what it runs on and if anyone runs out of replies.",
+                    whoFresh: "Names show here once people chat",
+                    ranOnFresh: "Shows once {name:string} replies",
+                    peopleFresh:
+                        "No one has chatted with {name:string} yet. When people do, each one shows here with how many replies they got and when.",
+                    ranOnFreshLine:
+                        "Nothing yet. Once {name:string} replies, each AI it runs on shows here with its replies and tokens.",
                     range: "Range",
                     today: "Today",
                     week: "7 days",
@@ -854,7 +863,6 @@ const mapEditor: BaseTranslation = {
                         "In AI keys, tap Lend to a universe on the one you want. It shows here as soon as it’s lent.",
                     managerHint:
                         "You manage bots here, so you can switch {bot:string} to Universe AI. Your own keys never show on someone else’s bot.",
-                    pinTo: "Pin to a provider",
                     model: {
                         title: "Model",
                         change: "Change",
@@ -893,6 +901,10 @@ const mapEditor: BaseTranslation = {
                     stepsHint: "Tools it may use before it answers.",
                     keysLimit: "Key's limit",
                     keysLimitIs: "Key's limit · {limit:string}",
+                    modelsLimitIs: "Model's limit · {limit:string}",
+                    modelStops: "{model:string} writes up to {limit:string} tokens, so this bot stops there.",
+                    modelStopsKey:
+                        "{model:string} writes up to {limit:string} tokens, so this bot stops there. The key allows {key:string}.",
                     showToolCalls: "Show tool calls",
                     showToolCallsOff: "Tool calls stay hidden",
                     showToolCallsOn: "Shows tool names in chat",

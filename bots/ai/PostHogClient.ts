@@ -57,6 +57,8 @@ export interface CapturedGeneration {
     botId?: string;
     playerId?: string;
     space?: string;
+    /** Why the reply left the person with nothing (#1498): marks the event as an error in PostHog's LLM views. */
+    error?: string;
 }
 
 /**
@@ -104,6 +106,7 @@ export function captureAiGeneration(params: CapturedGeneration): void {
                 bot_id: params.botId,
                 player_id: params.playerId,
                 space: params.space,
+                ...(params.error ? { $ai_is_error: true, $ai_error: params.error } : {}),
             },
             timestamp,
         });
@@ -143,6 +146,7 @@ export function captureAiTrace(params: CapturedGeneration): void {
                 bot_id: params.botId,
                 player_id: params.playerId,
                 space: params.space,
+                ...(params.error ? { $ai_is_error: true, $ai_error: params.error } : {}),
             },
             timestamp,
         });
