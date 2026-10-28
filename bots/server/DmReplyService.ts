@@ -101,6 +101,9 @@ const RESTING_PROMPT =
     "in character and in the same language they wrote in, saying you can't talk right now and they can come back later. " +
     "Don't answer their question, and don't mention AI, settings or anyone who runs you.";
 
+/** Chats whose last files are remembered for telling a message tried again from a new one. */
+const MAX_LAST_FILES = 500;
+
 export class DmReplyService extends BaseBehavior {
     private queues = new Map<string, Promise<unknown>>();
     /** Per chat, the words that wait behind the answer in progress, to be answered together once it is done. */
@@ -321,7 +324,10 @@ export class DmReplyService extends BaseBehavior {
         const files = uploads.map((upload) => `${upload.name}:${upload.sizeBytes ?? ''}`).join('\n');
         const lastFiles = (this.lastFiles ??= new Map());
         const sameFiles = (lastFiles.get(chat) ?? files) === files;
+        // Newest last; the oldest chat goes first, which only takes it back to comparing the text alone
+        lastFiles.delete(chat);
         lastFiles.set(chat, files);
+        if (lastFiles.size > MAX_LAST_FILES) lastFiles.delete(lastFiles.keys().next().value!);
         const alreadyKept =
             lastSaid?.sender === 'person' &&
             withoutNoteIds(lastSaid.message) === withoutNoteIds(original) &&
