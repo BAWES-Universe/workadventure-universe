@@ -345,3 +345,47 @@ describe("native click/tap while already walking", () => {
         expect(facings.filter((facing) => facing !== c.facing)).toEqual([]);
     }
 });
+
+describe("native click/tap walks on whole pixels", () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+    });
+
+    const DOWN = 0;
+    const RIGHT = 2;
+    const UP = 3;
+    // Frame times as a browser gives them: never exactly 1000 / 60, sometimes a dropped frame.
+    const frameTimes = [16.7, 15.2, 18.9, 16.1, 33.4, 16.6, 17.3];
+
+    // The camera follows on whole pixels: a Woka between two pixels is drawn a fraction away from it and shakes.
+    it.each([
+        { name: "down-right", start: { x: 48, y: 32 }, click: { x: 208, y: 208 }, facing: DOWN },
+        { name: "up-left", start: { x: 208, y: 192 }, click: { x: 48, y: 48 }, facing: UP },
+        { name: "right", start: { x: 48, y: 96 }, click: { x: 208, y: 112 }, facing: RIGHT },
+    ])("walks $name on whole pixels, facing one way, to the clicked spot", async (c) => {
+        const f = fixture(c.start);
+        f.click(c.click);
+        await vi.runAllTimersAsync();
+        const destination = f.player.getCurrentPathDestinationPoint();
+
+        const facings = new Set<number>();
+        const signX = Math.sign(c.click.x - c.start.x);
+        const signY = Math.sign(c.click.y - 16 - c.start.y);
+        let last = { x: f.player.x, y: f.player.y };
+        for (let frame = 0; f.player.pathToFollow && frame < 1000; frame++) {
+            f.player.followPath(frameTimes[frame % frameTimes.length]);
+            if (!f.player.pathToFollow) break;
+            expect(Number.isInteger(f.player.x) && Number.isInteger(f.player.y)).toBe(true);
+            // Never steps back on either axis.
+            expect(signX * (f.player.x - last.x)).toBeGreaterThanOrEqual(0);
+            expect(signY * (f.player.y - last.y)).toBeGreaterThanOrEqual(0);
+            last = { x: f.player.x, y: f.player.y };
+            facings.add((f.player as unknown as { _lastDirection: number })._lastDirection);
+        }
+
+        expect([...facings]).toEqual([c.facing]);
+        expect({ x: f.player.x, y: f.player.y }).toEqual(destination);
+    });
+});
