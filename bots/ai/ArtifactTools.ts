@@ -292,13 +292,18 @@ function escapeRegExp(text: string): string {
 
 /**
  * Points the page at the names its media went in under: "song.mp3" in quotes (src="song.mp3", './song.mp3') becomes
- * "song.m4a". Only quoted, so a name like "song" doesn't change the word in the page's text.
+ * "song.m4a". Only quoted, so a name like "song" doesn't change the word in the page's text. A name with no ending
+ * ("cover") could also be a class or an id, so it changes only where a file is pointed at: src, href, poster or
+ * data="cover", and url("cover").
  */
 function useSavedNames(text: string, renames: MediaRename[]): string {
-    return renames.reduce(
-        (page, { from, to }) => page.replace(new RegExp(`(["'](?:\\./)?)${escapeRegExp(from)}(["'])`, 'g'), (_match, open: string, close: string) => `${open}${to}${close}`),
-        text
-    );
+    return renames.reduce((page, { from, to }) => {
+        const name = `(["'](?:\\./)?)${escapeRegExp(from)}(["'])`;
+        const where = from.includes('.')
+            ? new RegExp(`()${name}`, 'g')
+            : new RegExp(`(\\b(?:src|href|poster|data)\\s*=\\s*|url\\(\\s*)${name}`, 'gi');
+        return page.replace(where, (_match, before: string, open: string, close: string) => `${before}${open}${to}${close}`);
+    }, text);
 }
 
 function renamedLine(renames: MediaRename[]): { renamed?: string[] } {

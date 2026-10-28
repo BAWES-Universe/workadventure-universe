@@ -128,6 +128,15 @@ describe('make_artifact with media', () => {
         expect(formatArtifactResult('make_artifact', run.result)).toContain('"song.mp3" is "song.m4a" now, and the page uses that.');
     });
 
+    it('changes a name with no ending only where a file is pointed at, never a class or id', async () => {
+        const ctx = context(undefined, fakeFetch({ [SONG]: () => response(new Uint8Array([1, 2, 3]), { 'content-type': 'audio/mpeg' }) }));
+        const content = '<div class="song" id=\'song\'><audio src="song"></audio><a data-src="./song">x</a></div><style>.hero{background:url("song")}</style><script>el.dataset.name = "song";</script>';
+        await runArtifactTool('make_artifact', { title: 'My song', kind: 'page', content, media: [{ file: 'm1', name: 'song' }] }, ctx);
+        const [, artifact, , uploads] = vi.mocked(ctx.admin.makeArtifact).mock.calls[0];
+        expect(uploads[0].name).toBe('song.mp3');
+        expect(artifact.content).toBe('<div class="song" id=\'song\'><audio src="song.mp3"></audio><a data-src="./song.mp3">x</a></div><style>.hero{background:url("song.mp3")}</style><script>el.dataset.name = "song";</script>');
+    });
+
     it('points a change\'s edits at the saved name too', async () => {
         const ctx = context(undefined, fakeFetch({ [SONG]: () => response(new Uint8Array([1, 2, 3]), { 'content-type': 'audio/mp4' }) }));
         await runArtifactTool('change_artifact', { id: 'art-1', edits: [{ old: '</main>', new: '<audio src="song.mp3"></audio></main>' }], media: [{ file: 'm1', name: 'song.mp3' }] }, ctx);
