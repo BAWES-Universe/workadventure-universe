@@ -127,7 +127,6 @@ export interface BotAiOptions {
         status: "working" | "down";
         ifDown: "universe-ai" | "stop";
         group?: "own-computer" | "hosted" | null;
-        model?: string | null;
         supportsVision?: boolean | null;
         visionModels?: string[];
         logo?: string | null;
