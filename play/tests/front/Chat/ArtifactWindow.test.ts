@@ -445,6 +445,48 @@ describe("the artifact window", () => {
         expect(byTestId("artifactChangeOpeners")?.getAttribute("aria-checked")).toBe("false");
     });
 
+    it("opens the device's share sheet beside Copy link, and copies only when the sheet cannot open", async () => {
+        api.fetchArtifact.mockResolvedValue({ ...opened(3), artifact: { ...opened(3).artifact, openScope: "link" } });
+        api.fetchArtifactVersions.mockResolvedValue([]);
+        const writeText = vi.fn(() => Promise.resolve());
+        Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+        const share = vi.fn(() => Promise.reject(new DOMException("closed", "AbortError")));
+        Object.defineProperty(navigator, "share", { value: share, configurable: true });
+        try {
+            mountWindow(3);
+            await vi.waitFor(() => expect(byTestId("artifactShare")).not.toBeNull());
+            byTestId("artifactShare")?.click();
+            await vi.waitFor(() => expect(byTestId("artifactShareLink")).not.toBeNull());
+            expect(byTestId("artifactCopyLink")).not.toBeNull();
+
+            // Closing the sheet copies nothing
+            byTestId("artifactShareLink")?.click();
+            expect(share).toHaveBeenCalledWith({ title: "Quests board", url: `https://orbit.test/a/${ID}` });
+            await tick();
+            await tick();
+            expect(writeText).not.toHaveBeenCalled();
+            expect(byTestId("artifactLinkCopied")).toBeNull();
+
+            // A sheet that cannot open copies instead, so the tap never does nothing
+            share.mockImplementation(() => Promise.reject(new DOMException("blocked", "NotAllowedError")));
+            byTestId("artifactShareLink")?.click();
+            await vi.waitFor(() => expect(byTestId("artifactLinkCopied")).not.toBeNull());
+            expect(writeText).toHaveBeenCalledWith(`https://orbit.test/a/${ID}`);
+        } finally {
+            Reflect.deleteProperty(navigator, "share");
+        }
+    });
+
+    it("keeps Copy link alone where the device has no share sheet", async () => {
+        api.fetchArtifact.mockResolvedValue({ ...opened(3), artifact: { ...opened(3).artifact, openScope: "link" } });
+        api.fetchArtifactVersions.mockResolvedValue([]);
+        mountWindow(3);
+        await vi.waitFor(() => expect(byTestId("artifactShare")).not.toBeNull());
+        byTestId("artifactShare")?.click();
+        await vi.waitFor(() => expect(byTestId("artifactCopyLink")).not.toBeNull());
+        expect(byTestId("artifactShareLink")).toBeNull();
+    });
+
     it("shows no Share button to someone who is not the owner", async () => {
         api.fetchArtifact.mockResolvedValue(opened(3, 3, "app", false));
         mountWindow(3);
