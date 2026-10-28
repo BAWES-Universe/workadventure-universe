@@ -23,6 +23,7 @@
         selectedBotStore,
         botPreviewsStore,
         botsLoadedForRoomIdStore,
+        botsLoadingStore,
         placingBotStore,
         roomChangeTriggerStore,
         upsertBot,
@@ -43,6 +44,7 @@
     import { withoutRefused } from "./visionModel";
     import { newBotRef } from "./mindModel";
     import { aiModelPlan } from "./modelPickerModel";
+    import { botDataFromSave } from "./savedBotModel";
     import { botPermissionsStore } from "./stores/BotPermissionsStore";
     import { botTelemetryNoticeStore, botTelemetryStore } from "./stores/BotTelemetryStore";
     import { ruleName } from "./accessModel";
@@ -508,6 +510,7 @@
 
         isLoading = true;
         error = null;
+        botsLoadingStore.update((count) => count + 1);
 
         if (!keepCurrent) {
             // Clear bot store immediately to prevent showing old bots from previous room
@@ -531,6 +534,7 @@
             botsLoadedForRoomIdStore.set(null);
         } finally {
             isLoading = false;
+            botsLoadingStore.update((count) => Math.max(0, count - 1));
         }
     }
 
@@ -741,38 +745,10 @@
             };
 
             const botId = selectedBot.id;
+            // The page's record as sent: what the save answers is read against it
+            const sent = selectedBot;
             const updatedBot = await queueBotSave(botId, () => botApiService.updateBot(botId, updateData));
-
-            // Convert API response back to BotData format
-            const textureId = typeof updatedBot.characterTextureId === "string" ? updatedBot.characterTextureId : "";
-            // Ensure behaviorType is never undefined
-            const behaviorConfig = updatedBot.behaviorConfig as BotData["behaviorConfig"] | undefined;
-            const responseBehaviorType =
-                (updatedBot.behaviorType as "idle" | "patrol" | "social") || behaviorConfig?.behaviorType || "idle";
-
-            const botData: BotData = {
-                id: updatedBot.id,
-                botId: updatedBot.id,
-                name: updatedBot.name,
-                description: typeof updatedBot.description === "string" ? updatedBot.description : undefined,
-                characterTexture: textureId,
-                characterTextureIds: textureId ? [textureId] : [],
-                companionTextureId:
-                    typeof updatedBot.companionTextureId === "string" ? updatedBot.companionTextureId : null,
-                behaviorType: responseBehaviorType, // Guaranteed to be set
-                enabled: updatedBot.enabled ?? true,
-                behaviorConfig: updatedBot.behaviorConfig || {
-                    behaviorType: responseBehaviorType,
-                    assignedSpace: { center: { x: 0, y: 0 }, radius: 0 },
-                },
-                aiProviderRef: updatedBot.aiProviderRef,
-                aiModel: selectedBot.aiModel,
-                chatInstructions: updatedBot.chatInstructions || "",
-                createdAt: updatedBot.createdAt || new Date().toISOString(),
-                updatedAt: updatedBot.updatedAt || new Date().toISOString(),
-                createdBy: updatedBot.createdBy || null,
-                updatedBy: updatedBot.updatedBy || null,
-            };
+            const botData = botDataFromSave(updatedBot, sent);
 
             // Update store
             updateBotInStore(botData);

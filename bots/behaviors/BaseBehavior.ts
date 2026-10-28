@@ -8,7 +8,8 @@ import type { SpaceUser } from '@workadventure/messages';
 import { PositionMessage_Direction } from '@workadventure/messages';
 import { facingOf, resolveBehaviorModel, type BotFacing } from './behaviorModel';
 import type { AIService, InterruptionAction } from '../ai/AIService';
-import type { ReplyLimitReached } from '../ai/types';
+import type { AIStreamChunk, ReplyLimitReached } from '../ai/types';
+import { withNearbySteps } from './NearbySteps';
 import type { AdminApiService } from '../server/AdminApiService';
 import type { ConversationStorage } from '../memory/ConversationStorage';
 import type { ConversationMemory } from '../memory/ConversationMemory';
@@ -16,6 +17,10 @@ import type { ResponseProcessor, ProcessedResponse } from '../ai/ResponseProcess
 import { parseEmotionsFromResponse, appendStreamedChunk, detectEmotionPrefixAtEnd } from '../ai/EmotionParser';
 import type { BotMetricsCollector } from '../metrics/BotMetricsCollector';
 import { BotBusyError } from '../utils/summonErrors';
+import type { ParsedFile } from '../services/FileParser';
+import type { ArtifactCall } from '../server/AdminApiService';
+import { fileNote, keptTextOf, kindOf, withFileNotes, type ChatUpload } from '../services/ChatFiles';
+import { chatFileKeeper, type FileJob } from '../services/ChatFileKeeper';
 
 /** What a bot says when someone keeps writing while it is still answering (#1159): fixed, so it never calls the AI. */
 export const BUSY_LINE = "I'll answer your messages once I've finished this one.";
@@ -1503,7 +1508,7 @@ export abstract class BaseBehavior {
      * @param message Chat message
      * @param senderId Sender's user ID
      */
-    onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string, galleryUrls?: string[]): Promise<void> {
+    onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string, galleryUrls?: string[], uploads?: ChatUpload[]): Promise<void> {
         // Default: do nothing
         return Promise.resolve();
     }
@@ -1521,6 +1526,26 @@ export abstract class BaseBehavior {
      */
     getConfig(): BehaviorConfig {
         return this.config;
+    }
+
+    /**
+     * A reply's stream with its steps line in nearby chat (#1545): one line the bot edits while it uses its tools,
+     * shown only when the bot's "Show tool calls" switch is on.
+     */
+    protected withToolSteps(
+        stream: AsyncIterable<AIStreamChunk>,
+        spaceName: string,
+        botId: string,
+        playerId: number,
+        abortSignal?: AbortSignal
+    ): AsyncGenerator<AIStreamChunk> {
+        return withNearbySteps(stream, {
+            shouldShow: () => this.shouldShowToolCalls(botId),
+            send: (responseId, text, isFinal, field) =>
+                this.bot?.sendStreamMessage(spaceName, responseId, '', isFinal, text, false, undefined, false, JSON.stringify(field)),
+            newResponseId: () => `bot-${botId}-player-${playerId}-steps-${crypto.randomUUID()}`,
+            aborted: () => abortSignal?.aborted === true,
+        });
     }
 
     /**
@@ -1674,7 +1699,7 @@ export abstract class BaseBehavior {
                 let emotionBlockStarted = false;
                 // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
                 let pendingPrefix = '';
-                for await (const chunk of this.aiService.generateBotResponseStream(
+                for await (const chunk of this.withToolSteps(this.aiService.generateBotResponseStream(
                     botId,
                     playerId,
                     playerMessage + ` [IMPORTANT: Give a COMPLETELY DIFFERENT response- attempt ${regenerationAttempts}]`,
@@ -1691,9 +1716,8 @@ export abstract class BaseBehavior {
                     params.homeRoomUrl,
                     params.peopleInRoom,
                     true
-                )) {
+                ), spaceName, botId, playerId, abortSignal)) {
                     if (chunk.reset) {
-                        const showToolCalls = chunk.toolNames?.length ? await this.shouldShowToolCalls(botId) : false;
                         if (abortSignal?.aborted) break;
                         // Tool calls overrode the streamed ack — finalize the current
                         // bubble with the accumulated ack instead of wiping it, then
@@ -1705,24 +1729,6 @@ export abstract class BaseBehavior {
                         }
                         responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
                         this.trackActiveResponseId(playerId, responseId);
-                        // Show tool names as separate bubbles — one per tool call invocation
-                        if (chunk.toolNames?.length) {
-                            if (showToolCalls) {
-                                for (let ti = 0; ti < chunk.toolNames.length; ti++) {
-                                    const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
-                                    const toolResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
-                                    this.trackActiveResponseId(playerId, toolResponseId);
-                                    this.bot?.sendStreamMessage(spaceName, toolResponseId, toolStatus, false);
-                                    // Finalize the tool-name bubble so it doesn't linger in
-                                    // the frontend's streamMessages map.
-                                    this.bot?.sendStreamMessage(spaceName, toolResponseId, '', true, toolStatus);
-                                }
-                            }
-                            // Create a new responseId for follow-up content so it appears
-                            // in its own bubble instead of merging into the last tool-name bubble.
-                            responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
-                            this.trackActiveResponseId(playerId, responseId);
-                        }
                         regeneratedMessage = '';
                         emotionBlockStarted = false;
                         pendingPrefix = '';
@@ -2273,6 +2279,93 @@ export abstract class BaseBehavior {
             .map((c) => c.u);
     }
 
+    /**
+     * Files someone sent (#1508): the line the history keeps for their message (what they wrote, then a one-line note
+     * for each file, in place of "[sent a file]"), and `keep`, which puts the files on Orbit's list once that line is in
+     * the history. Keeping runs in the background: the reply never waits for it, and nothing here can fail the reply.
+     */
+    protected noteSentFiles(where: {
+        botId: string;
+        playerId: number;
+        text: string;
+        uploads: ChatUpload[];
+        /** What the reply read from each upload, by its link (formatParsedAttachment's `found`). */
+        read: Map<string, ParsedFile | null>;
+        /** Who and where, as Orbit's file routes take them; null when the files can't be kept here. */
+        call: ArtifactCall | null;
+        personRef: string | null;
+    }): { line: string; keep: () => void } {
+        const files = where.uploads.map((upload) => {
+            const parsed = where.read.get(upload.url) ?? null;
+            const kind = kindOf(upload);
+            const pages = parsed?.metadata?.pageCount ?? null;
+            return { upload, parsed, kind, pages, note: fileNote({ name: upload.name, kind, pages, lengthSeconds: upload.lengthSeconds }) };
+        });
+        const line = withFileNotes(where.text, files.map((file) => file.note));
+        const keep = () => {
+            const admin = this.adminApiService;
+            if (!where.call || !admin || files.length === 0) return;
+            // The line as it is in the history now: the ids go into its notes as Orbit gives them
+            const entry = this.conversationMemory?.lastPersonLine?.(where.botId, where.playerId);
+            const maxTextChars = this.aiService?.botLimitsFor(where.botId).fileTextChars ?? 0;
+            const readChars = this.aiService?.readCharsFor(where.botId) ?? 0;
+            const jobs: FileJob[] = files.map((file) => {
+                // A file with text to keep: one FileParser read as text, or a document it could not read this time
+                const textual = file.parsed ? file.parsed.type === 'text' || file.parsed.type === 'document' : file.kind === 'document';
+                // All of it was read for the reply; or only part, so the whole file is read again afterwards
+                const readAgain = textual && !!file.parsed?.truncated && maxTextChars > readChars;
+                return {
+                    call: where.call!,
+                    personRef: where.personRef,
+                    upload: file.upload,
+                    kind: file.kind,
+                    pages: file.pages,
+                    maxTextChars,
+                    ...(!textual ? {} : readAgain ? { readAgain: { mimeType: file.parsed!.mimeType } } : { text: keptTextOf(file.parsed) }),
+                    onRef: (ref) => {
+                        if (entry?.message.includes(file.note)) {
+                            entry.message = entry.message.replace(file.note, () => fileNote({ ref, name: file.upload.name, kind: file.kind, pages: file.pages, lengthSeconds: file.upload.lengthSeconds }));
+                        }
+                    },
+                };
+            });
+            void chatFileKeeper.keepAll(admin, jobs);
+        };
+        return { line, keep };
+    }
+
+    /**
+     * A bubble's files (#1508): reads them for the reply as before, and gives the line the history keeps with a note
+     * for each upload, and `keep` to call once that line is in the history. Text links in the message are read for
+     * the reply but are not files, so only uploads get a note.
+     */
+    protected async readBubbleFiles(
+        spaceName: string,
+        senderId: number,
+        message: string,
+        url: string,
+        mimeType: string,
+        mediaType: string | undefined,
+        galleryUrls: string[] | undefined,
+        uploads: ChatUpload[] | undefined
+    ): Promise<{ augmented: string; line: string; keep: () => void }> {
+        const read = new Map<string, ParsedFile | null>();
+        const augmented = await this.formatParsedAttachment(message, url, mimeType, mediaType, galleryUrls, undefined, read);
+        const botId = this.bot?.getBotId();
+        if (!uploads?.length || !botId || !this.bot) return { augmented, line: message, keep: () => undefined };
+        const noted = this.noteSentFiles({
+            botId,
+            playerId: senderId,
+            text: message,
+            uploads,
+            read,
+            // The same person and chat the artifact tools name: Orbit decides who may use the file from them
+            call: { botId, person: this.bot.getPersonForArtifacts(senderId), chat: { kind: 'nearby', ref: spaceName } },
+            personRef: this.userIdToUuid.get(senderId) ?? null,
+        });
+        return { augmented, ...noted };
+    }
+
     protected async formatParsedAttachment(
         message: string,
         url: string,
@@ -2280,7 +2373,9 @@ export abstract class BaseBehavior {
         mediaType?: string,
         galleryUrls?: string[],
         /** The bot reading it, for a caller with no bot client (a direct message). */
-        botId?: string
+        botId?: string,
+        /** Filled with what was read from each link (null when reading it failed), for keeping the files (#1508). */
+        found?: Map<string, ParsedFile | null>
     ): Promise<string> {
         const allUrls = [...new Set([url, ...(galleryUrls || [])])];
         const readChars = this.aiService?.readCharsFor(botId ?? this.bot?.getBotId());
@@ -2308,6 +2403,7 @@ export abstract class BaseBehavior {
         for (let i = 0; i < allUrls.length; i++) {
             const fileUrl = allUrls[i];
             const settled = results[i];
+            found?.set(fileUrl, settled.status === 'fulfilled' ? settled.value : null);
             if (settled.status === 'rejected') {
                 const mediaLabel = mediaType || 'file';
                 augmentedMessage = `${augmentedMessage}\n[User also sent a ${mediaLabel}: ${fileUrl}]`;

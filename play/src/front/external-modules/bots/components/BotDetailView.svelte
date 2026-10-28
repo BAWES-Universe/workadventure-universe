@@ -64,6 +64,11 @@
         aiOptionsBotId = currentBot.id;
         aiOptions = null;
     }
+    // A named function, not one written inline: Svelte hands an inline one to the Mind group again each time `aiOptions`
+    // changes (#1540)
+    function takeAiOptions(loaded: BotAiOptions | null) {
+        aiOptions = loaded;
+    }
     /** The WOKA picker fills the panel in place of the page, as the companion picker does */
     export let editingTexture = false;
     /** The companion picker fills the panel in place of the page (BotEditor puts its title and back circle up) */
@@ -108,8 +113,8 @@
     }
     let switching = false;
     let switchError: string | null = null;
-    // Usage opens first until someone opens another group
-    let openGroup: string | undefined = lastOpenGroup ?? "usage";
+    // Every group starts closed, Usage too, so the page shows all of them; the one last opened stays open
+    let openGroup: string | undefined = lastOpenGroup;
 
     function toggleGroup(id: string) {
         openGroup = openGroup === id ? undefined : id;
@@ -698,7 +703,7 @@
                 open={openGroup === "mind"}
                 onToggle={toggleGroup}
                 onChange={(next) => apply(next)}
-                onOptions={(loaded) => (aiOptions = loaded)}
+                onOptions={takeAiOptions}
             />
             <VisionGroup
                 bot={currentBot}

@@ -11,8 +11,7 @@
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import type { ChatMessage, ChatRoom, ChatRoomMembershipManagement } from "../../Connection/ChatConnection";
     import getCloseImg from "../../images/get-close.png";
-    import { selectedChatMessageToReply, shouldRestoreChatStateStore } from "../../Stores/ChatStore";
-    import { selectedRoomStore } from "../../Stores/SelectRoomStore";
+    import { chatBackPeekStore, leaveChat } from "../../ChatBack";
     import { matrixSecurity } from "../../Connection/Matrix/MatrixSecurity";
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import { ProximityChatRoom } from "../../Connection/Proximity/ProximityChatRoom";
@@ -48,6 +47,7 @@
     import Avatar from "../Avatar.svelte";
     import { MatrixChatRoom } from "../../Connection/Matrix/MatrixChatRoom";
     import { openProfileRoomIdStore } from "../../Stores/PartnerProfileStore";
+    import { openRoomDetailsIdStore, openSharedItemsStore } from "../../Stores/ChatDetailsStore";
     import { chatCarriesItsCloseStore } from "../../ChatSidebarWidthStore";
     import { installStrayFileDropGuard, isFileDrag } from "../../../Utils/strayFileDropGuard";
     import { mapEditorToolbarInUseStore } from "../../../Stores/MapEditorStore";
@@ -67,9 +67,14 @@
     import SessionDivider from "./Thread/SessionDivider.svelte";
     import ProximityThreadTitle from "./Thread/ProximityThreadTitle.svelte";
     import ProximityEndedFooter from "./Thread/ProximityEndedFooter.svelte";
+    import { nearbyChatName } from "./Thread/nearbyTitle";
     import RoomMenu from "./RoomMenu/RoomMenu.svelte";
     import DirectChatTitle from "./DirectChat/DirectChatTitle.svelte";
     import PartnerProfilePanel from "./DirectChat/PartnerProfilePanel.svelte";
+    import RoomDetailsPanel from "./Details/RoomDetailsPanel.svelte";
+    import NearbyDetailsPanel from "./Details/NearbyDetailsPanel.svelte";
+    import SharedPanel from "./Details/SharedPanel.svelte";
+    import PinnedBar from "./Details/PinnedBar.svelte";
     import { DIRECT_PARTNER_CONTEXT, directPartnerStore, type DirectPartner } from "./DirectChat/DirectPartnerStore";
     import { dayLabel, messageRuns, runSenderKey } from "./MessageRuns";
     import { IconChevronLeft, IconChevronRight, IconLoader, IconLock, IconMailBox } from "@wa-icons";
@@ -181,9 +186,46 @@
     $: isEncrypted = room.isEncrypted;
     $: proximityRoom = room instanceof ProximityChatRoom ? room : undefined;
     $: matrixRoom = room instanceof MatrixChatRoom ? room : undefined;
+
+    // Counts the chat objects shown here: a chat can be made again under the same id (its type found out later, or a new
+    // map), and what is keyed on this is made again with it. A number, so the same chat set again changes nothing.
+    let roomInstance = 0;
+    let lastRoom: ChatRoom | undefined = room;
+    $: if (room !== lastRoom) {
+        lastRoom = room;
+        roomInstance++;
+    }
     // A direct chat knows who the other person is and where they are right now (header, menu, profile).
     $: directPartner = matrixRoom?.type === "direct" ? directPartnerStore(matrixRoom) : undefined;
     $: profileOpen = directPartner !== undefined && $openProfileRoomIdStore === room.id;
+    // A group's details, and the page of what a chat shared over either, sit over the conversation like the profile.
+    $: roomDetailsOpen = matrixRoom !== undefined && directPartner === undefined && $openRoomDetailsIdStore === room.id;
+    $: nearbyDetailsOpen = proximityRoom !== undefined && $openRoomDetailsIdStore === room.id;
+    // The nearby chat's details belong to one conversation: a new one starts on the conversation, not over it.
+    $: nearbyJoinedAt = proximityRoom?.spaceJoinedAt;
+    let seenNearbyJoinedAt: number | undefined;
+    let nearbyJoinWatched = false;
+    $: watchNearbyJoin($nearbyJoinedAt);
+    // Any conversation starting after this timeline opened is a new one, even when there was none before.
+    function watchNearbyJoin(joinedAt: number | undefined) {
+        if (nearbyJoinWatched && joinedAt !== undefined && joinedAt !== seenNearbyJoinedAt) closeNearbyDetails();
+        nearbyJoinWatched = true;
+        seenNearbyJoinedAt = joinedAt;
+    }
+    $: nearbySpaceKind = proximityRoom?.spaceKind;
+    $: nearbySpaceName = proximityRoom?.name;
+    $: nearbyName =
+        proximityRoom && $nearbySpaceKind ? nearbyChatName($nearbySpaceKind, $nearbySpaceName ?? "", $LL) : undefined;
+
+    function closeNearbyDetails() {
+        if (!proximityRoom) return;
+        if (get(openRoomDetailsIdStore) === room.id) openRoomDetailsIdStore.set(undefined);
+        if (get(openSharedItemsStore)?.roomId === room.id) openSharedItemsStore.set(undefined);
+    }
+    $: sharedOpen =
+        (matrixRoom !== undefined || proximityRoom !== undefined) && $openSharedItemsStore?.roomId === room.id
+            ? $openSharedItemsStore
+            : undefined;
     $: isDirectChat.set(directPartner !== undefined);
     $: partnerForCards.set(directPartner ? $directPartner : undefined);
     $: roomMembers = matrixRoom ? matrixRoom.members : readable([]);
@@ -613,10 +655,7 @@
     }
 
     function goBackAndClearSelectedChatMessage() {
-        openProfileRoomIdStore.set(undefined);
-        selectedChatMessageToReply.set(null);
-        selectedRoomStore.set(undefined);
-        shouldRestoreChatStateStore.set(false);
+        leaveChat();
     }
 
     function handleScroll() {
@@ -794,6 +833,10 @@
         document.removeEventListener("dragenter", onMapFileDragCapture, true);
         document.removeEventListener("dragover", onMapFileDragCapture, true);
         document.removeEventListener("drop", onMapFileDragCapture, true);
+        // However the chat is left (another chat picked, a message opening one), its details close with it: coming
+        // back opens on the conversation.
+        if (get(openRoomDetailsIdStore) === room.id) openRoomDetailsIdStore.set(undefined);
+        if (get(openSharedItemsStore)?.roomId === room.id) openSharedItemsStore.set(undefined);
     });
 </script>
 
@@ -804,7 +847,13 @@
 <div
     bind:this={timelineRef}
     class="relative isolate flex flex-col flex-auto h-full w-full max-w-full"
-    class:profile-open={profileOpen && matrixRoom && $directPartner}
+    class:profile-open={(profileOpen && matrixRoom && $directPartner) ||
+        roomDetailsOpen ||
+        nearbyDetailsOpen ||
+        sharedOpen}
+    class:shared-open={sharedOpen !== undefined}
+    class:peek-conversation={$chatBackPeekStore === "conversation"}
+    class:peek-panel={$chatBackPeekStore === "panel"}
     on:dragover|preventDefault
     on:drop|preventDefault|stopPropagation={onDropFiles}
 >
@@ -815,15 +864,27 @@
                 : $LL.chat.fileAttachment.dropToAddHere()}
         </div>
     {/if}
-    {#if profileOpen && matrixRoom && $directPartner}
-        <!-- Over the conversation, which stays as it was (draft, files, scroll) for when you come back. Above the
-             message options (z-50) and menus that live in it; "isolate" keeps all of that inside this panel. -->
-        <PartnerProfilePanel
-            room={matrixRoom}
-            partner={$directPartner}
-            on:close={() => openProfileRoomIdStore.set(undefined)}
-        />
-    {/if}
+    <!-- Made again when the chat is, so a panel never shows the old one. -->
+    {#key roomInstance}
+        <!-- "Media, links and files" sits over the details or profile it was opened from, which stay as they were for
+             when you come back (and show under it while you swipe back). -->
+        {#if profileOpen && matrixRoom && $directPartner}
+            <!-- Over the conversation, which stays as it was (draft, files, scroll) for when you come back. Above the
+                 message options (z-50) and menus that live in it; "isolate" keeps all of that inside this panel. -->
+            <PartnerProfilePanel
+                room={matrixRoom}
+                partner={$directPartner}
+                on:close={() => openProfileRoomIdStore.set(undefined)}
+            />
+        {:else if roomDetailsOpen && matrixRoom}
+            <RoomDetailsPanel room={matrixRoom} />
+        {:else if nearbyDetailsOpen && proximityRoom}
+            <NearbyDetailsPanel room={proximityRoom} />
+        {/if}
+        {#if sharedOpen}
+            <SharedPanel {room} tab={sharedOpen.tab} partnerChatId={$directPartner?.chatId} chatTitle={nearbyName} />
+        {/if}
+    {/key}
     {#if room !== undefined}
         <div class="flex flex-col gap-2">
             <div
@@ -845,14 +906,22 @@
                 <!-- Every chat's title starts right after the back arrow, so the picture never moves with the name. -->
                 <div class="flex min-w-0 grow items-center">
                     {#if proximityRoom && isEnded}
-                        <div class="flex min-w-0 max-w-full flex-col" data-testid="threadNow" data-state="ended">
+                        <!-- The proximity chat's name opens its details, whichever stay is shown. -->
+                        <button
+                            type="button"
+                            class="room-title flex min-w-0 max-w-full flex-col px-2"
+                            data-testid="threadNow"
+                            data-state="ended"
+                            aria-label={$LL.chat.details.open({ name: endedTitle })}
+                            on:click={() => openRoomDetailsIdStore.set(room.id)}
+                        >
                             <div class="max-w-full truncate text-md font-bold leading-5" data-testid="roomName">
                                 {endedTitle}
                             </div>
                             <div class="max-w-full truncate text-xs text-white/60" data-testid="threadNowLabel">
                                 {endedSubtitle}
                             </div>
-                        </div>
+                        </button>
                     {:else if proximityRoom}
                         <ProximityThreadTitle room={proximityRoom} />
                     {:else if matrixRoom && $directPartner}
@@ -864,7 +933,17 @@
                             on:openProfile={() => openProfileRoomIdStore.set(room.id)}
                         />
                     {:else}
-                        <div class="flex min-w-0 items-center gap-2.5 px-2">
+                        <!-- A group's name opens its details, as a direct chat's name opens the profile. -->
+                        <svelte:element
+                            this={matrixRoom ? "button" : "div"}
+                            type={matrixRoom ? "button" : undefined}
+                            class="room-title flex min-w-0 items-center gap-2.5 px-2"
+                            aria-label={matrixRoom ? $LL.chat.details.open({ name: $roomName }) : undefined}
+                            data-testid="roomTitleButton"
+                            on:click={() => {
+                                if (matrixRoom) openRoomDetailsIdStore.set(room.id);
+                            }}
+                        >
                             <Avatar pictureStore={room.pictureStore} fallbackName={$roomName} size="sm" />
                             <div class="flex min-w-0 flex-col">
                                 <div class="flex min-w-0 items-center gap-1.5">
@@ -888,18 +967,18 @@
                                     </div>
                                 {/if}
                             </div>
-                        </div>
+                        </svelte:element>
                     {/if}
                 </div>
                 {#if matrixRoom}
                     <div class="flex h-12 w-12 shrink-0 items-center justify-center">
                         <RoomMenu room={matrixRoom} inHeader />
                     </div>
-                    <!-- When the chat carries its own close, it sits at this end of the header: keep its place free so
-                         it never covers the menu. -->
-                    {#if $chatCarriesItsCloseStore}
-                        <div class="h-12 w-12 shrink-0" aria-hidden="true" />
-                    {/if}
+                {/if}
+                <!-- When the chat carries its own close, it sits at this end of the header: keep its place free so
+                     it never covers the menu or the name. -->
+                {#if $chatCarriesItsCloseStore}
+                    <div class="h-12 w-12 shrink-0" aria-hidden="true" />
                 {/if}
                 {#if shouldDisplayLoader}
                     <!-- Over the empty space at the top of the list, so the messages don't move when it shows. -->
@@ -910,6 +989,16 @@
                     </div>
                 {/if}
             </div>
+            {#if matrixRoom}
+                <!-- Made again when the chat is, so it never shows the old one's pins. -->
+                {#key roomInstance}
+                    <PinnedBar
+                        room={matrixRoom}
+                        onShowAll={() =>
+                            directPartner ? openProfileRoomIdStore.set(room.id) : openRoomDetailsIdStore.set(room.id)}
+                    />
+                {/key}
+            {/if}
             {#if liveElsewhere && proximityRoom}
                 <div
                     class="mx-2 flex items-center gap-2 rounded-xl bg-success/15 px-3 py-2 text-xs text-white"
@@ -1076,6 +1165,7 @@
                         {room}
                         partner={$directPartner}
                         inputHint={botPlaceholder}
+                        allowVoiceNotes={partnerBotId === undefined}
                         bind:this={messageInputBarRef}
                     />
                 {/key}
@@ -1115,8 +1205,28 @@
         pointer-events: none;
     }
     /* The profile has no background of its own: it sits on the chat panel's surface, like the conversation. What it
-       covers is hidden instead, and keeps its draft, files and scroll for when you come back. */
-    .profile-open > :global(:not([data-testid="partnerProfilePanel"])) {
+       covers is hidden instead, and keeps its draft, files and scroll for when you come back. A swipe back shows it
+       again under the level sliding away (#1553). */
+    .profile-open:not(.peek-conversation) > :global(:not([data-chat-layer])) {
         visibility: hidden;
+    }
+    .shared-open:not(.peek-panel) > :global([data-chat-layer="panel"]) {
+        visibility: hidden;
+    }
+    .room-title {
+        margin: 0;
+        padding-block: 0.25rem;
+        border-radius: 0.75rem;
+        color: inherit;
+        font: inherit;
+        text-align: start;
+        background: transparent;
+    }
+    button.room-title:hover {
+        background: rgba(255, 255, 255, 0.08);
+    }
+    button.room-title:focus-visible {
+        outline: 2px solid rgba(196, 181, 253, 0.9);
+        outline-offset: -2px;
     }
 </style>

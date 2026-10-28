@@ -131,6 +131,24 @@ describe("the bot page's Mind group (#1375)", () => {
         expect(byTestId("bot-runs-on-unlent")).toHaveLength(0);
     });
 
+    it("offers no provider pin to anyone, even when an older Orbit still sends the provider list (#1446)", async () => {
+        mocks.api.getBotAiOptions.mockResolvedValue(
+            options({
+                keys: [lentKey],
+                providers: [
+                    { id: "deepseek-flash", name: "DeepSeek V4 Flash", type: "openai", model: null, enabled: true },
+                ],
+            })
+        );
+        await mount();
+        expect(byTestId("bot-mind-provider")).toHaveLength(0);
+        expect(text()).not.toContain("Pin to a provider");
+        expect(text()).not.toContain("DeepSeek V4 Flash");
+        // Universe AI is still the first choice, then the key
+        const cards = byTestId("bot-runs-on-universe-ai").length + byTestId("bot-runs-on-mine").length;
+        expect(cards).toBe(2);
+    });
+
     it("never shows it on someone else's bot", async () => {
         mocks.api.getBotAiOptions.mockResolvedValue(options({ viewerIsMaker: false }));
         mocks.api.getMyAiKeys.mockResolvedValue([{ id: "key-1", name: "Opus 5.5" }]);
@@ -209,5 +227,33 @@ describe("the bot page's Mind group (#1375)", () => {
         await settle();
         expect(mocks.api.getBotAiOptions).toHaveBeenCalledTimes(2);
         expect(text()).toContain("OpenAI · gpt-5");
+    });
+
+    it("names Universe AI on the closed row while Orbit hasn't answered, never its stored ref", async () => {
+        mocks.api.getBotAiOptions.mockReturnValue(
+            new Promise<null>(() => {
+                // never answers
+            })
+        );
+        const component = new MindGroup({
+            target,
+            props: { bot, open: false, onToggle: vi.fn(), onChange: vi.fn() },
+        });
+        destroy = () => component.$destroy();
+        await settle();
+        expect(text()).toContain("Universe AI");
+        expect(text()).not.toContain("universe-ai");
+    });
+
+    it("names Universe AI on the closed row when Orbit can't say what the bot runs on", async () => {
+        mocks.api.getBotAiOptions.mockResolvedValue(null);
+        const component = new MindGroup({
+            target,
+            props: { bot, open: false, onToggle: vi.fn(), onChange: vi.fn() },
+        });
+        destroy = () => component.$destroy();
+        await settle();
+        expect(text()).toContain("Universe AI");
+        expect(text()).not.toContain("universe-ai");
     });
 });

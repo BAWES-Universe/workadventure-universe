@@ -62,7 +62,8 @@ export type VisionPick =
 /**
  * What the bot page offers under "Runs on" for one bot (Orbit GET /api/me/bot-ai, #374). Nobody is shown the server's
  * provider list: the choices are Universe AI and the viewer's own keys lent to this bot's universe. A key that isn't
- * the viewer's is shown only as what the bot is on now. A super admin also gets `providers`, to pin a bot to one.
+ * the viewer's is shown only as what the bot is on now. `providers` is always null from Orbit now (nobody pins a bot to a
+ * provider any more); an older Orbit may still send it, and the page ignores it.
  */
 /** One model of a key that the lend here allows, with what the provider says about it (left out when it said nothing). */
 export interface KeyModelOption {

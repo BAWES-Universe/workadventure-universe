@@ -1,6 +1,7 @@
 <script lang="ts">
     import type { Readable } from "svelte/store";
     import type { ChatMessageContent } from "../../../Connection/ChatConnection";
+    import { singlePlayback } from "../../../../Utils/SinglePlayback";
     import { getMediaCaption } from "../MessageActions/messageActions";
 
     export let content: Readable<ChatMessageContent>;
@@ -11,7 +12,7 @@
 
 {#if $content.url !== undefined}
     <!-- svelte-ignore a11y-media-has-caption -->
-    <video controls class="w-full block rounded">
+    <video controls use:singlePlayback class="w-full block rounded">
         <source src={$content.url} />
     </video>
 {/if}

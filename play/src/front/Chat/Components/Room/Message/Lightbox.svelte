@@ -3,6 +3,7 @@
     import { fade } from "svelte/transition";
     import { lightboxOpenStore } from "../../../../Stores/UserInputStore";
     import LL from "../../../../../i18n/i18n-svelte";
+    import { singlePlayback } from "../../../../Utils/SinglePlayback";
     import { saveMessageFiles } from "../MessageActions/availableActions";
     import {
         MIN_SCALE,
@@ -567,6 +568,7 @@
                         <!-- svelte-ignore a11y-media-has-caption -->
                         <video
                             bind:this={videoEl}
+                            use:singlePlayback
                             {src}
                             controls
                             autoplay
