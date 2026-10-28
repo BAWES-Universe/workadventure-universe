@@ -191,9 +191,6 @@
     // A direct chat knows who the other person is and where they are right now (header, menu, profile).
     $: directPartner = matrixRoom?.type === "direct" ? directPartnerStore(matrixRoom) : undefined;
     $: profileOpen = directPartner !== undefined && $openProfileRoomIdStore === room.id;
-    // At the very start of a direct message with a bot, once nothing older is left to load
-    $: hasPreviousMessage = room.hasPreviousMessage;
-    $: botDmIntroShown = showsBotDmIntro(partner?.id, $hasPreviousMessage, showLoading);
     $: isDirectChat.set(directPartner !== undefined);
     $: partnerForCards.set(directPartner ? $directPartner : undefined);
     $: roomMembers = matrixRoom ? matrixRoom.members : readable([]);
@@ -288,6 +285,11 @@
     // it is gone.
     $: members = "members" in room ? (room as ChatRoom & ChatRoomMembershipManagement).members : readable([]);
     $: partner = room.type === "direct" ? $members.find((member) => member.id !== myChatID) : undefined;
+    // At the very start of a direct message with a bot, once nothing older is left to load. Kept below `partner`:
+    // Svelte doesn't see that `partner` reads `members` through `$members`, so a line above `members` that reads
+    // `partner` would work it out before `members` exists.
+    $: hasPreviousMessage = room.hasPreviousMessage;
+    $: botDmIntroShown = showsBotDmIntro(partner?.id, $hasPreviousMessage, showLoading);
     $: partnerBotId = botIdFromChatId(partner?.id);
     $: partnerMembership = partner?.membership ?? readable(undefined);
     $: botLeft = partnerBotId !== undefined && $partnerMembership === "leave";
