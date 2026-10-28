@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { fileNote, keptTextOf, kindOf, piecesOf, storeOf, TEXT_PIECE_CHARS, withFileNotes, withoutNoteIds } from '../services/ChatFiles';
+import { fileNote, keptTextOf, kindOf, piecesOf, storeOf, TEXT_PIECE_CHARS, withFileNotes, withoutFileNotes, withoutNoteIds } from '../services/ChatFiles';
 import { BotClient } from '../client/BotClient';
+import { ConversationMemory } from '../memory/ConversationMemory';
 
 const ID = '0b5c1a6e-3f2d-4c8b-9a71-2e4f6d8c0a1b.pdf';
 
@@ -30,6 +31,16 @@ describe('the note for a file in the history', () => {
 
     it('keeps a name on one line, with nothing that would end the note early', () => {
         expect(fileNote({ name: 'a "quoted"\n[name].txt', kind: 'document' })).toBe('[file · "a \'quoted\' \'name\'.txt" · TXT]');
+    });
+
+    it("is not taken as something the person said about themselves", () => {
+        const memory = new ConversationMemory();
+        const line = withFileNotes('', [fileNote({ ref: 'f3', name: 'im Paris.jpg', kind: 'image' }), fileNote({ name: 'my birthday is today.txt', kind: 'document' })]);
+        expect(withoutFileNotes(line)).toBe('');
+        expect(withoutFileNotes(withFileNotes("I'm Sara", [fileNote({ name: 'x.pdf', kind: 'document' })]))).toBe("I'm Sara");
+        memory.addMessage('bot1', 7, line, 'person', 'space-1');
+        expect(memory.getMemory('bot1', 7)?.personalInfo.name).toBeUndefined();
+        expect(memory.getMemory('bot1', 7)?.personalInfo.birthday).toBeUndefined();
     });
 
     it('reads the same with or without its ids, so a message sent again is still the same message', () => {

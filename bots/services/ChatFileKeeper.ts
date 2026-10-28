@@ -119,7 +119,8 @@ export class ChatFileKeeper {
         const added = await this.add(admin, job);
         if (!added || !wanted()) return added?.ref ?? null;
         job.onRef?.(added.ref);
-        if (job.text != null) {
+        // A file with text to keep (null: it could not be read, which Orbit is told)
+        if (job.text !== undefined) {
             await this.keepText(admin, job, added.ref, job.text, wanted);
         } else if (job.readAgain) {
             const readAgain = job.readAgain;
@@ -172,6 +173,8 @@ export class ChatFileKeeper {
 
     /** The text in pieces, in order; or that it could not be read. */
     private async keepText(admin: AdminApiService, job: FileJob, ref: string, text: string | null, wanted: () => boolean): Promise<void> {
+        // "Text kept from a file" is 0: no text is kept
+        if (job.maxTextChars <= 0) return;
         try {
             if (text === null) {
                 await admin.keepBotFileText(job.call, ref, { failed: true });
