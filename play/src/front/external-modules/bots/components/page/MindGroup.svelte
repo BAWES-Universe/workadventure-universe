@@ -249,14 +249,6 @@
         return card.ifDown === "stop" ? page.mind.downStops() : page.mind.downUseUniverseAi();
     }
 
-    function pinProvider(event: Event) {
-        const select = event.currentTarget as HTMLSelectElement;
-        const value = select.value;
-        // Back to the prompt, so the same provider can be pinned again after the bot moves off it
-        select.value = "";
-        if (value) onChange({ ...bot, aiProviderRef: value, aiModel: null });
-    }
-
     function pick(event: Event) {
         const value = (event.currentTarget as HTMLSelectElement).value;
         onChange({ ...bot, aiProviderRef: value || undefined, aiModel: null });
@@ -380,22 +372,6 @@
                     <IconExternalLink font-size="14" />
                 </PageButton>
             </div>
-        {/if}
-        {#if options.providers && options.providers.length > 0}
-            <label class="bp-select">
-                <span class="sr-only">{page.mind.pinTo()}</span>
-                <select value="" on:change={pinProvider} data-testid="bot-mind-provider">
-                    <option value="">{page.mind.pinTo()}</option>
-                    {#each options.providers as provider (provider.id)}
-                        <option value={provider.id}>
-                            {provider.name}{provider.enabled
-                                ? ""
-                                : ` ${$LL.actionbar.botEditorModule.providerDisabled()}`}
-                        </option>
-                    {/each}
-                </select>
-                <IconChevronDown font-size="16" />
-            </label>
         {/if}
         {#if !options.viewerIsMaker || unlent.length === 0}
             <p class="bp-m">

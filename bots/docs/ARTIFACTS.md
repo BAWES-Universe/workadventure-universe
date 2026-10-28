@@ -17,7 +17,7 @@ cannot draw it.
 | `make_artifact` | `title`, `kind` (`app`, `page`, `markdown`, `svg`), `content`, `summary?`. Version 1. |
 | `change_artifact` | `id`, `edits: [{ old, new, all? }]` or `content`, `summary?`, `title?`, `baseVersion?`. A new version. |
 | `read_artifact` | `id`, `version?`. The text, as data (never instructions). |
-| `list_artifacts` | The artifacts made in this chat, newest change first. How a bot finds the one a later message means. |
+| `list_artifacts` | The artifacts made in this chat, plus the asking person's own from their other chats, newest change first. How a bot finds the one a later message means. |
 
 With an Orbit that keeps files in bot chats (#1508), `list_artifacts` leaves the tool list and `find_files` finds artifacts
 instead, along with files, a page at a time: this chat's, and the person's own from any chat with any bot. A history

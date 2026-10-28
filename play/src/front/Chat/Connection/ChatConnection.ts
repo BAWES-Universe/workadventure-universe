@@ -253,6 +253,12 @@ export type ChatMessageContent = {
     fileNames: string[] | undefined;
     /** A recorded voice message (Matrix MSC3245), as opposed to an audio file. */
     isVoice?: boolean;
+    /** How long a voice message is, in seconds, when its sender wrote it down. */
+    voiceDuration?: number;
+    /** The shape of a voice message: levels from 0 to 1, when its sender wrote it down. */
+    voiceWaveform?: number[];
+    /** The file could not be fetched (gone, or the network failed). It is tried again the next time it is shown. */
+    mediaFailed?: boolean;
 };
 export const historyVisibilityOptions = ["joined", "invited", "world_readable"] as const;
 export type historyVisibility = (typeof historyVisibilityOptions)[number];

@@ -87,7 +87,12 @@
     } = message;
 
     // File cards say who sent the file.
-    setContext<MessageSenderInfo>(MESSAGE_SENDER_CONTEXT, { name: sender?.username, isMine: isMyMessage });
+    setContext<MessageSenderInfo>(MESSAGE_SENDER_CONTEXT, {
+        name: sender?.username,
+        isMine: isMyMessage,
+        messageId: id,
+        sentAt: date ?? undefined,
+    });
 
     $: senderPicture = personPicture($wokaByChatId, sender?.chatId, sender?.pictureStore) ?? readable(undefined);
     $: senderColour = $colourOf(sender?.chatId, sender?.username);

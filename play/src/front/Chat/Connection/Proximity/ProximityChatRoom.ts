@@ -59,6 +59,7 @@ import { CharacterLayerManager } from "../../../Phaser/Entity/CharacterLayerMana
 import { BubbleNotification as BasicNotification } from "../../../Notification/BubbleNotification";
 import { formatPeopleNames } from "../../Components/TopRow/TopRowSummary";
 import { composerDraftStore } from "../../Stores/ComposerDraftStore";
+import { isVoiceNoteFileName } from "../../VoiceNote/VoiceNote";
 import { areaChatRooms } from "../../Stores/AreaPresenceStore";
 import { rememberProximityChat } from "../../Stores/SayHiCardStore";
 import {
@@ -467,8 +468,11 @@ export class ProximityChatRoom implements ChatRoom {
             case "avi":
             case "mkv":
                 return "video";
+            // Voice notes recorded in WebM and Ogg are stored as .weba and .oga, so they are not read as video.
             case "mp3":
             case "wav":
+            case "weba":
+            case "oga":
             case "aac":
             case "flac":
             case "m4a":
@@ -520,6 +524,8 @@ export class ProximityChatRoom implements ChatRoom {
             urls: galleryUrls,
             filename: fileName,
             fileNames: fileNames,
+            // The nearby chat carries no flag with a file: a note is told from an audio file by its name.
+            isVoice: messageType === "audio" && isVoiceNoteFileName(fileName),
         };
 
         const spaceUser = this.users?.get(this._spaceUserId);
@@ -761,6 +767,7 @@ export class ProximityChatRoom implements ChatRoom {
             urls: galleryUrls ?? undefined,
             filename: fileName ?? undefined,
             fileNames: fileNames ?? undefined,
+            isVoice: messageType === "audio" && isVoiceNoteFileName(fileName ?? undefined),
         };
 
         const spaceUser = this.users?.get(senderUserId);
