@@ -92,6 +92,11 @@ export class ArtifactsService {
         return answer.versions;
     }
 
+    /** The owner makes an older version the latest again: a new version with its file, so nothing is lost. */
+    restore(id: string, number: number, viewer: ArtifactViewer): Promise<OpenedArtifact> {
+        return this.call(`/api/artifacts/${encodeURIComponent(id)}/restore`, { viewer, number }, Opened);
+    }
+
     /** The code of one version, for the Code view. */
     readCode(id: string, number: number, viewer: ArtifactViewer): Promise<ArtifactVersionCode> {
         return this.call(`/api/artifacts/${encodeURIComponent(id)}/versions/${number}`, { viewer }, VersionCode);

@@ -34,7 +34,8 @@ import {
     shouldRestoreChatStateStore,
 } from "../../Stores/ChatStore";
 import { selectedRoomStore } from "../../Stores/SelectRoomStore";
-import { mapExtendedSpaceUserToChatUser } from "../../UserProvider/ChatUserMapper";
+import { isBotUser, mapExtendedSpaceUserToChatUser } from "../../UserProvider/ChatUserMapper";
+import { parseBotReplyLimit, type BotReplyLimit } from "../../Bots/BotReplyLimit";
 import { gameManager } from "../../../Phaser/Game/GameManager";
 import { availabilityStatusStore, requestedCameraState, requestedMicrophoneState } from "../../../Stores/MediaStore";
 import { localUserStore } from "../../../Connection/LocalUserStore";
@@ -118,6 +119,8 @@ export interface ProximityChatMessageOptions {
      * everyone (sent by this game) get one; without it the message takes no reactions.
      */
     react?: (message: ProximityChatMessage, key: string) => void;
+    /** A reply limit the person reached on a bot (#1159): the message is the fixed card. */
+    replyLimit?: BotReplyLimit;
 }
 
 function fileNameOfUrl(url: string): string {
@@ -153,6 +156,8 @@ export class ProximityChatMessage implements ChatMessage {
      * Local and in memory only.
      */
     stoppedOnLeave?: boolean;
+    /** Set on the fixed card a bot sends one person who reached a reply limit (#1159). Local and in memory only. */
+    replyLimit?: BotReplyLimit;
     constructor(
         public id: string,
         public sender: AnyKindOfUser,
@@ -164,9 +169,10 @@ export class ProximityChatMessage implements ChatMessage {
     ) {
         this.session = options.session;
         this.notSent = options.notSent;
+        this.replyLimit = options.replyLimit;
         this.quotedMessage = options.quotedMessage;
         this.isQuotedMessage = options.isQuotedMessage;
-        const isConversation = !options.session && !options.notSent && !options.isQuotedMessage;
+        const isConversation = !options.session && !options.notSent && !options.isQuotedMessage && !options.replyLimit;
         const hasContent = type !== "incoming" && type !== "outcoming";
         this.canReact.set(isConversation && hasContent && options.react !== undefined);
         this.canReply.set(isConversation && hasContent);
@@ -220,6 +226,9 @@ export class ProximityChatRoom implements ChatRoom {
     private spaceMessageSubscription: Subscription | undefined;
     private spaceIsTypingSubscription: Subscription | undefined;
     private spaceMessageReactionSubscription: Subscription | undefined;
+    private spaceReplyLimitSubscription: Subscription | undefined;
+    /** The reply limit card shown for each bot, by bot id, so a newer one replaces it */
+    private replyLimitCards = new Map<string, string>();
     // Expiry timers of the typing entries, by spaceUserId of the sender
     private typingExpiryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
     private spaceStreamMessageSubscription: Subscription | undefined;
@@ -843,6 +852,31 @@ export class ProximityChatRoom implements ChatRoom {
         });
     };
 
+    /** The fixed reply limit card, in place of the bot's last one, opening the chat if it is closed. */
+    private showReplyLimit(replyLimit: BotReplyLimit, senderSpaceUserId: string): void {
+        const shown = this.replyLimitCards.get(replyLimit.botId);
+        if (shown) this.messages.delete(shown);
+        // The sender as this chat knows them (with their picture and status), as for the bot's streamed replies
+        const spaceUser = this.users?.get(senderSpaceUserId);
+        const card = new ProximityChatMessage(
+            uuidv4(),
+            spaceUser ? mapExtendedSpaceUserToChatUser(spaceUser) : this.unknownUser,
+            writable({ body: "", url: undefined, urls: undefined, filename: undefined, fileNames: undefined }),
+            new Date(),
+            false,
+            "proximity",
+            { replyLimit }
+        );
+        this.replyLimitCards.set(replyLimit.botId, card.id);
+        this.removeTypingUserbyID(senderSpaceUserId);
+        this.messages.push(card);
+        this.lastMessageTimestamp = card.date.getTime();
+        // Unread like any message that arrives, so another open room still shows it came
+        this.markUnread();
+        openChat("bubble");
+        this.showIfNothingOpen();
+    }
+
     private applyRemoteReaction(senderUserId: string, event: SpaceMessageReaction): void {
         if (!isUsableReaction(event.reaction)) return;
         const message = this.messages.get(event.messageId);
@@ -1334,6 +1368,22 @@ export class ProximityChatRoom implements ChatRoom {
                 this.applyRemoteReaction(event.sender, event.spaceMessageReaction);
             });
 
+        // A bot's reply limit card (#1159), sent to this person only. The pusher passes it on only from a bot about
+        // itself; it is checked here again. A newer card from the same bot takes the place of the last one.
+        this.spaceReplyLimitSubscription?.unsubscribe();
+        this.spaceReplyLimitSubscription = this._space.observePrivateEvent("botReplyLimit").subscribe((event) => {
+            if (!isBotUser(event.sender) || event.sender.uuid !== `bot-${event.botReplyLimit.botId}`) return;
+            // A bot this person blocked opens nothing, as with its messages
+            if (blackListManager.isBlackListed(event.sender.uuid)) return;
+            const replyLimit = parseBotReplyLimit(
+                event.botReplyLimit,
+                event.botReplyLimit.botId,
+                event.botReplyLimit.botName || event.sender.name
+            );
+            if (!replyLimit) return;
+            this.showReplyLimit(replyLimit, event.sender.spaceUserId);
+        });
+
         // Subscribe to streaming bot responses — tokens arrive incrementally
         this.spaceStreamMessageSubscription = this._space
             .observePublicEvent("spaceStreamMessage")
@@ -1511,6 +1561,7 @@ export class ProximityChatRoom implements ChatRoom {
                 this.spaceMessageSubscription?.unsubscribe();
                 this.spaceIsTypingSubscription?.unsubscribe();
                 this.spaceMessageReactionSubscription?.unsubscribe();
+                this.spaceReplyLimitSubscription?.unsubscribe();
                 this.spaceStreamMessageSubscription?.unsubscribe();
                 this.streamMessages.clear();
                 this.closeScriptingAudioStreamManagers();
@@ -1733,6 +1784,7 @@ export class ProximityChatRoom implements ChatRoom {
         this.spaceMessageSubscription?.unsubscribe();
         this.spaceIsTypingSubscription?.unsubscribe();
         this.spaceMessageReactionSubscription?.unsubscribe();
+        this.spaceReplyLimitSubscription?.unsubscribe();
         this.spaceStreamMessageSubscription?.unsubscribe();
         this.streamMessages.clear();
 
@@ -1811,6 +1863,7 @@ export class ProximityChatRoom implements ChatRoom {
         this.spaceMessageSubscription?.unsubscribe();
         this.spaceIsTypingSubscription?.unsubscribe();
         this.spaceMessageReactionSubscription?.unsubscribe();
+        this.spaceReplyLimitSubscription?.unsubscribe();
         this.spaceStreamMessageSubscription?.unsubscribe();
         this.streamMessages.clear();
         this.clearTypingMembers();

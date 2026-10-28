@@ -4,6 +4,7 @@ import type { MapStore } from "@workadventure/store-utils";
 import type { StateEvents } from "matrix-js-sdk";
 import type { BotStatusNote } from "../Bots/BotChatStatus";
 import type { BotRoomLink } from "../Bots/BotRoomLink";
+import type { BotReplyLimit } from "../Bots/BotReplyLimit";
 import type { ArtifactCard } from "../../Artifacts/artifactCard";
 import type { RoomConnection } from "../../Connection/RoomConnection";
 import type { PictureStore } from "../../Stores/PictureStore";
@@ -198,6 +199,8 @@ export interface ChatMessage {
     botStatusAt?: number;
     /** Set when a bot's reply names the room it lives in: a card under the message takes you there. */
     roomLink?: BotRoomLink;
+    /** Set when a bot did not answer because the person reached a reply limit (#1159): drawn as the fixed card. */
+    replyLimit?: BotReplyLimit;
     /** Set when a bot's direct message carries an artifact it made: drawn as a card the person taps to open. */
     artifact?: ArtifactCard;
     /** Whether reactions on this message reach the other people in the chat. */

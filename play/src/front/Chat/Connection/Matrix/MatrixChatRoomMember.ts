@@ -5,6 +5,7 @@ import { get, writable } from "svelte/store";
 import type { ChatRoomMember, ChatRoomMembership, memberTypingInformation } from "../ChatConnection";
 import { ChatPermissionLevel, TYPING_STOP_GRACE_MS } from "../ChatConnection";
 import type { PictureStore } from "../../../Stores/PictureStore";
+import { botIdFromChatId } from "../../Bots/BotChatStatus";
 import { changingMatrixAvatarStore } from "./MatrixMedia";
 
 export class MatrixChatRoomMember implements ChatRoomMember {
@@ -22,9 +23,11 @@ export class MatrixChatRoomMember implements ChatRoomMember {
     readonly pictureStore: PictureStore;
     private typingGraceTimer: ReturnType<typeof setTimeout> | undefined;
     private readonly pictureMxc: Writable<string | undefined>;
+    private readonly isBot: boolean;
 
     constructor(private roomMember: RoomMember, client: MatrixClient) {
         this.id = roomMember.userId;
+        this.isBot = botIdFromChatId(this.id) !== undefined;
         this.name = writable(this.roomMember.name);
         this.membership = writable(this.roomMember.membership);
         this.permissionLevel = writable(MatrixChatRoomMember.getPermissionLevel(this.roomMember.powerLevelNorm));
@@ -61,6 +64,11 @@ export class MatrixChatRoomMember implements ChatRoomMember {
             return;
         }
         if (get(this.isTypingInformation) === null) return;
+        // A bot says "stopped" only once it has sent its whole answer, so its dots go at once.
+        if (this.isBot) {
+            this.isTypingInformation.set(null);
+            return;
+        }
         // The dots stay a moment after a "stopped", in case typing starts again right away.
         this.typingGraceTimer = setTimeout(() => {
             this.typingGraceTimer = undefined;
@@ -68,8 +76,12 @@ export class MatrixChatRoomMember implements ChatRoomMember {
         }, TYPING_STOP_GRACE_MS);
     }
 
-    /** Their message arrived: they are no longer typing it, and the dots go at once. */
+    /**
+     * Their message arrived: they are no longer typing it, and the dots go at once. A bot still typing has more of its
+     * answer on the way (a "let me look" line before a tool, an artifact, media), so its dots stay until it stops.
+     */
     stoppedTyping(): void {
+        if (this.isBot && this.roomMember.typing) return;
         this.clearTypingGrace();
         this.isTypingInformation.set(null);
     }

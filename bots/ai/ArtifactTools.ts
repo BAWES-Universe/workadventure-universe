@@ -172,6 +172,8 @@ export interface ArtifactContext {
     botId: string;
     person: ArtifactPerson;
     chat: ArtifactChat;
+    /** How long a make or a change may take to save, from the super admin's "Time to save" (Orbit #666). */
+    saveTimeoutMs?: number;
 }
 
 export interface ArtifactToolRun {
@@ -204,9 +206,88 @@ function cardOf(artifact: ArtifactSummary, version: number): ArtifactCard {
     return { id: artifact.id, version, title: artifact.title, kind: artifact.kind, maker: artifact.makerName };
 }
 
-/** What the model hears when its reply was cut off in the middle of a make or change: nothing was saved. */
+/**
+ * What the model hears when its reply was cut off in the middle of a make or change: nothing was saved. It builds the
+ * file in parts instead of making it smaller (Orbit #666): a first version that fits, then change_artifact edits that add the rest.
+ */
 export const ARTIFACT_CUT_OFF_MESSAGE =
-    'Your reply was cut off before the file was finished, so nothing was saved. Try again with small edits instead of the whole file, or a smaller file.';
+    'Your reply was cut off before the file was finished, so nothing was saved. Build it in parts: make_artifact with a working first ' +
+    'version that leaves out the largest sections, then add each section with its own change_artifact edits. Do not make it smaller ' +
+    'or simpler than they asked for.';
+
+/** What the chat says when a bot said it made or changed an artifact and nothing was saved (Orbit #666). */
+export const NOTHING_SAVED_LINE = 'No new version was saved.';
+
+/**
+ * Something a bot makes as an artifact. Not table, list, file, map, page, site, version or mock: those come up in ordinary
+ * answers ("here's the updated version of your email").
+ */
+const ARTIFACT_NOUN = '(?:artifacts?|dashboards?|calculators?|mockups?)';
+/**
+ * Things a bot makes as artifacts that people also have of their own ("I've fixed the bug in your app"): only with a cue
+ * below, and not "of" something ("the board of directors").
+ */
+const SOMETIMES_ARTIFACT_NOUN = '(?:apps?|games?|boards?|trackers?)(?!\\s+of\\b)';
+/**
+ * Pointing at an artifact: tapping or opening its card, the card above or below. Not "tap" or "open it" alone: "Tap Save"
+ * is an ordinary instruction. A version named counts through VERSION_SAID instead.
+ */
+const ARTIFACT_CUE = /\b(?:artifacts?|(?:tap|open|see|in) (?:the|its) card|card (?:above|below))\b/;
+/**
+ * "v2", "version 3": a version said to exist, standing on its own as the thing made ("v2 has the charts", "here's version 3
+ * with", "saved as v2"). Not straight after a name ("Node v18", "Python version 3") nor before one ("the v2 API", "version 2
+ * of the library"): those are someone else's software (Sentry on #1499).
+ */
+const VERSION_SAID =
+    /(?:^|[,;:(]|\b(?:the|its|this|a|new|and|as|now|saved|made|built|here(?:'s|’s| is)|it(?:'s|’s| is)))\s*(?:v\d+|version \d+)(?:\.\d+)*(?=\s*(?:$|[,;:)—-]|(?:is|has|adds|includes|with|now|shows|keeps|looks|should|will)\b))/;
+/** Saying it was made or changed. */
+const DONE_VERB =
+    '(?:made|built|created|updated|changed|rebuilt|redesigned|redid|reworked|added|fixed|saved|ready|live|finished|upgraded|improved)';
+/** "I've rebuilt the dashboard", "here's the updated quests board": someone saying they did it, then what, close together. */
+const DONE_SAID_START = `\\b(?:i(?:'ve|’ve| have)?|i just|here(?:'s|’s| is)|it(?:'s|’s| is) (?:now )?|all set|done)\\b[^.!?\\n]{0,40}\\b${DONE_VERB}\\b[^.!?\\n]{0,30}\\b`;
+const DONE_SAID = new RegExp(`${DONE_SAID_START}${ARTIFACT_NOUN}\\b`);
+/** The same about an app, game, board or tracker: counts only in a reply with an artifact cue. */
+const DONE_SAID_SOMETIMES = new RegExp(`${DONE_SAID_START}${SOMETIMES_ARTIFACT_NOUN}\\b`);
+/** "v2 is ready", "rebuilt it, v2 has the charts": a version named next to a word saying it was done. */
+const VERSION_DONE = new RegExp(`\\b${DONE_VERB}\\b`);
+/** "couldn't save", "nothing was saved": a bot that says it did not. */
+const NOT_DONE_SAID = /\b(couldn(?:'|’)?t|could not|can(?:'|’)?t|cannot|wasn(?:'|’)?t|was not|didn(?:'|’)?t|did not|failed|unable|not saved|nothing was saved|won(?:'|’)?t)\b/;
+/** "the dashboard I built earlier", "v2 from yesterday": a sentence about one saved in an earlier turn. */
+const EARLIER_SAID = /\b(?:earlier|before|previously|already|yesterday|ago|last time|the other day|last (?:week|night|month|session|chat))\b/;
+
+/**
+ * Whether a reply says an artifact was made or changed. Read only when no make or change was saved in the turn, so it
+ * leans on the wording, one sentence at a time: "I've built / here's the updated" followed closely by something an
+ * artifact is (an app, game, board or tracker only next to a sentence pointing at its card or opening it), or a
+ * version named ("v2", "version 3") next to a word saying it was done. Ordinary answers that mention a
+ * table, a list or a page without saying one was made don't count, nor a sentence about one from before ("the dashboard I
+ * built earlier"): that one was saved in an earlier turn.
+ */
+export function claimsArtifactSaved(reply: string): boolean {
+    const text = reply.toLowerCase();
+    if (!text.trim() || NOT_DONE_SAID.test(text)) return false;
+    // A period between digits ("v2.0") does not end a sentence
+    const sentences = text.split(/(?:(?<!\d)\.|\.(?!\d)|[!?\n])+/);
+    // An app, game, board or tracker counts with a cue in the same sentence or the one after ("... the game. Tap the card")
+    const cued = (index: number) => ARTIFACT_CUE.test(sentences[index]) || ARTIFACT_CUE.test(sentences[index + 1] ?? '');
+    return sentences.some(
+        (sentence, index) =>
+            !EARLIER_SAID.test(sentence) &&
+            (DONE_SAID.test(sentence) ||
+                (DONE_SAID_SOMETIMES.test(sentence) && cued(index)) ||
+                (VERSION_SAID.test(sentence) && VERSION_DONE.test(sentence)))
+    );
+}
+
+/** The second try after a reply said it saved an artifact and nothing was saved: do it with the tool, or say it plainly. */
+export function nothingSavedRetryMessage(original: string, reply: string): string {
+    return (
+        `${original}\n\n[Your last answer to this was: "${reply.trim().slice(0, 1500)}". But no ${MAKE_ARTIFACT_TOOL} or ${CHANGE_ARTIFACT_TOOL} ` +
+        `call was saved in that turn, so nothing was made or changed, and the chat now says "${NOTHING_SAVED_LINE}". Do it now with ` +
+        `${MAKE_ARTIFACT_TOOL} or ${CHANGE_ARTIFACT_TOOL}. If it is large, build it in parts. If you cannot, say so in one short line. ` +
+        `If they did not ask for an artifact, answer again without saying one was made. Never say a version was saved unless the tool said so.]`
+    );
+}
 
 /** Make and change write a file, so a half-written one must never go through. */
 export function writesArtifact(name: string): boolean {
@@ -223,10 +304,11 @@ export function describeArtifactError(error: unknown): string {
                 return "The owner hasn't allowed changes from this person. Say so kindly; they can ask the owner, or make their own copy.";
             case 'not_allowed':
                 return error.message;
+            // Orbit's line names the limit a super admin set, e.g. "An artifact can hold up to 2 MB."
             case 'too_large':
-                return 'That is too large. Make it smaller (under 500 KB).';
+                return `That is too large. ${error.message} Make the file smaller, for example with less inline data or smaller images.`;
             case 'too_many_versions':
-                return 'This artifact has reached its limit of 200 versions. Suggest making a new one.';
+                return `This artifact has no room for another version. ${error.message} Suggest making a new one.`;
             case 'stale_version':
                 return error.message;
             case 'edit_not_found':
@@ -255,12 +337,16 @@ export async function runArtifactTool(name: string, args: Record<string, unknown
             case MAKE_ARTIFACT_TOOL: {
                 const kind = argString(args.kind) as ArtifactKind;
                 if (!KINDS.includes(kind)) return { result: { error: 'kind must be app, page, markdown or svg.' } };
-                const made = await context.admin.makeArtifact(call, {
-                    title: argString(args.title),
-                    kind,
-                    content: argString(args.content),
-                    summary: argString(args.summary) || null,
-                });
+                const made = await context.admin.makeArtifact(
+                    call,
+                    {
+                        title: argString(args.title),
+                        kind,
+                        content: argString(args.content),
+                        summary: argString(args.summary) || null,
+                    },
+                    context.saveTimeoutMs
+                );
                 return {
                     result: { success: true, id: made.artifact.id, title: made.artifact.title, kind, version: made.version.number },
                     card: cardOf(made.artifact, made.version.number),
@@ -278,7 +364,7 @@ export async function runArtifactTool(name: string, args: Record<string, unknown
                     summary: argString(args.summary) || null,
                     title: argString(args.title) || null,
                     baseVersion: argVersion(args.baseVersion),
-                });
+                }, context.saveTimeoutMs);
                 return {
                     result: { success: true, id: changed.artifact.id, title: changed.artifact.title, version: changed.version.number },
                     card: cardOf(changed.artifact, changed.version.number),
