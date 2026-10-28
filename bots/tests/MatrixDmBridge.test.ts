@@ -308,6 +308,39 @@ describe('MatrixDmBridge', () => {
         expect(client.sendText).toHaveBeenLastCalledWith(BOT_USER, ROOM, 'Found it.');
     });
 
+    it('shows the steps line as one notice and updates that same message, before the answer (#1545)', async () => {
+        const working = { v: 1, state: 'working', line: 'Generate music', startedAt: 1, steps: [] };
+        const done = { ...working, state: 'done', line: 'Generate music 2 times' };
+        client.sendMessage.mockResolvedValueOnce('$steps');
+        deps.reply.mockImplementationOnce(async (_b: string, _p: unknown, _t: string, _a: unknown, hooks: any) => {
+            await hooks.onSteps(working, 'Generate music…');
+            await hooks.onSteps(done, 'Generate music 2 times');
+            return { text: 'Here they are.', media: [] };
+        });
+        await bridge.onEvent(invite());
+        await bridge.onEvent(message('make two songs'));
+        const sent = client.sendMessage.mock.calls.map((c: any[]) => c[2]);
+        expect(sent[0]).toEqual({ msgtype: 'm.notice', body: 'Generate music…', 'universe.steps': working });
+        expect(sent[1]).toEqual({
+            msgtype: 'm.notice',
+            body: '* Generate music 2 times',
+            'm.new_content': { msgtype: 'm.notice', body: 'Generate music 2 times', 'universe.steps': done },
+            'm.relates_to': { rel_type: 'm.replace', event_id: '$steps' },
+        });
+        expect(client.sendText).toHaveBeenLastCalledWith(BOT_USER, ROOM, 'Here they are.');
+    });
+
+    it('still answers when the steps line fails to send', async () => {
+        client.sendMessage.mockRejectedValueOnce(new Error('timeout'));
+        deps.reply.mockImplementationOnce(async (_b: string, _p: unknown, _t: string, _a: unknown, hooks: any) => {
+            await hooks.onSteps({ v: 1, state: 'working', line: 'Search', startedAt: 1, steps: [] }, 'Search…');
+            return { text: 'Found it.', media: [] };
+        });
+        await bridge.onEvent(invite());
+        await bridge.onEvent(message('find it'));
+        expect(client.sendText).toHaveBeenLastCalledWith(BOT_USER, ROOM, 'Found it.');
+    });
+
     const alice = { uuid: 'uuid-alice', name: 'Alice', isGuest: false };
 
     it('asks Orbit before joining and again after joining, before reading the chat history', async () => {
@@ -1506,6 +1539,79 @@ describe('DmReplyService history', () => {
         // Something new is kept as usual.
         await (service as any).replyNow(BOT, person, 'are you back?', [], {});
         expect(history.map((entry) => entry.message)).toEqual(['left while resting', 'are you back?']);
+    });
+
+    const stepsService = async (stream: () => AsyncGenerator<any>, showToolCalls = true) => {
+        const { DmReplyService } = await import('../server/DmReplyService');
+        const { ConversationMemory } = await import('../memory/ConversationMemory');
+        const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
+        Object.assign(service, {
+            playerIds: new Map(),
+            nextPlayerId: -1,
+            loadedBots: new Set([BOT]),
+            botManager: { getBot: () => null },
+            getBotConfig: async () => ({ botId: BOT, name: 'Guide', aiProviderRef: 'p' }),
+            aiService: { generateBotResponseStream: vi.fn(stream) },
+            conversationMemory: new ConversationMemory(),
+            conversationStorage: { startConversation: vi.fn(), addMessage: vi.fn(async () => undefined) },
+            shouldShowToolCalls: vi.fn(async () => showToolCalls),
+        });
+        return service;
+    };
+    const song = (id: string, prompt: string) => ({ id, doing: 'Make a song', done: 'Make a song', detail: prompt, group: 'tool:generate_music' });
+
+    it('shows the steps line while tools run, and folds it as the answer arrives (#1545)', async () => {
+        const service = await stepsService(async function* () {
+            yield { content: "I'll make it.", done: false };
+            yield { content: '', done: false, reset: true, toolNames: ['generate_music'], toolSteps: [song('a', 'funk'), song('b', 'disco')] };
+            yield { content: '', done: false, toolStepResults: [{ id: 'a', ok: true }, { id: 'b', ok: false, note: 'daily limit reached' }] };
+            yield { content: 'Here it is.', done: false };
+            yield { content: '', done: true, metadata: {} };
+        });
+        const shown: Array<[any, string]> = [];
+        const onInterimMessage = vi.fn(async () => undefined);
+        const reply = await (service as any).replyNow(BOT, { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false }, 'make songs', [], {
+            onInterimMessage,
+            onSteps: async (field: any, text: string) => void shown.push([structuredClone(field), text]),
+        });
+        expect(reply.text).toBe('Here it is.');
+        // The line before the tools stays its own message; no "🔍 tool..." messages any more
+        expect(onInterimMessage.mock.calls).toEqual([["I'll make it."]]);
+        expect(shown.map(([field, text]) => [field.state, text])).toEqual([
+            ['working', 'Make a song…'],
+            ['working', 'Make a song…'],
+            ['done', "Make a song · 1 didn't work"],
+        ]);
+        expect(shown[0][0].steps.map((s: any) => s.state)).toEqual(['running', 'running']);
+        expect(shown[2][0].steps).toEqual([
+            { doing: 'Make a song', done: 'Make a song', detail: 'funk', state: 'done' },
+            { doing: 'Make a song', done: 'Make a song', detail: 'disco', state: 'failed', note: 'daily limit reached' },
+        ]);
+    });
+
+    it("shows no steps when the bot's Show tool calls switch is off", async () => {
+        const onSteps = vi.fn(async () => undefined);
+        const service = await stepsService(async function* () {
+            yield { content: '', done: false, reset: true, toolNames: ['generate_music'], toolSteps: [song('a', 'funk')] };
+            yield { content: '', done: false, toolStepResults: [{ id: 'a', ok: true }] };
+            yield { content: 'Done.', done: false };
+            yield { content: '', done: true, metadata: {} };
+        }, false);
+        await (service as any).replyNow(BOT, { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false }, 'make a song', [], { onSteps });
+        expect(onSteps).not.toHaveBeenCalled();
+    });
+
+    it('marks the line stopped when the reply fails part-way', async () => {
+        const shown: any[] = [];
+        const service = await stepsService(async function* () {
+            yield { content: '', done: false, reset: true, toolNames: ['generate_music'], toolSteps: [song('a', 'funk')] };
+            throw new Error('provider down');
+        });
+        const reply = await (service as any).replyNow(BOT, { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false }, 'make a song', [], {
+            onSteps: async (field: any) => void shown.push(structuredClone(field)),
+        });
+        expect(reply.failed).toBe(true);
+        expect(shown.at(-1)).toMatchObject({ state: 'stopped', steps: [{ state: 'failed' }] });
     });
 
     it('answers the words that waited behind an answer once, together; a file on its own (#1159)', async () => {
