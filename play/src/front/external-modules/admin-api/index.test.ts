@@ -1311,6 +1311,16 @@ describe("Signing Orbit in when the OIDC access token has run out", () => {
         expect(answers()).toEqual([expect.objectContaining({ type: "orbit-auth-token-v2", accessToken: renewed })]);
     });
 
+    it("hands over a token about to run out when /me answers with it unchanged", async () => {
+        const nearlyOut = makeOidcToken(nowSeconds() + 30);
+        const gameToken = makeAccessTokenJwt(nearlyOut);
+        mocks.pusherGet.mockResolvedValue(meAnswer(gameToken));
+        await openedWith(gameToken);
+        await orbitAsks();
+        expect(mocks.pusherGet).toHaveBeenCalledTimes(1);
+        expect(answers()).toEqual([expect.objectContaining({ type: "orbit-auth-token-v2", accessToken: nearlyOut })]);
+    });
+
     it("hands over a token that is still good even when the browser wrongly says it is offline", async () => {
         const good = makeOidcToken(nowSeconds() + 3600);
         online = false;

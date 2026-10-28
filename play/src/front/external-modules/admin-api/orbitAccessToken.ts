@@ -256,8 +256,9 @@ export async function orbitAccessTokenWithRetries(
         // eslint-disable-next-line no-await-in-loop
         const { accessToken, failure } = await orbitAccessTokenAttempt(holder, force, isCurrent);
         if (!isCurrent()) return null;
-        // Renewed, or the newest token there is (another caller or tab may have renewed it meanwhile).
-        if (accessToken && failure === null && (force || !isStale(accessToken))) return accessToken;
+        // Renewed, still good, or the newest token there is (another caller or tab may have renewed it meanwhile). A
+        // token about to run out that the play server answered with unchanged is still accepted: it is all there is.
+        if (accessToken && failure === null) return accessToken;
         if (failure === "refused" || (failure === null && !accessToken)) return null;
         if (!isOffline() && Date.now() - started - offlineFor >= options.giveUpAfterMs) return null;
         options.onWait?.();
