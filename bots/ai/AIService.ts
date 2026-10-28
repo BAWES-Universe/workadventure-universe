@@ -1226,10 +1226,11 @@ export class AIService {
                                         accumulatedContent += text;
                                         firstCallContent += text;
                                     },
-                                    (used, prompt, completion) => {
+                                    (used, prompt, completion, cached) => {
                                         tokensUsed += used;
                                         promptTokens += prompt;
                                         completionTokens += completion;
+                                        cachedPromptTokens = addCachedTokens(cachedPromptTokens, cached);
                                     }
                                 )) {
                                     yield {content: contText, done: false, metadata: undefined};
@@ -1815,13 +1816,15 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                             followUpContentBuffer += text;
                                             accumulatedContent += text;
                                         },
-                                        (used, prompt, completion) => {
+                                        (used, prompt, completion, cached) => {
                                             followUpTokens += used;
                                             followUpPromptTokens += prompt;
                                             followUpCompletionTokens += completion;
+                                            followUpCachedPromptTokens = addCachedTokens(followUpCachedPromptTokens, cached);
                                             tokensUsed += used;
                                             promptTokens += prompt;
                                             completionTokens += completion;
+                                            cachedPromptTokens = addCachedTokens(cachedPromptTokens, cached);
                                         }
                                     )) {
                                         yield {content: contText, done: false, metadata: undefined};
@@ -1867,13 +1870,15 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                         followUpContentBuffer += text;
                                         accumulatedContent += text;
                                     },
-                                    (used, prompt, completion) => {
+                                    (used, prompt, completion, cached) => {
                                         followUpTokens += used;
                                         followUpPromptTokens += prompt;
                                         followUpCompletionTokens += completion;
+                                        followUpCachedPromptTokens = addCachedTokens(followUpCachedPromptTokens, cached);
                                         tokensUsed += used;
                                         promptTokens += prompt;
                                         completionTokens += completion;
+                                        cachedPromptTokens = addCachedTokens(cachedPromptTokens, cached);
                                     }
                                 )) {
                                     yield {content: contText, done: false, metadata: undefined};
@@ -1989,7 +1994,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         // mid-sentence. Auto-continue so the response completes
                         // instead of silently truncating.
                         if (chunk.metadata?.truncated && !abortSignal?.aborted && accumulatedContent) {
-                            const contTokens = { used: 0, prompt: 0, completion: 0 };
+                            const contTokens: { used: number; prompt: number; completion: number; cached?: number } = { used: 0, prompt: 0, completion: 0 };
                             for await (const contChunk of this.continueTruncatedResponse(
                                 providerId,
                                 systemPrompt,
@@ -2009,6 +2014,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             tokensUsed += contTokens.used;
                             promptTokens += contTokens.prompt;
                             completionTokens += contTokens.completion;
+                            cachedPromptTokens = addCachedTokens(cachedPromptTokens, contTokens.cached);
                         }
                         // No tool calls seen — content was already streamed word-by-word
                         // via per-chunk yields above. Just yield the done signal.
@@ -2400,7 +2406,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         partialContent: string,
         config: AIProviderConfig,
         abortSignal: AbortSignal | undefined,
-        tokenSink: { used: number; prompt: number; completion: number },
+        tokenSink: { used: number; prompt: number; completion: number; cached?: number },
         ledger: UsageLedger,
         visionImages?: string[] | undefined
     ): AsyncGenerator<AIStreamChunk> {
@@ -2436,6 +2442,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     if (chunk.metadata?.tokensUsed) tokenSink.used += chunk.metadata.tokensUsed;
                     if (chunk.metadata?.promptTokens) tokenSink.prompt += chunk.metadata.promptTokens;
                     if (chunk.metadata?.completionTokens) tokenSink.completion += chunk.metadata.completionTokens;
+                    tokenSink.cached = addCachedTokens(tokenSink.cached, chunk.metadata?.cachedPromptTokens);
                     if (chunk.done) {
                         stillTruncated = !!chunk.metadata?.truncated;
                     }
@@ -2477,9 +2484,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         ledger: UsageLedger,
         visionImages: string[] | undefined,
         accumulateContent: (text: string) => void,
-        accumulateTokens: (used: number, prompt: number, completion: number) => void
+        accumulateTokens: (used: number, prompt: number, completion: number, cached: number | undefined) => void
     ): AsyncGenerator<string> {
-        const contTokens = { used: 0, prompt: 0, completion: 0 };
+        const contTokens: { used: number; prompt: number; completion: number; cached?: number } = { used: 0, prompt: 0, completion: 0 };
         for await (const contChunk of this.continueTruncatedResponse(
             providerId,
             systemPrompt,
@@ -2495,7 +2502,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 yield contChunk.content;
             }
         }
-        accumulateTokens(contTokens.used, contTokens.prompt, contTokens.completion);
+        accumulateTokens(contTokens.used, contTokens.prompt, contTokens.completion, contTokens.cached);
     }
 
     /**

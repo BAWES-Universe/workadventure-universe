@@ -43,7 +43,7 @@ vi.mock("../mcp/MCPConnector", () => ({
 }));
 
 /** A call that, like the registry, tells the config what it read from and wrote to the cache before its closing chunk */
-function call(options: { read?: number; write?: number; prompt: number; completion: number; text?: string; tool?: boolean; cached?: number }) {
+function call(options: { read?: number; write?: number; prompt: number; completion: number; text?: string; tool?: boolean; cached?: number; truncated?: boolean }) {
     return async function* (_providerId: string, _system: string, _message: string, config: any) {
         if (options.tool) yield { content: "", done: false, toolCalls: [{ id: "call_1", name: "get_bot_position", arguments: "{}" }] };
         else yield { content: options.text ?? "Hello there.", done: false };
@@ -60,7 +60,7 @@ function call(options: { read?: number; write?: number; prompt: number; completi
                 cacheWriteTokens: options.write,
                 latency: 10,
                 error: false,
-                truncated: false,
+                truncated: options.truncated ?? false,
             },
         };
     };
@@ -212,6 +212,16 @@ describe("AIService and the provider's prompt cache", () => {
 
             // The turn still adds every round up
             expect(admin.trackAIUsage.mock.calls[0][0]).toMatchObject({ cacheReadTokens: 6000, cacheWriteTokens: 3000 });
+        });
+
+        it("counts a continuation's cached tokens with the rest, so the trace's cost is not priced at the fresh rate", async () => {
+            const { admin, memory } = buildMocks();
+            mockGenerateStream
+                .mockImplementationOnce(call({ prompt: 1100, completion: 50, cached: 1000, read: 1000, truncated: true }))
+                .mockImplementationOnce(call({ prompt: 1300, completion: 40, cached: 1200, read: 1200, text: " and the rest." }));
+            await run(new AIService(memory, admin, "http://admin.local"), admin);
+
+            expect(mockCaptureAiTrace.mock.calls[0][0]).toMatchObject({ inputTokens: 2400, cachedInputTokens: 2200 });
         });
 
         it("keeps the ledger's cache reads on the Sentry span when the provider's own cached figure is smaller", async () => {
