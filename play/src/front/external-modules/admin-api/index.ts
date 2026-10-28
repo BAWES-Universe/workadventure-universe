@@ -48,7 +48,7 @@ import {
 let adminModalOpen = false;
 /** The bridge for this visit (a new one on every room join or reconnect). */
 let bridge: OrbitBridge | null = null;
-/** The control that opened Orbit, to give focus back to when Orbit closes. */
+/** The control that opened Orbit from the keyboard, to give focus back to when Orbit closes. */
 let launcher: HTMLElement | null = null;
 let unsubscribeUserConnected: (() => void) | null = null;
 let unsubscribeModal: (() => void) | null = null;
@@ -338,7 +338,7 @@ function openAdminModal(options: ExtensionModuleOptions, source: OrbitOpenSource
     }
 
     // Reopened by the game, not by a tap: there is no control to give the focus back to.
-    launcher = source !== "resume" && document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    launcher = source !== "resume" ? keyboardFocusedControl() : null;
     clearHeldMovement();
     modalFullScreenStore.set(false);
     modalIframeStore.set(modalEvent);
@@ -407,6 +407,21 @@ export function openOrbitProfileByChatId(chatId: string): boolean {
 export function notifyOrbitChanged(topic: OrbitEventTopic) {
     if (!adminModalOpen || !bridge) return;
     bridge.notifyChanged(topic);
+}
+
+/**
+ * The control the keyboard has focused, or null. A control a click or tap focused is left alone: with the focus handed
+ * back to it, Enter would press it again (reopening Orbit) instead of opening Express.
+ */
+function keyboardFocusedControl(): HTMLElement | null {
+    const focused = document.activeElement;
+    if (!(focused instanceof HTMLElement)) return null;
+    try {
+        return focused.matches(":focus-visible") ? focused : null;
+    } catch {
+        // A browser without :focus-visible: keep the focus return for everyone.
+        return focused;
+    }
 }
 
 // Function to close the admin modal
