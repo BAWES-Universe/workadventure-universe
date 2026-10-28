@@ -22,7 +22,8 @@ export async function* withNearbySteps(stream: AsyncIterable<AIStreamChunk>, lin
     let steps: ReplySteps | undefined;
     let shown: boolean | undefined;
     let responseId: string | undefined;
-    let failed = false;
+    // The answer came: the stream ran out, or gave its last chunk. A reply that stops before that didn't finish.
+    let answered = false;
     const show = () => {
         if (!steps) return;
         responseId ??= line.newResponseId();
@@ -45,15 +46,14 @@ export async function* withNearbySteps(stream: AsyncIterable<AIStreamChunk>, lin
                 // Only the line needs it: the reply goes on without it
                 continue;
             }
+            if (chunk.done) answered = true;
             yield chunk;
         }
-    } catch (error) {
-        failed = true;
-        throw error;
+        answered = true;
     } finally {
-        // Also runs when the reply's loop stops early: after its last chunk, or when it was cut off
+        // Also runs when the reply's loop stops early: after its last chunk, when it was cut off, or when it failed
         if (steps) {
-            if (failed || line.aborted?.()) steps.stop();
+            if (!answered || line.aborted?.()) steps.stop();
             else steps.end();
             show();
         }

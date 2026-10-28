@@ -95,6 +95,18 @@ describe('withNearbySteps', () => {
         expect(sent.at(-1)?.field.state).toBe('stopped');
     });
 
+    it('marks the line stopped when the reply fails before its answer came', async () => {
+        const { sent, line } = lineFor();
+        await expect(
+            (async () => {
+                for await (const chunk of withNearbySteps(reply(toolRound), line)) {
+                    if (chunk.content === 'Here it is') throw new Error('reply broke');
+                }
+            })()
+        ).rejects.toThrow('reply broke');
+        expect(sent.at(-1)?.field.state).toBe('stopped');
+    });
+
     it('shows nothing when the reply was cut off before its first step', async () => {
         const { sent, line, state } = lineFor();
         state.aborted = true;
