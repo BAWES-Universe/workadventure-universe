@@ -1370,6 +1370,7 @@ export class AIService {
                                 const errorBefore = followUpError;
                                 const failedBefore = followUpFailedForHealth;
                                 const errorStatusBefore = followUpErrorStatus;
+                                const errorTextBefore = errorText;
                                 let refusedForLength = false;
                                 for await (const resultChunk of this.meteredStream(
                                     ledger,
@@ -1468,6 +1469,7 @@ export class AIService {
                                 followUpError = errorBefore;
                                 followUpFailedForHealth = failedBefore;
                                 followUpErrorStatus = errorStatusBefore;
+                                errorText = errorTextBefore;
                                 lastFollowUpDoneChunk = null;
                             }
 

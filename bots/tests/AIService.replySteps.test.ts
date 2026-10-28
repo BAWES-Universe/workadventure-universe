@@ -201,6 +201,28 @@ describe('AIService – a reply keeps its own steps', () => {
         expect(after.length).toBeLessThan(before);
     });
 
+    it('says why a later call failed, not the refusal the length guard already fixed', async () => {
+        const { admin, memory } = buildMocks(LIMITS, 'own-key');
+        const refused = async function* () {
+            yield { content: '', done: true, metadata: { tokensUsed: 0, latency: 10, error: true, errorStatus: 400, tooLong: true, errorText: "This model's maximum context length is 8192 tokens" } };
+        };
+        const broken = async function* () {
+            yield { content: '', done: true, metadata: { tokensUsed: 0, latency: 10, error: true, errorStatus: 500, errorText: 'server error' } };
+        };
+        answersWith(calls('call_a'), refused, calls('call_b'));
+        mockGenerateStream.mockImplementation(broken);
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        await reply(withLongResults(new AIService(memory, admin, 'http://admin.local')));
+        const said = warn.mock.calls.map((call) => String(call[0])).filter((line) => line.includes('did not answer in full'));
+        expect(said).toEqual([expect.stringContaining('the provider failed (500): server error')]);
+        // The failed call's own event too: the refusal's text is not carried past the call that fixed it
+        const { captureAiGeneration } = await import('../ai/PostHogClient');
+        const failed = vi.mocked(captureAiGeneration).mock.calls.map((call: any[]) => call[0].error).filter(Boolean);
+        expect(failed.length).toBeGreaterThan(0);
+        for (const error of failed) expect(error).not.toContain('maximum context length');
+        expect(failed.at(-1)).toBe('the provider failed (500): server error');
+    });
+
     it("never marks a person's key failing for a rate limit its own asking again caused", async () => {
         const { admin, memory } = buildMocks(LIMITS, 'own-key');
         const limited = async function* () {
