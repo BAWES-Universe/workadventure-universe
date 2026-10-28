@@ -235,7 +235,9 @@
                                 refusedSave = true;
                                 const currentBot = get(botPreviewsStore).get(bot.id);
                                 const saved =
-                                    shownBotCount === shownBotCountOnScheduleForConfig ? lastSavedBotConfig : savedConfigOnSchedule;
+                                    shownBotCount === shownBotCountOnScheduleForConfig
+                                        ? lastSavedBotConfig
+                                        : savedConfigOnSchedule;
                                 if (
                                     currentBot &&
                                     JSON.stringify(currentBot.behaviorConfig?.vision ?? null) ===
