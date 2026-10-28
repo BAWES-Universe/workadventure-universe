@@ -1183,9 +1183,10 @@ export class AdminApiService {
     /**
      * One call to Orbit's routes for files in bot chats (#1508), with the bot service token. A refusal comes back as an
      * ArtifactCallError with Orbit's own code and line; anything that stops Orbit answering is `orbit_unavailable`. No
-     * file name or text is ever logged.
+     * file name or text is ever logged. `report` false keeps a call made before every reply out of Sentry, so a slow
+     * Orbit doesn't send one event per reply.
      */
-    private async botFileCall<T>(path: string, body: object, timeoutMs: number): Promise<T> {
+    private async botFileCall<T>(path: string, body: object, timeoutMs: number, report = true): Promise<T> {
         const botServiceToken = process.env.BOT_SERVICE_TOKEN;
         if (!this.isConfigured() || !botServiceToken) {
             throw new ArtifactCallError('orbit_unavailable', 503, 'Orbit is not set up for files.');
@@ -1205,7 +1206,7 @@ export class AdminApiService {
             }
             // An Orbit without the routes yet (it ships first, but a bot server can talk to an older one)
             if (status === 404) throw new ArtifactCallError('not_available', 404, 'Orbit does not keep chat files yet.');
-            Sentry.captureException(new Error(`Bot file call ${path} failed (${status ?? 'no answer'})`), { tags: { area: 'bot-files' } });
+            if (report) Sentry.captureException(new Error(`Bot file call ${path} failed (${status ?? 'no answer'})`), { tags: { area: 'bot-files' } });
             throw new ArtifactCallError('orbit_unavailable', status ?? 503, 'Orbit could not be reached.');
         }
     }
@@ -1229,9 +1230,10 @@ export class AdminApiService {
     findBotFiles(
         call: ArtifactCall,
         find: { limit: number; words?: string | null; kinds?: string[] | null; source?: 'person' | 'bot' | null; page?: number | null },
-        timeoutMs = BOT_FILE_TIMEOUT_MS
+        timeoutMs = BOT_FILE_TIMEOUT_MS,
+        report = true
     ): Promise<BotFilesFound> {
-        return this.botFileCall('api/bot-files/find', { ...call, ...find }, timeoutMs);
+        return this.botFileCall('api/bot-files/find', { ...call, ...find }, timeoutMs, report);
     }
 
     /**

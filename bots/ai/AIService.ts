@@ -2614,7 +2614,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         try {
             const who = this.chatCallFor(botId, playerId, botClient, spaceName);
             if (!who) return '';
-            const found = await admin.findBotFiles({ botId, ...who }, { limit }, RECENT_FILES_WAIT_MS);
+            const found = await admin.findBotFiles({ botId, ...who }, { limit }, RECENT_FILES_WAIT_MS, false);
             return buildRecentFilesLine(found.items ?? []);
         } catch {
             // Never in the way of the reply: an Orbit without the list, a slow one, or a chat it can't name

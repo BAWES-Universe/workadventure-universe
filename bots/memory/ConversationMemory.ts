@@ -190,9 +190,6 @@ export class ConversationMemory {
     }
 
     /**
-     * Add a message to conversation history
-     */
-    /**
      * The newest line from the person, so a file's note in it can take the short id Orbit gives the file later (#1508).
      * The line itself, not a copy: a reply added meanwhile doesn't move it.
      */
@@ -204,6 +201,9 @@ export class ConversationMemory {
         return undefined;
     }
 
+    /**
+     * Add a message to conversation history
+     */
     addMessage(
         botId: string,
         playerId: number,

@@ -46,7 +46,8 @@ describe('the newest files, asked of Orbit before a reply', () => {
         expect(findBotFiles).toHaveBeenCalledWith(
             { botId: 'bot1', person: { signedIn: true, identifier: 'uuid-1', name: 'Khalid' }, chat: { kind: 'nearby', ref: 'space-1' } },
             { limit: BOT_LIMIT_DEFAULTS.recentFiles },
-            expect.any(Number)
+            expect.any(Number),
+            false
         );
         expect(line).toContain('f12');
     });
@@ -54,7 +55,7 @@ describe('the newest files, asked of Orbit before a reply', () => {
     it('in a direct message names the signed-in person and the room', async () => {
         const ai = new AIService(null!, null!, '');
         (ai as unknown as { conversationMemory: unknown }).conversationMemory = { getMemory: () => ({ dmRoomId: '!room', userUuid: 'uuid-2', playerName: 'Sara' }) };
-        const findBotFiles = vi.fn(async () => ({ items: [] }));
+        const findBotFiles = vi.fn(async (_call: unknown, _find: unknown) => ({ items: [] }));
         expect(await ai['recentFilesFor']('bot1', -1, undefined, 'matrix-dm', { findBotFiles } as never)).toBe('');
         expect(findBotFiles.mock.calls[0][0]).toEqual({ botId: 'bot1', person: { signedIn: true, identifier: 'uuid-2', name: 'Sara' }, chat: { kind: 'dm', ref: '!room' } });
     });
@@ -118,5 +119,11 @@ describe('AdminApiService files in bot chats', () => {
         const reported = vi.mocked(Sentry.captureException).mock.calls[0][0] as Error;
         expect(reported.message).toBe('Bot file call api/bot-files/text failed (no answer)');
         expect(JSON.stringify(vi.mocked(Sentry.captureException).mock.calls)).not.toContain('secret');
+    });
+
+    it('keeps the newest files asked before every reply out of Sentry when Orbit is slow, so a bad minute is not one event per reply', async () => {
+        post.mockRejectedValueOnce(Object.assign(new Error('timeout'), { isAxiosError: true, code: 'ECONNABORTED' }));
+        await expect(service.findBotFiles(call, { limit: 5 }, 2000, false)).rejects.toMatchObject({ code: 'orbit_unavailable' });
+        expect(Sentry.captureException).not.toHaveBeenCalled();
     });
 });
