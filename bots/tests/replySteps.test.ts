@@ -163,6 +163,28 @@ describe("a reply's room for tool results", () => {
         expect(room.makeRoom(1_000_000)).toBe(false);
     });
 
+    it('gives the room a short result leaves to the longer ones in the same step', () => {
+        const room = new StepRoom(1000);
+        room.add(
+            stepOf(
+                1,
+                '',
+                [
+                    { id: 'a', name: 'get_bot_position', arguments: '{}' },
+                    { id: 'b', name: 'read_web_page', arguments: '{}' },
+                ],
+                [
+                    { id: 'a', name: 'get_bot_position', text: 'x: 1, y: 2' },
+                    { id: 'b', name: 'read_web_page', text: 'b'.repeat(3000) },
+                ]
+            )
+        );
+        const [short, long] = room.steps[0]!.results;
+        expect(short!.content).toBe('x: 1, y: 2');
+        // Not half of the room: all but what the short one kept
+        expect(long!.content).toMatch(/^b{990}\n\[Only the first 990 of 3,000 characters fit/);
+    });
+
     it('never cuts half an emoji', () => {
         const room = new StepRoom(3);
         room.add(step(1, 'ab😀cd'));

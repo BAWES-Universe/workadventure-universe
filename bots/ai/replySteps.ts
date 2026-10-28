@@ -288,16 +288,21 @@ export class StepRoom {
     }
 
     private fit(step: ReplyStep, room: number): boolean {
-        const each = Math.max(1, Math.floor(room / Math.max(1, step.results.length)));
+        // Shortest first, so the room a short result leaves goes to the longer ones
+        const cuts = step.results
+            .map((result) => ({ result, cut: this.cut.get(result) ?? { whole: result.content, kept: result.content.length } }))
+            .sort((a, b) => a.cut.kept - b.cut.kept);
+        let left = room;
         let changed = false;
-        for (const result of step.results) {
-            const cut = this.cut.get(result) ?? { whole: result.content, kept: result.content.length };
-            if (cut.kept <= each) continue;
+        cuts.forEach(({ result, cut }, i) => {
+            const each = Math.max(1, Math.floor(left / (cuts.length - i)));
+            left = Math.max(0, left - Math.min(cut.kept, each));
+            if (cut.kept <= each) return;
             const kept = clipped(cut.whole, each);
             result.content = `${kept}${cutNote(kept.length, cut.whole.length)}`;
             this.cut.set(result, { whole: cut.whole, kept: kept.length });
             changed = true;
-        }
+        });
         return changed;
     }
 }
