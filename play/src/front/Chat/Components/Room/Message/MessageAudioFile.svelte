@@ -1,36 +1,256 @@
 <script lang="ts">
+    import { getContext, hasContext, onDestroy } from "svelte";
     import type { Readable } from "svelte/store";
     import type { ChatMessageContent } from "../../../Connection/ChatConnection";
+    import LL from "../../../../../i18n/i18n-svelte";
+    import { formatDuration } from "../../../../Components/Broadcast/voiceRecorder";
+    import { readAudioShape } from "../../../VoiceNote/AudioShape";
+    import { singlePlayback } from "../../../../Utils/SinglePlayback";
+    import {
+        isVoiceNoteUnplayed,
+        markVoiceNotePlayed,
+        resampleWaveform,
+        VOICE_NOTE_BARS,
+    } from "../../../VoiceNote/VoiceNote";
+    import { getMediaCaption } from "../MessageActions/messageActions";
+    import { MESSAGE_SENDER_CONTEXT, type MessageSenderInfo } from "./messageSenderContext";
+    import { IconPauseFilled, IconPlayFilled } from "@wa-icons";
 
     export let content: Readable<ChatMessageContent>;
 
-    $: hasCaption = $content.body && $content.body.trim();
+    const sender = hasContext(MESSAGE_SENDER_CONTEXT)
+        ? getContext<MessageSenderInfo>(MESSAGE_SENDER_CONTEXT)
+        : undefined;
+    const isMine = sender?.isMine ?? false;
+
+    const SPEEDS = [1, 1.5, 2];
+    const SKIP_SECONDS = 5;
+
+    let player: HTMLAudioElement | undefined;
+    // The shape and length: the sender's own when the message carries them, else read from the file.
+    let readLevels: number[] | undefined;
+    let readDuration: number | undefined;
+    // The player's own length, for a file whose shape could not be read (too big, or a format the browser cannot decode).
+    let playerDuration: number | undefined;
+    let current = 0;
+    let playing = false;
+    // A note from someone else is new until it is played on this device (their own never is).
+    let heard = isMine || !$content.isVoice || !isVoiceNoteUnplayed(sender?.messageId, sender?.sentAt);
+    let speed = 0;
+    let shapeFor: string | undefined;
+
+    $: isVoice = $content.isVoice === true;
+    $: levels = resampleWaveform($content.voiceWaveform ?? readLevels ?? [], VOICE_NOTE_BARS);
+    $: duration = $content.voiceDuration ?? readDuration ?? playerDuration;
+    // What a voice note has to say about itself is its shape: an audio file keeps its name above the player.
+    $: name = isVoice ? undefined : $content.filename?.trim() || $content.body?.trim() || undefined;
+    $: caption = getMediaCaption($content);
+    $: needsFile = $content.voiceWaveform === undefined || $content.voiceDuration === undefined;
+    $: if ($content.url && needsFile && $content.url !== shapeFor) readShape($content.url);
+    $: progress = duration ? Math.min(1, current / duration) : 0;
+    $: started = playing || current > 0;
+
+    function readShape(url: string) {
+        shapeFor = url;
+        readAudioShape(url)
+            .then((shape) => {
+                if (shapeFor !== url || !shape) return;
+                readLevels = shape.levels;
+                readDuration = shape.duration;
+            })
+            .catch((error) => console.warn("voice note shape", error));
+    }
+
+    function onPlay() {
+        playing = true;
+        if (!heard) {
+            heard = true;
+            if (sender?.messageId) markVoiceNotePlayed(sender.messageId);
+        }
+    }
+
+    function toggle() {
+        if (!player) return;
+        if (playing) player.pause();
+        else player.play().catch((error) => console.warn(error));
+    }
+    function cycleSpeed() {
+        speed = (speed + 1) % SPEEDS.length;
+        if (player) player.playbackRate = SPEEDS[speed];
+    }
+    function seekTo(seconds: number) {
+        if (!player || !duration) return;
+        player.currentTime = Math.min(duration, Math.max(0, seconds));
+    }
+    function seek(event: MouseEvent) {
+        if (!duration) return;
+        const box = (event.currentTarget as HTMLElement).getBoundingClientRect();
+        seekTo(Math.min(1, Math.max(0, (event.clientX - box.left) / box.width)) * duration);
+    }
+    function seekByKey(event: KeyboardEvent) {
+        if (event.key === "ArrowRight") seekTo(current + SKIP_SECONDS);
+        else if (event.key === "ArrowLeft") seekTo(current - SKIP_SECONDS);
+        else return;
+        event.preventDefault();
+    }
+    onDestroy(() => {
+        player?.pause();
+    });
 </script>
 
-{#if $content.url !== undefined}
-    <audio controls src={$content.url} class="max-w-full min-w-96 block p-2" />
+{#if name}
+    <div class="px-3 pt-2 text-sm text-white/80 truncate max-w-[260px]">{name}</div>
 {/if}
-
-{#if hasCaption}
-    <div class="px-2 py-1 text-sm text-white/90">{$content.body}</div>
+<div class="voice-note" class:mine={isMine} data-testid="voiceNote">
+    <button
+        type="button"
+        class="voice-play u-cta-secondary"
+        on:click={toggle}
+        disabled={!$content.url}
+        aria-label={playing ? $LL.chat.voiceNote.pause() : $LL.chat.voiceNote.play()}
+    >
+        {#if playing}
+            <IconPauseFilled font-size="18" />
+        {:else}
+            <IconPlayFilled font-size="18" />
+        {/if}
+    </button>
+    <!-- svelte-ignore a11y-click-events-have-key-events -->
+    <div
+        class="voice-bars"
+        on:click={seek}
+        on:keydown={seekByKey}
+        role="slider"
+        aria-label={$LL.chat.voiceNote.position()}
+        aria-valuemin={0}
+        aria-valuemax={duration ? Math.round(duration) : 0}
+        aria-valuenow={Math.round(current)}
+        tabindex="0"
+    >
+        {#each levels as level, index (index)}
+            <span
+                class:played={index / VOICE_NOTE_BARS < progress}
+                style="height: {Math.max(4, Math.round(level * 26))}px"
+            />
+        {/each}
+    </div>
+    <div class="voice-time">
+        {started ? `${formatDuration(current)} / ${formatDuration(duration ?? 0)}` : formatDuration(duration ?? 0)}
+        {#if !heard}<span class="voice-unheard" role="img" aria-label={$LL.chat.voiceNote.notPlayed()} />{/if}
+    </div>
+    <button
+        type="button"
+        class="voice-speed u-cta-secondary"
+        on:click={cycleSpeed}
+        aria-label={$LL.chat.voiceNote.speed()}
+    >
+        {SPEEDS[speed]}×
+    </button>
+    {#if $content.url}
+        <audio
+            src={$content.url}
+            preload="metadata"
+            bind:this={player}
+            use:singlePlayback
+            bind:currentTime={current}
+            on:play={onPlay}
+            on:pause={() => (playing = false)}
+            on:ended={() => {
+                playing = false;
+                current = 0;
+            }}
+            on:loadedmetadata={() => {
+                if (player) player.playbackRate = SPEEDS[speed];
+            }}
+            on:durationchange={() => {
+                // A browser-made file can have no length in its header (the player says Infinity): it is not used then.
+                playerDuration =
+                    player && Number.isFinite(player.duration) && player.duration > 0 ? player.duration : undefined;
+            }}
+        />
+    {/if}
+</div>
+{#if caption}
+    <div class="px-3 pb-2 text-sm text-white/90">{caption}</div>
 {/if}
 
 <style>
-    audio::-webkit-media-controls-panel {
-        background-color: #d3d8f9;
-        -moz-border-radius: 1px !important;
-        -webkit-border-radius: 1px !important;
-        border-radius: 1px !important;
+    .voice-note {
+        display: grid;
+        grid-template-columns: 44px minmax(0, 1fr) auto;
+        grid-template-rows: auto auto;
+        grid-template-areas:
+            "play bars speed"
+            "play time speed";
+        column-gap: 10px;
+        align-items: center;
+        width: 264px;
+        max-width: 100%;
+        box-sizing: border-box;
+        padding: 8px 12px 8px 8px;
     }
-
-    audio::-webkit-media-controls-mute-button,
-    audio::-webkit-media-controls-play-button,
-    audio::-webkit-media-controls-current-time-display,
-    audio::-webkit-media-controls-time-remaining-display,
-    audio::-webkit-media-controls-timeline {
-        color: #1b2a41;
-        -moz-border-radius: 1px !important;
-        -webkit-border-radius: 1px !important;
-        border-radius: 1px !important;
+    .voice-play {
+        grid-area: play;
+        width: 44px;
+        height: 44px;
+        padding: 0;
+        border-radius: 9999px;
+        display: grid;
+        place-items: center;
+        box-sizing: border-box;
+        font-family: inherit;
+    }
+    .voice-bars {
+        grid-area: bars;
+        height: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        cursor: pointer;
+    }
+    .voice-bars span {
+        flex: none;
+        width: 3px;
+        border-radius: 9999px;
+        background: rgba(255, 255, 255, 0.35);
+    }
+    .voice-bars span.played {
+        background: #fff;
+    }
+    .voice-time {
+        grid-area: time;
+        font-size: 11px;
+        line-height: 16px;
+        color: rgba(255, 255, 255, 0.5);
+        font-variant-numeric: tabular-nums;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    /* A note that has not been played: the accent, the way Telegram marks one. */
+    .voice-unheard {
+        width: 7px;
+        height: 7px;
+        border-radius: 9999px;
+        background: #c4b5fd;
+    }
+    .voice-speed {
+        grid-area: speed;
+        position: relative;
+        min-width: 36px;
+        height: 24px;
+        padding: 0 8px;
+        border-radius: 9999px;
+        box-sizing: border-box;
+        font-size: 11px;
+        font-weight: 600;
+        line-height: 1;
+        font-family: inherit;
+    }
+    /* A 44px target around the 24px pill. */
+    .voice-speed::before {
+        content: "";
+        position: absolute;
+        inset: -10px -4px;
     }
 </style>

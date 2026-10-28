@@ -7,6 +7,7 @@ import { showCopiedPill } from "../../../Stores/CopiedPillStore";
 import LL from "../../../../../i18n/i18n-svelte";
 import { showFloatingUi } from "../../../../Utils/svelte-floatingui-show";
 import LazyEmote from "../../../../Components/EmoteMenu/LazyEmote.svelte";
+import { pinActionOf, type PinAction } from "../Details/Pins";
 import { getCopyableText, getSaveableFiles, type SaveableFile } from "./messageActions";
 import { saveFiles } from "./saveFiles";
 
@@ -17,19 +18,22 @@ export interface AvailableActions {
     files: SaveableFile[];
     edit: boolean;
     delete: boolean;
+    /** Pin or Unpin, for someone who may pin in this chat. */
+    pin: PinAction | undefined;
 }
 
 /** The actions a message offers, the same in the hover bar, the press-and-hold menu and the right-click menu. */
 export function availableActions(message: ChatMessage): Readable<AvailableActions> {
     return derived(
-        [message.content, message.canReact, message.canReply, message.canDelete],
-        ([$content, $canReact, $canReply, $canDelete]) => ({
+        [message.content, message.canReact, message.canReply, message.canDelete, pinActionOf(message)],
+        ([$content, $canReact, $canReply, $canDelete, $pin]) => ({
             react: $canReact,
             reply: $canReply,
             copyText: getCopyableText(message.type, $content),
             files: getSaveableFiles(message.type, $content),
             edit: message.isMyMessage && message.type === "text",
             delete: $canDelete,
+            pin: $pin,
         })
     );
 }
@@ -41,7 +45,8 @@ export function hasAnyAction(actions: AvailableActions): boolean {
         actions.copyText !== undefined ||
         actions.files.length > 0 ||
         actions.edit ||
-        actions.delete
+        actions.delete ||
+        actions.pin !== undefined
     );
 }
 

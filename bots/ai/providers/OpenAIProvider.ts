@@ -9,7 +9,7 @@
 import type { AIProvider } from '../AIProvider';
 import type { AIProviderConfig, AIStreamChunk, AIResponse, AIUsageDetail } from '../types';
 import { decryptApiKey } from '../encryption';
-import { fetchFor, statusFromError } from './ownKeyHttp';
+import { fetchFor, providerErrorText, statusFromError } from './ownKeyHttp';
 import { linkExternalAbort } from './abortUtils';
 import { resolveVisionSupport } from './visionModels';
 import * as Sentry from '@sentry/node';
@@ -646,6 +646,7 @@ export class OpenAIProvider implements AIProvider {
                     latency,
                     error: !streamEnded && !finishReason,
                     truncated: finishReason === 'length',
+                    ...(finishReason ? { finishReason } : {}),
                 },
             };
 
@@ -663,6 +664,7 @@ export class OpenAIProvider implements AIProvider {
                     error: !externallyCancelled,
                     ...(externallyCancelled ? { cancelled: true } : {}),
                     errorStatus: statusFromError(error),
+                    ...(externallyCancelled ? {} : { errorText: providerErrorText(error) }),
                 },
             };
         } finally {

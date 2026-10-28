@@ -42,14 +42,55 @@ async function showPushed(push) {
         const showing = await self.registration.getNotifications({ tag });
         showing.forEach((notification) => notification.close());
     }
+    // A Universe window here that plays its own chat sound for this message (#1493): the system's sound would be a
+    // second one. A notification for a closed Universe, or one that is frozen in the background, still makes its sound.
+    const silent = chatRoomId !== undefined && (await universePlaysChatSound(chatRoomId));
     await self.registration.showNotification(push.title, {
         body: typeof push.body === "string" ? push.body : undefined,
         icon: "/static/images/logo-WA-min.png",
         badge: "/static/images/logo-WA-min.png",
         tag,
+        silent,
         // A newer message in a busy chat replaces the older notification: it still has to make its sound.
-        renotify: Boolean(tag),
+        renotify: Boolean(tag) && !silent,
         data: { chatRoomId, tabUrl: push.url },
+    });
+}
+
+/**
+ * Longer than a running page takes to answer (it waits up to 1.5 s for its own sound, ChatSound.ts); a frozen one (a
+ * phone's app in the background) never answers, and its notification rings.
+ */
+const SOUND_CHECK_WAIT_MS = 2000;
+
+/** Whether a Universe window here played, or is about to play, the chat sound for this chat (NotificationManager answers). */
+async function universePlaysChatSound(chatRoomId) {
+    let windows;
+    try {
+        windows = await clients.matchAll({ type: "window", includeUncontrolled: true });
+    } catch {
+        return false;
+    }
+    if (windows.length === 0) return false;
+    return new Promise((resolve) => {
+        let waiting = windows.length;
+        const timer = setTimeout(() => resolve(false), SOUND_CHECK_WAIT_MS);
+        const answer = (plays) => {
+            waiting--;
+            if (plays === true || waiting === 0) {
+                clearTimeout(timer);
+                resolve(plays === true);
+            }
+        };
+        for (const client of windows) {
+            try {
+                const channel = new MessageChannel();
+                channel.port1.onmessage = (event) => answer(event.data);
+                client.postMessage({ type: "chatSoundCheck", chatRoomId }, [channel.port2]);
+            } catch {
+                answer(false);
+            }
+        }
     });
 }
 

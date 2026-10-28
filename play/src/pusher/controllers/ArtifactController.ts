@@ -4,7 +4,7 @@ import Debug from "debug";
 import type { ResponseWithUserIdentifier } from "../middlewares/Authenticated";
 import { authenticated } from "../middlewares/Authenticated";
 import { PerUserRateLimiter } from "../services/LinkPreviewService";
-import { ArtifactsError, artifactsService } from "../services/ArtifactsService";
+import { ArtifactsError, artifactsService, CHANGE_SCOPES, OPEN_SCOPES } from "../services/ArtifactsService";
 import type { ArtifactViewer } from "../services/ArtifactsService";
 import { socketManager } from "../services/SocketManager";
 import { isBubbleSpaceName } from "../services/SpaceJoinPolicy";
@@ -30,6 +30,13 @@ const OpenBody = z.object({
 });
 const ViewerBody = z.object({ chat: Chat.optional() });
 const RestoreBody = z.object({ chat: Chat.optional(), number: z.number().int().min(1) });
+const ShareBody = z
+    .object({
+        chat: Chat.optional(),
+        openScope: z.enum(OPEN_SCOPES).optional(),
+        changeScope: z.enum(CHANGE_SCOPES).optional(),
+    })
+    .refine((body) => body.openScope !== undefined || body.changeScope !== undefined);
 
 /** Who is looking and whether they are in the chat, as the pusher knows it (never as the browser claims it). */
 export function viewerOf(
@@ -90,6 +97,9 @@ export class ArtifactController extends BaseHttpController {
         this.app.options("/artifacts/:id/restore", (req: Request, res: Response) => {
             res.status(200).send("");
         });
+        this.app.options("/artifacts/:id/share", (req: Request, res: Response) => {
+            res.status(200).send("");
+        });
 
         this.app.post("/artifacts/:id/open", [authenticated], async (req: Request, res: ResponseWithUserIdentifier) => {
             await this.answer(req, res, "open", async (viewer, id) => {
@@ -148,6 +158,35 @@ export class ArtifactController extends BaseHttpController {
                     const body = RestoreBody.safeParse(req.body ?? {});
                     if (!body.success) throw new ArtifactsError("invalid_request", 400);
                     return artifactsService.restore(id, body.data.number, viewer(body.data.chat));
+                });
+            }
+        );
+
+        /**
+         * @openapi
+         * /artifacts/{id}/share:
+         *   post:
+         *     description: The owner says who can open it ("chat" or "link") and who can ask for changes ("owner" or
+         *       "openers"), one or both. Answers with the artifact as it now is.
+         *     responses:
+         *       200:
+         *         description: The artifact with its new sharing
+         *       400:
+         *         description: Neither was sent, or one is not a known choice
+         *       403:
+         *         description: The person may open it but is not its owner
+         *       404:
+         *         description: No such artifact, or the person may not open it
+         */
+        this.app.post(
+            "/artifacts/:id/share",
+            [authenticated],
+            async (req: Request, res: ResponseWithUserIdentifier) => {
+                await this.answer(req, res, "share", async (viewer, id) => {
+                    const body = ShareBody.safeParse(req.body ?? {});
+                    if (!body.success) throw new ArtifactsError("invalid_request", 400);
+                    const { chat, ...sharing } = body.data;
+                    return artifactsService.share(id, sharing, viewer(chat));
                 });
             }
         );

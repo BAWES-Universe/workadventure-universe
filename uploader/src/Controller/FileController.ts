@@ -37,6 +37,8 @@ import { HttpResponseDevice } from "./HttpResponseDevice";
 // reading a body that is over them, so a refused upload is never held in memory or stored.
 const MAX_FILES_PER_UPLOAD = 10;
 const maxFileSize = parseInt(UPLOAD_MAX_FILESIZE);
+// What the uploader names a stored file: a UUID, with the file's extension (up to 16 characters, as MimeType.ts keeps) kept.
+const CHAT_FILE_ID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\.[a-z0-9]{1,16})?$/i;
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -72,6 +74,7 @@ export class FileController {
     this.uploadAudioMessage();
     this.downloadAudioMessage();
     this.downloadFile();
+    this.chatFile();
     this.uploadFile();
     this.deleteUploadedFile();
     this.ping();
@@ -187,6 +190,48 @@ export class FileController {
           console.error(e);
           return response.status(500).send("Internal server error");
       });
+    });
+  }
+
+  /**
+   * A lasting link to a chat file kept in one of the CDN buckets: it sends the browser on to the file's public link,
+   * or to a fresh signed one when the bucket has no public link (a signed link expires, so a saved one can't be kept).
+   * Only the two chat buckets, and only uploader file ids (a UUID with its extension), are ever looked up.
+   */
+  chatFile() {
+    this.App.get("/chat-file/:bucket/:id", (request, response) => {
+      const bucket = request.params["bucket"];
+      const id = request.params["id"];
+      const publicUrl =
+        bucket === S3_CDN_USER_REFS_BUCKET
+          ? S3_CDN_USER_REFS_PUBLIC_URL
+          : bucket === S3_CDN_BOT_GENS_BUCKET
+          ? S3_CDN_BOT_GENS_PUBLIC_URL
+          : undefined;
+      const isChatBucket =
+        !!bucket && (bucket === S3_CDN_USER_REFS_BUCKET || bucket === S3_CDN_BOT_GENS_BUCKET);
+      if (!isChatBucket || !CHAT_FILE_ID_REGEX.test(id)) {
+        response.status(404).json({ message: "not-found" });
+        return;
+      }
+      response.setHeader("Cache-Control", "no-store");
+      if (publicUrl) {
+        response.redirect(302, `${publicUrl}/${id}`);
+        return;
+      }
+      const provider = getCdnProvider(bucket);
+      if (!provider) {
+        response.status(404).json({ message: "not-found" });
+        return;
+      }
+      provider
+        .getSignedUrl(id)
+        .then((link) => response.redirect(302, link))
+        .catch((e) => {
+          console.error(e);
+          Sentry.captureException(e);
+          if (!response.headersSent) response.status(500).send("Internal server error");
+        });
     });
   }
 
