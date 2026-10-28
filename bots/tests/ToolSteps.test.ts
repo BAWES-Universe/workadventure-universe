@@ -28,6 +28,16 @@ describe('ToolSteps', () => {
         const long = describeStep({ id: 'a', name: 'search', arguments: { query: 'x'.repeat(200) } }).detail!;
         expect(Array.from(long)).toHaveLength(60);
         expect(long.endsWith('…')).toBe(true);
+        // Others in the chat may see the detail: a link keeps only where it goes, and an email or a token-like value
+        // is not shown at all
+        expect(describeStep({ id: 'a', name: 'read_web_page', arguments: { url: 'https://me:pw@x.test/a/b?token=abc#top' } }).detail).toBe(
+            'https://x.test/a/b'
+        );
+        expect(describeStep({ id: 'a', name: 'search', arguments: { query: 'invoices for sam@example.test' } }).detail).toBeUndefined();
+        expect(describeStep({ id: 'a', name: 'search', arguments: { query: 'use sk_live_51HxYzAbCdEfGhIjKlMnOp' } }).detail).toBeUndefined();
+        expect(describeStep({ id: 'a', name: 'search', arguments: { query: 'pixel-world lounge funk, 112 BPM' } }).detail).toBe(
+            'pixel-world lounge funk, 112 BPM'
+        );
         // Broken arguments are no detail, not an error
         expect(describeStep({ id: 'a', name: 'search', arguments: '{oops' }).detail).toBeUndefined();
     });

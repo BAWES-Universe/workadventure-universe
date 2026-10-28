@@ -60,15 +60,18 @@ const NOTE_MAX = 80;
 const DETAIL_KEYS = ['prompt', 'query', 'q', 'search', 'url', 'title', 'topic', 'text', 'description', 'name'];
 /** Never shown, whatever they hold. */
 const PRIVATE_KEY = /key|token|secret|password|passwd|auth|cookie|session|email|phone/i;
+const EMAIL = /[^\s@]+@[^\s@]+\.[^\s@]+/;
+/** A long unbroken run of letters and digits with both: what keys and tokens look like, not words. */
+const TOKEN_LIKE = /(?=[A-Za-z0-9_-]*\d)(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]{24,}/;
 
 /** Our own tools that are work the person waits for. Moving around the map stays out of the line. */
 const OWN_STEPS: Record<string, (args: Record<string, unknown>) => Omit<ToolStep, 'id'>> = {
     read_web_page: (args) => {
         const where = pageName(args.url);
-        return { doing: where ? `Reading ${where}` : 'Reading a page', done: 'Read a page', detail: oneLine(args.url), group: 'page' };
+        return { doing: where ? `Reading ${where}` : 'Reading a page', done: 'Read a page', detail: shown(args.url), group: 'page' };
     },
-    [MAKE_ARTIFACT_TOOL]: (args) => ({ doing: 'Making an artifact', done: 'Made an artifact', detail: oneLine(args.title), group: 'make_artifact' }),
-    [CHANGE_ARTIFACT_TOOL]: (args) => ({ doing: 'Changing an artifact', done: 'Changed an artifact', detail: oneLine(args.title), group: 'change_artifact' }),
+    [MAKE_ARTIFACT_TOOL]: (args) => ({ doing: 'Making an artifact', done: 'Made an artifact', detail: shown(args.title), group: 'make_artifact' }),
+    [CHANGE_ARTIFACT_TOOL]: (args) => ({ doing: 'Changing an artifact', done: 'Changed an artifact', detail: shown(args.title), group: 'change_artifact' }),
 };
 
 /** How a group reads in the summary, by count. Groups without one say "<done> 3 times". */
@@ -233,11 +236,30 @@ function detailOf(args: Record<string, unknown>): string | undefined {
     for (const key of DETAIL_KEYS) {
         const found = Object.keys(args).find((k) => k.toLowerCase() === key);
         if (found && !PRIVATE_KEY.test(found)) {
-            const value = oneLine(args[found]);
+            const value = shown(args[found]);
             if (value) return value;
         }
     }
     return undefined;
+}
+
+/**
+ * A detail as others in the chat may see it (nearby chat shows it to everyone there): links keep only where they go,
+ * without sign-in parts, queries or fragments, and a value carrying an email address or a token-like string is not
+ * shown at all.
+ */
+function shown(value: unknown): string | undefined {
+    if (typeof value !== 'string') return undefined;
+    const bare = value.replace(/\bhttps?:\/\/\S+/gi, (link) => {
+        try {
+            const url = new URL(link);
+            return `${url.protocol}//${url.host}${url.pathname === '/' ? '' : url.pathname}`;
+        } catch {
+            return '';
+        }
+    });
+    if (EMAIL.test(bare) || TOKEN_LIKE.test(bare)) return undefined;
+    return oneLine(bare);
 }
 
 function oneLine(value: unknown, max = DETAIL_MAX): string | undefined {
