@@ -70,8 +70,15 @@ export function artifactDirectMessage(card: ArtifactCard): { body: string; field
     return { body: `${card.title} · ${kind} · Version ${card.version}`, field: card };
 }
 
-export function artifactToolDefinitions(): Array<{ type: 'function'; function: { name: string; description: string; parameters: object } }> {
-    return [
+/**
+ * The artifact tools. With `findWith` set to find_files (#1508), list_artifacts is left out: find_files finds artifacts
+ * along with files, a page at a time, from every chat the person may reach them from.
+ */
+export function artifactToolDefinitions(
+    options: { findWith?: string } = {}
+): Array<{ type: 'function'; function: { name: string; description: string; parameters: object } }> {
+    const findWith = options.findWith ?? LIST_ARTIFACTS_TOOL;
+    const tools: Array<{ type: 'function'; function: { name: string; description: string; parameters: object } }> = [
         {
             type: 'function',
             function: {
@@ -113,7 +120,7 @@ export function artifactToolDefinitions(): Array<{ type: 'function'; function: {
                 parameters: {
                     type: 'object',
                     properties: {
-                        id: { type: 'string', description: 'The artifact id (from make_artifact, list_artifacts or the message).' },
+                        id: { type: 'string', description: `The artifact id (from make_artifact, ${findWith} or the message).` },
                         edits: {
                             type: 'array',
                             description: 'Small edits, applied in order.',
@@ -164,6 +171,7 @@ export function artifactToolDefinitions(): Array<{ type: 'function'; function: {
             },
         },
     ];
+    return findWith === LIST_ARTIFACTS_TOOL ? tools : tools.filter((tool) => tool.function.name !== LIST_ARTIFACTS_TOOL);
 }
 
 /** Who is asking and where, as the bot server knows them for this turn. */
