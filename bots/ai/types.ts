@@ -72,6 +72,8 @@ export interface BotLimits {
     roomChars: number;
     /** Characters of a file's text Orbit keeps ("Text kept from a file"). */
     fileTextChars: number;
+    /** Orbit keeps files in bot chats: it served their limits, so it has the routes the file tools use. */
+    files?: boolean;
 }
 
 /** The recommended limits, the same as Orbit's (lib/bot-limit-values.ts there). */
@@ -110,6 +112,8 @@ export function readBotLimits(raw: unknown): BotLimits {
             (out as unknown as Record<string, number>)[key] = value;
         }
     }
+    // An Orbit that keeps files in bot chats serves their limits; an older one doesn't, and the file tools stay out
+    if (typeof given.findResults === 'number') out.files = true;
     return out;
 }
 
@@ -159,6 +163,8 @@ export interface AIStreamChunk {
     /** How the calls of the last round ended: sent once they ran, before the bot carries on. */
     toolStepResults?: ToolStepResult[];
     toolCalls?: ToolCall[]; // Tool calls requested by AI
+    /** On the done chunk: the model's reasoning for this call, when its provider streams it (DeepSeek thinking). It goes back with the reply's steps. */
+    reasoning?: string;
     metadata?: {
         tokensUsed?: number;
         promptTokens?: number;
@@ -180,6 +186,10 @@ export interface AIStreamChunk {
         cancelled?: boolean;
         errorStatus?: number; // HTTP status the provider answered with when the call failed (401/403 = the key was rejected)
         truncated?: boolean; // true when the provider hit finish_reason='length' (max_tokens cap)
+        /** The provider turned the call down as longer than the model takes (its context window). */
+        tooLong?: boolean;
+        /** The tokens the model takes and was asked, when the "too long" error says both. */
+        context?: { limit: number; asked: number };
         /** Why the provider ended the call ('stop', 'length', 'tool_calls', ...), when it said. */
         finishReason?: string;
         /** What the provider said when the call failed, short and without logins (see providerErrorText). */

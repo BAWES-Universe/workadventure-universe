@@ -19,6 +19,7 @@ import { decryptApiKey } from '../encryption';
 import { fetchFor, providerErrorText, statusFromError } from './ownKeyHttp';
 import { statedOutputCeiling } from './OpenAIProvider';
 import { linkExternalAbort } from './abortUtils';
+import { withStepsAsText, type ReplySteps } from '../replySteps';
 import { resolveVisionSupport } from './visionModels';
 import * as Sentry from '@sentry/node';
 
@@ -371,7 +372,8 @@ export class AnthropicProvider implements AIProvider {
         config: AIProviderConfig,
         tools?: any[],
         externalSignal?: AbortSignal,
-        images?: string[]
+        images?: string[],
+        steps?: ReplySteps
     ): AsyncGenerator<AIStreamChunk> {
         const startTime = Date.now();
         const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
@@ -393,7 +395,8 @@ export class AnthropicProvider implements AIProvider {
         try {
             const endpoint = this.getEndpoint(config);
             const apiKey = this.getApiKey(config);
-            const requestBody = this.buildRequestBody(systemPrompt, userMessage, config, true, tools, images);
+            // The reply's earlier steps go in as text after the message, so a later round still sees what the first ones found
+            const requestBody = this.buildRequestBody(systemPrompt, withStepsAsText(userMessage, steps), config, true, tools, images);
             const { response, controller } = await this.post(endpoint, apiKey, requestBody, config, timeout, externalSignal, cleanups);
 
             if (!response.body) {
