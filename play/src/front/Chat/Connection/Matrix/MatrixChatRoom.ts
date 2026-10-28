@@ -538,8 +538,11 @@ export class MatrixChatRoom
         if (eventRelation) {
             const event_id = eventRelation.event_id;
             if (event_id) {
-                const newBody = event.getOriginalContent()["m.new_content"].body;
+                const newContent = event.getOriginalContent()["m.new_content"];
+                const newBody = newContent.body;
                 this.messages.get(event_id)?.modifyContent(newBody);
+                // A bot's steps line (#1545) is one notice the bot server keeps updating
+                this.messages.get(event_id)?.modifySteps(event.getSender(), newContent);
                 // A pinned message loaded on its own, outside the loaded conversation, gets the edit too.
                 this.detachedMessages.get(event_id)?.modifyContent(newBody);
             }

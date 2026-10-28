@@ -302,7 +302,7 @@ export class Player extends Character {
             segmentStartPos.y +
             (this.currentPathSegmentDistanceFromStart / pathSegmentLength) * (segmentEndPos.y - segmentStartPos.y);
 
-        this.moveToPos(newX, newY);
+        this.moveToPos(newX, newY, xDistance, yDistance);
 
         this.emit(hasMovedEventName, { moving: true, direction: this._lastDirection, x: this.x, y: this.y });
         this.scene.markDirty();
@@ -347,27 +347,27 @@ export class Player extends Character {
     }
 
     /**
-     * Moves the character to the given position.
+     * Moves the character to the given position, facing the way the path segment (xDirection, yDirection) goes.
      */
-    private moveToPos(x: number, y: number) {
-        const oldX = this.x;
-        const oldY = this.y;
-        this.x = x;
-        this.y = y;
-        // The 1.1 ratio to y is applied here because in path finding mode, the player often moves in diagonal.
-        // In diagonal, the amount of x and y are almost equal. This produces a graphical glitch where on one frame,
-        // the player goes left, and on the next frame, the player goes up. This is because the x and y are almost equal.
-        // To fix this, we apply a ratio of 1.1 to y to make sure that the player goes up/down when the y and x are almost equal.
-        if (Math.abs(x - oldX) > Math.abs((y - oldY) * 1.1)) {
-            if (x < oldX) {
+    private moveToPos(x: number, y: number, xDirection: number, yDirection: number) {
+        // On whole pixels, like the keyboard and the camera (startFollow rounds): at an in-between position the Woka
+        // is drawn a fraction away from where the camera put it, and shakes on screen by up to a pixel each frame.
+        // The distance walked along the path stays exact, so the rounding never adds up.
+        this.x = Math.round(x);
+        this.y = Math.round(y);
+        // The facing comes from the segment, not from this frame's rounded step: on a diagonal one frame's step can be
+        // 3 px across and 2 px down and the next one the other way round, which would flip the Woka every frame.
+        // The 1.1 ratio to y makes a Woka walking on an exact diagonal face up/down.
+        if (Math.abs(xDirection) > Math.abs(yDirection * 1.1)) {
+            if (xDirection < 0) {
                 this._lastDirection = PositionMessage_Direction.LEFT;
-            } else if (x > oldX) {
+            } else if (xDirection > 0) {
                 this._lastDirection = PositionMessage_Direction.RIGHT;
             }
         } else {
-            if (y < oldY) {
+            if (yDirection < 0) {
                 this._lastDirection = PositionMessage_Direction.UP;
-            } else if (y > oldY) {
+            } else if (yDirection > 0) {
                 this._lastDirection = PositionMessage_Direction.DOWN;
             }
         }
