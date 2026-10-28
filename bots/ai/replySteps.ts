@@ -225,7 +225,9 @@ export class StepRoom {
 
     add(step: ReplyStep): void {
         if (this.size() + sizeOf(step) > this.room) this.setAside(this.steps);
-        if (sizeOf(step) > this.room) this.fit(step, this.room);
+        // A step larger than the room on its own: its long arguments go first, then its results get what the rest leaves
+        if (sizeOf(step) > this.room) this.setAsideArguments(step);
+        if (sizeOf(step) > this.room) this.fit(step, Math.max(0, this.room - (sizeOf(step) - resultsSizeOf(step))));
         this.steps.push(step);
     }
 

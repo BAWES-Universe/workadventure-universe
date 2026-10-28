@@ -125,7 +125,8 @@ describe("a reply's room for tool results", () => {
     });
 
     it('keeps as much of one step larger than the room as fits, and says so', () => {
-        const room = new StepRoom(1000);
+        // What it said and called takes 31 of the room
+        const room = new StepRoom(1031);
         room.add(step(1, 'a'.repeat(1500)));
         expect(room.steps[0]!.results[0]!.content).toBe(
             `${'a'.repeat(1000)}\n[Only the first 1,000 of 1,500 characters fit in this reply's room for tool results ("Room for tool results in one reply").]`
@@ -181,12 +182,12 @@ describe("a reply's room for tool results", () => {
         );
         const [short, long] = room.steps[0]!.results;
         expect(short!.content).toBe('x: 1, y: 2');
-        // Not half of the room: all but what the short one kept
-        expect(long!.content).toMatch(/^b{990}\n\[Only the first 990 of 3,000 characters fit/);
+        // Not half of the room: all but what the short one kept, and the 33 its calls take
+        expect(long!.content).toMatch(/^b{957}\n\[Only the first 957 of 3,000 characters fit/);
     });
 
     it('never cuts half an emoji', () => {
-        const room = new StepRoom(3);
+        const room = new StepRoom(34);
         room.add(step(1, 'ab😀cd'));
         expect(room.steps[0]!.results[0]!.content.startsWith('ab\n[Only the first 2 of 6')).toBe(true);
     });
@@ -215,6 +216,18 @@ describe('what a call was made with', () => {
         room.add(made(2, 'y'.repeat(2000)));
         expect(room.steps[0]!.results[0]!.content).toContain('set aside to make room. Call it again');
         expect(JSON.parse(room.steps[0]!.calls[0]!.arguments)).toEqual({ url });
+    });
+
+    it('fits one step larger than the room with its page set aside first, and gives its results what the rest leaves', () => {
+        const room = new StepRoom(2000);
+        room.add(made(1, 'x'.repeat(5000), 'r'.repeat(1500)));
+        expect(JSON.parse(room.steps[0]!.calls[0]!.arguments).html).toBe('[5,000 characters, set aside to make room]');
+        expect(room.steps[0]!.results[0]!.content).toBe('r'.repeat(1500));
+
+        const thinking = new StepRoom(1000);
+        thinking.add(step(1, 'p'.repeat(1500), 'w'.repeat(600)));
+        const kept = thinking.steps[0]!.results[0]!.content.match(/^p+/)![0].length;
+        expect(kept + 600 + 'round 1'.length + 'read_web_page'.length + '{"url":"x"}'.length).toBeLessThanOrEqual(1000);
     });
 
     it('sets the newest page aside before its results when the model turns the steps down for length', () => {
