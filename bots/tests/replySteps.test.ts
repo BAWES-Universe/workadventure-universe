@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { StepRoom, saysTooLong, stepMessages, stepOf, stepsAsText, withStepsAsText, type ReplyStep } from '../ai/replySteps';
+import { charsToFree, contextNumbersOf, StepRoom, saysTooLong, stepMessages, stepOf, stepsAsText, tooLongOf, withStepsAsText, type ReplyStep } from '../ai/replySteps';
 
 /**
  * A reply keeps its own steps (#1508): each round of tool calls goes back to the model as chat messages, within
@@ -61,6 +61,19 @@ describe('a call turned down for length', () => {
         expect(saysTooLong('OpenAI API error: 401 Invalid API key')).toBe(false);
         expect(saysTooLong('OpenAI API error: 429 Rate limit reached')).toBe(false);
     });
+
+    it('says how far over it went when the error gives the numbers', () => {
+        expect(contextNumbersOf("This model's maximum context length is 131072 tokens. However, you requested 140,000 tokens (108000 in the messages, 32000 in the completion).")).toEqual({ limit: 131072, asked: 140000 });
+        expect(contextNumbersOf("maximum context length is 8192 tokens. However, your messages resulted in 9100 tokens.")).toEqual({ limit: 8192, asked: 9100 });
+        expect(contextNumbersOf('Trying to keep the first 9000 tokens when context the overflows. However, the model is loaded with context length of only 8192 tokens')).toEqual({ limit: 8192, asked: 9000 });
+        expect(contextNumbersOf('prompt is too long: 210000 tokens > 200000 maximum')).toEqual({ limit: 200000, asked: 210000 });
+        expect(contextNumbersOf('The number of tokens to keep from the initial prompt is greater than the context length.')).toBeUndefined();
+        expect(tooLongOf('401 Invalid API key')).toEqual({});
+        expect(tooLongOf('prompt is too long: 210000 tokens > 200000 maximum')).toEqual({ tooLong: true, context: { limit: 200000, asked: 210000 } });
+        // 10% over, at 4 characters a token, with a fifth more for the guess
+        expect(charsToFree({ limit: 9000, asked: 10000 }, 40000)).toBe(4800);
+        expect(charsToFree(undefined, 40000)).toBeUndefined();
+    });
 });
 
 describe("a reply's room for tool results", () => {
@@ -106,6 +119,21 @@ describe("a reply's room for tool results", () => {
         while (room.makeRoom()) rounds++;
         expect(rounds).toBeLessThan(10);
         expect(room.steps[1]!.results[0]!.content).toMatch(/^b\n\[Only the first 1 of 400 characters fit/);
+    });
+
+    it('cuts by how far over it went when the error said, settling in one go', () => {
+        const room = new StepRoom(100_000);
+        room.add(step(1, 'a'.repeat(400)));
+        room.add(step(2, 'b'.repeat(4000)));
+        // Setting the older one aside frees too little, so the newest gives up the rest
+        expect(room.makeRoom(1000)).toBe(true);
+        expect(room.steps[0]!.results[0]!.content).toContain('400 characters, set aside');
+        expect(room.steps[1]!.results[0]!.content).toMatch(/^b+\n\[Only the first 3,\d{3} of 4,000 characters fit/);
+        expect(room.size()).toBeLessThan(4400 - 1000 + 300);
+        // More than the steps hold: as small as they go, once, then nothing is left to cut
+        expect(room.makeRoom(1_000_000)).toBe(true);
+        expect(room.steps[1]!.results[0]!.content).toMatch(/^b\n\[Only the first 1 of 4,000/);
+        expect(room.makeRoom(1_000_000)).toBe(false);
     });
 
     it('never cuts half an emoji', () => {

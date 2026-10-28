@@ -106,7 +106,7 @@ import {
 import type { PendingMedia } from '../memory/ConversationMemory';
 import { FIND_FILES_TOOL, OPEN_FILE_TOOL, SEND_AGAIN_TOOL, fileToolDefinitions, formatFileResult, isFileTool, runFileTool } from './FileTools';
 import { linkOfStore } from '../services/ChatFiles';
-import { StepRoom, stepOf, stepsAsText, withStepsAsText, type ReplySteps } from './replySteps';
+import { charsToFree, StepRoom, stepOf, stepsAsText, withStepsAsText, type ReplySteps } from './replySteps';
 
 /** What one turn did, for the "Say when nothing was saved" check (Orbit #666). */
 interface TurnFacts {
@@ -831,6 +831,8 @@ export class AIService {
             // health report needs the reply as a whole, and the provider's status when it gave one.
             let followUpFailedForHealth = false;
             let followUpErrorStatus: number | undefined;
+            /** The length guard asked again this reply (#1508): a 429 after it is from our own asking, not the key. */
+            let askedAgainForLength = false;
             // skipping code after the loop but still reaching the finally block.
             let followUpInput = '';
             let overallFollowUpStartTime = 0;
@@ -1342,7 +1344,8 @@ export class AIService {
                             followUpStartTime = Date.now();
 
                             // The length guard (#1508): when the model turns the steps down as longer than it takes, set the
-                            // older results aside (then cut the newest) and ask again, until it fits or nothing is left to cut
+                            // older results aside, then cut the newest (by how far over it went, when the error says), and
+                            // ask again, until it fits or nothing is left to cut
                             for (;;) {
                                 const errorBefore = followUpError;
                                 const failedBefore = followUpFailedForHealth;
@@ -1435,7 +1438,9 @@ export class AIService {
                                         refusedForLength = resultChunk.metadata?.tooLong === true && !followUpContent && toolCallAccumulator.size === 0;
                                     }
                                 }
-                                if (!refusedForLength || abortSignal?.aborted || !stepRoom.makeRoom()) break;
+                                const promptChars = systemPrompt.length + userMessageForQwen.length + followUpAfter.length + stepRoom.size() + JSON.stringify(tools).length;
+                                if (!refusedForLength || abortSignal?.aborted || !stepRoom.makeRoom(charsToFree(lastFollowUpDoneChunk?.metadata?.context, promptChars))) break;
+                                askedAgainForLength = true;
                                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                                     console.warn(`[AIService] The model turned ${followUpIterations} step(s) down as too long; made room (${stepRoom.size()} characters) and asking again`);
                                 }
@@ -2095,9 +2100,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
                 // A reply through a person's own key: tell Orbit how it went (a cancelled one says nothing either way).
                 // 401 and 403 mean the provider rejected the key, which marks it Down at once.
-                if (reportHealth && streamCompleted && !abortSignal?.aborted) {
+                const status = errorStatus ?? followUpErrorStatus;
+                // Turned down for asking too often while the length guard asked again: that was us, not the key
+                const rateLimitedByGuard = askedAgainForLength && status === 429;
+                if (reportHealth && streamCompleted && !abortSignal?.aborted && !rateLimitedByGuard) {
                     const failed = error || followUpFailedForHealth;
-                    const status = errorStatus ?? followUpErrorStatus;
                     this.adminApiService
                         .reportAiHealth(botId, failed ? { ok: false, rejected: status === 401 || status === 403, ...(status ? { status } : {}) } : { ok: true })
                         .catch(() => {});

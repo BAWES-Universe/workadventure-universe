@@ -13,7 +13,7 @@ import { fetchFor, statusFromError } from './ownKeyHttp';
 import { linkExternalAbort } from './abortUtils';
 import { resolveVisionSupport } from './visionModels';
 import * as Sentry from '@sentry/node';
-import { saysTooLong, stepMessages, type ReplySteps } from '../replySteps';
+import { stepMessages, tooLongOf, type ReplySteps } from '../replySteps';
 
 /**
  * True only for OpenAI's own API. The prompt-cache hints below are OpenAI
@@ -648,7 +648,7 @@ export class OpenAIProvider implements AIProvider {
                     error: !externallyCancelled,
                     ...(externallyCancelled ? { cancelled: true } : {}),
                     errorStatus: statusFromError(error),
-                    ...(!externallyCancelled && saysTooLong(String(error?.message ?? '')) ? { tooLong: true } : {}),
+                    ...(!externallyCancelled ? tooLongOf(error?.message) : {}),
                 },
             };
         } finally {

@@ -179,6 +179,34 @@ describe('AIService – a reply keeps its own steps', () => {
         expect(admin.reportAiHealth).toHaveBeenLastCalledWith('bot-1', { ok: true });
     });
 
+    it('cuts by how far over the error says it went, so one more call fits', async () => {
+        const { admin, memory } = buildMocks(LIMITS, 'own-key');
+        const over = async function* () {
+            yield { content: '', done: true, metadata: { tokensUsed: 0, latency: 10, error: true, errorStatus: 400, tooLong: true, context: { limit: 9000, asked: 10000 } } };
+        };
+        answersWith(calls('call_a'), over, says('I am by the door.'));
+        await reply(new AIService(memory, admin, 'http://admin.local'));
+        expect(mockGenerateStream).toHaveBeenCalledTimes(3);
+        const before = seen[1].steps[0].results[0].content.length;
+        const after = seen[2].steps[0].results[0].content;
+        expect(after).toMatch(/\n\[Only the first \d[\d,]* of [\d,]+ characters fit/);
+        // Not halved blind: cut by what it went over, which for this short result is all but its start
+        expect(after.length).toBeLessThan(before + 200);
+    });
+
+    it("never marks a person's key failing for a rate limit its own asking again caused", async () => {
+        const { admin, memory } = buildMocks(LIMITS, 'own-key');
+        const limited = async function* () {
+            yield { content: '', done: true, metadata: { tokensUsed: 0, latency: 10, error: true, errorStatus: 429 } };
+        };
+        answersWith(calls('call_a'), tooLong);
+        mockGenerateStream.mockImplementation(limited);
+        const chunks = await reply(new AIService(memory, admin, 'http://admin.local'));
+        expect(chunks.at(-1).done).toBe(true);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(admin.reportAiHealth).not.toHaveBeenCalled();
+    });
+
     it('stops asking once nothing is left to cut', async () => {
         const { admin, memory } = buildMocks(LIMITS, 'own-key');
         answersWith(calls('call_a'));

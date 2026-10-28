@@ -12,7 +12,7 @@ import { resolveVisionSupport } from './visionModels';
 import { decryptApiKey } from '../encryption';
 import { fetchFor, statusFromError } from './ownKeyHttp';
 import * as Sentry from '@sentry/node';
-import { saysTooLong, stepMessages, type ReplySteps } from '../replySteps';
+import { stepMessages, tooLongOf, type ReplySteps } from '../replySteps';
 
 export class LMStudioProvider implements AIProvider {
     private readonly DEFAULT_TIMEOUT = 30000; // 30 seconds
@@ -253,7 +253,7 @@ export class LMStudioProvider implements AIProvider {
                     latency,
                     error: !externallyCancelled,
                     errorStatus: statusFromError(error),
-                    ...(!externallyCancelled && saysTooLong(String(error?.message ?? '')) ? { tooLong: true } : {}),
+                    ...(!externallyCancelled ? tooLongOf(error?.message) : {}),
                 },
             };
         } finally {

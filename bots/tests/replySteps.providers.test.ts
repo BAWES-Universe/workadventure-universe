@@ -107,7 +107,7 @@ describe('OpenAI-shaped providers (OpenAI, DeepSeek, OpenRouter)', () => {
     it('say when the call was turned down as longer than the model takes', async () => {
         refuses(400, `{"error":{"message":"This model's maximum context length is 8192 tokens. However, your messages resulted in 9100 tokens."}}`);
         const chunks = await drain(new OpenAIProvider().generateStream('system', 'hi', config(), [], undefined, undefined, steps));
-        expect(chunks.at(-1)?.metadata).toMatchObject({ error: true, tooLong: true, errorStatus: 400 });
+        expect(chunks.at(-1)?.metadata).toMatchObject({ error: true, tooLong: true, errorStatus: 400, context: { limit: 8192, asked: 9100 } });
         refuses(401, '{"error":{"message":"Invalid API key"}}');
         const rejected = await drain(new OpenAIProvider().generateStream('system', 'hi', config()));
         expect(rejected.at(-1)?.metadata).not.toHaveProperty('tooLong');

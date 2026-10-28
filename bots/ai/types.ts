@@ -168,6 +168,8 @@ export interface AIStreamChunk {
         truncated?: boolean; // true when the provider hit finish_reason='length' (max_tokens cap)
         /** The provider turned the call down as longer than the model takes (its context window). */
         tooLong?: boolean;
+        /** The tokens the model takes and was asked, when the "too long" error says both. */
+        context?: { limit: number; asked: number };
         // MultiPromptAIService analysis metadata
         analysis?: {
             tokensUsed: number;

@@ -30,7 +30,8 @@ export function stepOf(round: number, content: string, calls: ToolCall[], result
     const run = calls.filter((call) => call.name && call.name.trim() !== '');
     const paired: ReplyStep = { content, calls: [], results: [], ...(reasoning ? { reasoning } : {}) };
     run.forEach((call, i) => {
-        const result = results[i];
+        // By id when the call has one, so the pairs hold even if what ran is ever filtered differently
+        const result = (call.id ? results.find((given) => given.id === call.id) : undefined) ?? results[i];
         if (!result) return;
         const id = call.id || `call_${round}_${i}`;
         paired.calls.push({ id, name: call.name, arguments: call.arguments || '{}' });
@@ -75,6 +76,53 @@ export function saysTooLong(text: string): boolean {
     return /context[_ ]length|context window|maximum context|too many tokens|prompt is too long|exceeds? (the )?(model'?s? )?(maximum|max|context)|input is too long|reduce the length/i.test(text);
 }
 
+/** The tokens the model takes and the tokens it was asked, when its error says both. */
+export interface ContextNumbers {
+    limit: number;
+    asked: number;
+}
+
+const tokensIn = (text: string, wording: RegExp): number | undefined => {
+    const match = wording.exec(text);
+    return match ? Number(match[1]!.replace(/,/g, '')) : undefined;
+};
+
+/**
+ * The numbers in a "too long" error: "maximum context length is 8192 tokens. However, you requested 9100 tokens",
+ * LM Studio's "keep the first 9000 tokens … context length of only 8192 tokens", "210000 tokens > 200000 maximum".
+ */
+export function contextNumbersOf(text: string): ContextNumbers | undefined {
+    const over = /(\d[\d,]*) tokens? > (\d[\d,]*)(?: tokens?)? maximum/i.exec(text);
+    if (over) return { asked: Number(over[1]!.replace(/,/g, '')), limit: Number(over[2]!.replace(/,/g, '')) };
+    const limit =
+        tokensIn(text, /maximum context length is (\d[\d,]*) tokens/i) ??
+        tokensIn(text, /context length of only (\d[\d,]*) tokens/i) ??
+        tokensIn(text, /context (?:window|length) (?:of|is) (\d[\d,]*) tokens/i);
+    const asked =
+        tokensIn(text, /requested (\d[\d,]*) tokens/i) ??
+        tokensIn(text, /resulted in (\d[\d,]*) tokens/i) ??
+        tokensIn(text, /keep the first (\d[\d,]*) tokens/i) ??
+        tokensIn(text, /\((\d[\d,]*) in the messages/i);
+    return limit && asked && asked > limit ? { limit, asked } : undefined;
+}
+
+/** What a provider's done chunk says about a call turned down for length: nothing for any other error. */
+export function tooLongOf(message: unknown): { tooLong?: true; context?: ContextNumbers } {
+    const text = String(message ?? '');
+    if (!saysTooLong(text)) return {};
+    const context = contextNumbersOf(text);
+    return { tooLong: true, ...(context ? { context } : {}) };
+}
+
+/**
+ * Characters the steps give up so the call fits: what it went over, at this prompt's characters per token, with a
+ * fifth more for the guess. Undefined without the numbers (the room is then halved instead).
+ */
+export function charsToFree(context: ContextNumbers | undefined, promptChars: number): number | undefined {
+    if (!context || promptChars <= 0) return undefined;
+    return Math.ceil((context.asked - context.limit) * (promptChars / context.asked) * 1.2);
+}
+
 function sizeOf(step: ReplyStep): number {
     return step.results.reduce((total, result) => total + result.content.length, 0);
 }
@@ -112,15 +160,20 @@ export class StepRoom {
     }
 
     /**
-     * The model turned the steps down for length: set the older results aside, or when there are none left, keep half
-     * of what the newest step still has. False when nothing more can be made smaller.
+     * The model turned the steps down for length: set the older results aside, then cut the newest step, by `free`
+     * characters when the error said how far over it went, else to half of what it still has. False when nothing more
+     * can be made smaller.
      */
-    makeRoom(): boolean {
-        if (this.setAside(this.steps.slice(0, -1))) return true;
+    makeRoom(free?: number): boolean {
+        const goal = free !== undefined ? this.size() - free : undefined;
+        const setAside = this.setAside(this.steps.slice(0, -1));
+        if (setAside && (goal === undefined || this.size() <= goal)) return true;
         const newest = this.steps.at(-1);
-        if (!newest) return false;
+        if (!newest) return setAside;
         const kept = newest.results.reduce((total, result) => total + (this.cut.get(result)?.kept ?? result.content.length), 0);
-        return this.fit(newest, Math.floor(kept / 2));
+        const others = this.size() - sizeOf(newest);
+        const want = goal === undefined ? Math.floor(kept / 2) : Math.min(kept - 1, goal - others);
+        return this.fit(newest, Math.max(0, want)) || setAside;
     }
 
     private setAside(steps: ReplyStep[]): boolean {
