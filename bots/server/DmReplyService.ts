@@ -15,6 +15,7 @@ import { parseEmotionsFromResponse, appendStreamedChunk } from '../ai/EmotionPar
 import { ROOM_CARD_MARK } from '../ai/AIService';
 import type { PendingMedia } from '../memory/ConversationMemory';
 import type { ArtifactCard } from '../ai/ArtifactTools';
+import { ReplySteps, type StepsField } from '../ai/ToolSteps';
 import type { ReplyLimitReached } from '../ai/types';
 import type { ParsedFile } from '../services/FileParser';
 import { withoutNoteIds, type ChatUpload } from '../services/ChatFiles';
@@ -62,6 +63,11 @@ export interface DmAttachment {
 export interface DmReplyHooks {
     /** Text the bot says before it runs a tool ("Let me look that up"), sent as its own message like a bubble. */
     onInterimMessage?: (text: string) => Promise<void>;
+    /**
+     * The reply's steps line changed (#1545): the bot started tools, they finished, or the reply ended. The first call
+     * sends the line, later ones update that same message. `text` is the line for chat apps that can't draw it.
+     */
+    onSteps?: (field: StepsField, text: string) => Promise<void>;
     /** The Matrix room the message came in. Live artifacts made in this chat belong to it. */
     roomId?: string;
 }
@@ -360,6 +366,17 @@ export class DmReplyService extends BaseBehavior {
         let promptTokens = 0;
         let completionTokens = 0;
         let providerFailed = false;
+        // The bot's own "Show tool calls" switch (#742) decides whether this reply shows its steps line (#1545)
+        let steps: ReplySteps | undefined;
+        let showSteps: boolean | undefined;
+        const showStepsNow = async () => {
+            if (steps && hooks.onSteps) await hooks.onSteps(steps.field(), steps.text());
+        };
+        const stopSteps = async () => {
+            if (!steps) return;
+            steps.stop();
+            await showStepsNow();
+        };
 
         try {
             for await (const chunk of this.aiService.generateBotResponseStream(
@@ -383,17 +400,26 @@ export class DmReplyService extends BaseBehavior {
                     // The model said something before calling tools: in a bubble that stays as its own bubble.
                     const interim = withoutRoomCardMark(parseEmotionsFromResponse(fullMessage).cleanedResponse);
                     if (interim) await hooks.onInterimMessage?.(interim);
-                    // The bot's own "Show tool calls" switch, as in a bubble (#742).
-                    if (chunk.toolNames?.length && (await this.shouldShowToolCalls(botId))) {
-                        for (const toolName of chunk.toolNames) {
-                            await hooks.onInterimMessage?.(`🔍 ${toolName}...`);
+                    if (chunk.toolSteps?.length) {
+                        showSteps ??= await this.shouldShowToolCalls(botId);
+                        if (showSteps) {
+                            steps ??= new ReplySteps();
+                            steps.start(chunk.toolSteps);
+                            await showStepsNow();
                         }
                     }
                     fullMessage = '';
                     continue;
                 }
+                if (chunk.toolStepResults) {
+                    if (steps?.finish(chunk.toolStepResults)) await showStepsNow();
+                    continue;
+                }
                 // A reply limit: nothing was said and nothing is remembered as said
-                if (chunk.replyLimit) return { text: '', media: [], replyLimit: chunk.replyLimit };
+                if (chunk.replyLimit) {
+                    await stopSteps();
+                    return { text: '', media: [], replyLimit: chunk.replyLimit };
+                }
                 if (chunk.content) fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                 if (chunk.metadata?.tokensUsed) tokensUsed = chunk.metadata.tokensUsed;
                 if (chunk.metadata?.latency) latency = chunk.metadata.latency;
@@ -405,59 +431,69 @@ export class DmReplyService extends BaseBehavior {
             }
         } catch (error) {
             console.error(`[DmReplyService] AI error for bot ${botId}:`, error);
+            await stopSteps();
             return { text: '', media: [], failed: true };
         }
         if (providerFailed) {
             console.error(`[DmReplyService] AI provider failed for bot ${botId}; the answer so far is dropped`);
+            await stopSteps();
             return { text: '', media: [], failed: true };
         }
 
-        const responseTime = latency || Date.now() - startTime;
-        const parsed = parseEmotionsFromResponse(fullMessage);
-        let replyText = parsed.cleanedResponse;
-        memory.updateEmotionsFromAI(
-            botId,
-            playerId,
-            parsed.emotions ?? { personSentiment: 0, isInsult: false, insultSeverity: 0, context: 'neutral' }
-        );
-
-        if (this.responseProcessor && replyText.trim()) {
-            const tokenUsage = tokensUsed > 0
-                ? {
-                      prompt: promptTokens || Math.floor(tokensUsed * 0.7),
-                      completion: completionTokens || Math.floor(tokensUsed * 0.3),
-                      total: tokensUsed,
-                  }
-                : undefined;
-            const processed = this.responseProcessor.processResponse(botId, playerId, replyText, chatInstructions, responseTime, tokenUsage);
-            const regenerated = await this.regenerateOnRepetition({
+        let replyText = '';
+        let askedForRoom = false;
+        // A failure past the stream still stops the line, so it never spins on
+        try {
+            const responseTime = latency || Date.now() - startTime;
+            const parsed = parseEmotionsFromResponse(fullMessage);
+            replyText = parsed.cleanedResponse;
+            memory.updateEmotionsFromAI(
                 botId,
                 playerId,
-                playerMessage: augmented,
-                chatInstructions,
-                aiProviderRef: config.aiProviderRef,
-                spaceName: DM_SPACE_NAME,
-                context,
-                processed,
-                processedMessage: processed.cleaned,
-                fullMessage,
-                responseTime,
-                tokenUsage,
-                responseId: `dm-${botId}-${playerId}`,
-                debugLabel: 'DmReplyService',
-                images: images.length ? images : undefined,
-                channel: 'dm',
-                toolTimeoutSeconds: config.toolTimeoutSeconds,
-                homeRoomUrl: config.roomUrl,
-                peopleInRoom,
-            });
-            replyText = regenerated.processedMessage;
-        }
+                parsed.emotions ?? { personSentiment: 0, isInsult: false, insultSeverity: 0, context: 'neutral' }
+            );
 
-        // The bot marks a reply that answers where it is: the person asked, so it always gets the card. Read from the
-        // reply that is sent, so an answer asked for again after a repeat goes by its own mark.
-        const askedForRoom = replyText.toUpperCase().includes(ROOM_CARD_MARK);
-        replyText = withoutRoomCardMark(replyText);
+            if (this.responseProcessor && replyText.trim()) {
+                const tokenUsage = tokensUsed > 0
+                    ? {
+                          prompt: promptTokens || Math.floor(tokensUsed * 0.7),
+                          completion: completionTokens || Math.floor(tokensUsed * 0.3),
+                          total: tokensUsed,
+                      }
+                    : undefined;
+                const processed = this.responseProcessor.processResponse(botId, playerId, replyText, chatInstructions, responseTime, tokenUsage);
+                const regenerated = await this.regenerateOnRepetition({
+                    botId,
+                    playerId,
+                    playerMessage: augmented,
+                    chatInstructions,
+                    aiProviderRef: config.aiProviderRef,
+                    spaceName: DM_SPACE_NAME,
+                    context,
+                    processed,
+                    processedMessage: processed.cleaned,
+                    fullMessage,
+                    responseTime,
+                    tokenUsage,
+                    responseId: `dm-${botId}-${playerId}`,
+                    debugLabel: 'DmReplyService',
+                    images: images.length ? images : undefined,
+                    channel: 'dm',
+                    toolTimeoutSeconds: config.toolTimeoutSeconds,
+                    homeRoomUrl: config.roomUrl,
+                    peopleInRoom,
+                });
+                replyText = regenerated.processedMessage;
+            }
+
+            // The bot marks a reply that answers where it is: the person asked, so it always gets the card. Read from the
+            // reply that is sent, so an answer asked for again after a repeat goes by its own mark.
+            askedForRoom = replyText.toUpperCase().includes(ROOM_CARD_MARK);
+            replyText = withoutRoomCardMark(replyText);
+        } catch (error) {
+            await stopSteps();
+            throw error;
+        }
         // Kept only once it was sent: if sending fails the person's message stays the last thing said, so a retry
         // answers it afresh instead of seeing a reply they never got.
         let kept = false;
@@ -466,6 +502,12 @@ export class DmReplyService extends BaseBehavior {
             kept = true;
             memory.addMessage(botId, playerId, replyText, 'bot', DM_SPACE_NAME);
         };
+
+        // The line folds into its summary as the answer arrives
+        if (steps) {
+            steps.end();
+            await showStepsNow();
+        }
 
         // Media the tools produced waits in memory; a DM delivers it as attachments right after the text.
         const playerMemory = memory.getMemory(botId, playerId);

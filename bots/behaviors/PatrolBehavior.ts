@@ -1016,7 +1016,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingPrefix = '';
-            for await (const chunk of this.aiService.generateBotResponseStream(
+            for await (const chunk of this.withToolSteps(this.aiService.generateBotResponseStream(
                 botId,
                 followerPlayer.userId,
                 arrivalPrompt,
@@ -1026,9 +1026,8 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 context,
                 this.bot,
                 this.adminApiService
-            )) {
+            ), spaceName, botId, followerPlayer.userId, undefined)) {
                 if (chunk.reset) {
-                    const showToolCalls = chunk.toolNames?.length ? await this.shouldShowToolCalls(botId) : false;
                     if (fullMessage) {
                         const finalContent = pendingPrefix ? fullMessage.slice(0, -pendingPrefix.length) : fullMessage;
                         this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, finalContent);
@@ -1037,19 +1036,6 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                     fullMessage = '';
                     emotionBlockStarted = false;
                     pendingPrefix = '';
-                    if (chunk.toolNames?.length) {
-                        if (showToolCalls) {
-                            for (let ti = 0; ti < chunk.toolNames.length; ti++) {
-                                const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
-                                arrivalResponseId = `bot-${botId}-player-${followerPlayer.userId}-${crypto.randomUUID()}`;
-                                fullMessage = toolStatus;
-                                this.bot?.sendStreamMessage(spaceName, arrivalResponseId, toolStatus, false);
-                                this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, toolStatus);
-                            }
-                        }
-                        arrivalResponseId = `bot-${botId}-player-${followerPlayer.userId}-${crypto.randomUUID()}`;
-                        fullMessage = '';
-                    }
                     continue;
                 }
                 if (chunk.content) {
@@ -1208,7 +1194,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingPrefix = '';
-            for await (const chunk of this.aiService.generateBotResponseStream(
+            for await (const chunk of this.withToolSteps(this.aiService.generateBotResponseStream(
                 botId,
                 followerPlayer.userId,
                 arrivalPrompt,
@@ -1218,9 +1204,8 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 context,
                 this.bot,
                 this.adminApiService
-            )) {
+            ), spaceName, botId, followerPlayer.userId, undefined)) {
                 if (chunk.reset) {
-                    const showToolCalls = chunk.toolNames?.length ? await this.shouldShowToolCalls(botId) : false;
                     if (fullMessage) {
                         const finalContent = pendingPrefix ? fullMessage.slice(0, -pendingPrefix.length) : fullMessage;
                         this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, finalContent);
@@ -1229,19 +1214,6 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                     fullMessage = '';
                     emotionBlockStarted = false;
                     pendingPrefix = '';
-                    if (chunk.toolNames?.length) {
-                        if (showToolCalls) {
-                            for (let ti = 0; ti < chunk.toolNames.length; ti++) {
-                                const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
-                                arrivalResponseId = `bot-${botId}-player-${followerPlayer.userId}-${crypto.randomUUID()}`;
-                                fullMessage = toolStatus;
-                                this.bot?.sendStreamMessage(spaceName, arrivalResponseId, toolStatus, false);
-                                this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, toolStatus);
-                            }
-                        }
-                        arrivalResponseId = `bot-${botId}-player-${followerPlayer.userId}-${crypto.randomUUID()}`;
-                        fullMessage = '';
-                    }
                     continue;
                 }
                 if (chunk.content) {
@@ -1380,7 +1352,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingPrefix = '';
-            for await (const chunk of this.aiService.generateBotResponseStream(
+            for await (const chunk of this.withToolSteps(this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
                 playerMessage,
@@ -1390,7 +1362,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 context,
                 this.bot,
                 this.adminApiService
-            )) {
+            ), spaceName, botId, playerId, undefined)) {
                 if (chunk.content) {
                     fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                     
@@ -1550,7 +1522,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingPrefix = '';
-            for await (const chunk of this.aiService.generateBotResponseStream(
+            for await (const chunk of this.withToolSteps(this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
                 playerMessage,
@@ -1560,9 +1532,8 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 context,
                 this.bot,
                 this.adminApiService
-            )) {
+            ), spaceName, botId, playerId, undefined)) {
                 if (chunk.reset) {
-                    const showToolCalls = chunk.toolNames?.length ? await this.shouldShowToolCalls(botId) : false;
                     if (fullMessage) {
                         // Strip any deferred '[' that was not streamed to the frontend
                         const finalContent = pendingPrefix ? fullMessage.slice(0, -pendingPrefix.length) : fullMessage;
@@ -1572,19 +1543,6 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                     fullMessage = "";
                     emotionBlockStarted = false;
                     pendingPrefix = '';
-                    if (chunk.toolNames?.length) {
-                        if (showToolCalls) {
-                            for (let ti = 0; ti < chunk.toolNames.length; ti++) {
-                                const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
-                                greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
-                                fullMessage = toolStatus;
-                                this.bot?.sendStreamMessage(spaceName, greetingResponseId, toolStatus, false);
-                                this.bot?.sendStreamMessage(spaceName, greetingResponseId, "", true, toolStatus);
-                            }
-                        }
-                        greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
-                        fullMessage = "";
-                    }
                     continue;
                 }
                 if (chunk.content) {
@@ -1819,7 +1777,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         };
 
         try {
-            for await (const chunk of this.aiService.generateBotResponseStream(
+            for await (const chunk of this.withToolSteps(this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
                 playerMessage,
@@ -1831,9 +1789,8 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 this.adminApiService,
                 abortSignal,
                 images
-            )) {
+            ), spaceName, botId, playerId, abortSignal)) {
                 if (chunk.reset) {
-                    const showToolCalls = chunk.toolNames?.length ? await this.shouldShowToolCalls(botId) : false;
                     if (abortSignal?.aborted) break;
                         batchFlush(batchState, sendBatch);
                         // Only finalize the pre-tool bubble if there was actual text
@@ -1847,24 +1804,6 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                         fullMessage = '';
                         emotionBlockStarted = false;
                         pendingPrefix = '';
-                        if (chunk.toolNames?.length) {
-                            if (showToolCalls) {
-                                for (let ti = 0; ti < chunk.toolNames.length; ti++) {
-                                    const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
-                                    responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
-                                    this.trackActiveResponseId(playerId, responseId);
-                                    fullMessage = toolStatus;
-                                    this.bot?.sendStreamMessage(spaceName, responseId, toolStatus, false);
-                                    // Finalize the tool-name bubble so it doesn't linger in
-                                    // the frontend's streamMessages map.
-                                    this.bot?.sendStreamMessage(spaceName, responseId, '', true, toolStatus);
-                                }
-                            }
-                            // New responseId for follow-up — separate from the tool-name bubble
-                            responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
-                            this.trackActiveResponseId(playerId, responseId);
-                            fullMessage = ''; // Clear so follow-up content starts fresh
-                        }
                         continue;
                     }
 
@@ -2069,7 +2008,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingPrefix = '';
-            for await (const chunk of this.aiService.generateBotResponseStream(
+            for await (const chunk of this.withToolSteps(this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
                 goodbyePrompt,
@@ -2079,9 +2018,8 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 context,
                 this.bot,
                 this.adminApiService
-            )) {
+            ), spaceName, botId, playerId, undefined)) {
                 if (chunk.reset) {
-                    const showToolCalls = chunk.toolNames?.length ? await this.shouldShowToolCalls(botId) : false;
                     if (fullMessage) {
                         const finalContent = pendingPrefix ? fullMessage.slice(0, -pendingPrefix.length) : fullMessage;
                         this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, '', true, finalContent);
@@ -2090,19 +2028,6 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                     fullMessage = '';
                     emotionBlockStarted = false;
                     pendingPrefix = '';
-                    if (chunk.toolNames?.length) {
-                        if (showToolCalls) {
-                            for (let ti = 0; ti < chunk.toolNames.length; ti++) {
-                                const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
-                                goodbyeResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
-                                fullMessage = toolStatus;
-                                this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, toolStatus, false);
-                                this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, '', true, toolStatus);
-                            }
-                        }
-                        goodbyeResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
-                        fullMessage = '';
-                    }
                     continue;
                 }
                 if (chunk.content) {

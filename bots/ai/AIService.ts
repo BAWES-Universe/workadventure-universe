@@ -21,6 +21,7 @@ import type { MapDataService } from '../server/MapDataService';
 import * as Sentry from '@sentry/node';
 import { MCPConnector, toolTimeoutMs } from '../mcp/MCPConnector';
 import { appendStreamedChunk } from './EmotionParser';
+import { describeStep, resultOf, showsAsStep, type ToolStep } from './ToolSteps';
 import { jsonrepair } from 'jsonrepair';
 import { resolveVisionSupport } from './providers/visionModels';
 import { normalizeWebUrl } from '../utils/chatLinks';
@@ -1179,7 +1180,7 @@ export class AIService {
                         // Yield reset to clear any streamed pre-tool content from frontend
                         // before executing tools — the bubble will be finalized by the
                         // behavior with the accumulated pre-tool text.
-                        yield {content: '', done: false, reset: true, toolNames: displayToolNames};
+                        yield {content: '', done: false, reset: true, toolNames: displayToolNames, toolSteps: this.stepsOf(Array.from(toolCallAccumulator.values()), toolServerMap)};
 
                         // Convert accumulated tool calls to array (arguments should now be complete)
                         pendingToolCalls = Array.from(toolCallAccumulator.values()).map(tc => ({
@@ -1230,6 +1231,11 @@ export class AIService {
                             // pass it): the first round reads the cap from this chunk, later rounds from the previous round's last chunk
                             const replyCutOff = !!(followUpIterations === 1 ? chunk.metadata?.truncated : lastFollowUpDoneChunk?.metadata?.truncated);
                             const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff);
+                            // The steps line marks each shown call done or failed before the bot carries on (#1545)
+                            const toolStepResults = toolResults
+                                .filter((tr) => showsAsStep(tr.name, toolServerMap.has(tr.name)))
+                                .map((tr) => resultOf(tr.id, tr.result));
+                            if (toolStepResults.length) yield {content: '', done: false, toolStepResults};
                             if (turn && toolResults.some((tr) => writesArtifact(tr.name) && tr.result?.success === true)) turn.artifactSaved = true;
 
                             // Collect URLs that were already sent by explicit send_* tool calls
@@ -1483,7 +1489,7 @@ export class AIService {
                                 // Yield reset so the behavior creates a new bubble
                                 // for the next follow-up round's content, instead of
                                 // concatenating all rounds into the current bubble.
-                                yield {content: '', done: false, reset: true, toolNames: displayFollowUpToolNames};
+                                yield {content: '', done: false, reset: true, toolNames: displayFollowUpToolNames, toolSteps: this.stepsOf(pendingToolCalls, toolServerMap)};
                                 continue; // Back to while loop to execute new tool calls
                             }
                         }
@@ -1511,6 +1517,11 @@ export class AIService {
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                                 console.warn(`[AIService] ⚠️ Reached max follow-up iterations (${MAX_FOLLOW_UP_ITERATIONS}). Dropping ${toolCallAccumulator.size} pending tool calls.`);
                             }
+                            // The steps line already shows these calls: they never ran, so they end as not done (#1545)
+                            const notRun = pendingToolCalls
+                                .filter((tc) => showsAsStep(tc.name, toolServerMap.has(tc.name)))
+                                .map((tc) => ({ id: tc.id, ok: false, note: 'Not run: the bot reached its step limit' }));
+                            if (notRun.length) yield {content: '', done: false, toolStepResults: notRun};
                             toolCallAccumulator.clear();
                             pendingToolCalls = [];
                         }
@@ -2416,9 +2427,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     /**
      * Build tool definitions for function calling
      */
-    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService, channel: 'world' | 'dm' = 'world'): Promise<{ tools: any[]; toolServerMap: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string> }> }> {
+    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService, channel: 'world' | 'dm' = 'world'): Promise<{ tools: any[]; toolServerMap: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string>; title?: string }> }> {
         const tools: any[] = [];
-        const toolServerMap = new Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string> }>();
+        const toolServerMap = new Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string>; title?: string }>();
 
         if (botClient) {
             // Tool: Get people on the map
@@ -2740,7 +2751,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         toolCalls: ToolCall[],
         botClient?: BotClient,
         adminApiService?: AdminApiService,
-        toolServerMap?: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string> }>,
+        toolServerMap?: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string>; title?: string }>,
         playerUuid?: string,
         spaceName?: string,
         botId?: string,
@@ -3657,7 +3668,19 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         } catch {
             return '';
         }
-    }    /**
+    }
+
+    /** The calls a reset starts, as the steps line shows them: tool servers' tools and our own work tools (#1545). */
+    private stepsOf(
+        calls: Array<{ id: string; name: string; arguments?: unknown }>,
+        toolServerMap: Map<string, { title?: string }>
+    ): ToolStep[] {
+        return calls
+            .filter((call) => call.name && showsAsStep(call.name, toolServerMap.has(call.name)))
+            .map((call) => describeStep(call, toolServerMap.get(call.name)?.title));
+    }
+
+    /**
      * Format tool results for AI
      */
     private formatToolResults(results: Array<{ id: string; name: string; result: any }>): string {
