@@ -24,6 +24,8 @@
     export let tab: SharedTab;
     /** In a direct chat, the other person: the chat is named after the name they go by now. */
     export let partnerChatId: string | undefined = undefined;
+    /** What to call the chat under the title, when its own name isn't what its header shows (nearby chat). */
+    export let chatTitle: string | undefined = undefined;
 
     const direction = document.documentElement.getAttribute("dir") || "ltr";
     const shared = sharedItemsStore(room);
@@ -33,7 +35,7 @@
     const nameByChatId: Readable<Map<string, string>> = hasContext(NAME_BY_CHAT_ID_CONTEXT)
         ? getContext(NAME_BY_CHAT_ID_CONTEXT)
         : readable(new Map<string, string>());
-    $: chatName = personName($nameByChatId, partnerChatId, $roomName);
+    $: chatName = chatTitle ?? personName($nameByChatId, partnerChatId, $roomName);
 
     $: tabs = [
         { id: "media" as const, label: $LL.chat.details.tabs.media(), count: $shared.media.length },
@@ -103,17 +105,21 @@
     let lightboxUnsubscribe: Unsubscriber | undefined;
     $: lightboxIndex = lightboxKey === undefined ? -1 : $shared.media.findIndex((item) => item.key === lightboxKey);
     $: lightboxItem = lightboxIndex >= 0 ? $shared.media[lightboxIndex] : undefined;
-    $: watchLightbox(lightboxItem?.message);
+    $: watchLightbox(lightboxItem?.message, lightboxItem?.src);
 
-    // The list is rebuilt as messages come and go: the same message keeps its listener, so a playing video doesn't restart.
+    // The list is rebuilt as messages come and go: the same image keeps its listener, so a playing video doesn't restart.
     let watchedMessage: ChatMessage | undefined;
-    function watchLightbox(message: ChatMessage | undefined) {
-        if (message === watchedMessage) return;
+    let watchedSrc: string | undefined;
+    function watchLightbox(message: ChatMessage | undefined, src: string | undefined) {
+        if (message === watchedMessage && src === watchedSrc) return;
         watchedMessage = message;
+        watchedSrc = src;
         lightboxUnsubscribe?.();
         lightboxUnsubscribe = undefined;
-        lightboxUrl = undefined;
-        if (message) lightboxUnsubscribe = message.content.subscribe((content) => (lightboxUrl = content.url));
+        lightboxUrl = src;
+        if (message && src === undefined) {
+            lightboxUnsubscribe = message.content.subscribe((content) => (lightboxUrl = content.url));
+        }
     }
 
     function step(delta: number) {
@@ -161,7 +167,9 @@
                                 <MediaThumb
                                     message={item.message}
                                     {sender}
-                                    label={item.message.type === "video"
+                                    src={item.src}
+                                    video={item.isVideo}
+                                    label={item.isVideo
                                         ? $LL.chat.details.video({ name: sender })
                                         : $LL.chat.details.image({ name: sender })}
                                     on:click={() => (lightboxKey = item.key)}
@@ -187,7 +195,7 @@
                         <h3 class="shared-heading">{sectionLabel(section)}</h3>
                         <div class="shared-group">
                             {#each items as item (item.key)}
-                                <FileRow message={item.message} name={item.name} size={item.size} />
+                                <FileRow message={item.message} name={item.name} size={item.size} src={item.src} />
                             {/each}
                         </div>
                     </section>
@@ -223,7 +231,7 @@
     src={lightboxUrl}
     alt={lightboxItem?.name}
     show={lightboxItem !== undefined}
-    isVideo={lightboxItem?.message.type === "video"}
+    isVideo={lightboxItem?.isVideo ?? false}
     filename={lightboxItem?.name}
     hasPrev={$shared.media.length > 1}
     hasNext={$shared.media.length > 1}

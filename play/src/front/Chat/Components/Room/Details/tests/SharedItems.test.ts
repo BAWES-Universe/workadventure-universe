@@ -32,6 +32,41 @@ const isDeleted = (m: ChatMessage) => (m as unknown as { __deleted: boolean })._
 const file = (name: string, size?: number, voice = false): SharedFileInfo => ({ name, size, voice });
 
 describe("what a chat shared", () => {
+    it("lists each image of a nearby gallery on its own, with its own link", () => {
+        const shared = sharedItemsOf(
+            [message("g1", "gallery"), message("v1", "video", { file: file("clip.mp4") })],
+            bodyOf,
+            isDeleted,
+            (m) =>
+                m.id === "g1"
+                    ? [
+                          { url: "https://cdn.test/a.png", name: "a.png" },
+                          { url: "https://cdn.test/b.webm", name: "b.webm" },
+                      ]
+                    : []
+        );
+
+        expect(shared.media).toEqual([
+            expect.objectContaining({ key: "v1", isVideo: true }),
+            expect.objectContaining({ key: "g1 0", src: "https://cdn.test/a.png", name: "a.png", isVideo: false }),
+            expect.objectContaining({ key: "g1 1", src: "https://cdn.test/b.webm", isVideo: true }),
+        ]);
+    });
+
+    it("puts a file sent in a gallery with images under Files, with its own link", () => {
+        const shared = sharedItemsOf([message("g2", "gallery")], bodyOf, isDeleted, () => [
+            { url: "https://cdn.test/door.jpg", name: "door.jpg" },
+            { url: "https://cdn.test/0b5c.pdf", name: "Lobby floor plan.pdf" },
+            { url: "https://cdn.test/notes", name: "notes" },
+        ]);
+
+        expect(shared.media.map((item) => item.key)).toEqual(["g2 0"]);
+        expect(shared.files).toEqual([
+            expect.objectContaining({ key: "g2 1", name: "Lobby floor plan.pdf", src: "https://cdn.test/0b5c.pdf" }),
+            expect.objectContaining({ key: "g2 2", name: "notes", src: "https://cdn.test/notes" }),
+        ]);
+    });
+
     it("sorts images and videos, links and files, newest first", () => {
         const shared = sharedItemsOf(
             [
