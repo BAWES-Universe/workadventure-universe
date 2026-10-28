@@ -3,7 +3,7 @@
     import { openModal } from "svelte-modals";
     import LL from "../../../../../i18n/i18n-svelte";
     import type { MatrixChatRoom } from "../../../Connection/Matrix/MatrixChatRoom";
-    import { notificationPlayingStore } from "../../../../Stores/NotificationStore";
+    import { showChatDoneToast } from "../../../../Stores/ChatDoneToastStore";
     import { selectedRoomStore } from "../../../Stores/SelectRoomStore";
     import { openRoomDetailsIdStore } from "../../../Stores/ChatDetailsStore";
     import TopRowAvatar from "../../TopRow/TopRowAvatar.svelte";
@@ -49,11 +49,13 @@
     }
 
     function leave() {
+        // Says which group went, like the "…" menu: "Left Design team".
+        const notification = $LL.chat.roomMenu.leaveRoom.notification({ name: $roomName });
         room.leaveRoom()
             .then(() => {
                 close();
                 if ($selectedRoomStore?.id === room.id) selectedRoomStore.set(undefined);
-                notificationPlayingStore.playNotification($LL.chat.roomMenu.leaveRoom.notification());
+                showChatDoneToast(notification);
             })
             .catch((error) => console.error("Failed to leave the group", error));
     }
