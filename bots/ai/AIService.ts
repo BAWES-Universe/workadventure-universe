@@ -55,7 +55,13 @@ export function promptOfToolCall(args: string | undefined): string | null {
     try {
         parsed = JSON.parse(args);
     } catch {
-        return args.trim() || null;
+        // Repaired as the tool call itself was (safeParseToolArgs), so its prompt is still found
+        try {
+            parsed = JSON.parse(jsonrepair(args));
+        } catch {
+            parsed = null;
+        }
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return args.trim() || null;
     }
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         const given = parsed as Record<string, unknown>;

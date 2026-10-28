@@ -8,6 +8,8 @@
  * - Relationship context (how they met, important events)
  */
 
+import { withoutFileNotes } from '../services/ChatFiles';
+
 /** Recent messages a reply reads until Orbit serves the bot's own number: the recommended "Messages it remembers". */
 const DEFAULT_HISTORY_WINDOW = 20;
 export interface ConversationMessage {
@@ -248,7 +250,7 @@ export class ConversationMemory {
         
         // Extract personal information (birthday, name, preferences, facts)
         if (sender === 'person') {
-            this.extractPersonalInfo(botId, playerId, message);
+            this.extractPersonalInfo(botId, playerId, withoutFileNotes(message));
         }
     }
 
