@@ -41,6 +41,8 @@ function makeWindow() {
         },
         /** The user presses Back. */
         pressBack: () => traverse(-1),
+        /** The user presses Forward. */
+        pressForward: () => traverse(1),
     };
 }
 
@@ -187,5 +189,37 @@ describe("chat history", () => {
         await settle();
         expect(closeLevel).toHaveBeenCalledTimes(2);
         expect(get(depth)).toBe(0);
+    });
+
+    it("Forward onto a closed level leaves it closed and goes back to where the chat is", async () => {
+        const { tab, depth, closeLevel } = setup();
+        depth.set(2);
+        await settle();
+        tab.pressBack();
+        await settle();
+        expect(get(depth)).toBe(1);
+        tab.pressForward();
+        await settle();
+        await settle();
+        expect(get(depth)).toBe(1);
+        expect(tab.index).toBe(1);
+        expect(closeLevel).toHaveBeenCalledTimes(1);
+        // The next Back closes the chat at once.
+        tab.pressBack();
+        await settle();
+        expect(get(depth)).toBe(0);
+    });
+
+    it("Back onto a step from before a reload closes the chat and walks past it", async () => {
+        const { tab, depth, closeLevel } = setup();
+        tab.history.pushState({ universeChat: true, chatStep: "before-reload" });
+        depth.set(1);
+        await settle();
+        tab.pressBack();
+        await settle();
+        await settle();
+        expect(closeLevel).toHaveBeenCalledTimes(1);
+        expect(get(depth)).toBe(0);
+        expect(tab.index).toBe(0);
     });
 });
