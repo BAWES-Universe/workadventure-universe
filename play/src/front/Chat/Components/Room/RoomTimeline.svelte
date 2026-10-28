@@ -4,7 +4,7 @@
 </script>
 
 <script lang="ts">
-    import { afterUpdate, beforeUpdate, hasContext, onDestroy, onMount, setContext, tick } from "svelte";
+    import { afterUpdate, beforeUpdate, getContext, hasContext, onDestroy, onMount, setContext, tick } from "svelte";
     import * as Sentry from "@sentry/svelte";
     import { derived, get, readable, writable } from "svelte/store";
     import type { Readable } from "svelte/store";
@@ -48,6 +48,7 @@
         createNameByChatIdStore,
         createWokaByChatIdStore,
         personColour,
+        personName,
     } from "../../Stores/ChatUserWokaStore";
     import type { PersonColourOf } from "../../Stores/ChatUserWokaStore";
     import { currentChatPeople } from "../../Stores/ChatPeopleLookup";
@@ -97,6 +98,7 @@
             createNameByChatIdStore(gameManager.getCurrentGameScene().userProviderMerger, currentChatPeople()?.store)
         );
     }
+    const nameByChatId: Readable<Map<string, string>> = getContext(NAME_BY_CHAT_ID_CONTEXT);
 
     // Cards inside messages (a bot's room) act on the other person of a direct chat.
     const partnerForCards = writable<DirectPartner | undefined>(undefined);
@@ -971,7 +973,7 @@
                 <!--    </div>-->
                 <!--{/if}-->
                 {#if botDmIntroShown}
-                    <BotDmIntro name={$roomName || "Bot"} />
+                    <BotDmIntro name={personName($nameByChatId, partner?.id, $roomName || "Bot")} />
                 {/if}
                 {#if shownSession && !isEnded && !isRoomMessages}
                     <li class="px-4 pb-2 text-center text-xs text-white/45" data-testid="proximityExplainer">
