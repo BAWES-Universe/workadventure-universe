@@ -25,14 +25,20 @@ function mappedIpv4(ip: string): string | null {
     return `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
 }
 
-/** Whether an IPv4 address is loopback, unspecified, private or link-local (which covers cloud metadata). */
+/**
+ * Whether an IPv4 address is loopback, unspecified, private, link-local (which covers cloud metadata), shared address
+ * space (100.64.0.0/10, which holds some providers' metadata address) or reserved for special use.
+ */
 function isPrivateIpv4(ip: string): boolean {
     return (
         /^127\./.test(ip) ||
-        ip === '0.0.0.0' ||
+        /^0\./.test(ip) || // 0.0.0.0/8, including 0.0.0.0
         /^10\./.test(ip) ||
+        /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(ip) || // 100.64.0.0/10
         /^172\.(1[6-9]|2\d|3[01])\./.test(ip) ||
+        /^192\.0\.0\./.test(ip) || // 192.0.0.0/24
         /^192\.168\./.test(ip) ||
+        /^198\.1[89]\./.test(ip) || // 198.18.0.0/15
         /^169\.254\./.test(ip)
     );
 }

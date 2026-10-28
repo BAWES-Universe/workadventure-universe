@@ -158,7 +158,7 @@ export function artifactToolDefinitions(): Array<{ type: 'function'; function: {
             function: {
                 name: LIST_ARTIFACTS_TOOL,
                 description:
-                    'List the artifacts made in this chat, the most recently changed first, with their ids. Use it when someone refers to an ' +
+                    'List the artifacts made in this chat and the ones this person made in their other chats with any bot, the most recently changed first, with their ids. Use it when someone refers to an ' +
                     'artifact from earlier ("make the buttons bigger", "the quests board") and you do not have its id. Call it silently.',
                 parameters: { type: 'object', properties: {}, required: [] },
             },
@@ -218,18 +218,36 @@ export const ARTIFACT_CUT_OFF_MESSAGE =
 /** What the chat says when a bot said it made or changed an artifact and nothing was saved (Orbit #666). */
 export const NOTHING_SAVED_LINE = 'No new version was saved.';
 
-/** Something a bot makes as an artifact. Not table, list, file or map: those come up in ordinary answers. */
-const ARTIFACT_NOUN =
-    '(?:artifacts?|apps?|pages?|dashboards?|games?|boards?|calculators?|sites?|websites?|trackers?|mocks?|mockups?|versions?)';
-/** "v2", "version 3": a version said to exist. */
-const VERSION_SAID = /\b(?:v\d+|version \d+)\b/;
+/**
+ * Something a bot makes as an artifact. Not table, list, file, map, page, site, version or mock: those come up in ordinary
+ * answers ("here's the updated version of your email").
+ */
+const ARTIFACT_NOUN = '(?:artifacts?|dashboards?|calculators?|mockups?)';
+/**
+ * Things a bot makes as artifacts that people also have of their own ("I've fixed the bug in your app"): only with a cue
+ * below, and not "of" something ("the board of directors").
+ */
+const SOMETIMES_ARTIFACT_NOUN = '(?:apps?|games?|boards?|trackers?)(?!\\s+of\\b)';
+/**
+ * Pointing at an artifact: tapping or opening its card, the card above or below. Not "tap" or "open it" alone: "Tap Save"
+ * is an ordinary instruction. A version named counts through VERSION_SAID instead.
+ */
+const ARTIFACT_CUE = /\b(?:artifacts?|(?:tap|open|see|in) (?:the|its) card|card (?:above|below))\b/;
+/**
+ * "v2", "version 3": a version said to exist, standing on its own as the thing made ("v2 has the charts", "here's version 3
+ * with", "saved as v2"). Not straight after a name ("Node v18", "Python version 3") nor before one ("the v2 API", "version 2
+ * of the library"): those are someone else's software (Sentry on #1499).
+ */
+const VERSION_SAID =
+    /(?:^|[,;:(]|\b(?:the|its|this|a|new|and|as|now|saved|made|built|here(?:'s|’s| is)|it(?:'s|’s| is)))\s*(?:v\d+|version \d+)(?:\.\d+)*(?=\s*(?:$|[,;:)—-]|(?:is|has|adds|includes|with|now|shows|keeps|looks|should|will)\b))/;
 /** Saying it was made or changed. */
 const DONE_VERB =
     '(?:made|built|created|updated|changed|rebuilt|redesigned|redid|reworked|added|fixed|saved|ready|live|finished|upgraded|improved)';
 /** "I've rebuilt the dashboard", "here's the updated quests board": someone saying they did it, then what, close together. */
-const DONE_SAID = new RegExp(
-    `\\b(?:i(?:'ve|’ve| have)?|i just|here(?:'s|’s| is)|it(?:'s|’s| is) (?:now )?|all set|done)\\b[^.!?\\n]{0,40}\\b${DONE_VERB}\\b[^.!?\\n]{0,30}\\b${ARTIFACT_NOUN}\\b`
-);
+const DONE_SAID_START = `\\b(?:i(?:'ve|’ve| have)?|i just|here(?:'s|’s| is)|it(?:'s|’s| is) (?:now )?|all set|done)\\b[^.!?\\n]{0,40}\\b${DONE_VERB}\\b[^.!?\\n]{0,30}\\b`;
+const DONE_SAID = new RegExp(`${DONE_SAID_START}${ARTIFACT_NOUN}\\b`);
+/** The same about an app, game, board or tracker: counts only in a reply with an artifact cue. */
+const DONE_SAID_SOMETIMES = new RegExp(`${DONE_SAID_START}${SOMETIMES_ARTIFACT_NOUN}\\b`);
 /** "v2 is ready", "rebuilt it, v2 has the charts": a version named next to a word saying it was done. */
 const VERSION_DONE = new RegExp(`\\b${DONE_VERB}\\b`);
 /** "couldn't save", "nothing was saved": a bot that says it did not. */
@@ -240,16 +258,25 @@ const EARLIER_SAID = /\b(?:earlier|before|previously|already|yesterday|ago|last 
 /**
  * Whether a reply says an artifact was made or changed. Read only when no make or change was saved in the turn, so it
  * leans on the wording, one sentence at a time: "I've built / here's the updated" followed closely by something an
- * artifact is, or a version named ("v2", "version 3") next to a word saying it was done. Ordinary answers that mention a
+ * artifact is (an app, game, board or tracker only next to a sentence pointing at its card or opening it), or a
+ * version named ("v2", "version 3") next to a word saying it was done. Ordinary answers that mention a
  * table, a list or a page without saying one was made don't count, nor a sentence about one from before ("the dashboard I
  * built earlier"): that one was saved in an earlier turn.
  */
 export function claimsArtifactSaved(reply: string): boolean {
     const text = reply.toLowerCase();
     if (!text.trim() || NOT_DONE_SAID.test(text)) return false;
-    return text
-        .split(/[.!?\n]+/)
-        .some((sentence) => !EARLIER_SAID.test(sentence) && (DONE_SAID.test(sentence) || (VERSION_SAID.test(sentence) && VERSION_DONE.test(sentence))));
+    // A period between digits ("v2.0") does not end a sentence
+    const sentences = text.split(/(?:(?<!\d)\.|\.(?!\d)|[!?\n])+/);
+    // An app, game, board or tracker counts with a cue in the same sentence or the one after ("... the game. Tap the card")
+    const cued = (index: number) => ARTIFACT_CUE.test(sentences[index]) || ARTIFACT_CUE.test(sentences[index + 1] ?? '');
+    return sentences.some(
+        (sentence, index) =>
+            !EARLIER_SAID.test(sentence) &&
+            (DONE_SAID.test(sentence) ||
+                (DONE_SAID_SOMETIMES.test(sentence) && cued(index)) ||
+                (VERSION_SAID.test(sentence) && VERSION_DONE.test(sentence)))
+    );
 }
 
 /** The second try after a reply said it saved an artifact and nothing was saved: do it with the tool, or say it plainly. */
@@ -388,7 +415,7 @@ export function formatArtifactResult(name: string, result: Record<string, unknow
         }
         case LIST_ARTIFACTS_TOOL: {
             const artifacts = (result.artifacts as Array<Record<string, unknown>>) ?? [];
-            if (artifacts.length === 0) return `${name}: Nothing has been made in this chat yet.`;
+            if (artifacts.length === 0) return `${name}: Nothing has been made yet.`;
             return `${name}: ${artifacts.map((a) => `"${a.title}" (id ${a.id}, ${a.kind}, version ${a.version}, by ${a.madeBy})`).join('; ')}. The first is the most recently changed.`;
         }
         default:

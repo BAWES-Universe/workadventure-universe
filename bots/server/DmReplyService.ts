@@ -15,7 +15,10 @@ import { parseEmotionsFromResponse, appendStreamedChunk } from '../ai/EmotionPar
 import { ROOM_CARD_MARK } from '../ai/AIService';
 import type { PendingMedia } from '../memory/ConversationMemory';
 import type { ArtifactCard } from '../ai/ArtifactTools';
+import { ReplySteps, type StepsField } from '../ai/ToolSteps';
 import type { ReplyLimitReached } from '../ai/types';
+import type { ParsedFile } from '../services/FileParser';
+import { withoutNoteIds, type ChatUpload } from '../services/ChatFiles';
 import type { BotConfiguration } from './AdminApiService';
 import type { BotManager } from './BotManager';
 
@@ -51,11 +54,20 @@ export interface DmAttachment {
     url: string;
     mimeType: string;
     mediaType?: 'image' | 'file' | 'audio' | 'video';
+    /** The name it was sent with, its size, and how long it plays: kept with it on the bot's list of files (#1508). */
+    name?: string;
+    sizeBytes?: number | null;
+    lengthSeconds?: number | null;
 }
 
 export interface DmReplyHooks {
     /** Text the bot says before it runs a tool ("Let me look that up"), sent as its own message like a bubble. */
     onInterimMessage?: (text: string) => Promise<void>;
+    /**
+     * The reply's steps line changed (#1545): the bot started tools, they finished, or the reply ended. The first call
+     * sends the line, later ones update that same message. `text` is the line for chat apps that can't draw it.
+     */
+    onSteps?: (field: StepsField, text: string) => Promise<void>;
     /** The Matrix room the message came in. Live artifacts made in this chat belong to it. */
     roomId?: string;
 }
@@ -95,6 +107,9 @@ const RESTING_PROMPT =
     "in character and in the same language they wrote in, saying you can't talk right now and they can come back later. " +
     "Don't answer their question, and don't mention AI, settings or anyone who runs you.";
 
+/** Chats whose last files are remembered for telling a message tried again from a new one. */
+const MAX_LAST_FILES = 500;
+
 export class DmReplyService extends BaseBehavior {
     private queues = new Map<string, Promise<unknown>>();
     /** Per chat, the words that wait behind the answer in progress, to be answered together once it is done. */
@@ -107,6 +122,8 @@ export class DmReplyService extends BaseBehavior {
     private missingCache = new Map<string, number>();
     /** When each chat (bot and person) last got a room card. */
     private roomCards = new Map<string, number>();
+    /** Per chat, the files in the person's last message by name and size: a message tried again sends the same ones. */
+    private lastFiles?: Map<string, string>;
 
     constructor(private botManager: BotManager) {
         super({ type: 'dm' });
@@ -268,13 +285,37 @@ export class DmReplyService extends BaseBehavior {
         // Same attachment handling as a bubble: parsed text for the model, image URLs for vision.
         let augmented = text;
         let images: string[] = [];
+        const read = new Map<string, ParsedFile | null>();
         const [primary, ...gallery] = attachments;
         if (primary) {
             const galleryUrls = gallery.map((a) => a.url);
-            augmented = await this.formatParsedAttachment(text, primary.url, primary.mimeType, primary.mediaType, galleryUrls, botId);
+            augmented = await this.formatParsedAttachment(text, primary.url, primary.mimeType, primary.mediaType, galleryUrls, botId, read);
             images = await this.collectImageUrls(primary.url, primary.mediaType, primary.mimeType, galleryUrls);
         }
-        const original = text || (primary ? `[sent a ${primary.mediaType || 'file'}]` : '');
+        // The files go on the bot's list (#1508), and the history keeps a note for each in place of "[sent a file]"
+        const uploads: ChatUpload[] = attachments.map((a) => ({
+            url: a.url,
+            name: a.name || a.url.split('?')[0].split('/').pop() || a.mediaType || 'file',
+            mimeType: a.mimeType,
+            mediaType: a.mediaType,
+            sizeBytes: a.sizeBytes,
+            lengthSeconds: a.lengthSeconds,
+        }));
+        const noted = uploads.length
+            ? this.noteSentFiles({
+                  botId,
+                  playerId,
+                  text,
+                  uploads,
+                  read,
+                  // A direct message is always a signed-in person, in the Matrix room the message came from
+                  call: hooks.roomId
+                      ? { botId, person: { signedIn: true, identifier: person.uuid, name: person.name }, chat: { kind: 'dm', ref: hooks.roomId } }
+                      : null,
+                  personRef: person.uuid,
+              })
+            : null;
+        const original = noted?.line ?? text;
 
         const lastMet = memory.getMemory(botId, playerId)?.relationship?.lastMet ?? 0;
         if (Date.now() - lastMet > NEW_CONVERSATION_AFTER_MS) {
@@ -283,10 +324,25 @@ export class DmReplyService extends BaseBehavior {
         // A message tried again after a failed answer (or sent again by the person) is already the last thing they
         // said, with no reply after it: keep it once in the history.
         const lastSaid = memory.getMemory(botId, playerId)?.conversationHistory?.at(-1);
-        const alreadyKept = lastSaid?.sender === 'person' && lastSaid.message === original && lastSaid.spaceName === DM_SPACE_NAME;
+        // A note has its file's id once Orbit gave one, so the ids don't count; the files were kept the first time.
+        // A note doesn't say a file's size, so another file with the same name is told apart by it.
+        const chat = `${botId}:${playerId}`;
+        const files = uploads.map((upload) => `${upload.name}:${upload.sizeBytes ?? ''}`).join('\n');
+        const lastFiles = (this.lastFiles ??= new Map());
+        const sameFiles = (lastFiles.get(chat) ?? files) === files;
+        // Newest last; the oldest chat goes first, which only takes it back to comparing the text alone
+        lastFiles.delete(chat);
+        lastFiles.set(chat, files);
+        if (lastFiles.size > MAX_LAST_FILES) lastFiles.delete(lastFiles.keys().next().value!);
+        const alreadyKept =
+            lastSaid?.sender === 'person' &&
+            withoutNoteIds(lastSaid.message) === withoutNoteIds(original) &&
+            lastSaid.spaceName === DM_SPACE_NAME &&
+            sameFiles;
         if (!alreadyKept) {
             memory.addMessage(botId, playerId, original, 'person', DM_SPACE_NAME);
-            memory.extractPersonalInfo(botId, playerId, original);
+            memory.extractPersonalInfo(botId, playerId, text);
+            noted?.keep();
         }
         // A first message creates the memory after the uuid was set, so it starts as "temp-<id>": name it now, before
         // tools see it.
@@ -310,6 +366,17 @@ export class DmReplyService extends BaseBehavior {
         let promptTokens = 0;
         let completionTokens = 0;
         let providerFailed = false;
+        // The bot's own "Show tool calls" switch (#742) decides whether this reply shows its steps line (#1545)
+        let steps: ReplySteps | undefined;
+        let showSteps: boolean | undefined;
+        const showStepsNow = async () => {
+            if (steps && hooks.onSteps) await hooks.onSteps(steps.field(), steps.text());
+        };
+        const stopSteps = async () => {
+            if (!steps) return;
+            steps.stop();
+            await showStepsNow();
+        };
 
         try {
             for await (const chunk of this.aiService.generateBotResponseStream(
@@ -333,17 +400,26 @@ export class DmReplyService extends BaseBehavior {
                     // The model said something before calling tools: in a bubble that stays as its own bubble.
                     const interim = withoutRoomCardMark(parseEmotionsFromResponse(fullMessage).cleanedResponse);
                     if (interim) await hooks.onInterimMessage?.(interim);
-                    // The bot's own "Show tool calls" switch, as in a bubble (#742).
-                    if (chunk.toolNames?.length && (await this.shouldShowToolCalls(botId))) {
-                        for (const toolName of chunk.toolNames) {
-                            await hooks.onInterimMessage?.(`🔍 ${toolName}...`);
+                    if (chunk.toolSteps?.length) {
+                        showSteps ??= await this.shouldShowToolCalls(botId);
+                        if (showSteps) {
+                            steps ??= new ReplySteps();
+                            steps.start(chunk.toolSteps);
+                            await showStepsNow();
                         }
                     }
                     fullMessage = '';
                     continue;
                 }
+                if (chunk.toolStepResults) {
+                    if (steps?.finish(chunk.toolStepResults)) await showStepsNow();
+                    continue;
+                }
                 // A reply limit: nothing was said and nothing is remembered as said
-                if (chunk.replyLimit) return { text: '', media: [], replyLimit: chunk.replyLimit };
+                if (chunk.replyLimit) {
+                    await stopSteps();
+                    return { text: '', media: [], replyLimit: chunk.replyLimit };
+                }
                 if (chunk.content) fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                 if (chunk.metadata?.tokensUsed) tokensUsed = chunk.metadata.tokensUsed;
                 if (chunk.metadata?.latency) latency = chunk.metadata.latency;
@@ -355,59 +431,69 @@ export class DmReplyService extends BaseBehavior {
             }
         } catch (error) {
             console.error(`[DmReplyService] AI error for bot ${botId}:`, error);
+            await stopSteps();
             return { text: '', media: [], failed: true };
         }
         if (providerFailed) {
             console.error(`[DmReplyService] AI provider failed for bot ${botId}; the answer so far is dropped`);
+            await stopSteps();
             return { text: '', media: [], failed: true };
         }
 
-        const responseTime = latency || Date.now() - startTime;
-        const parsed = parseEmotionsFromResponse(fullMessage);
-        let replyText = parsed.cleanedResponse;
-        memory.updateEmotionsFromAI(
-            botId,
-            playerId,
-            parsed.emotions ?? { personSentiment: 0, isInsult: false, insultSeverity: 0, context: 'neutral' }
-        );
-
-        if (this.responseProcessor && replyText.trim()) {
-            const tokenUsage = tokensUsed > 0
-                ? {
-                      prompt: promptTokens || Math.floor(tokensUsed * 0.7),
-                      completion: completionTokens || Math.floor(tokensUsed * 0.3),
-                      total: tokensUsed,
-                  }
-                : undefined;
-            const processed = this.responseProcessor.processResponse(botId, playerId, replyText, chatInstructions, responseTime, tokenUsage);
-            const regenerated = await this.regenerateOnRepetition({
+        let replyText = '';
+        let askedForRoom = false;
+        // A failure past the stream still stops the line, so it never spins on
+        try {
+            const responseTime = latency || Date.now() - startTime;
+            const parsed = parseEmotionsFromResponse(fullMessage);
+            replyText = parsed.cleanedResponse;
+            memory.updateEmotionsFromAI(
                 botId,
                 playerId,
-                playerMessage: augmented,
-                chatInstructions,
-                aiProviderRef: config.aiProviderRef,
-                spaceName: DM_SPACE_NAME,
-                context,
-                processed,
-                processedMessage: processed.cleaned,
-                fullMessage,
-                responseTime,
-                tokenUsage,
-                responseId: `dm-${botId}-${playerId}`,
-                debugLabel: 'DmReplyService',
-                images: images.length ? images : undefined,
-                channel: 'dm',
-                toolTimeoutSeconds: config.toolTimeoutSeconds,
-                homeRoomUrl: config.roomUrl,
-                peopleInRoom,
-            });
-            replyText = regenerated.processedMessage;
-        }
+                parsed.emotions ?? { personSentiment: 0, isInsult: false, insultSeverity: 0, context: 'neutral' }
+            );
 
-        // The bot marks a reply that answers where it is: the person asked, so it always gets the card. Read from the
-        // reply that is sent, so an answer asked for again after a repeat goes by its own mark.
-        const askedForRoom = replyText.toUpperCase().includes(ROOM_CARD_MARK);
-        replyText = withoutRoomCardMark(replyText);
+            if (this.responseProcessor && replyText.trim()) {
+                const tokenUsage = tokensUsed > 0
+                    ? {
+                          prompt: promptTokens || Math.floor(tokensUsed * 0.7),
+                          completion: completionTokens || Math.floor(tokensUsed * 0.3),
+                          total: tokensUsed,
+                      }
+                    : undefined;
+                const processed = this.responseProcessor.processResponse(botId, playerId, replyText, chatInstructions, responseTime, tokenUsage);
+                const regenerated = await this.regenerateOnRepetition({
+                    botId,
+                    playerId,
+                    playerMessage: augmented,
+                    chatInstructions,
+                    aiProviderRef: config.aiProviderRef,
+                    spaceName: DM_SPACE_NAME,
+                    context,
+                    processed,
+                    processedMessage: processed.cleaned,
+                    fullMessage,
+                    responseTime,
+                    tokenUsage,
+                    responseId: `dm-${botId}-${playerId}`,
+                    debugLabel: 'DmReplyService',
+                    images: images.length ? images : undefined,
+                    channel: 'dm',
+                    toolTimeoutSeconds: config.toolTimeoutSeconds,
+                    homeRoomUrl: config.roomUrl,
+                    peopleInRoom,
+                });
+                replyText = regenerated.processedMessage;
+            }
+
+            // The bot marks a reply that answers where it is: the person asked, so it always gets the card. Read from the
+            // reply that is sent, so an answer asked for again after a repeat goes by its own mark.
+            askedForRoom = replyText.toUpperCase().includes(ROOM_CARD_MARK);
+            replyText = withoutRoomCardMark(replyText);
+        } catch (error) {
+            await stopSteps();
+            throw error;
+        }
         // Kept only once it was sent: if sending fails the person's message stays the last thing said, so a retry
         // answers it afresh instead of seeing a reply they never got.
         let kept = false;
@@ -416,6 +502,12 @@ export class DmReplyService extends BaseBehavior {
             kept = true;
             memory.addMessage(botId, playerId, replyText, 'bot', DM_SPACE_NAME);
         };
+
+        // The line folds into its summary as the answer arrives
+        if (steps) {
+            steps.end();
+            await showStepsNow();
+        }
 
         // Media the tools produced waits in memory; a DM delivers it as attachments right after the text.
         const playerMemory = memory.getMemory(botId, playerId);

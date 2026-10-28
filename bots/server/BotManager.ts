@@ -32,6 +32,7 @@ import {
     type BehaviorModel,
     type LegacyBehaviorType,
 } from '../behaviors/behaviorModel';
+import { chatFileKeeper } from '../services/ChatFileKeeper';
 
 export interface BotInstance {
     botId: string;
@@ -161,7 +162,11 @@ export class BotManager {
             });
             this.conversationMemory = persistentMemory;
             // Orbit tells the bot server who a manager asked a private bot to forget (#435)
-            this.adminApiService.setForgetHandler?.((botId, notice) => persistentMemory.forget(botId, notice));
+            // Files still being kept for them are dropped too (#1508); Orbit already removed what it had
+            this.adminApiService.setForgetHandler?.((botId, notice) => {
+                chatFileKeeper.forget(botId, notice);
+                persistentMemory.forget(botId, notice);
+            });
             
             // Initialize AI service
             const adminApiUrl = process.env.ADMIN_API_URL || '';

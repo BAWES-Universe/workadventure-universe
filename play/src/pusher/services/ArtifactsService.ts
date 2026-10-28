@@ -56,6 +56,19 @@ const Rights = z.object({ owner: z.boolean(), change: z.boolean(), manage: z.boo
 const Opened = z.object({ artifact: ArtifactView, version: VersionView, you: Rights });
 export type OpenedArtifact = z.infer<typeof Opened>;
 
+const Shared = z.object({ artifact: ArtifactView });
+export type SharedArtifact = z.infer<typeof Shared>;
+
+/** Who can open it: people in the chat it was made in, or anyone with the link. */
+export const OPEN_SCOPES = ["chat", "link"] as const;
+/** Who can ask for changes: only its owner, or everyone who can open it, in its chat. */
+export const CHANGE_SCOPES = ["owner", "openers"] as const;
+
+export interface ArtifactSharing {
+    openScope?: (typeof OPEN_SCOPES)[number];
+    changeScope?: (typeof CHANGE_SCOPES)[number];
+}
+
 const VersionList = z.object({ versions: z.array(VersionView) });
 const VersionCode = z.object({ version: VersionView, content: z.string() });
 export type ArtifactVersionCode = z.infer<typeof VersionCode>;
@@ -64,6 +77,7 @@ const OrbitErrorBody = z.object({ error: z.string() });
 
 interface HttpClient {
     post(url: string, body: unknown, config: AxiosRequestConfig): Promise<{ data: unknown }>;
+    put(url: string, body: unknown, config: AxiosRequestConfig): Promise<{ data: unknown }>;
 }
 
 /**
@@ -97,17 +111,27 @@ export class ArtifactsService {
         return this.call(`/api/artifacts/${encodeURIComponent(id)}/restore`, { viewer, number }, Opened);
     }
 
+    /** The owner says who can open it and who can ask for changes; the answer is the artifact as it now is. */
+    share(id: string, sharing: ArtifactSharing, viewer: ArtifactViewer): Promise<SharedArtifact> {
+        return this.call(`/api/artifacts/${encodeURIComponent(id)}/share`, { viewer, ...sharing }, Shared, "put");
+    }
+
     /** The code of one version, for the Code view. */
     readCode(id: string, number: number, viewer: ArtifactViewer): Promise<ArtifactVersionCode> {
         return this.call(`/api/artifacts/${encodeURIComponent(id)}/versions/${number}`, { viewer }, VersionCode);
     }
 
-    private async call<T>(path: string, body: unknown, answer: z.ZodType<T>): Promise<T> {
+    private async call<T>(
+        path: string,
+        body: unknown,
+        answer: z.ZodType<T>,
+        method: "post" | "put" = "post"
+    ): Promise<T> {
         if (!this.isEnabled()) {
             throw new ArtifactsError("artifacts_unavailable", 503);
         }
         try {
-            const response = await this.http.post(`${this.baseUrl}${path}`, body, {
+            const response = await this.http[method](`${this.baseUrl}${path}`, body, {
                 headers: { Authorization: `${this.token}` },
             });
             return answer.parse(response.data);

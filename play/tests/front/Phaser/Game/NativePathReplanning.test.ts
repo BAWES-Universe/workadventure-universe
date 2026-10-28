@@ -57,6 +57,7 @@ const Player = nativeClass<NativePlayer>(
     "Phaser/Player/Player.ts",
     [
         "setPathToFollow",
+        "skipWaypointAlreadyPassed",
         "getCurrentPathDestinationPoint",
         "finishFollowingPath",
         "adjustPathToFollowToColliderBounds",
@@ -274,5 +275,117 @@ describe("native click/tap visibility replanning", () => {
         }
         expect(f.scene.userInputManager.isControlsEnabled).toBe(true);
         expect(f.scene.userInputManager.isRightClickEnabled).toBe(true);
+    });
+});
+
+describe("native click/tap while already walking", () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+    });
+
+    const DOWN = 0;
+    const LEFT = 1;
+    const RIGHT = 2;
+    const UP = 3;
+
+    // Each case: where the Woka stands (sprite), the first click and the repeated click (floor), the expected
+    // facing and the axis it walks along (+1 / -1).
+    it.each([
+        { name: "up", start: { x: 80, y: 192 }, first: { x: 80, y: 48 }, again: { x: 80, y: 40 }, facing: UP },
+        { name: "down", start: { x: 80, y: 48 }, first: { x: 80, y: 208 }, again: { x: 80, y: 216 }, facing: DOWN },
+        {
+            name: "right",
+            start: { x: 48, y: 112 },
+            first: { x: 208, y: 128 },
+            again: { x: 216, y: 128 },
+            facing: RIGHT,
+        },
+        { name: "left", start: { x: 208, y: 112 }, first: { x: 48, y: 128 }, again: { x: 40, y: 128 }, facing: LEFT },
+    ])("never steps back or faces backwards when clicking again while walking $name", async (c) => {
+        // Every offset within a tile, so some clicks land just before the Woka crosses into the next tile.
+        for (let offset = 0; offset < 12; offset++) {
+            vi.clearAllTimers();
+            await spamClicks(c, offset);
+        }
+    });
+
+    async function spamClicks(
+        c: { start: Point; first: Point; again: Point; facing: number },
+        offset: number
+    ): Promise<void> {
+        const f = fixture(c.start);
+        f.click(c.first);
+        await vi.runAllTimersAsync();
+        for (let frame = 0; frame < offset; frame++) f.player.followPath(1000 / 60);
+
+        const axis = c.facing === UP || c.facing === DOWN ? "y" : "x";
+        const sign = c.facing === UP || c.facing === LEFT ? -1 : 1;
+        const facings: number[] = [];
+        let last = f.player[axis];
+        const step = () => {
+            f.player.followPath(1000 / 60);
+            facings.push((f.player as unknown as { _lastDirection: number })._lastDirection);
+            // Never moves backwards along the walking axis.
+            expect(sign * (f.player[axis] - last)).toBeGreaterThanOrEqual(0);
+            last = f.player[axis];
+        };
+
+        // Spam: click again, and keep walking the old path for a few frames while the new one is computed.
+        for (let spam = 0; spam < 5; spam++) {
+            f.click(c.again);
+            step();
+            step();
+            await vi.runAllTimersAsync();
+            for (let frame = 0; frame < 4 && f.player.pathToFollow; frame++) step();
+        }
+        while (f.player.pathToFollow) step();
+
+        expect(facings.filter((facing) => facing !== c.facing)).toEqual([]);
+    }
+});
+
+describe("native click/tap walks on whole pixels", () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+    });
+
+    const DOWN = 0;
+    const RIGHT = 2;
+    const UP = 3;
+    // Frame times as a browser gives them: never exactly 1000 / 60, sometimes a dropped frame.
+    const frameTimes = [16.7, 15.2, 18.9, 16.1, 33.4, 16.6, 17.3];
+
+    // The camera follows on whole pixels: a Woka between two pixels is drawn a fraction away from it and shakes.
+    it.each([
+        { name: "down-right", start: { x: 48, y: 32 }, click: { x: 208, y: 208 }, facing: DOWN },
+        { name: "up-left", start: { x: 208, y: 192 }, click: { x: 48, y: 48 }, facing: UP },
+        { name: "right", start: { x: 48, y: 96 }, click: { x: 208, y: 112 }, facing: RIGHT },
+    ])("walks $name on whole pixels, facing one way, to the clicked spot", async (c) => {
+        const f = fixture(c.start);
+        f.click(c.click);
+        await vi.runAllTimersAsync();
+        const destination = f.player.getCurrentPathDestinationPoint();
+
+        const facings = new Set<number>();
+        const signX = Math.sign(c.click.x - c.start.x);
+        const signY = Math.sign(c.click.y - 16 - c.start.y);
+        let last = { x: f.player.x, y: f.player.y };
+        for (let frame = 0; f.player.pathToFollow && frame < 1000; frame++) {
+            f.player.followPath(frameTimes[frame % frameTimes.length]);
+            if (!f.player.pathToFollow) break;
+            expect(Number.isInteger(f.player.x) && Number.isInteger(f.player.y)).toBe(true);
+            // Never steps back on either axis.
+            expect(signX * (f.player.x - last.x)).toBeGreaterThanOrEqual(0);
+            expect(signY * (f.player.y - last.y)).toBeGreaterThanOrEqual(0);
+            last = { x: f.player.x, y: f.player.y };
+            facings.add((f.player as unknown as { _lastDirection: number })._lastDirection);
+        }
+
+        expect([...facings]).toEqual([c.facing]);
+        expect({ x: f.player.x, y: f.player.y }).toEqual(destination);
     });
 });
