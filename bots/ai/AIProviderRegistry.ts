@@ -8,6 +8,7 @@ import type { AIProvider } from './AIProvider';
 import type { AIProviderConfig, AIStreamChunk, AIResponse } from './types';
 import { LMStudioProvider } from './providers/LMStudioProvider';
 import { OpenAIProvider } from './providers/OpenAIProvider';
+import { withStepsAsText, type ReplySteps } from './replySteps';
 
 export class AIProviderRegistry {
     private providers: Map<string, AIProvider> = new Map();
@@ -81,7 +82,8 @@ export class AIProviderRegistry {
         config: AIProviderConfig,
         tools?: any[],
         signal?: AbortSignal,
-        images?: string[]
+        images?: string[],
+        steps?: ReplySteps
     ): AsyncGenerator<AIStreamChunk> {
         const provider = this.getOrCreateProvider(config);
 
@@ -90,8 +92,8 @@ export class AIProviderRegistry {
         }
 
         if (!provider.supportsStreaming()) {
-            // Fallback to non-streaming
-            const response = await provider.generate(systemPrompt, userMessage, config, tools, signal, images);
+            // Fallback to non-streaming, which takes one message: the reply's steps go in it as text
+            const response = await provider.generate(systemPrompt, withStepsAsText(userMessage, steps), config, tools, signal, images);
             // Metadata (tokens/truncated/error) is attached ONLY to the done chunk —
             // consumers accumulate usage with += across chunks (e.g.
             // continueTruncatedResponse, follow-up rounds), so sharing the same
@@ -120,7 +122,7 @@ export class AIProviderRegistry {
         }
 
         // Use streaming
-        yield* provider.generateStream(systemPrompt, userMessage, config, tools, signal, images);
+        yield* provider.generateStream(systemPrompt, userMessage, config, tools, signal, images, steps);
     }
 
     /**

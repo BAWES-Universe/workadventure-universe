@@ -1,6 +1,7 @@
 import CancelablePromise from "cancelable-promise";
 import { ResourceLoadError } from "../Services/SuperLoaderPlugin";
 import type { SuperLoaderPlugin } from "../Services/SuperLoaderPlugin";
+import { SEPARATE_CACHE_PARAM, withSeparateCache } from "../../Utils/SeparateCacheUrl";
 import { PlayerTexturesKey } from "./PlayerTextures";
 import { reportWokaLoadStalled, WOKA_STALL_REPORT_MS } from "./WokaLoadReporter";
 import type { WokaTextureDescriptionInterface, PlayerTextures } from "./PlayerTextures";
@@ -16,8 +17,7 @@ export const WOKA_LOAD_TIMEOUT_MS = 10_000;
 // Only the timeout: Phaser keeps the file's own settings for every field left out (an image needs its "blob" type).
 export const wokaXhrSettings = { timeout: WOKA_LOAD_TIMEOUT_MS } as Phaser.Types.Loader.XHRSettingsObject;
 
-/** Added to a picture's address when it is asked for again; storages ignore query fields they don't know. */
-export const SEPARATE_CACHE_PARAM = "wa_cors";
+export { SEPARATE_CACHE_PARAM };
 
 /**
  * The address to ask again at when a Woka picture from another site failed right away, or undefined when asking again
@@ -33,21 +33,7 @@ export function separateCacheUrl(url: string, error: unknown, elapsedMs: number)
     if (!(error instanceof ResourceLoadError) || error.reason !== "load-error" || elapsedMs >= WOKA_LOAD_TIMEOUT_MS) {
         return undefined;
     }
-    let address: URL;
-    try {
-        address = new URL(url, window.location.href);
-    } catch {
-        return undefined;
-    }
-    if (
-        address.origin === window.location.origin ||
-        (address.protocol !== "https:" && address.protocol !== "http:") ||
-        address.searchParams.has(SEPARATE_CACHE_PARAM)
-    ) {
-        return undefined;
-    }
-    address.searchParams.set(SEPARATE_CACHE_PARAM, "1");
-    return address.toString();
+    return withSeparateCache(url);
 }
 
 export interface FrameConfig {

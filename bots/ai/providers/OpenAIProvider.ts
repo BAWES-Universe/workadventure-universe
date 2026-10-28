@@ -13,6 +13,7 @@ import { fetchFor, providerErrorText, statusFromError } from './ownKeyHttp';
 import { linkExternalAbort } from './abortUtils';
 import { resolveVisionSupport } from './visionModels';
 import * as Sentry from '@sentry/node';
+import { stepMessages, tooLongOf, type ReplySteps } from '../replySteps';
 
 /**
  * True only for OpenAI's own API. The prompt-cache hints below are OpenAI
@@ -242,13 +243,16 @@ export class OpenAIProvider implements AIProvider {
         config: AIProviderConfig,
         stream: boolean,
         tools?: any[],
-        images?: string[]
+        images?: string[],
+        steps?: ReplySteps
     ): Record<string, any> {
         const body: Record<string, any> = {
             model: config.model,
             messages: [
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: userMessage },
+                // The reply's steps so far, with the reasoning a thinking model gave for each (it wants it back)
+                ...stepMessages(steps, { reasoning: true }),
             ],
             stream,
         };
@@ -324,11 +328,13 @@ export class OpenAIProvider implements AIProvider {
         config: AIProviderConfig,
         tools?: any[],
         externalSignal?: AbortSignal,
-        images?: string[]
+        images?: string[],
+        steps?: ReplySteps
     ): AsyncGenerator<AIStreamChunk> {
         const startTime = Date.now();
         let tokensUsed = 0;
         let promptTokens = 0;
+        let reasoning = '';
         let usageDetail: AIUsageDetail = {};
         let completionTokens = 0;
         let responseModel = '';
@@ -348,7 +354,7 @@ export class OpenAIProvider implements AIProvider {
             let streamController = controller; // tracks the controller for the active stream (may be updated on retry)
             timeoutId = setTimeout(() => controller.abort(), timeout);
 
-            const requestBody = this.buildRequestBody(systemPrompt, userMessage, config, true, tools, images);
+            const requestBody = this.buildRequestBody(systemPrompt, userMessage, config, true, tools, images, steps);
             // Ask the stream to end with a usage chunk. Without it a provider may leave usage out of a stream, and the reply is
             // recorded with 0 tokens (#1173). A provider that refuses the field is retried without it below, and remembered.
             if (!OpenAIProvider.refusedStreamOptions.has(endpoint)) {
@@ -593,6 +599,11 @@ export class OpenAIProvider implements AIProvider {
                                 responseModel = json.model;
                             }
 
+                            // A thinking model's reasoning: kept for the reply's next step, never shown
+                            if (typeof delta?.reasoning_content === 'string') {
+                                reasoning += delta.reasoning_content;
+                            }
+
                             // YIELD directly per-chunk with event-loop yield so the frontend
                             // can render each token before the next arrives
                             if (delta?.content) {
@@ -626,6 +637,7 @@ export class OpenAIProvider implements AIProvider {
             yield {
                 content: '',
                 done: true,
+                ...(reasoning ? { reasoning } : {}),
                 metadata: {
                     tokensUsed,
                     promptTokens,
@@ -655,7 +667,7 @@ export class OpenAIProvider implements AIProvider {
                     error: !externallyCancelled,
                     ...(externallyCancelled ? { cancelled: true } : {}),
                     errorStatus: statusFromError(error),
-                    ...(externallyCancelled ? {} : { errorText: providerErrorText(error) }),
+                    ...(externallyCancelled ? {} : { ...tooLongOf(error?.message), errorText: providerErrorText(error) }),
                 },
             };
         } finally {

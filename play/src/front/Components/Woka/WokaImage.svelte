@@ -1,15 +1,28 @@
 <script lang="ts" context="module">
+    import { withSeparateCache } from "../../Utils/SeparateCacheUrl";
+
     // Every WOKA picture is loaded once and shared by all the tiles that draw it
     const imageCache = new Map<string, HTMLImageElement>();
 
     function cachedImage(url: string): HTMLImageElement {
         let img = imageCache.get(url);
         if (!img) {
-            img = new window.Image();
+            const image = new window.Image();
             // Set crossOrigin before src so the image is only fetched once
-            img.crossOrigin = "user-credentials";
-            img.src = url;
-            imageCache.set(url, img);
+            image.crossOrigin = "user-credentials";
+            // A picture from another site that a picker or Orbit showed first fails here at once; asked again at its
+            // own address it loads, as the map does (#1133)
+            image.addEventListener(
+                "error",
+                () => {
+                    const retryUrl = withSeparateCache(url);
+                    if (retryUrl) image.src = retryUrl;
+                },
+                { once: true }
+            );
+            image.src = url;
+            imageCache.set(url, image);
+            img = image;
         }
         return img;
     }
