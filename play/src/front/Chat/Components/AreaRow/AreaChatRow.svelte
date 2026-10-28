@@ -8,6 +8,7 @@
     } from "../../Connection/ChatConnection";
     import { selectedRoomStore } from "../../Stores/SelectRoomStore";
     import EncryptionBadge from "../EncryptionBadge.svelte";
+    import { previewLine } from "../Room/MessageActions/messageActions";
     import RoomMenu from "../Room/RoomMenu/RoomMenu.svelte";
     import { formatTypingLine } from "../TopRow/TopRowSummary";
     import { IconBellOff, IconMapPin } from "@wa-icons";
@@ -53,7 +54,19 @@
 
     $: latestMessage = $messages.length > 0 ? $messages[$messages.length - 1] : undefined;
     $: latestMessageContent = latestMessage?.content;
-    $: latestMessageText = $latestMessageContent ? toPlainText($latestMessageContent.body) : "";
+    $: latestMessageText =
+        latestMessage && $latestMessageContent
+            ? toPlainText(
+                  previewLine(latestMessage.type, $latestMessageContent, {
+                      photo: $LL.chat.messageActions.photo(),
+                      photos: (count) => $LL.chat.messageActions.photos({ count }),
+                      files: (count) => $LL.chat.messageActions.files({ count }),
+                      video: $LL.chat.messageActions.video(),
+                      voice: $LL.chat.messageActions.voice(),
+                      audio: $LL.chat.messageActions.audio(),
+                  })
+              )
+            : "";
     $: latestMessageSender = latestMessage
         ? latestMessage.isMyMessage
             ? $LL.chat.topRow.you()

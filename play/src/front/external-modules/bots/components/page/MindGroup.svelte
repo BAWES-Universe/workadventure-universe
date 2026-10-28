@@ -40,7 +40,13 @@
      * say (an older Orbit, offline): the page then keeps the provider list it always had.
      */
     let options: BotAiOptions | null = null;
-    $: onOptions?.(options);
+    // Told only when the options themselves change. Run again each time the page passes `onOptions` back, a page whose
+    // callback changes with what it is told would answer and be told again without end, freezing the game (#1540).
+    let toldOptions: BotAiOptions | null | undefined;
+    $: if (options !== toldOptions) {
+        toldOptions = options;
+        onOptions?.(options);
+    }
     /** The viewer's own keys, lent or not (#1375): the ones not lent here are named, with how to lend them. */
     let myKeys: Array<{ id: string; name: string }> | null = null;
     /**

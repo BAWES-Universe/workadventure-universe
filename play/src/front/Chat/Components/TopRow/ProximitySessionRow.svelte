@@ -7,6 +7,7 @@
     import { ROOM_MESSAGES_SESSION_ID } from "../../Connection/Proximity/ProximitySessions";
     import type { PictureStore } from "../../../Stores/PictureStore";
     import { formatRowTime, formatUnreadCount, toPlainText } from "../OneList/OneListOrder";
+    import { previewLine } from "../Room/MessageActions/messageActions";
     import { minuteClock } from "../OneList/MinuteClock";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import TopRowAvatar from "./TopRowAvatar.svelte";
@@ -99,7 +100,19 @@
         : $LL.chat.session.proximityTag();
     $: lastMessage = session.lastMessage;
     $: lastContent = lastMessage?.content;
-    $: lastText = $lastContent ? toPlainText($lastContent.body) : "";
+    $: lastText =
+        lastMessage && $lastContent
+            ? toPlainText(
+                  previewLine(lastMessage.type, $lastContent, {
+                      photo: $LL.chat.messageActions.photo(),
+                      photos: (count) => $LL.chat.messageActions.photos({ count }),
+                      files: (count) => $LL.chat.messageActions.files({ count }),
+                      video: $LL.chat.messageActions.video(),
+                      voice: $LL.chat.messageActions.voice(),
+                      audio: $LL.chat.messageActions.audio(),
+                  })
+              )
+            : "";
     $: lastSender = lastMessage
         ? lastMessage.isMyMessage
             ? $LL.chat.topRow.you()

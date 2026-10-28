@@ -22,6 +22,8 @@ const api = vi.hoisted(() => {
         fetchArtifactVersions: vi.fn(),
         fetchArtifactCode: vi.fn(),
         restoreArtifactVersion: vi.fn(),
+        shareArtifact: vi.fn(),
+        artifactLink: (id: string) => `https://orbit.test/a/${id}`,
     };
 });
 vi.mock("../../../src/front/Artifacts/ArtifactApi", () => api);
@@ -372,6 +374,124 @@ describe("the artifact window", () => {
             expect(byTestId("artifactFrame")?.getAttribute("src")).toBe("https://artifacts.test/v3.html")
         );
         expect(byTestId("artifactRestoreFailed")).toBeNull();
+    });
+
+    it("lets only the owner share: the link is turned on at once, saved, and copied", async () => {
+        api.fetchArtifact.mockResolvedValue(opened(3));
+        api.fetchArtifactVersions.mockResolvedValue([]);
+        let saved: (artifact: unknown) => void = () => {};
+        api.shareArtifact.mockReturnValue(
+            new Promise((resolve) => {
+                saved = resolve;
+            })
+        );
+        const writeText = vi.fn(() => Promise.resolve());
+        Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+        mountWindow(3);
+        await vi.waitFor(() => expect(byTestId("artifactShare")).not.toBeNull());
+
+        // One list at a time: Share puts the Versions list away
+        byTestId("artifactVersions")?.click();
+        await vi.waitFor(() => expect(byTestId("artifactVersionMenu")).not.toBeNull());
+        byTestId("artifactShare")?.click();
+        await vi.waitFor(() => expect(byTestId("artifactShareMenu")).not.toBeNull());
+        expect(byTestId("artifactVersionMenu")).toBeNull();
+        expect(byTestId("artifactOpenChat")?.getAttribute("aria-checked")).toBe("true");
+        expect(byTestId("artifactChangeOwner")?.getAttribute("aria-checked")).toBe("true");
+        expect(byTestId("artifactCopyLink")).toBeNull();
+
+        byTestId("artifactOpenLink")?.click();
+        await tick();
+        expect(api.shareArtifact).toHaveBeenCalledWith(ID, { openScope: "link" }, { kind: "nearby", ref: "bubble" });
+        expect(byTestId("artifactOpenLink")?.getAttribute("aria-checked")).toBe("true");
+        // Nothing else is sent until it is saved
+        byTestId("artifactChangeOpeners")?.click();
+        expect(api.shareArtifact).toHaveBeenCalledTimes(1);
+
+        // The link shows at once, but it is copied only once it works
+        expect((byTestId("artifactCopyLink") as HTMLButtonElement).disabled).toBe(true);
+        saved({ ...opened(3).artifact, openScope: "link" });
+        await vi.waitFor(() => expect((byTestId("artifactCopyLink") as HTMLButtonElement).disabled).toBe(false));
+        byTestId("artifactCopyLink")?.click();
+        await vi.waitFor(() => expect(byTestId("artifactLinkCopied")).not.toBeNull());
+        expect(writeText).toHaveBeenCalledWith(`https://orbit.test/a/${ID}`);
+
+        // Picking what is already saved sends nothing
+        byTestId("artifactOpenLink")?.click();
+        expect(api.shareArtifact).toHaveBeenCalledTimes(1);
+
+        document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+        await vi.waitFor(() => expect(byTestId("artifactShareMenu")).toBeNull());
+    });
+
+    it("goes back to what was saved when sharing fails, and shows the link when it cannot be copied", async () => {
+        api.fetchArtifact.mockResolvedValue({ ...opened(3), artifact: { ...opened(3).artifact, openScope: "link" } });
+        api.shareArtifact.mockRejectedValue(new api.ArtifactRequestError(0, "offline"));
+        Object.defineProperty(navigator, "clipboard", {
+            value: { writeText: () => Promise.reject(new Error("denied")) },
+            configurable: true,
+        });
+        mountWindow(3);
+        await vi.waitFor(() => expect(byTestId("artifactShare")).not.toBeNull());
+        byTestId("artifactShare")?.click();
+        await vi.waitFor(() => expect(byTestId("artifactCopyLink")).not.toBeNull());
+
+        byTestId("artifactCopyLink")?.click();
+        await vi.waitFor(() => expect(byTestId("artifactLinkText")?.textContent).toBe(`https://orbit.test/a/${ID}`));
+
+        byTestId("artifactChangeOpeners")?.click();
+        await vi.waitFor(() => expect(byTestId("artifactShareFailed")).not.toBeNull());
+        expect(byTestId("artifactChangeOwner")?.getAttribute("aria-checked")).toBe("true");
+        expect(byTestId("artifactChangeOpeners")?.getAttribute("aria-checked")).toBe("false");
+    });
+
+    it("opens the device's share sheet beside Copy link, and copies only when the sheet cannot open", async () => {
+        api.fetchArtifact.mockResolvedValue({ ...opened(3), artifact: { ...opened(3).artifact, openScope: "link" } });
+        api.fetchArtifactVersions.mockResolvedValue([]);
+        const writeText = vi.fn(() => Promise.resolve());
+        Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+        const share = vi.fn(() => Promise.reject(new DOMException("closed", "AbortError")));
+        Object.defineProperty(navigator, "share", { value: share, configurable: true });
+        try {
+            mountWindow(3);
+            await vi.waitFor(() => expect(byTestId("artifactShare")).not.toBeNull());
+            byTestId("artifactShare")?.click();
+            await vi.waitFor(() => expect(byTestId("artifactShareLink")).not.toBeNull());
+            expect(byTestId("artifactCopyLink")).not.toBeNull();
+
+            // Closing the sheet copies nothing
+            byTestId("artifactShareLink")?.click();
+            expect(share).toHaveBeenCalledWith({ title: "Quests board", url: `https://orbit.test/a/${ID}` });
+            await tick();
+            await tick();
+            expect(writeText).not.toHaveBeenCalled();
+            expect(byTestId("artifactLinkCopied")).toBeNull();
+
+            // A sheet that cannot open copies instead, so the tap never does nothing
+            share.mockImplementation(() => Promise.reject(new DOMException("blocked", "NotAllowedError")));
+            byTestId("artifactShareLink")?.click();
+            await vi.waitFor(() => expect(byTestId("artifactLinkCopied")).not.toBeNull());
+            expect(writeText).toHaveBeenCalledWith(`https://orbit.test/a/${ID}`);
+        } finally {
+            Reflect.deleteProperty(navigator, "share");
+        }
+    });
+
+    it("keeps Copy link alone where the device has no share sheet", async () => {
+        api.fetchArtifact.mockResolvedValue({ ...opened(3), artifact: { ...opened(3).artifact, openScope: "link" } });
+        api.fetchArtifactVersions.mockResolvedValue([]);
+        mountWindow(3);
+        await vi.waitFor(() => expect(byTestId("artifactShare")).not.toBeNull());
+        byTestId("artifactShare")?.click();
+        await vi.waitFor(() => expect(byTestId("artifactCopyLink")).not.toBeNull());
+        expect(byTestId("artifactShareLink")).toBeNull();
+    });
+
+    it("shows no Share button to someone who is not the owner", async () => {
+        api.fetchArtifact.mockResolvedValue(opened(3, 3, "app", false));
+        mountWindow(3);
+        await vi.waitFor(() => expect(byTestId("artifactVersions")).not.toBeNull());
+        expect(byTestId("artifactShare")).toBeNull();
     });
 
     it("says it is gone for a missing artifact, and offers another try only when the server cannot be reached", async () => {
