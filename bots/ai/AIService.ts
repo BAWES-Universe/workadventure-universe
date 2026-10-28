@@ -2700,7 +2700,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         if (!memory) return "It couldn't be sent right now. Say so simply and offer to try again.";
         // A direct message sends it after the reply, so what would stop it there is checked now, before saying it was sent
         if (file.sizeBytes != null && file.sizeBytes > MAX_OUTGOING_MEDIA_BYTES) {
-            return `It is too big to send in a direct message (over ${Math.round(MAX_OUTGOING_MEDIA_BYTES / (1024 * 1024))} MB). Say so simply; it can be sent in a nearby chat.`;
+            // A nearby chat posts a file Orbit keeps as it is; a link kept as typed would be uploaded there, and refused too
+            const nearby = file.store && 'bucket' in file.store ? '; it can be sent in a nearby chat' : '';
+            return `It is too big to send in a direct message (over ${Math.round(MAX_OUTGOING_MEDIA_BYTES / (1024 * 1024))} MB). Say so simply${nearby}.`;
         }
         try {
             const { FileParser } = await import('../services/FileParser');
