@@ -164,7 +164,8 @@ describe('AIService – a reply keeps its own steps', () => {
     });
 
     it('sets older results aside once the steps pass "Room for tool results in one reply"', async () => {
-        const { admin, memory } = buildMocks({ ...LIMITS, roomChars: 10 });
+        // Each call to get_bot_position with {} takes 18 of the room, leaving 10 for what it gave back
+        const { admin, memory } = buildMocks({ ...LIMITS, roomChars: 28 });
         answersWith(calls('call_a'), calls('call_b'), says('Here.'));
         await reply(new AIService(memory, admin, 'http://admin.local'));
         expect(seen[1].steps[0].results[0].content).toMatch(/\n\[Only the first 10 of \d+ characters fit/);
