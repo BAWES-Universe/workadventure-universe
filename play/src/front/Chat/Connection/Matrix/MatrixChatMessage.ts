@@ -83,7 +83,7 @@ export class MatrixChatMessage implements ChatMessage {
             room.getMember(event.getSender() ?? "")?.name ?? ""
         );
         this.artifact = readArtifactField(event.getSender(), event.getOriginalContent());
-        this.steps = writable(readBotSteps(event.getSender(), this.latestContent()));
+        this.steps = writable(readBotSteps(event.getSender(), this.stepsContent()));
         this.date = event.getDate();
         this.sender = this.getSender();
         this.isMyMessage = this.room.client.getUserId() === event.getSender();
@@ -392,13 +392,18 @@ export class MatrixChatMessage implements ChatMessage {
         }
     }
 
-    /** The content as last edited, for a message read from history after the bot server updated it. */
-    private latestContent(): Record<string, unknown> {
+    /** A notice as last edited, so a steps line read from history shows where the bot server left it. */
+    private stepsContent(): Record<string, unknown> | undefined {
+        const original = this.event.getOriginalContent();
+        // Only a notice can carry a steps line, so other messages skip the look at their edits
+        if (original.msgtype !== "m.notice") return undefined;
         const bundled: unknown = this.event.getUnsigned()["m.relations"]?.["m.replace"]?.content?.["m.new_content"];
         if (bundled && typeof bundled === "object") return bundled as Record<string, unknown>;
-        const replaced: unknown = this.event.replacingEvent()?.getOriginalContent()["m.new_content"];
-        if (replaced && typeof replaced === "object") return replaced as Record<string, unknown>;
-        return this.event.getOriginalContent();
+        if (this.event.replacingEventId()) {
+            const replaced: unknown = this.event.replacingEvent()?.getOriginalContent()["m.new_content"];
+            if (replaced && typeof replaced === "object") return replaced as Record<string, unknown>;
+        }
+        return original;
     }
 
     /** An update of a bot's steps line: only its own sender can change it. */
