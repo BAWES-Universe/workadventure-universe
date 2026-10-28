@@ -147,8 +147,8 @@
         if (sending) return;
         // Send while recording stops it first: what was said so far goes.
         if (state === "recording") await stop();
-        if (!note) return;
-        // eslint-disable-next-line require-atomic-updates
+        // A second press while the stop was finishing waits for the same stop: only the first one sends.
+        if (!note || sending) return;
         sending = true;
         player?.pause();
         let sent = false;
