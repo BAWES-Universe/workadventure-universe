@@ -80,21 +80,37 @@ describe('a file the bot sent, to keep', () => {
 });
 
 describe('a file the bot sends in nearby chat', () => {
-    it('goes to the behavior for the person it is answering, and never stops the file being sent', async () => {
+    it('goes to the behavior for the person whose reply sent it, so two replies at once never swap files, and never stops the file being sent', async () => {
         const { BotClient } = await import('../client/BotClient');
         const client = Object.create(BotClient.prototype) as InstanceType<typeof BotClient>;
         const onBotMediaSent = vi.fn();
-        Object.assign(client, { behavior: { onBotMediaSent }, mediaAsker: null, config: { botId: BOT } });
-        const items = [{ url: CDN, mediaType: 'audio' }];
-        client['mediaSent']('space-1', items);
+        const send = vi.fn();
+        Object.assign(client, { behavior: { onBotMediaSent }, config: { botId: BOT, name: 'Guide' }, spaces: new Map([['space-1', 7]]), send });
+        // A's slow song lands after B's reply started: each send names its own asker
+        expect(client.sendMediaMessage('space-1', 'https://cdn/b.png', 'image', 'image/png', '', undefined, 43)).toBe(true);
+        expect(client.sendMediaMessage('space-1', CDN, 'audio', 'audio/mpeg', '', undefined, 42)).toBe(true);
+        expect(onBotMediaSent.mock.calls.map(([space, asker, items]) => [space, asker, items[0].url])).toEqual([
+            ['space-1', 43, 'https://cdn/b.png'],
+            ['space-1', 42, CDN],
+        ]);
+        client.sendMediaGallery('space-1', ['https://cdn/1.png', 'https://cdn/2.png'], 'two', ['one.png', 'two.png'], 42);
+        expect(onBotMediaSent.mock.calls.at(-1)).toEqual([
+            'space-1',
+            42,
+            [
+                { url: 'https://cdn/1.png', mediaType: 'image', mimeType: 'image/png', caption: 'two', fileName: 'one.png' },
+                { url: 'https://cdn/2.png', mediaType: 'image', mimeType: 'image/png', caption: undefined, fileName: 'two.png' },
+            ],
+        ]);
+        // A send that isn't from a reply (no asker) is sent and not kept
+        onBotMediaSent.mockClear();
+        expect(client.sendMediaMessage('space-1', CDN, 'audio', 'audio/mpeg')).toBe(true);
         expect(onBotMediaSent).not.toHaveBeenCalled();
-        client.setMediaAsker(42);
-        client['mediaSent']('space-1', items);
-        expect(onBotMediaSent).toHaveBeenCalledWith('space-1', 42, items);
         onBotMediaSent.mockImplementation(() => {
             throw new Error('boom');
         });
-        expect(() => client['mediaSent']('space-1', items)).not.toThrow();
+        expect(client.sendMediaMessage('space-1', CDN, 'audio', 'audio/mpeg', '', undefined, 42)).toBe(true);
+        expect(send).toHaveBeenCalledTimes(5);
     });
 
     it('is kept for that person and bubble, with the tool that made the file it was uploaded from', async () => {

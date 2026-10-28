@@ -554,8 +554,6 @@ export class AIService {
         let usageRecorded = false;
         // A new turn starts clean: an artifact call is only the same as an earlier one while that turn is asked again
         if (!isRetry && playerId !== undefined) this.conversationMemory?.getMemory(botId, playerId)?.artifactCalls?.clear();
-        // What the bot sends in this bubble from now on goes on this person's list of files (#1508)
-        botClient?.setMediaAsker?.(playerId);
         // Buffer for content received before tool calls are detected
         // Discarded if tool calls arrive (was filler/thinking text);
         // flushed as final response if no tool calls.
@@ -2944,7 +2942,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             }
                             result = await this.sendMediaWithRetry(
                                 botClient, spaceName, imageUrl, alt, 'image',
-                                () => botClient.sendImage(spaceName, imageUrl, alt),
+                                () => botClient.sendImage(spaceName, imageUrl, alt, playerId),
                                 botId, playerId
                             );
                         } else {
@@ -2969,7 +2967,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             }
                             result = await this.sendMediaWithRetry(
                                 botClient, spaceName, fileUrl, filename, 'file',
-                                () => botClient.sendFile(spaceName, fileUrl, filename),
+                                () => botClient.sendFile(spaceName, fileUrl, filename, playerId),
                                 botId, playerId
                             );
                         } else {
@@ -2993,7 +2991,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             }
                             result = await this.sendMediaWithRetry(
                                 botClient, spaceName, audioUrl, '', 'audio',
-                                () => botClient.sendAudio(spaceName, audioUrl),
+                                () => botClient.sendAudio(spaceName, audioUrl, playerId),
                                 botId, playerId
                             );
                         } else {
@@ -3017,7 +3015,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             }
                             result = await this.sendMediaWithRetry(
                                 botClient, spaceName, videoUrl, '', 'video',
-                                () => botClient.sendVideo(spaceName, videoUrl),
+                                () => botClient.sendVideo(spaceName, videoUrl, playerId),
                                 botId, playerId
                             );
                         } else {
@@ -3284,7 +3282,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             // Send images: batch 2+ as a gallery, single image as individual send
             if (imageUrlsToSend.length >= 2) {
                 try {
-                    const success = botClient.sendMediaGallery(spaceName, imageUrlsToSend);
+                    const success = botClient.sendMediaGallery(spaceName, imageUrlsToSend, undefined, undefined, playerId);
                     if (success) {
                         sentCount += imageUrlsToSend.length;
                         for (const url of imageUrlsToSend) sentUrls.add(url);
@@ -3292,7 +3290,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         // Gallery send returned false (e.g. not in space) — fall back to individual sends
                         for (const url of imageUrlsToSend) {
                             try {
-                                await botClient.sendImage(spaceName, url);
+                                await botClient.sendImage(spaceName, url, undefined, playerId);
                                 sentCount++;
                                 sentUrls.add(url);
                             } catch (err2: any) {
@@ -3308,7 +3306,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     // Fallback: send individually on gallery failure
                     for (const url of imageUrlsToSend) {
                         try {
-                            await botClient.sendImage(spaceName, url);
+                            await botClient.sendImage(spaceName, url, undefined, playerId);
                             sentCount++;
                             sentUrls.add(url);
                         } catch (err2: any) {
@@ -3318,7 +3316,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 }
             } else if (imageUrlsToSend.length === 1) {
                 try {
-                    await botClient.sendImage(spaceName, imageUrlsToSend[0]);
+                    await botClient.sendImage(spaceName, imageUrlsToSend[0], undefined, playerId);
                     sentCount++;
                     sentUrls.add(imageUrlsToSend[0]);
                 } catch (err: any) {
@@ -3366,15 +3364,15 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             for (const { url, ext } of otherUrlsToSend) {
                 try {
                     if (VIDEO_EXT_SET.has(ext)) {
-                        await botClient.sendVideo(spaceName, url);
+                        await botClient.sendVideo(spaceName, url, playerId);
                         sentCount++;
                         sentUrls.add(url);
                     } else if (AUDIO_EXT_SET.has(ext)) {
-                        await botClient.sendAudio(spaceName, url);
+                        await botClient.sendAudio(spaceName, url, playerId);
                         sentCount++;
                         sentUrls.add(url);
                     } else {
-                        await botClient.sendFile(spaceName, url);
+                        await botClient.sendFile(spaceName, url, undefined, playerId);
                         sentCount++;
                         sentUrls.add(url);
                     }
@@ -3508,7 +3506,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
         const memory = this.conversationMemory?.getMemory(botId, playerId);
         if (!memory?.pendingMedia?.length) return;
-        botClient.setMediaAsker?.(playerId);
 
         if (process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[PM-TRACE] flushPendingMedia entry: space=${spaceName?.substring(spaceName.lastIndexOf('#'))} count=${memory.pendingMedia.length} urls=[${memory.pendingMedia.map(p => p.url.substring(0, 60)).join(', ')}]`);
@@ -3542,7 +3539,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 remaining.push(item);
                 continue;
             }
-            if (botClient.sendMediaMessage(spaceName, item.url, item.mediaType, item.mimeType || 'application/octet-stream', item.caption || '')) {
+            if (botClient.sendMediaMessage(spaceName, item.url, item.mediaType, item.mimeType || 'application/octet-stream', item.caption || '', undefined, playerId)) {
                 if (process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.log(`[AIService] ✅ Flushed pending ${item.mediaType} to ${spaceName}: ${item.url.substring(0, 60)}`);
                 }

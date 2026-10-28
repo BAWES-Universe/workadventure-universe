@@ -70,8 +70,6 @@ export class BotClient {
     private ws: WebSocket | null = null;
     private state: BotState;
     private behavior: BaseBehavior | null = null;
-    /** Who the bot is answering, so media it sends goes on that person's list of files (#1508). */
-    private mediaAsker: number | null = null;
     /** Where each uploaded file came from, so a sent file is matched with the tool that made it. */
     private uploadedFrom = new Map<string, string>();
     /** Asks Orbit whether someone may chat with this bot, before their words reach the AI. Null: nobody is asked. */
@@ -1710,11 +1708,11 @@ export class BotClient {
      * Send an image to a space.
      * Uploads the image from the provided URL to the CDN (if needed) and sends it to the chat.
      */
-    async sendImage(spaceName: string, url: string, alt?: string): Promise<string> {
+    async sendImage(spaceName: string, url: string, alt?: string, asker?: number): Promise<string> {
         const mimeHint = this.inferMimeFromExt(url);
         try {
             const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
-            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, alt || '')) {
+            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, alt || '', undefined, asker)) {
                 const err = new Error(`Bot is not in space ${spaceName} — cannot send image`);
                 (err as any)._cdnUrl = location;
                 (err as any)._mediaType = mediaType;
@@ -1736,11 +1734,11 @@ export class BotClient {
     /**
      * Send a file to a space.
      */
-    async sendFile(spaceName: string, url: string, filename?: string): Promise<string> {
+    async sendFile(spaceName: string, url: string, filename?: string, asker?: number): Promise<string> {
         const mimeHint = this.inferMimeFromExt(url);
         try {
             const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
-            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, '', filename)) {
+            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, '', filename, asker)) {
                 const err = new Error(`Bot is not in space ${spaceName} — cannot send file`);
                 (err as any)._cdnUrl = location;
                 (err as any)._mediaType = mediaType;
@@ -1762,11 +1760,11 @@ export class BotClient {
     /**
      * Send audio to a space.
      */
-    async sendAudio(spaceName: string, url: string): Promise<string> {
+    async sendAudio(spaceName: string, url: string, asker?: number): Promise<string> {
         const mimeHint = this.inferMimeFromExt(url);
         try {
             const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
-            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType)) {
+            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, undefined, undefined, asker)) {
                 const err = new Error(`Bot is not in space ${spaceName} — cannot send audio`);
                 (err as any)._cdnUrl = location;
                 (err as any)._mediaType = mediaType;
@@ -1788,11 +1786,11 @@ export class BotClient {
     /**
      * Send video to a space.
      */
-    async sendVideo(spaceName: string, url: string): Promise<string> {
+    async sendVideo(spaceName: string, url: string, asker?: number): Promise<string> {
         const mimeHint = this.inferMimeFromExt(url);
         try {
             const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
-            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType)) {
+            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, undefined, undefined, asker)) {
                 const err = new Error(`Bot is not in space ${spaceName} — cannot send video`);
                 (err as any)._cdnUrl = location;
                 (err as any)._mediaType = mediaType;
@@ -1880,7 +1878,7 @@ export class BotClient {
     /**
      * Send a media message to a space via publicEvent spaceMessage.
      */
-    public sendMediaMessage(spaceName: string, url: string, mediaType: string, mimeType: string, caption?: string, fileName?: string): boolean {
+    public sendMediaMessage(spaceName: string, url: string, mediaType: string, mimeType: string, caption?: string, fileName?: string, asker?: number): boolean {
         const spaceUserId = this.spaces.get(spaceName);
         if (!spaceUserId) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -1913,7 +1911,7 @@ export class BotClient {
                 },
             },
         });
-        this.mediaSent(spaceName, [{ url, mediaType, mimeType, caption, fileName }]);
+        this.mediaSent(spaceName, asker, [{ url, mediaType, mimeType, caption, fileName }]);
         return true;
     }
 
@@ -1922,7 +1920,7 @@ export class BotClient {
      * The first image goes in the `url` field (backwards compatible), and
      * additional images go in `galleryUrls`. The caption appears below the grid.
      */
-    public sendMediaGallery(spaceName: string, urls: string[], caption?: string, fileNames?: string[]): boolean {
+    public sendMediaGallery(spaceName: string, urls: string[], caption?: string, fileNames?: string[], asker?: number): boolean {
         if (urls.length === 0) return false;
 
         const spaceUserId = this.spaces.get(spaceName);
@@ -1960,16 +1958,8 @@ export class BotClient {
                 },
             },
         });
-        this.mediaSent(spaceName, urls.map((one, i) => ({ url: one, mediaType: 'image', mimeType: this.inferMimeFromExt(one), caption: i === 0 ? caption : undefined, fileName: fileNames?.[i] })));
+        this.mediaSent(spaceName, asker, urls.map((one, i) => ({ url: one, mediaType: 'image', mimeType: this.inferMimeFromExt(one), caption: i === 0 ? caption : undefined, fileName: fileNames?.[i] })));
         return true;
-    }
-
-    /**
-     * Who the bot is answering now: what it sends from here on is theirs on the bot's list of files (#1508). Set at the
-     * start of each reply, and when media left from an earlier one is sent.
-     */
-    setMediaAsker(playerId: number | null): void {
-        this.mediaAsker = playerId;
     }
 
     /** The link a file was uploaded from, for a link the uploader gave back. */
@@ -1977,10 +1967,14 @@ export class BotClient {
         return this.uploadedFrom.get(location);
     }
 
-    private mediaSent(spaceName: string, items: SentMedia[]): void {
-        if (this.mediaAsker === null || !this.behavior) return;
+    /**
+     * Files the bot sent, for the list of files (#1508): theirs, for `asker`, the person whose reply sent them. Every
+     * reply passes its own, so two replies at once never swap files; a send with no asker (not from a reply) isn't kept.
+     */
+    private mediaSent(spaceName: string, asker: number | undefined, items: SentMedia[]): void {
+        if (asker === undefined || !this.behavior) return;
         try {
-            this.behavior.onBotMediaSent(spaceName, this.mediaAsker, items);
+            this.behavior.onBotMediaSent(spaceName, asker, items);
         } catch (error) {
             // Keeping the file never stops it being sent
             console.warn(`[Bot ${this.config.botId}] Could not keep a sent file:`, (error as Error)?.message ?? error);
