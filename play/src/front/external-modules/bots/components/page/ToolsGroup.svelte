@@ -64,7 +64,8 @@
             : page.tools.count({ count: servers.length });
     $: waits = page.tools.waits({ patience: durationLabel(patience) });
     $: brief = names ? `${names} · ${waits}` : waits;
-    $: ceiling = ceilingFor(aiOptions, bot.aiProviderRef);
+    // What the bot runs on, as the model's limit below finds it: Orbit's current pick when the bot has none saved
+    $: ceiling = ceilingFor(aiOptions, bot.aiProviderRef ?? aiOptions?.current ?? undefined);
     // A model that writes less than the key allows is where the bot stops (Orbit #673): its limit is the first chip
     $: modelCap = modelCapFor(aiOptions, bot);
     $: stopsAtModel = modelCap !== null && (ceiling === null || modelCap.tokens < ceiling.reply) ? modelCap : null;

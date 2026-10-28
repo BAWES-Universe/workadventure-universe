@@ -8,7 +8,7 @@ import { readBotStatusNote, type BotStatusNote } from "../../Bots/BotChatStatus"
 import { readBotRoomLink, type BotRoomLink } from "../../Bots/BotRoomLink";
 import { readBotReplyLimit, type BotReplyLimit } from "../../Bots/BotReplyLimit";
 import { readArtifactField, type ArtifactCard } from "../../../Artifacts/artifactCard";
-import type { ChatMessage, ChatMessageContent, ChatMessageType, ChatUser } from "../ChatConnection";
+import type { ChatMessage, ChatMessageContent, ChatMessageType, ChatUser, SharedFileInfo } from "../ChatConnection";
 import { canRenderAttachmentInline } from "../../../Utils/InlineMimeType";
 import { chatUserFactory } from "./MatrixChatUser";
 import { MatrixChatMessageReaction } from "./MatrixChatMessageReaction";
@@ -235,6 +235,7 @@ export class MatrixChatMessage implements ChatMessage {
                 // A picture sent as a reply still tells its body from its name.
                 filename: this.type === "text" ? undefined : this.getMediaFileName(content),
                 fileNames: undefined,
+                isVoice: this.isVoiceMessage(content),
             };
         }
 
@@ -248,10 +249,19 @@ export class MatrixChatMessage implements ChatMessage {
                 // The body of a Matrix file is its name: the blob: URL it loads from has none.
                 filename: this.getMediaFileName(content),
                 fileNames: undefined,
+                isVoice: this.isVoiceMessage(content),
             };
         }
 
         return { body: content.body, url: undefined, urls: undefined, filename: undefined, fileNames: undefined };
+    }
+
+    /** A recorded voice message, flagged by Element (MSC3245) as `org.matrix.msc3245.voice`, or `m.voice` once stable. */
+    private isVoiceMessage(content: IContent): boolean {
+        return (
+            this.type === "audio" &&
+            (content["org.matrix.msc3245.voice"] !== undefined || content["m.voice"] !== undefined)
+        );
     }
 
     /**
@@ -317,6 +327,19 @@ export class MatrixChatMessage implements ChatMessage {
     public getFormattedBody(): string {
         const content = this.event.getOriginalContent();
         return content.formatted_body;
+    }
+
+    get sharedFile(): SharedFileInfo | undefined {
+        if (this.type === "text" || this.event.isDecryptionFailure()) return undefined;
+        const content = this.event.getOriginalContent();
+        const info: unknown = content.info;
+        const size = typeof info === "object" && info !== null ? (info as Record<string, unknown>).size : undefined;
+        return {
+            name: this.getMediaFileName(content) ?? "",
+            size: typeof size === "number" && Number.isFinite(size) ? size : undefined,
+            // Matrix marks a voice message on its audio event (MSC3245).
+            voice: content["org.matrix.msc3245.voice"] !== undefined,
+        };
     }
 
     public mxcUrlToHttp(url: string) {
