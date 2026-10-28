@@ -45,8 +45,11 @@ import { selectedRoomStore } from "../../Stores/SelectRoomStore";
 import { gameManager } from "../../../Phaser/Game/GameManager";
 import { localUserStore } from "../../../Connection/LocalUserStore";
 import { MessageNotification } from "../../../Notification/MessageNotification";
+import { chatSoundPlayed } from "../../../Notification/ChatSound";
 import { notificationManager } from "../../../Notification/NotificationManager";
 import type { PictureStore } from "../../../Stores/PictureStore";
+import LL from "../../../../i18n/i18n-svelte";
+import { previewLine } from "../../Components/Room/MessageActions/messageActions";
 import { MatrixChatMessage } from "./MatrixChatMessage";
 import { MatrixChatMessageReaction } from "./MatrixChatMessageReaction";
 import { matrixSecurity } from "./MatrixSecurity";
@@ -140,11 +143,18 @@ export class MatrixChatRoom
         private matrixRoom: Room,
         private notifyNewMessage = (message: MatrixChatMessage) => {
             if (!localUserStore.getChatSounds() || get(this.areNotificationsMuted)) return;
-            gameManager.getCurrentGameScene().playSound("new-message");
+            if (gameManager.getCurrentGameScene().playSound("new-message")) chatSoundPlayed(this.id);
             notificationManager.createNotification(
                 new MessageNotification(
                     message.sender?.username ?? "unknown",
-                    get(message.content).body,
+                    previewLine(message.type, get(message.content), {
+                        photo: get(LL).chat.messageActions.photo(),
+                        photos: (count) => get(LL).chat.messageActions.photos({ count }),
+                        files: (count) => get(LL).chat.messageActions.files({ count }),
+                        video: get(LL).chat.messageActions.video(),
+                        voice: get(LL).chat.messageActions.voice(),
+                        audio: get(LL).chat.messageActions.audio(),
+                    }),
                     this.id,
                     get(this.name)
                 )

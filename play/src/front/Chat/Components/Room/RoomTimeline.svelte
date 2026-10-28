@@ -68,10 +68,12 @@
     import SessionDivider from "./Thread/SessionDivider.svelte";
     import ProximityThreadTitle from "./Thread/ProximityThreadTitle.svelte";
     import ProximityEndedFooter from "./Thread/ProximityEndedFooter.svelte";
+    import { nearbyChatName } from "./Thread/nearbyTitle";
     import RoomMenu from "./RoomMenu/RoomMenu.svelte";
     import DirectChatTitle from "./DirectChat/DirectChatTitle.svelte";
     import PartnerProfilePanel from "./DirectChat/PartnerProfilePanel.svelte";
     import RoomDetailsPanel from "./Details/RoomDetailsPanel.svelte";
+    import NearbyDetailsPanel from "./Details/NearbyDetailsPanel.svelte";
     import SharedPanel from "./Details/SharedPanel.svelte";
     import PinnedBar from "./Details/PinnedBar.svelte";
     import { DIRECT_PARTNER_CONTEXT, directPartnerStore, type DirectPartner } from "./DirectChat/DirectPartnerStore";
@@ -199,8 +201,32 @@
     $: profileOpen = directPartner !== undefined && $openProfileRoomIdStore === room.id;
     // A group's details, and the page of what a chat shared over either, sit over the conversation like the profile.
     $: roomDetailsOpen = matrixRoom !== undefined && directPartner === undefined && $openRoomDetailsIdStore === room.id;
+    $: nearbyDetailsOpen = proximityRoom !== undefined && $openRoomDetailsIdStore === room.id;
+    // The nearby chat's details belong to one conversation: a new one starts on the conversation, not over it.
+    $: nearbyJoinedAt = proximityRoom?.spaceJoinedAt;
+    let seenNearbyJoinedAt: number | undefined;
+    let nearbyJoinWatched = false;
+    $: watchNearbyJoin($nearbyJoinedAt);
+    // Any conversation starting after this timeline opened is a new one, even when there was none before.
+    function watchNearbyJoin(joinedAt: number | undefined) {
+        if (nearbyJoinWatched && joinedAt !== undefined && joinedAt !== seenNearbyJoinedAt) closeNearbyDetails();
+        nearbyJoinWatched = true;
+        seenNearbyJoinedAt = joinedAt;
+    }
+    $: nearbySpaceKind = proximityRoom?.spaceKind;
+    $: nearbySpaceName = proximityRoom?.name;
+    $: nearbyName =
+        proximityRoom && $nearbySpaceKind ? nearbyChatName($nearbySpaceKind, $nearbySpaceName ?? "", $LL) : undefined;
+
+    function closeNearbyDetails() {
+        if (!proximityRoom) return;
+        if (get(openRoomDetailsIdStore) === room.id) openRoomDetailsIdStore.set(undefined);
+        if (get(openSharedItemsStore)?.roomId === room.id) openSharedItemsStore.set(undefined);
+    }
     $: sharedOpen =
-        matrixRoom !== undefined && $openSharedItemsStore?.roomId === room.id ? $openSharedItemsStore : undefined;
+        (matrixRoom !== undefined || proximityRoom !== undefined) && $openSharedItemsStore?.roomId === room.id
+            ? $openSharedItemsStore
+            : undefined;
     $: isDirectChat.set(directPartner !== undefined);
     $: partnerForCards.set(directPartner ? $directPartner : undefined);
     $: roomMembers = matrixRoom ? matrixRoom.members : readable([]);
@@ -827,7 +853,10 @@
 <div
     bind:this={timelineRef}
     class="relative isolate flex flex-col flex-auto h-full w-full max-w-full"
-    class:profile-open={(profileOpen && matrixRoom && $directPartner) || roomDetailsOpen || sharedOpen}
+    class:profile-open={(profileOpen && matrixRoom && $directPartner) ||
+        roomDetailsOpen ||
+        nearbyDetailsOpen ||
+        sharedOpen}
     on:dragover|preventDefault
     on:drop|preventDefault|stopPropagation={onDropFiles}
 >
@@ -840,8 +869,8 @@
     {/if}
     <!-- Made again when the chat is, so a panel never shows the old one. -->
     {#key roomInstance}
-        {#if sharedOpen && matrixRoom}
-            <SharedPanel room={matrixRoom} tab={sharedOpen.tab} partnerChatId={$directPartner?.chatId} />
+        {#if sharedOpen}
+            <SharedPanel {room} tab={sharedOpen.tab} partnerChatId={$directPartner?.chatId} chatTitle={nearbyName} />
         {:else if profileOpen && matrixRoom && $directPartner}
             <!-- Over the conversation, which stays as it was (draft, files, scroll) for when you come back. Above the
                  message options (z-50) and menus that live in it; "isolate" keeps all of that inside this panel. -->
@@ -852,6 +881,8 @@
             />
         {:else if roomDetailsOpen && matrixRoom}
             <RoomDetailsPanel room={matrixRoom} />
+        {:else if nearbyDetailsOpen && proximityRoom}
+            <NearbyDetailsPanel room={proximityRoom} />
         {/if}
     {/key}
     {#if room !== undefined}
@@ -875,14 +906,22 @@
                 <!-- Every chat's title starts right after the back arrow, so the picture never moves with the name. -->
                 <div class="flex min-w-0 grow items-center">
                     {#if proximityRoom && isEnded}
-                        <div class="flex min-w-0 max-w-full flex-col" data-testid="threadNow" data-state="ended">
+                        <!-- The proximity chat's name opens its details, whichever stay is shown. -->
+                        <button
+                            type="button"
+                            class="room-title flex min-w-0 max-w-full flex-col px-2"
+                            data-testid="threadNow"
+                            data-state="ended"
+                            aria-label={$LL.chat.details.open({ name: endedTitle })}
+                            on:click={() => openRoomDetailsIdStore.set(room.id)}
+                        >
                             <div class="max-w-full truncate text-md font-bold leading-5" data-testid="roomName">
                                 {endedTitle}
                             </div>
                             <div class="max-w-full truncate text-xs text-white/60" data-testid="threadNowLabel">
                                 {endedSubtitle}
                             </div>
-                        </div>
+                        </button>
                     {:else if proximityRoom}
                         <ProximityThreadTitle room={proximityRoom} />
                     {:else if matrixRoom && $directPartner}
@@ -935,11 +974,11 @@
                     <div class="flex h-12 w-12 shrink-0 items-center justify-center">
                         <RoomMenu room={matrixRoom} inHeader />
                     </div>
-                    <!-- When the chat carries its own close, it sits at this end of the header: keep its place free so
-                         it never covers the menu. -->
-                    {#if $chatCarriesItsCloseStore}
-                        <div class="h-12 w-12 shrink-0" aria-hidden="true" />
-                    {/if}
+                {/if}
+                <!-- When the chat carries its own close, it sits at this end of the header: keep its place free so
+                     it never covers the menu or the name. -->
+                {#if $chatCarriesItsCloseStore}
+                    <div class="h-12 w-12 shrink-0" aria-hidden="true" />
                 {/if}
                 {#if shouldDisplayLoader}
                     <!-- Over the empty space at the top of the list, so the messages don't move when it shows. -->
@@ -1170,7 +1209,7 @@
         > :global(
             :not([data-testid="partnerProfilePanel"]):not([data-testid="roomDetailsPanel"]):not(
                     [data-testid="sharedPanel"]
-                )
+                ):not([data-testid="nearbyDetailsPanel"])
         ) {
         visibility: hidden;
     }
