@@ -1165,6 +1165,7 @@
                         {room}
                         partner={$directPartner}
                         inputHint={botPlaceholder}
+                        allowVoiceNotes={partnerBotId === undefined}
                         bind:this={messageInputBarRef}
                     />
                 {/key}
