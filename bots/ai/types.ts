@@ -169,7 +169,6 @@ export interface AIStreamChunk {
         completionTokens?: number;
         /** Part of promptTokens that was read from the provider's cache, and part that was written to it (Claude only for now). */
         cacheReadTokens?: number;
-        cacheWriteTokens?: number;
         /** Reasoning tokens inside completionTokens. Undefined when the provider does not say. */
         reasoningTokens?: number;
         /** What the provider charged for this call, in dollars (OpenRouter sends it). Undefined when it does not say. */
@@ -226,7 +225,6 @@ export interface AIUsageMetadata {
     completionTokens?: number;
     /** Part of promptTokens read from / written to the provider's cache (both are inside promptTokens, not on top of it). */
     cacheReadTokens?: number;
-    cacheWriteTokens?: number;
     /** Parts of promptTokens the provider read from / wrote to its cache, and of completionTokens spent reasoning. */
     cachedPromptTokens?: number;
     cacheWriteTokens?: number;
