@@ -103,7 +103,7 @@ import {
     runArtifactTool,
     type ArtifactCard,
 } from './ArtifactTools';
-import type { PendingMedia } from '../memory/ConversationMemory';
+import { MAX_OUTGOING_MEDIA_BYTES, type PendingMedia } from '../memory/ConversationMemory';
 import { FIND_FILES_TOOL, OPEN_FILE_TOOL, SEND_AGAIN_TOOL, fileToolDefinitions, formatFileResult, isFileTool, runFileTool } from './FileTools';
 import { linkOfStore } from '../services/ChatFiles';
 
@@ -2675,7 +2675,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      * a bubble send names no asker, and a direct message's is marked as sent again.
      */
     private async sendFileAgain(
-        file: { kind: string; name: string; mimeType: string | null; line: string | null; store?: FileStore },
+        file: { kind: string; name: string; mimeType: string | null; line: string | null; sizeBytes?: number | null; store?: FileStore },
         url: string,
         where: { botClient?: BotClient; spaceName?: string; botId: string; playerId: number }
     ): Promise<string | null> {
@@ -2698,6 +2698,16 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         }
         const memory = this.conversationMemory?.getMemory(botId, playerId);
         if (!memory) return "It couldn't be sent right now. Say so simply and offer to try again.";
+        // A direct message sends it after the reply, so what would stop it there is checked now, before saying it was sent
+        if (file.sizeBytes != null && file.sizeBytes > MAX_OUTGOING_MEDIA_BYTES) {
+            return `It is too big to send in a direct message (over ${Math.round(MAX_OUTGOING_MEDIA_BYTES / (1024 * 1024))} MB). Say so simply; it can be sent in a nearby chat.`;
+        }
+        try {
+            const { FileParser } = await import('../services/FileParser');
+            await FileParser.validateUrl(url);
+        } catch {
+            return "It couldn't be sent right now. Say so simply and offer to try again.";
+        }
         const pending = (memory.pendingMedia ??= []);
         if (pending.length >= (memory.maxPendingMedia || 5)) return 'There are already as many files waiting to go with this reply as it can carry. Send it in the next one.';
         pending.push({
@@ -2709,6 +2719,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             createdAt: Date.now(),
             retryCount: 0,
             again: true,
+            name: file.name,
         });
         return null;
     }

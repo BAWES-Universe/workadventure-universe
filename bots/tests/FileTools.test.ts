@@ -5,6 +5,7 @@ import { artifactToolDefinitions } from '../ai/ArtifactTools';
 import { fileToolDefinitions, formatFileResult, runFileTool, type FileToolContext } from '../ai/FileTools';
 import { readBotLimits } from '../ai/types';
 import { linkOfStore } from '../services/ChatFiles';
+import { FileParser } from '../services/FileParser';
 import { ArtifactCallError } from '../server/AdminApiService';
 import { MCPConnector } from '../mcp/MCPConnector';
 
@@ -371,11 +372,24 @@ describe('the file tools in AIService', () => {
         expect(describe).toHaveBeenCalledWith(['https://cdn.example.com/map.png'], undefined);
     });
 
-    it('in a direct message: the file goes with the reply, marked as sent again', async () => {
+    it('in a direct message: the file goes with the reply, marked as sent again, under its own name', async () => {
+        const check = vi.spyOn(FileParser, 'validateUrl').mockResolvedValue();
         const memory: Record<string, unknown> = { userUuid: 'uuid-alice', playerName: 'Alice', dmRoomId: '!room', pendingMedia: [] };
         const [sent] = await withFiles(memory)['executeToolCalls']([{ id: 't2', name: 'send_again', arguments: '{"id":"f212"}' }], undefined, orbit() as never, undefined, 'uuid-alice', 'matrix-dm', 'bot1', -3);
         expect(sent.result).toMatchObject({ sent: true });
-        expect(memory.pendingMedia).toEqual([expect.objectContaining({ url: 'https://cdn.example.com/song.mp3', mediaType: 'audio', again: true })]);
+        expect(check).toHaveBeenCalledWith('https://cdn.example.com/song.mp3');
+        expect(memory.pendingMedia).toEqual([expect.objectContaining({ url: 'https://cdn.example.com/song.mp3', mediaType: 'audio', again: true, name: SONG.name })]);
+    });
+
+    it('in a direct message: says it can not go before saying it went, for a file too big or a link that can not be fetched', async () => {
+        const memory: Record<string, unknown> = { userUuid: 'uuid-alice', playerName: 'Alice', dmRoomId: '!room', pendingMedia: [] };
+        const ai = withFiles(memory);
+        const where = { botId: 'bot1', playerId: -3 };
+        vi.spyOn(FileParser, 'validateUrl').mockResolvedValue();
+        expect(await ai['sendFileAgain'](view(SONG, { sizeBytes: 60 * 1024 * 1024 }), 'https://cdn.example.com/big.mp4', where)).toMatch(/too big to send in a direct message \(over 50 MB\)/);
+        vi.spyOn(FileParser, 'validateUrl').mockRejectedValue(new Error('private'));
+        expect(await ai['sendFileAgain'](view(SONG), 'http://10.0.0.1/song.mp3', where)).toMatch(/couldn't be sent right now/);
+        expect(memory.pendingMedia).toEqual([]);
     });
 
     it("leaves a file tool's result alone when sending media, and reads it as the tool's own lines", async () => {

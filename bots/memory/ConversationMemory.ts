@@ -79,6 +79,9 @@ export interface RelationshipContext {
  * Pending media item — an uploaded file that couldn't be delivered
  * because the user left the space. Retried on reconnect.
  */
+/** The most a file sent in a direct message may be: it is downloaded and uploaded to Matrix whole. */
+export const MAX_OUTGOING_MEDIA_BYTES = 50 * 1024 * 1024;
+
 export interface PendingMedia {
     url: string;
     /** The original URL from the tool result, before CDN upload. Used for dedup —
@@ -93,6 +96,8 @@ export interface PendingMedia {
     lastRetryAt?: number;
     /** A file from an earlier chat sent again (#1508): it is already on the person's list of files. */
     again?: boolean;
+    /** What the file is called, when it has a name of its own (a file sent again); otherwise the link's last part. */
+    name?: string;
 }
 
 export interface BotPlayerMemory {
