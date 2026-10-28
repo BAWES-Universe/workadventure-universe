@@ -25,7 +25,8 @@ export interface SavedNearbyItem {
     sentAt: string;
 }
 
-const UPLOADER_FILE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\.[a-z0-9]{1,10})?$/i;
+// The uploader keeps an extension of up to 16 characters (its MimeType.ts), so "x.webmanifest" is one of its files too.
+const UPLOADER_FILE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\.[a-z0-9]{1,16})?$/i;
 const BUCKET = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
 const MAX_KEY = 300;
 const MAX_NAME = 300;

@@ -37,6 +37,14 @@ describe("a chat file's lasting reference", () => {
         expect(chatFileRef(SIGNED)).toBe(`user-refs/${ID}`);
     });
 
+    it("knows an uploader file with a long extension", () => {
+        const id = "0b5c1a6e-3f2d-4c8b-9a71-2e4f6d8c0a1b.webmanifest";
+        expect(chatFileRef(`https://r2.example.com/user-refs/${id}?X-Amz-Signature=abc`)).toBe(`user-refs/${id}`);
+        expect(
+            chatFileRef(`https://r2.example.com/user-refs/${ID}x${"a".repeat(17)}?X-Amz-Signature=abc`)
+        ).toBeUndefined();
+    });
+
     it("is nothing for a public link, an uploader link or anything that isn't an uploader file", () => {
         expect(chatFileRef(`https://cdn.example.com/${ID}`)).toBeUndefined();
         expect(chatFileRef(`https://uploader.example.com/upload-file/${ID}`)).toBeUndefined();

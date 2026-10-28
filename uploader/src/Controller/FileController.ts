@@ -37,8 +37,8 @@ import { HttpResponseDevice } from "./HttpResponseDevice";
 // reading a body that is over them, so a refused upload is never held in memory or stored.
 const MAX_FILES_PER_UPLOAD = 10;
 const maxFileSize = parseInt(UPLOAD_MAX_FILESIZE);
-// What the uploader names a stored file: a UUID, with the file's extension kept.
-const CHAT_FILE_ID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\.[a-z0-9]{1,10})?$/i;
+// What the uploader names a stored file: a UUID, with the file's extension (up to 16 characters, as MimeType.ts keeps) kept.
+const CHAT_FILE_ID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\.[a-z0-9]{1,16})?$/i;
 
 const upload = multer({
   storage: multer.memoryStorage(),
