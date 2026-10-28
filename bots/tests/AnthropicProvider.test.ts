@@ -422,6 +422,18 @@ describe("AnthropicProvider", () => {
             expect(metadata.errorText).toContain("socket hang up");
         });
 
+        it("says a call was turned down as too long, with the numbers, so the reply's steps can be trimmed", async () => {
+            fetchMock.mockImplementationOnce(async () => failure(400, "prompt is too long: 210000 tokens > 200000 maximum"));
+            const chunks = await drain(new AnthropicProvider().generateStream("s", "x", config()));
+            expect(chunks[chunks.length - 1].metadata).toMatchObject({ error: true, errorStatus: 400, tooLong: true, context: { asked: 210000, limit: 200000 } });
+        });
+
+        it("does not call any other 400 too long", async () => {
+            fetchMock.mockImplementationOnce(async () => failure(400, "messages: text content blocks must be non-empty"));
+            const chunks = await drain(new AnthropicProvider().generateStream("s", "x", config()));
+            expect(chunks[chunks.length - 1].metadata).not.toHaveProperty("tooLong");
+        });
+
         it("asks again within the output cap a model states, and remembers it for the next reply", async () => {
             const model = "claude-old-haiku-ceiling";
             fetchMock.mockImplementationOnce(async () => failure(400, "max_tokens: 32000 > 4096, which is the maximum allowed number of output tokens for claude-old-haiku-ceiling"));

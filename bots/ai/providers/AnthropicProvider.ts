@@ -19,7 +19,7 @@ import { decryptApiKey } from '../encryption';
 import { fetchFor, providerErrorText, statusFromError } from './ownKeyHttp';
 import { statedOutputCeiling } from './OpenAIProvider';
 import { linkExternalAbort } from './abortUtils';
-import { withStepsAsText, type ReplySteps } from '../replySteps';
+import { tooLongOf, withStepsAsText, type ReplySteps } from '../replySteps';
 import { resolveVisionSupport } from './visionModels';
 import * as Sentry from '@sentry/node';
 
@@ -528,7 +528,7 @@ export class AnthropicProvider implements AIProvider {
                     error: !externallyCancelled,
                     ...(externallyCancelled ? { cancelled: true } : {}),
                     errorStatus: statusFromError(error),
-                    ...(externallyCancelled ? {} : { errorText: providerErrorText(error) }),
+                    ...(externallyCancelled ? {} : { ...tooLongOf(error?.message), errorText: providerErrorText(error) }),
                 },
             };
         } finally {
