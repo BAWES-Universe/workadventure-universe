@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { tick } from "svelte";
-import { writable } from "svelte/store";
+import { readable, writable } from "svelte/store";
 import { Subject } from "rxjs";
 import type { SpaceInterface } from "../../../../Space/SpaceInterface";
 import type { SpaceRegistryInterface } from "../../../../Space/SpaceRegistry/SpaceRegistryInterface";
@@ -55,6 +55,7 @@ vi.mock("../../../../WebRtc/AudioStream/ScriptingInputAudioStreamManager", () =>
 import { loadLocale } from "../../../../../i18n/i18n-util.sync";
 import { setLocale } from "../../../../../i18n/i18n-svelte";
 import { ProximityChatRoom } from "../../../Connection/Proximity/ProximityChatRoom";
+import { NAME_BY_CHAT_ID_CONTEXT } from "../../../Stores/ChatUserWokaStore";
 import RoomTimeline from "../RoomTimeline.svelte";
 
 function fakeSpace() {
@@ -93,7 +94,9 @@ describe("RoomTimeline", () => {
     async function mount(room: ChatRoom) {
         const target = document.createElement("div");
         document.body.appendChild(target);
-        const component = new RoomTimeline({ target, props: { room } });
+        // The game would give the timeline the names people go by; here nobody is known yet
+        const context = new Map([[NAME_BY_CHAT_ID_CONTEXT, readable(new Map<string, string>())]]);
+        const component = new RoomTimeline({ target, props: { room }, context });
         destroy = () => component.$destroy();
         await tick();
         return target;
