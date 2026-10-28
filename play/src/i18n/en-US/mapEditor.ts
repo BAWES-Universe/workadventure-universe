@@ -691,6 +691,15 @@ const mapEditor: BaseTranslation = {
                     briefNone: "No one has chatted with {name:string} yet",
                     briefLoading: "Loading…",
                     briefFailed: "Couldn't load usage. Open to try again.",
+                    freshTitle: "Usage fills in once people chat with {name:string}",
+                    freshLine:
+                        "You'll see how many replies it gives each day, who chats with it, what it runs on and if anyone runs out of replies.",
+                    whoFresh: "Names show here once people chat",
+                    ranOnFresh: "Shows once {name:string} replies",
+                    peopleFresh:
+                        "No one has chatted with {name:string} yet. When people do, each one shows here with how many replies they got and when.",
+                    ranOnFreshLine:
+                        "Nothing yet. Once {name:string} replies, each AI it runs on shows here with its replies and tokens.",
                     range: "Range",
                     today: "Today",
                     week: "7 days",
