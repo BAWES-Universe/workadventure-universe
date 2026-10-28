@@ -1505,6 +1505,11 @@ export class AIService {
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                                 console.warn(`[AIService] ⚠️ Reached max follow-up iterations (${MAX_FOLLOW_UP_ITERATIONS}). Dropping ${toolCallAccumulator.size} pending tool calls.`);
                             }
+                            // The steps line already shows these calls: they never ran, so they end as not done (#1545)
+                            const notRun = pendingToolCalls
+                                .filter((tc) => showsAsStep(tc.name, toolServerMap.has(tc.name)))
+                                .map((tc) => ({ id: tc.id, ok: false, note: 'Not run: the bot reached its step limit' }));
+                            if (notRun.length) yield {content: '', done: false, toolStepResults: notRun};
                             toolCallAccumulator.clear();
                             pendingToolCalls = [];
                         }

@@ -162,4 +162,24 @@ describe("AIService – the steps a reply shows (#1545)", () => {
             { id: "r1", doing: "Reading a page", done: "Read a page", detail: "notaurl", group: "page" },
         ]);
     });
+
+    it("ends calls the bot announced but never ran, once it reached its step limit, as not done", async () => {
+        const { admin, memory } = buildMocks();
+        admin.getBotAiCredentials.mockResolvedValue({ ...provider, limits: { steps: 1 } });
+        mockExecuteToolCall.mockResolvedValue({ content: [{ type: "text", text: "ok" }] });
+        mockGenerateStream
+            .mockImplementationOnce(calls({ id: "c1", name: "generate_music", args: { prompt: "funk" } }))
+            .mockImplementationOnce(calls({ id: "c2", name: "generate_music", args: { prompt: "disco" } }))
+            .mockImplementation(says("Here is the first one."));
+        const chunks = await reply(new AIService(memory, admin, "http://admin.local"));
+
+        const announced = chunks.filter((chunk) => chunk.toolSteps).flatMap((chunk) => chunk.toolSteps.map((step: any) => step.id));
+        expect(announced).toEqual(["c1", "c2"]);
+        const results = chunks.filter((chunk) => chunk.toolStepResults).flatMap((chunk) => chunk.toolStepResults);
+        expect(results).toEqual([
+            { id: "c1", ok: true },
+            { id: "c2", ok: false, note: "Not run: the bot reached its step limit" },
+        ]);
+        expect(mockExecuteToolCall).toHaveBeenCalledTimes(1);
+    });
 });

@@ -1614,6 +1614,28 @@ describe('DmReplyService history', () => {
         expect(shown.at(-1)).toMatchObject({ state: 'stopped', steps: [{ state: 'failed' }] });
     });
 
+    it('marks the line stopped when shaping the answer fails after the stream', async () => {
+        const shown: any[] = [];
+        const service = await stepsService(async function* () {
+            yield { content: '', done: false, reset: true, toolNames: ['generate_music'], toolSteps: [song('a', 'funk')] };
+            yield { content: 'Here it is.', done: false };
+            yield { content: '', done: true, metadata: {} };
+        });
+        Object.assign(service, {
+            responseProcessor: {
+                processResponse: () => {
+                    throw new Error('processor broke');
+                },
+            },
+        });
+        await expect(
+            (service as any).replyNow(BOT, { matrixUserId: ALICE, uuid: 'uuid-alice', name: 'Alice', isGuest: false }, 'make a song', [], {
+                onSteps: async (field: any) => void shown.push(structuredClone(field)),
+            })
+        ).rejects.toThrow('processor broke');
+        expect(shown.at(-1)).toMatchObject({ state: 'stopped', steps: [{ state: 'failed' }] });
+    });
+
     it('answers the words that waited behind an answer once, together; a file on its own (#1159)', async () => {
         const { DmReplyService } = await import('../server/DmReplyService');
         const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
