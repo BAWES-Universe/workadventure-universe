@@ -264,6 +264,33 @@ describe('a reply that says it saved an artifact (Orbit #666)', () => {
         expect(claimsArtifactSaved("I've made a list of maps for you: Paris, Rome.")).toBe(false);
         expect(claimsArtifactSaved('Python v3 came out in 2008.')).toBe(false);
         expect(claimsArtifactSaved("I've added a note. The page you linked is about trains.")).toBe(false);
+        // Words that are artifacts only sometimes (Sentry on the R6 release)
+        expect(claimsArtifactSaved("Here's the updated version of your email draft:\n\nHi Sam, ...")).toBe(false);
+        expect(claimsArtifactSaved("I've updated the page title and the site menu in your notes.")).toBe(false);
+        expect(claimsArtifactSaved("Here's the updated board of directors list.")).toBe(false);
+        expect(claimsArtifactSaved("I've made a mock interview plan for Monday.")).toBe(false);
+        // An app, game, board or tracker only with a cue that it is an artifact (CodeRabbit on the R6 release)
+        expect(claimsArtifactSaved("I've fixed the bug in your app. The loop now stops at 10.")).toBe(false);
+        expect(claimsArtifactSaved("I've updated the tracker you keep in Notion with this week's numbers.")).toBe(false);
+        expect(claimsArtifactSaved("I've added dark mode to the game. Tap the card to open it.")).toBe(true);
+        expect(claimsArtifactSaved("I've rebuilt the app, v2 has the charts.")).toBe(true);
+        expect(claimsArtifactSaved("Here's version 3 with the new colors, all fixed.")).toBe(true);
+        expect(claimsArtifactSaved('Saved as v2, the charts are updated.')).toBe(true);
+        expect(claimsArtifactSaved('v2 is ready.')).toBe(true);
+        expect(claimsArtifactSaved('Saved version 3.')).toBe(true);
+        expect(claimsArtifactSaved('Saved as v2.1, the charts are updated.')).toBe(true);
+        // The cue has to be next to the claim, not anywhere in the reply (Sentry on #1499)
+        expect(claimsArtifactSaved("I've fixed the bug in your app. Node v18 or later is needed. The card reader works now too.")).toBe(false);
+        expect(claimsArtifactSaved("I've fixed the bug in your app. Upgrade to Node v18.")).toBe(false);
+        expect(claimsArtifactSaved("I've upgraded your project to Node v18.")).toBe(false);
+        expect(claimsArtifactSaved('Done, Python version 3 is installed and your script is fixed.')).toBe(false);
+        expect(claimsArtifactSaved("I've updated the code to call the v2 API.")).toBe(false);
+        expect(claimsArtifactSaved("I've updated the code to call the v2.0 API.")).toBe(false);
+        expect(claimsArtifactSaved("I've updated your script to use version 2 of the library.")).toBe(false);
+        // Sentry on #1499: an ordinary "Tap Save" is no cue, and "of" only matters for the words that are sometimes artifacts
+        expect(claimsArtifactSaved("I've fixed the bug in your app. Tap Save and it works.")).toBe(false);
+        expect(claimsArtifactSaved("Here's the updated mockup of your landing page.")).toBe(true);
+        expect(claimsArtifactSaved("I've built a dashboard of your sales this month.")).toBe(true);
     });
 
     it('asks the second try to use the tool or say plainly, with what the chat now says', () => {

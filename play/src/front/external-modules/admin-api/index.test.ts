@@ -866,7 +866,11 @@ describe("The Orbit bridge", () => {
         });
     });
 
-    it("gives focus back to the control that opened Orbit when Orbit closes", async () => {
+    // Opens Orbit from a button, closes it, and returns what has focus then. `byKeyboard` is what :focus-visible says
+    // of the button when Orbit opens (a click or tap leaves it false; Enter or Space on the button makes it true).
+    async function focusAfterOrbitCloses(
+        byKeyboard: boolean
+    ): Promise<{ button: HTMLElement; focused: Element | null }> {
         let onVisibility: ((visible: boolean) => void) | undefined;
         mocks.modalVisibilitySubscribe.mockImplementation(((callback: (visible: boolean) => void) => {
             onVisibility = callback;
@@ -875,6 +879,8 @@ describe("The Orbit bridge", () => {
         const button = document.createElement("button");
         document.body.append(button);
         button.focus();
+        const matches = button.matches.bind(button);
+        button.matches = (selector: string) => (selector === ":focus-visible" ? byKeyboard : matches(selector));
 
         const index = await freshIndex();
         index.default.init({}, makeOptions());
@@ -883,7 +889,18 @@ describe("The Orbit bridge", () => {
         (document.activeElement as HTMLElement | null)?.blur();
 
         onVisibility?.(false);
-        expect(document.activeElement).toBe(button);
+        return { button, focused: document.activeElement };
+    }
+
+    it("gives focus back to the control the keyboard used to open Orbit when Orbit closes", async () => {
+        const { button, focused } = await focusAfterOrbitCloses(true);
+        expect(focused).toBe(button);
+        button.remove();
+    });
+
+    it("leaves the focus free when a click or tap opened Orbit, so Enter opens Express and not Orbit again", async () => {
+        const { button, focused } = await focusAfterOrbitCloses(false);
+        expect(focused).not.toBe(button);
         button.remove();
     });
 });

@@ -1,0 +1,302 @@
+/**
+ * A reply that comes back with nothing (no words, no tool call) or fails at the provider used to leave no trace: a DM
+ * showed "Couldn't answer" while Sentry marked the turn ok and PostHog got no event (#1498). It now logs one line with
+ * the reason, marks the span as an error and sends the trace with $ai_is_error.
+ */
+
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+// --- Mock @sentry/node ---
+const mockParentSpan = {
+    end: vi.fn(),
+    setAttribute: vi.fn(),
+    setStatus: vi.fn(),
+    spanContext: vi.fn(() => ({ spanId: "test-span-id", traceId: "test-trace-id" })),
+};
+
+vi.mock("@sentry/node", () => ({
+    startSpanManual: vi.fn((_opts: unknown, callback: (span: any) => any) => callback(mockParentSpan)),
+    startInactiveSpan: vi.fn(),
+    getCurrentScope: vi.fn(() => ({ setConversationId: vi.fn() })),
+    getActiveSpan: vi.fn(() => null),
+    setConversationId: vi.fn(),
+}));
+
+// --- Mock @sentry/core ---
+vi.mock("@sentry/core", () => ({
+    _INTERNAL_setSpanForScope: vi.fn(),
+}));
+
+// --- Mock PostHog telemetry so the captured generations can be inspected ---
+const mockCaptureAiGeneration = vi.fn();
+const mockCaptureAiTrace = vi.fn();
+vi.mock("../ai/PostHogClient", () => ({
+    captureAiGeneration: mockCaptureAiGeneration,
+    captureAiTrace: mockCaptureAiTrace,
+    flushPostHog: vi.fn().mockResolvedValue(undefined),
+}));
+
+// --- Mock encryption ---
+vi.mock("../ai/encryption", () => ({
+    decryptApiKey: vi.fn(() => "decrypted-key"),
+}));
+
+// --- Mock AIProviderRegistry ---
+const mockGenerateStream = vi.fn();
+vi.mock("../ai/AIProviderRegistry", () => ({
+    AIProviderRegistry: vi.fn().mockImplementation(() => ({
+        generateStream: mockGenerateStream,
+    })),
+}));
+
+// --- Mock BotClient ---
+vi.mock("../client/BotClient", () => ({
+    BotClient: vi.fn(),
+}));
+
+// --- Mock MCPConnector to prevent real HTTP calls during tests ---
+vi.mock("../mcp/MCPConnector", () => ({
+    MCPConnector: {
+        discoverToolsWithMapping: vi.fn().mockResolvedValue({
+            tools: [],
+            toolServerMap: new Map(),
+        }),
+        executeToolCall: vi.fn().mockResolvedValue({ content: [] }),
+        clearCache: vi.fn(),
+    },
+}));
+
+// ---- Helper streams ----
+
+// DeepSeek on 27 Oct: the whole 4,000-token limit went on thinking, so no words came back.
+async function* thinkingOnlyStream() {
+    yield {
+        content: "",
+        done: true,
+        metadata: { tokensUsed: 10581, promptTokens: 6581, completionTokens: 4000, reasoningTokens: 4000, latency: 25000, error: false, truncated: true, finishReason: "length" },
+    };
+}
+
+async function* providerErrorStream() {
+    yield {
+        content: "",
+        done: true,
+        metadata: { tokensUsed: 0, latency: 300, error: true, errorStatus: 400, errorText: "OpenAI API error: 400 max_tokens is too large" },
+    };
+}
+
+// A tool ran, then the call after it failed: the person gets nothing.
+async function* toolCallStream() {
+    yield { content: "", done: false, toolCalls: [{ id: "call_1", name: "get_bot_position", arguments: "{}" }] };
+    yield { content: "", done: true, metadata: { tokensUsed: 110, promptTokens: 100, completionTokens: 10, latency: 20, error: false, truncated: false, finishReason: "tool_calls" } };
+}
+
+async function* followUpErrorStream() {
+    yield { content: "", done: true, metadata: { tokensUsed: 0, latency: 300, error: true, errorStatus: 502, errorText: "OpenAI API error: 502 bad gateway" } };
+}
+
+// Words before the tool, then the tool.
+async function* prefaceThenToolCallStream() {
+    yield { content: "Let me check.", done: false };
+    yield { content: "", done: false, toolCalls: [{ id: "call_1", name: "get_bot_position", arguments: "{}" }] };
+    yield { content: "", done: true, metadata: { tokensUsed: 110, promptTokens: 100, completionTokens: 10, latency: 20, error: false, truncated: false, finishReason: "tool_calls" } };
+}
+
+// The answer after the tool starts, then the stream breaks.
+async function* partialThenErrorStream() {
+    yield { content: "You are by the", done: false };
+    yield { content: "", done: true, metadata: { tokensUsed: 0, latency: 300, error: true, errorStatus: 502, errorText: "OpenAI API error: 502 stream broke" } };
+}
+
+// The first call asked for a tool, then broke off.
+async function* brokenToolCallStream() {
+    yield { content: "", done: false, toolCalls: [{ id: "call_1", name: "get_bot_position", arguments: "{}" }] };
+    yield { content: "", done: true, metadata: { tokensUsed: 110, promptTokens: 100, completionTokens: 10, latency: 20, error: true, errorStatus: 500, errorText: "OpenAI API error: 500 stream broke" } };
+}
+
+// DeepSeek's empty-name tool call: the bot retries once without tools, and that retry thinks until the limit.
+async function* emptyNameToolCallStream() {
+    yield { content: "", done: false, toolCalls: [{ id: "call_1", name: "", arguments: "" }] };
+    yield { content: "", done: true, metadata: { tokensUsed: 110, promptTokens: 100, completionTokens: 10, latency: 20, error: false, truncated: false, finishReason: "tool_calls" } };
+}
+
+async function* plainAnswerStream() {
+    yield { content: "Hello there.", done: false };
+    yield { content: "", done: true, metadata: { tokensUsed: 33, promptTokens: 30, completionTokens: 3, latency: 10, error: false, truncated: false, finishReason: "stop" } };
+}
+
+// ---- Build minimal mocks ----
+function buildMocks() {
+    const mockAdminApiService: any = {
+        getAIProviderCredentials: vi.fn().mockResolvedValue({
+            providerId: "test-provider",
+            name: "TestBot",
+            type: "lmstudio",
+            enabled: true,
+            endpoint: "http://localhost:1234",
+            apiKeyEncrypted: null,
+            model: "llama3",
+            temperature: 0.7,
+            maxTokens: 512,
+            supportsStreaming: true,
+            settings: {},
+        }),
+        trackAIUsage: vi.fn().mockResolvedValue(undefined),
+        getRoomMetadata: vi.fn().mockResolvedValue(null),
+        getAvailableAIProviders: vi.fn().mockResolvedValue([]),
+    };
+
+    const mockConversationMemory: any = {
+        getMemory: vi.fn(() => ({ userUuid: "test-uuid" })),
+        getPendingMediaNotice: vi.fn(() => ""),
+    };
+
+    return { mockAdminApiService, mockConversationMemory };
+}
+
+async function drain(generator: AsyncGenerator<any>): Promise<any[]> {
+    const chunks: any[] = [];
+    for await (const chunk of generator) {
+        chunks.push(chunk);
+    }
+    return chunks;
+}
+
+describe("AIService – a reply that leaves the person nothing (#1498)", () => {
+    let AIService: any;
+    let warn: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(async () => {
+        vi.clearAllMocks();
+        mockGenerateStream.mockReset();
+        warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        const mod = await import("../ai/AIService");
+        AIService = mod.AIService;
+    });
+
+    afterEach(() => {
+        warn.mockRestore();
+        vi.resetModules();
+    });
+
+    const run = async (message = "build me an artifact with music", privateBot = false) => {
+        const { mockAdminApiService, mockConversationMemory } = buildMocks();
+        mockAdminApiService.isBotPrivate = vi.fn().mockResolvedValue(privateBot);
+        const service = new AIService(mockConversationMemory, mockAdminApiService, "http://admin.local");
+        await drain(service.generateBotResponseStream("bot-1", 42, message, "You are a bot.", "test-provider", "space-1", ""));
+    };
+    const warnings = () => warn.mock.calls.map((call: unknown[]) => String(call[0])).filter((line: string) => line.includes("did not answer in full"));
+
+    it("says why a reply came back with no words", async () => {
+        mockGenerateStream.mockImplementationOnce(thinkingOnlyStream);
+        await run();
+
+        expect(warnings()).toEqual([
+            "[AIService] Bot bot-1 did not answer in full on llama3 (test-provider): no words and no tool call: it reached the longest reply, 4000 tokens used of 512 allowed, 4000 on thinking",
+        ]);
+        expect(mockParentSpan.setStatus).toHaveBeenCalledWith({ code: 2, message: expect.stringContaining("reached the longest reply") });
+        expect(mockCaptureAiTrace).toHaveBeenCalledTimes(1);
+        expect(mockCaptureAiTrace.mock.calls[0][0].error).toContain("no words and no tool call");
+        // The call itself is flagged too, even with nothing in it
+        expect(mockCaptureAiGeneration).toHaveBeenCalledTimes(1);
+        expect(mockCaptureAiGeneration.mock.calls[0][0].error).toContain("no words and no tool call");
+    });
+
+    it("says what the provider answered when the call failed", async () => {
+        mockGenerateStream.mockImplementationOnce(providerErrorStream);
+        await run();
+
+        expect(warnings()).toEqual([
+            "[AIService] Bot bot-1 did not answer in full on llama3 (test-provider): the provider failed (400): OpenAI API error: 400 max_tokens is too large",
+        ]);
+        expect(mockCaptureAiTrace.mock.calls[0][0].error).toBe("the provider failed (400): OpenAI API error: 400 max_tokens is too large");
+    });
+
+    it("says why when the call after a tool failed", async () => {
+        // The follow-up fails, and so does the retry after it
+        mockGenerateStream.mockImplementationOnce(toolCallStream).mockImplementation(followUpErrorStream);
+        await run();
+
+        expect(warnings()).toEqual([
+            "[AIService] Bot bot-1 did not answer in full on llama3 (test-provider): the provider failed (502): OpenAI API error: 502 bad gateway",
+        ]);
+        expect(mockParentSpan.setStatus).toHaveBeenCalledWith({ code: 2, message: expect.stringContaining("502") });
+        // The tool call's own call went fine; the call after it carries the error
+        const generations = mockCaptureAiGeneration.mock.calls.map((call: any[]) => call[0]);
+        expect(generations[0].error).toBeUndefined();
+        expect(generations.at(-1).error).toBe("the provider failed (502): OpenAI API error: 502 bad gateway");
+    });
+
+    it("still says why when only words before the tool came back", async () => {
+        mockGenerateStream.mockImplementationOnce(prefaceThenToolCallStream).mockImplementation(followUpErrorStream);
+        await run();
+
+        expect(warnings()).toEqual([
+            "[AIService] Bot bot-1 did not answer in full on llama3 (test-provider): the provider failed (502): OpenAI API error: 502 bad gateway",
+        ]);
+    });
+
+    it("still says why when the answer broke off after its first words", async () => {
+        mockGenerateStream.mockImplementationOnce(toolCallStream).mockImplementation(partialThenErrorStream);
+        await run();
+
+        expect(warnings()).toEqual([
+            "[AIService] Bot bot-1 did not answer in full on llama3 (test-provider): the provider failed (502): OpenAI API error: 502 stream broke",
+        ]);
+    });
+
+    it("leaves a reply alone when a later call made up for a failed one", async () => {
+        mockGenerateStream
+            .mockImplementationOnce(toolCallStream)
+            .mockImplementationOnce(followUpErrorStream)
+            .mockImplementationOnce(plainAnswerStream);
+        await run();
+
+        expect(warnings()).toEqual([]);
+        expect(mockParentSpan.setStatus).not.toHaveBeenCalled();
+    });
+
+    it("flags the first call's own event when it broke off after its tool call", async () => {
+        mockGenerateStream.mockImplementationOnce(brokenToolCallStream).mockImplementationOnce(plainAnswerStream);
+        await run();
+
+        expect(mockCaptureAiGeneration.mock.calls[0][0].error).toBe("the provider failed (500): OpenAI API error: 500 stream broke");
+    });
+
+    it("gives the retry's own reason after an empty-name tool call", async () => {
+        mockGenerateStream.mockImplementationOnce(emptyNameToolCallStream).mockImplementationOnce(thinkingOnlyStream);
+        await run();
+
+        expect(warnings()).toHaveLength(1);
+        expect(warnings()[0]).toContain("no words and no tool call: it reached the longest reply");
+    });
+
+    it("keeps a private bot's provider text out of the line", async () => {
+        mockGenerateStream.mockImplementationOnce(providerErrorStream);
+        await run("build me an artifact with music", true);
+
+        expect(warnings()).toEqual([
+            "[AIService] Bot bot-1 did not answer in full on llama3 (test-provider): the provider failed (400): details left out for a private bot",
+        ]);
+        expect(mockParentSpan.setStatus).toHaveBeenCalledWith({ code: 2, message: expect.not.stringContaining("max_tokens") });
+        expect(mockCaptureAiTrace).not.toHaveBeenCalled();
+        expect(mockCaptureAiGeneration).not.toHaveBeenCalled();
+    });
+
+    it("never puts the person's words in the line", async () => {
+        mockGenerateStream.mockImplementationOnce(thinkingOnlyStream);
+        await run("my secret plan");
+        expect(warnings().join(" ")).not.toContain("secret");
+    });
+
+    it("leaves a reply with an answer alone", async () => {
+        mockGenerateStream.mockImplementationOnce(plainAnswerStream);
+        await run();
+
+        expect(warnings()).toEqual([]);
+        expect(mockParentSpan.setStatus).not.toHaveBeenCalled();
+        expect(mockCaptureAiTrace).toHaveBeenCalledTimes(1);
+        expect(mockCaptureAiTrace.mock.calls[0][0].error).toBeUndefined();
+        expect(mockCaptureAiGeneration.mock.calls[0][0].error).toBeUndefined();
+    });
+});

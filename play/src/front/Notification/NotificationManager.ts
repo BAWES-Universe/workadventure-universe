@@ -12,6 +12,7 @@ import { gameSceneIsLoadedStore } from "../Stores/GameSceneStore";
 import { waitForStoreValue } from "../Stores/Utils/waitForStoreValue";
 import type { NotificationWA } from "./Notification";
 import { findChatRoom } from "./findChatRoom";
+import { playsChatSound } from "./ChatSound";
 
 type SelectedRoomStore = {
     subscribe: (this: void, run: Subscriber<ChatRoom | undefined>) => Unsubscriber;
@@ -61,6 +62,16 @@ class NotificationManager {
     }
 
     private readonly onServiceWorkerMessage = (event: MessageEvent): void => {
+        // A push for a chat: the worker shows it without the system's sound when this page rings for it (#1493).
+        const soundCheck = ChatSoundCheckSchema.safeParse(event.data);
+        if (soundCheck.success) {
+            const port = event.ports[0];
+            if (!port) return;
+            playsChatSound(soundCheck.data.chatRoomId)
+                .then((plays) => port.postMessage(plays))
+                .catch(() => port.postMessage(false));
+            return;
+        }
         const result = NotificationSchema.safeParse(event.data);
         if (!result.success) {
             return;
@@ -112,6 +123,11 @@ const NotificationSchema = z.object({
     data: z.object({
         chatRoomId: z.string(),
     }),
+});
+
+const ChatSoundCheckSchema = z.object({
+    type: z.literal("chatSoundCheck"),
+    chatRoomId: z.string(),
 });
 
 const PENDING_CHAT_KEY = "notificationPendingChat";

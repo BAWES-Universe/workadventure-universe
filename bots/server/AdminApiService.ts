@@ -1104,7 +1104,8 @@ export class AdminApiService {
                     ...(media.length > 0 ? {} : { 'Content-Type': 'application/json' }),
                     'Cache-Control': 'no-store',
                 },
-                timeout: timeoutMs,
+                // 0 would mean no time limit at all to axios
+                timeout: timeoutMs > 0 ? timeoutMs : ARTIFACT_TIMEOUT_MS,
                 maxBodyLength: Infinity,
             });
             return response.data;

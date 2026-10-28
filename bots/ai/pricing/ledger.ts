@@ -61,11 +61,30 @@ export interface TurnCost {
     usage: CallUsage;
 }
 
+/** How a call to the provider ended: a reply whose last call failed left the person without a full answer (#1498). */
+export interface CallOutcome {
+    failed: boolean;
+    status?: number;
+    /** What the provider said, already short and without logins (providerErrorText). */
+    errorText?: string;
+}
+
 export class UsageLedger {
     private readonly calls: Array<{ cost: CallCost; usage: CallUsage }> = [];
+    private last: CallOutcome | null = null;
 
     add(entry: { cost: CallCost; usage: CallUsage }): void {
         this.calls.push(entry);
+    }
+
+    /** Every call of the reply passes through the ledger, so it also keeps how the latest one ended. */
+    noteOutcome(outcome: CallOutcome): void {
+        this.last = outcome;
+    }
+
+    /** Null when no call has ended yet. */
+    lastOutcome(): CallOutcome | null {
+        return this.last;
     }
 
     /** Null when no call has finished yet. */

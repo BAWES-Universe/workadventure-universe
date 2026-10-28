@@ -29,6 +29,14 @@ describe('AdminApiService artifacts', () => {
         vi.unstubAllEnvs();
     });
 
+    it('waits its own 30 seconds when given no time limit, never forever (CodeRabbit on the R6 release)', async () => {
+        post.mockResolvedValue({ data: {} });
+        await service.makeArtifact(call, { title: 'Quests', kind: 'app', content: '<p>x</p>' }, 0);
+        expect(post).toHaveBeenLastCalledWith(expect.any(String), expect.any(Object), expect.objectContaining({ timeout: 30_000 }));
+        await service.makeArtifact(call, { title: 'Quests', kind: 'app', content: '<p>x</p>' }, 45_000);
+        expect(post).toHaveBeenLastCalledWith(expect.any(String), expect.any(Object), expect.objectContaining({ timeout: 45_000 }));
+    });
+
     it('makes an artifact with the service token, naming the bot, the person and the chat', async () => {
         const answer = { artifact: { id: 'a' }, version: { number: 1 }, hidden: false };
         post.mockResolvedValue({ data: answer });
