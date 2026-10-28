@@ -73,6 +73,7 @@
     import PartnerProfilePanel from "./DirectChat/PartnerProfilePanel.svelte";
     import RoomDetailsPanel from "./Details/RoomDetailsPanel.svelte";
     import SharedPanel from "./Details/SharedPanel.svelte";
+    import PinnedBar from "./Details/PinnedBar.svelte";
     import { DIRECT_PARTNER_CONTEXT, directPartnerStore, type DirectPartner } from "./DirectChat/DirectPartnerStore";
     import { dayLabel, messageRuns, runSenderKey } from "./MessageRuns";
     import { IconChevronLeft, IconChevronRight, IconLoader, IconLock, IconMailBox } from "@wa-icons";
@@ -949,6 +950,16 @@
                     </div>
                 {/if}
             </div>
+            {#if matrixRoom}
+                <!-- Made again when the chat is, so it never shows the old one's pins. -->
+                {#key roomInstance}
+                    <PinnedBar
+                        room={matrixRoom}
+                        onShowAll={() =>
+                            directPartner ? openProfileRoomIdStore.set(room.id) : openRoomDetailsIdStore.set(room.id)}
+                    />
+                {/key}
+            {/if}
             {#if liveElsewhere && proximityRoom}
                 <div
                     class="mx-2 flex items-center gap-2 rounded-xl bg-success/15 px-3 py-2 text-xs text-white"

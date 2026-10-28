@@ -225,6 +225,8 @@ const chat: BaseTranslation = {
         save: "Save",
         edit: "Edit",
         delete: "Delete",
+        pin: "Pin",
+        unpin: "Unpin",
         close: "Close",
         replyingTo: "Replying to {name}",
         you: "You",
@@ -481,6 +483,12 @@ const chat: BaseTranslation = {
         lookFurther: "Look further back",
         lookingFurther: "Looking further back…",
         people: "People",
+        pinned: "Pinned",
+        pinnedOf: "Pinned · {index:number} of {count:number}",
+        allPins: "All",
+        allPinsLabel: "See all pinned messages",
+        nextPin: "Go to the pinned message, then the next one",
+        pinnedLoading: "Pinned message",
     },
     folderMenu: {
         leaveFolder: {
