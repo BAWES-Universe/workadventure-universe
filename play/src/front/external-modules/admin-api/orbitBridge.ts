@@ -13,6 +13,8 @@
  * are requests: the game checks reach, Busy and blocks itself, exactly as when you invite from the People tab. Orbit
  * also asks which of someone's profile links the game can show in its window (`orbit-check-links`, answered with
  * `orbit-links`) and to open one there (`orbit-open-link`); the game checks each page itself, as it does a chat link.
+ * And Orbit says how many steps its pages have added to the tab's history (`orbit-history`), so closing Orbit walks
+ * back over exactly those (#1556).
  *
  * Every visit (a room join or a reconnect) gets a new room revision. Requests carry it; Orbit refuses one from another
  * revision, and the game ignores answers from another revision, so an old Orbit frame can't act after a room or
@@ -144,6 +146,21 @@ export interface OrbitOpenLinkMessage {
     url: string;
 }
 
+/**
+ * How many steps Orbit's pages have added to the tab's history above the one the game added when Orbit opened (the
+ * game's "history" capability). Sent whenever it changes. A page loaded afresh counts from 0, so the number is never
+ * more than the real one.
+ */
+export interface OrbitHistoryMessage {
+    type: "orbit-history";
+    version: typeof ORBIT_BRIDGE_VERSION;
+    roomRevision: string;
+    step: number;
+}
+
+/** The most Orbit steps the game walks back over at once. */
+export const MAX_ORBIT_HISTORY_STEPS = 1000;
+
 /** The most links Orbit asks about at once. */
 export const MAX_CHECKED_LINKS = 10;
 
@@ -243,6 +260,19 @@ export function isOrbitOpenLinkMessage(value: unknown): value is OrbitOpenLinkMe
     );
 }
 
+export function isOrbitHistoryMessage(value: unknown): value is OrbitHistoryMessage {
+    return (
+        isRecord(value) &&
+        value.type === "orbit-history" &&
+        value.version === ORBIT_BRIDGE_VERSION &&
+        isBoundedString(value.roomRevision, 16, 128) &&
+        typeof value.step === "number" &&
+        Number.isInteger(value.step) &&
+        value.step >= 0 &&
+        value.step <= MAX_ORBIT_HISTORY_STEPS
+    );
+}
+
 /** A fresh room revision for a new visit. */
 export function newRoomRevision(): string {
     return `rev-${crypto.randomUUID()}`;
@@ -283,7 +313,7 @@ export class OrbitBridge {
             type: "orbit-bridge-init",
             version: ORBIT_BRIDGE_VERSION,
             roomRevision: this.roomRevision,
-            capabilities: ["navigate", "event", "view", "profile", "invite", "message", "open-link"],
+            capabilities: ["navigate", "event", "view", "profile", "invite", "message", "open-link", "history"],
             view: this.view,
             ...(this.maxNameLength ? { maxNameLength: this.maxNameLength } : {}),
         });

@@ -93,9 +93,23 @@ function makeHistory() {
             entries.push(state);
             index = entries.length - 1;
         }),
-        back: vi.fn(() => {
-            if (index > 0) index -= 1;
+        back: vi.fn(() => history.go(-1)),
+        go: vi.fn((delta: number) => {
+            const next = index + delta;
+            // Out of range, a browser does nothing at all.
+            if (next < 0 || next >= entries.length) return;
+            const before = entries[index];
+            index = next;
+            history.onTraverse?.(before, entries[index]);
         }),
+        get length() {
+            return entries.length;
+        },
+        get index() {
+            return index;
+        },
+        /** Set to hear each move, as the page would hear a popstate. */
+        onTraverse: undefined as ((before: unknown, after: unknown) => void) | undefined,
         entries,
     };
     return history;
@@ -527,7 +541,7 @@ describe("The Orbit bridge", () => {
                 type: "orbit-bridge-init",
                 version: 1,
                 roomRevision: revision,
-                capabilities: ["navigate", "event", "view", "profile", "invite", "message", "open-link"],
+                capabilities: ["navigate", "event", "view", "profile", "invite", "message", "open-link", "history"],
                 view: "compact",
                 maxNameLength: 25,
             },
@@ -1023,7 +1037,7 @@ describe("Orbit and the Back button (1C)", () => {
     it("takes its entry out of the history when Orbit is closed any other way", async () => {
         await openedIndex();
         modalClosedByGame();
-        expect(fakeHistory.back).toHaveBeenCalledTimes(1);
+        expect(fakeHistory.go).toHaveBeenCalledWith(-1);
         expect(fakeHistory.state).toBeNull();
         // Opening again adds a fresh entry.
         mocks.modalVisibilitySubscribe.mockClear();
@@ -1058,12 +1072,12 @@ describe("Orbit and the Back button (1C)", () => {
         expect(await holds()).toBe(false);
     });
 
-    it("lets go after a second when the step back never lands where it can be seen", async () => {
+    it("lets go once the walk back ends, even when the room never shows", async () => {
         await openedIndex();
         modalClosedByGame();
-        vi.advanceTimersByTime(999);
+        vi.advanceTimersByTime(100);
         expect(await holds()).toBe(true);
-        vi.advanceTimersByTime(1);
+        vi.advanceTimersByTime(1000);
         expect(await holds()).toBe(false);
     });
 
@@ -1077,6 +1091,93 @@ describe("Orbit and the Back button (1C)", () => {
         const index = await openedIndex();
         index.default.destroy();
         expect(await holds()).toBe(false);
+    });
+
+    /** A page Orbit loads in its frame: a step with the same state for the page around it. */
+    function orbitPageLoaded() {
+        fakeHistory.pushState(fakeHistory.state);
+    }
+
+    /** The page hears a popstate only when a move changes its own state, as with a frame's steps in a browser. */
+    function hearMoves() {
+        fakeHistory.onTraverse = (before, after) => {
+            if (before === after) return;
+            for (const listener of popStateListeners) listener({ state: after } as PopStateEvent);
+        };
+    }
+
+    function orbitSays(step: number) {
+        fromOrbit({ type: "orbit-bridge-ready", version: 1, capabilities: [] });
+        const init = frame.postMessage.mock.calls.find((call) => call[0].type === "orbit-bridge-init");
+        fromOrbit({ type: "orbit-history", version: 1, roomRevision: init?.[0].roomRevision, step });
+    }
+
+    it("closing walks back over the steps Orbit's pages added, in one go", async () => {
+        hearMoves();
+        await openedIndex();
+        orbitPageLoaded();
+        orbitPageLoaded();
+        orbitSays(2);
+        modalClosedByGame();
+        expect(fakeHistory.go).toHaveBeenCalledWith(-3);
+        expect(fakeHistory.index).toBe(0);
+        expect(await holds()).toBe(false);
+        vi.advanceTimersByTime(1000);
+        expect(fakeHistory.back).not.toHaveBeenCalled();
+    });
+
+    it("with the room first in the history, keeps stepping back until it shows (an Orbit that says nothing)", async () => {
+        hearMoves();
+        await openedIndex();
+        orbitPageLoaded();
+        orbitPageLoaded();
+        modalClosedByGame();
+        expect(fakeHistory.go).toHaveBeenCalledWith(-1);
+        expect(fakeHistory.index).toBe(2);
+        expect(await holds()).toBe(true);
+        vi.advanceTimersByTime(150);
+        vi.advanceTimersByTime(150);
+        expect(fakeHistory.index).toBe(0);
+        expect(await holds()).toBe(false);
+        vi.advanceTimersByTime(1000);
+        expect(fakeHistory.back).toHaveBeenCalledTimes(2);
+    });
+
+    it("with something before the room, goes back only as far as Orbit said", async () => {
+        hearMoves();
+        fakeHistory.pushState({ somewhereElse: true });
+        await openedIndex();
+        orbitPageLoaded();
+        orbitPageLoaded();
+        orbitSays(1);
+        modalClosedByGame();
+        expect(fakeHistory.go).toHaveBeenCalledWith(-2);
+        vi.advanceTimersByTime(1000);
+        // One page's step stays behind rather than risk going past the room.
+        expect(fakeHistory.back).not.toHaveBeenCalled();
+        expect(fakeHistory.index).toBe(2);
+        expect(await holds()).toBe(false);
+    });
+
+    it("never walks back more steps than the history holds", async () => {
+        hearMoves();
+        fakeHistory.pushState({ somewhereElse: true });
+        await openedIndex();
+        orbitPageLoaded();
+        orbitSays(50);
+        modalClosedByGame();
+        expect(fakeHistory.go).toHaveBeenCalledWith(-2);
+        expect(fakeHistory.index).toBe(1);
+    });
+
+    it("ignores Orbit's number for another visit", async () => {
+        hearMoves();
+        fakeHistory.pushState({ somewhereElse: true });
+        await openedIndex();
+        orbitPageLoaded();
+        fromOrbit({ type: "orbit-history", version: 1, roomRevision: "rev-another-visit-0000", step: 1 });
+        modalClosedByGame();
+        expect(fakeHistory.go).toHaveBeenCalledWith(-1);
     });
 
     it("tells Orbit which view it is in when the game's maximise button changes it", async () => {
