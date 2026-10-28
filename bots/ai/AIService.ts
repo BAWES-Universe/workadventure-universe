@@ -2075,7 +2075,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     if (cacheLedger.read || cacheLedger.write) {
                         parentSpan?.setAttribute('gen_ai.usage.input_tokens', promptTokens);
                         parentSpan?.setAttribute('gen_ai.usage.output_tokens', completionTokens);
-                        parentSpan?.setAttribute('gen_ai.usage.cache_read.input_tokens', cacheLedger.read);
+                        // A provider that only reports writes (OpenRouter) has no ledger reads: its cached figure is the reads
+                        parentSpan?.setAttribute('gen_ai.usage.cache_read.input_tokens', cacheLedger.read || (cachedPromptTokens ?? 0));
                         parentSpan?.setAttribute('gen_ai.usage.cache_creation.input_tokens', cacheLedger.write);
                     } else if (cachedPromptTokens !== undefined) {
                         // No ledger (DeepSeek, LM Studio): the span takes the provider's cached figure

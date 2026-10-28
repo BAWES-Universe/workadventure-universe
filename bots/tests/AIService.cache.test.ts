@@ -224,6 +224,17 @@ describe("AIService and the provider's prompt cache", () => {
             expect(reads[reads.length - 1][1]).toBe(3000);
         });
 
+        it("keeps the provider's cached figure on the Sentry span when it reports cache writes but no ledger reads", async () => {
+            const { admin, memory } = buildMocks();
+            mockGenerateStream.mockImplementationOnce(call({ prompt: 3025, completion: 7, write: 500, cached: 1000 }));
+            await run(new AIService(memory, admin, "http://admin.local"), admin);
+
+            const reads = mockParentSpan.setAttribute.mock.calls.filter(([key]) => key === "gen_ai.usage.cache_read.input_tokens");
+            expect(reads[reads.length - 1][1]).toBe(1000);
+            const writes = mockParentSpan.setAttribute.mock.calls.filter(([key]) => key === "gen_ai.usage.cache_creation.input_tokens");
+            expect(writes[writes.length - 1][1]).toBe(500);
+        });
+
         it("puts the cache figures on the turn's Sentry span, the cached tokens inside input_tokens", async () => {
             const { admin, memory } = buildMocks();
             mockGenerateStream.mockImplementationOnce(call({ prompt: 3025, completion: 7, read: 3000, write: 20 }));
