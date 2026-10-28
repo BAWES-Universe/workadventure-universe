@@ -40,6 +40,32 @@ export type InterruptionAction = 'update' | 'cancel' | 'answer' | 'queue';
 const QUICK_LLM_TIMEOUT_MS = 3000;
 /** How long a reply waits for the newest-files line (#1508) before it goes on without it. */
 const RECENT_FILES_WAIT_MS = 2000;
+/** Files remembered with the tool that made them, until they are sent. */
+const MAX_MADE_MEDIA = 500;
+/** Tools that send or look things up, and never make a file. */
+// (read_web_page is READ_WEB_PAGE_TOOL, named here as it is declared at the end of the file)
+const MADE_NOTHING_TOOLS = new Set(['send_image', 'send_file', 'send_audio', 'send_video', 'get_people_on_map', 'get_bot_position', 'get_areas_on_map', 'navigate_to', 'read_web_page']);
+/** A tool named like this lists or reads what was made before (list_imagines), so it didn't make what it returns. */
+const LOOKS_UP = /^(list|get|search|find|read|fetch|query|show)_/i;
+
+/** What the bot asked a tool for: its prompt (or text) when it has one, else all it was given. */
+export function promptOfToolCall(args: string | undefined): string | null {
+    if (!args) return null;
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(args);
+    } catch {
+        return args.trim() || null;
+    }
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const given = parsed as Record<string, unknown>;
+        for (const key of ['prompt', 'text', 'lyrics', 'description', 'query']) {
+            if (typeof given[key] === 'string' && (given[key] as string).trim()) return (given[key] as string).trim();
+        }
+    }
+    const all = JSON.stringify(parsed);
+    return all && all !== '{}' ? all : null;
+}
 
 // Internal API for setting active span on scope — scope.setSpan() removed in v10
 // Note: startSpanManual already calls _setSpanForScope internally (verified in SDK source).
@@ -54,6 +80,7 @@ import { captureAiGeneration, captureAiTrace, flushPostHog } from './PostHogClie
 import { priceCall } from './pricing/costing';
 import { UsageLedger, priceMetadata, type TurnCost } from './pricing/ledger';
 import { buildRecentFilesLine, buildSystemPrompt } from './systemPrompt';
+import type { MadeWith } from '../services/ChatFiles';
 /** Ends a direct-message reply that answers where the bot is or invites the person over because they asked. */
 export { ROOM_CARD_MARK } from './systemPrompt';
 import {
@@ -128,6 +155,8 @@ export class AIService {
     private botRoutePricing: Map<string, AIProviderConfig> = new Map();
     /** Each bot's limits as Orbit last served them (Orbit #666), for the parts of a reply that have no provider config at hand. */
     private botLimits: Map<string, BotLimits> = new Map();
+    /** Which tool made each file the bot was given back, by link (#1508). */
+    private madeMedia = new Map<string, MadeWith>();
     private providerRegistry: AIProviderRegistry;
     private mapDataService?: MapDataService;
 
@@ -525,6 +554,8 @@ export class AIService {
         let usageRecorded = false;
         // A new turn starts clean: an artifact call is only the same as an earlier one while that turn is asked again
         if (!isRetry && playerId !== undefined) this.conversationMemory?.getMemory(botId, playerId)?.artifactCalls?.clear();
+        // What the bot sends in this bubble from now on goes on this person's list of files (#1508)
+        botClient?.setMediaAsker?.(playerId);
         // Buffer for content received before tool calls are detected
         // Discarded if tool calls arrive (was filler/thinking text);
         // flushed as final response if no tool calls.
@@ -1213,6 +1244,8 @@ export class AIService {
                             // pass it): the first round reads the cap from this chunk, later rounds from the previous round's last chunk
                             const replyCutOff = !!(followUpIterations === 1 ? chunk.metadata?.truncated : lastFollowUpDoneChunk?.metadata?.truncated);
                             const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff);
+                            // Which tool made each file, and what it was asked for, for the bot's list of files (#1508)
+                            this.noteMadeMedia(pendingToolCalls, toolResults);
                             if (turn && toolResults.some((tr) => writesArtifact(tr.name) && tr.result?.success === true)) turn.artifactSaved = true;
 
                             // Collect URLs that were already sent by explicit send_* tool calls
@@ -3475,6 +3508,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
         const memory = this.conversationMemory?.getMemory(botId, playerId);
         if (!memory?.pendingMedia?.length) return;
+        botClient.setMediaAsker?.(playerId);
 
         if (process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[PM-TRACE] flushPendingMedia entry: space=${spaceName?.substring(spaceName.lastIndexOf('#'))} count=${memory.pendingMedia.length} urls=[${memory.pendingMedia.map(p => p.url.substring(0, 60)).join(', ')}]`);
@@ -3534,6 +3568,37 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         if (process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[PM-TRACE] flushPendingMedia exit: remaining=${remaining.length} urls=[${remaining.map(p => p.url.substring(0, 60)).join(', ')}]`);
         }
+    }
+
+    /**
+     * Remember which tool made each file in its results, and what the bot asked it for (#1508), so the file goes on the
+     * bot's list with how it was made ("same as Tuesday's song, but slower"). Only tools that make things: the bot's own
+     * map, page and artifact tools are left out. Held briefly, by link; nothing here is saved.
+     */
+    private noteMadeMedia(toolCalls: ToolCall[], toolResults: Array<{ id: string; name: string; result: any }>): void {
+        for (const tr of toolResults) {
+            if (MADE_NOTHING_TOOLS.has(tr.name) || isArtifactTool(tr.name) || LOOKS_UP.test(tr.name)) continue;
+            let urls: string[];
+            try {
+                urls = this.extractUrlsFromResult(tr.result);
+            } catch {
+                continue;
+            }
+            if (urls.length === 0) continue;
+            const made: MadeWith = { with: tr.name, prompt: promptOfToolCall(toolCalls.find((call) => call.id === tr.id)?.arguments) };
+            // The first tool that gave a file back made it: one that hands it on later doesn't change that
+            for (const url of urls) if (!this.madeMedia.has(url)) this.madeMedia.set(url, made);
+            while (this.madeMedia.size > MAX_MADE_MEDIA) this.madeMedia.delete(this.madeMedia.keys().next().value!);
+        }
+    }
+
+    /** How a file the bot sends was made, by the link it is sent from or the one it was uploaded from. */
+    madeFor(...urls: (string | undefined | null)[]): MadeWith | null {
+        for (const url of urls) {
+            const made = url ? this.madeMedia.get(url) : undefined;
+            if (made) return made;
+        }
+        return null;
     }
 
     /**

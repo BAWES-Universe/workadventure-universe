@@ -32,7 +32,7 @@ import { movementLogger } from '../utils/MovementLogger';
 import type { BotConfiguration } from '../server/AdminApiService';
 import { CANNOT_CHECK_CHAT_LINE, type BotAccessGate, type BotAccessVerdict } from '../server/BotAccessGate';
 import { FileParser } from '../services/FileParser';
-import type { ChatUpload } from '../services/ChatFiles';
+import type { ChatUpload, SentMedia } from '../services/ChatFiles';
 import { extractChatLinks } from '../utils/chatLinks';
 import { resolve4, resolve6 } from 'dns/promises';
 import * as Sentry from '@sentry/node';
@@ -58,6 +58,9 @@ export interface BotConfig {
     uploaderUrl?: string;
 }
 
+/** Uploads remembered for matching a sent file with the tool that made it. */
+const MAX_UPLOADED_FROM = 500;
+
 export class BotClient {
     // Static set of all bot user IDs - shared across all bot instances
     private static botUserIds: Set<number> = new Set();
@@ -67,6 +70,10 @@ export class BotClient {
     private ws: WebSocket | null = null;
     private state: BotState;
     private behavior: BaseBehavior | null = null;
+    /** Who the bot is answering, so media it sends goes on that person's list of files (#1508). */
+    private mediaAsker: number | null = null;
+    /** Where each uploaded file came from, so a sent file is matched with the tool that made it. */
+    private uploadedFrom = new Map<string, string>();
     /** Asks Orbit whether someone may chat with this bot, before their words reach the AI. Null: nobody is asked. */
     private accessGate: BotAccessGate | null = null;
     /** When each person was told that the bot's owner limits who can chat with it: once per visit (see mayChat). */
@@ -1668,6 +1675,9 @@ export class BotClient {
         const uploadedFile = result[0];
         const location = uploadedFile.location || uploadedFile.url;
         const mediaType = this.inferMediaTypeFromUrl(location, contentType);
+        this.uploadedFrom.delete(location);
+        this.uploadedFrom.set(location, url);
+        if (this.uploadedFrom.size > MAX_UPLOADED_FROM) this.uploadedFrom.delete(this.uploadedFrom.keys().next().value!);
 
         return { location, mediaType, mimeType: contentType };
     }
@@ -1903,6 +1913,7 @@ export class BotClient {
                 },
             },
         });
+        this.mediaSent(spaceName, [{ url, mediaType, mimeType, caption, fileName }]);
         return true;
     }
 
@@ -1949,7 +1960,31 @@ export class BotClient {
                 },
             },
         });
+        this.mediaSent(spaceName, urls.map((one, i) => ({ url: one, mediaType: 'image', mimeType: this.inferMimeFromExt(one), caption: i === 0 ? caption : undefined, fileName: fileNames?.[i] })));
         return true;
+    }
+
+    /**
+     * Who the bot is answering now: what it sends from here on is theirs on the bot's list of files (#1508). Set at the
+     * start of each reply, and when media left from an earlier one is sent.
+     */
+    setMediaAsker(playerId: number | null): void {
+        this.mediaAsker = playerId;
+    }
+
+    /** The link a file was uploaded from, for a link the uploader gave back. */
+    uploadedFromOf(location: string): string | undefined {
+        return this.uploadedFrom.get(location);
+    }
+
+    private mediaSent(spaceName: string, items: SentMedia[]): void {
+        if (this.mediaAsker === null || !this.behavior) return;
+        try {
+            this.behavior.onBotMediaSent(spaceName, this.mediaAsker, items);
+        } catch (error) {
+            // Keeping the file never stops it being sent
+            console.warn(`[Bot ${this.config.botId}] Could not keep a sent file:`, (error as Error)?.message ?? error);
+        }
     }
 
     /**

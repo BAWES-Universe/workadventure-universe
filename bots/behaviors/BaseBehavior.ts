@@ -18,8 +18,8 @@ import type { BotMetricsCollector } from '../metrics/BotMetricsCollector';
 import { BotBusyError } from '../utils/summonErrors';
 import type { ParsedFile } from '../services/FileParser';
 import type { ArtifactCall } from '../server/AdminApiService';
-import { fileNote, keptTextOf, kindOf, withFileNotes, type ChatUpload } from '../services/ChatFiles';
-import { chatFileKeeper, type FileJob } from '../services/ChatFileKeeper';
+import { fileNote, keptTextOf, kindOf, withFileNotes, type ChatUpload, type SentMedia } from '../services/ChatFiles';
+import { chatFileKeeper, sentMediaJob, type FileJob } from '../services/ChatFileKeeper';
 
 /** What a bot says when someone keeps writing while it is still answering (#1159): fixed, so it never calls the AI. */
 export const BUSY_LINE = "I'll answer your messages once I've finished this one.";
@@ -2330,6 +2330,24 @@ export abstract class BaseBehavior {
             void chatFileKeeper.keepAll(admin, jobs);
         };
         return { line, keep };
+    }
+
+    /**
+     * Files the bot just sent in a bubble (#1508), to the person it is answering: they go on that person's list with the
+     * tool that made each one and what the bot asked it for. In the background; nothing here stops the file being sent.
+     */
+    onBotMediaSent(spaceName: string, playerId: number, items: SentMedia[]): void {
+        const admin = this.adminApiService;
+        const botId = this.bot?.getBotId();
+        if (!admin || !botId || !this.bot || items.length === 0) return;
+        const where = {
+            call: { botId, person: this.bot.getPersonForArtifacts(playerId), chat: { kind: 'nearby' as const, ref: spaceName } },
+            personRef: this.userIdToUuid.get(playerId) ?? null,
+            maxTextChars: this.aiService?.botLimitsFor(botId).fileTextChars ?? 0,
+        };
+        // The bubble sends the uploader's copy: the tool gave back the link it was uploaded from
+        const jobs = items.map((item) => sentMediaJob(item, where, this.aiService?.madeFor(item.url, this.bot!.uploadedFromOf(item.url)) ?? null));
+        void chatFileKeeper.keepAll(admin, jobs);
     }
 
     /**

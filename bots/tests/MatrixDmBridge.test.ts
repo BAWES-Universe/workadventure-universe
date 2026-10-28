@@ -172,6 +172,22 @@ describe('MatrixDmBridge', () => {
         });
     });
 
+    it("puts each file it sent on the person's list once it reached them, and not one that failed (#1508)", async () => {
+        await bridge.onEvent(invite());
+        const song = { url: 'https://tools.example.com/song.mp3', mediaType: 'audio', mimeType: '', createdAt: 0, retryCount: 0 };
+        const lost = { ...song, url: 'https://tools.example.com/lost.mp3' };
+        const mediaSent = vi.fn(() => {
+            throw new Error('Orbit down');
+        });
+        deps.reply.mockResolvedValueOnce({ text: 'Here it is.', media: [song, lost], mediaSent });
+        vi.spyOn(bridge as any, 'sendMedia').mockImplementation(async (_bot: unknown, _room: unknown, item: any) => {
+            if (item === lost) throw new Error('too big');
+        });
+        await bridge.onEvent(message('make me a song'));
+        expect(mediaSent).toHaveBeenCalledTimes(1);
+        expect(mediaSent).toHaveBeenCalledWith(song);
+    });
+
     it('answers with just the card when the bot made an artifact and said nothing', async () => {
         await bridge.onEvent(invite());
         const card = { id: 'art-1', version: 1, title: 'Clock', kind: 'page', maker: 'Guide' };
