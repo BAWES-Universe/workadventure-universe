@@ -248,6 +248,8 @@ export type ChatMessageContent = {
     urls: string[] | undefined;
     filename: string | undefined;
     fileNames: string[] | undefined;
+    /** A recorded voice message (Matrix MSC3245), as opposed to an audio file. */
+    isVoice?: boolean;
 };
 export const historyVisibilityOptions = ["joined", "invited", "world_readable"] as const;
 export type historyVisibility = (typeof historyVisibilityOptions)[number];
