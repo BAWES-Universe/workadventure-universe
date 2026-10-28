@@ -271,7 +271,7 @@ async function gatherMedia(value: unknown, context: ArtifactContext): Promise<Ga
             fetched = await fetchMedia(entry.url, room, context.saveTimeoutMs ?? 30_000, context.media?.fetch);
         } catch (error) {
             if (error instanceof MediaFetchError && error.code === 'too_large') {
-                throw new MediaArgError(`${entry.ref} does not fit: the media in one artifact can come to ${Math.round(maxBytes / (1024 * 1024))} MB. Leave some out.`);
+                throw new MediaArgError(`${entry.ref} does not fit: one save can add up to ${Math.round(maxBytes / (1024 * 1024))} MB of media. Leave some out, or add the rest with change_artifact.`);
             }
             throw new MediaArgError(`${entry.ref} could not be downloaded. ${error instanceof Error ? error.message : ''}`.trim());
         }
