@@ -199,6 +199,23 @@
               .join(" · ")
         : ref;
 
+    // The line under the cards, only where it is true for this person on this bot (#1574). The maker reads where their
+    // keys come from (the box above says it when one isn't lent). Anyone else reads they can move the bot to Universe AI
+    // only while it can be picked, and why their own keys aren't here only when they have some.
+    $: universeAiCard = cards.find((card) => card.kind === "universe-ai");
+    $: note = !options
+        ? ""
+        : options.viewerIsMaker
+        ? unlent.length === 0
+            ? page.mind.makerHint()
+            : ""
+        : [
+              universeAiCard && canPick(options, universeAiCard) ? page.mind.managerMove({ bot: bot.name ?? "" }) : "",
+              myKeys && myKeys.length > 0 ? page.mind.managerKeys() : "",
+          ]
+              .filter(Boolean)
+              .join(" ");
+
     function listNames(list: string[], lang: string): string {
         if (list.length < 2 || !Intl.ListFormat) return list.join(", ");
         return new Intl.ListFormat(lang, { style: "long", type: "conjunction" }).format(list);
@@ -373,10 +390,8 @@
                 </PageButton>
             </div>
         {/if}
-        {#if !options.viewerIsMaker || unlent.length === 0}
-            <p class="bp-m">
-                {options.viewerIsMaker ? page.mind.makerHint() : page.mind.managerHint({ bot: bot.name ?? "" })}
-            </p>
+        {#if note}
+            <p class="bp-m" data-testid="bot-runs-on-note">{note}</p>
         {/if}
     {:else if failed}
         <div class="bp-line">

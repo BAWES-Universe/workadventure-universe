@@ -81,10 +81,10 @@ describe("the bot page's Mind group (#1375)", () => {
     const text = () => target.textContent?.replace(/\s+/g, " ").trim() ?? "";
     const byTestId = (id: string) => [...target.querySelectorAll<HTMLElement>(`[data-testid=${id}]`)];
 
-    async function mount() {
+    async function mount(onBot: BotData = bot) {
         const component = new MindGroup({
             target,
-            props: { bot, open: true, onToggle: vi.fn(), onChange: vi.fn() },
+            props: { bot: onBot, open: true, onToggle: vi.fn(), onChange: vi.fn() },
         });
         destroy = () => component.$destroy();
         await settle();
@@ -154,6 +154,57 @@ describe("the bot page's Mind group (#1375)", () => {
         mocks.api.getMyAiKeys.mockResolvedValue([{ id: "key-1", name: "Opus 5.5" }]);
         await mount();
         expect(byTestId("bot-runs-on-unlent")).toHaveLength(0);
+    });
+
+    describe("the line for someone who manages bots but didn't make this one (#1574)", () => {
+        const sarasKey: NonNullable<BotAiOptions["currentKey"]> = {
+            id: "key-sara",
+            name: "Sara's DeepSeek",
+            ownerName: "Sara",
+            mine: false,
+            status: "working",
+            ifDown: "universe-ai",
+        };
+        const note = () => byTestId("bot-runs-on-note")[0]?.textContent?.trim() ?? null;
+        const onSarasKey = { ...bot, aiProviderRef: "key-sara" };
+
+        it("says nothing on a bot already on Universe AI when they have no keys", async () => {
+            mocks.api.getBotAiOptions.mockResolvedValue(options({ viewerIsMaker: false }));
+            mocks.api.getMyAiKeys.mockResolvedValue([]);
+            await mount();
+            expect(note()).toBeNull();
+            expect(text()).not.toContain("to Universe AI.");
+        });
+
+        it("says only why their keys aren't here on a bot already on Universe AI", async () => {
+            mocks.api.getBotAiOptions.mockResolvedValue(options({ viewerIsMaker: false }));
+            mocks.api.getMyAiKeys.mockResolvedValue([{ id: "key-1", name: "Opus 5.5" }]);
+            await mount();
+            expect(note()).toBe("Your AI keys show only on bots you made.");
+        });
+
+        it("says they can move a bot on someone else's key to Universe AI", async () => {
+            mocks.api.getBotAiOptions.mockResolvedValue(
+                options({ viewerIsMaker: false, current: "key-sara", currentKey: sarasKey })
+            );
+            mocks.api.getMyAiKeys.mockResolvedValue([{ id: "key-1", name: "Opus 5.5" }]);
+            await mount(onSarasKey);
+            expect(note()).toBe("You can move Micho to Universe AI. Your AI keys show only on bots you made.");
+        });
+
+        it("doesn't offer Universe AI when it isn't set up", async () => {
+            mocks.api.getBotAiOptions.mockResolvedValue(
+                options({
+                    viewerIsMaker: false,
+                    current: "key-sara",
+                    currentKey: sarasKey,
+                    universeAi: { available: false },
+                })
+            );
+            mocks.api.getMyAiKeys.mockResolvedValue([]);
+            await mount(onSarasKey);
+            expect(note()).toBeNull();
+        });
     });
 
     it("shows a key lent in AI keys as soon as Orbit closes, without reopening the bot", async () => {

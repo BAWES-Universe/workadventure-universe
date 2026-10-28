@@ -861,8 +861,8 @@ const mapEditor: BaseTranslation = {
                     unlentStepOne: "In AI keys, tap Lend to a universe on it. It shows here as soon as it’s lent.",
                     unlentStepMany:
                         "In AI keys, tap Lend to a universe on the one you want. It shows here as soon as it’s lent.",
-                    managerHint:
-                        "You manage bots here, so you can switch {bot:string} to Universe AI. Your own keys never show on someone else’s bot.",
+                    managerMove: "You can move {bot:string} to Universe AI.",
+                    managerKeys: "Your AI keys show only on bots you made.",
                     model: {
                         title: "Model",
                         change: "Change",
