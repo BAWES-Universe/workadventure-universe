@@ -282,7 +282,7 @@ export class AIService {
                 });
                 if (!resolved.resting && resolved.config.limits) {
                     this.botLimits.set(botId, resolved.config.limits);
-                    if (resolved.config.limits.files === true) this.orbitKeepsFiles = true;
+                    if (this.botLimits.get(botId)?.files === true) this.orbitKeepsFiles = true;
                     this.conversationMemory?.setHistoryWindow?.(botId, resolved.config.limits.messages);
                 }
                 if (!resolved.resting) {
