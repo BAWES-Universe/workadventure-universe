@@ -875,6 +875,14 @@ div.emoji-picker {
         0 18px 48px -12px rgba(0, 0, 0, 0.55), 0 0 32px -12px rgba(134, 41, 252, 0.55);
     /* The violet edge every surface shares. */
     --u-surface-edge: rgba(167, 139, 250, 0.18);
+    /* Steel blue, the fill of the bubbles you send in chat: flat, white text at 7.6:1. It is fixed, not taken from
+       Orbit's primary colour, so every universe's own bubbles look the same. */
+    --u-bubble-mine: #285687;
+}
+/* The bubbles you send: one flat fill, white text. */
+.u-bubble-mine {
+    background-color: var(--u-bubble-mine);
+    color: #fff;
 }
 /* The raised surface as a class: the device list, the profile menu and the action bar's dropdowns. */
 .u-surface {
