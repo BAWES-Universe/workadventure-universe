@@ -8,7 +8,8 @@ import type { SpaceUser } from '@workadventure/messages';
 import { PositionMessage_Direction } from '@workadventure/messages';
 import { facingOf, resolveBehaviorModel, type BotFacing } from './behaviorModel';
 import type { AIService, InterruptionAction } from '../ai/AIService';
-import type { ReplyLimitReached } from '../ai/types';
+import type { AIStreamChunk, ReplyLimitReached } from '../ai/types';
+import { withNearbySteps } from './NearbySteps';
 import type { AdminApiService } from '../server/AdminApiService';
 import type { ConversationStorage } from '../memory/ConversationStorage';
 import type { ConversationMemory } from '../memory/ConversationMemory';
@@ -1524,6 +1525,26 @@ export abstract class BaseBehavior {
     }
 
     /**
+     * A reply's stream with its steps line in nearby chat (#1545): one line the bot edits while it uses its tools,
+     * shown only when the bot's "Show tool calls" switch is on.
+     */
+    protected withToolSteps(
+        stream: AsyncIterable<AIStreamChunk>,
+        spaceName: string,
+        botId: string,
+        playerId: number,
+        abortSignal?: AbortSignal
+    ): AsyncGenerator<AIStreamChunk> {
+        return withNearbySteps(stream, {
+            shouldShow: () => this.shouldShowToolCalls(botId),
+            send: (responseId, text, isFinal, field) =>
+                this.bot?.sendStreamMessage(spaceName, responseId, '', isFinal, text, false, undefined, false, JSON.stringify(field)),
+            newResponseId: () => `bot-${botId}-player-${playerId}-steps-${crypto.randomUUID()}`,
+            aborted: () => abortSignal?.aborted === true,
+        });
+    }
+
+    /**
      * Update behavior configuration
      */
     updateConfig(config: Partial<BehaviorConfig>): void {
@@ -1674,7 +1695,7 @@ export abstract class BaseBehavior {
                 let emotionBlockStarted = false;
                 // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
                 let pendingPrefix = '';
-                for await (const chunk of this.aiService.generateBotResponseStream(
+                for await (const chunk of this.withToolSteps(this.aiService.generateBotResponseStream(
                     botId,
                     playerId,
                     playerMessage + ` [IMPORTANT: Give a COMPLETELY DIFFERENT response- attempt ${regenerationAttempts}]`,
@@ -1691,9 +1712,8 @@ export abstract class BaseBehavior {
                     params.homeRoomUrl,
                     params.peopleInRoom,
                     true
-                )) {
+                ), spaceName, botId, playerId, abortSignal)) {
                     if (chunk.reset) {
-                        const showToolCalls = chunk.toolNames?.length ? await this.shouldShowToolCalls(botId) : false;
                         if (abortSignal?.aborted) break;
                         // Tool calls overrode the streamed ack — finalize the current
                         // bubble with the accumulated ack instead of wiping it, then
@@ -1705,24 +1725,6 @@ export abstract class BaseBehavior {
                         }
                         responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
                         this.trackActiveResponseId(playerId, responseId);
-                        // Show tool names as separate bubbles — one per tool call invocation
-                        if (chunk.toolNames?.length) {
-                            if (showToolCalls) {
-                                for (let ti = 0; ti < chunk.toolNames.length; ti++) {
-                                    const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
-                                    const toolResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
-                                    this.trackActiveResponseId(playerId, toolResponseId);
-                                    this.bot?.sendStreamMessage(spaceName, toolResponseId, toolStatus, false);
-                                    // Finalize the tool-name bubble so it doesn't linger in
-                                    // the frontend's streamMessages map.
-                                    this.bot?.sendStreamMessage(spaceName, toolResponseId, '', true, toolStatus);
-                                }
-                            }
-                            // Create a new responseId for follow-up content so it appears
-                            // in its own bubble instead of merging into the last tool-name bubble.
-                            responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
-                            this.trackActiveResponseId(playerId, responseId);
-                        }
                         regeneratedMessage = '';
                         emotionBlockStarted = false;
                         pendingPrefix = '';
