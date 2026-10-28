@@ -9,10 +9,12 @@ vi.mock("../../../Connection/AxiosUtils", () => ({ axiosToPusher: { get: vi.fn()
 const ORBIT = "https://orbit.test";
 const BOTS = "https://bots.test";
 const SESSION = `orb_sess_v2_${"c".repeat(64)}`;
+// A signed-in player: the token the game holds carries the account's access token
+const SIGNED_IN = `header.${btoa(JSON.stringify({ accessToken: "access-1" }))}.signature`;
 
-function service(): BotApiService {
+function service(jwt = "header.e30.signature"): BotApiService {
     const api = new BotApiService();
-    api.initialize("header.e30.signature", ORBIT, "room-1", BOTS);
+    api.initialize(jwt, ORBIT, "room-1", BOTS);
     // The Orbit session is not what is under test
     vi.spyOn(
         api as unknown as { getAdminApiSessionToken: () => Promise<string> },
@@ -192,10 +194,15 @@ describe("an Orbit that does not answer about who may use a bot", () => {
     });
 
     it("gives up on the page of kept nearby items and says none came back", async () => {
-        vi.spyOn(globalThis, "fetch").mockImplementation((_url, init) => untilCancelled(init?.signal));
-        const asked = service().getNearbyShared();
+        const fetchMock = vi
+            .spyOn(globalThis, "fetch")
+            .mockImplementation((_url, init) => untilCancelled(init?.signal));
+        const asked = service(SIGNED_IN).getNearbyShared();
         await vi.advanceTimersByTimeAsync(20000);
         await expect(asked).resolves.toBeNull();
+        // It asked Orbit, and stopped waiting by cancelling the request
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(fetchMock.mock.calls[0][1]?.signal?.aborted).toBe(true);
     });
 
     const requests: Array<[string, (api: BotApiService) => Promise<unknown>]> = [
