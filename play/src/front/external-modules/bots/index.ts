@@ -88,6 +88,24 @@ export function openBotEditorFromMenu(): void {
     tryOpen();
 }
 
+/**
+ * Open one bot's page in the bot editor, for "Use my AI key" on the reply limit card (#1159). The editor loads this
+ * room's bots as it opens; the bot is picked once that load is done, or the editor stays on its list.
+ */
+export function openBotPage(botId: string): void {
+    openBotEditorFromMenu();
+    const lifecycle = botEditorLifecycle;
+    const deadline = Date.now() + 8000;
+    void import("./stores/BotEditorStore").then(({ selectBotWhenLoaded }) => {
+        selectBotWhenLoaded(
+            botId,
+            () => botEditorComponentInstance !== null,
+            () => lifecycle === botEditorLifecycle,
+            deadline
+        );
+    });
+}
+
 let _extensionOptions: ExtensionModuleOptions | null = null;
 let unregisterEditTool: (() => void) | undefined;
 let unsubscribeSelectedToolBridge: (() => void) | undefined;
