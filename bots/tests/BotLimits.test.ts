@@ -12,8 +12,8 @@ describe('a bot limits from Orbit (Orbit #666)', () => {
         });
     });
 
-    it('takes 0 only where 0 means something: keep every version, never carry on (CodeRabbit on the R6 release)', () => {
-        expect(readBotLimits({ artifactVersions: 0, continuations: 0 })).toEqual({ ...BOT_LIMIT_DEFAULTS, artifactVersions: 0, continuations: 0 });
+    it('takes 0 only where 0 means something: keep every version, never carry on, no media in a save (CodeRabbit on the R6 release)', () => {
+        expect(readBotLimits({ artifactVersions: 0, continuations: 0, artifactMediaBytes: 0 })).toEqual({ ...BOT_LIMIT_DEFAULTS, artifactVersions: 0, continuations: 0, artifactMediaBytes: 0 });
         // A save with no time limit, a reply of 0 tokens: broken, so the recommended value
         expect(readBotLimits({ artifactSaveSeconds: 0, readChars: 0, replyTokens: 0, waitSeconds: 0 })).toEqual(BOT_LIMIT_DEFAULTS);
     });

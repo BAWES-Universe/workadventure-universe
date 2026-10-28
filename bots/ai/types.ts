@@ -71,8 +71,8 @@ export const BOT_LIMIT_DEFAULTS: BotLimits = {
     guard: true,
 };
 
-/** Limits where 0 means something: keep every version, never carry on by itself. A 0 anywhere else (a save with no time limit) is broken. */
-const ZERO_ALLOWED = new Set<keyof BotLimits>(['artifactVersions', 'continuations']);
+/** Limits where 0 means something: keep every version, never carry on by itself, no media in a save. A 0 anywhere else (a save with no time limit) is broken. */
+const ZERO_ALLOWED = new Set<keyof BotLimits>(['artifactVersions', 'continuations', 'artifactMediaBytes']);
 
 /** The limits Orbit sent, each checked, with the recommended value for any that is missing or broken. */
 export function readBotLimits(raw: unknown): BotLimits {
