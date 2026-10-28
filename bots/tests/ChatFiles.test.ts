@@ -59,6 +59,11 @@ describe('what a file is', () => {
         expect(kindOf({ name: 'x', mimeType: 'application/pdf', mediaType: 'file' })).toBe('document');
         expect(kindOf({ name: 'notes.md', mimeType: 'application/octet-stream' })).toBe('document');
         expect(kindOf({ name: 'archive.zip', mimeType: 'application/zip' })).toBe('other');
+        // The rest of a gallery has no type, only its name
+        expect(kindOf({ name: 'beach.PNG', mimeType: null, mediaType: null })).toBe('image');
+        expect(kindOf({ name: 'song.mp3', mimeType: null, mediaType: null })).toBe('audio');
+        expect(kindOf({ name: 'clip.mp4', mimeType: null, mediaType: null })).toBe('video');
+        expect(kindOf({ name: 'plan.pdf', mimeType: null, mediaType: null })).toBe('document');
     });
 });
 

@@ -98,6 +98,33 @@ describe('a file in a direct message (#1508)', () => {
         expect(admin.addBotFile).toHaveBeenCalledTimes(1);
     });
 
+    it('another file with the same name after a failed answer is a new message, kept as well', async () => {
+        const { service, admin, history } = await dmService();
+        (service as any).aiService.generateBotResponseStream = vi.fn(async function* () {
+            throw new Error('provider down');
+        });
+        await (service as any).replyNow(BOT, person, 'see this', [attachment], { roomId: '!room' });
+        await flush();
+        const other = { ...attachment, url: 'https://uploader.test/upload-file/other.pdf', sizeBytes: 5400 };
+        await (service as any).replyNow(BOT, person, 'see this', [other], { roomId: '!room' });
+        await flush();
+        expect(history()).toHaveLength(2);
+        expect(admin.addBotFile).toHaveBeenCalledTimes(2);
+    });
+
+    it('the same file sent again after a failed answer, uploaded anew, is still kept once', async () => {
+        const { service, admin, history } = await dmService();
+        (service as any).aiService.generateBotResponseStream = vi.fn(async function* () {
+            throw new Error('provider down');
+        });
+        await (service as any).replyNow(BOT, person, 'see this', [attachment], { roomId: '!room' });
+        await flush();
+        await (service as any).replyNow(BOT, person, 'see this', [{ ...attachment, url: 'https://uploader.test/upload-file/again.pdf' }], { roomId: '!room' });
+        await flush();
+        expect(history()).toHaveLength(1);
+        expect(admin.addBotFile).toHaveBeenCalledTimes(1);
+    });
+
     it('never waits for Orbit: the reply is sent while the file is still being kept, and a failure there changes nothing', async () => {
         let release!: () => void;
         const { service, history } = await dmService({
