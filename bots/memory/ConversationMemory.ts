@@ -192,6 +192,18 @@ export class ConversationMemory {
     /**
      * Add a message to conversation history
      */
+    /**
+     * The newest line from the person, so a file's note in it can take the short id Orbit gives the file later (#1508).
+     * The line itself, not a copy: a reply added meanwhile doesn't move it.
+     */
+    lastPersonLine(botId: string, playerId: number): ConversationMessage | undefined {
+        const history = this.getMemory(botId, playerId)?.conversationHistory;
+        for (let i = (history?.length ?? 0) - 1; i >= 0; i--) {
+            if (history![i].sender === 'person') return history![i];
+        }
+        return undefined;
+    }
+
     addMessage(
         botId: string,
         playerId: number,

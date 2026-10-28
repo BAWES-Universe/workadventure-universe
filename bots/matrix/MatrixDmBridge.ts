@@ -880,7 +880,22 @@ export class MatrixDmBridge implements MatrixEventHandler {
             const mimeType = String(content.info?.mimetype ?? file.contentType);
             const url = await this.deps.uploadAttachment(file.data, mimeType, filename);
             if (!url) return { text: caption, attachments: [], failed: true };
-            return { text: caption, attachments: [{ url, mimeType, mediaType }] };
+            const size = Number(content.info?.size);
+            const duration = Number(content.info?.duration);
+            return {
+                text: caption,
+                attachments: [
+                    {
+                        url,
+                        mimeType,
+                        mediaType,
+                        name: filename,
+                        sizeBytes: Number.isFinite(size) && size >= 0 ? size : file.data.length,
+                        // Matrix gives how long audio and video play in milliseconds
+                        lengthSeconds: Number.isFinite(duration) && duration > 0 ? duration / 1000 : null,
+                    },
+                ],
+            };
         } catch (error) {
             console.warn('[MatrixDmBridge] Could not read an attachment:', (error as Error)?.message ?? error);
             return { text: caption, attachments: [], failed: true };

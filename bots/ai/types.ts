@@ -52,6 +52,16 @@ export interface BotLimits {
     artifactSaveSeconds: number;
     /** "Say when nothing was saved". */
     guard: boolean;
+    /** Files in chats (#1508): this person's newest files the bot sees before each reply. */
+    recentFiles: number;
+    /** Files found in one search. */
+    findResults: number;
+    /** Characters it reads from an earlier file at a time. */
+    partChars: number;
+    /** Characters of step results one reply keeps. */
+    roomChars: number;
+    /** Characters of a file's text Orbit keeps ("Text kept from a file"). */
+    fileTextChars: number;
 }
 
 /** The recommended limits, the same as Orbit's (lib/bot-limit-values.ts there). */
@@ -66,6 +76,11 @@ export const BOT_LIMIT_DEFAULTS: BotLimits = {
     artifactVersions: 0,
     artifactSaveSeconds: 30,
     guard: true,
+    recentFiles: 5,
+    findResults: 10,
+    partChars: 8000,
+    roomChars: 80000,
+    fileTextChars: 2_000_000,
 };
 
 /** The limits Orbit sent, each checked, with the recommended value for any that is missing or broken. */

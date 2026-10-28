@@ -2,6 +2,7 @@
  * IdleBehavior - Bot stands in place and responds to interactions
  */
 
+import type { ChatUpload } from '../services/ChatFiles';
 import { BaseBehavior, type BehaviorConfig } from './BaseBehavior';
 import { PositionMessage_Direction, type SpaceUser } from '@workadventure/messages';
 import { ConversationMemory } from '../memory/ConversationMemory';
@@ -353,7 +354,7 @@ export class IdleBehavior extends BaseBehavior {
         super.onSpaceLeft(spaceName);
     }
 
-    async onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string, galleryUrls?: string[]): Promise<void> {
+    async onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string, galleryUrls?: string[], uploads?: ChatUpload[]): Promise<void> {
         if (!this.bot) {
             return;
         }
@@ -366,8 +367,14 @@ export class IdleBehavior extends BaseBehavior {
         // Save the original message for persistence — augmented version
         // is for the AI request only.
         const originalUserMessage = message;
+        // With a note for each file it came with (#1508), for the bot's memory only: the saved chat keeps what they wrote
+        let historyMessage = message;
+        let keepFiles: () => void = () => undefined;
         if (url) {
-            message = await this.formatParsedAttachment(message, url, mimeType || 'application/octet-stream', mediaType, galleryUrls);
+            const files = await this.readBubbleFiles(spaceName, senderId, message, url, mimeType || 'application/octet-stream', mediaType, galleryUrls, uploads);
+            message = files.augmented;
+            historyMessage = files.line;
+            keepFiles = files.keep;
         }
 
         // Get user info from bot's player map
@@ -395,7 +402,8 @@ export class IdleBehavior extends BaseBehavior {
         // Start conversation in memory if needed
         if (this.conversationMemory) {
             this.conversationMemory.startConversation(botId, senderId);
-            this.conversationMemory.addMessage(botId, senderId, originalUserMessage, 'person', spaceName);
+            this.conversationMemory.addMessage(botId, senderId, historyMessage, 'person', spaceName);
+            keepFiles();
             this.conversationMemory.extractPersonalInfo(botId, senderId, originalUserMessage);
         }
         

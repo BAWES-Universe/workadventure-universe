@@ -38,6 +38,8 @@ export type InterruptionAction = 'update' | 'cancel' | 'answer' | 'queue';
  * upstream call rather than leaving it dangling (see the call sites).
  */
 const QUICK_LLM_TIMEOUT_MS = 3000;
+/** How long a reply waits for the newest-files line (#1508) before it goes on without it. */
+const RECENT_FILES_WAIT_MS = 2000;
 
 // Internal API for setting active span on scope — scope.setSpan() removed in v10
 // Note: startSpanManual already calls _setSpanForScope internally (verified in SDK source).
@@ -51,7 +53,7 @@ const sentrySetSpan: ((scope: any, span: any) => void) | undefined =
 import { captureAiGeneration, captureAiTrace, flushPostHog } from './PostHogClient';
 import { priceCall } from './pricing/costing';
 import { UsageLedger, priceMetadata, type TurnCost } from './pricing/ledger';
-import { buildSystemPrompt } from './systemPrompt';
+import { buildRecentFilesLine, buildSystemPrompt } from './systemPrompt';
 /** Ends a direct-message reply that answers where the bot is or invites the person over because they asked. */
 export { ROOM_CARD_MARK } from './systemPrompt';
 import {
@@ -253,6 +255,11 @@ export class AIService {
     /** A bot's limits as Orbit last served them, the recommended ones until it has (Orbit #666). */
     private limitsFor(botId?: string): BotLimits {
         return (botId && this.botLimits.get(botId)) || BOT_LIMIT_DEFAULTS;
+    }
+
+    /** A bot's limits as Orbit last served them (the recommended ones until it has). */
+    botLimitsFor(botId?: string): BotLimits {
+        return this.limitsFor(botId);
     }
 
     /** How much of a file or web page this bot reads ("Reads from a page or file", Orbit #666). */
@@ -608,6 +615,9 @@ export class AIService {
                 // visionCapable: brain can see — images pass through as multipart.
             }
 
+            // The newest files line is asked for now, so it comes in while the map context is read
+            const recentFiles = this.recentFilesFor(botId, playerId, botClient, spaceName, adminApiService);
+
             // Fetch map context (location + areas) upfront so bot always knows where it is
             let mapContextInfo = '';
             let botUniverse = '';
@@ -738,6 +748,7 @@ export class AIService {
                 // pending items at turn start.
                 pendingMediaNotice: this.conversationMemory.getPendingMediaNotice(botId, playerId),
                 channel,
+                recentFiles: await recentFiles,
             });
 
             // Check if Qwen model (for /no_think directive)
@@ -2572,6 +2583,46 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     }
 
     /**
+     * Who is talking to the bot and in which chat, as Orbit's artifact and file routes take them: in a bubble the person
+     * Orbit's access check sees and the bubble; in a direct message the signed-in person and the Matrix room it came
+     * from. Null when there is no chat to name.
+     */
+    private chatCallFor(
+        botId: string,
+        playerId: number,
+        botClient?: BotClient,
+        spaceName?: string
+    ): { person: { signedIn: boolean; identifier: string | null; name: string | null }; chat: { kind: 'nearby' | 'dm'; ref: string } } | null {
+        if (botClient) {
+            if (!spaceName) return null;
+            return { person: botClient.getPersonForArtifacts(playerId), chat: { kind: 'nearby', ref: spaceName } };
+        }
+        const memory = this.conversationMemory?.getMemory(botId, playerId);
+        if (!memory?.dmRoomId) return null;
+        return { person: { signedIn: true, identifier: memory.userUuid, name: memory.playerName ?? null }, chat: { kind: 'dm', ref: memory.dmRoomId } };
+    }
+
+    /**
+     * The newest files and artifacts in this person's chats with the bot (#1508), "Newest files it sees" of them, for the
+     * end of the prompt. Empty when there are none, the setting is 0, or Orbit doesn't answer in time: the reply goes on
+     * without it.
+     */
+    private async recentFilesFor(botId: string, playerId: number, botClient?: BotClient, spaceName?: string, adminApiService?: AdminApiService): Promise<string> {
+        const limit = this.limitsFor(botId).recentFiles;
+        const admin = adminApiService ?? this.adminApiService;
+        if (limit <= 0 || !admin) return '';
+        try {
+            const who = this.chatCallFor(botId, playerId, botClient, spaceName);
+            if (!who) return '';
+            const found = await admin.findBotFiles({ botId, ...who }, { limit }, RECENT_FILES_WAIT_MS);
+            return buildRecentFilesLine(found.items ?? []);
+        } catch {
+            // Never in the way of the reply: an Orbit without the list, a slow one, or a chat it can't name
+            return '';
+        }
+    }
+
+    /**
      * Run one artifact tool for the person who is talking to the bot, and put its card in their chat: in a bubble that is
      * a line of nearby chat; in a direct message it waits in memory and goes out with the reply. Never throws.
      */
@@ -2585,18 +2636,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         if (!admin || !botId || playerId === undefined) return { error: 'Artifacts are not available right now.' };
 
         const memory = this.conversationMemory?.getMemory(botId, playerId);
-        let person: { signedIn: boolean; identifier: string | null; name: string | null };
-        let chat: { kind: 'nearby' | 'dm'; ref: string };
-        if (botClient) {
-            if (!spaceName) return { error: 'Cannot make an artifact: not currently in a conversation space' };
-            person = botClient.getPersonForArtifacts(playerId);
-            chat = { kind: 'nearby', ref: spaceName };
-        } else {
-            // A direct message is always a signed-in person, in the Matrix room the message came from
-            if (!memory?.dmRoomId) return { error: 'Artifacts are not available in this chat.' };
-            person = { signedIn: true, identifier: memory.userUuid, name: memory.playerName ?? null };
-            chat = { kind: 'dm', ref: memory.dmRoomId };
-        }
+        if (botClient && !spaceName) return { error: 'Cannot make an artifact: not currently in a conversation space' };
+        const who = this.chatCallFor(botId, playerId, botClient, spaceName);
+        if (!who) return { error: 'Artifacts are not available in this chat.' };
+        const { person, chat } = who;
 
         // The same make or change asked again in the same turn is that turn being regenerated: answer with what it did
         const repeatKey = writesArtifact(name) ? `${name}:${JSON.stringify(args)}` : undefined;

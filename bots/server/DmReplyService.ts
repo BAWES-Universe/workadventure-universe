@@ -16,6 +16,8 @@ import { ROOM_CARD_MARK } from '../ai/AIService';
 import type { PendingMedia } from '../memory/ConversationMemory';
 import type { ArtifactCard } from '../ai/ArtifactTools';
 import type { ReplyLimitReached } from '../ai/types';
+import type { ParsedFile } from '../services/FileParser';
+import { withoutNoteIds, type ChatUpload } from '../services/ChatFiles';
 import type { BotConfiguration } from './AdminApiService';
 import type { BotManager } from './BotManager';
 
@@ -51,6 +53,10 @@ export interface DmAttachment {
     url: string;
     mimeType: string;
     mediaType?: 'image' | 'file' | 'audio' | 'video';
+    /** The name it was sent with, its size, and how long it plays: kept with it on the bot's list of files (#1508). */
+    name?: string;
+    sizeBytes?: number | null;
+    lengthSeconds?: number | null;
 }
 
 export interface DmReplyHooks {
@@ -268,13 +274,37 @@ export class DmReplyService extends BaseBehavior {
         // Same attachment handling as a bubble: parsed text for the model, image URLs for vision.
         let augmented = text;
         let images: string[] = [];
+        const read = new Map<string, ParsedFile | null>();
         const [primary, ...gallery] = attachments;
         if (primary) {
             const galleryUrls = gallery.map((a) => a.url);
-            augmented = await this.formatParsedAttachment(text, primary.url, primary.mimeType, primary.mediaType, galleryUrls, botId);
+            augmented = await this.formatParsedAttachment(text, primary.url, primary.mimeType, primary.mediaType, galleryUrls, botId, read);
             images = await this.collectImageUrls(primary.url, primary.mediaType, primary.mimeType, galleryUrls);
         }
-        const original = text || (primary ? `[sent a ${primary.mediaType || 'file'}]` : '');
+        // The files go on the bot's list (#1508), and the history keeps a note for each in place of "[sent a file]"
+        const uploads: ChatUpload[] = attachments.map((a) => ({
+            url: a.url,
+            name: a.name || a.url.split('?')[0].split('/').pop() || a.mediaType || 'file',
+            mimeType: a.mimeType,
+            mediaType: a.mediaType,
+            sizeBytes: a.sizeBytes,
+            lengthSeconds: a.lengthSeconds,
+        }));
+        const noted = uploads.length
+            ? this.noteSentFiles({
+                  botId,
+                  playerId,
+                  text,
+                  uploads,
+                  read,
+                  // A direct message is always a signed-in person, in the Matrix room the message came from
+                  call: hooks.roomId
+                      ? { botId, person: { signedIn: true, identifier: person.uuid, name: person.name }, chat: { kind: 'dm', ref: hooks.roomId } }
+                      : null,
+                  personRef: person.uuid,
+              })
+            : null;
+        const original = noted?.line ?? text;
 
         const lastMet = memory.getMemory(botId, playerId)?.relationship?.lastMet ?? 0;
         if (Date.now() - lastMet > NEW_CONVERSATION_AFTER_MS) {
@@ -283,10 +313,13 @@ export class DmReplyService extends BaseBehavior {
         // A message tried again after a failed answer (or sent again by the person) is already the last thing they
         // said, with no reply after it: keep it once in the history.
         const lastSaid = memory.getMemory(botId, playerId)?.conversationHistory?.at(-1);
-        const alreadyKept = lastSaid?.sender === 'person' && lastSaid.message === original && lastSaid.spaceName === DM_SPACE_NAME;
+        // A note has its file's id once Orbit gave one, so the ids don't count; the files were kept the first time
+        const alreadyKept =
+            lastSaid?.sender === 'person' && withoutNoteIds(lastSaid.message) === withoutNoteIds(original) && lastSaid.spaceName === DM_SPACE_NAME;
         if (!alreadyKept) {
             memory.addMessage(botId, playerId, original, 'person', DM_SPACE_NAME);
-            memory.extractPersonalInfo(botId, playerId, original);
+            memory.extractPersonalInfo(botId, playerId, text);
+            noted?.keep();
         }
         // A first message creates the memory after the uuid was set, so it starts as "temp-<id>": name it now, before
         // tools see it.

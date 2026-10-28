@@ -32,6 +32,7 @@ import { movementLogger } from '../utils/MovementLogger';
 import type { BotConfiguration } from '../server/AdminApiService';
 import { CANNOT_CHECK_CHAT_LINE, type BotAccessGate, type BotAccessVerdict } from '../server/BotAccessGate';
 import { FileParser } from '../services/FileParser';
+import type { ChatUpload } from '../services/ChatFiles';
 import { extractChatLinks } from '../utils/chatLinks';
 import { resolve4, resolve6 } from 'dns/promises';
 import * as Sentry from '@sentry/node';
@@ -2215,6 +2216,25 @@ export class BotClient {
     }
 
     /**
+     * The files someone uploaded with a nearby chat message (#1508), with the names they were sent with: the upload and
+     * the rest of its gallery, never the links typed in the text.
+     */
+    static uploadsOf(
+        spaceMessage: { url?: string; mediaType?: string; galleryUrls?: string[]; fileName?: string; fileNames?: string[] },
+        mimeType?: string | null
+    ): ChatUpload[] | undefined {
+        if (!spaceMessage.url) return undefined;
+        const urls = [spaceMessage.url, ...(spaceMessage.galleryUrls ?? [])];
+        return urls.map((url, i) => ({
+            url,
+            name: spaceMessage.fileNames?.[i] || (i === 0 ? spaceMessage.fileName : undefined) || url.split('?')[0].split('/').pop() || 'file',
+            // The type is known for the message's own upload; the rest of a gallery goes by its name
+            mimeType: i === 0 ? mimeType ?? null : null,
+            mediaType: i === 0 ? spaceMessage.mediaType ?? null : null,
+        }));
+    }
+
+    /**
      * Get the room URL this bot is connected to
      */
     getRoomUrl(): string {
@@ -2935,7 +2955,8 @@ export class BotClient {
                             detectedUrl,
                             spaceMessage.mediaType,
                             detectedMime,
-                            galleryUrls.length > 0 ? galleryUrls : undefined
+                            galleryUrls.length > 0 ? galleryUrls : undefined,
+                            BotClient.uploadsOf(spaceMessage, detectedMime)
                         ).catch(error => {
                             console.error(`[Bot ${this.config.botId}] onChatMessage error:`, error);
                             Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
