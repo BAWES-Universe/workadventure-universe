@@ -158,6 +158,11 @@ export class AIService {
     private botRoutePricing: Map<string, AIProviderConfig> = new Map();
     /** Each bot's limits as Orbit last served them (Orbit #666), for the parts of a reply that have no provider config at hand. */
     private botLimits: Map<string, BotLimits> = new Map();
+    /**
+     * Orbit has the file routes (#1508): it served some bot's limits with them, or answered the newest files. It is one
+     * Orbit for every bot, so a bot whose limits Orbit never serves (one on a provider by id) gets the file tools too.
+     */
+    private orbitKeepsFiles = false;
     /** Which tool made each file the bot was given back, by link (#1508). */
     private madeMedia = new Map<string, MadeWith>();
     private providerRegistry: AIProviderRegistry;
@@ -271,6 +276,7 @@ export class AIService {
                 });
                 if (!resolved.resting && resolved.config.limits) {
                     this.botLimits.set(botId, resolved.config.limits);
+                    if (resolved.config.limits.files === true) this.orbitKeepsFiles = true;
                     this.conversationMemory?.setHistoryWindow?.(botId, resolved.config.limits.messages);
                 }
                 if (!resolved.resting) {
@@ -2623,7 +2629,12 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     /** Orbit keeps files in this bot's chats (it served their limits), so the file tools can be offered and run. */
     private filesOn(botId?: string, adminApiService?: AdminApiService): boolean {
         const admin = adminApiService ?? this.adminApiService;
-        return !!botId && !!admin?.isConfigured?.() && this.limitsFor(botId).files === true;
+        return !!botId && !!admin?.isConfigured?.() && this.keepsFiles(botId);
+    }
+
+    /** Orbit keeps this bot's files: its own limits say so, or Orbit has shown it keeps them for any bot. */
+    private keepsFiles(botId?: string): boolean {
+        return this.limitsFor(botId).files === true || this.orbitKeepsFiles;
     }
 
     /**
@@ -2726,6 +2737,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             const who = this.chatCallFor(botId, playerId, botClient, spaceName);
             if (!who) return '';
             const found = await admin.findBotFiles({ botId, ...who }, { limit }, RECENT_FILES_WAIT_MS, false);
+            this.orbitKeepsFiles = true;
             return buildRecentFilesLine(found.items ?? []);
         } catch {
             // Never in the way of the reply: an Orbit without the list, a slow one, or a chat it can't name
@@ -3791,7 +3803,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 return formatArtifactResult(r.name, r.result);
             }
             // The file tools ran (Orbit keeps files here), not an MCP tool of the same name
-            if (isFileTool(r.name) && r.result && this.limitsFor(botId).files === true) {
+            if (isFileTool(r.name) && r.result && this.keepsFiles(botId)) {
                 return formatFileResult(r.name, r.result);
             }
             if (r.name === READ_WEB_PAGE_TOOL && r.result) {

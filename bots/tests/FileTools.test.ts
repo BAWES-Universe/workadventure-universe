@@ -303,6 +303,23 @@ describe('the file tools in AIService', () => {
         }
     });
 
+    it('offers them to a bot whose limits Orbit never serves (on a provider by id) once Orbit has shown it keeps files', async () => {
+        const has = async (ai: AIService, bot: string) =>
+            (await ai['buildTools'](bot, undefined, orbit() as never, 'dm')).tools.some((tool: { function: { name: string } }) => tool.function.name === 'find_files');
+        const ai = withFiles();
+        expect(await has(ai, 'bot2')).toBe(false);
+        // Another bot's limits came with the file routes
+        ai['resolvedFromAnswer'] = (() => ({ resting: false, config: { providerId: 'p', limits: readBotLimits({ findResults: 10 }) }, source: 'universe-ai' })) as never;
+        ai['adminApiService'] = { getBotAiCredentials: vi.fn(async () => ({})) } as never;
+        await ai['resolveProvider']('universe-ai', 'bot3');
+        expect(await has(ai, 'bot2')).toBe(true);
+        // Or the newest files were answered for it
+        const fresh = new AIService(null!, null!, '');
+        (fresh as unknown as { conversationMemory: unknown }).conversationMemory = { getMemory: () => ({ dmRoomId: '!room', userUuid: 'uuid-2', playerName: 'Sara' }) };
+        await fresh['recentFilesFor']('bot2', -1, undefined, 'matrix-dm', orbit() as never);
+        expect(await has(fresh, 'bot2')).toBe(true);
+    });
+
     it('in a bubble: asks for the person and the bubble, and sends a file again without keeping it twice', async () => {
         const bot = client();
         const admin = orbit();
