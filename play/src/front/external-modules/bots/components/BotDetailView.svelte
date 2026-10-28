@@ -58,6 +58,12 @@
     let currentBot: BotData | null = null;
     /** What "Runs on" offers this bot, as the Mind group loads it: the Tools group's reply limits come from it */
     let aiOptions: BotAiOptions | null = null;
+    /** The bot `aiOptions` were loaded for: another bot on the panel must not be shown the previous one's answer */
+    let aiOptionsBotId: string | undefined | null = null;
+    $: if (currentBot && currentBot.id !== aiOptionsBotId) {
+        aiOptionsBotId = currentBot.id;
+        aiOptions = null;
+    }
     /** The WOKA picker fills the panel in place of the page, as the companion picker does */
     export let editingTexture = false;
     /** The companion picker fills the panel in place of the page (BotEditor puts its title and back circle up) */
