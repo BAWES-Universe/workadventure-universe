@@ -86,6 +86,23 @@ function failureOf(error: unknown): RenewalFailure {
 }
 
 /**
+ * A /me answer about the room that carries no token: nothing was renewed. When the play server couldn't reach Orbit
+ * (or says to retry), asking again may work. Otherwise the token the game has is handed over while it still works,
+ * as before; one that ran out, or one Orbit already refused, is of no use, so the play server's no stands.
+ */
+function withoutRenewal(answer: MeResponse, gameToken: string, force: boolean): RenewalResult {
+    if (
+        answer.status === "error" &&
+        (answer.type === "retry" || ("code" in answer && answer.code === "ROOM_ACCESS_ERROR"))
+    ) {
+        return { accessToken: null, failure: "network" };
+    }
+    const current = getAccessTokenFromJwt(gameToken);
+    if (!force && current && !orbitAccessTokenHasExpired(current)) return { accessToken: null, failure: null };
+    return { accessToken: null, failure: "refused" };
+}
+
+/**
  * The /me renewal in flight, shared by every request made with the same game token (Orbit's frame and the bot
  * editor alike). A forced request doesn't join an unforced one: that one may hand back the very token just refused.
  */
@@ -126,7 +143,7 @@ async function renewGameToken(
         // refresh token it replaces may no longer work.
         const renewedGameToken =
             parsed.status === "ok" ? parsed.authToken : (response.data as { authToken?: unknown } | null)?.authToken;
-        if (typeof renewedGameToken !== "string") return { accessToken: null, failure: "refused" };
+        if (typeof renewedGameToken !== "string") return withoutRenewal(parsed, gameToken, force);
         const renewed = getAccessTokenFromJwt(renewedGameToken);
         if (!renewed) return { accessToken: null, failure: "refused" };
         const stored = localUserStore.getAuthToken();
