@@ -26,6 +26,8 @@ describe('what the bot asked a tool for', () => {
         expect(promptOfToolCall('{"text":"Hello there","voice":"v1"}')).toBe('Hello there');
         expect(promptOfToolCall('{"style":"lofi","seconds":30}')).toBe('{"style":"lofi","seconds":30}');
         expect(promptOfToolCall('not json')).toBe('not json');
+        // Arguments with a quote left unescaped, repaired as the call itself was
+        expect(promptOfToolCall('{"prompt":"a card with "Dragon" on it","seconds":30}')).toBe('a card with "Dragon" on it');
         expect(promptOfToolCall('{}')).toBeNull();
         expect(promptOfToolCall(undefined)).toBeNull();
     });
