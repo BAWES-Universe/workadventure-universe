@@ -1,5 +1,6 @@
 import { ABSOLUTE_PUSHER_URL } from "../Enum/ComputedConst";
 import { localUserStore } from "../Connection/LocalUserStore";
+import { ADMIN_URL } from "../Enum/EnvironmentVariable";
 
 /** The chat a card was seen in: the bubble's space (as the bots name it) or the Matrix room of a direct chat. */
 export interface ArtifactChat {
@@ -82,6 +83,26 @@ export function restoreArtifactVersion(
     chat: ArtifactChat | undefined
 ): Promise<OpenedArtifact> {
     return post<OpenedArtifact>(`${encodeURIComponent(id)}/restore`, { chat, number });
+}
+
+export type ArtifactOpenScope = "chat" | "link";
+export type ArtifactChangeScope = "owner" | "openers";
+
+/** The owner says who can open it and who can ask for changes; the answer is the artifact as it now is. */
+export async function shareArtifact(
+    id: string,
+    sharing: { openScope?: ArtifactOpenScope; changeScope?: ArtifactChangeScope },
+    chat: ArtifactChat | undefined
+): Promise<OpenedArtifact["artifact"]> {
+    return (
+        await post<{ artifact: OpenedArtifact["artifact"] }>(`${encodeURIComponent(id)}/share`, { chat, ...sharing })
+    ).artifact;
+}
+
+/** The page "Anyone with the link" opens: Orbit's, view only and without signing in. None without Orbit. */
+export function artifactLink(id: string, orbitUrl: string | undefined = ADMIN_URL): string | undefined {
+    if (!orbitUrl) return undefined;
+    return `${orbitUrl.replace(/\/+$/, "")}/a/${encodeURIComponent(id)}`;
 }
 
 /** The text of one version, for the Code view and for a document. */

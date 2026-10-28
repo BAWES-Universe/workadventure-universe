@@ -148,6 +148,10 @@ export interface AIStreamChunk {
         cancelled?: boolean;
         errorStatus?: number; // HTTP status the provider answered with when the call failed (401/403 = the key was rejected)
         truncated?: boolean; // true when the provider hit finish_reason='length' (max_tokens cap)
+        /** Why the provider ended the call ('stop', 'length', 'tool_calls', ...), when it said. */
+        finishReason?: string;
+        /** What the provider said when the call failed, short and without logins (see providerErrorText). */
+        errorText?: string;
         // MultiPromptAIService analysis metadata
         analysis?: {
             tokensUsed: number;
