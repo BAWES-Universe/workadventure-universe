@@ -588,6 +588,39 @@ describe('MCPConnector', () => {
             });
         });
 
+        describe('data only in structuredContent (#1566)', () => {
+            const callWith = async (result: unknown) => {
+                mockedAxios.post.mockImplementation(async (_url: string, body: any) =>
+                    body?.method === 'initialize' ? MOCK_INIT_RESPONSE : { data: { jsonrpc: '2.0', id: '2', result } }
+                );
+                return MCPConnector.executeToolCall('server-1', 'https://weather.example.com/mcp', 'get_weather', {}, 'none');
+            };
+            const data = { temperature: 22.5, conditions: 'Partly cloudy' };
+
+            it('adds the data as text when content holds no text', async () => {
+                expect(await callWith({ content: [], structuredContent: data })).toEqual([
+                    { type: 'text', text: JSON.stringify(data) },
+                ]);
+            });
+
+            it('keeps other content items and adds the data after them', async () => {
+                const link = { type: 'resource_link', uri: 'https://example.com/a.json', name: 'a.json' };
+                expect(await callWith({ content: [link], structuredContent: data })).toEqual([
+                    link,
+                    { type: 'text', text: JSON.stringify(data) },
+                ]);
+            });
+
+            it('adds nothing when a text item already carries it, as the spec asks servers to', async () => {
+                const content = [{ type: 'text', text: JSON.stringify(data) }];
+                expect(await callWith({ content, structuredContent: data })).toEqual(content);
+            });
+
+            it('passes on any JSON value, such as a list', async () => {
+                expect(await callWith({ content: [], structuredContent: [1, 2] })).toEqual([{ type: 'text', text: '[1,2]' }]);
+            });
+        });
+
         it('returns error when no content in response', async () => {
             mockedAxios.post
                 .mockResolvedValueOnce(MOCK_INIT_RESPONSE)

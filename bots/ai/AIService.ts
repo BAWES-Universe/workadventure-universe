@@ -3791,9 +3791,16 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         // A processed MCP resource/blob — item.text is the CDN URL.
                         // Include it directly so the AI can use it with send_* tools.
                         parts.push(item.text);
+                    } else if (item?.type === 'resource' && typeof item.resource?.text === 'string' && item.resource.text) {
+                        // An embedded text resource: its text is what the tool answered with, not only where it lives (#1566).
+                        parts.push(item.resource.uri ? `${item.resource.uri}\n${item.resource.text}` : item.resource.text);
                     } else if (item?.type === 'resource' && item.resource?.uri) {
                         // Raw resource item that couldn't be uploaded (e.g. no uploader).
                         parts.push(item.resource.uri);
+                    } else if (item?.type === 'resource_link' && typeof item.uri === 'string' && item.uri) {
+                        // A link the tool points to, with the words it gave it (#1566).
+                        const words = [item.name, item.description].filter((w) => typeof w === 'string' && w).join(': ');
+                        parts.push(words ? `${words} (${item.uri})` : item.uri);
                     } else if ((item?.type === 'image' || item?.type === 'audio') && item.mimeType) {
                         // Inline content that couldn't be uploaded (e.g. no uploader).
                         parts.push(`[${item.type}: ${item.mimeType}]`);

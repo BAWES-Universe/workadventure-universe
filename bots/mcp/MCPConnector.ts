@@ -745,7 +745,15 @@ export class MCPConnector {
         }
 
         if (response.result && Array.isArray(response.result.content)) {
-            return response.result.content;
+            const content: any[] = response.result.content;
+            // A tool may answer with data only in structuredContent (a server SHOULD also put it in a text item): give
+            // the bot that data as text when no text item carries it (#1566)
+            const structured = response.result.structuredContent;
+            const hasText = content.some((item) => item?.type === 'text' && typeof item.text === 'string' && item.text.trim());
+            if (structured !== undefined && structured !== null && !hasText) {
+                return [...content, { type: 'text', text: typeof structured === 'string' ? structured : JSON.stringify(structured) }];
+            }
+            return content;
         }
 
         if (response.result !== undefined) {
