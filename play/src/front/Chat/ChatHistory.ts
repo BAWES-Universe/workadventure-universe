@@ -1,4 +1,4 @@
-import { get } from "svelte/store";
+import { get, readable } from "svelte/store";
 import type { Readable } from "svelte/store";
 
 /**
@@ -7,7 +7,9 @@ import type { Readable } from "svelte/store";
  * screen's left edge to Safari, which slides the whole page, game included; the chat's own swipe goes back instead.
  *
  * Closing a level any other way (the ‹ arrow, the swipe, a room change) walks back over its step. A step left behind
- * (Orbit was open over it when the chat closed, or the page reloaded) is stepped over, never reopened.
+ * (Orbit was open over it when the chat closed, or the page reloaded) is stepped over, never reopened. While Orbit
+ * holds the top of the history (open, or its steps still being walked back), the chat adds no steps; they follow
+ * once Orbit lets go.
  */
 
 interface ChatStepState {
@@ -39,11 +41,14 @@ export function createChatHistory(
     depthStore: Readable<number>,
     closeLevel: () => void,
     win: Window = window,
-    newId: () => string = () => crypto.randomUUID()
+    newId: () => string = () => crypto.randomUUID(),
+    orbitHolds: Readable<boolean> = readable(false)
 ): ChatHistory {
     const history = win.history;
     // Our steps, oldest first: one per open level.
     const steps: string[] = [];
+    // Where our steps start being above a step Orbit left behind (added once Orbit had let go), if they do.
+    let firstAboveOrbit: number | undefined;
     let waitingForOwnTraversal = false;
     let traversalTimer: ReturnType<typeof setTimeout> | undefined;
     let syncQueued = false;
@@ -59,11 +64,12 @@ export function createChatHistory(
     }
 
     function sync() {
-        if (waitingForOwnTraversal) return;
+        if (waitingForOwnTraversal || get(orbitHolds)) return;
         const depth = get(depthStore);
         if (depth > steps.length) {
             try {
                 while (steps.length < depth) {
+                    if (firstAboveOrbit === undefined && isOrbitState(history.state)) firstAboveOrbit = steps.length;
                     const id = newId();
                     history.pushState({ universeChat: true, chatStep: id } satisfies ChatStepState, "");
                     steps.push(id);
@@ -75,6 +81,7 @@ export function createChatHistory(
             const top = steps[steps.length - 1];
             const extra = steps.length - depth;
             steps.length = depth;
+            if (firstAboveOrbit !== undefined && firstAboveOrbit >= depth) firstAboveOrbit = undefined;
             // Something else is on top (Orbit): leave the steps, they are stepped over later.
             if (!isChatStepState(history.state) || history.state.chatStep !== top) return;
             waitingForOwnTraversal = true;
@@ -96,8 +103,12 @@ export function createChatHistory(
             return;
         }
         const state: unknown = event.state;
-        if (isOrbitState(state)) return;
-        const index = isChatStepState(state) ? steps.indexOf(state.chatStep) : -1;
+        let index = isChatStepState(state) ? steps.indexOf(state.chatStep) : -1;
+        if (isOrbitState(state)) {
+            // Orbit's steps are Orbit's, unless one it left behind is under ours: Back onto it leaves those levels.
+            if (get(orbitHolds) || firstAboveOrbit === undefined) return;
+            index = firstAboveOrbit - 1;
+        }
         if (isChatStepState(state) && index === -1) {
             // A step from before: walk past it to what is under it.
             if (steps.length === 0) history.back();
@@ -108,15 +119,18 @@ export function createChatHistory(
         if (keep >= steps.length) return;
         const toClose = steps.length - keep;
         steps.length = keep;
+        if (firstAboveOrbit !== undefined && firstAboveOrbit >= keep) firstAboveOrbit = undefined;
         for (let i = 0; i < toClose; i++) closeLevel();
     }
 
     const unsubscribe = depthStore.subscribe(() => queueSync());
+    const unsubscribeOrbit = orbitHolds.subscribe(() => queueSync());
     win.addEventListener("popstate", onPopState);
 
     return {
         destroy() {
             unsubscribe();
+            unsubscribeOrbit();
             win.removeEventListener("popstate", onPopState);
             if (traversalTimer !== undefined) clearTimeout(traversalTimer);
         },
@@ -126,7 +140,12 @@ export function createChatHistory(
 let installed: ChatHistory | undefined;
 
 /** Once per page, from the chat. Does nothing on an iPhone or iPad (see above). */
-export function installChatHistory(isAppleTouch: boolean, depthStore: Readable<number>, closeLevel: () => void): void {
+export function installChatHistory(
+    isAppleTouch: boolean,
+    depthStore: Readable<number>,
+    closeLevel: () => void,
+    orbitHolds: Readable<boolean>
+): void {
     if (installed || isAppleTouch) return;
-    installed = createChatHistory(depthStore, closeLevel);
+    installed = createChatHistory(depthStore, closeLevel, window, () => crypto.randomUUID(), orbitHolds);
 }

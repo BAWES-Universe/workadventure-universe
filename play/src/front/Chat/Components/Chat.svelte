@@ -6,6 +6,7 @@
     import { chatBackPeekStore, chatDepthStore, closeChatLevel } from "../ChatBack";
     import { installChatHistory } from "../ChatHistory";
     import { isIOS } from "../../WebRtc/DeviceUtils";
+    import { orbitHoldsHistoryStore } from "../../Stores/OrbitHistoryStore";
     import RoomUserList from "./UserList/RoomUserList.svelte";
     import RoomList from "./RoomList.svelte";
     import ChatTabs from "./ChatTabs.svelte";
@@ -13,7 +14,7 @@
     import { chatBackSwipe } from "./chatBackSwipe";
     export let sideBarWidth: number = INITIAL_SIDEBAR_WIDTH;
 
-    installChatHistory(isIOS(), chatDepthStore, closeChatLevel);
+    installChatHistory(isIOS(), chatDepthStore, closeChatLevel, orbitHoldsHistoryStore);
 
     const gameScene = gameManager.getCurrentGameScene();
     const userProviderMergerPromise = gameScene.userProviderMerger;

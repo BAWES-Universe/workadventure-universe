@@ -55,10 +55,11 @@ afterEach(() => chatHistory?.destroy());
 function setup() {
     const tab = makeWindow();
     const depth = writable(0);
+    const orbitHolds = writable(false);
     const closeLevel = vi.fn(() => depth.update((value) => Math.max(0, value - 1)));
     let n = 0;
-    chatHistory = createChatHistory(depth, closeLevel, tab.win, () => `step-${++n}`);
-    return { tab, depth, closeLevel };
+    chatHistory = createChatHistory(depth, closeLevel, tab.win, () => `step-${++n}`, orbitHolds);
+    return { tab, depth, closeLevel, orbitHolds };
 }
 
 describe("chat history", () => {
@@ -156,5 +157,35 @@ describe("chat history", () => {
         await settle();
         expect(closeLevel).not.toHaveBeenCalled();
         expect(get(depth)).toBe(1);
+    });
+
+    it("adds no steps while Orbit holds the history, and adds them once it lets go", async () => {
+        const { tab, depth, orbitHolds } = setup();
+        orbitHolds.set(true);
+        tab.history.pushState({ orbit: true, orbitVisit: "o" });
+        // Message from Orbit: the chat opens while Orbit's step is still being walked back.
+        depth.set(1);
+        await settle();
+        expect(tab.history.pushState).toHaveBeenCalledTimes(1);
+        tab.pressBack();
+        await settle();
+        orbitHolds.set(false);
+        await settle();
+        expect(tab.history.state).toEqual({ universeChat: true, chatStep: "step-1" });
+        expect(tab.entries).toEqual(["room", { universeChat: true, chatStep: "step-1" }]);
+    });
+
+    it("a level opened over a step Orbit left behind closes on Back onto it", async () => {
+        const { tab, depth, closeLevel } = setup();
+        tab.history.pushState({ orbit: true, orbitVisit: "left-behind" });
+        depth.set(2);
+        await settle();
+        tab.pressBack();
+        await settle();
+        expect(closeLevel).toHaveBeenCalledTimes(1);
+        tab.pressBack();
+        await settle();
+        expect(closeLevel).toHaveBeenCalledTimes(2);
+        expect(get(depth)).toBe(0);
     });
 });

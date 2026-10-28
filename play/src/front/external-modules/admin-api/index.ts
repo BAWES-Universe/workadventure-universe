@@ -11,6 +11,7 @@ import {
     modalIframeWindowStore,
     modalVisibilityStore,
 } from "../../Stores/ModalStore";
+import { orbitHoldsHistoryStore } from "../../Stores/OrbitHistoryStore";
 import { gameManager } from "../../Phaser/Game/GameManager";
 import { isUserNameValid, maxUserNameLength } from "../../Connection/LocalUserUtils";
 import type { ModalEvent } from "../../Api/Events/ModalEvent";
@@ -137,12 +138,30 @@ function isCurrentOrbitHistoryState(state: unknown): boolean {
     );
 }
 
+/** How long the chat waits for a step back over Orbit's history to land before it adds its own steps anyway. */
+const RELEASE_HISTORY_TIMEOUT_MS = 1000;
+let releaseTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** Orbit holds the top of the history (see OrbitHistoryStore): the chat adds no steps for now. */
+function holdHistory(until: "released" | "landed") {
+    if (releaseTimer !== undefined) clearTimeout(releaseTimer);
+    releaseTimer = until === "landed" ? setTimeout(releaseHistory, RELEASE_HISTORY_TIMEOUT_MS) : undefined;
+    orbitHoldsHistoryStore.set(true);
+}
+
+function releaseHistory() {
+    if (releaseTimer !== undefined) clearTimeout(releaseTimer);
+    releaseTimer = undefined;
+    orbitHoldsHistoryStore.set(false);
+}
+
 function pushHistoryEntry() {
     if (historyEntryId !== null) return;
     try {
         const nextId = crypto.randomUUID();
         history.pushState({ orbit: true, orbitVisit: nextId }, "");
         historyEntryId = nextId;
+        holdHistory("released");
     } catch (error) {
         console.warn("Could not add Orbit to the history", error);
     }
@@ -151,19 +170,30 @@ function pushHistoryEntry() {
 function dropHistoryEntry() {
     const wasCurrent = isCurrentOrbitHistoryState(history.state);
     historyEntryId = null;
-    if (wasCurrent) history.back();
+    if (!wasCurrent) {
+        releaseHistory();
+        return;
+    }
+    // Held until the step back lands, so a chat opened from Orbit (Message) adds its step after it, not under it.
+    holdHistory("landed");
+    history.back();
 }
 
 function handlePopState(event: PopStateEvent) {
     if (adminModalOpen && !isCurrentOrbitHistoryState(event.state)) {
-        // Back, on Orbit's entry: Orbit closes, and the room stays.
+        // Back, on Orbit's entry: Orbit closes, and the room stays. Back took its step, so the history is free.
         historyEntryId = null;
         closeAdminModal();
+        releaseHistory();
     }
     if (!adminModalOpen && isOrbitHistoryState(event.state)) {
         // An entry left behind by an earlier visit (Orbit was open during a room change): step over it.
+        holdHistory("landed");
         history.back();
+        return;
     }
+    // A step back over Orbit's history has landed.
+    if (historyEntryId === null && releaseTimer !== undefined) releaseHistory();
 }
 
 /** A key or a joystick held when Orbit opens would keep walking: its release never reaches the game. */
@@ -709,6 +739,7 @@ const adminExtensionModule: ExtensionModule = {
         closeAdminModal();
         // The room is changing: its history entry stays behind and is stepped over later (see handlePopState).
         historyEntryId = null;
+        releaseHistory();
         pendingPlayerName = null;
         bridge = null;
         launcher = null;
