@@ -1,5 +1,5 @@
 <script lang="ts">
-    import type { Readable } from "svelte/store";
+    import { readable, type Readable } from "svelte/store";
     import { getAttachmentOpenUrl, isSvgAttachmentUrl } from "../../../../Utils/AttachmentUrls";
     import type { ChatMessageContent } from "../../../Connection/ChatConnection";
     import LL from "../../../../../i18n/i18n-svelte";
@@ -7,6 +7,7 @@
     import { chatFileOpensInViewer } from "../../../../FileViewer/fileKinds";
     import Lightbox from "./Lightbox.svelte";
     import ViewableFileCard from "./ViewableFileCard.svelte";
+    import MessageAudioFile from "./MessageAudioFile.svelte";
 
     export let content: Readable<ChatMessageContent>;
 
@@ -148,6 +149,16 @@
     $: currentLightboxItem = lightboxItems[lightboxIndex];
 
     /** Saves the file under its real name instead of opening it in a tab (the link stays for a long press). */
+    function audioContent(item: GalleryItem): Readable<ChatMessageContent> {
+        return readable({
+            body: item.filename,
+            url: item.url,
+            urls: undefined,
+            filename: item.filename,
+            fileNames: undefined,
+        });
+    }
+
     function saveItem(item: GalleryItem) {
         saveMessageFiles([{ url: item.url, name: item.filename }]).catch((error) => console.error(error));
     }
@@ -415,72 +426,9 @@
                 {/if}
             {/each}
 
-            <!-- Audio files: inline player cards -->
+            <!-- Audio files: the chat's own audio player, each with its title and Download -->
             {#each audioItems as item (item.url)}
-                {@const info = getFileTypeInfo(item.url)}
-                <div class="flex items-center gap-3 p-2 rounded-lg bg-white/5">
-                    <!-- Audio icon -->
-                    <div
-                        class="flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center"
-                        style="background: {info.color};"
-                    >
-                        <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            width="20"
-                            height="20"
-                            viewBox="0 0 24 24"
-                            fill="#ffffff"
-                        >
-                            <path d="M3 18v-6a9 9 0 0 1 18 0v6" />
-                            <path
-                                d="M21 19a2 2 0 0 1 -2 2h-1v-7h3v5z"
-                                fill="none"
-                                stroke="#ffffff"
-                                stroke-width="2"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                            />
-                            <path
-                                d="M3 19a2 2 0 0 0 2 2h1v-7h-3v5z"
-                                fill="none"
-                                stroke="#ffffff"
-                                stroke-width="2"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                            />
-                        </svg>
-                    </div>
-                    <!-- Audio player + download -->
-                    <div class="flex-1 min-w-0 flex items-center gap-2">
-                        <!-- svelte-ignore a11y-media-has-caption -->
-                        <audio controls src={item.url} class="flex-1 min-w-0 h-8" style="max-width: 200px;" />
-                        <a
-                            href={item.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            download={item.filename}
-                            on:click|preventDefault={() => saveItem(item)}
-                            class="flex-shrink-0 opacity-40 hover:opacity-80 transition-opacity"
-                            aria-label="Download audio"
-                        >
-                            <svg
-                                xmlns="http://www.w3.org/2000/svg"
-                                width="18"
-                                height="18"
-                                viewBox="0 0 24 24"
-                                stroke="#ffffff"
-                                fill="none"
-                                stroke-width="2"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                            >
-                                <path d="M21 15v4a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-4" />
-                                <path d="M7 10l5 5l5 -5" />
-                                <path d="M12 15l0 -12" />
-                            </svg>
-                        </a>
-                    </div>
-                </div>
+                <MessageAudioFile content={audioContent(item)} />
             {/each}
         </div>
     {/if}

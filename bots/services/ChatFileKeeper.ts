@@ -1,5 +1,5 @@
 /**
- * Keeps the files people send a bot on Orbit's list (#1508), in the background: a reply never waits for it, and a
+ * Keeps the files people send a bot, and the files it sends them, on Orbit's list (#1508), in the background: a reply never waits for it, and a
  * failure here never touches the reply. Each file is added (one retry when Orbit could not be reached), its note in
  * the history gets the short id Orbit gave, and its text is kept in pieces: the text the reply already read when that
  * was all of it, or the whole file read again afterwards, up to "Text kept from a file".
@@ -9,12 +9,14 @@
 import type { AdminApiService, ArtifactCall, BotFileSummary } from '../server/AdminApiService';
 import type { MemoryForgetNotice } from '../memory/ForgetNotice';
 import { FileParser } from './FileParser';
-import { keptTextOf, piecesOf, storeOf, type ChatUpload, type FileKind } from './ChatFiles';
+import { keptTextOf, kindOf, piecesOf, storeOf, TEXT_PIECE_CHARS, type ChatUpload, type FileKind, type MadeWith, type SentMedia } from './ChatFiles';
 
 /** Waited before the one retry of an add Orbit did not answer. */
 const RETRY_AFTER_MS = 2_000;
 /** Whole files read again at once, so a burst of uploads doesn't load a small server that hosts every bot. */
 const READS_AT_ONCE = 2;
+/** The longest line Orbit takes with a file. */
+const MAX_LINE_SENT = 2_000;
 
 export interface FileJob {
     call: ArtifactCall;
@@ -22,6 +24,12 @@ export interface FileJob {
     personRef: string | null;
     upload: ChatUpload;
     kind: FileKind;
+    /** Who sent it: the person (the default), or the bot. */
+    source?: 'person' | 'bot';
+    /** For a file the bot sent: the tool that made it and what the bot asked it for, when it was made this visit. */
+    made?: MadeWith | null;
+    /** One line about it (a caption it was sent with), for the bot's notes and for search. */
+    line?: string | null;
     pages?: number | null;
     /** The whole text, when the reply already read all of it. */
     text?: string | null;
@@ -34,6 +42,35 @@ export interface FileJob {
 }
 
 type Parse = typeof FileParser.parseFile;
+
+/**
+ * A file the bot sent, to keep: named as it was sent (or by its link), with the tool that made it. A document's text
+ * is read afterwards, up to "Text kept from a file", so finding it later finds its words.
+ */
+export function sentMediaJob(
+    item: SentMedia,
+    where: { call: ArtifactCall; personRef: string | null; maxTextChars: number },
+    made: MadeWith | null
+): FileJob {
+    let fromLink = '';
+    try {
+        fromLink = decodeURIComponent(new URL(item.url).pathname.split('/').pop() ?? '');
+    } catch {
+        fromLink = '';
+    }
+    const name = item.fileName?.trim() || fromLink || item.mediaType || 'file';
+    const upload: ChatUpload = { url: item.url, name, mimeType: item.mimeType || null, mediaType: item.mediaType };
+    const kind = kindOf(upload);
+    return {
+        ...where,
+        upload,
+        kind,
+        source: 'bot',
+        made,
+        line: item.caption?.trim() || null,
+        ...(kind === 'document' && upload.mimeType ? { readAgain: { mimeType: upload.mimeType } } : {}),
+    };
+}
 
 /** Text up to `max` characters, never ending in half an emoji. */
 function clipped(text: string, max: number): string {
@@ -128,7 +165,7 @@ export class ChatFileKeeper {
     private async add(admin: AdminApiService, job: FileJob): Promise<BotFileSummary | null> {
         const { upload } = job;
         const file = {
-            source: 'person' as const,
+            source: job.source ?? ('person' as const),
             kind: job.kind,
             name: upload.name,
             mimeType: upload.mimeType ?? null,
@@ -136,6 +173,10 @@ export class ChatFileKeeper {
             store: storeOf(upload.url),
             lengthSeconds: upload.lengthSeconds != null ? Math.round(upload.lengthSeconds) : null,
             pages: job.pages ?? null,
+            // Orbit takes a line up to 2,000 characters, and keeps its first 300
+            ...(job.line ? { line: clipped(job.line, MAX_LINE_SENT) } : {}),
+            // Orbit takes a prompt up to one piece of text
+            ...(job.made ? { madeWith: job.made.with, madePrompt: job.made.prompt === null ? null : clipped(job.made.prompt, TEXT_PIECE_CHARS) } : {}),
         };
         for (let attempt = 0; attempt < 2; attempt++) {
             try {

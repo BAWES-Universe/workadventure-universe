@@ -1199,7 +1199,7 @@ export class AdminApiService {
         return this.artifactCall(`api/artifacts/${encodeURIComponent(id)}/read`, { ...call, ...(version ? { version } : {}) });
     }
 
-    /** The artifacts made in this chat that the person may open, the most recently changed first. */
+    /** The artifacts made in this chat that the person may open, plus their own from other chats, the most recently changed first. */
     listArtifactsInChat(call: ArtifactCall): Promise<{ artifacts: ArtifactSummary[]; hidden: boolean }> {
         return this.artifactCall('api/artifacts/in-chat', call);
     }

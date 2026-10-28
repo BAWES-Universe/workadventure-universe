@@ -186,7 +186,7 @@ export function artifactToolDefinitions(): Array<{ type: 'function'; function: {
             function: {
                 name: LIST_ARTIFACTS_TOOL,
                 description:
-                    'List the artifacts made in this chat, the most recently changed first, with their ids. Use it when someone refers to an ' +
+                    'List the artifacts made in this chat and the ones this person made in their other chats with any bot, the most recently changed first, with their ids. Use it when someone refers to an ' +
                     'artifact from earlier ("make the buttons bigger", "the quests board") and you do not have its id. Call it silently.',
                 parameters: { type: 'object', properties: {}, required: [] },
             },
@@ -586,7 +586,7 @@ export function formatArtifactResult(name: string, result: Record<string, unknow
         }
         case LIST_ARTIFACTS_TOOL: {
             const artifacts = (result.artifacts as Array<Record<string, unknown>>) ?? [];
-            if (artifacts.length === 0) return `${name}: Nothing has been made in this chat yet.`;
+            if (artifacts.length === 0) return `${name}: Nothing has been made yet.`;
             return `${name}: ${artifacts.map((a) => `"${a.title}" (id ${a.id}, ${a.kind}, version ${a.version}, by ${a.madeBy})`).join('; ')}. The first is the most recently changed.`;
         }
         default:
