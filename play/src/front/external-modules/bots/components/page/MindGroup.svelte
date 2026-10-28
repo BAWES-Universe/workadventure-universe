@@ -7,7 +7,15 @@
     import { botApiService } from "../../services/BotApiService";
     import { resolveVisionSupport } from "../../visionModels";
     import { canOpenOrbit, openOrbitPage } from "../../../admin-api/index";
-    import { canPick, cardIcon, mindBriefName, runsOnCards, unlentKeyNames, type RunsOnCard } from "../../mindModel";
+    import {
+        canPick,
+        cardIcon,
+        mindBriefName,
+        runsOnCards,
+        unlentKeyNames,
+        UNIVERSE_AI_REF,
+        type RunsOnCard,
+    } from "../../mindModel";
     import { allowedModelsOf, botModelOf, keyChoice, keyOfRef, modelRow, shortName } from "../../modelPickerModel";
     import PageGroup from "./PageGroup.svelte";
     import PageButton from "./PageButton.svelte";
@@ -40,7 +48,13 @@
      * say (an older Orbit, offline): the page then keeps the provider list it always had.
      */
     let options: BotAiOptions | null = null;
-    $: onOptions?.(options);
+    // Told only when the options themselves change. Run again each time the page passes `onOptions` back, a page whose
+    // callback changes with what it is told would answer and be told again without end, freezing the game (#1540).
+    let toldOptions: BotAiOptions | null | undefined;
+    $: if (options !== toldOptions) {
+        toldOptions = options;
+        onOptions?.(options);
+    }
     /** The viewer's own keys, lent or not (#1375): the ones not lent here are named, with how to lend them. */
     let myKeys: Array<{ id: string; name: string }> | null = null;
     /**
@@ -172,6 +186,9 @@
             : page.mind.none()
         : !ref
         ? page.mind.none()
+        : // Before Orbit answers (or when it can't), a bot on Universe AI still shows its name, never its stored ref
+        ref.toLowerCase() === UNIVERSE_AI_REF
+        ? page.mind.universeAi()
         : current
         ? [
               current.enabled ? current.name : `${current.name} ${$LL.actionbar.botEditorModule.providerDisabled()}`,

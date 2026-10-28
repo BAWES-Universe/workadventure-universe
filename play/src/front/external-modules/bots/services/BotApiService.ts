@@ -715,10 +715,12 @@ export class BotApiService {
     async getNearbyShared(cursor?: string): Promise<{ items: SavedNearbyItem[]; next: string | null } | null> {
         if (!this.canKeepNearbyShared()) return null;
         try {
-            const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
-            const response = await this.fetch(`/api/me/nearby-shared${query}`);
-            if (!response.ok) return null;
-            return savedNearbyPage(await response.json());
+            return await this.withPermissionsTimeout(async (signal) => {
+                const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+                const response = await this.fetch(`/api/me/nearby-shared${query}`, { signal });
+                if (!response.ok) return null;
+                return savedNearbyPage(await response.json());
+            });
         } catch {
             return null;
         }

@@ -17,6 +17,7 @@ import {
 import { ACCESS_CACHE_TTL_MS } from '../server/BotAccessGate';
 import { BotWokaAvatar } from './BotWokaAvatar';
 import { ARTIFACT_KEY, artifactDirectMessage } from '../ai/ArtifactTools';
+import { STEPS_KEY, type StepsField } from '../ai/ToolSteps';
 
 /** The field of a reply that names the bot's room: the game shows a card under it to go there. */
 export const ROOM_LINK_KEY = 'universe.room_link';
@@ -566,6 +567,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
         };
         let typingTimer: NodeJS.Timeout | undefined = setTimeout(startTyping, TYPING_DELAY_MS);
         let answered = false;
+        let stepsSent: Promise<void> = Promise.resolve();
+        let stepsEventId: string | undefined;
         const sentAt = event.origin_server_ts ?? Date.now();
         if (!catchUp) this.answeringLive.set(event.room_id, sentAt);
         try {
@@ -579,6 +582,29 @@ export class MatrixDmBridge implements MatrixEventHandler {
                         console.warn(`[MatrixDmBridge] Could not send an interim message in ${event.room_id}:`, error?.message ?? error);
                     }
                     if (typing) startTyping();
+                },
+                onSteps: (field, text) => {
+                    // One notice per reply, updated in place: notices and updates don't notify (#1545). In order, and
+                    // never throwing: a lost steps line must not cost the person the answer.
+                    stepsSent = stepsSent
+                        .then(async () => {
+                            const content = { msgtype: 'm.notice', body: text, [STEPS_KEY]: field };
+                            if (!stepsEventId) {
+                                stepsEventId = await this.client.sendMessage(botUserId, event.room_id, content);
+                                return;
+                            }
+                            await this.client.sendMessage(botUserId, event.room_id, {
+                                msgtype: 'm.notice',
+                                body: `* ${text}`,
+                                'm.new_content': content,
+                                'm.relates_to': { rel_type: 'm.replace', event_id: stepsEventId },
+                            });
+                        })
+                        .catch((error: any) =>
+                            console.warn(`[MatrixDmBridge] Could not show the steps in ${event.room_id}:`, error?.message ?? error)
+                        );
+                    if (typing) startTyping();
+                    return stepsSent;
                 },
             });
             // Answered together with the messages that waited with it (#1159): that one answer was sent for all of them

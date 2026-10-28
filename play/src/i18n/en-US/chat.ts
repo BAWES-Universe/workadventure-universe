@@ -802,6 +802,14 @@ const chat: BaseTranslation = {
         nowIn: "Now in",
         inThisRoom: "You're in this room",
     },
+    botSteps: {
+        doneCount: "{done} of {total} done",
+        failed: "{count} didn't work",
+        stopped: "Stopped",
+        again: "again",
+        show: "Show steps",
+        hide: "Hide steps",
+    },
     replyLimit: {
         titleUniverseAi: "You've used your Universe AI replies for now",
         titleGuest: "You've used your guest replies for now",

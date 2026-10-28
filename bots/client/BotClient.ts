@@ -2019,7 +2019,8 @@ export class BotClient {
         finalContent?: string,
         isError?: boolean,
         errorMessage?: string,
-        reset?: boolean
+        reset?: boolean,
+        steps?: string
     ): void {
         const spaceUserId = this.spaces.get(spaceName);
         if (!spaceUserId) {
@@ -2046,6 +2047,7 @@ export class BotClient {
                                 isError: isError ?? false,
                                 errorMessage,
                                 reset: reset ?? false,
+                                ...(steps !== undefined ? { steps } : {}),
                             },
                         },
                     },

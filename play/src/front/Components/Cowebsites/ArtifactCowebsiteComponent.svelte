@@ -46,6 +46,8 @@
     const COMPACT_WIDTH = 440;
     /** The most lines of code drawn at once; a mini app is one file, so this is only a guard. */
     const MAX_CODE_LINES = 4000;
+    /** How long Copy link reads "Link copied", as on the invite bar. */
+    const COPIED_FOR_MS = 3000;
 
     const id = actualCowebsite.artifactId;
     const versionStore = actualCowebsite.version;
@@ -71,6 +73,9 @@
     let pendingShare: { openScope?: ArtifactOpenScope; changeScope?: ArtifactChangeScope } | undefined;
     let shareFailed = false;
     let copied: "no" | "yes" | "failed" = "no";
+    let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+    /** The device has its own share sheet (phones, and most computers): Share sits beside Copy link, like invites. */
+    const canShare = typeof navigator.share === "function";
     let menu: HTMLElement | undefined;
     let versionsButton: HTMLButtonElement | undefined;
     let shareButton: HTMLButtonElement | undefined;
@@ -90,6 +95,7 @@
 
     onDestroy(() => {
         destroyed = true;
+        if (copiedTimer) clearTimeout(copiedTimer);
     });
 
     $: compact = panelWidth > 0 && panelWidth < COMPACT_WIDTH;
@@ -295,12 +301,26 @@
         const copying = navigator.clipboard?.writeText(link) ?? Promise.reject(new Error("No clipboard"));
         copying.then(
             () => {
-                if (!destroyed) copied = "yes";
+                if (destroyed) return;
+                copied = "yes";
+                if (copiedTimer) clearTimeout(copiedTimer);
+                copiedTimer = setTimeout(() => {
+                    if (copied === "yes") copied = "no";
+                }, COPIED_FOR_MS);
             },
             () => {
                 if (!destroyed) copied = "failed";
             }
         );
+    }
+
+    function shareLink() {
+        if (!link) return;
+        navigator.share({ title, url: link }).catch((error: unknown) => {
+            // Closing the share sheet is not a failure: do not copy behind the person's back.
+            if (error instanceof DOMException && error.name === "AbortError") return;
+            copyLink();
+        });
     }
 
     function pickVersion(number: number) {
@@ -592,20 +612,34 @@
                         {$LL.chat.artifacts.shareFailed()}
                     </p>
                 {:else if openScope === "link" && link}
-                    {#if copied === "yes"}
-                        <p class="copied" role="status" data-testid="artifactLinkCopied">
-                            <IconCheck font-size="18" />
-                            {$LL.chat.artifacts.linkCopied()}
-                        </p>
-                    {:else}
+                    <div class="link-actions">
+                        {#if canShare}
+                            <button
+                                type="button"
+                                class="glass"
+                                disabled={!!pendingShare}
+                                data-testid="artifactShareLink"
+                                on:click={shareLink}><IconShare font-size="18" /> {$LL.chat.artifacts.share()}</button
+                            >
+                        {/if}
                         <button
                             type="button"
                             class="go"
+                            class:wide={canShare}
                             disabled={!!pendingShare}
                             data-testid="artifactCopyLink"
-                            on:click={copyLink}><IconCopy font-size="18" /> {$LL.chat.artifacts.copyLink()}</button
+                            on:click={copyLink}
                         >
-                    {/if}
+                            {#if copied === "yes"}
+                                <IconCheck font-size="18" />
+                                <span role="status" data-testid="artifactLinkCopied"
+                                    >{$LL.chat.artifacts.linkCopied()}</span
+                                >
+                            {:else}
+                                <IconCopy font-size="18" /> {$LL.chat.artifacts.copyLink()}
+                            {/if}
+                        </button>
+                    </div>
                     {#if copied === "failed"}
                         <p class="menu-note" role="alert">{$LL.chat.artifacts.copyFailed()}</p>
                         <code class="link-text" data-testid="artifactLinkText">{link}</code>
@@ -814,7 +848,8 @@
     .quiet:focus-visible,
     .menu-row:focus-visible,
     .choice:focus-visible,
-    .go:focus-visible {
+    .go:focus-visible,
+    .glass:focus-visible {
         outline: 2px solid #c4b5fd;
         outline-offset: 2px;
     }
@@ -947,34 +982,44 @@
         border: 0;
         background: radial-gradient(circle, #fff 0 4px, transparent 4.5px), linear-gradient(135deg, #8629fc, #4156f6);
     }
-    .go,
-    .copied {
+    /* Share and Copy link side by side, as on the invite bar (InviteFooter): Copy link takes the larger share. */
+    .link-actions {
         display: flex;
+        gap: 8px;
+        margin: 4px 0 0;
+    }
+    .go,
+    .glass {
+        display: flex;
+        flex: 1;
         align-items: center;
         justify-content: center;
         gap: 8px;
         min-height: 44px;
-        margin: 4px 0 0;
+        margin: 0;
         border-radius: 999px;
         font-family: inherit;
         font-size: 14px;
         font-weight: 600;
+        color: #fff;
+        cursor: pointer;
+    }
+    .go.wide {
+        flex: 1.4;
+    }
+    .glass {
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(255, 255, 255, 0.08);
+    }
+    .go:disabled,
+    .glass:disabled {
+        cursor: default;
+        opacity: 0.7;
     }
     .go {
         border: 0;
         background: linear-gradient(135deg, #8629fc, #4156f6);
         box-shadow: 0 8px 24px -8px rgba(134, 41, 252, 0.7);
-        color: #fff;
-        cursor: pointer;
-    }
-    .go:disabled {
-        cursor: default;
-        opacity: 0.7;
-    }
-    .copied {
-        background: rgba(74, 222, 128, 0.14);
-        border: 1px solid rgba(74, 222, 128, 0.5);
-        color: #bbf7d0;
     }
     .link-text {
         margin: 0 6px 2px;
