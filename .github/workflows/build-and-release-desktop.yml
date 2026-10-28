@@ -16,8 +16,14 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Read-only unless a job below says otherwise (#432)
+permissions:
+  contents: read
+
 jobs:
   build_on_linux:
+    permissions:
+      contents: write  # electron-builder publishes the app to the release
     name: "Build & release desktop app for ${{ matrix.os }}"
 
     strategy:

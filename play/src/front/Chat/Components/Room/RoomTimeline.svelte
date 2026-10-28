@@ -31,7 +31,9 @@
     import { formatPeopleNames } from "../TopRow/TopRowSummary";
     import { availabilityFromNote, botChatClosed, botHeaderState, botIdFromChatId } from "../../Bots/BotChatStatus";
     import { botStatusCache } from "../../Bots/BotStatusStore";
+    import { nextReplyLimitExpiry, shownReplyLimitIds } from "../../Bots/BotReplyLimit";
     import BotStatusNoteCard from "../Bots/BotStatusNoteCard.svelte";
+    import BotReplyLimitCard from "../Bots/BotReplyLimitCard.svelte";
     import {
         PERSON_COLOUR_CONTEXT,
         NAME_BY_CHAT_ID_CONTEXT,
@@ -301,6 +303,21 @@
     $: botClosed = botChatClosed(botState);
     $: lastBotMessage = partnerBotId ? [...$messages].reverse().find((message) => !message.isMyMessage) : undefined;
     $: lastBotNote = lastBotMessage?.botStatus;
+    // One reply limit card per bot (#1159): the newest, and only until its time is up. The clock moves on when the next
+    // card runs out, so it goes away then even when nothing new is said.
+    let replyLimitNow = Date.now();
+    let replyLimitTimer: ReturnType<typeof setTimeout> | undefined;
+    $: shownReplyLimits = shownReplyLimitIds($messages, replyLimitNow);
+    $: wakeAtReplyLimitExpiry(nextReplyLimitExpiry($messages, replyLimitNow));
+    function wakeAtReplyLimitExpiry(expiry: number | undefined) {
+        clearTimeout(replyLimitTimer);
+        replyLimitTimer = undefined;
+        if (expiry === undefined) return;
+        replyLimitTimer = setTimeout(tickReplyLimitClock, Math.min(expiry - Date.now() + 50, 2 ** 31 - 1));
+    }
+    function tickReplyLimitClock() {
+        replyLimitNow = Date.now();
+    }
     // A note saying the bot is resting, not ready or gone updates the header at once, unless a lookup that started after
     // the note was written knows better.
     $: lastNoteAvailability = lastBotNote ? availabilityFromNote(lastBotNote.state) : undefined;
@@ -792,6 +809,7 @@
         clearTimeout(redrawTimer);
         if (redrawFrame !== undefined) cancelAnimationFrame(redrawFrame);
         clearTimeout(fileDragTimer);
+        clearTimeout(replyLimitTimer);
         document.removeEventListener("dragenter", onMapFileDragCapture, true);
         document.removeEventListener("dragover", onMapFileDragCapture, true);
         document.removeEventListener("drop", onMapFileDragCapture, true);
@@ -1059,6 +1077,10 @@
                             />
                         {:else if entry.message.type === "outcoming" || entry.message.type === "incoming"}
                             <MessageSystem message={entry.message} />
+                        {:else if entry.message.replyLimit}
+                            {#if shownReplyLimits.has(entry.message.id)}
+                                <BotReplyLimitCard replyLimit={entry.message.replyLimit} />
+                            {/if}
                         {:else if entry.message.botStatus}
                             <BotStatusNoteCard note={entry.message.botStatus} />
                         {:else}

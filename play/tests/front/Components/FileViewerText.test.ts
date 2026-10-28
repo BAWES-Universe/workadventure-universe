@@ -40,9 +40,9 @@ describe("the text reader", () => {
         target.remove();
     });
 
-    function mount(kind: FileViewerKind, bytes: ArrayBuffer) {
+    function mount(kind: FileViewerKind, bytes: ArrayBuffer, name = "file") {
         const events = { loaded: vi.fn(), failed: vi.fn(), download: vi.fn() };
-        const reader = new FileViewerText({ target, props: { kind, bytes } });
+        const reader = new FileViewerText({ target, props: { kind, bytes, name } });
         component = reader;
         for (const [name, handler] of Object.entries(events)) {
             (reader as unknown as { $on(name: string, handler: (event: unknown) => void): void }).$on(name, handler);
@@ -67,9 +67,103 @@ describe("the text reader", () => {
         expect(target.querySelector("b")).toBeNull();
         component?.$destroy();
 
-        mount("json", encode('{"a":[1,2]}'));
+        mount("json", encode('{"a":[1,2]}'), "data.json");
         await tick();
-        expect(target.querySelector(".plain")?.textContent).toBe('{\n  "a": [\n    1,\n    2\n  ]\n}');
+        expect(codeLines()).toEqual(["{", '  "a": [', "    1,", "    2", "  ]", "}"]);
+    });
+
+    /** The text of each numbered line of the code view. */
+    function codeLines(): string[] {
+        return Array.from(target.querySelectorAll('[data-testid="codeViewLines"] .code-text')).map(
+            (line) => line.textContent ?? ""
+        );
+    }
+
+    it("shows code with numbered lines and colors, running nothing in it", async () => {
+        const source = 'const greeting = "<b>hi</b>";\n\n// done\nWA.ui.openModal({ title: greeting });';
+        mount("code", encode(source), "welcome.ts");
+        await tick();
+
+        expect(target.querySelector('[data-testid="codeView"] .code-meta')?.textContent).toContain("TypeScript");
+        expect(target.querySelector('[data-testid="codeView"] .code-meta')?.textContent).toContain('"count":4');
+        expect(Array.from(target.querySelectorAll(".code-number")).map((number) => number.textContent)).toEqual([
+            "1",
+            "2",
+            "3",
+            "4",
+        ]);
+        await vi.waitFor(
+            () =>
+                expect(target.querySelector('[data-testid="codeViewLines"]')?.getAttribute("data-colored")).toBe(
+                    "true"
+                ),
+            { timeout: 5000 }
+        );
+        expect(codeLines()).toEqual(source.split("\n").map((line) => line || " "));
+        expect(target.querySelector(".hljs-keyword")?.textContent).toBe("const");
+        expect(target.querySelector(".hljs-comment")?.textContent).toBe("// done");
+        expect(target.querySelector('[data-testid="codeViewLines"] b')).toBeNull();
+    });
+
+    it("reads Windows line ends as plain ones, and opens no extra line after the last line end", async () => {
+        mount("code", encode("let a = 1;\r\nlet b = 2;\r\n"), "a.js");
+        await tick();
+
+        expect(codeLines()).toEqual(["let a = 1;", "let b = 2;"]);
+        expect(target.querySelector('[data-testid="codeView"] .code-meta')?.textContent).toContain('"count":2');
+    });
+
+    it("keeps a blank line that closes the file as a row of its own", async () => {
+        mount("code", encode("let a = 1;\n\n"), "a.js");
+        await tick();
+
+        expect(codeLines()).toEqual(["let a = 1;", " "]);
+        expect(target.querySelector('[data-testid="codeView"] .code-meta')?.textContent).toContain('"count":2');
+        await vi.waitFor(() =>
+            expect(target.querySelector('[data-testid="codeViewLines"]')?.getAttribute("data-colored")).toBe("true")
+        );
+        expect(codeLines()).toEqual(["let a = 1;", " "]);
+    });
+
+    it("copies the code as the file has it", async () => {
+        const writeText = vi.fn().mockResolvedValue(undefined);
+        Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+        mount("json", encode('{"a":1}'), "data.json");
+        await tick();
+
+        target.querySelector<HTMLButtonElement>('[data-testid="codeViewCopy"]')?.click();
+        await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith('{"a":1}'));
+        await vi.waitFor(() =>
+            expect(target.querySelector('[data-testid="codeViewCopy"]')?.textContent).toContain("chat.codeView.copied")
+        );
+    });
+
+    it("shows the first 10,000 lines of long code, says so, and offers the download", async () => {
+        const events = mount(
+            "code",
+            encode(Array.from({ length: 10_005 }, (_, index) => `x${index}`).join("\n")),
+            "a.js"
+        );
+        await tick();
+
+        expect(target.querySelectorAll('[data-testid="codeViewLines"] .code-line')).toHaveLength(10_000);
+        expect(target.querySelector('[data-testid="codeView"] .code-meta')?.textContent).toContain('"count":10005');
+        const note = target.querySelector('[data-testid="fileViewerLimit"]');
+        expect(note?.textContent).toContain("chat.fileViewer.codeLinesCut");
+        note?.querySelector("button")?.click();
+        expect(events.download).toHaveBeenCalledOnce();
+    }, 20_000);
+
+    it("colors a Markdown code block that names its language, and leaves the others plain", async () => {
+        mount("markdown", encode("```js\nconst a = 1;\n```\n\n```\nplain text\n```"));
+        await tick();
+
+        await vi.waitFor(() => expect(target.querySelector(".md pre code .hljs-keyword")?.textContent).toBe("const"), {
+            timeout: 5000,
+        });
+        const blocks = target.querySelectorAll(".md pre code");
+        expect(blocks[0].textContent).toBe("const a = 1;\n");
+        expect(blocks[1].querySelector("span")).toBeNull();
     });
 
     it("shows a CSV as a table with every cell as text", async () => {

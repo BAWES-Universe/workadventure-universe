@@ -2016,6 +2016,34 @@ export class BotClient {
     }
 
     /**
+     * Show one person, and only them, the fixed card for a reply limit they reached (#1159). Sent as a private event
+     * to that person in the bot's nearby chat; the pusher passes it on only when a bot sends it.
+     */
+    sendReplyLimitCard(spaceName: string, playerId: number, card: { limit: string; resetsAt: string; who: string }): void {
+        const spaceUserId = this.spaces.get(spaceName);
+        if (!spaceUserId) return;
+        // A space user id is "<room>_<user id>": the person's is the bot's with their own user id at the end
+        const cut = spaceUserId.lastIndexOf('_');
+        if (cut < 0) return;
+        const receiverUserId = `${spaceUserId.slice(0, cut)}_${playerId}`;
+        this.send({
+            message: {
+                $case: 'privateEvent',
+                privateEvent: {
+                    spaceName,
+                    receiverUserId,
+                    spaceEvent: {
+                        event: {
+                            $case: 'botReplyLimit',
+                            botReplyLimit: { ...card, botId: this.config.botId, botName: this.config.name },
+                        },
+                    },
+                },
+            },
+        });
+    }
+
+    /**
      * Start typing indicator in space (shows bot is typing)
      */
     startTyping(spaceName: string): void {
