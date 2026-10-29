@@ -8,6 +8,7 @@ import type { AIProvider } from './AIProvider';
 import type { AIProviderConfig, AIStreamChunk, AIResponse } from './types';
 import { LMStudioProvider } from './providers/LMStudioProvider';
 import { OpenAIProvider } from './providers/OpenAIProvider';
+import { AnthropicProvider } from './providers/AnthropicProvider';
 import { withStepsAsText, type ReplySteps } from './replySteps';
 
 export class AIProviderRegistry {
@@ -48,8 +49,8 @@ export class AIProviderRegistry {
                 provider = new OpenAIProvider();
                 break;
             case 'anthropic':
-                // TODO: Implement AnthropicProvider
-                throw new Error(`Provider type 'anthropic' not yet implemented`);
+                provider = new AnthropicProvider();
+                break;
             case 'ultravox':
                 // TODO: Implement UltravoxProvider
                 throw new Error(`Provider type 'ultravox' not yet implemented`);
@@ -122,7 +123,13 @@ export class AIProviderRegistry {
         }
 
         // Use streaming
-        yield* provider.generateStream(systemPrompt, userMessage, config, tools, signal, images, steps);
+        for await (const chunk of provider.generateStream(systemPrompt, userMessage, config, tools, signal, images, steps)) {
+            // Tell the caller what this call read from and wrote to the provider's cache, before it sees the chunk
+            if (chunk.done && config.onCacheTokens && (chunk.metadata?.cacheReadTokens || chunk.metadata?.cacheWriteTokens)) {
+                config.onCacheTokens(chunk.metadata.cacheReadTokens ?? 0, chunk.metadata.cacheWriteTokens ?? 0);
+            }
+            yield chunk;
+        }
     }
 
     /**

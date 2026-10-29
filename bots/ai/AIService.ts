@@ -86,7 +86,7 @@ const sentrySetSpan: ((scope: any, span: any) => void) | undefined =
 import { captureAiGeneration, captureAiTrace, flushPostHog } from './PostHogClient';
 import { priceCall } from './pricing/costing';
 import { UsageLedger, priceMetadata, type TurnCost } from './pricing/ledger';
-import { buildRecentFilesLine, buildSystemPrompt } from './systemPrompt';
+import { buildRecentFilesLine, buildSystemPromptWithEnds } from './systemPrompt';
 import type { FileStore, MadeWith } from '../services/ChatFiles';
 import { replyProblem } from './replyProblem';
 import { providerErrorText } from './providers/ownKeyHttp';
@@ -795,7 +795,8 @@ export class AIService {
 
             // Build system prompt. Order matters for provider prompt caching
             // (issue #1333): see ai/systemPrompt.ts.
-            const systemPrompt = buildSystemPrompt({
+            // The ends of the parts that stay the same from message to message are where the Claude provider marks its cache
+            const { prompt: systemPrompt, cacheEnds: promptCacheEnds } = buildSystemPromptWithEnds({
                 chatInstructions,
                 mapContextInfo,
                 conversationContext,
@@ -928,6 +929,17 @@ export class AIService {
             const sentryScope = Sentry.getCurrentScope();
             const previousSpan = Sentry.getActiveSpan();
             sentrySetSpan?.(sentryScope, parentSpan);
+            // What the turn's calls read from and wrote to the provider's cache (Claude only; both are inside promptTokens)
+            const cacheLedger = { read: 0, write: 0 };
+            const cacheCursor = { read: 0, write: 0 };
+            /** Cache tokens since the last generation event, so each event carries its own call's share */
+            const takeCache = (): { cacheReadTokens?: number; cacheWriteTokens?: number } => {
+                const read = cacheLedger.read - cacheCursor.read;
+                const write = cacheLedger.write - cacheCursor.write;
+                cacheCursor.read = cacheLedger.read;
+                cacheCursor.write = cacheLedger.write;
+                return read || write ? { cacheReadTokens: read, cacheWriteTokens: write } : {};
+            };
             // Pass the parent span to providers via config so they can
             // explicitly set it in startSpanManual({parentSpan: ...})
             // This bypasses async-context scope lookup which doesn't
@@ -935,7 +947,14 @@ export class AIService {
             // Clone config to avoid mutating the shared cached object (race condition)
             // TODO: Refactor to pass parentSpan as a parameter once the provider
             // interface is updated to accept it directly
-            const configWithParent: AIProviderConfig = { ...config };
+            const configWithParent: AIProviderConfig = {
+                ...config,
+                promptCacheEnds,
+                onCacheTokens: (read, write) => {
+                    cacheLedger.read += read;
+                    cacheLedger.write += write;
+                },
+            };
             (configWithParent as any).__sentryParentSpan = parentSpan;
             // One cache route per bot: requests with the same bot prompt prefix
             // land on the same cache (OpenAI's prompt_cache_key; other
@@ -1079,7 +1098,9 @@ export class AIService {
                         // propagate (it would abort the stream and yield an error
                         // done chunk, killing the turn).
                         try {
+                            const callCache = takeCache();
                             captureGeneration({
+                                ...callCache,
                                 distinctId: `bot-${botId}`,
                                 traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
                                 sessionId: `conversation-${botId}-player-${playerId}`,
@@ -1092,6 +1113,7 @@ export class AIService {
                                 outputTokens: completionTokens,
                                 latency: (Date.now() - firstCallStartTime) / 1000,
                                 cost: this.calculateCost(providerId, {
+                                    cacheWriteTokens: callCache.cacheWriteTokens,
                                     cachedPromptTokens: cachedPromptTokens,
                                     tokensUsed,
                                     promptTokens,
@@ -1204,10 +1226,11 @@ export class AIService {
                                         accumulatedContent += text;
                                         firstCallContent += text;
                                     },
-                                    (used, prompt, completion) => {
+                                    (used, prompt, completion, cached) => {
                                         tokensUsed += used;
                                         promptTokens += prompt;
                                         completionTokens += completion;
+                                        cachedPromptTokens = addCachedTokens(cachedPromptTokens, cached);
                                     }
                                 )) {
                                     yield {content: contText, done: false, metadata: undefined};
@@ -1495,12 +1518,16 @@ export class AIService {
                                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                                     console.log(`[AIService] 🔄 Follow-up round ${followUpIterations} produced ${pendingToolCalls.length} new tool calls, repeating...`);
                                 }
+                                // This round's cache share is taken even when nothing is captured below (a tool-only round),
+                                // so the next round's event never carries it
+                                const followUpCache = takeCache();
                                 // Capture $ai_generation for this round's follow-up call (not the final one)
                                 if (followUpContent || followUpError) {
                                     // Telemetry is fire-and-forget: a capture failure must never
                                     // propagate (it would abort the follow-up loop mid-turn).
                                     try {
                                         captureGeneration({
+                                            ...followUpCache,
                                             distinctId: `bot-${botId}`,
                                             traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
                                             sessionId: `conversation-${botId}-player-${playerId}`,
@@ -1513,6 +1540,7 @@ export class AIService {
                                             outputTokens: followUpCompletionTokens,
                                             latency: (Date.now() - followUpStartTime) / 1000,
                                             cost: this.calculateCost(providerId, {
+                                                cacheWriteTokens: followUpCache.cacheWriteTokens,
                                                 cachedPromptTokens: followUpCachedPromptTokens,
                                                 tokensUsed: followUpTokens,
                                                 promptTokens: followUpPromptTokens,
@@ -1788,13 +1816,15 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                             followUpContentBuffer += text;
                                             accumulatedContent += text;
                                         },
-                                        (used, prompt, completion) => {
+                                        (used, prompt, completion, cached) => {
                                             followUpTokens += used;
                                             followUpPromptTokens += prompt;
                                             followUpCompletionTokens += completion;
+                                            followUpCachedPromptTokens = addCachedTokens(followUpCachedPromptTokens, cached);
                                             tokensUsed += used;
                                             promptTokens += prompt;
                                             completionTokens += completion;
+                                            cachedPromptTokens = addCachedTokens(cachedPromptTokens, cached);
                                         }
                                     )) {
                                         yield {content: contText, done: false, metadata: undefined};
@@ -1840,13 +1870,15 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                         followUpContentBuffer += text;
                                         accumulatedContent += text;
                                     },
-                                    (used, prompt, completion) => {
+                                    (used, prompt, completion, cached) => {
                                         followUpTokens += used;
                                         followUpPromptTokens += prompt;
                                         followUpCompletionTokens += completion;
+                                        followUpCachedPromptTokens = addCachedTokens(followUpCachedPromptTokens, cached);
                                         tokensUsed += used;
                                         promptTokens += prompt;
                                         completionTokens += completion;
+                                        cachedPromptTokens = addCachedTokens(cachedPromptTokens, cached);
                                     }
                                 )) {
                                     yield {content: contText, done: false, metadata: undefined};
@@ -1863,7 +1895,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             // Telemetry is fire-and-forget: a capture failure must never
                             // propagate (it would abort the turn after the answer).
                             try {
+                                const callCache = takeCache();
                                 captureGeneration({
+                                    ...callCache,
                                     distinctId: `bot-${botId}`,
                                     traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
                                     sessionId: `conversation-${botId}-player-${playerId}`,
@@ -1876,6 +1910,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     outputTokens: followUpCompletionTokens,
                                     latency: (Date.now() - followUpStartTime) / 1000,
                                     cost: this.calculateCost(providerId, {
+                                        cacheWriteTokens: callCache.cacheWriteTokens,
                                         cachedPromptTokens: followUpCachedPromptTokens,
                                         tokensUsed: followUpTokens,
                                         promptTokens: followUpPromptTokens,
@@ -1959,7 +1994,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         // mid-sentence. Auto-continue so the response completes
                         // instead of silently truncating.
                         if (chunk.metadata?.truncated && !abortSignal?.aborted && accumulatedContent) {
-                            const contTokens = { used: 0, prompt: 0, completion: 0 };
+                            const contTokens: { used: number; prompt: number; completion: number; cached?: number } = { used: 0, prompt: 0, completion: 0 };
                             for await (const contChunk of this.continueTruncatedResponse(
                                 providerId,
                                 systemPrompt,
@@ -1979,6 +2014,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             tokensUsed += contTokens.used;
                             promptTokens += contTokens.prompt;
                             completionTokens += contTokens.completion;
+                            cachedPromptTokens = addCachedTokens(cachedPromptTokens, contTokens.cached);
                         }
                         // No tool calls seen — content was already streamed word-by-word
                         // via per-chunk yields above. Just yield the done signal.
@@ -2025,7 +2061,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
                     // Non-tool-call path: capture $ai_generation for the first (only) LLM call
                     if (!privateBot && !initialGenCaptured && streamCompleted && (firstCallContent || problem) && !hadToolCalls) {
+                        const callCache = takeCache();
                         captureAiGeneration({
+                            ...callCache,
                             distinctId: `bot-${botId}`,
                             traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
                             sessionId: `conversation-${botId}-player-${playerId}`,
@@ -2038,6 +2076,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             outputTokens: followUpCompletionTokens > 0 ? (completionTokens - followUpCompletionTokens) : completionTokens,
                             latency: (Date.now() - firstCallStartTime) / 1000,
                             cost: this.calculateCost(providerId, {
+                                cacheWriteTokens: callCache.cacheWriteTokens,
                                 cachedPromptTokens: followUpCachedPromptTokens !== undefined && cachedPromptTokens !== undefined ? cachedPromptTokens - followUpCachedPromptTokens : cachedPromptTokens,
                                 tokensUsed,
                                 promptTokens: followUpPromptTokens > 0 ? (promptTokens - followUpPromptTokens) : promptTokens,
@@ -2054,7 +2093,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     
                     // Tool follow-up path: capture $ai_generation for the follow-up LLM call
                     if (!privateBot && !followUpGenCaptured && hadToolCalls && (followUpContent || followUpError)) {
+                        const callCache = takeCache();
                         captureAiGeneration({
+                            ...callCache,
                             distinctId: `bot-${botId}`,
                             traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
                             sessionId: `conversation-${botId}-player-${playerId}`,
@@ -2067,6 +2108,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             outputTokens: followUpCompletionTokens,
                             latency: (Date.now() - followUpStartTime) / 1000,
                             cost: this.calculateCost(providerId, {
+                                cacheWriteTokens: callCache.cacheWriteTokens,
                                 cachedPromptTokens: followUpCachedPromptTokens,
                                 tokensUsed: followUpTokens,
                                 promptTokens: followUpPromptTokens,
@@ -2085,6 +2127,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     if (!privateBot && streamCompleted && (accumulatedContent || error || problem)) {
                         const generationLatency = (Date.now() - startTime) / 1000;
                         captureAiTrace({
+                            ...(cacheLedger.read || cacheLedger.write ? { cacheReadTokens: cacheLedger.read, cacheWriteTokens: cacheLedger.write } : {}),
                             distinctId: `bot-${botId}`,
                             traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
                             sessionId: `conversation-${botId}-player-${playerId}`,
@@ -2097,6 +2140,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             outputTokens: completionTokens,
                             latency: generationLatency,
                             cost: this.calculateCost(providerId, {
+                                cacheWriteTokens: cacheLedger.write,
                                 cachedPromptTokens: cachedPromptTokens,
                                 tokensUsed,
                                 promptTokens,
@@ -2121,10 +2165,19 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         console.error('[AIService] Telemetry capture failed (swallowed):', telemetryError);
                     }
                 } finally {
-                    // Always close Sentry span and restore scope, even if PostHog fails
-                    if (cachedPromptTokens !== undefined) {
+                    // A turn that used the provider's cache says so on its span. Sentry's input_tokens counts the cached
+                    // tokens too; the two cache figures are parts of it.
+                    if (cacheLedger.read || cacheLedger.write) {
+                        parentSpan?.setAttribute('gen_ai.usage.input_tokens', promptTokens);
+                        parentSpan?.setAttribute('gen_ai.usage.output_tokens', completionTokens);
+                        // A provider that only reports writes (OpenRouter) has no ledger reads: its cached figure is the reads
+                        parentSpan?.setAttribute('gen_ai.usage.cache_read.input_tokens', cacheLedger.read || (cachedPromptTokens ?? 0));
+                        parentSpan?.setAttribute('gen_ai.usage.cache_creation.input_tokens', cacheLedger.write);
+                    } else if (cachedPromptTokens !== undefined) {
+                        // No ledger (DeepSeek, LM Studio): the span takes the provider's cached figure
                         parentSpan?.setAttribute("gen_ai.usage.cache_read.input_tokens", cachedPromptTokens);
                     }
+                    // Always close Sentry span and restore scope, even if PostHog fails
                     parentSpan?.end();
                     sentrySetSpan?.(sentryScope, previousSpan);
                 }
@@ -2154,6 +2207,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     tokensUsed,
                     promptTokens,
                     completionTokens,
+                    ...(cacheLedger.read || cacheLedger.write ? { cacheReadTokens: cacheLedger.read, cacheWriteTokens: cacheLedger.write } : {}),
                     latency,
                     error,
                 }, ledger.summary(), this.whoTalked(botId, playerId, channel)).catch(err => {
@@ -2272,6 +2326,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 tokensUsed: metadata.tokensUsed || 0,
                 promptTokens: metadata.promptTokens || 0,
                 completionTokens: metadata.completionTokens || 0,
+                ...(metadata.cacheReadTokens ? { cacheReadTokens: metadata.cacheReadTokens } : {}),
+                ...(metadata.cacheWriteTokens ? { cacheWriteTokens: metadata.cacheWriteTokens } : {}),
                 apiCalls: 1,
                 durationSeconds: metadata.durationSeconds ?? null,
                 price: {
@@ -2350,7 +2406,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         partialContent: string,
         config: AIProviderConfig,
         abortSignal: AbortSignal | undefined,
-        tokenSink: { used: number; prompt: number; completion: number },
+        tokenSink: { used: number; prompt: number; completion: number; cached?: number },
         ledger: UsageLedger,
         visionImages?: string[] | undefined
     ): AsyncGenerator<AIStreamChunk> {
@@ -2386,6 +2442,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     if (chunk.metadata?.tokensUsed) tokenSink.used += chunk.metadata.tokensUsed;
                     if (chunk.metadata?.promptTokens) tokenSink.prompt += chunk.metadata.promptTokens;
                     if (chunk.metadata?.completionTokens) tokenSink.completion += chunk.metadata.completionTokens;
+                    tokenSink.cached = addCachedTokens(tokenSink.cached, chunk.metadata?.cachedPromptTokens);
                     if (chunk.done) {
                         stillTruncated = !!chunk.metadata?.truncated;
                     }
@@ -2427,9 +2484,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         ledger: UsageLedger,
         visionImages: string[] | undefined,
         accumulateContent: (text: string) => void,
-        accumulateTokens: (used: number, prompt: number, completion: number) => void
+        accumulateTokens: (used: number, prompt: number, completion: number, cached: number | undefined) => void
     ): AsyncGenerator<string> {
-        const contTokens = { used: 0, prompt: 0, completion: 0 };
+        const contTokens: { used: number; prompt: number; completion: number; cached?: number } = { used: 0, prompt: 0, completion: 0 };
         for await (const contChunk of this.continueTruncatedResponse(
             providerId,
             systemPrompt,
@@ -2445,7 +2502,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 yield contChunk.content;
             }
         }
-        accumulateTokens(contTokens.used, contTokens.prompt, contTokens.completion);
+        accumulateTokens(contTokens.used, contTokens.prompt, contTokens.completion, contTokens.cached);
     }
 
     /**

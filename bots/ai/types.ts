@@ -27,6 +27,14 @@ export interface AIProviderConfig {
      * (their own computer, or their own NIM), so every call to it goes through the address guard.
      */
     ownKey?: { addressTyped: boolean };
+    /**
+     * Where the part of the system prompt that stays the same from message to message ends, as character offsets into
+     * the system prompt, in order. Only the Claude provider reads this (it marks those ends for Claude's cache); every
+     * other provider ignores it, so their requests are unchanged.
+     */
+    promptCacheEnds?: number[];
+    /** Called with the cache reads and writes of each finished call (only when there were any), so the caller can total a turn. */
+    onCacheTokens?: (read: number, write: number) => void;
     /** The bot's limits (Orbit #666), when Orbit served them with the bot's credentials. */
     limits?: BotLimits;
 }
@@ -165,6 +173,8 @@ export interface AIStreamChunk {
         /** Prompt tokens the provider wrote to its cache on this call (a subset of promptTokens). Undefined when it does not say. */
         cacheWriteTokens?: number;
         completionTokens?: number;
+        /** Part of promptTokens that was read from the provider's cache, and part that was written to it (Claude only for now). */
+        cacheReadTokens?: number;
         /** Reasoning tokens inside completionTokens. Undefined when the provider does not say. */
         reasoningTokens?: number;
         /** What the provider charged for this call, in dollars (OpenRouter sends it). Undefined when it does not say. */
@@ -223,6 +233,8 @@ export interface AIUsageMetadata {
     tokensUsed?: number;
     promptTokens?: number;
     completionTokens?: number;
+    /** Part of promptTokens read from / written to the provider's cache (both are inside promptTokens, not on top of it). */
+    cacheReadTokens?: number;
     /** Parts of promptTokens the provider read from / wrote to its cache, and of completionTokens spent reasoning. */
     cachedPromptTokens?: number;
     cacheWriteTokens?: number;

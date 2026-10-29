@@ -216,6 +216,20 @@ export function buildNowLine(now: Date = new Date(), pendingMediaNotice?: string
     return line;
 }
 
+/** A built system prompt, and where its parts that stay the same from message to message end (character offsets, in order). */
+export interface BuiltSystemPrompt {
+    prompt: string;
+    /**
+     * The end of the fixed rules and the end of the location block: the two places a provider with its own cache
+     * (Claude) marks. Everything after them changes with the person, the day or the message.
+     */
+    cacheEnds: number[];
+}
+
+export function buildSystemPrompt(parts: SystemPromptParts): string {
+    return buildSystemPromptWithEnds(parts).prompt;
+}
+
 /** One file or artifact for the newest-files line, as Orbit's search gives it (#1508). */
 export type RecentFile =
     | {
@@ -254,7 +268,7 @@ function oneLine(text: string): string {
     return line.length > 80 ? `${line.slice(0, 79)}…` : line;
 }
 
-export function buildSystemPrompt(parts: SystemPromptParts): string {
+export function buildSystemPromptWithEnds(parts: SystemPromptParts): BuiltSystemPrompt {
     const { chatInstructions, mapContextInfo, conversationContext, pendingMediaNotice, now, channel = 'world', recentFiles } = parts;
 
     // CRITICAL: Chat instructions define the bot's personality and MUST be followed
@@ -274,9 +288,11 @@ export function buildSystemPrompt(parts: SystemPromptParts): string {
     // takes precedence — these are guidelines for natural conversation.
     systemPrompt += HUMAN_LIKE_RULES;
     systemPrompt += naturalConversationRules(channel);
+    const cacheEnds = [systemPrompt.length];
 
     if (mapContextInfo) {
         systemPrompt += mapContextInfo;
+        cacheEnds.push(systemPrompt.length);
     }
     if (conversationContext) {
         systemPrompt += `\n\nConversation Context:\n${conversationContext}`;
@@ -285,5 +301,5 @@ export function buildSystemPrompt(parts: SystemPromptParts): string {
     // After the Now line: it changes as files come, so the cached part above stays the same
     if (recentFiles) systemPrompt += recentFiles;
     systemPrompt += CLOSING_REMINDER;
-    return systemPrompt;
+    return { prompt: systemPrompt, cacheEnds };
 }

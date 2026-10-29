@@ -1289,6 +1289,9 @@ export class AdminApiService {
         tokensUsed?: number;
         promptTokens?: number;
         completionTokens?: number;
+        /** Part of the input read from / written to the provider's cache (inside the input, not on top of it) */
+        cacheReadTokens?: number;
+        cacheWriteTokens?: number;
         apiCalls?: number;
         durationSeconds?: number | null;
         /** Dollars, the old estimate. Orbit keeps it as one only when no `price` comes with it. */
@@ -1333,6 +1336,9 @@ export class AdminApiService {
                 botId: usage.botId,
                 providerId: usage.providerId,
                 tokensUsed: usage.tokensUsed || 0,
+                // Orbit ignores what it doesn't store yet; its usage table takes these with the cost rework (#1173)
+                ...(usage.cacheReadTokens ? { cacheReadTokens: usage.cacheReadTokens } : {}),
+                ...(usage.cacheWriteTokens ? { cacheWriteTokens: usage.cacheWriteTokens } : {}),
                 apiCalls: usage.apiCalls || 1,
                 durationSeconds: usage.durationSeconds ?? null,
                 cost: usage.price ? null : usage.cost ?? null,
