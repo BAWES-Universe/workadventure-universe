@@ -1,7 +1,7 @@
 import type { IContent, MatrixEvent, Room } from "matrix-js-sdk";
 import { Direction, EventStatus, EventType, MatrixEventEvent, MsgType, RelationType } from "matrix-js-sdk";
 import type { Writable } from "svelte/store";
-import { writable } from "svelte/store";
+import { derived, writable } from "svelte/store";
 import { v4 as uuidv4 } from "uuid";
 import { MapStore } from "@workadventure/store-utils";
 import { readBotStatusNote, type BotStatusNote } from "../../Bots/BotChatStatus";
@@ -17,6 +17,7 @@ import { MatrixChatMessageReaction } from "./MatrixChatMessageReaction";
 import { MatrixChatRelation } from "./MatrixChatRelation";
 import type { MatrixMediaHold } from "./MatrixMedia";
 import { holdMatrixMedia } from "./MatrixMedia";
+import { readMediaGroup, type MediaGroupTag } from "./MatrixMediaGroup";
 
 /** My reaction with one emoji: what the last click asked for, and the event that is on the server now. */
 interface MyReaction {
@@ -43,6 +44,41 @@ function withoutReplyFallback(body: unknown): string | undefined {
     return lines.slice(first).join("\n");
 }
 
+/**
+ * What the gallery shows: the files of all its messages once each has its address (or failed), with the words of the
+ * first one under them.
+ */
+function galleryContent(kinds: ChatMessageType[], contents: ChatMessageContent[]): ChatMessageContent {
+    const items = kinds.map((type, i) => ({ type, content: contents[i] }));
+    const ready = items.filter((item) => item.content.url !== undefined);
+    const loading = items.some((item) => item.content.url === undefined && !item.content.mediaFailed);
+    const first = contents[0];
+    // The words of a Matrix file are its body when that is not its name (MSC2530).
+    const body = first.body?.trim() && first.body.trim() !== first.filename?.trim() ? first.body : "";
+    if (loading || ready.length === 0) {
+        return {
+            body,
+            url: undefined,
+            urls: undefined,
+            filename: undefined,
+            fileNames: undefined,
+            mediaFailed: !loading && ready.length === 0 ? true : undefined,
+        };
+    }
+    return {
+        body,
+        url: ready[0].content.url,
+        urls: ready.slice(1).map((item) => item.content.url as string),
+        filename: undefined,
+        fileNames: ready.map((item) => item.content.filename ?? item.content.body ?? ""),
+        itemTypes: ready.map((item) => galleryItemType(item.type)),
+    };
+}
+
+function galleryItemType(type: ChatMessageType): "image" | "video" | "audio" | "file" {
+    return type === "image" || type === "video" || type === "audio" ? type : "file";
+}
+
 export class MatrixChatMessage implements ChatMessage {
     id: string;
     content: Writable<ChatMessageContent>;
@@ -64,6 +100,12 @@ export class MatrixChatMessage implements ChatMessage {
     readonly artifact: ArtifactCard | undefined;
     /** A bot's steps line (#1545): the bot server updates this one message while the bot works. */
     readonly steps: Writable<BotSteps | undefined>;
+    /** Set when this message is one of several files sent together (see MatrixMediaGroup). */
+    readonly groupTag: MediaGroupTag | undefined;
+    /** The Matrix id of the sender, which only the same sender's messages can join a group with. */
+    readonly senderId: string | undefined;
+    /** The messages of the gallery this one opens, in order, this one first. */
+    private groupMembers: MatrixChatMessage[] | undefined;
     readonly canReact = writable(true);
     readonly canReply = writable(true);
     private isShown = false;
@@ -73,6 +115,8 @@ export class MatrixChatMessage implements ChatMessage {
     /** In a direct chat (isDirect), only the person who sent a message can delete it. */
     constructor(private event: MatrixEvent, private room: Room, isQuotedMessage?: boolean, private isDirect = false) {
         this.id = event.getId() ?? uuidv4();
+        this.groupTag = readMediaGroup(event.getOriginalContent());
+        this.senderId = event.getSender();
         this.type = this.mapMatrixMessageTypeToChatMessage();
         this.botStatus = readBotStatusNote(event.getSender(), event.getOriginalContent());
         // The homeserver's clock can differ from ours: the SDK's local timestamp is the send time on our clock.
@@ -158,16 +202,36 @@ export class MatrixChatMessage implements ChatMessage {
         this.updateMessageContentOnDecryptedEvent();
     };
 
+    /**
+     * Makes this message the gallery of all the files sent together (it is the first of `members`). It is shown as
+     * the same gallery nearby chat uses, with the words of the first file under it; the other messages are kept
+     * inside it and not listed on their own.
+     */
+    joinGroup(members: MatrixChatMessage[]) {
+        if (members.length < 2 || members[0] !== this) return;
+        this.groupMembers = members;
+        // What each file is, read before this message becomes the gallery.
+        const kinds = members.map((member) => member.type);
+        this.type = "gallery";
+        const own = this.content;
+        const gallery = derived([own, ...members.slice(1).map((member) => member.content)], (contents) =>
+            galleryContent(kinds, contents)
+        );
+        // Edits and media loading still change the first file's own content.
+        this.content = { subscribe: gallery.subscribe, set: own.set, update: own.update };
+    }
+
     /** The list that held this message is built again: the event no longer calls it, and its media is let go. */
     destroy() {
         this.event.off(MatrixEventEvent.Decrypted, this.onDecrypted);
+        this.groupMembers?.slice(1).forEach((member) => member.destroy());
         this.releaseMedia();
         this.relations?.destroy();
     }
 
     private updateMessageContentOnDecryptedEvent() {
         // Until it is decrypted, the event's type is m.room.encrypted: an image or file only shows as one now.
-        this.type = this.mapMatrixMessageTypeToChatMessage();
+        if (this.groupMembers === undefined) this.type = this.mapMatrixMessageTypeToChatMessage();
         this.content.set(this.getMessageContent());
         this.loadMediaUrl();
     }

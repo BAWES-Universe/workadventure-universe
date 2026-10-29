@@ -127,7 +127,11 @@
             if (u) {
                 if (!seen.has(u)) {
                     seen.add(u);
-                    next.push({ url: u, type: inferMediaType(u), filename: names[nameIdx] ?? getFilename(u) });
+                    next.push({
+                        url: u,
+                        type: $content.itemTypes?.[nameIdx] ?? inferMediaType(u),
+                        filename: names[nameIdx] ?? getFilename(u),
+                    });
                 }
                 nameIdx++;
             }
