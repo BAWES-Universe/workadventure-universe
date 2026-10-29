@@ -222,13 +222,6 @@
     }
     $: nearbySpaceKind = proximityRoom?.spaceKind;
     $: nearbySpaceName = proximityRoom?.name;
-    // An ended conversation's lists are named after it (#1615), the live chat's after the chat.
-    $: endedNearby = endedConversation(shownSession, (names) =>
-        formatPeopleNames(names, { two: $LL.chat.topRow.twoNames, more: $LL.chat.topRow.moreNames })
-    );
-    $: nearbyName =
-        endedNearby?.title ??
-        (proximityRoom && $nearbySpaceKind ? nearbyChatName($nearbySpaceKind, $nearbySpaceName ?? "", $LL) : undefined);
 
     function closeNearbyDetails() {
         if (!proximityRoom) return;
@@ -256,6 +249,14 @@
             : undefined
         : undefined;
     $: liveSession = proximityRoom ? $sessions.find((session) => session.isLive) : undefined;
+    // An ended conversation's lists are named after it (#1615), the live chat's after the chat. Kept below `sessions`:
+    // Svelte would otherwise run `shownSession` before `sessions` is set.
+    $: endedNearby = endedConversation(shownSession, (names) =>
+        formatPeopleNames(names, { two: $LL.chat.topRow.twoNames, more: $LL.chat.topRow.moreNames })
+    );
+    $: nearbyName =
+        endedNearby?.title ??
+        (proximityRoom && $nearbySpaceKind ? nearbyChatName($nearbySpaceKind, $nearbySpaceName ?? "", $LL) : undefined);
     $: isEnded = shownSession !== undefined && !shownSession.isLive;
     $: isRoomMessages = shownSession?.id === ROOM_MESSAGES_SESSION_ID;
     $: timelineEntries = shownSession
