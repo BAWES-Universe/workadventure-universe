@@ -13,6 +13,8 @@
     export let card: ArtifactCard;
     /** The name of the bot that sent the message, when the card itself does not say. */
     export let makerName: string | undefined = undefined;
+    /** A card for a pasted share link (game #1582): it names its maker instead of a version, and says when it is open. */
+    export let fromLink = false;
 
     const chatOf: ArtifactChatOf | undefined = hasContext(ARTIFACT_CHAT_CONTEXT)
         ? getContext(ARTIFACT_CHAT_CONTEXT)
@@ -25,6 +27,15 @@
     $: shownVersion = openWindow?.version;
     $: isOpen = openWindow !== undefined && $shownVersion === card.version;
     $: badge = artifactBadge(card.kind, $LL);
+    $: kindName = artifactKindName(card.kind, $LL);
+    $: linkMaker = card.maker ?? makerName;
+    $: sub =
+        fromLink && linkMaker
+            ? (isOpen ? $LL.chat.artifacts.linkCardLineOpen : $LL.chat.artifacts.linkCardLine)({
+                  kind: kindName,
+                  maker: linkMaker,
+              })
+            : $LL.chat.artifacts.cardLine({ kind: kindName, version: card.version });
 
     function open() {
         const chat: ArtifactChat | undefined = chatOf?.();
@@ -43,9 +54,7 @@
     <span class="badge" style:background={badge.color} aria-hidden="true">{badge.label}</span>
     <span class="text">
         <span class="name">{card.title}</span>
-        <span class="sub">
-            {$LL.chat.artifacts.cardLine({ kind: artifactKindName(card.kind, $LL), version: card.version })}
-        </span>
+        <span class="sub">{sub}</span>
     </span>
 </button>
 

@@ -12,6 +12,11 @@ vi.mock("../../../Stores/CoWebsiteStore", () => ({
 }));
 vi.mock("../../ChatSheetStore", () => ({ lowerChatSheet: vi.fn() }));
 vi.mock("../../../WebRtc/CoWebsite/SimpleCoWebsite", () => ({ SimpleCoWebsite: class {} }));
+vi.mock("../../../WebRtc/CoWebsite/ArtifactCoWebsite", () => ({ ArtifactCoWebsite: class {} }));
+vi.mock("../../../Artifacts/artifactLinkCard", () => ({
+    artifactIdOfLink: () => undefined,
+    linkedArtifactCard: vi.fn(),
+}));
 vi.mock("../LinkPreviewFetcher", async () => {
     const { writable } = await import("svelte/store");
     return {

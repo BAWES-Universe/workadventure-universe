@@ -869,6 +869,8 @@ const chat: BaseTranslation = {
         badgeMarkdown: "DOC",
         badgeSvg: "SVG",
         cardLine: "{kind} · Version {version} · Tap to open",
+        linkCardLine: "{kind} · By {maker} · Tap to open",
+        linkCardLineOpen: "{kind} · By {maker} · Open",
         cardAria: "Open {title}, version {version}",
         by: "By {maker}",
         byVersion: "By {maker} · Version {version}",
