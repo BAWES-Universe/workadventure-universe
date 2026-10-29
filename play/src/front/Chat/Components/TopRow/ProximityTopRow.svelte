@@ -7,6 +7,7 @@
     import type { SpaceUserExtended } from "../../../Space/SpaceInterface";
     import { isBotUser } from "../../UserProvider/ChatUserMapper";
     import { areaPresenceStore } from "../../Stores/AreaPresenceStore";
+    import { createPersonColourOf } from "../../Stores/ChatUserWokaStore";
     import WokaFromUserId from "../../../Components/Woka/WokaFromUserId.svelte";
     import TopRowAvatar from "./TopRowAvatar.svelte";
     import type { TopRowArea } from "./TopRowSummary";
@@ -35,6 +36,8 @@
     const hasUserInProximityChat = proximityChatRoom.hasUserInProximityChat;
     const hasUnreadMessages = proximityChatRoom.hasUnreadMessages;
     const messages = proximityChatRoom.messages;
+    // Each woka sits on the person's colour from People, as in a direct chat's row.
+    const colourOf = createPersonColourOf(gameManager.tryGetCurrentGameScene()?.userProviderMerger);
 
     function toParticipants(users: Map<string, SpaceUserExtended>): ProximityChatParticipant[] {
         return Array.from(users.values())
@@ -44,6 +47,7 @@
                 name: user.name,
                 pictureStore: user.pictureStore,
                 bot: isBotUser(user),
+                chatId: user.chatID,
             }));
     }
 
@@ -158,7 +162,11 @@
                     <div class="flex items-center">
                         {#each stackedPeople as person, index (person.id)}
                             <div class={index === 0 ? "" : "-ms-3"} style:z-index={MAX_STACKED_AVATARS - index}>
-                                <TopRowAvatar pictureStore={person.pictureStore} name={person.name} />
+                                <TopRowAvatar
+                                    pictureStore={person.pictureStore}
+                                    name={person.name}
+                                    color={$colourOf(person.chatId, person.name)}
+                                />
                             </div>
                         {/each}
                         {#if extraPeople > 0}

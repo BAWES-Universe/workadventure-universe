@@ -116,13 +116,14 @@
         return room instanceof MatrixChatRoom && room.type === "direct" ? { kind: "dm", ref: room.id } : undefined;
     });
 
-    // In a direct chat, each person's woka sits on their colour from People (header, profile, messages).
-    const isDirectChat = writable(false);
+    // In a direct chat and a proximity chat, each person's woka sits on their colour from People (header, profile,
+    // messages). Group chats keep the plain circle.
+    const showsPeopleColours = writable(false);
     const colourByChatId = createColourByChatIdStore(gameManager.getCurrentGameScene().userProviderMerger);
     setContext<Readable<PersonColourOf>>(
         PERSON_COLOUR_CONTEXT,
-        derived([isDirectChat, colourByChatId], ([$isDirectChat, $colourByChatId]) =>
-            $isDirectChat
+        derived([showsPeopleColours, colourByChatId], ([$showsPeopleColours, $colourByChatId]) =>
+            $showsPeopleColours
                 ? (chatId: string | undefined, name: string | undefined) => personColour($colourByChatId, chatId, name)
                 : () => undefined
         )
@@ -234,7 +235,7 @@
         (matrixRoom !== undefined || proximityRoom !== undefined) && $openSharedItemsStore?.roomId === room.id
             ? $openSharedItemsStore
             : undefined;
-    $: isDirectChat.set(directPartner !== undefined);
+    $: showsPeopleColours.set(directPartner !== undefined || proximityRoom !== undefined);
     $: partnerForCards.set(directPartner ? $directPartner : undefined);
     $: roomMembers = matrixRoom ? matrixRoom.members : readable([]);
     $: memberCount = $roomMembers.length;

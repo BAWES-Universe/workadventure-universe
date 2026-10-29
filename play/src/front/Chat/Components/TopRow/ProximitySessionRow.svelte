@@ -1,5 +1,7 @@
 <script lang="ts">
+    import { getContext, hasContext } from "svelte";
     import { readable } from "svelte/store";
+    import type { Readable } from "svelte/store";
     import type { SpaceUserExtended } from "../../../Space/SpaceInterface";
     import LL, { locale } from "../../../../i18n/i18n-svelte";
     import type { ChatMessage } from "../../Connection/ChatConnection";
@@ -10,6 +12,7 @@
     import { previewLine } from "../Room/MessageActions/messageActions";
     import { minuteClock } from "../OneList/MinuteClock";
     import { gameManager } from "../../../Phaser/Game/GameManager";
+    import { createPersonColourOf, PERSON_COLOUR_CONTEXT, type PersonColourOf } from "../../Stores/ChatUserWokaStore";
     import TopRowAvatar from "./TopRowAvatar.svelte";
     import { formatPeopleNames } from "./TopRowSummary";
     import { IconMapPin, IconScript } from "@wa-icons";
@@ -29,6 +32,8 @@
         key: string;
         name: string;
         pictureStore: PictureStore;
+        /** Their chat account, which gives them their colour from People. */
+        chatId?: string;
     }
 
     function talkersOf(list: readonly ChatMessage[]): Talker[] {
@@ -46,10 +51,15 @@
                 "pictureStore" in message.sender && message.sender.pictureStore
                     ? message.sender.pictureStore
                     : readable<string | undefined>(undefined);
-            talkers.push({ key, name, pictureStore });
+            talkers.push({ key, name, pictureStore, chatId: message.sender.chatId ?? undefined });
         }
         return talkers;
     }
+
+    // Each woka sits on the person's colour from People, as on a direct chat's row.
+    const colourOf: Readable<PersonColourOf> = hasContext(PERSON_COLOUR_CONTEXT)
+        ? getContext(PERSON_COLOUR_CONTEXT)
+        : createPersonColourOf(gameManager.tryGetCurrentGameScene()?.userProviderMerger);
 
     // The people who were in the chat, with their wokas from the world when they're still around.
     // No scene while a reconnect swaps it: the row still shows, with initials.
@@ -75,6 +85,7 @@
                     key: id ?? name,
                     name,
                     pictureStore: user?.pictureStore ?? readable<string | undefined>(undefined),
+                    chatId: user?.chatID ?? undefined,
                 };
             })
             .filter((person) => person.name.trim() !== "");
@@ -140,7 +151,9 @@
     function withWorldPictures(list: Talker[], people: Talker[]): Talker[] {
         return list.map((talker) => {
             const known = people.find((person) => person.name === talker.name);
-            return known ? { ...talker, pictureStore: known.pictureStore } : talker;
+            return known
+                ? { ...talker, pictureStore: known.pictureStore, chatId: talker.chatId ?? known.chatId }
+                : talker;
         });
     }
     $: timestamp = lastMessage?.date?.getTime() ?? session.endedAt ?? session.startedAt;
@@ -172,15 +185,24 @@
             </div>
         {:else if shownTalkers.length >= 2}
             <div class="absolute start-0 top-0">
-                <TopRowAvatar pictureStore={shownTalkers[0].pictureStore} name={shownTalkers[0].name} />
+                <TopRowAvatar
+                    pictureStore={shownTalkers[0].pictureStore}
+                    name={shownTalkers[0].name}
+                    color={$colourOf(shownTalkers[0].chatId, shownTalkers[0].name)}
+                />
             </div>
             <div class="absolute end-0 bottom-0 scale-75 origin-bottom-right rtl:origin-bottom-left">
-                <TopRowAvatar pictureStore={shownTalkers[1].pictureStore} name={shownTalkers[1].name} />
+                <TopRowAvatar
+                    pictureStore={shownTalkers[1].pictureStore}
+                    name={shownTalkers[1].name}
+                    color={$colourOf(shownTalkers[1].chatId, shownTalkers[1].name)}
+                />
             </div>
         {:else if shownTalkers.length === 1}
             <TopRowAvatar
                 pictureStore={shownTalkers[0].pictureStore}
                 name={shownTalkers[0].name}
+                color={$colourOf(shownTalkers[0].chatId, shownTalkers[0].name)}
                 size="lg"
                 ring={false}
             />
