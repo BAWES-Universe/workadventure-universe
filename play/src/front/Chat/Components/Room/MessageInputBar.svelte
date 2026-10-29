@@ -891,6 +891,15 @@
             return true;
         } catch (error: unknown) {
             console.error("Error sending a voice note:", error);
+            if (
+                destination.room instanceof ProximityChatRoom &&
+                stayId !== undefined &&
+                !isSendDestinationOpen(destination)
+            ) {
+                // Its stay ended while it uploaded, and the upload failed: kept there as unsent, to send another way.
+                destination.room.keepUnsentVoiceNote(stayId, { file, details });
+                return true;
+            }
             const failure =
                 error instanceof UploadFailure ? error : new UploadFailure("other", undefined, "unexpected-error");
             showUploadError(uploadFailureLine([file], [failure]), new Map());
