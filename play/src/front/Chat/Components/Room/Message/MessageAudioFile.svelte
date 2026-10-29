@@ -142,6 +142,9 @@
     </button>
     {#if !isVoice}
         <div class="audio-title" data-testid="audioFileTitle">{title}</div>
+    {/if}
+    <!-- A file that never arrived has nothing to save: no button that looks tappable and does nothing. -->
+    {#if !isVoice && !unreachable}
         <button
             type="button"
             class="audio-download"

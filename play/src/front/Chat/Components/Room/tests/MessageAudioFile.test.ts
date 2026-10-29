@@ -13,7 +13,7 @@ vi.mock("../../../../../i18n/i18n-svelte", async () => {
         download: () => "Download",
         loading: () => "Loading…",
         cantPlay: () => "Can't play this file here. Download it instead.",
-        cantLoad: () => "Couldn't load this file.",
+        cantLoad: () => "Couldn't load this file. Reopen the chat to try again.",
     };
     return { default: readable({ chat: { voiceNote, audioFile } }) };
 });
@@ -168,8 +168,10 @@ describe("an audio file in chat", () => {
     it("says when the file could not be fetched instead of loading for ever", async () => {
         const holder = await show("Desert Drive.mp3", { url: undefined, mediaFailed: true });
 
-        expect(visibleText()).toContain("Couldn't load this file.");
+        expect(visibleText()).toContain("Couldn't load this file. Reopen the chat to try again.");
         expect(visibleText()).not.toContain("Loading");
+        // Nothing arrived, so there is nothing to download
+        expect(holder.querySelector("button[aria-label=Download]")).toBeNull();
         expect((holder.querySelector(".voice-play") as HTMLButtonElement).disabled).toBe(true);
         expect(holder.querySelector("audio")).toBeNull();
     });
