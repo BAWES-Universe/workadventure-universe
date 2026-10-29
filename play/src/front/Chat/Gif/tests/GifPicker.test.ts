@@ -337,6 +337,7 @@ describe("GifPicker", () => {
             const categories = vi.fn().mockResolvedValue([
                 { name: "lol", query: "lol", previewUrl: "https://static.klipy.com/lol.webp" },
                 { name: "love", query: "love", previewUrl: "https://static.klipy.com/love.webp" },
+                { name: "wow", query: "wow", previewUrl: "https://static.klipy.com/wow.webp" },
             ]);
             const client = fakeClient({ categories });
             mount(client);
@@ -344,39 +345,58 @@ describe("GifPicker", () => {
             expect(target.querySelector('[data-testid="gifPickerTrending"]')).toBeNull();
             await settle();
             expect(target.querySelector('[data-testid="gifPickerTilesLoading"]')).toBeNull();
-            expect(target.querySelectorAll('[data-testid="gifPickerTile"]')).toHaveLength(2);
+            expect(target.querySelectorAll('[data-testid="gifPickerTile"]')).toHaveLength(3);
 
             closePicker();
             mount(client);
             // No waiting: what the first opening learnt is there at once.
             expect(target.querySelector('[data-testid="gifPickerTilesLoading"]')).toBeNull();
-            expect(target.querySelectorAll('[data-testid="gifPickerTile"] img')).toHaveLength(2);
+            expect(target.querySelectorAll('[data-testid="gifPickerTile"] img')).toHaveLength(3);
             expect(target.querySelector('[data-testid="gifPickerTrending"] img')).not.toBeNull();
             expect(categories).toHaveBeenCalledTimes(1);
             expect(client.trending).toHaveBeenCalledTimes(1);
         });
 
-        it("loads the tile pictures at once and keeps them for the next opening", async () => {
+        it("loads a tile picture when its tile comes into view, and keeps it for the next opening", async () => {
             const client = fakeClient({
                 categories: vi.fn().mockResolvedValue([
                     { name: "lol", query: "lol", previewUrl: "https://static.klipy.com/lol.webp" },
                     { name: "love", query: "love", previewUrl: "https://static.klipy.com/love.webp" },
+                    { name: "wow", query: "wow", previewUrl: "https://static.klipy.com/wow.webp" },
                 ]),
             });
             mount(client);
             await settle();
-            // Not lazy: a tile built again must not wait to scroll into view before its picture starts.
-            for (const image of target.querySelectorAll(
-                '[data-testid="gifPickerTile"] img, [data-testid="gifPickerTrending"] img'
-            )) {
-                expect(image.getAttribute("loading")).toBeNull();
-            }
-            const held = gifSessionOf(client).pictures;
-            expect([...(held?.keys() ?? [])].sort()).toEqual([
+            const tileImages = () => [...target.querySelectorAll('[data-testid="gifPickerTile"] img')];
+            // The list is long: nothing is asked for before its tile is on screen.
+            for (const image of tileImages()) expect(image.getAttribute("loading")).toBe("lazy");
+            // The Trending tile is always the first one: not lazy.
+            expect(target.querySelector('[data-testid="gifPickerTrending"] img')?.getAttribute("loading")).toBeNull();
+            // Only the trending picture is held before any tile has loaded.
+            expect([...(gifSessionOf(client).pictures?.keys() ?? [])]).toEqual(["https://static.klipy.com/t-sm.webp"]);
+
+            tileImages()[0].dispatchEvent(new Event("load"));
+            tileImages()[1].dispatchEvent(new Event("load"));
+            expect([...(gifSessionOf(client).pictures?.keys() ?? [])].sort()).toEqual([
                 "https://static.klipy.com/lol.webp",
                 "https://static.klipy.com/love.webp",
                 "https://static.klipy.com/t-sm.webp",
             ]);
+
+            closePicker();
+            mount(client);
+            // A tile built again whose picture was seen does not wait to scroll into view: it shows it at once.
+            expect(tileImages().map((image) => image.getAttribute("loading"))).toEqual([null, null, "lazy"]);
+        });
+
+        it("shows every category Klipy sends, less what would sit alone on the last row", async () => {
+            const names = Array.from({ length: 14 }, (_, index) => `word${index}`);
+            mount(fakeClient({ categories: vi.fn().mockResolvedValue(names.map((name) => ({ name, query: name }))) }));
+            await settle();
+            // 14 categories and Trending are 15 tiles; at two a row the last one is left out.
+            const tiles = [...target.querySelectorAll('[data-testid="gifPickerTile"]')];
+            expect(tiles).toHaveLength(13);
+            expect(tiles[12].textContent?.trim()).toBe("word12");
         });
 
         it("asks Klipy for the tiles again once five minutes have passed", async () => {
@@ -561,6 +581,21 @@ describe("GifPicker", () => {
                 expect(target.querySelectorAll(".column")).toHaveLength(gifs);
             }
         );
+
+        it("keeps every row of tiles full at three a row too", async () => {
+            const names = Array.from({ length: 13 }, (_, index) => `word${index}`);
+            const categories = vi.fn().mockResolvedValue(names.map((name) => ({ name, query: name })));
+            const anchor = anchorOfWidth(500);
+            mount(fakeClient({ categories }), vi.fn(), { anchor });
+            await settle();
+            // 13 categories and Trending are 14 tiles: 12 in four full rows of three.
+            expect(target.querySelectorAll('[data-testid="gifPickerTile"]')).toHaveLength(11);
+            // The same list at two a row: 14 tiles fill seven rows, nothing is left out.
+            anchor.width = 360;
+            resizeCallback?.([]);
+            await settle();
+            expect(target.querySelectorAll('[data-testid="gifPickerTile"]')).toHaveLength(13);
+        });
 
         it("moves the GIFs into more columns when the chat panel grows", async () => {
             const search = vi.fn().mockResolvedValue({

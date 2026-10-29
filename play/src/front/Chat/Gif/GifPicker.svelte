@@ -6,6 +6,7 @@
     import type { GifCategory, GifItem, KlipyClient } from "./KlipyClient";
     import {
         fallbackCategories,
+        fullRowCategories,
         gifColumnsFor,
         gifNeighbour,
         pickerWidthFor,
@@ -17,7 +18,13 @@
     } from "./GifLayout";
     import type { GridMove } from "./GifLayout";
     import { outsideClick } from "./GifOutsideClick";
-    import { gifSessionOf, holdGifPicture, markGifSessionLoaded, sharedKlipyClient } from "./GifSession";
+    import {
+        gifSessionOf,
+        holdGifPicture,
+        isGifPictureHeld,
+        markGifSessionLoaded,
+        sharedKlipyClient,
+    } from "./GifSession";
     import { IconArrowLeft, IconSearch, IconTrendingUp, IconWifiOff, IconX } from "@wa-icons";
 
     /** Called with the link of the GIF the player tapped. */
@@ -70,7 +77,8 @@
     $: gifColumns = gifColumnsFor(width);
     $: if (gifColumns !== columns.length) layout();
 
-    $: shownCategories = categories ?? [];
+    // Every category Klipy sent, less what would sit alone on the last row.
+    $: shownCategories = fullRowCategories(categories ?? [], tileColumns);
     $: tilesLoading = categories === undefined;
     $: tileCount = 1 + shownCategories.length;
     $: tileSkeletons = Array.from({ length: tileColumns === 3 ? 9 : 8 });
@@ -271,9 +279,8 @@
                 .categories()
                 .then((found) => {
                     if (found.length > 0) {
-                        session.categories = found.slice(0, 12);
+                        session.categories = found;
                         markGifSessionLoaded(session);
-                        for (const category of session.categories) holdGifPicture(session, category.previewUrl);
                     }
                     categories = session.categories ?? fallbackCategories();
                 })
@@ -440,7 +447,16 @@
                             on:click={() => openCategory(category)}
                         >
                             {#if category.previewUrl}
-                                <img src={category.previewUrl} alt="" draggable="false" referrerpolicy="no-referrer" />
+                                <!-- The list is long: a picture loads when its tile comes into view, and is kept once
+                                     loaded so the next opening shows it at once. -->
+                                <img
+                                    src={category.previewUrl}
+                                    alt=""
+                                    draggable="false"
+                                    referrerpolicy="no-referrer"
+                                    loading={isGifPictureHeld(session, category.previewUrl) ? undefined : "lazy"}
+                                    on:load={() => session && holdGifPicture(session, category.previewUrl)}
+                                />
                             {/if}
                             <span class="tile-label">{category.name}</span>
                         </button>
@@ -535,6 +551,9 @@
     /* The width follows the chat panel (set inline once the panel is known, 360px until then). Tall enough for a
        few rows, but half the screen on a phone so the chat stays in view. */
     .gif-picker {
+        /* The width is the whole box, padding included: the game has no global reset, and the picker would be
+           20px wider than its chat panel allows and stick out on the left now that it sits on the right. */
+        box-sizing: border-box;
         display: flex;
         flex-direction: column;
         gap: 8px;

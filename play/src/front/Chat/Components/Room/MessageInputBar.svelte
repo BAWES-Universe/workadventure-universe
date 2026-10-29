@@ -607,10 +607,12 @@
                     hideGifPicker();
                 },
             },
-            // Centred on the bar: as wide as the panel less 8px each side, so it has 8px on both.
-            { placement: "top" },
+            // On the right of the bar, above the GIF button, like the emoji picker: 8px in from the right edge. On a
+            // narrow panel it is as wide as the bar less 8px each side, so it has 8px on both.
+            { placement: "top-end" },
             8,
-            false
+            false,
+            8
         );
     }
 
