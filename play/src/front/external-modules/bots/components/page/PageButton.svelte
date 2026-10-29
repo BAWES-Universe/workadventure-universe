@@ -50,6 +50,9 @@
         .bp-btn:not(:disabled):hover {
             background: rgba(255, 255, 255, 0.14);
         }
+        .bp-btn.go:not(:disabled):hover {
+            background: linear-gradient(135deg, #8629fc, #4156f6);
+        }
         .bp-btn.danger:not(:disabled):hover {
             background: rgba(255, 112, 92, 0.16);
         }

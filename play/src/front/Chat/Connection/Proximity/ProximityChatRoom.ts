@@ -201,7 +201,11 @@ export class ProximityChatMessage implements ChatMessage {
         if (!["image", "video", "file", "audio"].includes(this.type)) return undefined;
         const content = get(this.content);
         if (!content.url) return undefined;
-        return { name: content.filename || fileNameOfUrl(content.url), size: undefined, voice: false };
+        return {
+            name: content.filename || fileNameOfUrl(content.url),
+            size: undefined,
+            voice: content.isVoice === true,
+        };
     }
 
     remove(): void {
