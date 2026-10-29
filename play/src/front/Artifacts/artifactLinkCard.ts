@@ -26,9 +26,10 @@ export function artifactIdOfLink(url: string, orbitUrl: string | undefined = ADM
 const checked = new Map<string, Promise<ArtifactCard | undefined>>();
 
 /**
- * The card a pasted artifact link shows, at its latest version, or undefined when this person may not open it from
+ * The card a pasted artifact link shows, or undefined when this person may not open it from
  * here (or it is gone): then the link stays a plain link and nothing about the artifact is shown. Orbit decides, with
- * the same rules as tapping a bot's card.
+ * the same rules as tapping a bot's card. Its version is only the one seen when checked: the card opens whatever is
+ * latest when tapped.
  */
 export function linkedArtifactCard(id: string, chat: ArtifactChat | undefined): Promise<ArtifactCard | undefined> {
     const key = `${id}|${chat?.kind ?? ""}|${chat?.ref ?? ""}`;

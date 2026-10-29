@@ -14,15 +14,22 @@ export function openArtifactWindow(id: string): ArtifactCoWebsite | undefined {
 }
 
 /**
- * Opens a card's artifact in the window, at the version the card names. Tapping the card of the one that is open
- * brings that panel back instead (at that card's version). On a phone the chat sheet drops to its lowest height so the
+ * Opens a card's artifact in the window, at the version the card names, or at whatever is latest for a pasted share
+ * link (`atLatest`, game #1582), since that is what the link means. Tapping the card of the one that is open brings
+ * that panel back instead (at that card's version). On a phone the chat sheet drops to its lowest height so the
  * artifact shows above it.
  */
-export function openArtifactFromCard(card: ArtifactCard, chat: ArtifactChat | undefined, makerName?: string): void {
+export function openArtifactFromCard(
+    card: ArtifactCard,
+    chat: ArtifactChat | undefined,
+    makerName?: string,
+    atLatest = false
+): void {
     lowerChatSheet();
+    const version = atLatest ? undefined : card.version;
     const existing = openArtifactWindow(card.id);
     if (existing) {
-        existing.version.set(card.version);
+        existing.version.set(version);
         if (chat) existing.chat = chat;
         // With other panels open, it moves to the end, where the container shows the newest panel.
         if (get(coWebsites).length > 1) {
@@ -38,7 +45,7 @@ export function openArtifactFromCard(card: ArtifactCard, chat: ArtifactChat | un
                 card.id,
                 chat,
                 { title: card.title, kind: card.kind, makerName: card.maker ?? makerName },
-                card.version
+                version
             )
         )
     );

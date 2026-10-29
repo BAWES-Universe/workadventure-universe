@@ -102,7 +102,7 @@ describe("an artifact's share link pasted in a chat", () => {
         await tick();
     }
 
-    it("shows the artifact's card, which opens it in the game window at its latest version", async () => {
+    it("shows the artifact's card, which opens it in the game window at whatever is latest", async () => {
         vi.spyOn(globalThis, "fetch").mockResolvedValue(
             answer(200, {
                 artifact: { id: ID, title: "Dubai trip, day 3", kind: "page", makerName: "Laura", version: 4 },
@@ -118,9 +118,11 @@ describe("an artifact's share link pasted in a chat", () => {
 
         card?.click();
         expect(openArtifactFromCard).toHaveBeenCalledWith(
-            expect.objectContaining({ id: ID, version: 4, title: "Dubai trip, day 3", maker: "Laura" }),
+            expect.objectContaining({ id: ID, title: "Dubai trip, day 3", maker: "Laura" }),
             undefined,
-            undefined
+            undefined,
+            // At whatever is latest when tapped, not the version seen when the card was checked
+            true
         );
     });
 

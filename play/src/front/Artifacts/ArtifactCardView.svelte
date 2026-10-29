@@ -25,7 +25,9 @@
             coWebsite instanceof ArtifactCoWebsite && coWebsite.artifactId === card.id
     );
     $: shownVersion = openWindow?.version;
-    $: isOpen = openWindow !== undefined && $shownVersion === card.version;
+    // A pasted link's card stands for the latest version, whichever number that is now.
+    $: isOpen =
+        openWindow !== undefined && ($shownVersion === card.version || (fromLink && $shownVersion === undefined));
     $: badge = artifactBadge(card.kind, $LL);
     $: kindName = artifactKindName(card.kind, $LL);
     $: linkMaker = card.maker ?? makerName;
@@ -39,7 +41,7 @@
 
     function open() {
         const chat: ArtifactChat | undefined = chatOf?.();
-        openArtifactFromCard(card, chat, makerName);
+        openArtifactFromCard(card, chat, makerName, fromLink);
     }
 </script>
 
