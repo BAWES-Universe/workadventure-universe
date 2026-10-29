@@ -91,6 +91,28 @@ describe("chatBackSwipe", () => {
         expect(get(chatBackPeekStore)).toBeUndefined();
     });
 
+    it("does not end the slide on a transition that finishes inside the conversation", async () => {
+        node = makeChat(["thread"]);
+        action = chatBackSwipe(node, { listBeside: false });
+        const thread = node.querySelector<HTMLElement>('[data-chat-layer="thread"]') as HTMLElement;
+        const inner = document.createElement("div");
+        thread.appendChild(inner);
+        swipe(
+            node,
+            [10, 300],
+            [
+                [30, 302],
+                [80, 304],
+                [160, 305],
+            ]
+        );
+        // A hover or focus change inside the layer ends its own transition and bubbles up.
+        inner.dispatchEvent(new Event("transitionend", { bubbles: true }));
+        expect(get(selectedRoomStore)).toBe(room);
+        await settled();
+        expect(get(selectedRoomStore)).toBeUndefined();
+    });
+
     it("lets go early and the conversation slides back", async () => {
         node = makeChat(["thread"]);
         action = chatBackSwipe(node, { listBeside: false });

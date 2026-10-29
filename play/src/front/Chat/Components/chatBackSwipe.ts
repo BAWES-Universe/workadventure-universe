@@ -147,7 +147,9 @@ export function chatBackSwipe(
         moving.style.transition = reduce ? "none" : `transform ${SETTLE_MS}ms cubic-bezier(0.2, 0.8, 0.2, 1)`;
         moving.style.transform = `translateX(${target * direction}px)`;
         let done = false;
-        const end = () => {
+        // transitionend bubbles: only the layer's own slide ends the settle, not a hover or focus change inside it.
+        const end = (event?: Event) => {
+            if (event && (event.target !== moving || (event as TransitionEvent).propertyName !== "transform")) return;
             if (done) return;
             done = true;
             moving.removeEventListener("transitionend", end);
@@ -162,7 +164,7 @@ export function chatBackSwipe(
             return;
         }
         moving.addEventListener("transitionend", end);
-        setTimeout(end, SETTLE_MS + 80);
+        setTimeout(() => end(), SETTLE_MS + 80);
     }
 
     function finish() {
