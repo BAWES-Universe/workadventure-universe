@@ -881,6 +881,8 @@ const chat: BaseTranslation = {
         linkCardLineOpen: "{kind} · By {maker} · Open",
         cardAria: "Open {title}, version {version}",
         by: "By {maker}",
+        yours: "Your artifacts",
+        yoursLine: "{count} from every bot and chat",
         byVersion: "By {maker} · Version {version}",
         byVersionOf: "By {maker} · Version {version} of {count}",
         opening: "Opening…",

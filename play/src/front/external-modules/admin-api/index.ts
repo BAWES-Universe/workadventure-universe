@@ -21,6 +21,7 @@ import { ringStore } from "../../Chat/Stores/RingStore";
 import { openDirectChatRoom } from "../../Chat/Utils";
 import { openProfileLinkHere, profileLinksOpeningHere } from "../../Chat/LinkPreview/ProfileLinks";
 import { openArtifactFromCard } from "../../Artifacts/openArtifact";
+import { openYourArtifacts } from "../../Artifacts/openYourArtifacts";
 import { artifactKindOf } from "../../Artifacts/artifactCard";
 import {
     ORBIT_AUTH_VERSION,
@@ -39,6 +40,7 @@ import {
     isOrbitMessagePersonMessage,
     isOrbitCheckLinksMessage,
     isOrbitOpenArtifactMessage,
+    isOrbitOpenArtifactsListMessage,
     isOrbitHistoryMessage,
     isOrbitOpenLinkMessage,
     isOrbitProfileChangedMessage,
@@ -337,6 +339,11 @@ function handleAdminAuthMessage(event: MessageEvent<unknown>) {
                 },
                 undefined
             );
+        return;
+    }
+    if (isOrbitOpenArtifactsListMessage(event.data)) {
+        // Your artifacts, from View all: the window comes in front with the list, and Orbit stays behind.
+        if (bridge && event.data.roomRevision === bridge.roomRevision) openYourArtifacts();
         return;
     }
     if (!isOrbitAuthReadyMessage(event.data)) return;

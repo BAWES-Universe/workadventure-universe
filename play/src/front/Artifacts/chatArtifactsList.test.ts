@@ -6,7 +6,8 @@ vi.mock("../Enum/EnvironmentVariable", () => ({ ADMIN_URL: undefined }));
 vi.mock("../Connection/LocalUserStore", () => ({ localUserStore: { getAuthToken: () => "token" } }));
 
 import type { ArtifactChat, ChatArtifact, ChatArtifactPage } from "./ArtifactApi";
-import { ChatArtifactsList, chatArtifactsList } from "./chatArtifactsList";
+import { fetchYourArtifacts } from "./ArtifactApi";
+import { ChatArtifactsList, chatArtifactsList, yourArtifactsList } from "./chatArtifactsList";
 
 const chat: ArtifactChat = { kind: "dm", ref: "!room:chat.example" };
 const artifact = (id: string): ChatArtifact => ({
@@ -76,5 +77,31 @@ describe("a chat's artifacts", () => {
     it("is the same list for a chat's group and its page", () => {
         expect(chatArtifactsList(chat)).toBe(chatArtifactsList({ ...chat }));
         expect(chatArtifactsList(chat)).not.toBe(chatArtifactsList({ kind: "nearby", ref: chat.ref }));
+    });
+});
+
+describe("your artifacts (#1609)", () => {
+    it("asks the game's server for every one you own, a page at a time, and marks each as yours", async () => {
+        const row = { ...artifact("a"), yours: undefined };
+        const fetchMock = vi.fn(() =>
+            Promise.resolve(new Response(JSON.stringify({ artifacts: [row], total: 51, next: 50 }), { status: 200 }))
+        );
+        vi.stubGlobal("fetch", fetchMock);
+        try {
+            const answer = await fetchYourArtifacts(50);
+            expect(fetchMock).toHaveBeenCalledWith("https://pusher.test/artifacts/owned", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: "token" },
+                body: JSON.stringify({ offset: 50 }),
+            });
+            expect(answer).toMatchObject({ total: 51, next: 50 });
+            expect(answer.artifacts[0]).toMatchObject({ id: "a", yours: true });
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+
+    it("is one list wherever it opens", () => {
+        expect(yourArtifactsList()).toBe(yourArtifactsList());
     });
 });
