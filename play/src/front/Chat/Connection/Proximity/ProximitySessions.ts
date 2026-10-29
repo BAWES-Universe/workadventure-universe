@@ -386,10 +386,9 @@ export function buildProximitySessions<M extends SessionTimelineMessage>(
             open.startedAt !== undefined &&
             open.startedAt >= currentSpaceJoinedAt - 1000;
         open.isLive = startedRecently;
-        if (!open.isLive) {
-            open.unsentDraft = open.unsentDraft ?? drafts?.get(open.id);
-            open.unsentVoiceNote = voiceNotes?.get(open.id);
-        }
+        if (!open.isLive) open.unsentDraft = open.unsentDraft ?? drafts?.get(open.id);
+        // A note can be kept in the live stay too: put back in the recorder, then the chat was closed before it went.
+        open.unsentVoiceNote = voiceNotes?.get(open.id);
         sessions.push(open);
     }
     const conversations = continueConversations(sessions, rules);

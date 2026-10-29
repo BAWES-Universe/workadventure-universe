@@ -1085,12 +1085,11 @@ export class ProximityChatRoom implements ChatRoom {
      */
     public takeUnsentVoiceNote(session: ProximitySession<ChatMessage>): UnsentVoiceNote | undefined {
         const notes = new Map(get(this._unsentVoiceNotes));
-        let note: UnsentVoiceNote | undefined;
-        for (const id of session.stayIds) {
-            note = notes.get(id) ?? note;
-            notes.delete(id);
-        }
-        if (note === undefined) return undefined;
+        // The latest one, the note the session shows. An earlier stay's note stays kept: it shows once this one is out.
+        const id = [...session.stayIds].reverse().find((stayId) => notes.has(stayId));
+        if (id === undefined) return undefined;
+        const note = notes.get(id);
+        notes.delete(id);
         this._unsentVoiceNotes.set(notes);
         return note;
     }

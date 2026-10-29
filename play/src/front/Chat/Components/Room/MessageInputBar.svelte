@@ -200,6 +200,7 @@
         voiceSpaceGeneration = spaceGenerationOf(room);
         voiceForStay = true;
         voiceSessionId = proximityRoom.currentSessionId;
+        voiceRestored = true;
     }
 
     const selectedChatChatMessageToReplyUnsubscriber = selectedChatMessageToReply.subscribe((chatMessage) => {
@@ -544,7 +545,8 @@
         // Leaving the conversation ends the typing status there.
         typingSignal.stop();
         // The stay ended while a voice note for it was being made: it is kept there as unsent, never sent on. Leaving
-        // the map closes the stay without a new space, so the stay's id says it too.
+        // the map closes the stay without a new space, so the stay's id says it too. A note that was put back in the
+        // recorder is kept even while the stay goes on: it goes back in the next time this chat is opened.
         if (
             voiceActive &&
             voiceForStay &&
@@ -552,7 +554,7 @@
             !sendingVoice &&
             room instanceof ProximityChatRoom &&
             voiceSessionId !== undefined &&
-            room.currentSessionId !== voiceSessionId
+            (room.currentSessionId !== voiceSessionId || voiceRestored)
         ) {
             keepVoiceNoteIn(room, voiceSessionId);
         }
@@ -808,6 +810,8 @@
     let voiceSessionId: string | undefined;
     // True while a note is being uploaded.
     let sendingVoice = false;
+    // True when the note in the recorder is one kept unsent and put back, not one recorded here.
+    let voiceRestored = false;
     $: if ($proximitySessions) {
         keepVoiceNoteOfEndedStay();
         // The stay a note started alone is for gets its id once that stay has one (just after the space is joined).
@@ -817,6 +821,7 @@
     }
 
     function startVoiceNote() {
+        voiceRestored = false;
         voiceSpaceGeneration = spaceGenerationOf(room);
         voiceSessionId = room instanceof ProximityChatRoom ? room.currentSessionId : undefined;
         voiceForStay = voiceSessionId !== undefined;
