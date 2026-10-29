@@ -188,6 +188,57 @@ describe('MatrixDmBridge', () => {
         expect(mediaSent).toHaveBeenCalledWith(song);
     });
 
+    describe('the copy of a sent file on our uploader (#1572)', () => {
+        const song = { url: 'https://tools.example.com/song.mp3?sig=abc', mediaType: 'audio', mimeType: 'audio/mpeg', createdAt: 0, retryCount: 0 };
+
+        async function sendOne(item: any, uploadAttachment?: (...args: any[]) => Promise<string | null>) {
+            const { FileParser } = await import('../services/FileParser');
+            vi.spyOn(FileParser, 'validateUrl').mockResolvedValue(undefined as never);
+            const axios = (await import('axios')).default;
+            vi.spyOn(axios, 'get').mockResolvedValue({ data: Buffer.from('song'), headers: { 'content-type': 'audio/mpeg' } } as never);
+            deps.uploadAttachment = uploadAttachment;
+            const mediaSent = vi.fn();
+            await bridge.onEvent(invite());
+            deps.reply.mockResolvedValueOnce({ text: 'Here it is.', media: [item], mediaSent });
+            await bridge.onEvent(message('make me a song'));
+            return mediaSent;
+        }
+
+        it("keeps our uploader's copy on the list, not the tool's link, and still sends the file", async () => {
+            const upload = vi.fn(async () => 'https://uploader.test/upload-file/song.mp3');
+            const mediaSent = await sendOne(song, upload);
+            expect(upload).toHaveBeenCalledWith(Buffer.from('song'), 'audio/mpeg', 'song.mp3');
+            expect(client.sendMessage).toHaveBeenCalledWith(BOT_USER, ROOM, expect.objectContaining({ msgtype: 'm.audio', url: 'mxc://matrix.test/abc' }));
+            expect(mediaSent).toHaveBeenCalledWith({ ...song, originalUrl: song.url, url: 'https://uploader.test/upload-file/song.mp3' });
+        });
+
+        it("keeps the tool's link when the copy fails, and the file still reaches the person", async () => {
+            const mediaSent = await sendOne(song, vi.fn(async () => { throw new Error('uploader down'); }));
+            expect(client.sendMessage).toHaveBeenCalledWith(BOT_USER, ROOM, expect.objectContaining({ msgtype: 'm.audio' }));
+            expect(mediaSent).toHaveBeenCalledWith(song);
+        });
+
+        it('makes no copy of a file sent again from the list', async () => {
+            const upload = vi.fn(async () => 'https://uploader.test/upload-file/again.mp3');
+            const mediaSent = await sendOne({ ...song, again: true }, upload);
+            expect(upload).not.toHaveBeenCalled();
+            expect(mediaSent).toHaveBeenCalledWith({ ...song, again: true });
+        });
+
+        it('makes no second copy of a file already on the uploader', async () => {
+            vi.stubEnv('UPLOADER_URL', 'https://uploader.test');
+            try {
+                const upload = vi.fn(async () => 'https://uploader.test/upload-file/other.mp3');
+                const kept = { ...song, url: 'https://uploader.test/upload-file/song.mp3' };
+                const mediaSent = await sendOne(kept, upload);
+                expect(upload).not.toHaveBeenCalled();
+                expect(mediaSent).toHaveBeenCalledWith(kept);
+            } finally {
+                vi.unstubAllEnvs();
+            }
+        });
+    });
+
     it('answers with just the card when the bot made an artifact and said nothing', async () => {
         await bridge.onEvent(invite());
         const card = { id: 'art-1', version: 1, title: 'Clock', kind: 'page', maker: 'Guide' };

@@ -647,16 +647,17 @@ export class MatrixDmBridge implements MatrixEventHandler {
             }
             for (const item of reply.media ?? []) {
                 const sent = await this.sendMedia(botUserId, event.room_id, item).then(
-                    () => true,
+                    (copy) => ({ copy }),
                     (error) => {
                         console.warn(`[MatrixDmBridge] Could not send media from bot ${botId}:`, error?.message ?? error);
-                        return false;
+                        return null;
                     }
                 );
-                // On the person's list of files once it reached them (#1508); keeping it never stops the reply
+                // On the person's list of files once it reached them (#1508); keeping it never stops the reply.
+                // The list keeps our own copy (#1572), so a tool link that expires or is signed cannot lose the file.
                 if (sent) {
                     try {
-                        reply.mediaSent?.(item);
+                        reply.mediaSent?.(sent.copy ? { ...item, originalUrl: item.originalUrl ?? item.url, url: sent.copy } : item);
                     } catch {
                         // nothing to undo: the file was sent
                     }
@@ -942,7 +943,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
     }
 
-    private async sendMedia(botUserId: string, roomId: string, item: PendingMedia): Promise<void> {
+    /** Sends the file; returns the link of the copy on our uploader that the bot's list keeps, or null when there is none. */
+    private async sendMedia(botUserId: string, roomId: string, item: PendingMedia): Promise<string | null> {
         const { FileParser } = await import('../services/FileParser');
         await FileParser.validateUrl(item.url);
         const response = await axios.get(item.url, {
@@ -963,5 +965,21 @@ export class MatrixDmBridge implements MatrixEventHandler {
             url: mxc,
             info: { mimetype: mimeType, size: data.length },
         });
+        return this.keepCopy(item, data, mimeType, filename);
+    }
+
+    /**
+     * A copy of a sent file on our uploader, the same place nearby chat keeps it. A file already on the uploader, one
+     * sent again from the list and a failed copy keep what they have: the file reached the person, so this never fails the send.
+     */
+    private async keepCopy(item: PendingMedia, data: Buffer, mimeType: string, filename: string): Promise<string | null> {
+        const uploaderUrl = process.env.UPLOADER_URL;
+        if (item.again || !this.deps.uploadAttachment || (uploaderUrl && item.url.startsWith(uploaderUrl))) return null;
+        try {
+            return await this.deps.uploadAttachment(data, mimeType, filename);
+        } catch (error) {
+            console.warn('[MatrixDmBridge] Could not copy a sent file to the uploader:', (error as Error)?.message ?? error);
+            return null;
+        }
     }
 }
