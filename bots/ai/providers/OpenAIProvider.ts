@@ -244,6 +244,15 @@ export class OpenAIProvider implements AIProvider {
     }
 
     /**
+     * Alibaba's thinking models (open-source Qwen3 among them) answer a non-streaming call with 400 "parameter.enable_thinking only support stream call" unless thinking is turned off
+     * (the message names `enable_thinking`). Streamed replies are not affected. A request that already says it is not
+     * asked again.
+     */
+    private rejectsThinking(status: number, errorText: string, requestBody: Record<string, any>): boolean {
+        return status === 400 && requestBody.enable_thinking === undefined && /enable_thinking/i.test(errorText);
+    }
+
+    /**
      * Build request body with correct token limit parameter
      */
     private buildRequestBody(
@@ -742,13 +751,17 @@ export class OpenAIProvider implements AIProvider {
                     const outputCeiling = statedOutputCeiling(response.status, errorText, requestBody.max_completion_tokens ?? requestBody.max_tokens);
 
                     // If error is about temperature, retry without temperature (use default)
-                    if (this.rejectsTemperature(response.status, errorData, errorText, requestBody)) {
-                        OpenAIProvider.refusedTemperature.add(OpenAIProvider.outputCeilingKey(config, endpoint));
+                    const refusesTemperature = this.rejectsTemperature(response.status, errorData, errorText, requestBody);
+                    if (refusesTemperature || this.rejectsThinking(response.status, errorText, requestBody)) {
+                        if (refusesTemperature) OpenAIProvider.refusedTemperature.add(OpenAIProvider.outputCeilingKey(config, endpoint));
                         if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                            console.log(`[OpenAIProvider] Retrying without temperature parameter for model: ${config.model}`);
+                            console.log(
+                                `[OpenAIProvider] Retrying ${refusesTemperature ? 'without temperature' : 'with thinking off'} for model: ${config.model}`
+                            );
                         }
                         const retryBody = { ...requestBody };
-                        delete retryBody.temperature;
+                        if (refusesTemperature) delete retryBody.temperature;
+                        else retryBody.enable_thinking = false;
 
                         const retryController = new AbortController();
                         externalAbortCleanups.push(linkExternalAbort(externalSignal, retryController));
