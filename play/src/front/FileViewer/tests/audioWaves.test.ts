@@ -46,3 +46,11 @@ describe("the music stage's waves", () => {
         expect(bandsSettled(shown, QUIET_BANDS)).toBe(true);
     });
 });
+
+describe("the window's audio element", () => {
+    it("is one element, kept from song to song, so a tap that played it lets the next song play", async () => {
+        const { windowAudioElement } = await import("../audioWaves");
+        expect(windowAudioElement()).toBe(windowAudioElement());
+        expect(windowAudioElement().volume).toBe(0.8);
+    });
+});

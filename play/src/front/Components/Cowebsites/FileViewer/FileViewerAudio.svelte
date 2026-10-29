@@ -13,8 +13,10 @@
         bandsSettled,
         drawWaves,
         easeBands,
+        joinedWindowAudioAnalyser,
         QUIET_BANDS,
-        stageAudioContext,
+        windowAudioAnalyser,
+        windowAudioElement,
         type Bands,
     } from "../../../FileViewer/audioWaves";
     import type { FileViewerAudio } from "../../../WebRtc/CoWebsite/FileViewerCoWebsite";
@@ -56,17 +58,23 @@
 
     const url = audio.url;
     // The page may only listen to a file it holds itself: another site's file would play silent through the stage.
+    // Such a file plays on an element of its own, without the stage.
     const canListen = url.startsWith("blob:");
     const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
 
-    let player: HTMLAudioElement | undefined;
+    const player = canListen ? windowAudioElement() : new Audio();
+    const ownPlayback = canListen ? undefined : singlePlayback(player);
+    player.src = url;
+    // The window's element is shared from song to song: it answers only while it plays this one.
+    const isMine = () => player.getAttribute("src") === url;
     let canvas: HTMLCanvasElement | undefined;
     let playing = false;
     let current = 0;
     let duration: number | undefined;
     let speed = 0;
-    let volume = 0.8;
-    let muted = false;
+    // The level carries over from the last song.
+    let volume = player.volume;
+    let muted = player.muted;
     let volumeDragging = false;
     let failed = false;
     let levels: number[] | undefined;
@@ -173,36 +181,12 @@
 
     // The stage listens to the music while it plays.
     let analyser: AnalyserNode | undefined;
-    let elementSource: MediaElementAudioSourceNode | undefined;
     let bins: Uint8Array | undefined;
     let shown: Bands = QUIET_BANDS;
     let time = 0;
     let lastFrame = 0;
     let frame = 0;
     let drawing = false;
-
-    function listen(): void {
-        if (analyser || !player || !canListen) return;
-        const context = stageAudioContext();
-        if (!context) return;
-        // Once the song goes through the stage it plays only while the context runs: it is joined to a running one.
-        const join = () => {
-            if (analyser || !player || context.state !== "running") return;
-            try {
-                elementSource = context.createMediaElementSource(player);
-                analyser = context.createAnalyser();
-                analyser.fftSize = 2048;
-                analyser.smoothingTimeConstant = 0.78;
-                elementSource.connect(analyser);
-                analyser.connect(context.destination);
-                bins = new Uint8Array(analyser.frequencyBinCount);
-            } catch (error) {
-                console.warn("The music stage can't listen to this file", error);
-            }
-        };
-        if (context.state === "running") join();
-        else context.resume().then(join, () => undefined);
-    }
 
     function paint(): void {
         if (!canvas) return;
@@ -224,6 +208,11 @@
         lastFrame = now;
         time += elapsed * (playing ? 1 : 0.35);
         let target = QUIET_BANDS;
+        // The analyser joins once its context runs, a moment after the first play.
+        if (playing && canListen && !analyser) analyser = joinedWindowAudioAnalyser();
+        if (analyser && (!bins || bins.length !== analyser.frequencyBinCount)) {
+            bins = new Uint8Array(analyser.frequencyBinCount);
+        }
         if (playing && analyser && bins) {
             analyser.getByteFrequencyData(bins);
             target = bandsOf(bins, analyser.context.sampleRate);
@@ -256,19 +245,19 @@
     }
 
     function play(): void {
-        if (!player || failed) return;
-        listen();
+        if (failed) return;
+        if (canListen) analyser = windowAudioAnalyser();
         player.play().catch((error) => console.warn("Could not play an audio file", error));
     }
 
     function toggle(): void {
-        if (!player || failed) return;
+        if (failed) return;
         if (playing) player.pause();
         else play();
     }
 
     function seekTo(seconds: number): void {
-        if (!player || !duration) return;
+        if (!duration) return;
         player.currentTime = Math.min(duration, Math.max(0, seconds));
     }
 
@@ -278,7 +267,7 @@
 
     function cycleSpeed(): void {
         speed = (speed + 1) % SPEEDS.length;
-        if (player) player.playbackRate = SPEEDS[speed];
+        player.playbackRate = SPEEDS[speed];
     }
 
     function scrubAt(event: PointerEvent): void {
@@ -316,18 +305,37 @@
         }
     }
 
-    function onPlay(): void {
-        playing = true;
-        // A phone may have stopped the context (a call): the song would play silent through the stage.
-        if (analyser && analyser.context.state === "suspended") {
-            (analyser.context as AudioContext).resume().catch(() => undefined);
-        }
-    }
+    $: player.volume = volume;
+    $: player.muted = muted;
 
-    $: if (player) {
-        player.volume = volume;
-        player.muted = muted;
-    }
+    const listeners: [string, () => void][] = [
+        ["play", () => (playing = true)],
+        ["pause", () => (playing = false)],
+        [
+            "ended",
+            () => {
+                playing = false;
+                current = 0;
+            },
+        ],
+        ["error", () => (failed = true)],
+        ["timeupdate", () => (current = player.currentTime)],
+        ["seeked", () => (current = player.currentTime)],
+        [
+            "durationchange",
+            () => {
+                duration = Number.isFinite(player.duration) && player.duration > 0 ? player.duration : undefined;
+            },
+        ],
+        ["loadedmetadata", () => (player.playbackRate = SPEEDS[speed])],
+    ];
+    const handlers = listeners.map(([event, handler]) => {
+        const guarded = () => {
+            if (isMine()) handler();
+        };
+        player.addEventListener(event, guarded);
+        return [event, guarded] as const;
+    });
 
     onMount(() => {
         void readShape();
@@ -337,10 +345,15 @@
 
     onDestroy(() => {
         cancelAnimationFrame(frame);
-        player?.pause();
         stopOpening?.();
-        elementSource?.disconnect();
-        analyser?.disconnect();
+        for (const [event, handler] of handlers) player.removeEventListener(event, handler);
+        ownPlayback?.destroy();
+        // The next song may have taken the element already: only this one's is let go.
+        if (isMine()) {
+            player.pause();
+            player.removeAttribute("src");
+            player.load();
+        }
     });
 </script>
 
@@ -560,27 +573,6 @@
             {/each}
         </div>
     {/if}
-
-    <audio
-        src={url}
-        preload="metadata"
-        bind:this={player}
-        use:singlePlayback
-        bind:currentTime={current}
-        on:play={onPlay}
-        on:pause={() => (playing = false)}
-        on:ended={() => {
-            playing = false;
-            current = 0;
-        }}
-        on:error={() => (failed = true)}
-        on:durationchange={() => {
-            duration = player && Number.isFinite(player.duration) && player.duration > 0 ? player.duration : undefined;
-        }}
-        on:loadedmetadata={() => {
-            if (player) player.playbackRate = SPEEDS[speed];
-        }}
-    />
 </div>
 
 <style>
