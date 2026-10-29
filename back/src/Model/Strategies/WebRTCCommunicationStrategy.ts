@@ -271,9 +271,8 @@ export class WebRTCCommunicationStrategy implements ICommunicationStrategy {
                     return;
                 }
                 try {
-                    if (!this.hasExistingConnection(user1.spaceUserId, user2.spaceUserId)) {
+                    if (this.shouldEstablishConnection(user1, user2)) {
                         this.establishConnection(user1, user2);
-                        return;
                     }
                 } catch (error) {
                     console.error(
