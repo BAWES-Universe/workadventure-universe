@@ -189,9 +189,11 @@
         message = text;
     }
 
-    // The same for a voice note left unsent: back in the recorder, ready to send, unless another one is being made.
+    // The same for a voice note left unsent: back in the recorder, ready to send. Never over something being typed,
+    // attached or recorded: it then stays with the chat, shown as unsent once it ends.
     function restoreContinuedVoiceNote(proximityRoom: ProximityChatRoom, live: ProximitySession<ChatMessage>) {
-        if (live.unsentVoiceNote === undefined || voiceActive || !voiceComposer) return;
+        if (live.unsentVoiceNote === undefined || voiceActive || !voiceComposer?.canLoad()) return;
+        if (!isEmptyMessage(message) || files.length !== 0) return;
         const note = proximityRoom.takeUnsentVoiceNote(live);
         if (!note) return;
         voiceComposer.load(note);

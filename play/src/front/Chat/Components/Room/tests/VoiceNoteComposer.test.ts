@@ -195,4 +195,21 @@ describe("a voice note that is still being stopped", () => {
         await click("voiceSendButton");
         expect(onSend).toHaveBeenCalledWith(file, details);
     });
+
+    it("does not put a kept note over one being recorded", async () => {
+        const composer = new VoiceNoteComposer({
+            target,
+            props: { canRecord: true, onSend: () => Promise.resolve(true), onError: vi.fn() },
+        });
+        shown = composer;
+        await tick();
+        expect(composer.canLoad()).toBe(true);
+        await click("voiceRecordButton");
+        expect(composer.canLoad()).toBe(false);
+
+        composer.load({ file: new File([new Uint8Array(10)], "Voice message.m4a"), details });
+        await tick();
+        expect(target.querySelector('[data-testid="voiceRecording"]')).not.toBeNull();
+        expect(createUrl).not.toHaveBeenCalled();
+    });
 });

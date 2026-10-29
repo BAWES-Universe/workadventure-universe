@@ -152,9 +152,14 @@
         });
     }
 
+    /** Whether a note kept from before can go back in: nothing is being recorded, held or asked for. */
+    export function canLoad(): boolean {
+        return state === "idle" && !starting;
+    }
+
     /** Puts a note kept from before back in, ready to listen to and send. */
     export function load(kept: UnsentVoiceNote) {
-        discard();
+        if (!canLoad()) return;
         note = {
             ...kept,
             url: URL.createObjectURL(kept.file),
