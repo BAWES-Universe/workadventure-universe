@@ -2,7 +2,7 @@
  * A tool that ran but failed answers with isError (MCP spec): it reads as an error, so the steps line shows it as
  * didn't work (#1545) instead of done.
  */
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const post = vi.fn();
 vi.mock('axios', () => ({ default: { post: (...args: unknown[]) => post(...args), isCancel: () => false } }));
@@ -14,6 +14,8 @@ import { MCPConnector } from '../mcp/MCPConnector';
 const answer = (result: unknown) => ({ data: { jsonrpc: '2.0', id: 1, result }, headers: {}, status: 200 });
 
 describe('MCPConnector.executeToolCall', () => {
+    beforeEach(() => post.mockReset());
+
     it('returns a failed run as an error with its reason', async () => {
         post.mockResolvedValueOnce(answer({})).mockResolvedValueOnce(
             answer({ isError: true, content: [{ type: 'text', text: 'daily limit reached' }] })
@@ -23,8 +25,8 @@ describe('MCPConnector.executeToolCall', () => {
     });
 
     it('returns a run that worked as its content, as before', async () => {
-        post.mockResolvedValueOnce(answer({ content: [{ type: 'text', text: 'ok' }] }));
-        const result = await MCPConnector.executeToolCall('s1', 'https://music.test/mcp', 'generate_music', {}, 'none', undefined, undefined, 'p1');
+        post.mockResolvedValueOnce(answer({})).mockResolvedValueOnce(answer({ content: [{ type: 'text', text: 'ok' }] }));
+        const result = await MCPConnector.executeToolCall('s2', 'https://music2.test/mcp', 'generate_music', {}, 'none', undefined, undefined, 'p1');
         expect(result).toEqual([{ type: 'text', text: 'ok' }]);
     });
 });
