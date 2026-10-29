@@ -71,6 +71,11 @@ describe('a file the bot sent, to keep', () => {
         });
     });
 
+    it('is not read again for its words when no text is kept', () => {
+        const job = sentMediaJob({ url: 'https://cdn.example.com/plan.pdf', mediaType: 'file', mimeType: 'application/pdf' }, { ...where, maxTextChars: 0 }, null);
+        expect(job.readAgain).toBeUndefined();
+    });
+
     it("goes to Orbit as the bot's, with the tool and its prompt", async () => {
         const admin = orbit();
         const keeper = new ChatFileKeeper(vi.fn() as never, 1);

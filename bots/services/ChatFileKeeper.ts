@@ -68,7 +68,7 @@ export function sentMediaJob(
         source: 'bot',
         made,
         line: item.caption?.trim() || null,
-        ...(kind === 'document' && upload.mimeType ? { readAgain: { mimeType: upload.mimeType } } : {}),
+        ...(kind === 'document' && upload.mimeType && where.maxTextChars > 0 ? { readAgain: { mimeType: upload.mimeType } } : {}),
     };
 }
 
