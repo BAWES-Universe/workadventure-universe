@@ -15,7 +15,8 @@ import { warningMessageStore } from "../Stores/ErrorStore";
 import { LL } from "../../i18n/i18n-svelte";
 import { openChat } from "./openChat";
 import { ChatsStillLoadingError } from "./Connection/ChatsStillLoadingError";
-import { navChat } from "./Stores/ChatStore";
+import { navChat, selectedChatMessageToReply } from "./Stores/ChatStore";
+import type { ChatRoom } from "./Connection/ChatConnection";
 import { selectedRoomStore } from "./Stores/SelectRoomStore";
 import RequiresLoginForChatModal from "./Components/RequiresLoginForChatModal.svelte";
 
@@ -71,6 +72,41 @@ export const openTab = (url: string) => {
     scriptUtils.openTab(url);
 };
 
+/**
+ * The direct chat with this person: the one that exists (inviting the person back if they deleted it), or a new one when
+ * there is none. Joined when it was only an invite, waiting for the join when asked to.
+ */
+const findDirectChatRoom = async (chatID: string, waitForJoin: boolean) => {
+    const chatConnection = await gameManager.getChatConnection();
+    const room = await chatConnection.createDirectRoom(chatID);
+    if (!room) throw new Error("Failed to create room");
+    analyticsClient.createMatrixRoom();
+
+    if (get(room.myMembership) === "invite") {
+        const joining = room.joinRoom();
+        if (waitForJoin) await joining;
+        else joining.catch((error: unknown) => console.error(error));
+    }
+    return room;
+};
+
+function showDirectChatFailure(error: unknown, chatID: string): void {
+    if (error instanceof ChatsStillLoadingError) {
+        // Not a failure: the player just tries again in a moment.
+        warningMessageStore.addWarningMessage(get(LL).chat.chatsStillLoading());
+        return;
+    }
+    warningMessageStore.addWarningMessage(get(LL).chat.failedToOpenRoom({ roomId: chatID }));
+    console.error(error);
+    Sentry.captureException(error);
+}
+
+function showRoom(room: ChatRoom): void {
+    selectedRoomStore.set(room);
+    navChat.switchToChat();
+    openChat("person");
+}
+
 export const openDirectChatRoom = async (chatID: string) => {
     try {
         if (!get(userIsConnected)) {
@@ -79,29 +115,45 @@ export const openDirectChatRoom = async (chatID: string) => {
         }
         // There is no chat with yourself (another of your tabs or devices has your chat id).
         if (chatID === localUserStore.getChatId()) return;
-        const chatConnection = await gameManager.getChatConnection();
-        // Finds the chat that exists (inviting the person back if they deleted it) and only makes one when there is none.
-        const room = await chatConnection.createDirectRoom(chatID);
-        if (!room) throw new Error("Failed to create room");
-        analyticsClient.createMatrixRoom();
-
-        if (get(room.myMembership) === "invite") {
-            room.joinRoom().catch((error: unknown) => console.error(error));
-        }
-
-        selectedRoomStore.set(room);
-        navChat.switchToChat();
-        openChat("person");
+        showRoom(await findDirectChatRoom(chatID, false));
     } catch (error) {
-        if (error instanceof ChatsStillLoadingError) {
-            // Not a failure: the player just tries again in a moment.
-            warningMessageStore.addWarningMessage(get(LL).chat.chatsStillLoading());
-            return;
+        showDirectChatFailure(error, chatID);
+    }
+};
+
+/**
+ * Sends something to this person's direct chat, then opens it there. Says whether it went; when it did not, a line
+ * says so (`notSentLine` when the sending itself failed).
+ */
+export const sendToDirectChat = async (
+    chatID: string,
+    send: (room: ChatRoom) => Promise<void>,
+    notSentLine?: string
+): Promise<boolean> => {
+    if (!get(userIsConnected) || chatID === localUserStore.getChatId()) return false;
+    let room: ChatRoom;
+    try {
+        room = await findDirectChatRoom(chatID, true);
+    } catch (error) {
+        showDirectChatFailure(error, chatID);
+        return false;
+    }
+    try {
+        // A reply picked in another chat would point at a message this one does not have.
+        selectedChatMessageToReply.set(null);
+        await send(room);
+    } catch (error) {
+        if (!notSentLine) {
+            showDirectChatFailure(error, chatID);
+            return false;
         }
-        warningMessageStore.addWarningMessage(get(LL).chat.failedToOpenRoom({ roomId: chatID }));
+        warningMessageStore.addWarningMessage(notSentLine);
         console.error(error);
         Sentry.captureException(error);
+        return false;
     }
+    showRoom(room);
+    return true;
 };
 
 export const openChatRoom = async (roomId: string) => {

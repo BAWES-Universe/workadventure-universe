@@ -137,4 +137,79 @@ describe("a voice note that is still being stopped", () => {
         await tick();
         expect(onSend).toHaveBeenCalledTimes(1);
     });
+
+    it("hands over a note still being recorded, leaves the recorder empty, and lets the microphone go", async () => {
+        const composer = new VoiceNoteComposer({
+            target,
+            props: { canRecord: true, onSend: () => Promise.resolve(true), onError: vi.fn() },
+        });
+        shown = composer;
+        await tick();
+        await click("voiceRecordButton");
+
+        const taken = composer.takeNote();
+        await tick();
+        expect(target.querySelector('[data-testid="voiceRecording"]')).toBeNull();
+        expect(target.querySelector('[data-testid="voiceRecordButton"]')).not.toBeNull();
+        // Stopped, not cancelled: what was said so far is kept.
+        expect(cancel).not.toHaveBeenCalled();
+
+        const file = new File([new Uint8Array(10)], "Voice message.m4a");
+        finish({ file, details });
+        await expect(taken).resolves.toEqual({ file, details });
+    });
+
+    it("hands over a note that was still being stopped, and one held for review", async () => {
+        const composer = new VoiceNoteComposer({
+            target,
+            props: { canRecord: true, onSend: () => Promise.resolve(true), onError: vi.fn() },
+        });
+        shown = composer;
+        await tick();
+        await click("voiceRecordButton");
+        await click("voiceStopButton");
+        const whileStopping = composer.takeNote();
+        const file = new File([new Uint8Array(10)], "Voice message.m4a");
+        finish({ file, details });
+        await expect(whileStopping).resolves.toEqual({ file, details });
+        await tick();
+        expect(target.querySelector('[data-testid="voiceReview"]')).toBeNull();
+
+        composer.load({ file, details });
+        await tick();
+        expect(target.querySelector('[data-testid="voiceReview"]')).not.toBeNull();
+        await expect(composer.takeNote()).resolves.toEqual({ file, details });
+        await tick();
+        expect(target.querySelector('[data-testid="voiceReview"]')).toBeNull();
+        await expect(composer.takeNote()).resolves.toBeUndefined();
+    });
+
+    it("puts a kept note back, ready to send", async () => {
+        const onSend = vi.fn(() => Promise.resolve(true));
+        const composer = new VoiceNoteComposer({ target, props: { canRecord: true, onSend, onError: vi.fn() } });
+        shown = composer;
+        await tick();
+        const file = new File([new Uint8Array(10)], "Voice message.m4a");
+        composer.load({ file, details });
+        await tick();
+        await click("voiceSendButton");
+        expect(onSend).toHaveBeenCalledWith(file, details);
+    });
+
+    it("does not put a kept note over one being recorded", async () => {
+        const composer = new VoiceNoteComposer({
+            target,
+            props: { canRecord: true, onSend: () => Promise.resolve(true), onError: vi.fn() },
+        });
+        shown = composer;
+        await tick();
+        expect(composer.canLoad()).toBe(true);
+        await click("voiceRecordButton");
+        expect(composer.canLoad()).toBe(false);
+
+        composer.load({ file: new File([new Uint8Array(10)], "Voice message.m4a"), details });
+        await tick();
+        expect(target.querySelector('[data-testid="voiceRecording"]')).not.toBeNull();
+        expect(createUrl).not.toHaveBeenCalled();
+    });
 });
