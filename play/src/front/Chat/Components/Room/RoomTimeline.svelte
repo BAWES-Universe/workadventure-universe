@@ -77,6 +77,7 @@
     import PartnerProfilePanel from "./DirectChat/PartnerProfilePanel.svelte";
     import RoomDetailsPanel from "./Details/RoomDetailsPanel.svelte";
     import NearbyDetailsPanel from "./Details/NearbyDetailsPanel.svelte";
+    import { endedConversation } from "./Details/NearbyConversation";
     import SharedPanel from "./Details/SharedPanel.svelte";
     import ArtifactsPanel from "./Details/ArtifactsPanel.svelte";
     import PinnedBar from "./Details/PinnedBar.svelte";
@@ -221,8 +222,13 @@
     }
     $: nearbySpaceKind = proximityRoom?.spaceKind;
     $: nearbySpaceName = proximityRoom?.name;
+    // An ended conversation's lists are named after it (#1615), the live chat's after the chat.
+    $: endedNearby = endedConversation(shownSession, (names) =>
+        formatPeopleNames(names, { two: $LL.chat.topRow.twoNames, more: $LL.chat.topRow.moreNames })
+    );
     $: nearbyName =
-        proximityRoom && $nearbySpaceKind ? nearbyChatName($nearbySpaceKind, $nearbySpaceName ?? "", $LL) : undefined;
+        endedNearby?.title ??
+        (proximityRoom && $nearbySpaceKind ? nearbyChatName($nearbySpaceKind, $nearbySpaceName ?? "", $LL) : undefined);
 
     function closeNearbyDetails() {
         if (!proximityRoom) return;

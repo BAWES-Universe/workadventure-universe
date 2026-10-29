@@ -17,6 +17,8 @@ export interface SharedItem {
     isVideo?: boolean;
     /** For one image or file of a gallery, which holds several in one message: its own link. */
     src?: string;
+    /** Shared in a proximity chat, listed in a direct chat beside its own items (#1615). */
+    nearby?: boolean;
 }
 
 const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "avif", "bmp", "svg", "heic", "heif"]);

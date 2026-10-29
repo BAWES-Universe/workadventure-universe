@@ -16,6 +16,8 @@
      */
     export let url: string;
     export let message: ChatMessage;
+    /** Shared in a proximity chat (#1615). */
+    export let nearby = false;
 
     let preview: WebPreview | undefined;
     let row: HTMLElement;
@@ -93,9 +95,26 @@
         <span class="truncate text-xs text-white/60">{preview?.siteName || site}</span>
         <span class="truncate text-[11px] text-white/45">{by}</span>
     </span>
+    {#if nearby}
+        <span class="where-tag" data-testid="sharedNearbyTag">{$LL.chat.session.proximityTag()}</span>
+    {/if}
 </a>
 
 <style>
+    .where-tag {
+        display: inline-flex;
+        align-items: center;
+        flex-shrink: 0;
+        height: 1.125rem;
+        padding: 0 0.4rem;
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        color: #d8ccff;
+        background: rgb(134 41 252 / 0.22);
+        border: 1px solid rgb(167 139 250 / 0.3);
+    }
     .shared-row:hover {
         background: rgba(255, 255, 255, 0.06);
     }
