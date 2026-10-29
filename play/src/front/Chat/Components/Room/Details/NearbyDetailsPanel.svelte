@@ -1,10 +1,14 @@
 <script lang="ts">
+    import { getContext, hasContext } from "svelte";
+    import { readable } from "svelte/store";
+    import type { Readable } from "svelte/store";
     import LL from "../../../../../i18n/i18n-svelte";
     import type { ProximityChatRoom } from "../../../Connection/Proximity/ProximityChatRoom";
     import { openRoomDetailsIdStore } from "../../../Stores/ChatDetailsStore";
     import TopRowAvatar from "../../TopRow/TopRowAvatar.svelte";
     import { formatPeopleNames, resolveTopRowState } from "../../TopRow/TopRowSummary";
     import { nearbyTitleLines } from "../Thread/nearbyTitle";
+    import { PERSON_COLOUR_CONTEXT, type PersonColourOf } from "../../../Stores/ChatUserWokaStore";
     import SharedSummary from "./SharedSummary.svelte";
     import ArtifactsSummary from "./ArtifactsSummary.svelte";
     import { IconChevronLeft, IconChevronRight, IconMessageCircle2 } from "@wa-icons";
@@ -19,6 +23,11 @@
     const participants = room.participants;
     const spaceKind = room.spaceKind;
     const spaceName = room.name;
+
+    // Each woka sits on the person's colour from People, as in the chat list.
+    const colourOf: Readable<PersonColourOf> = hasContext(PERSON_COLOUR_CONTEXT)
+        ? getContext(PERSON_COLOUR_CONTEXT)
+        : readable(() => undefined);
     const direction = document.documentElement.getAttribute("dir") || "ltr";
 
     // The same people as the chat's header: those a message sent now goes to.
@@ -68,7 +77,12 @@
                 {#if people.length > 0}
                     {#each people.slice(0, MAX_STACKED_AVATARS) as person, index (person.id)}
                         <span class={index === 0 ? "" : "-ms-8"} style:z-index={MAX_STACKED_AVATARS - index}>
-                            <TopRowAvatar pictureStore={person.pictureStore} name={person.name} size="xl" />
+                            <TopRowAvatar
+                                pictureStore={person.pictureStore}
+                                name={person.name}
+                                color={$colourOf(person.chatId, person.name)}
+                                size="xl"
+                            />
                         </span>
                     {/each}
                 {:else}
@@ -96,7 +110,12 @@
             <div class="details-heading">{$LL.chat.details.hereNow()} · {people.length}</div>
             {#each people as person (person.id)}
                 <div class="u-menu-row !m-0 cursor-default">
-                    <TopRowAvatar pictureStore={person.pictureStore} name={person.name} ring={false} />
+                    <TopRowAvatar
+                        pictureStore={person.pictureStore}
+                        name={person.name}
+                        color={$colourOf(person.chatId, person.name)}
+                        ring={false}
+                    />
                     <span class="u-menu-label truncate">{person.name}</span>
                 </div>
             {:else}

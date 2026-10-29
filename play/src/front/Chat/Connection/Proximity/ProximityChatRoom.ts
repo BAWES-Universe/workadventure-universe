@@ -100,6 +100,8 @@ export interface ProximityChatParticipant {
     readonly name: string;
     readonly pictureStore: PictureStore;
     readonly bot: boolean;
+    /** Their chat account, which gives them their colour from People. */
+    readonly chatId?: string;
 }
 
 /**
@@ -1439,6 +1441,7 @@ export class ProximityChatRoom implements ChatRoom {
                         name: user.name,
                         pictureStore: user.pictureStore,
                         bot: isBotUser(user),
+                        chatId: user.chatID,
                     }))
             );
             if (!hasUserInProximityChat && users.size > 1) {
