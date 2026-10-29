@@ -9,3 +9,6 @@ export const openRoomDetailsIdStore = writable<string | undefined>(undefined);
 
 /** The chat whose "Media, links and files" page is open over its details, and the tab it shows. */
 export const openSharedItemsStore = writable<{ roomId: string; tab: SharedTab } | undefined>(undefined);
+
+/** The chat whose "Artifacts" page is open over its details or profile (game #1474). */
+export const openArtifactsListStore = writable<string | undefined>(undefined);

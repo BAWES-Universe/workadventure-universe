@@ -7,7 +7,15 @@
     import { botApiService } from "../../services/BotApiService";
     import { resolveVisionSupport } from "../../visionModels";
     import { canOpenOrbit, openOrbitPage } from "../../../admin-api/index";
-    import { canPick, cardIcon, mindBriefName, runsOnCards, unlentKeyNames, type RunsOnCard } from "../../mindModel";
+    import {
+        canPick,
+        cardIcon,
+        mindBriefName,
+        runsOnCards,
+        unlentKeyNames,
+        UNIVERSE_AI_REF,
+        type RunsOnCard,
+    } from "../../mindModel";
     import { allowedModelsOf, botModelOf, keyChoice, keyOfRef, modelRow, shortName } from "../../modelPickerModel";
     import PageGroup from "./PageGroup.svelte";
     import PageButton from "./PageButton.svelte";
@@ -57,6 +65,11 @@
 
     /** The model list is open: for the key the bot is on (Change), or for a key it is about to go on (nothing picked yet). */
     let choosing: { keyId: string; pending: boolean } | null = null;
+    /**
+     * The card tapped while the bot is on someone else's key (#1579): it shows picked, and the question sits right under it.
+     * Only that person can put the bot back on their key, so the move is asked before it is made.
+     */
+    let pendingId: string | null = null;
 
     let loadedFor: string | undefined | null = null;
     let loadCount = 0;
@@ -125,6 +138,7 @@
         options = null;
         myKeys = null;
         choosing = null;
+        pendingId = null;
         lendPending = false;
         void load(botId);
     }
@@ -178,6 +192,9 @@
             : page.mind.none()
         : !ref
         ? page.mind.none()
+        : // Before Orbit answers (or when it can't), a bot on Universe AI still shows its name, never its stored ref
+        ref.toLowerCase() === UNIVERSE_AI_REF
+        ? page.mind.universeAi()
         : current
         ? [
               current.enabled ? current.name : `${current.name} ${$LL.actionbar.botEditorModule.providerDisabled()}`,
@@ -193,8 +210,16 @@
         return new Intl.ListFormat(lang, { style: "long", type: "conjunction" }).format(list);
     }
 
-    function chooseCard(card: RunsOnCard) {
+    // The bot is on another person's key (not the viewer's own key that is no longer lent here)
+    $: leavingFrom = options?.currentKey?.mine ? undefined : cards.find((c) => c.kind === "theirs" && c.picked);
+
+    function chooseCard(card: RunsOnCard, sure = false) {
         if (!options || !canPick(options, card)) return;
+        if (!sure && leavingFrom) {
+            pendingId = card.id;
+            return;
+        }
+        pendingId = null;
         // Another key or Universe AI starts the bot off on its own model: the only one, the provider's suggested one, or
         // none yet. A key that needs a pick opens its list first, and the bot moves only when a model is saved.
         const key = card.kind === "mine" ? keyOfRef(options, card.id) : undefined;
@@ -222,10 +247,10 @@
                     : page.mind.keyHosted({ universe: card.universe });
             case "theirs":
                 return card.owner
-                    ? page.mind.othersKey({ owner: card.owner, bot: bot.name ?? "" })
+                    ? page.mind.othersKey({ owner: card.owner })
                     : card.title && options?.currentKey?.mine
                     ? page.mind.keyUnlent()
-                    : page.mind.othersKeyUnknown({ bot: bot.name ?? "" });
+                    : page.mind.othersKeyUnknown();
             case "pinned":
                 return page.mind.pinned();
             case "gone":
@@ -236,14 +261,6 @@
     function downNoteOf(card: RunsOnCard): string | null {
         if ((card.kind !== "mine" && card.kind !== "theirs") || card.status !== "down") return null;
         return card.ifDown === "stop" ? page.mind.downStops() : page.mind.downUseUniverseAi();
-    }
-
-    function pinProvider(event: Event) {
-        const select = event.currentTarget as HTMLSelectElement;
-        const value = select.value;
-        // Back to the prompt, so the same provider can be pinned again after the bot moves off it
-        select.value = "";
-        if (value) onChange({ ...bot, aiProviderRef: value, aiModel: null });
     }
 
     function pick(event: Event) {
@@ -271,15 +288,16 @@
         <div class="bp-cards" role="radiogroup" aria-labelledby="bot-runs-on-label" data-testid="bot-runs-on">
             {#each cards as card (card.kind + card.id)}
                 {@const icon = cardIcon(card)}
+                {@const picked = pendingId ? card.id === pendingId : card.picked}
                 <button
                     type="button"
                     role="radio"
                     class="bp-card"
-                    class:picked={card.picked}
-                    aria-checked={card.picked}
+                    class:picked
+                    aria-checked={picked}
                     disabled={!card.picked && !canPick(options, card)}
                     data-testid="bot-runs-on-{card.kind}"
-                    on:click={() => chooseCard(card)}
+                    on:click={() => (pendingId && card.id === leavingFrom?.id ? (pendingId = null) : chooseCard(card))}
                 >
                     <span class="bp-cico">
                         {#if icon?.kind === "logo"}
@@ -308,8 +326,30 @@
                             {/if}
                         </span>
                     </span>
-                    <span class="bp-radio" class:on={card.picked} aria-hidden="true" />
+                    <span class="bp-radio" class:on={picked} aria-hidden="true" />
                 </button>
+                {#if pendingId === card.id && leavingFrom?.kind === "theirs"}
+                    <div class="bp-ask" role="alert" data-testid="bot-runs-on-move-ask">
+                        <p class="bp-ask-t">
+                            {page.mind.moveAsk({ target: card.kind === "mine" ? card.title : page.mind.universeAi() })}
+                        </p>
+                        {#if card.kind === "mine"}<p>{page.mind.movePay()}</p>{/if}
+                        <p>
+                            {leavingFrom.owner
+                                ? page.mind.moveBack({ owner: leavingFrom.owner })
+                                : page.mind.moveBackUnknown()}
+                        </p>
+                        <div class="bp-ask-actions">
+                            <PageButton tall on:click={() => (pendingId = null)}>{page.mind.moveKeep()}</PageButton>
+                            <PageButton
+                                go
+                                tall
+                                testId="bot-runs-on-move-confirm"
+                                on:click={() => chooseCard(card, true)}>{page.mind.moveGo()}</PageButton
+                            >
+                        </div>
+                    </div>
+                {/if}
             {/each}
         </div>
         {#if row}
@@ -345,7 +385,7 @@
                 {/if}
             </div>
         {/if}
-        {#if options.viewerIsMaker && unlent.length > 0}
+        {#if unlent.length > 0}
             <div class="bp-unlent" data-testid="bot-runs-on-unlent">
                 <IconKey font-size="18" />
                 <div class="bp-mtx">
@@ -362,7 +402,7 @@
                 </div>
             </div>
         {/if}
-        {#if options.viewerIsMaker && canOpenOrbit()}
+        {#if canOpenOrbit()}
             <div class="bp-line">
                 <PageButton testId="bot-runs-on-ai-keys" tall on:click={openAiKeys}>
                     {page.mind.aiKeys()}
@@ -370,26 +410,10 @@
                 </PageButton>
             </div>
         {/if}
-        {#if options.providers && options.providers.length > 0}
-            <label class="bp-select">
-                <span class="sr-only">{page.mind.pinTo()}</span>
-                <select value="" on:change={pinProvider} data-testid="bot-mind-provider">
-                    <option value="">{page.mind.pinTo()}</option>
-                    {#each options.providers as provider (provider.id)}
-                        <option value={provider.id}>
-                            {provider.name}{provider.enabled
-                                ? ""
-                                : ` ${$LL.actionbar.botEditorModule.providerDisabled()}`}
-                        </option>
-                    {/each}
-                </select>
-                <IconChevronDown font-size="16" />
-            </label>
-        {/if}
-        {#if !options.viewerIsMaker || unlent.length === 0}
-            <p class="bp-m">
-                {options.viewerIsMaker ? page.mind.makerHint() : page.mind.managerHint({ bot: bot.name ?? "" })}
-            </p>
+        {#if myKeys && myKeys.length === 0}
+            <p class="bp-m">{page.mind.noKeysHint({ bot: bot.name ?? "" })}</p>
+        {:else if unlent.length === 0}
+            <p class="bp-m">{page.mind.makerHint()}</p>
         {/if}
     {:else if failed}
         <div class="bp-line">
@@ -420,6 +444,32 @@
 </PageGroup>
 
 <style>
+    .bp-ask {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin-top: -2px;
+        padding: 12px 14px;
+        border-radius: 14px;
+        background: rgba(167, 139, 250, 0.1);
+    }
+    .bp-ask p {
+        margin: 0;
+        font-size: 13px;
+        line-height: 1.4;
+        color: rgba(244, 242, 250, 0.72);
+    }
+    .bp-ask .bp-ask-t {
+        font-size: 15px;
+        font-weight: 600;
+        color: #f4f2fa;
+    }
+    .bp-ask-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 4px;
+    }
     .bp-cap {
         font-size: 11px;
         font-weight: 700;

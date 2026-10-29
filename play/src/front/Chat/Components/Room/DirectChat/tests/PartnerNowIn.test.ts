@@ -82,8 +82,41 @@ describe("partnerNowIn", () => {
 
     it("shows nothing when Orbit can't answer", async () => {
         const failed = vi.spyOn(console, "error").mockImplementation(() => undefined);
-        expect(await settle(partnerNowIn(ADA, () => Promise.reject(new Error("down")), GAME))).toBeUndefined();
+        expect(await settle(partnerNowIn("uuid-new", () => Promise.reject(new Error("down")), GAME))).toBeUndefined();
         failed.mockRestore();
+    });
+
+    it("shows the room seen last at once when the profile opens again, and asks again (#1585)", async () => {
+        const uuid = "uuid-again";
+        await settle(partnerNowIn(uuid, () => Promise.resolve(view([{ uuid, place: LOBBY }])), GAME));
+        const garden = { ...LOBBY, name: "Garden", playPath: "/@/bawes/hq/garden" };
+        const ask = vi.fn(() => Promise.resolve(view([{ uuid, place: garden }])));
+        const again = partnerNowIn(uuid, ask, GAME);
+        expect(get(again)?.room).toBe("Lobby");
+        expect((await settle(again))?.room).toBe("Garden");
+        expect(ask).toHaveBeenCalledTimes(2);
+    });
+
+    it("keeps the room seen last when Orbit doesn't answer, and drops it when Orbit says they're not shown", async () => {
+        const uuid = "uuid-keep";
+        await settle(partnerNowIn(uuid, () => Promise.resolve(view([{ uuid, place: LOBBY }])), GAME));
+        expect((await settle(partnerNowIn(uuid, () => Promise.resolve(null), GAME)))?.room).toBe("Lobby");
+        const failed = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        expect((await settle(partnerNowIn(uuid, () => Promise.reject(new Error("down")), GAME)))?.room).toBe("Lobby");
+        failed.mockRestore();
+        expect(await settle(partnerNowIn(uuid, () => Promise.resolve(view([])), GAME))).toBeUndefined();
+        expect(
+            get(
+                partnerNowIn(
+                    uuid,
+                    () =>
+                        new Promise<never>(() => {
+                            // Never answers.
+                        }),
+                    GAME
+                )
+            )
+        ).toBeUndefined();
     });
 });
 

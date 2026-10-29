@@ -38,4 +38,18 @@ describe("botHomeRoom", () => {
         expect(await settle(botHomeRoom(BOT_CHAT_ID, () => Promise.reject(new Error("down")), GAME))).toBeUndefined();
         failed.mockRestore();
     });
+
+    it("shows the room it said last at once when the profile opens again, and keeps it when there is no answer (#1585)", async () => {
+        const botId = "0b7c1d2e-2222-4222-8333-944455556666";
+        const chatId = `@bot_${botId}:matrix.bawes.net`;
+        await settle(botHomeRoom(chatId, () => Promise.resolve(LINK), GAME));
+        const garden = { ...LINK, url: "https://play.example/@/bawes/hq/garden", room: "Garden" };
+        const again = botHomeRoom(chatId, () => Promise.resolve(garden), GAME);
+        expect(get(again)).toEqual(LINK);
+        expect(await settle(again)).toEqual(garden);
+        // No answer in time, or the bot server down: the room stays.
+        expect(await settle(botHomeRoom(chatId, () => Promise.resolve(undefined), GAME))).toEqual(garden);
+        // The bot server saying it has no room is an answer.
+        expect(await settle(botHomeRoom(chatId, () => Promise.resolve(null), GAME))).toBeUndefined();
+    });
 });

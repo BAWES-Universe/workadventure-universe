@@ -5,6 +5,7 @@ import type { StateEvents } from "matrix-js-sdk";
 import type { BotStatusNote } from "../Bots/BotChatStatus";
 import type { BotRoomLink } from "../Bots/BotRoomLink";
 import type { BotReplyLimit } from "../Bots/BotReplyLimit";
+import type { BotSteps } from "../Bots/BotSteps";
 import type { ArtifactCard } from "../../Artifacts/artifactCard";
 import type { RoomConnection } from "../../Connection/RoomConnection";
 import type { PictureStore } from "../../Stores/PictureStore";
@@ -203,6 +204,8 @@ export interface ChatMessage {
     replyLimit?: BotReplyLimit;
     /** Set when a bot's direct message carries an artifact it made: drawn as a card the person taps to open. */
     artifact?: ArtifactCard;
+    /** Set when a bot's notice is the steps line of its reply (#1545): drawn as a quiet line that updates in place. */
+    steps?: Readable<BotSteps | undefined>;
     /** Whether reactions on this message reach the other people in the chat. */
     canReact: Readable<boolean>;
     /** Whether a reply to this message is sent as a reply (with its quote) to the other people in the chat. */
@@ -250,6 +253,12 @@ export type ChatMessageContent = {
     fileNames: string[] | undefined;
     /** A recorded voice message (Matrix MSC3245), as opposed to an audio file. */
     isVoice?: boolean;
+    /** How long a voice message is, in seconds, when its sender wrote it down. */
+    voiceDuration?: number;
+    /** The shape of a voice message: levels from 0 to 1, when its sender wrote it down. */
+    voiceWaveform?: number[];
+    /** The file could not be fetched (gone, or the network failed). It is tried again the next time it is shown. */
+    mediaFailed?: boolean;
 };
 export const historyVisibilityOptions = ["joined", "invited", "world_readable"] as const;
 export type historyVisibility = (typeof historyVisibilityOptions)[number];

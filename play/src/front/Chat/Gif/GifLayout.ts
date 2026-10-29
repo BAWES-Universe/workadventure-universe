@@ -33,6 +33,16 @@ export function tileColumnsFor(pickerWidth: number): number {
     return pickerWidth < 440 ? 2 : 3;
 }
 
+/**
+ * The categories to show so that every row of tiles is full: as many as Klipy sent, less the last one or two that
+ * would sit alone at the bottom. The Trending tile comes first and counts. Fewer than a row are all shown.
+ */
+export function fullRowCategories<T>(categories: T[], columns: number): T[] {
+    const tiles = categories.length + 1;
+    if (tiles <= columns) return categories;
+    return categories.slice(0, tiles - (tiles % columns) - 1);
+}
+
 /** Columns of GIFs: 2 up to 439px, 3 up to 559px, 4 from there. */
 export function gifColumnsFor(pickerWidth: number): number {
     if (pickerWidth < 440) return 2;

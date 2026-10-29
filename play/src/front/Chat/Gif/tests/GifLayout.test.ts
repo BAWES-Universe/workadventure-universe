@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+    fullRowCategories,
     gifColumnsFor,
     gifNeighbour,
     pickerWidthFor,
@@ -40,6 +41,33 @@ describe("GifLayout", () => {
             expect(new Set(columns.flat()).size).toBeGreaterThan(3);
             expect(skeletonMoreRow(count)).toHaveLength(count);
         }
+    });
+
+    describe("fullRowCategories", () => {
+        const list = (count: number) => Array.from({ length: count }, (_, index) => index);
+
+        it("leaves out the last one or two categories that would sit alone, counting the Trending tile", () => {
+            // 12 categories + Trending = 13 tiles.
+            expect(fullRowCategories(list(12), 2)).toHaveLength(11);
+            expect(fullRowCategories(list(12), 3)).toHaveLength(11);
+            // 13 + Trending = 14: full at two a row, two left out at three.
+            expect(fullRowCategories(list(13), 2)).toHaveLength(13);
+            expect(fullRowCategories(list(13), 3)).toHaveLength(11);
+            // Already full.
+            expect(fullRowCategories(list(29), 2)).toHaveLength(29);
+            expect(fullRowCategories(list(29), 3)).toHaveLength(29);
+        });
+
+        it("keeps Klipy's order and has no limit of its own", () => {
+            expect(fullRowCategories(list(40), 3)).toEqual(list(38));
+        });
+
+        it("shows everything when there is not even one row", () => {
+            expect(fullRowCategories(list(0), 3)).toEqual([]);
+            expect(fullRowCategories(list(1), 3)).toEqual([0]);
+            expect(fullRowCategories(list(2), 3)).toEqual([0, 1]);
+            expect(fullRowCategories(list(1), 2)).toEqual([0]);
+        });
     });
 
     describe("tileNeighbour", () => {

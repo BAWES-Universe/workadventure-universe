@@ -13,6 +13,7 @@
     import { ProximityChatMessage } from "../../Connection/Proximity/ProximityChatRoom";
     import LinkPreview from "../../LinkPreview/LinkPreview.svelte";
     import BotRoomCard from "../../Bots/BotRoomCard.svelte";
+    import BotStepsLine from "../../Bots/BotStepsLine.svelte";
     import ArtifactCardView from "../../../Artifacts/ArtifactCardView.svelte";
     import { readArtifactLine } from "../../../Artifacts/artifactCard";
     import { bodyShownWithCard } from "../../LinkPreview/ChatLinkKind";
@@ -86,7 +87,12 @@
     } = message;
 
     // File cards say who sent the file.
-    setContext<MessageSenderInfo>(MESSAGE_SENDER_CONTEXT, { name: sender?.username, isMine: isMyMessage });
+    setContext<MessageSenderInfo>(MESSAGE_SENDER_CONTEXT, {
+        name: sender?.username,
+        isMine: isMyMessage,
+        messageId: id,
+        sentAt: date ?? undefined,
+    });
 
     $: senderPicture = personPicture($wokaByChatId, sender?.chatId, sender?.pictureStore) ?? readable(undefined);
     $: senderColour = $colourOf(sender?.chatId, sender?.username);
@@ -125,8 +131,13 @@
         proximity: MessageText as ComponentType,
     };
 
+    // A bot's steps line (#1545) is drawn without a bubble and takes no replies or reactions
+    const steps = message.steps ?? readable(undefined);
+    $: isSteps = $steps !== undefined && replyDepth === 0 && !isQuotedMessage;
+
     const actions = availableActions(message);
     $: actionable =
+        !isSteps &&
         replyDepth === 0 &&
         !isQuotedMessage &&
         !$isDeleted &&
@@ -235,12 +246,15 @@
         <div
             bind:this={bubbleRef}
             class:lifted={menuOpen}
+            class:steps-line={isSteps}
             class="message rounded-md
                     {$isDeleted && !isMyMessage && !messageFromSystem && replyDepth === 0 ? 'bg-white/10' : ''}
                     {$isDeleted && isMyMessage && !messageFromSystem && replyDepth === 0 ? 'bg-white/10' : ''}
-                    {!isMyMessage && !messageFromSystem && !$isDeleted && replyDepth === 0 ? 'bg-contrast' : ''}
+                    {!isMyMessage && !messageFromSystem && !$isDeleted && !isSteps && replyDepth === 0
+                ? 'bg-contrast'
+                : ''}
                     {isMyMessage && !messageFromSystem && !$isDeleted && replyDepth === 0 && !notSent
-                ? 'bg-secondary'
+                ? 'u-bubble-mine'
                 : ''}
                     {notSent ? 'message-not-sent bg-white/5 border border-dashed border-white/20' : ''}
                     {$reactionsWithUsers.length > 0 && !$isDeleted && replyDepth === 0 ? 'mb-4 p-0.5' : ''}
@@ -261,7 +275,9 @@
                     <QuotedMessage message={quotedMessage} onJump={jumpToQuoted} />
                 {/if}
 
-                {#if !notSent}
+                {#if isSteps}
+                    <BotStepsLine {steps} />
+                {:else if !notSent}
                     {#if artifactCard}
                         <ArtifactCardView card={artifactCard} makerName={sender?.username} />
                     {:else if !hasLinkCard}
@@ -311,7 +327,7 @@
                 {#if $reactionsWithUsers.length > 0}
                     <MessageReactions classes={isMyMessage ? "right-2" : "left-2"} reactions={$reactionsWithUsers} />
                 {/if}
-                {#if $isModified}
+                {#if $isModified && !isSteps}
                     <div class="text-white/50 text-xxs p-0 m-0 px-2 pb-1 text-right">
                         ({$LL.chat.messageEdited()})
                     </div>
@@ -494,6 +510,11 @@
         font-size: 11px;
         color: rgb(255 255 255 / 0.5);
         flex-shrink: 0;
+    }
+
+    /* A bot's steps line is as wide as its words */
+    .message.steps-line {
+        min-width: 0;
     }
 
     .message {
