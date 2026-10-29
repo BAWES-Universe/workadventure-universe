@@ -105,10 +105,21 @@ export class TexturesHelper {
         return new Promise<void>((resolve, reject) => {
             if (scene.textures.exists(key)) {
                 resolve();
+                return;
             }
-            scene.load.once(`filecomplete-image-${key}`, () => {
+            // A picture that can't be fetched fails the promise, instead of leaving it waiting for ever.
+            const onError = (file: Phaser.Loader.File) => {
+                if (file.key !== key) return;
+                scene.load.off(`filecomplete-image-${key}`, onComplete);
+                scene.load.off(Phaser.Loader.Events.FILE_LOAD_ERROR, onError);
+                reject(new Error(`Could not load the picture "${url}"`));
+            };
+            const onComplete = () => {
+                scene.load.off(Phaser.Loader.Events.FILE_LOAD_ERROR, onError);
                 resolve();
-            });
+            };
+            scene.load.once(`filecomplete-image-${key}`, onComplete);
+            scene.load.on(Phaser.Loader.Events.FILE_LOAD_ERROR, onError);
             scene.load.image(key, url);
             scene.load.start();
         });
